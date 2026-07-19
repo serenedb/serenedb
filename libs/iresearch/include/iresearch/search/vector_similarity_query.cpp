@@ -20,10 +20,13 @@
 
 #include "iresearch/search/vector_similarity_query.hpp"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
 #include <span>
+#include <tuple>
+#include <type_traits>
 #include <vector>
 
 #include "basics/assert.h"
@@ -43,6 +46,7 @@
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs {
 namespace {
@@ -235,7 +239,39 @@ class QVectorIterator : public VectorDistanceIterator {
     _pos = 0;
   }
 
-  IRS_DOC_ITERATOR_DEFAULTS
+  void Collect(const ScoreFunction& /*scorer*/, ColumnArgsFetcher& /*fetcher*/,
+               ScoreCollector& collector) final {
+    for (;;) {
+      AdvanceBlock();
+      const auto docs = GetDocsBlock();
+      if (docs.empty()) {
+        break;
+      }
+      const auto dist = GetDistBlock();
+      SDB_ASSERT(docs.size() == dist.size());
+      if (_boost == kNoBoost) {
+        collector.AddDocs(docs.data(), docs.size(), dist.data());
+      } else {
+        std::array<score_t, kPostingBlock> boosted;
+        for (size_t i = 0; i < dist.size(); ++i) {
+          boosted[i] = dist[i] * _boost;
+        }
+        collector.AddDocs(docs.data(), docs.size(), boosted.data());
+      }
+    }
+    _doc = doc_limits::eof();
+  }
+
+  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }
+
+  IRS_DOC_ITERATOR_EMIT_DEFAULTS
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      irs::FillBlockScoreContext score,
+                                      irs::FillBlockMatchContext match) final {
+    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score, match);
+  }
 
  private:
   void FillDistancesBlock() {
@@ -369,26 +405,49 @@ struct ClusterInputs {
   std::unique_ptr<QuantizerReader> vr;
 };
 
-std::optional<ClusterInputs> MakeClusterIterator(
-  const VectorState& state, size_t c, bool has_centroids,
-  std::unique_ptr<IndexInput>& pay_root) {
+std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
+                                                 size_t c, bool has_centroids,
+                                                 IndexInput& pay_root) {
   const PostingCookie cookie{.cookie = state.cookies[c].get(),
                              .field = state.reader->meta()};
   auto postings = state.reader->Iterator(IndexFeatures::None, cookie);
   if (!postings) {
     return std::nullopt;
   }
-  if (!pay_root) {
-    pay_root = state.reader->ReopenPayload();
-  }
-  auto vr =
-    pay_root ? MakeQuantizerReader(state.codebook, pay_root->Dup()) : nullptr;
-  if (vr) {
-    const float* centroid =
-      has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
-    vr->StartCluster(state.pay_starts[c], state.cluster_counts[c], centroid);
-  }
+  auto vr = MakeQuantizerReader(state.codebook, pay_root.Dup());
+  SDB_ASSERT(vr);
+  const float* centroid =
+    has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
+  vr->StartCluster(state.pay_starts[c], state.cluster_counts[c], centroid);
   return ClusterInputs{std::move(postings), std::move(vr)};
+}
+
+using QVectorIterators = std::vector<memory::managed_ptr<QVectorIterator>>;
+
+template<typename Out>
+bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
+  auto pay_root = state.reader->ReopenPayload();
+  if (!pay_root) {
+    return false;
+  }
+  out.reserve(state.cookies.size());
+  const bool has_centroids =
+    state.cluster_centroids.size() == state.cookies.size() * state.d;
+  for (size_t c = 0; c < state.cookies.size(); ++c) {
+    auto ci = MakeClusterIterator(state, c, has_centroids, *pay_root);
+    if (!ci) {
+      continue;
+    }
+    auto qit = memory::make_managed<QVectorIterator>(std::move(ci->postings),
+                                                     std::move(ci->vr), boost,
+                                                     state.cluster_counts[c]);
+    if constexpr (std::is_same_v<Out, ScoreAdapters>) {
+      out.emplace_back(DocIterator::ptr{std::move(qit)});
+    } else {
+      out.emplace_back(std::move(qit));
+    }
+  }
+  return true;
 }
 
 memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
@@ -427,6 +486,59 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
     std::move(src), *state.vector_column, *col_reader, d, query, metric, boost,
     state.estimation);
 }
+
+class DisjointClusterUnion : public DocIterator {
+ public:
+  DisjointClusterUnion(QVectorIterators&& itrs, doc_id_t docs_count,
+                       score_t /*boost*/)
+    : _itrs{std::move(itrs)}, _attrs{docs_count} {}
+
+  doc_id_t advance() final { SDB_UNREACHABLE(); }
+  doc_id_t seek(doc_id_t) final { SDB_UNREACHABLE(); }
+  uint32_t count() final { SDB_UNREACHABLE(); }
+  uint32_t EmitDocs(doc_id_t*, doc_id_t, doc_id_t) final { SDB_UNREACHABLE(); }
+
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& /*scorer*/,
+                          ColumnArgsFetcher* /*fetcher*/, doc_id_t min) final {
+    SDB_UNREACHABLE();
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t, doc_id_t, uint64_t*,
+                                      FillBlockScoreContext,
+                                      FillBlockMatchContext) final {
+    SDB_UNREACHABLE();
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if (type == Type<CostAttr>::id()) {
+      return &_attrs;
+    }
+    return nullptr;
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    _scorers.clear();
+    _scorers.reserve(_itrs.size());
+    for (auto& it : _itrs) {
+      _scorers.emplace_back(it->PrepareScore(ctx));
+    }
+    return ScoreFunction::Default();
+  }
+
+  void Collect(const ScoreFunction& /*scorer*/, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    SDB_ASSERT(_scorers.size() == _itrs.size());
+    for (size_t i = 0, n = _itrs.size(); i < n; ++i) {
+      _itrs[i]->Collect(_scorers[i], fetcher, collector);
+    }
+  }
+
+ private:
+  QVectorIterators _itrs;
+  std::vector<ScoreFunction> _scorers;
+  CostAttr _attrs;
+};
 
 }  // namespace
 
@@ -473,96 +585,39 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
     SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
     SDB_ASSERT(_state.codebook);
 
-    ScoreAdapters children;
-    children.reserve(_state.cookies.size());
-    bool ok = true;
-    const bool has_centroids =
-      _state.cluster_centroids.size() == _state.cookies.size() * _state.d;
-    std::unique_ptr<IndexInput> pay_root;
-    for (size_t c = 0; c < _state.cookies.size(); ++c) {
-      auto ci = MakeClusterIterator(_state, c, has_centroids, pay_root);
-      if (!ci) {
-        continue;
+    if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
+      QVectorIterators children;
+      if (BuildClusterIterators(_state, _boost, children) &&
+          !children.empty()) {
+        return memory::make_managed<DisjointClusterUnion>(std::move(children),
+                                                          docs_count, _boost);
       }
-      if (!ci->vr) {
-        ok = false;
-        break;
+    } else {
+      ScoreAdapters children;
+      if (BuildClusterIterators(_state, _boost, children) &&
+          !children.empty()) {
+        using Disjunction =
+          DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
+        auto v = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
+                                              std::move(children));
+        if (!_inner) {
+          return v;
+        }
+        auto inner_it = _inner->Execute(ctx, stats);
+        if (!inner_it) {
+          return DocIterator::empty();
+        }
+        return MergeWithInner(
+          std::move(v),
+          memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
+          ScoreMergeType::Sum);
       }
-      children.emplace_back(memory::make_managed<QVectorIterator>(
-        std::move(ci->postings), std::move(ci->vr), _boost,
-        _state.cluster_counts[c]));
-    }
-    if (ok && !children.empty()) {
-      using Disjunction =
-        DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
-      auto v = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
-                                            std::move(children));
-      if (!_inner) {
-        return v;
-      }
-      auto inner_it = _inner->Execute(ctx, stats);
-      if (!inner_it) {
-        return DocIterator::empty();
-      }
-      return MergeWithInner(
-        std::move(v), memory::make_managed<FilterIterator>(std::move(inner_it)),
-        docs_count, ScoreMergeType::Sum);
     }
   }
 
   auto it = MakeRawReranker(_segment, _state, query, _metric, _boost,
                             _inner.get(), ctx, stats);
   return it ? DocIterator::ptr{std::move(it)} : DocIterator::empty();
-}
-
-bool KnnVectorQuery::CollectTopK(ScoreCollector& collector,
-                                 const ExecutionContext& /*ctx*/,
-                                 const StatsBuffer& /*stats*/) const {
-  if (_state.quant == VectorQuantization::None || _inner) {
-    return false;
-  }
-  if (_state.cookies.empty()) {
-    return true;  // nothing probed; a valid (empty) collection
-  }
-  SDB_ASSERT(_segment.docs_mask() == nullptr);
-  SDB_ASSERT(_state.reader);
-  SDB_ASSERT(_state.vector_column);
-  SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
-  SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
-  SDB_ASSERT(_state.codebook);
-
-  const bool has_centroids =
-    _state.cluster_centroids.size() == _state.cookies.size() * _state.d;
-  std::unique_ptr<IndexInput> pay_root;
-  std::vector<score_t> boosted;
-
-  for (size_t c = 0; c < _state.cookies.size(); ++c) {
-    auto ci = MakeClusterIterator(_state, c, has_centroids, pay_root);
-    if (!ci) {
-      continue;
-    }
-    SDB_VERIFY(ci->vr,
-               "IVF quantized cluster has postings but no readable payload "
-               "stream");
-
-    QVectorIterator qv{std::move(ci->postings), std::move(ci->vr), _boost,
-                       _state.cluster_counts[c]};
-    while (true) {
-      qv.AdvanceBlock();
-      auto docs = qv.GetDocsBlock();
-      if (docs.empty()) {
-        break;
-      }
-      auto dist = qv.GetDistBlock();
-      SDB_ASSERT(docs.size() == dist.size());
-      boosted.resize(dist.size());
-      for (size_t i = 0; i < dist.size(); ++i) {
-        boosted[i] = dist[i] * _boost;
-      }
-      collector.AddDocs(docs.data(), docs.size(), boosted.data());
-    }
-  }
-  return true;
 }
 
 DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,

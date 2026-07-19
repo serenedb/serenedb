@@ -28,6 +28,14 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/function/scalar/generic_common.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -155,34 +163,174 @@ void InitScanState(IResearchScanGlobalState& state,
     state.output_projection_ids = input.projection_ids;
   }
 
+  // The floor consumed from a dropped static score filter (see
+  // IResearchSupportsPushdownFilter); partial folds of still-pushed score
+  // filters max into it below.
+  state.score_static_floor = bind_data.score_static_floor;
+
   state.pushed_filters = input.filters.get();
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, context, bind_data, *input.filters);
   }
 }
 
-// Flags whether any pushed filter targets a lookup (source-only) column. Such
-// filters are forwarded to the source's native lookup scan (via
-// `pushed_filters`) and force the streaming path (the lookup can't run per
-// collector candidate).
-// `.col` (covered) and virtual/extract filters are declined in
-// supports_pushdown_type and re-hosted in a Filter node above the scan, so they
-// never reach here.
+// IS NOT NULL replacement for the TRUE_OR_NULL segment classification,
+// mirroring duckdb's propagate_get: null when the filter is a ConstantOrNull
+// whose children the replacement cannot represent.
+duckdb::unique_ptr<duckdb::TableFilter> MakeNotNullReplacement(
+  const duckdb::TableFilter& filter, const duckdb::LogicalType& type) {
+  const auto& expr_filter = duckdb::ExpressionFilter::GetExpressionFilter(
+    filter, "MakeNotNullReplacement");
+  if (expr_filter.expr->GetExpressionType() ==
+      duckdb::ExpressionType::BOUND_FUNCTION) {
+    auto& func = expr_filter.expr->Cast<duckdb::BoundFunctionExpression>();
+    if (duckdb::ConstantOrNull::IsConstantOrNull(
+          func, duckdb::Value::BOOLEAN(true))) {
+      for (auto child = ++func.GetChildren().begin();
+           child != func.GetChildren().end(); ++child) {
+        switch (child->get()->GetExpressionType()) {
+          case duckdb::ExpressionType::BOUND_REF:
+          case duckdb::ExpressionType::VALUE_CONSTANT:
+            continue;
+          default:
+            return nullptr;
+        }
+      }
+    }
+  }
+  auto not_null = duckdb::ExpressionFilter::CreateNullCheckExpression(
+    duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL),
+    duckdb::ExpressionType::OPERATOR_IS_NOT_NULL);
+  return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(not_null));
+}
+
+// Lower bound implied by a static score filter (`score > c` / `score >= c`,
+// AND-conjunctions take the max; casts around the column unwrap): the largest
+// float T such that every score passing the filter exceeds T. `exact` is set
+// when the whole expression IS that bound (every conjunct folded), so the
+// filter can be consumed: enforcing `score > T` replaces evaluating it.
+// lowest() when the expression implies no usable lower bound.
+float StaticScoreFloor(const duckdb::Expression& expr, bool& exact) {
+  static constexpr auto kNone = std::numeric_limits<float>::lowest();
+  exact = false;
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
+    if (expr.GetExpressionType() != duckdb::ExpressionType::CONJUNCTION_AND) {
+      return kNone;
+    }
+    float floor = kNone;
+    bool all_exact = true;
+    for (const auto& child :
+         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+      bool child_exact = false;
+      floor = std::max(floor, StaticScoreFloor(*child, child_exact));
+      all_exact &= child_exact;
+    }
+    exact = all_exact;
+    return floor;
+  }
+  if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    return kNone;
+  }
+  const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
+  const auto* ref = &duckdb::BoundComparisonExpression::Left(cmp);
+  const auto* cst = &duckdb::BoundComparisonExpression::Right(cmp);
+  auto type = expr.GetExpressionType();
+  if (ref->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
+    std::swap(ref, cst);
+    type = duckdb::FlipComparisonExpression(type);
+  }
+  if (type != duckdb::ExpressionType::COMPARE_GREATERTHAN &&
+      type != duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
+    return kNone;
+  }
+  while (ref->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
+    ref = &ref->Cast<duckdb::BoundCastExpression>().Child();
+  }
+  if (ref->GetExpressionClass() != duckdb::ExpressionClass::BOUND_REF ||
+      cst->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
+    return kNone;
+  }
+  const auto& val = cst->Cast<duckdb::BoundConstantExpression>().GetValue();
+  if (val.IsNull() || !val.type().IsNumeric()) {
+    return kNone;
+  }
+  const double c = val.GetValue<double>();
+  const bool strict = type == duckdb::ExpressionType::COMPARE_GREATERTHAN;
+  float t = static_cast<float>(c);
+  if (strict ? static_cast<double>(t) > c : static_cast<double>(t) >= c) {
+    t = std::nextafterf(t, kNone);
+  }
+  exact = true;
+  return t;
+}
+
+// Bare IS [NOT] NULL over (non-try casts of) the column reference: the
+// validity child alone answers it, so the scan can skip the data decode. A
+// try-cast is not unwrapped -- it turns cast failures into NULLs, so its
+// nullness differs from the column's.
+irs::NullCheckKind DetectNullCheck(const duckdb::Expression& expr) {
+  const auto type = expr.GetExpressionType();
+  if ((type != duckdb::ExpressionType::OPERATOR_IS_NULL &&
+       type != duckdb::ExpressionType::OPERATOR_IS_NOT_NULL) ||
+      expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_OPERATOR) {
+    return irs::NullCheckKind::None;
+  }
+  const auto& children =
+    expr.Cast<duckdb::BoundOperatorExpression>().GetChildren();
+  if (children.size() != 1) {
+    return irs::NullCheckKind::None;
+  }
+  const auto* ref = children.front().get();
+  while (ref->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST &&
+         !ref->Cast<duckdb::BoundCastExpression>().IsTryCast()) {
+    ref = &ref->Cast<duckdb::BoundCastExpression>().Child();
+  }
+  if (ref->GetExpressionClass() != duckdb::ExpressionClass::BOUND_REF) {
+    return irs::NullCheckKind::None;
+  }
+  return type == duckdb::ExpressionType::OPERATOR_IS_NULL
+           ? irs::NullCheckKind::IsNull
+           : irs::NullCheckKind::IsNotNull;
+}
+
+// Classifies the pushed filters: score-column filters and covered `.col`
+// filters are applied in-scan (`col_filters`); a filter on a lookup
+// (source-only) column sets `has_lookup_filter` -- it is forwarded to the
+// source's native lookup scan via `pushed_filters` and forces the streaming
+// path (the lookup can't run per collector candidate).
 void BuildTableFilter(IResearchScanGlobalState& state,
                       duckdb::ClientContext& /*context*/,
                       const SereneDBScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
   const catalog::InvertedIndex* index_meta =
     bind_data.IsInvertedIndexEntry() ? bind_data.inverted_index.get() : nullptr;
-  // Push a score-column filter (applied on the computed score vector) and, if
-  // it is the optional dynamic TOP_N boundary, capture its shared runtime bound
-  // so the streaming WAND path can seed its threshold from it.
+  // Score-column filters, applied on the computed score vector (whatever
+  // HandleScoreFilter left pushed: on top-k the collector-enforced conjuncts
+  // were stripped; the floor was recorded on the bind data there). The
+  // dynamic TOP_N boundary's shared runtime bound is captured for WAND
+  // seeding -- it may sit alone or AND-combined with other score predicates.
   const auto push_score_filter = [&](const duckdb::TableFilter& filter) {
     state.col_filters.push_back(
       {.field = 0, .filter = &filter, .is_score = true});
+    const auto& expr =
+      *duckdb::ExpressionFilter::GetExpressionFilter(filter, "BuildTableFilter")
+         .expr;
     if (auto dyn =
-          duckdb::ExpressionFilter::GetRootOptionalDynamicFilterData(filter)) {
+          duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
       state.score_dynamic_filter = std::move(dyn);
+      return;
+    }
+    if (expr.GetExpressionClass() ==
+          duckdb::ExpressionClass::BOUND_CONJUNCTION &&
+        expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
+      for (const auto& child :
+           expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+        if (auto dyn =
+              duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*child)) {
+          state.score_dynamic_filter = std::move(dyn);
+          return;
+        }
+      }
     }
   };
   for (const auto& entry : filters) {
@@ -214,10 +362,24 @@ void BuildTableFilter(IResearchScanGlobalState& state,
       // keyed by the columnstore field id: an INCLUDE'd inverted-index column,
       // or -- for a search table, where every column lives in `.col` -- any
       // column.
-      state.col_filters.push_back({
-        .field = static_cast<irs::field_id>(col_id.id()),
-        .filter = &entry.Filter(),
-      });
+      auto& cf = state.col_filters.emplace_back();
+      cf.field = static_cast<irs::field_id>(col_id.id());
+      cf.filter = &entry.Filter();
+      cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
+        *duckdb::ExpressionFilter::GetExpressionFilter(entry.Filter(),
+                                                       "BuildTableFilter")
+           .expr,
+        duckdb::DynamicFilterScalarFun::NAME);
+      cf.zonemap_only =
+        duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
+          entry.Filter());
+      const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
+                            entry.Filter(), "BuildTableFilter")
+                            .expr;
+      cf.null_check = DetectNullCheck(expr);
+      cf.type = bind_data.column_types[bind_index];
+      cf.not_null = MakeNotNullReplacement(entry.Filter(),
+                                           bind_data.column_types[bind_index]);
     }
   }
 }
@@ -252,6 +414,22 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
 
 void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data) {
+  // A filter column pruned from the output (filter_prune keeps it in the
+  // scanned chunk, output_projection_ids drops it) is filter-only: the chain
+  // evaluates it in scratch (validity-only for bare null checks) and nothing
+  // reads its chunk slot, so no cs projection materializes it.
+  const auto filter_only = [&](duckdb::idx_t proj, catalog::Column::Id col_id) {
+    if (state.output_projection_ids.empty() ||
+        absl::c_find(state.output_projection_ids, proj) !=
+          state.output_projection_ids.end()) {
+      return false;
+    }
+    return absl::c_any_of(
+      state.col_filters, [&](const IResearchScanGlobalState::ColFilter& cf) {
+        return !cf.is_score &&
+               cf.field == static_cast<irs::field_id>(col_id.id());
+      });
+  };
   if (bind_data.IsSearchTableEntry()) {
     // Search table: every column lives in `.col`, so all projections are
     // covered and there is no lookup source.
@@ -263,6 +441,11 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
         continue;
       }
       const auto col_id = bind_data.column_ids[bind_col];
+      if (filter_only(proj, col_id)) {
+        state.external_projected_columns[proj] =
+          duckdb::DConstants::INVALID_INDEX;
+        continue;
+      }
       ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
       if (proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
@@ -302,6 +485,11 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
     const auto col_id = bind_data.column_ids[bind_col];
     const auto* info = bind_data.inverted_index->FindColumnInfo(col_id);
     if (info && info->IsStored()) {
+      if (filter_only(proj, col_id)) {
+        state.external_projected_columns[proj] =
+          duckdb::DConstants::INVALID_INDEX;
+        continue;
+      }
       ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
       if (info && info->store_values &&
           proj < state.projected_column_indexes.size()) {
@@ -360,14 +548,11 @@ FullScanner* GetOrOpenSegmentFullScanner(IResearchScanLocalState& lstate,
     if (!col_reader) {
       return nullptr;
     }
-    std::vector<TableFilterDocIterator::FilterSpec> specs;
-    specs.reserve(gstate.col_filters.size());
-    for (const auto& cf : gstate.col_filters) {
-      specs.push_back(
-        {.field = cf.field, .filter = cf.filter, .is_score = cf.is_score});
-    }
-    slot = std::make_unique<FullScanner>(*col_reader, gstate.cs_projections,
-                                         specs, gstate.client_context);
+    SDB_ASSERT(lstate.classified_seg == seg_idx,
+               "segment filters are classified at the claim site");
+    slot = std::make_unique<FullScanner>(
+      *col_reader, gstate.cs_projections, lstate.seg_cls.active,
+      gstate.client_context, lstate.filter_states);
   }
   return slot.get();
 }
@@ -411,7 +596,7 @@ void ApplyScoreEmit(const IResearchScanGlobalState& gstate, float* scores,
 
 void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
                                    duckdb::idx_t num_rows,
-                                   std::span<const float> scores,
+                                   duckdb::Vector* scores,
                                    duckdb::DataChunk& output) {
   gstate.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
   if (gstate.scan_tableoid) {
@@ -424,12 +609,10 @@ void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
   if (!gstate.scan_score) {
     return;
   }
-  SDB_ASSERT(scores.size() == num_rows);
   // Scores arrive already mapped to the user-facing value (ApplyScoreEmit runs
-  // at the emit boundary), so the write is a straight copy.
-  auto* score_data = duckdb::FlatVector::GetDataMutable<float>(
-    output.data[gstate.score_output_idx]);
-  std::memcpy(score_data, scores.data(), num_rows * sizeof(float));
+  // at the emit boundary) in the batcher's staged vector: reference it.
+  SDB_ASSERT(scores != nullptr);
+  output.data[gstate.score_output_idx].Reference(*scores);
 }
 
 }  // namespace sdb::connector

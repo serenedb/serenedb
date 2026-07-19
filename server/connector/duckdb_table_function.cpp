@@ -27,7 +27,9 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/variant.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/optimizer/column_lifetime_analyzer.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
@@ -86,6 +88,7 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.vector_scorer = src.vector_scorer;
   dst.score_top_k = src.score_top_k;
   dst.score_order = src.score_order;
+  dst.score_static_floor = src.score_static_floor;
   dst.offsets = src.offsets;
   dst.ts_dicts = src.ts_dicts;
   dst.count_only = src.count_only;
@@ -742,6 +745,12 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
     result.insert("Lookup", bind.lookup_label);
   }
   bind.AppendSummary(result);
+  // Top-k enforces the floor via the collectors for any scorer; streaming
+  // only puts it to work as the text WAND threshold.
+  if (bind.score_static_floor > std::numeric_limits<float>::lowest() &&
+      (bind.score_top_k || bind.text_scorer)) {
+    result.insert("Min Score", absl::StrCat(bind.score_static_floor));
+  }
   if (count_only) {
     result.insert("Output", "row-count only");
   }
@@ -787,40 +796,103 @@ bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data_p,
   return info != nullptr && info->store_values;
 }
 
+// A user-space score lower bound is a raw-space collector floor only where
+// the user-facing score IS the raw score: text scorers, and Identity-emit
+// vector scorers whose collector holds exact (unquantized) scores. The
+// decreasing emits (l2/cosine distance, ...) invert the bound -- their
+// near-keeping bounds are consumed as the vector query radius instead -- and
+// a quantized collector's approximate scores must not be cut by an exact
+// floor.
+bool ScoreFloorApplies(const SereneDBScanBindData& bind) {
+  if (bind.text_scorer) {
+    return true;
+  }
+  return bind.vector_scorer &&
+         bind.vector_scorer->score_emit == ScoreEmit::Identity &&
+         bind.vector_scorer->quant == irs::VectorQuantization::None;
+}
+
+// Score-column filter policy. The filter may be one predicate or an AND
+// combination (a TableFilterSet holds one filter per column). Static lower
+// bounds (`score > c` / `>= c`) are recorded as `score_static_floor`: it
+// seeds the streaming WAND threshold, the top-k collectors and the Min Score
+// display. On the top-k collector path the scan enforces score bounds itself,
+// so those conjuncts are stripped from the filter: the dynamic TOP_N boundary
+// (the collector maintains its own) and static lower bounds where the floor
+// is the collector's raw space (ScoreFloorApplies) -- the collector starts at
+// the floor. An empty residue drops the filter from the plan entirely.
+// Everything else stays pushed and evaluated per row: on the streaming path
+// the WAND threshold only skips blocks, it enforces nothing.
+duckdb::TableFilterPushdown HandleScoreFilter(SereneDBScanBindData& bind,
+                                              duckdb::TableFilter& filter) {
+  auto& expr_filter =
+    duckdb::ExpressionFilter::GetExpressionFilter(filter, "HandleScoreFilter");
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
+  if (expr_filter.expr->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_CONJUNCTION &&
+      expr_filter.expr->GetExpressionType() ==
+        duckdb::ExpressionType::CONJUNCTION_AND) {
+    conjuncts =
+      std::move(expr_filter.expr->Cast<duckdb::BoundConjunctionExpression>()
+                  .GetChildrenMutable());
+  } else {
+    conjuncts.push_back(std::move(expr_filter.expr));
+  }
+  const bool collector_enforces = bind.score_top_k.has_value();
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> residue;
+  for (auto& conjunct : conjuncts) {
+    if (duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*conjunct)) {
+      if (!collector_enforces) {
+        residue.push_back(std::move(conjunct));
+      }
+      continue;
+    }
+    if (ScoreFloorApplies(bind)) {
+      bool exact = false;
+      const auto floor = StaticScoreFloor(*conjunct, exact);
+      bind.score_static_floor = std::max(bind.score_static_floor, floor);
+      if (exact && collector_enforces) {
+        continue;
+      }
+    }
+    residue.push_back(std::move(conjunct));
+  }
+  if (residue.empty()) {
+    return duckdb::TableFilterPushdown::Drop;
+  }
+  if (residue.size() == 1) {
+    expr_filter.expr = std::move(residue.front());
+  } else {
+    auto conj = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+      duckdb::ExpressionType::CONJUNCTION_AND);
+    conj->GetChildrenMutable() = std::move(residue);
+    expr_filter.expr = std::move(conj);
+  }
+  return duckdb::TableFilterPushdown::BeforeLimit;
+}
+
 // Per-filter pushdown decision (see TableFilterPushdown), finer than the
 // per-column supports_pushdown_type. BeforeLimit: covered `.col` INCLUDE
-// filters, and score-column filters (static or -- in the streaming case -- the
-// dynamic TOP_N boundary) -- applied in-scan before any limit/lookup, so a
-// pushed top-k stays valid and the lookup only fetches survivors. Drop: the
-// dynamic TOP_N score boundary in the top-k collector case (score_top_k set) --
-// the collector enforces that boundary itself, so the pushed-back filter is
-// redundant and removed entirely. AfterLimit: lookup-source filters
-// (parquet/duckdb apply them during the source scan, after the doc-id
-// selection) -- forces the scan unlimited. Reject: other virtuals, search-table
-// columns, csv/json lookups -- stay a Filter node above the scan (which, being
-// a LogicalFilter, also forces streaming, so top-k stays correct).
+// filters, and score-column filters (or what remains of them after
+// HandleScoreFilter strips the collector-enforced conjuncts) -- applied
+// in-scan before any limit/lookup, so a pushed top-k stays valid and the
+// lookup only fetches survivors. Drop: a score filter the scan enforces
+// entirely by itself (HandleScoreFilter), removed from the plan. AfterLimit:
+// lookup-source filters (parquet/duckdb apply them during the source scan,
+// after the doc-id selection) -- forces the scan unlimited. Reject: other
+// virtuals, search-table columns, csv/json lookups -- stay a Filter node
+// above the scan (which, being a LogicalFilter, also forces streaming, so
+// top-k stays correct).
 duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(
-  const duckdb::FunctionData& bind_data_p, duckdb::idx_t col_idx,
-  const duckdb::TableFilter& filter) {
-  const auto& bind = bind_data_p.Cast<SereneDBScanBindData>();
+  duckdb::FunctionData& bind_data_p, duckdb::idx_t col_idx,
+  duckdb::TableFilter& filter) {
+  auto& bind = bind_data_p.Cast<SereneDBScanBindData>();
   if (col_idx >= bind.column_ids.size()) {
     return duckdb::TableFilterPushdown::Reject;
   }
   const auto col_id = bind.column_ids[col_idx];
   if (col_id == catalog::Column::kInvertedIndexScoreId) {
-    // The dynamic boundary TOP_N pushes back (an optional-wrapped dynamic
-    // filter) is redundant in the top-k collector case: the collector enforces
-    // its own boundary, and this one is only populated after the scan finishes.
-    // So drop it there. In the streaming case push it (BeforeLimit): the
-    // HitBatcher applies it on the computed scores before the lookup, so the
-    // lookup only fetches survivors, and a text WAND iterator additionally
-    // seeds its threshold from it. A real/static score filter (e.g. BM25 > 0.5)
-    // is likewise pushed and applied in-scan on the computed scores.
-    if (duckdb::ExpressionFilter::GetRootOptionalDynamicFilterData(filter)) {
-      return bind.score_top_k ? duckdb::TableFilterPushdown::Drop
-                              : duckdb::TableFilterPushdown::BeforeLimit;
-    }
-    return duckdb::TableFilterPushdown::BeforeLimit;
+    return HandleScoreFilter(bind, filter);
   }
   if (col_id.id() > catalog::Column::kMaxRealIdValue) {
     return duckdb::TableFilterPushdown::Reject;
@@ -847,15 +919,53 @@ duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(
   return duckdb::TableFilterPushdown::Reject;
 }
 
+// Accept single-column generic expressions (IS NULL, arithmetic, extracts,
+// function predicates) as pushed ExpressionFilters, like the native table
+// scan: the chain evaluates the whole expression against the decoded column.
+// Only for covered `.col` columns (and the computed score) -- expressions on
+// merely-indexed text columns, vector columns and lookup columns keep their
+// Filter node above the scan, where the dedicated ts_dict / vector-radius /
+// lookup handling already deals with them.
+bool IResearchPushdownExpression(duckdb::ClientContext&,
+                                 const duckdb::LogicalGet& get,
+                                 duckdb::Expression& expr) {
+  const auto& bind = get.bind_data->Cast<SereneDBScanBindData>();
+  duckdb::vector<duckdb::ColumnBinding> bindings;
+  duckdb::ColumnLifetimeAnalyzer::ExtractColumnBindings(expr, bindings);
+  if (bindings.empty()) {
+    return false;
+  }
+  const auto& column_ids = get.GetColumnIds();
+  if (bindings[0].column_index >= column_ids.size()) {
+    return false;
+  }
+  const auto col_idx = column_ids[bindings[0].column_index].GetPrimaryIndex();
+  if (col_idx >= bind.column_ids.size()) {
+    return false;
+  }
+  const auto col_id = bind.column_ids[col_idx];
+  if (col_id == catalog::Column::kInvertedIndexScoreId) {
+    return true;
+  }
+  if (col_id.id() > catalog::Column::kMaxRealIdValue) {
+    return false;
+  }
+  if (bind.IsSearchTableEntry()) {
+    return true;
+  }
+  if (bind.IsInvertedIndexEntry() && bind.inverted_index) {
+    const auto* info = bind.inverted_index->FindColumnInfo(col_id);
+    return info != nullptr && info->IsStored();
+  }
+  return false;
+}
+
 duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   duckdb::ClientContext&, duckdb::TableFunctionGetStatisticsInput& input) {
   if (!input.bind_data) {
     return nullptr;
   }
   const auto& bind = input.bind_data->Cast<SereneDBScanBindData>();
-  if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
-    return nullptr;
-  }
   if (!input.column_index.HasPrimaryIndex()) {
     return nullptr;
   }
@@ -864,15 +974,22 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto col_id = bind.column_ids[column_index];
-  const auto* info = bind.inverted_index->FindColumnInfo(col_id);
-  if (info == nullptr || !info->store_values) {
+  if (bind.IsInvertedIndexEntry() && bind.inverted_index) {
+    const auto* info = bind.inverted_index->FindColumnInfo(col_id);
+    if (!info || !info->store_values) {
+      return nullptr;
+    }
+  } else if (bind.IsSearchTableEntry()) {
+    if (col_id.id() > catalog::Column::kMaxRealIdValue) {
+      return nullptr;
+    }
+  } else {
     return nullptr;
   }
-  const auto& ss = bind;
-  if (!ss.snapshot) {
+  if (!bind.snapshot) {
     return nullptr;
   }
-  const auto* stats = ss.snapshot->reader.GetColumnStats(col_id);
+  const auto* stats = bind.snapshot->reader.GetColumnStats(col_id);
   if (stats == nullptr) {
     return nullptr;
   }
@@ -989,6 +1106,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.get_virtual_columns = SereneDBScanGetVirtualColumns;
   func.get_row_id_columns = SereneDBScanGetRowIdColumns;
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
+  func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;

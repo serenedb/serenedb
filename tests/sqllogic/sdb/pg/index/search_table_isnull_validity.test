@@ -1,0 +1,163 @@
+# Bare IS [NOT] NULL pushed filters evaluate on the validity child alone where
+# the block codec keeps validity separate (bitpacked ints, plain strings); on
+# self-describing blocks (dict_fsst) the codec filter path stays authoritative.
+# Mixed-null blocks across three segments, filtered columns both filter-only
+# and projected (the projected null-check column defers to a dense gather).
+
+statement ok
+CREATE TABLE nv (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT, d TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+# Segment 1: x NULL on every 3rd row, s NULL on every 5th, d low-cardinality
+# (dictionary codec) NULL on every 7th.
+statement ok
+INSERT INTO nv
+  SELECT i,
+         CASE WHEN i % 3 = 0 THEN NULL ELSE i END,
+         CASE WHEN i % 5 = 0 THEN NULL ELSE 'v' || i END,
+         CASE WHEN i % 7 = 0 THEN NULL ELSE 'tag' || (i % 4) END
+  FROM generate_series(0, 7999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) nv;
+
+
+# Segment 2: x fully valued, s fully NULL.
+statement ok
+INSERT INTO nv
+  SELECT i, i, NULL, 'tag' || (i % 4)
+  FROM generate_series(8000, 15999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) nv;
+
+
+# Segment 3: x fully NULL, s fully valued.
+statement ok
+INSERT INTO nv
+  SELECT i, NULL, 'v' || i, NULL
+  FROM generate_series(16000, 23999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) nv;
+
+
+# x: 2667 NULLs in seg1 (0,3,...,7997), all 8000 in seg3.
+query
+SELECT count(*) AS c FROM nv WHERE x IS NULL;
+----
+c
+10667
+
+
+query
+SELECT count(*) AS c FROM nv WHERE x IS NOT NULL;
+----
+c
+13333
+
+
+# Projected null-check column: survivors gather densely after the
+# validity-only filter pass.
+query
+SELECT sum(x) AS s, count(x) AS c FROM nv WHERE x IS NOT NULL;
+----
+s	c
+117326667	13333
+
+
+query
+SELECT sum(pk) AS s FROM nv WHERE x IS NULL AND pk < 10;
+----
+s
+18
+
+
+# s (strings, mixed codecs): 1600 NULLs in seg1, all 8000 in seg2.
+query
+SELECT count(*) AS c FROM nv WHERE s IS NULL;
+----
+c
+9600
+
+
+query
+SELECT count(*) AS c FROM nv WHERE s IS NOT NULL;
+----
+c
+14400
+
+
+query
+SELECT count(*) AS c FROM nv WHERE s IS NOT NULL AND x IS NULL;
+----
+c
+10133
+
+
+# d (low-cardinality strings -> dictionary codec, nulls self-described):
+# 1143 NULLs in seg1 (0,7,...,7994), all 8000 in seg3.
+query
+SELECT count(*) AS c FROM nv WHERE d IS NULL;
+----
+c
+9143
+
+
+query
+SELECT count(*) AS c FROM nv WHERE d IS NOT NULL;
+----
+c
+14857
+
+
+query
+SELECT count(DISTINCT d) AS c FROM nv WHERE d IS NOT NULL;
+----
+c
+4
+
+
+# Null checks combined with a value filter on another column.
+query
+SELECT count(*) AS c FROM nv WHERE x IS NOT NULL AND pk >= 8000;
+----
+c
+8000
+
+
+query
+SELECT min(pk) AS lo, max(pk) AS hi FROM nv WHERE s IS NULL AND d IS NOT NULL;
+----
+lo	hi
+5	15999
+
+
+statement ok
+DELETE FROM nv WHERE pk < 4000;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) nv;
+
+
+query
+SELECT count(*) AS c FROM nv WHERE x IS NULL;
+----
+c
+9333
+
+
+query
+SELECT count(*) AS c FROM nv WHERE s IS NOT NULL;
+----
+c
+11200
+
+
+statement ok
+DROP TABLE nv;

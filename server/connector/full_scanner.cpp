@@ -22,6 +22,8 @@
 
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/filter/table_filter_functions.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -33,28 +35,13 @@ FullScanner::FullScanner(
   const irs::ColReader& reader,
   std::span<const ColumnstoreProjection> projections,
   std::span<const TableFilterDocIterator::FilterSpec> filters,
-  duckdb::ClientContext* context)
+  duckdb::ClientContext* context, ColFilterStateCache& states)
   : _ctx{reader} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
 
   // `.col` filters (the score is computed, not stored -- never a bulk filter).
-  for (const auto& spec : filters) {
-    if (spec.is_score) {
-      continue;
-    }
-    const auto* column_reader = reader.Column(spec.field);
-    if (!column_reader) {
-      continue;
-    }
-    auto& f = _filters.emplace_back();
-    f.reader = column_reader;
-    f.field = spec.field;
-    f.filter = spec.filter;
-    f.state = duckdb::TableFilterState::Initialize(*context, *spec.filter);
-    f.scan = std::make_unique<irs::ColumnReader::ScanState>(
-      column_reader->InitScan(_ctx));
-  }
+  _filters.Bind(reader, _ctx, filters, *context, states);
 
   _bound.reserve(projections.size());
   for (const auto& projection : projections) {
@@ -66,18 +53,11 @@ FullScanner::FullScanner(
     // A projected column that is also a filter column materializes as part of
     // its filter step (decode once into this slot, then Slice) -- record the
     // slot on the filter and don't scan it again below.
-    if (!projection.IsExtract()) {
-      FilterCol* fc = nullptr;
-      for (auto& f : _filters) {
-        if (f.field == static_cast<irs::field_id>(projection.column_id)) {
-          fc = &f;
-          break;
-        }
-      }
-      if (fc != nullptr) {
-        fc->output_slots.push_back(projection.output_slot);
-        continue;
-      }
+    if (!projection.IsExtract() &&
+        _filters.AttachOutputSlot(
+          static_cast<irs::field_id>(projection.column_id),
+          projection.output_slot)) {
+      continue;
     }
     auto& b = _bound.emplace_back();
     b.reader = column_reader;
@@ -95,14 +75,7 @@ FullScanner::FullScanner(
       column_reader->InitScan(_ctx));
   }
 
-  // Filter-only columns (not projected) decode into a private scratch just to
-  // evaluate the predicate.
-  for (auto& f : _filters) {
-    if (f.output_slots.empty()) {
-      f.scratch =
-        std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
-    }
-  }
+  _filters.FinishBind();
 }
 
 duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
@@ -114,7 +87,7 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
 
-  if (_filters.empty()) {
+  if (_filters.Empty()) {
     for (auto& b : _bound) {
       auto& out = output.data[b.output_slot];
       if (b.extract) {
@@ -145,40 +118,23 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
   for (duckdb::idx_t i = 0; i < count; ++i) {
     _sel.set_index(i, i);
   }
-  duckdb::idx_t survivors = count;
-  for (auto& f : _filters) {
-    if (survivors == 0) {
-      break;
-    }
-    auto& target = f.output_slots.empty() ? f.scratch->Reset()
-                                          : output.data[f.output_slots.front()];
-    survivors = f.reader->GatherFilter(*f.scan, start_row, count, _sel,
-                                       survivors, *f.filter, *f.state, target);
-  }
+  const duckdb::idx_t survivors =
+    _filters.FilterWindow(start_row, count, _sel, count, &output);
   if (survivors == 0) {
     // Every row filtered out. Column scan cursors that didn't advance this
     // vector re-position to the next anchor on the following call.
     return 0;
   }
-  // Slice each projected filter column (decoded over the full span) down to the
-  // survivors -- zero-copy dictionary view, like RowGroup::Scan's Slice -- and
-  // Reference it into any further slots the same column is projected to.
-  for (auto& f : _filters) {
-    if (f.output_slots.empty()) {
-      continue;
-    }
-    auto& first = output.data[f.output_slots.front()];
-    first.Slice(_sel, survivors);
-    for (std::size_t k = 1; k < f.output_slots.size(); ++k) {
-      output.data[f.output_slots[k]].Reference(first);
-    }
-  }
+  _filters.FinishOutputs(start_row, count, _sel, survivors, output);
   // Materialize the survivors of the non-filter projected columns.
   for (auto& b : _bound) {
     auto& out = output.data[b.output_slot];
     if (b.extract) {
-      b.extract->MaterializeContiguous(start_row, count, out);
-      out.Slice(_sel, survivors);
+      if (survivors == count) {
+        b.extract->MaterializeContiguous(start_row, count, out);
+      } else {
+        b.extract->MaterializeSelected(start_row, _sel, survivors, out);
+      }
       continue;
     }
     if (b.is_list_like) {

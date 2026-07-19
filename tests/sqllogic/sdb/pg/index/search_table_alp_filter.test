@@ -1,0 +1,140 @@
+# Pushed filters over ALP-compressed `.col` float columns (decimal-like
+# doubles pick ALP): GatherFilter consults the codec's per-1024-vector bounds
+# (CompressionFunction::zonemap) to skip or blanket-accept scan windows, with
+# verdicts AND-combined across the vectors a window touches. Covers DOUBLE and
+# FLOAT, a null-bearing sibling (decode-path fallback), a NaN row (kept in the
+# vector's exceptions; NaN orders greatest), combined filters, and deletes.
+# Results are pinned against the generator formula.
+
+statement ok
+CREATE TABLE salpf (pk BIGINT PRIMARY KEY, d DOUBLE, f FLOAT, n DOUBLE, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+INSERT INTO salpf SELECT i, i * 0.01, (i * 0.01)::FLOAT,
+  CASE WHEN i % 10 = 0 THEN NULL ELSE i * 0.01 END, 'w' || (i // 4000)
+  FROM generate_series(0, 11999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) salpf;
+
+
+statement ok
+INSERT INTO salpf SELECT i, i * 0.01, (i * 0.01)::FLOAT,
+  CASE WHEN i % 10 = 0 THEN NULL ELSE i * 0.01 END, 'w' || (i // 4000)
+  FROM generate_series(12000, 23999) g(i);
+
+
+statement ok
+INSERT INTO salpf VALUES (24000, 'nan'::DOUBLE, 'nan'::FLOAT, 'nan'::DOUBLE, 'wnan');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) salpf;
+
+
+# Tiny range inside one ALP vector.
+query
+SELECT count(*) AS c, sum(pk) AS s FROM salpf WHERE d BETWEEN 100.0 AND 100.1;
+----
+c	s
+11	110055
+
+
+# Point hit and point miss between representable values.
+query
+SELECT count(*) AS c FROM salpf WHERE d = 100.05;
+----
+c
+1
+
+
+query
+SELECT count(*) AS c FROM salpf WHERE d = 100.055;
+----
+c
+0
+
+
+# Head and tail of the value range.
+query
+SELECT count(*) AS c FROM salpf WHERE d < 1.0;
+----
+c
+100
+
+
+# NaN orders greatest: it survives every greater-than bound.
+query
+SELECT count(*) AS c FROM salpf WHERE d > 239.98;
+----
+c
+2
+
+
+query
+SELECT count(*) AS c FROM salpf WHERE isnan(d);
+----
+c
+1
+
+
+# The null-bearing sibling takes the decode path.
+query
+SELECT count(*) AS c, sum(pk) AS s FROM salpf WHERE n BETWEEN 100.0 AND 100.1;
+----
+c	s
+9	90045
+
+
+# NaN is a value, not NULL.
+query
+SELECT count(*) AS c FROM salpf WHERE n IS NULL;
+----
+c
+2400
+
+
+# FLOAT column: constants fold to the column type.
+query
+SELECT count(*) AS c FROM salpf WHERE f BETWEEN 100.0 AND 100.1;
+----
+c
+11
+
+
+# ALP filter combined with a dictionary-string filter.
+query
+SELECT count(*) AS c FROM salpf WHERE d BETWEEN 100.0 AND 100.1 AND s = 'w2';
+----
+c
+11
+
+
+statement ok
+DELETE FROM salpf WHERE pk >= 10003 AND pk < 10008;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) salpf;
+
+
+# The matching vector now has a hole from the delete masks.
+query
+SELECT count(*) AS c, sum(pk) AS s FROM salpf WHERE d BETWEEN 100.0 AND 100.1;
+----
+c	s
+6	60030
+
+
+query
+SELECT count(*) AS c, sum(pk) AS s FROM salpf WHERE d BETWEEN 100.03 AND 100.09;
+----
+c	s
+2	20017
+
+
+statement ok
+DROP TABLE salpf;

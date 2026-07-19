@@ -64,6 +64,26 @@ namespace sdb::connector {
 
 struct SereneDBScanBindData;
 
+// How the scan executes, decided once in IResearchScanInitGlobal
+// (DecideScanMode): the fastest mode that can apply every pushed filter.
+enum class ScanMode : uint8_t {
+  // ts_dict_agg() term enumeration.
+  TsDict,
+  // count(*) with no predicate and no pushed filters: the whole-reader
+  // live_docs_count answers without touching a segment.
+  CountFast,
+  // count(*): per-segment count() -- whole-file statistics settle or kill the
+  // pushed `.col` filters, the rest apply through the TableFilterDocIterator
+  // wrapper. Score/lookup filters cannot run here (no scoring, no source
+  // materialization), so their plans take Stream instead.
+  Count,
+  // ORDER BY score LIMIT k: parallel top-k collectors.
+  TopK,
+  // Streaming DocIterator -> HitBatcher (WAND-seeded when eligible); match-all
+  // covered scans additionally take bulk FullScanner units.
+  Stream,
+};
+
 struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
@@ -90,6 +110,21 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   const irs::IndexReader* reader = nullptr;
   size_t total_segments = 0;
   std::atomic_uint32_t next_segment{0};
+  // The claimable segments: claimed slots in [0, claimable_segments) map
+  // through `segment_order` -- empty = identity over all segments. Init-time
+  // whole-file classification against the static pushed filters shrinks the
+  // list to survivors (a dynamic bound is still uninitialized at init, so it
+  // classifies NO_PRUNING and never excludes; survivors still classify at
+  // claim, where dynamic bounds have tightened), and ORDER BY <covered column>
+  // LIMIT (bind_data.scan_order) permutes it best-first (scheduling only --
+  // the TopN above still sorts). The scorer prepare phase walks every segment
+  // regardless (corpus-level term stats).
+  std::vector<uint32_t> segment_order;
+  uint32_t claimable_segments = 0;
+
+  uint32_t SegmentAt(uint32_t claimed) const {
+    return segment_order.empty() ? claimed : segment_order[claimed];
+  }
 
   std::atomic<duckdb::idx_t> produced_rows{0};
 
@@ -112,6 +147,17 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
     // A filter on the computed score column (not a `.col` field): applied on
     // the score vector after scoring instead of via the columnstore codec.
     bool is_score = false;
+    // Per-filter invariants, computed once at pushdown (see ColFilterSpec).
+    bool is_dynamic = false;
+    bool zonemap_only = false;
+    irs::NullCheckKind null_check = irs::NullCheckKind::None;
+    // The filtered column's type (a segment lacking the column classifies by
+    // evaluating the filter on a NULL of this type).
+    duckdb::LogicalType type;
+    // IS NOT NULL replacement for segments whose statistics say TRUE_OR_NULL
+    // (every non-null row passes) -- built once at pushdown, duckdb
+    // propagate_get-style. Null when the filter shape can't be replaced.
+    duckdb::unique_ptr<duckdb::TableFilter> not_null;
   };
   std::vector<ColFilter> col_filters;
 
@@ -123,6 +169,11 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // enforces the exact boundary on the docs that are produced.
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;
   bool wand_streaming = false;
+  // Lower bound implied by pushed static score filters (`score > c`), Lucene
+  // min_score-style: seeds the WAND threshold (streaming) and the top-k
+  // collector so below-bound blocks are skipped from the first window; the
+  // pushed filter still enforces the exact bound. lowest() = no bound.
+  float score_static_floor = std::numeric_limits<float>::lowest();
 
   // filter_prune: when set, the scanned column_ids include filter-only columns
   // the output must not emit. These are indexes into the scanned columns that
@@ -135,13 +186,11 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   irs::Filter::ptr owned_filter;
   std::unique_ptr<irs::Scorer> scorer_obj;
   const SereneDBScanBindData* scan = nullptr;
-  bool count_only = false;
-  bool ts_dict_mode = false;
+  ScanMode mode = ScanMode::Stream;
 
   // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for WAND pruning.
   std::atomic<irs::score_t> global_kth_score =
     std::numeric_limits<irs::score_t>::lowest();
-  bool parallel_topk = false;
   uint32_t rerank_pool = 0;
 
   // Bulk columnstore fast-path work units (match-all, covered, no filter).
@@ -169,13 +218,14 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   }
 
   duckdb::idx_t MaxThreads() const final {
-    if (count_only && queries.empty()) {
+    if (mode == ScanMode::CountFast) {
       return 1;
     }
     if (!scan_units.empty()) {
       return std::max<duckdb::idx_t>(1, scan_units.size());
     }
-    return std::max<duckdb::idx_t>(1, total_segments);
+    return std::max<duckdb::idx_t>(
+      1, scorer_obj ? total_segments : claimable_segments);
   }
 };
 
@@ -189,6 +239,15 @@ struct IResearchScanLocalState : public duckdb::LocalTableFunctionState {
   bool prepared = false;
 
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
+
+  // Whole-file filter classification of the segment this worker currently
+  // scans: computed exactly once per claimed segment (at the claim site) and
+  // consumed by StartSegment (HitBatcher binding) and the bulk FullScanner.
+  uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
+  TableFilterDocIterator::SegmentClassification seg_cls;
+  // Per-worker filter-evaluation state (ExpressionExecutor + decode scratch),
+  // built once per pushed filter and reused across segments and engines.
+  ColFilterStateCache filter_states;
 };
 
 struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
@@ -228,6 +287,13 @@ void BuildTableFilter(IResearchScanGlobalState& state,
                       duckdb::ClientContext& context,
                       const SereneDBScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters);
+
+// Lower bound implied by a static score filter (`score > c` / `score >= c`,
+// AND-conjunctions take the max): the largest float T such that every score
+// passing the filter exceeds T. `exact` is set when the whole expression IS
+// that bound, so enforcing `score > T` replaces evaluating the filter.
+// lowest() when the expression implies no usable lower bound.
+float StaticScoreFloor(const duckdb::Expression& expr, bool& exact);
 
 // Decode a pushdown-extract ColumnIndex into its dotted field-path components.
 // Struct steps carry a numeric index resolved against `root_type`; variant
@@ -272,9 +338,11 @@ void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input);
 void ApplyScoreEmit(const IResearchScanGlobalState& gstate, float* scores,
                     duckdb::idx_t n);
 
+// `scores` is the batcher's staged score vector (the output References it);
+// null when the scan does not track scores.
 void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
                                    duckdb::idx_t num_rows,
-                                   std::span<const float> scores,
+                                   duckdb::Vector* scores,
                                    duckdb::DataChunk& output);
 
 }  // namespace sdb::connector

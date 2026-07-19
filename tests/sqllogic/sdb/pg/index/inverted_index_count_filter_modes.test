@@ -1,0 +1,408 @@
+# count(*) over an inverted-index scan with every pushed-filter kind, plus the
+# mode each shape must take: no predicate & no filters answers from reader
+# metadata; `.col` filters count through per-segment classification (statistics
+# kill or settle whole segment files, the rest count() through the filter
+# wrapper); a score filter needs scoring and a lookup-column filter needs
+# source materialization, so those shapes stream and the aggregate counts the
+# survivors. Two segments: the first has `c` all NULL, the second c=101..200,
+# so per-file statistics differ per segment.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cfm_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE cfm (id INT PRIMARY KEY, body VARCHAR, c INT, d INT);
+
+
+statement ok
+CREATE INDEX cfm_idx ON cfm USING inverted(id, body cfm_en)
+  INCLUDE (c)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO cfm SELECT i, 'fox', NULL, i*10 FROM generate_series(1,100) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cfm;
+
+
+statement ok
+INSERT INTO cfm
+  SELECT i, CASE WHEN i%2=0 THEN 'fox' ELSE 'dog' END, i, i*10
+  FROM generate_series(101,200) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cfm;
+
+
+# Pure count: no predicate, no filters -- answered from reader metadata.
+query
+EXPLAIN SELECT count(*) FROM cfm_idx;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_idx           │
+│ Output: row-count only   │
+│ ~200 rows                │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_idx;
+----
+n
+200
+
+
+# Predicate count: per-segment count() of the query.
+query
+EXPLAIN SELECT count(*) FROM cfm_idx WHERE body @@ ts_phrase('fox');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_idx           │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: fox          │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ ~40 rows                 │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE body @@ ts_phrase('fox');
+----
+n
+150
+
+
+# Predicate + `.col` filter: the filter is pushed into the scan (no Filter
+# node) and applied during the count.
+query
+EXPLAIN SELECT count(*) FROM cfm_idx WHERE body @@ ts_phrase('fox') AND c > 150;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_idx           │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: fox          │  │
+│ ╰─────────────────────╯  │
+│ Column Filter: c > 150   │
+│ ~8 rows                  │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE body @@ ts_phrase('fox') AND c > 150;
+----
+n
+25
+
+
+# The all-NULL segment matches IS NULL entirely; the valued segment not at all
+# -- both answered by whole-file statistics.
+query
+SELECT count(*) AS n FROM cfm_idx WHERE body @@ ts_phrase('fox') AND c IS NULL;
+----
+n
+100
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE body @@ ts_phrase('fox') AND c IS NOT NULL;
+----
+n
+50
+
+
+# Statistics kill both segments: NULLs never pass a comparison and the valued
+# segment's minimum is 101.
+query
+SELECT count(*) AS n FROM cfm_idx WHERE body @@ ts_phrase('fox') AND c < 50;
+----
+n
+0
+
+
+# `.col` filter without any search predicate.
+query
+EXPLAIN SELECT count(*) FROM cfm_idx WHERE c > 150;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_idx           │
+│ Lookup: table            │
+│ Column Filter: c > 150   │
+│ ~40 rows                 │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE c > 150;
+----
+n
+50
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE c IS NULL;
+----
+n
+100
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE c < 50;
+----
+n
+0
+
+
+# Score filter: cannot be answered while counting (no scoring there), so the
+# plan streams scored rows and counts the survivors.
+query
+SELECT count(*) AS n FROM cfm_idx
+WHERE body @@ ts_phrase('fox') AND BM25(cfm_idx.tableoid) > -1;
+----
+n
+150
+
+
+query
+SELECT count(*) AS n FROM cfm_idx
+WHERE body @@ ts_phrase('fox') AND BM25(cfm_idx.tableoid) > 1000000;
+----
+n
+0
+
+
+# Lookup-column filter (d is not INCLUDE'd): applied during source
+# materialization, so the count must stream through the lookup.
+query
+EXPLAIN SELECT count(*) FROM cfm_idx WHERE body @@ ts_phrase('fox') AND d > 1700;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_idx           │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: fox          │  │
+│ ╰─────────────────────╯  │
+│ Column Filter: d > 1700  │
+│ ~8 rows                  │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE body @@ ts_phrase('fox') AND d > 1700;
+----
+n
+15
+
+
+# Deletes: masked rows must vanish from every count shape, including the
+# segments the statistics settle wholesale.
+statement ok
+DELETE FROM cfm WHERE id <= 50;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cfm;
+
+
+query
+SELECT count(*) AS n FROM cfm_idx;
+----
+n
+150
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE body @@ ts_phrase('fox');
+----
+n
+100
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE body @@ ts_phrase('fox') AND c IS NULL;
+----
+n
+50
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE c IS NULL;
+----
+n
+50
+
+
+query
+SELECT count(*) AS n FROM cfm_idx WHERE c > 150;
+----
+n
+50
+
+
+statement ok
+DROP TABLE cfm;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cfm_en;
+
+
+# Search table: the same count shapes through the unified engine (every column
+# lives in `.col`, no lookup source).
+statement ok
+CREATE TABLE cfm_st (a INT, s TEXT) WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+INSERT INTO cfm_st SELECT i, 'x'||i FROM generate_series(1,100) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cfm_st;
+
+
+statement ok
+INSERT INTO cfm_st SELECT i, 'x'||i FROM generate_series(101,200) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cfm_st;
+
+
+query
+EXPLAIN SELECT count(*) FROM cfm_st;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_st            │
+│ Lookup: search           │
+│ Output: row-count only   │
+│ ~200 rows                │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_st;
+----
+n
+200
+
+
+query
+EXPLAIN SELECT count(*) FROM cfm_st WHERE a > 150;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_st            │
+│ Lookup: search           │
+│ Column Filter: a > 150   │
+│ ~40 rows                 │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_st WHERE a > 150;
+----
+n
+50
+
+
+# Whole-file statistics kill both segments.
+query
+SELECT count(*) AS n FROM cfm_st WHERE a < 0;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM cfm_st WHERE a IS NULL;
+----
+n
+0
+
+
+statement ok
+DELETE FROM cfm_st WHERE a <= 50;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cfm_st;
+
+
+query
+SELECT count(*) AS n FROM cfm_st;
+----
+n
+150
+
+
+query
+SELECT count(*) AS n FROM cfm_st WHERE a > 150;
+----
+n
+50
+
+
+query
+SELECT count(*) AS n FROM cfm_st WHERE a <= 100;
+----
+n
+50
+
+
+statement ok
+DROP TABLE cfm_st;

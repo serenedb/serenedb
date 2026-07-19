@@ -25,6 +25,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
@@ -128,7 +129,88 @@ irs::score_t CurrentWandThreshold(duckdb::DynamicFilterData& dyn) {
   return boundary;
 }
 
+// The fastest mode that can apply every pushed filter. `.col` filters run in
+// every mode (codec filter + zonemap); a score filter only runs where scores
+// are computed and a lookup-column filter only during source materialization,
+// so count-shaped plans carrying one take Stream instead of Count. CountFast
+// additionally requires no predicate and no filters at all -- the whole-reader
+// live count is the answer.
+ScanMode DecideScanMode(const IResearchScanGlobalState& g,
+                        const SereneDBScanBindData& ss,
+                        const duckdb::TableFunctionInitInput& input) {
+  if (ss.TsDictMode()) {
+    return ScanMode::TsDict;
+  }
+  const bool score_filter = absl::c_any_of(
+    g.col_filters,
+    [](const IResearchScanGlobalState::ColFilter& f) { return f.is_score; });
+  if (!g.has_lookup_filter && !score_filter && IsCountOnlyScan(ss, input)) {
+    return !ss.stored_filter && !ss.vector_scorer && g.col_filters.empty()
+             ? ScanMode::CountFast
+             : ScanMode::Count;
+  }
+  // Vector (ANN) search tolerates a lookup filter on the Top: path: the
+  // collector over-fetches a pool, the lookup filter drops non-matches during
+  // materialization, and the TOP_N above trims to the exact k. A text lookup
+  // filter still forces streaming (exact), so it never reaches here anyway
+  // (score_top_k stays unset -- AfterLimit).
+  if (ss.score_top_k && (ss.text_scorer || ss.score_order) &&
+      (!g.has_lookup_filter || ss.vector_scorer)) {
+    return ScanMode::TopK;
+  }
+  return ScanMode::Stream;
+}
+
 }  // namespace
+
+// ORDER BY <covered column> LIMIT: order segments best-first by the order
+// key's per-file statistics -- the whole-file analogue of duckdb's
+// RowGroupReorderer. Scheduling only: the TopN above still sorts, so segments
+// with unusable statistics simply fall to the null end of the walk.
+void BuildSegmentScanOrder(IResearchScanGlobalState& g,
+                           const SereneDBScanBindData::ScanOrder& order) {
+  const auto field = static_cast<irs::field_id>(order.column.id());
+  struct Key {
+    uint32_t seg;
+    duckdb::Value value;
+  };
+  std::vector<Key> keys;
+  keys.reserve(g.claimable_segments);
+  for (uint32_t claimed = 0; claimed < g.claimable_segments; ++claimed) {
+    const auto si = g.SegmentAt(claimed);
+    duckdb::Value v;
+    const auto* col_reader = (*g.reader)[si].GetColReader();
+    const auto* reader = col_reader ? col_reader->Column(field) : nullptr;
+    if (reader) {
+      v = duckdb::RowGroupReorderer::RetrieveStat(
+        reader->MergedStatistics(), order.order_by, order.column_type);
+    }
+    keys.push_back({si, std::move(v)});
+  }
+  const bool nulls_first =
+    order.null_order == duckdb::OrderByNullType::NULLS_FIRST;
+  const bool asc = order.order_type == duckdb::OrderType::ASCENDING;
+  absl::c_sort(keys, [&](const Key& l, const Key& r) {
+    const bool ln = l.value.IsNull();
+    const bool rn = r.value.IsNull();
+    if (ln || rn) {
+      return ln != rn ? (ln ? nulls_first : !nulls_first) : l.seg < r.seg;
+    }
+    const auto& lo = asc ? l.value : r.value;
+    const auto& hi = asc ? r.value : l.value;
+    return lo != hi ? lo < hi : l.seg < r.seg;
+  });
+  g.segment_order.clear();
+  g.segment_order.reserve(keys.size());
+  for (const auto& k : keys) {
+    g.segment_order.push_back(k.seg);
+  }
+}
+
+void ClassifySegmentColFilters(
+  const irs::SubReader& seg, IResearchScanGlobalState& g,
+  ColFilterStateCache& states,
+  TableFilterDocIterator::SegmentClassification& out);
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
@@ -147,11 +229,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->scan = &ss;
   state->reader = &ss.snapshot->reader;
   state->total_segments = ss.snapshot->reader.size();
+  state->claimable_segments = static_cast<uint32_t>(state->total_segments);
   state->vector_scorer = ss.vector_scorer ? &*ss.vector_scorer : nullptr;
 
-  if (ss.TsDictMode()) {
-    state->count_only = false;
-    state->ts_dict_mode = true;
+  state->mode = DecideScanMode(*state, ss, input);
+  if (state->mode == ScanMode::TsDict) {
     if (absl::c_any_of(state->projected_columns, [](auto p) {
           return p != duckdb::DConstants::INVALID_INDEX;
         })) {
@@ -168,10 +250,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       std::move(state));
   }
 
-  // Count-only never coexists with pushed filters: filter columns stay
-  // projected (filter_prune off), so IsCountOnlyScan rejects such plans.
-  if ((state->count_only = IsCountOnlyScan(bind_data, input)) &&
-      !ss.stored_filter && !ss.vector_scorer) {
+  if (state->mode == ScanMode::CountFast) {
+    // The whole-reader live count answers at init (see InitLocal); no
+    // queries, one thread, no segment is touched.
     return duckdb::unique_ptr_cast<IResearchScanGlobalState,
                                    duckdb::GlobalTableFunctionState>(
       std::move(state));
@@ -186,7 +267,25 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
   state->queries.resize(ss.snapshot->reader.size());
 
-  if (state->count_only) {
+  if (!state->col_filters.empty() && state->total_segments != 0) {
+    ColFilterStateCache init_states;
+    TableFilterDocIterator::SegmentClassification cls;
+    state->segment_order.reserve(state->total_segments);
+    for (uint32_t si = 0; si < state->total_segments; ++si) {
+      ClassifySegmentColFilters((*state->reader)[si], *state, init_states, cls);
+      if (!cls.segment_dead) {
+        state->segment_order.push_back(si);
+      }
+    }
+    if (state->segment_order.size() == state->total_segments) {
+      state->segment_order.clear();
+    } else {
+      state->claimable_segments =
+        static_cast<uint32_t>(state->segment_order.size());
+    }
+  }
+
+  if (state->mode == ScanMode::Count) {
     return state;
   }
 
@@ -197,46 +296,58 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
   state->collectors.resize(state->MaxThreads());
 
-  // Vector (ANN) search tolerates a lookup filter on the Top: path: the
-  // collector over-fetches a pool, the lookup filter drops non-matches during
-  // materialization, and the TOP_N above trims to the exact k. A text lookup
-  // filter still forces streaming (exact), so it never reaches here anyway
-  // (score_top_k stays unset -- AfterLimit).
-  if (ss.score_top_k && (ss.text_scorer || ss.score_order) &&
-      (!state->has_lookup_filter || ss.vector_scorer)) {
-    state->parallel_topk = true;
+  if (state->mode == ScanMode::TopK) {
+    if (state->score_static_floor >
+        std::numeric_limits<irs::score_t>::lowest()) {
+      // Static score floor (Lucene min_score): the collectors start at the
+      // bound and enforce it -- the stripped filter's replacement
+      // (HandleScoreFilter recorded the floor only where it is the
+      // collector's raw space) -- and WAND skips below-floor blocks from the
+      // first window.
+      state->global_kth_score.store(state->score_static_floor,
+                                    std::memory_order_relaxed);
+    }
     if (ss.vector_scorer &&
         (ss.vector_scorer->quant != irs::VectorQuantization::None ||
          state->has_lookup_filter)) {
       state->rerank_pool =
         ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
     }
+  } else {
+    // Streaming text-score WAND: a pushed dynamic TOP_N score boundary (score
+    // DESC TOP_N -- only a lower bound can seed block-max skipping) or a
+    // static score floor on a WAND-enabled text scorer lets the streaming
+    // DocIterator skip below-threshold blocks (its ScoreThresholdAttr is
+    // seeded before each emit); the HitBatcher score filter still enforces
+    // the exact boundary. Honors the same kill switch as the in-scan top-k
+    // rule (IResearchSetScanOrder): with it set, WAND must not engage
+    // anywhere.
+    duckdb::Value disable_topk;
+    const bool topk_disabled =
+      context.TryGetCurrentSetting("sdb_disable_top_k_optimization",
+                                   disable_topk) &&
+      !disable_topk.IsNull() && disable_topk.GetValue<bool>();
+    const bool dynamic_bound =
+      state->score_dynamic_filter &&
+      (state->score_dynamic_filter->comparison_type ==
+         duckdb::ExpressionType::COMPARE_GREATERTHAN ||
+       state->score_dynamic_filter->comparison_type ==
+         duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO);
+    const bool static_bound =
+      state->score_static_floor > std::numeric_limits<irs::score_t>::lowest();
+    state->wand_streaming =
+      !topk_disabled && ss.text_scorer && state->scan_score &&
+      (dynamic_bound || static_bound) &&
+      WandEnabled(bind_data.inverted_index.get(), ss.text_scorer);
   }
-  // Streaming text-score WAND: a pushed dynamic TOP_N score boundary on a
-  // WAND-enabled text scorer lets the streaming DocIterator skip
-  // below-threshold blocks (its ScoreThresholdAttr is seeded from the boundary
-  // before each emit); the HitBatcher score filter still enforces the exact
-  // boundary. Only a lower bound (score DESC TOP_N) can seed WAND: an ASC
-  // boundary is an upper bound, which block-max skipping cannot use. Honors
-  // the same kill switch as the in-scan top-k rule (IResearchSetScanOrder):
-  // with it set, WAND must not engage anywhere.
-  duckdb::Value disable_topk;
-  const bool topk_disabled =
-    context.TryGetCurrentSetting("sdb_disable_top_k_optimization",
-                                 disable_topk) &&
-    !disable_topk.IsNull() && disable_topk.GetValue<bool>();
-  state->wand_streaming =
-    !topk_disabled && !state->parallel_topk && ss.text_scorer &&
-    state->scan_score && state->score_dynamic_filter &&
-    (state->score_dynamic_filter->comparison_type ==
-       duckdb::ExpressionType::COMPARE_GREATERTHAN ||
-     state->score_dynamic_filter->comparison_type ==
-       duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) &&
-    WandEnabled(bind_data.inverted_index.get(), ss.text_scorer);
   ClassifyColumnstoreProjections(*state, bind_data);
 
-  if (state->BulkChunkEligible() && !ss.text_scorer && !state->parallel_topk &&
-      !state->has_lookup_filter) {
+  if (ss.scan_order && state->mode == ScanMode::Stream) {
+    BuildSegmentScanOrder(*state, *ss.scan_order);
+  }
+
+  if (state->mode == ScanMode::Stream && state->BulkChunkEligible() &&
+      !ss.text_scorer && !state->has_lookup_filter) {
     // Search tables carry no inverted_index; fall back to the default unit.
     uint64_t rg_rows = bind_data.inverted_index
                          ? bind_data.inverted_index->GetOptions().row_group_size
@@ -247,7 +358,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     const uint64_t unit_rows = rg_rows >= DEFAULT_ROW_GROUP_SIZE
                                  ? rg_rows
                                  : DEFAULT_ROW_GROUP_SIZE / rg_rows * rg_rows;
-    for (uint32_t si = 0; si < state->total_segments; ++si) {
+    // Walking claim order keeps units grouped whole-segment best-first
+    // (intra-segment unit order stays natural -- rows within a file are
+    // unordered anyway).
+    for (uint32_t claimed = 0; claimed < state->claimable_segments; ++claimed) {
+      const auto si = state->SegmentAt(claimed);
       const auto& seg = (*state->reader)[si];
       const uint64_t docs = seg.docs_count();
       if (docs == 0) {
@@ -523,7 +638,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   duckdb::GlobalTableFunctionState* state) {
   auto& gstate = state->Cast<IResearchScanGlobalState>();
   const auto& bd = input.bind_data->Cast<SereneDBScanBindData>();
-  if (gstate.ts_dict_mode) {
+  if (gstate.mode == ScanMode::TsDict) {
     auto lstate = duckdb::make_uniq<TsDictLocalState>();
     const auto& ss = bd;
     lstate->fields.resize(ss.ts_dicts.size());
@@ -536,15 +651,15 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     BuildTsDictSlots(*lstate, input, bd, ss);
     return lstate;
   }
-  if (gstate.count_only) {
+  if (gstate.mode == ScanMode::CountFast || gstate.mode == ScanMode::Count) {
     auto lstate = duckdb::make_uniq<SearchFullScanCountLocalState>();
-    if (gstate.queries.empty()) {
+    if (gstate.mode == ScanMode::CountFast) {
       lstate->local_count = gstate.reader->live_docs_count();
       lstate->segments_exhausted = true;
     }
     return lstate;
   }
-  if (gstate.parallel_topk) {
+  if (gstate.mode == ScanMode::TopK) {
     auto lstate = duckdb::make_uniq<SearchFullScanTopKLocalState>();
     lstate->bind_data = &bd;
     if (!gstate.vector_scorer) {
@@ -583,31 +698,41 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     target = &base.scan_chunk;
   }
   auto& out = *target;
-  if (gstate.ts_dict_mode) {
-    auto& l = data.local_state->Cast<TsDictLocalState>();
-    RunStreamingScan(context, gstate, l, out);
-  } else if (gstate.count_only) {
-    auto& l = data.local_state->Cast<SearchFullScanCountLocalState>();
-    RunCountScan(context, gstate, l, out);
-  } else if (gstate.parallel_topk) {
-    auto& l = data.local_state->Cast<SearchFullScanTopKLocalState>();
-    if (!l.prepared) {
-      if (gstate.total_segments != 0 && !gstate.vector_scorer) {
-        PreparePhase(context, gstate, l);
-      }
-      l.prepared = true;
+  switch (gstate.mode) {
+    case ScanMode::TsDict: {
+      auto& l = data.local_state->Cast<TsDictLocalState>();
+      RunStreamingScan(context, gstate, l, out);
+      break;
     }
-    RunTopKScan(context, gstate, l, out);
-  } else {
-    auto& l = data.local_state->Cast<SearchFullScanScanLocalState>();
-    if (!l.prepared) {
-      if (gstate.scorer_obj && gstate.total_segments != 0 &&
-          !gstate.vector_scorer) {
-        PreparePhase(context, gstate, l);
-      }
-      l.prepared = true;
+    case ScanMode::CountFast:
+    case ScanMode::Count: {
+      auto& l = data.local_state->Cast<SearchFullScanCountLocalState>();
+      RunCountScan(context, gstate, l, out);
+      break;
     }
-    RunStreamingScan(context, gstate, l, out);
+    case ScanMode::TopK: {
+      auto& l = data.local_state->Cast<SearchFullScanTopKLocalState>();
+      if (!l.prepared) {
+        if (gstate.total_segments != 0 && !gstate.vector_scorer) {
+          PreparePhase(context, gstate, l);
+        }
+        l.prepared = true;
+      }
+      RunTopKScan(context, gstate, l, out);
+      break;
+    }
+    case ScanMode::Stream: {
+      auto& l = data.local_state->Cast<SearchFullScanScanLocalState>();
+      if (!l.prepared) {
+        if (gstate.scorer_obj && gstate.total_segments != 0 &&
+            !gstate.vector_scorer) {
+          PreparePhase(context, gstate, l);
+        }
+        l.prepared = true;
+      }
+      RunStreamingScan(context, gstate, l, out);
+      break;
+    }
   }
   if (target != &output) {
     output.ReferenceColumns(*target, gstate.output_projection_ids);
@@ -629,8 +754,23 @@ void IResearchSetScanOrder(
   }
   auto& bd = bind_data->Cast<SereneDBScanBindData>();
   const auto order_col = options->column_idx.GetPrimaryIndex();
-  if (order_col >= bd.column_ids.size() ||
-      bd.column_ids[order_col] != catalog::Column::kInvertedIndexScoreId) {
+  if (order_col >= bd.column_ids.size()) {
+    return;
+  }
+  const auto col_id = bd.column_ids[order_col];
+  if (col_id != catalog::Column::kInvertedIndexScoreId) {
+    // ORDER BY <covered .col column> LIMIT: iterate segments best-first by the
+    // column's per-file statistics (duckdb's row-group reorder, one level up).
+    // Only covered columns have `.col` statistics.
+    const auto* info =
+      bd.inverted_index ? bd.inverted_index->FindColumnInfo(col_id) : nullptr;
+    const bool stored =
+      bd.IsSearchTableEntry() || (info != nullptr && info->IsStored());
+    if (stored && !bd.scan_order) {
+      bd.scan_order = SereneDBScanBindData::ScanOrder{
+        col_id, options->order_type, options->null_order, options->order_by,
+        options->column_type};
+    }
     return;
   }
   auto& search_scan = bd;
@@ -652,11 +792,118 @@ void IResearchSetScanOrder(
   }
 }
 
+// Wraps `inner` so it yields only docs whose covered `.col` values pass the
+// segment's active filters (codec Filter + zonemap). An empty `active` set
+// (nothing pushed, or everything ALWAYS_TRUE for this segment) returns the
+// inner iterator unwrapped -- the non-filtered path.
+// Transparent to every DocIterator consumer (count/Collect/EmitScoredDocs).
+irs::DocIterator::ptr MaybeWrapColFilter(
+  irs::DocIterator::ptr inner, const irs::SubReader& seg,
+  std::span<const TableFilterDocIterator::FilterSpec> active,
+  IResearchScanGlobalState& g, ColFilterStateCache& states) {
+  if (active.empty()) {
+    return inner;
+  }
+  const auto* col_reader = seg.GetColReader();
+  SDB_ASSERT(col_reader != nullptr,
+             "`.col` table filter requires a columnstore segment");
+  return irs::memory::make_managed<TableFilterDocIterator>(
+    std::move(inner), *col_reader, active, *g.client_context, states);
+}
+
+// Whole-segment classification of the pushed `.col`/score filters against the
+// segment's per-column file statistics -- duckdb RowGroup::CheckZonemap one
+// stats level up. ALWAYS_FALSE/FALSE_OR_NULL for any filter kills the segment
+// before its postings are iterated (NULL evaluations don't pass a WHERE filter
+// either); ALWAYS_TRUE drops the filter for this segment (zonemap-only filters
+// stay: their bound can tighten later); TRUE_OR_NULL swaps in the pre-built
+// IS NOT NULL filter (duckdb propagate_get policy). A column absent from the
+// segment's columnstore is all NULL there: the filter evaluates once against a
+// single NULL -- failing kills the segment, passing drops the filter (nothing
+// to prune, and there is no reader to bind). Score specs (computed, no stored
+// stats) stay active. Writes into `out` so the caller's buffers are reused
+// across segments.
+void ClassifySegmentColFilters(
+  const irs::SubReader& seg, IResearchScanGlobalState& g,
+  ColFilterStateCache& states,
+  TableFilterDocIterator::SegmentClassification& out) {
+  out.segment_dead = false;
+  out.active.clear();
+  if (g.col_filters.empty()) {
+    return;
+  }
+  const auto* col_reader = seg.GetColReader();
+  for (const auto& cf : g.col_filters) {
+    TableFilterDocIterator::FilterSpec spec{
+      .field = cf.field,
+      .filter = cf.filter,
+      .is_score = cf.is_score,
+      .is_dynamic = cf.is_dynamic,
+      .zonemap_only = cf.zonemap_only,
+      .null_check = cf.null_check,
+      .not_null = cf.not_null.get(),
+    };
+    if (spec.is_score) {
+      out.active.push_back(spec);
+      continue;
+    }
+    const auto* reader =
+      col_reader != nullptr ? col_reader->Column(spec.field) : nullptr;
+    if (reader == nullptr) {
+      duckdb::Vector null_row{duckdb::Value{cf.type}, duckdb::count_t{1}};
+      duckdb::SelectionVector sel;
+      duckdb::idx_t approved = 1;
+      duckdb::ColumnSegment::FilterSelection(
+        sel, null_row, states.State(*g.client_context, *spec.filter), 1,
+        approved);
+      if (approved == 0) {
+        out.segment_dead = true;
+        out.active.clear();
+        return;
+      }
+      continue;
+    }
+    const auto& stats = reader->MergedStatistics();
+    const auto verdict =
+      spec.filter->Cast<duckdb::ExpressionFilter>().CheckStatistics(
+        stats, states.State(*g.client_context, *spec.filter));
+    switch (verdict) {
+      case duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE:
+      case duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL:
+        out.segment_dead = true;
+        out.active.clear();
+        return;
+      case duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE:
+        if (spec.zonemap_only) {
+          out.active.push_back(spec);
+        }
+        break;
+      case duckdb::FilterPropagateResult::FILTER_TRUE_OR_NULL:
+        if (!spec.zonemap_only && spec.not_null != nullptr) {
+          // The replacement is a bare IS NOT NULL, so it evaluates on the
+          // validity child alone.
+          spec.filter = spec.not_null;
+          spec.null_check = irs::NullCheckKind::IsNotNull;
+        }
+        out.active.push_back(spec);
+        break;
+      case duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE:
+        out.active.push_back(spec);
+        break;
+    }
+  }
+}
+
 namespace {
 
 void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
                         const irs::SubReader& seg, uint32_t seg_idx,
                         IResearchScanGlobalState& g) {
+  ClassifySegmentColFilters(seg, g, s.filter_states, s.seg_cls);
+  const auto& cls = s.seg_cls;
+  if (cls.segment_dead) {
+    return;
+  }
   using C = irs::NthPartitionScoreCollector;
   auto& search = *s.bind_data;
   if (!std::holds_alternative<C>(s.collector)) {
@@ -681,24 +928,11 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
     WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
   irs::DocIterator::ptr it = seg.mask(seg_query.Execute(
     {.wand = {.wand_enabled = wand_enabled},
-     .top_k_collect =
-       search.vector_scorer.has_value() && g.col_filters.empty()},
+     .top_k_collect = search.vector_scorer.has_value() && cls.active.empty()},
     stats));
-  if (!g.col_filters.empty()) {
-    // Filter the collected docs by the covered `.col` values, so top-k is
-    // selected over survivors (codec Filter + zonemap in the wrapper).
-    std::vector<TableFilterDocIterator::FilterSpec> specs;
-    specs.reserve(g.col_filters.size());
-    for (const auto& cf : g.col_filters) {
-      specs.push_back(
-        {.field = cf.field, .filter = cf.filter, .is_score = cf.is_score});
-    }
-    const auto* col_reader = seg.GetColReader();
-    SDB_ASSERT(col_reader != nullptr,
-               "`.col` table filter requires a columnstore segment");
-    it = irs::memory::make_managed<TableFilterDocIterator>(
-      std::move(it), *col_reader, specs, *g.client_context);
-  }
+  // Filter the collected docs by the covered `.col` values, so top-k is
+  // selected over survivors (codec Filter + zonemap in the wrapper).
+  it = MaybeWrapColFilter(std::move(it), seg, cls.active, g, s.filter_states);
   auto score_func = it->PrepareScore({
     .scorer = g.scorer_obj.get(),
     .segment = &seg,
@@ -722,11 +956,12 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
 void RunTopKScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
                  SearchFullScanTopKLocalState& l, duckdb::DataChunk& output) {
   while (!l.segments_exhausted) {
-    const auto seg = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (seg >= g.total_segments) {
+    const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
+    if (claimed >= g.claimable_segments) {
       l.segments_exhausted = true;
       break;
     }
+    const auto seg = g.SegmentAt(claimed);
     const auto& sub = (*g.reader)[seg];
     SDB_ASSERT(sub.live_docs_count() != 0);
     CollectSegmentTopK(l, sub, seg, g);
@@ -785,59 +1020,6 @@ void SearchFullScanTopKLocalState::PrepareEmitBuffer(
   top_hits = hit_slice.subspan(0, kept);
 }
 
-// Wraps `inner` so it yields only docs whose covered `.col` values pass the
-// pushed filters (codec Filter + zonemap), when any `.col` filter is present.
-// Transparent to every DocIterator consumer (count/Collect/EmitScoredDocs).
-irs::DocIterator::ptr MaybeWrapColFilter(irs::DocIterator::ptr inner,
-                                         const irs::SubReader& seg,
-                                         IResearchScanGlobalState& g) {
-  if (g.col_filters.empty()) {
-    return inner;
-  }
-  std::vector<TableFilterDocIterator::FilterSpec> specs;
-  specs.reserve(g.col_filters.size());
-  for (const auto& cf : g.col_filters) {
-    specs.push_back(
-      {.field = cf.field, .filter = cf.filter, .is_score = cf.is_score});
-  }
-  const auto* col_reader = seg.GetColReader();
-  SDB_ASSERT(col_reader != nullptr,
-             "`.col` table filter requires a columnstore segment");
-  return irs::memory::make_managed<TableFilterDocIterator>(
-    std::move(inner), *col_reader, specs, *g.client_context);
-}
-
-// Whole-segment zonemap prune: true when a `.col` filter is ALWAYS_FALSE for
-// the segment's entire column (MergedStatistics), so no doc can pass -- the
-// segment is skipped before its postings are iterated or anything materialized.
-bool SegmentExcludedByColFilter(const irs::SubReader& seg,
-                                IResearchScanGlobalState& g) {
-  if (g.col_filters.empty()) {
-    return false;
-  }
-  const auto* col_reader = seg.GetColReader();
-  if (col_reader == nullptr) {
-    return false;
-  }
-  for (const auto& cf : g.col_filters) {
-    if (cf.is_score) {
-      // The score is computed, not a `.col` field (its `field` is a sentinel);
-      // it can't be pruned by columnstore statistics.
-      continue;
-    }
-    const auto* reader = col_reader->Column(cf.field);
-    if (reader == nullptr) {
-      continue;
-    }
-    const auto& expr = cf.filter->Cast<duckdb::ExpressionFilter>();
-    if (expr.CheckStatistics(reader->MergedStatistics()) ==
-        duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
                                                 const irs::SubReader& seg,
                                                 uint32_t seg_idx,
@@ -880,19 +1062,16 @@ void SearchFullScanScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
     });
   }
   if (!hit_batcher) {
-    std::vector<TableFilterDocIterator::FilterSpec> specs;
-    specs.reserve(g.col_filters.size());
-    for (const auto& cf : g.col_filters) {
-      specs.push_back(
-        {.field = cf.field, .filter = cf.filter, .is_score = cf.is_score});
-    }
     hit_batcher = std::make_unique<HitBatcher>(
       g.cs_projections,
       g.has_external_projections ? catalog::term_dict::kPKFieldId
                                  : irs::field_limits::invalid(),
-      g.scan_score, specs);
+      g.scan_score);
   }
-  hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context);
+  SDB_ASSERT(classified_seg == seg_idx,
+             "segment filters are classified at the claim site");
+  hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
+                            &filter_states, seg_cls.active);
 }
 
 void SearchFullScanScanLocalState::StartUnit(
@@ -916,7 +1095,30 @@ void SearchFullScanScanLocalState::PushHits(IResearchScanGlobalState& g) {
     return;
   }
   for (;;) {
-    const auto next = streaming_doc->value();
+    auto next = streaming_doc->value();
+    // Before the first window value() is unpositioned; the self-positioning
+    // Emit skips to the first match itself (no advance() prime). Afterwards
+    // value() is the postcondition next match. `max = cursor + span` caps each
+    // window to the row-group boundary, so a cursor that starts ahead of the
+    // first match just yields an empty window and value() jumps to the match.
+    auto cursor = irs::doc_limits::valid(next) ? next : irs::doc_limits::min();
+    if (!irs::doc_limits::eof(next) && !hit_batcher->Filters().Empty()) {
+      // Zonemap skip: raise the emit floor past definitely-dead blocks (the
+      // self-positioning Emit skips to it) instead of staging and dropping
+      // their windows; when everything left is dead, the segment is done.
+      const auto rows = hit_batcher->SegmentRowCount();
+      auto row = static_cast<uint64_t>(cursor - irs::doc_limits::min());
+      for (auto dead = hit_batcher->Filters().DeadUntil(row);
+           dead != 0 && row < rows;
+           dead = hit_batcher->Filters().DeadUntil(row)) {
+        row = dead;
+      }
+      if (row >= rows) {
+        next = irs::doc_limits::eof();
+      } else {
+        cursor = irs::doc_limits::min() + static_cast<irs::doc_id_t>(row);
+      }
+    }
     if (irs::doc_limits::eof(next)) {
       streaming_score_function = {};
       streaming_doc.reset();
@@ -925,24 +1127,22 @@ void SearchFullScanScanLocalState::PushHits(IResearchScanGlobalState& g) {
       }
       return;
     }
-    // Before the first window value() is unpositioned; the self-positioning
-    // Emit skips to the first match itself (no advance() prime). Afterwards
-    // value() is the postcondition next match. `max = cursor + span` caps each
-    // window to the row-group boundary, so a cursor that starts ahead of the
-    // first match just yields an empty window and value() jumps to the match.
-    const auto cursor =
-      irs::doc_limits::valid(next) ? next : irs::doc_limits::min();
     const auto span = hit_batcher->OpenWindow(cursor - irs::doc_limits::min());
     if (span == 0) {
       return;
     }
     if (g.scan_score) {
       if (g.wand_streaming) {
-        // Seed the WAND threshold from the dynamic TOP_N boundary's current
-        // value; blocks that cannot beat it are skipped this window.
+        // Seed the WAND threshold from the static score floor and the dynamic
+        // TOP_N boundary's current value; blocks that cannot beat it are
+        // skipped this window.
         if (auto* t =
               irs::GetMutable<irs::ScoreThresholdAttr>(streaming_doc.get())) {
-          t->value = CurrentWandThreshold(*g.score_dynamic_filter);
+          auto v = g.score_static_floor;
+          if (g.score_dynamic_filter) {
+            v = std::max(v, CurrentWandThreshold(*g.score_dynamic_filter));
+          }
+          t->value = v;
         }
       }
       const auto n = streaming_doc->EmitScoredDocs(
@@ -971,12 +1171,19 @@ duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
     auto* scanner =
       GetOrOpenSegmentFullScanner(*this, g, *g.reader, current_seg_idx);
     SDB_ENSURE(scanner, "bulk cs scan: segment has no columnstore reader");
+    // Zonemap skip: jump the cursor past a definitely-dead block in one step
+    // instead of scanning it vector by vector.
+    const auto dead_end = scanner->DeadUntil(bulk_doc_in_seg);
+    if (dead_end > bulk_doc_in_seg) {
+      bulk_doc_in_seg = std::min<uint64_t>(dead_end, bulk_seg_doc_count);
+      continue;
+    }
     const auto take = std::min<duckdb::idx_t>(
       STANDARD_VECTOR_SIZE, bulk_seg_doc_count - bulk_doc_in_seg);
     const auto produced = scanner->Scan(bulk_doc_in_seg, take, output);
     bulk_doc_in_seg += take;
     if (produced != 0) {
-      AccountAndWriteVirtualColumns(g, produced, {}, output);
+      AccountAndWriteVirtualColumns(g, produced, nullptr, output);
       return produced;
     }
     output.Reset();
@@ -1010,19 +1217,30 @@ duckdb::idx_t SearchFullScanScanLocalState::EmitChunk(
 void RunCountScan(duckdb::ClientContext& /*ctx*/, IResearchScanGlobalState& g,
                   SearchFullScanCountLocalState& l, duckdb::DataChunk& output) {
   while (!l.segments_exhausted) {
-    const auto seg = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (seg >= g.total_segments) {
+    const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
+    if (claimed >= g.claimable_segments) {
       l.segments_exhausted = true;
       break;
     }
+    const auto seg = g.SegmentAt(claimed);
     const auto& sub = (*g.reader)[seg];
     SDB_ASSERT(sub.live_docs_count() != 0);
-    if (SegmentExcludedByColFilter(sub, g)) {
+    ClassifySegmentColFilters(sub, g, l.filter_states, l.seg_cls);
+    if (l.seg_cls.segment_dead) {
+      continue;
+    }
+    if (l.seg_cls.active.empty() && !g.scan->stored_filter &&
+        !g.vector_scorer) {
+      // No predicate and the whole-file statistics settled every pushed
+      // filter for this segment: the live count answers without touching the
+      // postings.
+      l.local_count += sub.live_docs_count();
       continue;
     }
     const auto& seg_query = EnsureSegmentQuery(g, l, sub, seg);
     auto doc = MaybeWrapColFilter(
-      sub.mask(seg_query.Execute({}, irs::StatsBuffer::Empty())), sub, g);
+      sub.mask(seg_query.Execute({}, irs::StatsBuffer::Empty())), sub,
+      l.seg_cls.active, g, l.filter_states);
     l.local_count += doc->count();
   }
   if (l.local_emitted >= l.local_count) {
@@ -1073,7 +1291,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
   };
   WriteChunkOffsets(l.offsets_entries, l.offsets_prepped_seg,
                     l.offsets_doc_scratch, g, view, output);
-  AccountAndWriteVirtualColumns(g, batch.count, batch.scores, output);
+  AccountAndWriteVirtualColumns(g, batch.count, batch.score_vec, output);
   return batch.count;
 }
 
@@ -1203,16 +1421,30 @@ void RunStreamingScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
       if (ui >= g.scan_units.size()) {
         break;
       }
-      l.StartUnit(ctx, g.scan_units[ui], g);
+      const auto& unit = g.scan_units[ui];
+      // Units subdivide a segment; the whole-file classification is computed
+      // once per segment and reused across its units.
+      if (l.classified_seg != unit.seg) {
+        ClassifySegmentColFilters((*g.reader)[unit.seg], g, l.filter_states,
+                                  l.seg_cls);
+        l.classified_seg = unit.seg;
+      }
+      if (l.seg_cls.segment_dead) {
+        continue;
+      }
+      l.StartUnit(ctx, unit, g);
       continue;
     }
-    const auto seg_idx = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (seg_idx >= g.total_segments) {
+    const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
+    if (claimed >= g.claimable_segments) {
       break;
     }
+    const auto seg_idx = g.SegmentAt(claimed);
     const auto& seg = (*g.reader)[seg_idx];
     SDB_ASSERT(seg.live_docs_count() != 0);
-    if (SegmentExcludedByColFilter(seg, g)) {
+    ClassifySegmentColFilters(seg, g, l.filter_states, l.seg_cls);
+    l.classified_seg = seg_idx;
+    if (l.seg_cls.segment_dead) {
       continue;
     }
     l.StartSegment(ctx, seg, seg_idx, g);

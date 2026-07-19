@@ -121,6 +121,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
   irs::score_t score_threshold = std::numeric_limits<irs::score_t>::min();
   irs::NthPartitionScoreCollector collector{score_threshold, k, hits};
   irs::ColumnArgsFetcher fetcher;
+  sdb::connector::ColFilterStateCache filter_states;
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {
     fetcher.Clear();
@@ -137,7 +138,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
         query->Execute({.wand = wand}, stats), *col_reader,
         std::span<const sdb::connector::TableFilterDocIterator::FilterSpec>{
           &spec, 1},
-        ctx);
+        ctx, filter_states);
 
     auto score_func = it->PrepareScore({
       .scorer = &scorer,

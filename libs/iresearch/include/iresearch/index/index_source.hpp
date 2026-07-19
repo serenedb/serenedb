@@ -24,7 +24,6 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/common/vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <limits>
 #include <memory>
@@ -50,8 +49,8 @@ struct PrimaryKeyBatch {
   };
 
   Kind kind = Kind::None;
-  duckdb::vector<int64_t> files;
-  duckdb::vector<int64_t> rows;
+  std::vector<int64_t> files;
+  std::vector<int64_t> rows;
   // Kind::Struct only: a BORROWED pointer to the current batch's key column (a
   // flattened STRUCT vector, `column_count` rows). Not owned, no per-row copy,
   // no duckdb::Value -- valid only until the immediately-following Materialize

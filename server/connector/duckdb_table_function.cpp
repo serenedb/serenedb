@@ -732,14 +732,56 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
       has_lookup = true;
     }
   }
-  const bool count_only =
-    input.projected_column_ids &&
-    absl::c_all_of(
-      *input.projected_column_ids, [](const duckdb::ColumnIndex& ci) {
-        return ci.GetPrimaryIndex() == duckdb::COLUMN_IDENTIFIER_EMPTY;
-      });
+  // Count-only = every OUTPUT column is the empty virtual column; filter-only
+  // columns (in projected_column_ids but excluded by projection_ids) are read
+  // for their filters without being emitted, so they don't disqualify.
+  bool count_only = input.projected_column_ids != nullptr;
+  if (count_only) {
+    const auto& column_ids = *input.projected_column_ids;
+    // an empty projection_ids means no pruning: the output is every column
+    const bool use_projection = input.projected_filter_prune &&
+                                input.projection_ids &&
+                                !input.projection_ids->empty();
+    const auto count =
+      use_projection ? input.projection_ids->size() : column_ids.size();
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const auto base_index = use_projection ? (*input.projection_ids)[i] : i;
+      if (base_index < column_ids.size() &&
+          column_ids[base_index].GetPrimaryIndex() !=
+            duckdb::COLUMN_IDENTIFIER_EMPTY) {
+        count_only = false;
+        break;
+      }
+    }
+  }
+  // A filter on a lookup (source-only) column keeps the lookup load-bearing
+  // even when the scan's output is count-only.
+  bool has_lookup_filter = false;
+  if (input.filters && input.projected_column_ids &&
+      bind.IsInvertedIndexEntry() && bind.inverted_index) {
+    const auto& column_ids = *input.projected_column_ids;
+    for (const auto& entry : *input.filters) {
+      const auto proj = static_cast<duckdb::idx_t>(entry.GetIndex());
+      if (proj >= column_ids.size() || column_ids[proj].IsVirtualColumn()) {
+        continue;
+      }
+      const auto bind_idx = column_ids[proj].GetPrimaryIndex();
+      if (bind_idx >= bind.column_ids.size()) {
+        continue;
+      }
+      const auto col_id = bind.column_ids[bind_idx];
+      if (col_id == catalog::Column::kInvertedIndexScoreId) {
+        continue;
+      }
+      const auto* info = bind.inverted_index->FindColumnInfo(col_id);
+      if (!info || !info->IsStored()) {
+        has_lookup_filter = true;
+        break;
+      }
+    }
+  }
   const bool suppress_lookup =
-    bind.IsInvertedIndexEntry() &&
+    bind.IsInvertedIndexEntry() && !has_lookup_filter &&
     (count_only || (!entries.empty() && !has_lookup));
   if (!bind.lookup_label.empty() && !suppress_lookup) {
     result.insert("Lookup", bind.lookup_label);

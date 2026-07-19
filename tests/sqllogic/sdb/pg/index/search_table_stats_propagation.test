@@ -88,7 +88,8 @@ c
 0
 
 
-# Always-true filter on a NOT NULL-valued column: dropped from the scan.
+# Always-true filter on a NOT NULL-valued column: dropped from the scan, and
+# the filter-only column drops out of the output, so the count stays count-only.
 query
 EXPLAIN SELECT count(*) FROM stp WHERE x >= 0;
 ----
@@ -100,6 +101,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: stp               │
 │ Lookup: search           │
+│ Output: row-count only   │
 │ ~40 rows                 │
 ╰──────────────────────────╯
 
@@ -124,6 +126,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: stp                   │
 │ Lookup: search               │
+│ Output: row-count only       │
 │ Column Filter: n IS NOT NULL │
 │ ~40 rows                     │
 ╰──────────────────────────────╯
@@ -177,6 +180,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: stp               │
 │ Lookup: search           │
+│ Output: row-count only   │
 │ Column Filter: x >= 150  │
 │ ~30 rows                 │
 ╰──────────────────────────╯

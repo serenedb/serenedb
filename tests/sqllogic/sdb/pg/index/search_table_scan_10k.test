@@ -41,7 +41,8 @@ c
 24000
 
 
-# Range filter that statistics confine to the last segment.
+# Range filter that statistics confine to the last segment. The filter column
+# is read only for the filter, so the scan stays count-only.
 query
 EXPLAIN SELECT count(*) FROM stk WHERE x >= 20000;
 ----
@@ -53,6 +54,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: stk                │
 │ Lookup: search            │
+│ Output: row-count only    │
 │ Column Filter: x >= 20000 │
 │ ~4,800 rows               │
 ╰───────────────────────────╯

@@ -4,8 +4,14 @@
 # kill or settle whole segment files, the rest count() through the filter
 # wrapper); a score filter needs scoring and a lookup-column filter needs
 # source materialization, so those shapes stream and the aggregate counts the
-# survivors. Two segments: the first has `c` all NULL, the second c=101..200,
-# so per-file statistics differ per segment.
+# survivors. The lookup source is consulted if and only if a lookup column is
+# needed (for a filter or a projection) -- a count over INCLUDE'd-column
+# filters never touches it, including when the filter is eliminated by
+# statistics and leaves its column dangling in the scan. Two segments: the
+# first has `c` all NULL, the second c=101..200, so per-file statistics differ
+# per segment.
+
+control substitution on
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY cfm_en(
@@ -99,7 +105,8 @@ n
 
 
 # Predicate + `.col` filter: the filter is pushed into the scan (no Filter
-# node) and applied during the count.
+# node) and applied during the count -- the filter column is read only for the
+# filter, so the scan stays count-only and never touches the lookup source.
 query
 EXPLAIN SELECT count(*) FROM cfm_idx WHERE body @@ ts_phrase('fox') AND c > 150;
 ----
@@ -110,13 +117,13 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
-│ Lookup: table            │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
 │ │ Value: fox          │  │
 │ ╰─────────────────────╯  │
 │ Column Filter: c > 150   │
+│ Output: row-count only   │
 │ ~8 rows                  │
 ╰──────────────────────────╯
 
@@ -153,7 +160,7 @@ n
 0
 
 
-# `.col` filter without any search predicate.
+# `.col` filter without any search predicate: still count-only, no lookup.
 query
 EXPLAIN SELECT count(*) FROM cfm_idx WHERE c > 150;
 ----
@@ -164,7 +171,7 @@ QUERY PLAN
 ╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_idx           │
-│ Lookup: table            │
+│ Output: row-count only   │
 │ Column Filter: c > 150   │
 │ ~40 rows                 │
 ╰──────────────────────────╯
@@ -210,7 +217,8 @@ n
 
 
 # Lookup-column filter (d is not INCLUDE'd): applied during source
-# materialization, so the count must stream through the lookup.
+# materialization, so the count must stream through the lookup -- the Lookup
+# line stays, and the scan still emits no column data (row-count only).
 query
 EXPLAIN SELECT count(*) FROM cfm_idx WHERE body @@ ts_phrase('fox') AND d > 1700;
 ----
@@ -228,6 +236,7 @@ QUERY PLAN
 │ │ Value: fox          │  │
 │ ╰─────────────────────╯  │
 │ Column Filter: d > 1700  │
+│ Output: row-count only   │
 │ ~8 rows                  │
 ╰──────────────────────────╯
 
@@ -348,6 +357,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: cfm_st            │
 │ Lookup: search           │
+│ Output: row-count only   │
 │ Column Filter: a > 150   │
 │ ~40 rows                 │
 ╰──────────────────────────╯
@@ -406,3 +416,180 @@ n
 
 statement ok
 DROP TABLE cfm_st;
+
+
+# -----------------------------------------------------------------------------
+# View over a read_parquet glob (external lookup source): the same count
+# shapes. INCLUDE'd columns (c, t) count in-scan; only a filter on a
+# non-INCLUDE'd column (extra) needs the source. This pins the shape where a
+# filter proven always-true by statistics (t spans every row) is dropped but
+# its column stays in the scan: the count must remain count-only, without the
+# lookup.
+# -----------------------------------------------------------------------------
+
+statement count 100
+COPY (SELECT i AS id,
+             CASE WHEN i%2=0 THEN 'fox jumps' ELSE 'dog sleeps' END AS body,
+             i AS c, i AS t, i*10 AS extra
+      FROM generate_series(1,100) g(i))
+TO '${__TEST_DIR__}/cfm_glob_a.parquet' (FORMAT PARQUET);
+
+
+statement count 100
+COPY (SELECT i AS id, 'fox runs' AS body, i AS c, i AS t, i*10 AS extra
+      FROM generate_series(101,200) g(i))
+TO '${__TEST_DIR__}/cfm_glob_b.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cfm_v_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE VIEW cfm_v AS
+SELECT * FROM read_parquet('${__TEST_DIR__}/cfm_glob_*.parquet');
+
+
+statement ok
+CREATE INDEX cfm_v_idx ON cfm_v USING inverted(body cfm_v_en) INCLUDE (c, t);
+
+
+# Pure count: reader metadata, no source touch.
+query
+EXPLAIN SELECT count(*) FROM cfm_v_idx;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_v_idx         │
+│ Output: row-count only   │
+│ ~200 rows                │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_v_idx;
+----
+n
+200
+
+
+# Predicate count.
+query
+SELECT count(*) AS n FROM cfm_v_idx WHERE body @@ ts_phrase('fox');
+----
+n
+150
+
+
+# Predicate + INCLUDE'd-column filter: counted in-scan, no lookup.
+query
+EXPLAIN SELECT count(*) FROM cfm_v_idx WHERE body @@ ts_phrase('fox') AND c > 150;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_v_idx         │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: fox          │  │
+│ ╰─────────────────────╯  │
+│ Column Filter: c > 150   │
+│ Output: row-count only   │
+│ ~8 rows                  │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_v_idx WHERE body @@ ts_phrase('fox') AND c > 150;
+----
+n
+50
+
+
+# Predicate + a filter statistics prove always true (t spans 1..200): the
+# filter is dropped from the scan and the count stays count-only -- the
+# dangling filter column must not force the lookup path.
+query
+EXPLAIN SELECT count(*) FROM cfm_v_idx WHERE body @@ ts_phrase('fox') AND t BETWEEN 1 AND 1000;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: cfm_v_idx         │
+│ Index Filter:            │
+│ ╭─ Term ──────────────╮  │
+│ │ Field: body(string) │  │
+│ │ Value: fox          │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ ~8 rows                  │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_v_idx WHERE body @@ ts_phrase('fox') AND t BETWEEN 1 AND 1000;
+----
+n
+150
+
+
+# Lookup-column filter (extra is not INCLUDE'd): the count must stream
+# through the parquet lookup; the scan still emits no column data.
+query
+EXPLAIN SELECT count(*) FROM cfm_v_idx WHERE body @@ ts_phrase('fox') AND extra > 1700;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ───────╮
+│ Aggregates: count_star()    │
+│ ~1 row                      │
+╰──────────────┬──────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: cfm_v_idx            │
+│ Lookup: glob parquet        │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: fox          │     │
+│ ╰─────────────────────╯     │
+│ Column Filter: extra > 1700 │
+│ Output: row-count only      │
+│ ~8 rows                     │
+╰─────────────────────────────╯
+
+
+query
+SELECT count(*) AS n FROM cfm_v_idx WHERE body @@ ts_phrase('fox') AND extra > 1700;
+----
+n
+30
+
+
+statement ok
+DROP INDEX cfm_v_idx;
+
+
+statement ok
+DROP VIEW cfm_v;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cfm_v_en;

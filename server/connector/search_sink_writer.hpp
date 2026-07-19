@@ -316,13 +316,6 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     InitImpl(batch_size, pk);
   }
 
-  // `flushed` reports a segment flush performed by this batch's insert; on a
-  // commit-on-flush transaction that flush is also a commit (see
-  // irs::IndexWriter::Transaction::Insert).
-  void Init(duckdb::idx_t batch_size, const PkChunk& pk, bool* flushed) {
-    InitImpl(batch_size, pk, flushed);
-  }
-
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
                     duckdb::idx_t count) final {
     if (_indexed.contains(col.id)) {

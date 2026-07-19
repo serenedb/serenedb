@@ -641,7 +641,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   }
 
   bool flushed = false;
-  writer->Init(num_rows, pk, &flushed);
+  writer->InitImpl(num_rows, pk, &flushed);
 
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {

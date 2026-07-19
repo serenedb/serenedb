@@ -145,8 +145,6 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 
   ObjectId _table_id;
   ObjectId _index_id;
-
-  std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::unique_ptr<ReplaySession> _replay;
   // Store-WAL byte offset of the replay range currently being delivered by
   // ApplyBufferedReplays (set by OnReplayRange). 0 = unknown (don't skip).

@@ -717,8 +717,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
                                              bool* flushed) {
   SDB_ASSERT(Valid());
   while (_active.Segment() == nullptr) {  // lazy init
-    _active = _commit_on_flush ? _writer->CreateSegmentContext()
-                               : _writer->GetSegmentContext();
+    _active = _writer->GetSegmentContext();
   }
 
   auto& segment = *_active.Segment();
@@ -783,25 +782,6 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
 bool IndexWriter::FlushRequired(const SegmentWriter& segment) const noexcept {
   return _segment_limits.Memory() <= segment.memory_active() ||
          _segment_limits.Docs() <= segment.buffered_docs();
-}
-
-IndexWriter::ActiveSegmentContext IndexWriter::CreateSegmentContext() {
-  _segments_active.fetch_add(1, std::memory_order_relaxed);
-  const auto options =
-    GetSegmentWriterOptions(false, /*field_options=*/nullptr);
-  std::shared_ptr<SegmentContext> segment = _segment_writer_pool.emplace(
-    _dir,
-    [this] {
-      SegmentMeta meta{.codec = _codec};
-      meta.name = FileName(NextSegmentId());
-      return meta;
-    },
-    options);
-  // recreate writer if it reserved more memory than allowed by current limits
-  if (_segment_limits.Memory() < segment->writer->memory_reserved()) {
-    segment->writer = SegmentWriter::make(segment->dir, options);
-  }
-  return {std::move(segment), _segments_active};
 }
 
 void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {

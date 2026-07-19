@@ -31,6 +31,7 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/append_state.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -362,12 +363,10 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     ReplayDelete(chunk, row_ids);
     return;
   }
-  if (!_storage) {
-    auto snapshot = conn->CatalogSnapshot();
-    auto inverted = snapshot->GetObject<catalog::InvertedIndex>(_index_id);
-    if (inverted) {
-      _storage = inverted->GetData();
-    }
+  std::shared_ptr<search::InvertedIndexStorage> storage;
+  if (auto inverted =
+        conn->CatalogSnapshot()->GetObject<catalog::InvertedIndex>(_index_id)) {
+    storage = inverted->GetData();
   }
   duckdb::UnifiedVectorFormat fmt;
   row_ids.ToUnifiedFormat(count, fmt);
@@ -388,29 +387,22 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     writer->Finish();
     conn->RegisterSearchFlush();
   };
-  if (_storage && _storage->IsDeleteLogOpen()) {
-    // Build in progress (rare path, so the copy is fine): the delete log
-    // covers the rowid window [begin, end). Below begin the backfill copy is
-    // already committed and above end the row was inserted during the build
-    // through the live writer -- in both cases the native remove masks the
-    // doc, so only the window in between (rows the scan may still copy
-    // uncommitted) defers to the log.
-    std::vector<int64_t> rows(count);
+  if (storage && storage->IsDeleteLogOpen()) {
+    const auto log_begin = storage->DeleteLogRowidBegin();
+    const auto log_end = storage->DeleteLogRowidEnd();
+    std::vector<int64_t> native;
+    std::vector<int64_t> logged;
+    native.reserve(count);
+    logged.reserve(count);
     for (duckdb::idx_t i = 0; i < count; ++i) {
-      rows[i] = data[fmt.sel->get_index(i)];
+      const int64_t row = data[fmt.sel->get_index(i)];
+      (row < log_begin || row >= log_end ? native : logged).push_back(row);
     }
-    const auto log_begin = _storage->DeleteLogRowidBegin();
-    const auto log_end = _storage->DeleteLogRowidEnd();
-    const auto native_end = absl::c_partition(
-      rows, [&](int64_t row) { return row < log_begin || row >= log_end; });
-    std::vector<int64_t> logged(native_end, rows.end());
-    if (!logged.empty() && _storage->AppendDeleteLog(std::move(logged))) {
-      rows.erase(native_end, rows.end());
+    if (!logged.empty() && !storage->AppendDeleteLog(std::move(logged))) {
+      absl::c_move(logged, std::back_inserter(native));
     }
-    // else: lost the race with publish -- the log is latched and `rows`
-    // still holds everything, all normal post-publish removes now.
-    if (!rows.empty()) {
-      write_rows(rows.size(), [&](size_t i) { return rows[i]; });
+    if (!native.empty()) {
+      write_rows(native.size(), [&](size_t i) { return native[i]; });
     }
     return;
   }

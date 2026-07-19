@@ -969,10 +969,6 @@ class IndexWriter : private util::Noncopyable {
   // Return a usable segment or a nullptr segment if retry is required
   // (e.g. no free segments available)
   ActiveSegmentContext GetSegmentContext();
-  // Fresh pool segment WITHOUT consulting the pending_freelist: never adopts
-  // another operation's context (no foreign buffered docs, no flush-context
-  // pin). Used by commit-on-flush (bulk) transactions for every acquisition.
-  ActiveSegmentContext CreateSegmentContext();
 
   // Return options for SegmentWriter. `field_options` (nullable, merge path)
   // overrides the construction-time fallback for a single compaction.

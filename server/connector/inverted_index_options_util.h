@@ -20,7 +20,8 @@
 
 #pragma once
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <array>
 #include <duckdb/common/types/value.hpp>
 #include <limits>
@@ -66,13 +67,15 @@ inline constexpr std::array<std::string_view, 10> kNumericInvertedOptions = {
 // create-time-only string options.
 inline constexpr auto kCreateInvertedOptions = [] {
   std::array<std::string_view, kNumericInvertedOptions.size() + 2> all{};
-  std::ranges::copy(kNumericInvertedOptions, all.begin());
+  for (size_t i = 0; i < kNumericInvertedOptions.size(); ++i) {
+    all[i] = kNumericInvertedOptions[i];
+  }
   all[kNumericInvertedOptions.size()] = "optimize_top_k";
   all[kNumericInvertedOptions.size() + 1] = "store_pk";
   return all;
 }();
 
-inline constexpr bool IsUint32InvertedOption(std::string_view name) {
+inline bool IsUint32InvertedOption(std::string_view name) {
   constexpr std::array<std::string_view, 7> kUint32Options = {
     "row_group_size",
     "norm_row_group_size",
@@ -82,21 +85,21 @@ inline constexpr bool IsUint32InvertedOption(std::string_view name) {
     kSegmentDocsMaxSetting,
     kCompactionMaxSegmentsSetting,
   };
-  return std::ranges::contains(kUint32Options, name);
+  return absl::c_contains(kUint32Options, name);
 }
 
 // Options where 0 is a real value, not a rejected degenerate: iresearch
 // defines segment_docs_max 0 == unlimited, and a maintenance interval (or
 // cleanup step) of 0 disables that background task -- the established idiom
 // deterministic tests rely on.
-inline constexpr bool IsZeroAllowedInvertedOption(std::string_view name) {
+inline bool IsZeroAllowedInvertedOption(std::string_view name) {
   constexpr std::array<std::string_view, 4> kZeroAllowed = {
     kSegmentDocsMaxSetting,
     kRefreshIntervalSetting,
     kCompactionIntervalSetting,
     kCleanupIntervalStepSetting,
   };
-  return std::ranges::contains(kZeroAllowed, name);
+  return absl::c_contains(kZeroAllowed, name);
 }
 
 // Validates a value for a numeric inverted-index option; the one validator

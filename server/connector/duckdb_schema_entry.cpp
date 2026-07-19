@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_schema_entry.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/constants.hpp>
@@ -945,7 +947,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         duckdb::AlterTableType::RESET_TABLE_OPTIONS) {
     auto& context = transaction.GetContext();
     const auto require_alterable = [](std::string_view option) {
-      if (!std::ranges::contains(kAlterableInvertedOptions, option)) {
+      if (!absl::c_contains(kAlterableInvertedOptions, option)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("option \"", option,
                                 "\" cannot be changed with ALTER INDEX"));

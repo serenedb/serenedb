@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_physical_create_index.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
 #include <atomic>
@@ -308,7 +309,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     for (const auto& [option, value] : _info->options) {
       const auto lower = duckdb::StringUtil::Lower(option);
       if (lower.starts_with("_sdb_") ||
-          std::ranges::contains(kCreateInvertedOptions, lower)) {
+          absl::c_contains(kCreateInvertedOptions, lower)) {
         continue;
       }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -721,7 +722,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     if (!delete_log.empty()) {
       // Sorted rowids encode to lexicographically sorted pk terms, so the
       // remove filter walks each segment's term dictionary sequentially.
-      std::ranges::sort(delete_log);
+      absl::c_sort(delete_log);
       auto trx = inverted_storage.GetTransaction();
       DuckDBSearchSinkDeleteWriter delete_writer{trx};
       delete_writer.Init(delete_log.size(), {});

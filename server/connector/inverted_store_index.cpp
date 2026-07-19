@@ -20,9 +20,9 @@
 
 #include "connector/inverted_store_index.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 
-#include <algorithm>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
@@ -401,9 +401,8 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     }
     const auto log_begin = _storage->DeleteLogRowidBegin();
     const auto log_end = _storage->DeleteLogRowidEnd();
-    const auto native_end = std::partition(
-      rows.begin(), rows.end(),
-      [&](int64_t row) { return row < log_begin || row >= log_end; });
+    const auto native_end = absl::c_partition(
+      rows, [&](int64_t row) { return row < log_begin || row >= log_end; });
     std::vector<int64_t> logged(native_end, rows.end());
     if (!logged.empty() && _storage->AppendDeleteLog(std::move(logged))) {
       rows.erase(native_end, rows.end());

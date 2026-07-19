@@ -677,47 +677,38 @@ void CollectSegmentTopK(SearchFullScanTopKLocalState& s,
   const irs::StatsBuffer& stats =
     g.stats ? *g.stats : irs::StatsBuffer::Empty();
 
-  bool done = false;
-  // A `.col` filter must be applied by the TableFilterDocIterator (path below);
-  // the direct CollectTopK fast path bypasses the iterator, so skip it then.
-  if (g.col_filters.empty() && seg.docs_mask() == nullptr &&
-      seg_query.CollectTopK(collector, {.wand = {.wand_enabled = false}},
-                            stats)) {
-    collector.SetScoreThreshold(s.local_threshold);
-    done = true;
-  }
-  if (!done) {
-    const bool wand_enabled =
-      WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
-    irs::DocIterator::ptr it = seg.mask(
-      seg_query.Execute({.wand = {.wand_enabled = wand_enabled}}, stats));
-    if (!g.col_filters.empty()) {
-      // Filter the collected docs by the covered `.col` values, so top-k is
-      // selected over survivors (codec Filter + zonemap in the wrapper).
-      std::vector<TableFilterDocIterator::FilterSpec> specs;
-      specs.reserve(g.col_filters.size());
-      for (const auto& cf : g.col_filters) {
-        specs.push_back(
-          {.field = cf.field, .filter = cf.filter, .is_score = cf.is_score});
-      }
-      const auto* col_reader = seg.GetColReader();
-      SDB_ASSERT(col_reader != nullptr,
-                 "`.col` table filter requires a columnstore segment");
-      it = irs::memory::make_managed<TableFilterDocIterator>(
-        std::move(it), *col_reader, specs, *g.client_context);
+  const bool wand_enabled =
+    WandEnabled(s.bind_data->inverted_index.get(), search.text_scorer);
+  irs::DocIterator::ptr it = seg.mask(seg_query.Execute(
+    {.wand = {.wand_enabled = wand_enabled},
+     .top_k_collect =
+       search.vector_scorer.has_value() && g.col_filters.empty()},
+    stats));
+  if (!g.col_filters.empty()) {
+    // Filter the collected docs by the covered `.col` values, so top-k is
+    // selected over survivors (codec Filter + zonemap in the wrapper).
+    std::vector<TableFilterDocIterator::FilterSpec> specs;
+    specs.reserve(g.col_filters.size());
+    for (const auto& cf : g.col_filters) {
+      specs.push_back(
+        {.field = cf.field, .filter = cf.filter, .is_score = cf.is_score});
     }
-    auto score_func = it->PrepareScore({
-      .scorer = g.scorer_obj.get(),
-      .segment = &seg,
-      .fetcher = &s.score_fetcher,
-    });
-    if (auto* it_threshold =
-          irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
-      collector.SetScoreThreshold(it_threshold->value);
-    }
-    it->Collect(score_func, s.score_fetcher, collector);
-    collector.SetScoreThreshold(s.local_threshold);
+    const auto* col_reader = seg.GetColReader();
+    SDB_ASSERT(col_reader != nullptr,
+               "`.col` table filter requires a columnstore segment");
+    it = irs::memory::make_managed<TableFilterDocIterator>(
+      std::move(it), *col_reader, specs, *g.client_context);
   }
+  auto score_func = it->PrepareScore({
+    .scorer = g.scorer_obj.get(),
+    .segment = &seg,
+    .fetcher = &s.score_fetcher,
+  });
+  if (auto* it_threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
+    collector.SetScoreThreshold(it_threshold->value);
+  }
+  it->Collect(score_func, s.score_fetcher, collector);
+  collector.SetScoreThreshold(s.local_threshold);
 
   const irs::score_t kth = s.local_threshold;
   auto cur = g.global_kth_score.load(std::memory_order_relaxed);

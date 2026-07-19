@@ -46,9 +46,6 @@ class KnnVectorQuery : public QueryBuilder {
   DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& stats) const final;
 
-  bool CollectTopK(ScoreCollector& collector, const ExecutionContext& ctx,
-                   const StatsBuffer& stats) const final;
-
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }

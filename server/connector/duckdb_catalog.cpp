@@ -846,7 +846,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 namespace {
 
 // WITH (on_conflict = 'throw' | 'nothing') -- duplicate lookup-key policy for
-// indexes over attached external-DB tables (PkSpec::ExternalDBKey), whose key
+// indexes over attached external-DB tables (an external key (PkSpec::ExternalRowId/ExternalColumnKey), whose key
 // is a column VALUE the engine may not keep unique (a ClickHouse "primary
 // key" is only the sorting prefix). 'throw' (default) probes the source at
 // build time and refuses on the first duplicated key; 'nothing' indexes the
@@ -858,7 +858,7 @@ namespace {
 void ApplyExternalKeyOnConflict(duckdb::CreateIndexInfo& info,
                                 const std::optional<ViewFastPath>& fast_path) {
   const bool external_key =
-    fast_path && fast_path->pk_spec == catalog::PkSpec::ExternalDBKey;
+    fast_path && catalog::IsExternalPK(fast_path->pk_spec);
   std::string action = "throw";
   if (auto it = info.options.find("on_conflict"); it != info.options.end()) {
     if (!external_key) {
@@ -876,16 +876,16 @@ void ApplyExternalKeyOnConflict(duckdb::CreateIndexInfo& info,
                               "\": expected 'throw' or 'nothing'"));
     }
   }
-  if (external_key && fast_path->pk_is_struct && action == "nothing") {
+  if (external_key && action == "nothing" && !ExternalKeyIsI64(*fast_path)) {
     // The 'nothing' collapse keeps the first row per key using a single-int64
-    // seen-set (the I64 shape); a user struct key holds arbitrary-typed values,
-    // which that set can't dedup. 'throw' (the default) probes the key columns
-    // and is fine.
+    // seen-set (the I64 storage shape); a struct key (a non-BIGINT column, or
+    // more than one) holds arbitrary-typed values that set can't dedup. 'throw'
+    // (the default) probes the key columns and is fine.
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("on_conflict = 'nothing' is not supported for a user-specified "
-              "(key_columns) lookup key; deduplicate the source or index on a "
-              "single unique auto-detected key"));
+      ERR_MSG("on_conflict = 'nothing' is not supported for a multi-column or "
+              "non-integer lookup key; deduplicate the source or index on a "
+              "single BIGINT key"));
   }
   if (external_key && fast_path->pk_uniqueness == PkUniqueness::Unverified) {
     // The policy applies: carry the validated (lowercased) action forward on
@@ -974,10 +974,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         const auto vcol = vcols[i];
         if (vcol == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
           pk_types.push_back(duckdb::LogicalType::UBIGINT);
-        } else if (view_fast_path->pk_is_struct) {
+        } else if (view_fast_path->pk_spec ==
+                   catalog::PkSpec::ExternalColumnKey) {
           // Real key columns of arbitrary types -- project their own types, not
           // a hardcoded BIGINT (which only fits the file/rowid int64 keys).
-          pk_types.push_back(view_fast_path->pk_struct_types[i]);
+          pk_types.push_back(view_fast_path->key_columns[i].type);
         } else {
           pk_types.push_back(duckdb::LogicalType::BIGINT);
         }
@@ -1219,12 +1220,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         [](const std::string& n) { return duckdb::Identifier{n}; }));
     create_index_info->SetSchema(target.ParentSchema().name);
     create_index_info->SetCatalog(target.ParentCatalog().GetName());
-    if (view_fast_path && view_fast_path->pk_is_struct) {
-      // A user-specified key (WITH key_columns): the projected key columns are
-      // packed into one struct column (PkColumnKind::Struct), independent of
-      // their count/types.
-      create_index_info->options["_sdb_view_fast_path_pk"] =
-        duckdb::Value("external_struct_key");
+    if (view_fast_path && catalog::IsExternalPK(view_fast_path->pk_spec)) {
+      // External key: stored as one BIGINT (ctid rowid or a single BIGINT
+      // column) or as a struct of the key columns' types (ExternalKeyIsI64).
+      create_index_info->options["_sdb_view_fast_path_pk"] = duckdb::Value(
+        ExternalKeyIsI64(*view_fast_path) ? "external_i64" : "external_struct_key");
     } else if (view_fast_path) {
       switch (view_fast_path->pk_spec) {
         case catalog::PkSpec::DuckDBRowId:

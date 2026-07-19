@@ -365,19 +365,17 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // User-specified lookup key via CREATE INDEX WITH (key_columns = '...'):
       // the user asserts which column(s) are the key (their PK or a secondary
       // key), overriding the auto-detected default (postgres ctid / clickhouse
-      // PK). Any number of columns (>= 1) of any types are stored together as
-      // ONE struct column and re-fetched via `col IN (...)` (single column) or
-      // an OR of per-row equalities `(a=.. AND b=..) OR ...` (multiple). An
-      // unknown column name falls back to no fast path.
-      std::vector<duckdb::column_t> idxs(key_columns.size());
-      std::vector<duckdb::LogicalType> types(key_columns.size());
+      // PK). Any number of columns (>= 1) of any types. An unknown column name
+      // falls back to no fast path.
+      duckdb::vector<ExternalKeyColumn> cols(key_columns.size());
       std::vector<bool> found(key_columns.size(), false);
       duckdb::idx_t pos = 0;
       for (const auto& col : entry.GetColumns().Logical()) {
         for (size_t k = 0; k < key_columns.size(); ++k) {
           if (!found[k] && col.Name() == key_columns[k]) {
-            idxs[k] = static_cast<duckdb::column_t>(pos);
-            types[k] = col.GetType();
+            cols[k] = {.name = key_columns[k],
+                       .source_index = static_cast<duckdb::column_t>(pos),
+                       .type = col.GetType()};
             found[k] = true;
           }
         }
@@ -390,27 +388,22 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.catalog_ref = ext_ref;
-      out.pk_spec = catalog::PkSpec::ExternalDBKey;
-      out.pk_is_struct = true;
-      out.pk_struct_indices = std::move(idxs);
-      out.pk_struct_types = std::move(types);
-      out.pk_struct_names.assign(key_columns.begin(), key_columns.end());
+      out.pk_spec = catalog::PkSpec::ExternalColumnKey;
+      out.key_columns = std::move(cols);
       out.pk_uniqueness = PkUniqueness::Unverified;
       out.projection_columns = std::move(projection_columns);
       return out;
     }
     if (cat_type == "postgres") {
       // Postgres: key the lookup on the row's physical locator, ctid (surfaced
-      // by the connector as the duckdb rowid), NOT a PK column. This is
+      // by the connector as the duckdb rowid), NOT a real column. This is
       // universal -- no PRIMARY KEY required, works for any table -- and a ctid
       // is unique within the (static) index's snapshot. The build projects the
-      // rowid; the lookup renders `rowid IN (...)`, which
-      // postgres_filter_pushdown turns into a `ctid IN (...)` TID scan on the
-      // remote.
+      // rowid; the lookup renders `rowid IN (...)`, which postgres_filter_
+      // pushdown turns into a `ctid IN (...)` TID scan on the remote.
       ViewFastPath out;
       out.catalog_ref = ext_ref;
-      out.pk_spec = catalog::PkSpec::ExternalDBKey;
-      out.pk_is_rowid = true;
+      out.pk_spec = catalog::PkSpec::ExternalRowId;
       out.pk_uniqueness = PkUniqueness::Enforced;
       out.projection_columns = std::move(projection_columns);
       return out;
@@ -419,8 +412,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // ClickHouse can't use a physical locator: its part+offset row id is
       // invalidated by background merges/compaction, so key on the MergeTree
       // sorting-prefix PK column (from system.columns.is_in_primary_key, read
-      // via the engine-agnostic catalog API). v1: a single 64-bit integer
-      // column; anything else -> no fast path -> materialisation unsupported.
+      // via the engine-agnostic catalog API) -- i.e. auto-detected key_columns.
+      // v1: a single 64-bit integer column; anything else -> no fast path.
       // NB: the ClickHouse "primary key" is only a sorting prefix, not a
       // uniqueness constraint (correctness assumes uniqueness -- see
       // on_conflict).
@@ -445,9 +438,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       duckdb::idx_t pos = 0;
       for (const auto& col : entry.GetColumns().Logical()) {
         if (col.Name() == *pk_name) {
-          // v1: a signed 64-bit key. The index keys postings via the int64
-          // primary-key encoding and the materialiser renders the value back
-          // into a `WHERE pk IN (...)` list -- both exact only for BIGINT.
+          // v1: a signed 64-bit key -- both the int64 storage and the re-fetch
+          // are exact only for BIGINT.
           if (col.GetType().id() != duckdb::LogicalTypeId::BIGINT) {
             return std::nullopt;
           }
@@ -461,9 +453,10 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       }
       ViewFastPath out;
       out.catalog_ref = ext_ref;
-      out.pk_spec = catalog::PkSpec::ExternalDBKey;
-      out.pk_column_index = *pk_index;
-      out.pk_column_name = std::move(*pk_name);
+      out.pk_spec = catalog::PkSpec::ExternalColumnKey;
+      out.key_columns.push_back({.name = std::move(*pk_name),
+                                 .source_index = *pk_index,
+                                 .type = duckdb::LogicalType::BIGINT});
       out.pk_uniqueness = PkUniqueness::Unverified;
       out.projection_columns = std::move(projection_columns);
       return out;
@@ -601,19 +594,19 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
-  if (fp.pk_spec == catalog::PkSpec::ExternalDBKey) {
-    if (fp.pk_is_rowid) {
-      // Postgres ctid: the key is the virtual rowid, not a real column.
-      return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+  if (fp.pk_spec == catalog::PkSpec::ExternalRowId) {
+    // Postgres ctid: the key is the virtual rowid, not a real column.
+    return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+  }
+  if (fp.pk_spec == catalog::PkSpec::ExternalColumnKey) {
+    // Project the key columns in order so the index sink can key postings by
+    // their values (stored as a single BIGINT or a struct -- ExternalKeyIsI64).
+    std::vector<duckdb::column_t> ids;
+    ids.reserve(fp.key_columns.size());
+    for (const auto& kc : fp.key_columns) {
+      ids.push_back(kc.source_index);
     }
-    if (fp.pk_is_struct) {
-      // The key columns are projected in order and packed into ONE struct
-      // column (PkColumnKind::Struct) by the index sink.
-      return fp.pk_struct_indices;
-    }
-    // The PK is a real source column (not a virtual one); project it so the
-    // index sink can key postings by its value.
-    return {fp.pk_column_index};
+    return ids;
   }
   if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};

@@ -69,7 +69,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
         context, std::move(*fp), projected_columns, projected_types,
         bind_column_ids, pushed_filters);
     }
-    if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::ExternalDBKey) {
+    if (fp->catalog_ref && catalog::IsExternalPK(fp->pk_spec)) {
       return std::make_unique<ExternalLookupIndexSource>(
         context, std::move(*fp), projected_columns, projected_types,
         bind_column_ids);

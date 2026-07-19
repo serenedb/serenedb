@@ -88,20 +88,15 @@ void ThrowOnDuplicateExternalKeys(duckdb::ClientContext& context,
   const auto table = absl::StrCat(catalog::QuoteSqlIdentifier(ref.catalog), ".",
                                   catalog::QuoteSqlIdentifier(ref.schema), ".",
                                   catalog::QuoteSqlIdentifier(ref.table));
-  // The key is the auto single column, or the user's key_columns list (any
-  // count) -- the GROUP BY / projection list is the same either way.
+  // Only an ExternalColumnKey (Unverified uniqueness) is probed; the GROUP BY /
+  // projection list is its key columns (auto metadata PK or user key_columns).
+  const auto n_key_cols = fast_path.key_columns.size();
   std::string key;
-  duckdb::idx_t n_key_cols = 1;
-  if (fast_path.pk_is_struct) {
-    n_key_cols = fast_path.pk_struct_names.size();
-    for (const auto& name : fast_path.pk_struct_names) {
-      if (!key.empty()) {
-        absl::StrAppend(&key, ", ");
-      }
-      absl::StrAppend(&key, catalog::QuoteSqlIdentifier(name));
+  for (const auto& kc : fast_path.key_columns) {
+    if (!key.empty()) {
+      absl::StrAppend(&key, ", ");
     }
-  } else {
-    key = catalog::QuoteSqlIdentifier(fast_path.pk_column_name);
+    absl::StrAppend(&key, catalog::QuoteSqlIdentifier(kc.name));
   }
   const auto sql =
     absl::StrCat("SELECT ", key, ", count(*) AS n FROM ", table, " GROUP BY ",
@@ -342,7 +337,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       state->collapse_dup_keys = true;
     } else {
       // 'throw': probe the source for duplicate keys before building. The
-      // option is stamped by BindCreateIndex only for an ExternalDBKey view,
+      // option is stamped by BindCreateIndex only for an external-key view,
       // but the source can change between bind and execute (DETACH, CREATE OR
       // REPLACE VIEW, a remote PK ALTER), so re-resolve and error cleanly
       // rather than blindly trusting the earlier decision -- a stale assumption

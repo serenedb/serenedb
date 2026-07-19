@@ -50,6 +50,15 @@ struct CatalogTableRef {
   std::string table;
 };
 
+// One column of a PkSpec::ExternalColumnKey lookup key. The list is the same
+// whether the columns came from the engine's PK metadata (clickhouse) or the
+// user's WITH (key_columns = '...').
+struct ExternalKeyColumn {
+  std::string name;               // source column name (WHERE + re-fetch)
+  duckdb::column_t source_index;  // position in the source table (projection)
+  duckdb::LogicalType type;       // projected + stored type
+};
+
 // What the source engine promises about the lookup key's uniqueness.
 enum class PkUniqueness {
   // Only a sorting/ordering hint (a ClickHouse MergeTree "primary key") --
@@ -70,34 +79,29 @@ struct ViewFastPath {
   // 0 = not pinned. Set at query time from the index's commit payload.
   int64_t pinned_iceberg_snapshot_id = 0;
   catalog::PkSpec pk_spec;
-  // For PkSpec::ExternalDBKey: the engine-metadata PK column the index keys on
-  // and re-fetches by (`WHERE pk_column_name IN (...)`). pk_column_index is the
-  // column's position in the source table (for BackfillPkVirtualColumns).
-  duckdb::column_t pk_column_index = 0;
-  std::string pk_column_name;
-  // For a user-specified key (CREATE INDEX WITH key_columns = 'a, b, ...'): the
-  // key columns, in order, of ANY types and ANY count >= 1. They are stored
-  // together as ONE struct column (PkColumnKind::Struct) and re-fetched via
-  // `WHERE col IN (...)` (one column) or an OR of per-row equalities
-  // `WHERE (a=.. AND b=..) OR ...` (more than one). pk_is_struct gates this
-  // path; pk_column_index/pk_column_name above are for the auto single-column
-  // key (clickhouse metadata PK) and are unused when pk_is_struct.
-  bool pk_is_struct = false;
-  duckdb::vector<duckdb::column_t> pk_struct_indices;
-  duckdb::vector<std::string> pk_struct_names;
-  duckdb::vector<duckdb::LogicalType> pk_struct_types;
+  // For PkSpec::ExternalColumnKey: the key columns, in order (any types, any
+  // count >= 1). Empty for PkSpec::ExternalRowId (postgres ctid -- keyed on the
+  // virtual rowid, no real columns). The lookup renders `WHERE rowid IN (...)`
+  // (ExternalRowId, pushed as a `ctid IN (...)` TID scan) or `WHERE col IN
+  // (...)` / an OR of per-row equalities (ExternalColumnKey).
+  duckdb::vector<ExternalKeyColumn> key_columns;
   PkUniqueness pk_uniqueness = PkUniqueness::Unverified;
-  // For PkSpec::ExternalDBKey over postgres: key on the row's physical locator
-  // (ctid, surfaced as the duckdb rowid) instead of a PK column -- universal
-  // (no PK needed) and unique within the static index's snapshot. The build
-  // projects the rowid; the lookup renders `rowid IN (...)`, pushed as a `ctid
-  // IN (...)` TID scan. pk_column_index/pk_column_name are unused in this mode.
-  bool pk_is_rowid = false;
   // Whether the backing reader's lookup applies pushed table filters (parquet /
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see
   // IResearchSupportsPushdownType.
   bool supports_filters = false;
 };
+
+// An external key is stored as a single BIGINT column (I64) when it is the ctid
+// rowid or a single BIGINT column -- both fit the int64 fast path (and its
+// on_conflict = 'nothing' collapse). Any other shape (a non-BIGINT column, or
+// more than one column) is stored as a STRUCT column of the key columns' types.
+inline bool ExternalKeyIsI64(const ViewFastPath& fp) noexcept {
+  return fp.pk_spec == catalog::PkSpec::ExternalRowId ||
+         (fp.pk_spec == catalog::PkSpec::ExternalColumnKey &&
+          fp.key_columns.size() == 1 &&
+          fp.key_columns[0].type.id() == duckdb::LogicalTypeId::BIGINT);
+}
 
 // `key_columns`: user-specified external-DB lookup key columns (CREATE INDEX
 // WITH key_columns). Empty = auto-detect the default key (postgres ctid /

@@ -93,24 +93,22 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
       return types[source_col];
     });
 
-  // The key column expression(s). A user Struct key is the user's key_columns
-  // (any count, any types). Otherwise a single key: the bare `rowid` keyword
-  // for the postgres ctid path (a `rowid IN (...)` predicate the connector
-  // pushes down as a `ctid IN (...)` TID scan; `rowid` is a pseudo-column,
-  // never quoted), or the quoted clickhouse metadata PK column.
-  if (_fast_path.pk_is_struct) {
-    _key_cols.reserve(_fast_path.pk_struct_names.size());
-    for (const auto& name : _fast_path.pk_struct_names) {
-      _key_cols.push_back(Quote(name));
-    }
-    _pk_kind = PrimaryKeyBatch::Kind::Struct;
-  } else if (_fast_path.pk_is_rowid) {
+  // The key column expression(s). ExternalRowId keys on the bare `rowid`
+  // keyword (a `rowid IN (...)` predicate the connector pushes down as a `ctid
+  // IN (...)` TID scan; `rowid` is a pseudo-column, never quoted).
+  // ExternalColumnKey keys on the quoted key columns (metadata PK or user
+  // key_columns, 1..N). Storage is int64 (ExternalKeyIsI64: rowid or a single
+  // BIGINT column) or a struct -- which drives how Materialize reads the batch.
+  if (_fast_path.pk_spec == catalog::PkSpec::ExternalRowId) {
     _key_cols.push_back("rowid");
-    _pk_kind = PrimaryKeyBatch::Kind::I64;
   } else {
-    _key_cols.push_back(Quote(_fast_path.pk_column_name));
-    _pk_kind = PrimaryKeyBatch::Kind::I64;
+    _key_cols.reserve(_fast_path.key_columns.size());
+    for (const auto& kc : _fast_path.key_columns) {
+      _key_cols.push_back(Quote(kc.name));
+    }
   }
+  _pk_kind = ExternalKeyIsI64(_fast_path) ? PrimaryKeyBatch::Kind::I64
+                                          : PrimaryKeyBatch::Kind::Struct;
 
   // The key column(s) always lead the result; the projected real columns
   // follow at <num_keys>..N. A fixed leading key keeps the layout valid even

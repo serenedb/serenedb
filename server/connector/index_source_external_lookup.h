@@ -33,7 +33,7 @@ namespace sdb::connector {
 
 // Point lookup for a view over an attached external-DB table (ClickHouse,
 // postgres) keyed by the table's own primary-key value
-// (PkSpec::ExternalDBKey). Matched rows are re-fetched with
+// (PkSpec::ExternalRowId / ExternalColumnKey). Matched rows are re-fetched with
 //   SELECT <pk>, <projection> FROM <catalog>.<schema>.<table>
 //   WHERE <pk> IN (<keys>)
 // -- plain DuckDB SQL through the attached catalog, so the connector's own

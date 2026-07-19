@@ -846,15 +846,16 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 namespace {
 
 // WITH (on_conflict = 'throw' | 'nothing') -- duplicate lookup-key policy for
-// indexes over attached external-DB tables (an external key (PkSpec::ExternalRowId/ExternalColumnKey), whose key
-// is a column VALUE the engine may not keep unique (a ClickHouse "primary
-// key" is only the sorting prefix). 'throw' (default) probes the source at
-// build time and refuses on the first duplicated key; 'nothing' indexes the
-// first row seen per key and drops the rest. Either way the built index holds
-// at most one document per key, which lookup correctness rests on. The
-// validated policy is stamped for SereneDBPhysicalCreateIndex; when the
-// engine enforces uniqueness itself (PkUniqueness::Enforced) there is nothing
-// to check or collapse, so nothing is stamped.
+// indexes over attached external-DB tables (an external key
+// (PkSpec::ExternalRowId/ExternalColumnKey), whose key is a column VALUE the
+// engine may not keep unique (a ClickHouse "primary key" is only the sorting
+// prefix). 'throw' (default) probes the source at build time and refuses on the
+// first duplicated key; 'nothing' indexes the first row seen per key and drops
+// the rest. Either way the built index holds at most one document per key,
+// which lookup correctness rests on. The validated policy is stamped for
+// SereneDBPhysicalCreateIndex; when the engine enforces uniqueness itself
+// (PkUniqueness::Enforced) there is nothing to check or collapse, so nothing is
+// stamped.
 void ApplyExternalKeyOnConflict(duckdb::CreateIndexInfo& info,
                                 const std::optional<ViewFastPath>& fast_path) {
   const bool external_key =
@@ -1224,7 +1225,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       // External key: stored as one BIGINT (ctid rowid or a single BIGINT
       // column) or as a struct of the key columns' types (ExternalKeyIsI64).
       create_index_info->options["_sdb_view_fast_path_pk"] = duckdb::Value(
-        ExternalKeyIsI64(*view_fast_path) ? "external_i64" : "external_struct_key");
+        ExternalKeyIsI64(*view_fast_path) ? "external_i64"
+                                          : "external_struct_key");
     } else if (view_fast_path) {
       switch (view_fast_path->pk_spec) {
         case catalog::PkSpec::DuckDBRowId:

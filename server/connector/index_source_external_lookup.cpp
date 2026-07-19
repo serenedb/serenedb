@@ -148,7 +148,8 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   } else {
     SDB_ASSERT(start + count <= pk.rows.size());
   }
-  const auto key_value = [&](duckdb::idx_t i, duckdb::idx_t k) -> duckdb::Value {
+  const auto key_value = [&](duckdb::idx_t i,
+                             duckdb::idx_t k) -> duckdb::Value {
     return is_struct ? (*fields)[k].GetValue(i)
                      : duckdb::Value::BIGINT(pk.rows[start + i]);
   };
@@ -250,7 +251,8 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
       for (const auto slot : it->second) {
         for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
           duckdb::VectorOperations::Copy(chunk->data[c + num_key_cols],
-                                         _tf_target.data[c], row + 1, row, slot);
+                                         _tf_target.data[c], row + 1, row,
+                                         slot);
         }
       }
       pending.erase(it);

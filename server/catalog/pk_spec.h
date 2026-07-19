@@ -33,7 +33,8 @@ enum class PkSpec : uint8_t {
   DuckDBRowId,
   FileIndexPlusDuckDBRowId,
   // Attached external DB (postgres/clickhouse). Both re-fetch matched rows by
-  // value via SQL through the connector; they differ only in the key expression.
+  // value via SQL through the connector; they differ only in the key
+  // expression.
   //   ExternalRowId    -- the remote physical row locator (postgres ctid,
   //                       surfaced as the duckdb rowid). Mirrors DuckDBRowId.
   //   ExternalColumnKey -- one or more real columns (the engine's PK metadata

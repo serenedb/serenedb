@@ -36,7 +36,7 @@ namespace sdb::connector {
 inline uint32_t ResolveUintWithOption(duckdb::ClientContext& context,
                                       std::string_view name,
                                       const duckdb::Value* with_value) {
-  if (with_value != nullptr) {
+  if (with_value) {
     return with_value->GetValue<uint32_t>();
   }
   duckdb::Value value;
@@ -49,7 +49,7 @@ inline uint32_t ResolveUintWithOption(duckdb::ClientContext& context,
 inline uint64_t ResolveUbigintWithOption(duckdb::ClientContext& context,
                                          std::string_view name,
                                          const duckdb::Value* with_value) {
-  if (with_value != nullptr) {
+  if (with_value) {
     return with_value->GetValue<uint64_t>();
   }
   duckdb::Value value;

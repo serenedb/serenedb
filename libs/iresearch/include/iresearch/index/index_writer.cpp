@@ -760,7 +760,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
       segment.Reset(true);
       throw;
     }
-    if (commit_on_flush != nullptr) {
+    if (commit_on_flush) {
       SDB_ASSERT(_queries == 0);
       if (!Commit()) {
         throw IllegalState{"commit-on-flush failed"};

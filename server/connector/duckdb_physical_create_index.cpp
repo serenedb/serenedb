@@ -156,6 +156,13 @@ catalog::Table* SereneDBPhysicalCreateIndex::TableOrNull() const noexcept {
   return nullptr;
 }
 
+bool SereneDBPhysicalCreateIndex::IsDuckDBTable() const noexcept {
+  auto* table = TableOrNull();
+  SDB_ASSERT(table == nullptr ||
+             table->GetEngine() == catalog::TableEngine::Transactional);
+  return table != nullptr;
+}
+
 const std::vector<catalog::Column>& SereneDBPhysicalCreateIndex::Columns()
   const noexcept {
   if (auto* t = TableOrNull()) {
@@ -345,7 +352,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         store_pk = "none";
       }
     }
-    const bool table_backed = TableOrNull() != nullptr;
+    const bool table_backed = IsDuckDBTable();
     enum class KeyShape { Single, Two, Synth };
     auto shape = KeyShape::Synth;
     if (table_backed) {
@@ -450,7 +457,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
     storage->StartTasks();
 
-    if (TableOrNull() != nullptr) {
+    if (IsDuckDBTable()) {
       auto database = snapshot->GetObject<catalog::Database>(_database_id);
       SDB_ASSERT(database);
       auto store_entry = catalog::GetStoreTableEntry(
@@ -569,8 +576,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     PkPolicy{.index_term = index_options.pk_term,
              .column = index_options.pk_column});
 
-  if (TableOrNull() != nullptr &&
-      gstate.pk_column == catalog::PkColumnKind::I64) {
+  if (IsDuckDBTable()) {
     auto& slot = lstate->uncommitted_min_slot;
     slot = gstate.registered_sinks.fetch_add(1, std::memory_order_relaxed);
     SDB_ASSERT(slot < gstate.uncommitted_min_rowids.size());

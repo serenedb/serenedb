@@ -40,6 +40,11 @@ namespace sdb::catalog {
 class Table;
 
 }  // namespace sdb::catalog
+namespace sdb::search {
+
+class InvertedIndexStorage;
+
+}  // namespace sdb::search
 namespace sdb::connector {
 
 // The inverted index as a first-class index on store tables: postings live

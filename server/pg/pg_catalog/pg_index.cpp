@@ -99,7 +99,13 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
         .indisexclusion = false,
         .indimmediate = true,
         .indisclustered = false,
-        .indisvalid = true,
+        // indisvalid = usable for QUERIES; indisready = maintained by WRITES
+        // (pg_index semantics). DML feeds the index from the moment it is
+        // attached (same catalog mutation that makes this row visible), so
+        // ready is always true; an in-flight online build shows
+        // ready=t/valid=f -- exactly PG's CREATE INDEX CONCURRENTLY mid
+        // phase.
+        .indisvalid = !index.Tombstoned(),
         .indcheckxmin = false,
         .indisready = true,
         .indislive = true,

@@ -134,6 +134,11 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
+  _tasks_settings.compaction_max_segments = options.compaction_max_segments;
+  _tasks_settings.compaction_max_segments_bytes =
+    options.compaction_max_segments_bytes;
+  _tasks_settings.compaction_floor_segment_bytes =
+    options.compaction_floor_segment_bytes;
 
   const auto schema_id = index.GetParentId();
   const auto db_id =
@@ -168,6 +173,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   // both values from the persisted segment meta below.
   _recovery_tick = TickDomain::Instance().Current();
   _last_durable_tick = _recovery_tick;
+  _delete_log_open = is_new;
   irs::ResourceManagementOptions resource_manager;
   resource_manager.transactions = _writers_memory;
   resource_manager.readers = _readers_memory;
@@ -177,7 +183,8 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
-  writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
+  writer_options.segment_memory_max = options.segment_memory_max;
+  writer_options.segment_docs_max = options.segment_docs_max;
 #ifdef SDB_DEV
   // Dev safety net: a second IndexWriter opening the same index directory (a
   // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock
@@ -271,6 +278,25 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
 
 void InvertedIndexStorage::StartTasks() {
   _search.StartTasks(shared_from_this());
+}
+
+void InvertedIndexStorage::ApplyOptions(
+  const catalog::InvertedIndexOptions& options) {
+  _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
+  _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
+  _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
+  _tasks_settings.compaction_max_segments = options.compaction_max_segments;
+  _tasks_settings.compaction_max_segments_bytes =
+    options.compaction_max_segments_bytes;
+  _tasks_settings.compaction_floor_segment_bytes =
+    options.compaction_floor_segment_bytes;
+
+  irs::SegmentOptions segment_options;
+  segment_options.segment_count_max = 0;
+  segment_options.segment_memory_max = options.segment_memory_max;
+  segment_options.segment_docs_max = options.segment_docs_max;
+  SDB_ASSERT(_writer);
+  _writer->Options(segment_options);
 }
 
 void InvertedIndexStorage::Refresh(
@@ -561,6 +587,34 @@ void InvertedIndexStorage::FinishCreation() {
 
 InvertedIndexStorage::Stats InvertedIndexStorage::GetStats() const {
   return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
+}
+
+bool InvertedIndexStorage::AppendDeleteLog(std::vector<int64_t>&& rows) {
+  duckdb::lock_guard<duckdb::mutex> lock{_delete_log_mutex};
+  if (!_delete_log_open.load(std::memory_order_relaxed)) {
+    return false;
+  }
+  _delete_log.push_back(std::move(rows));
+  return true;
+}
+
+std::vector<int64_t> InvertedIndexStorage::TakeDeleteLog() {
+  std::vector<std::vector<int64_t>> batches;
+  {
+    duckdb::lock_guard<duckdb::mutex> lock{_delete_log_mutex};
+    _delete_log_open.store(false, std::memory_order_release);
+    batches = std::exchange(_delete_log, {});
+  }
+  size_t total = 0;
+  for (const auto& batch : batches) {
+    total += batch.size();
+  }
+  std::vector<int64_t> rows;
+  rows.reserve(total);
+  for (const auto& batch : batches) {
+    rows.insert(rows.end(), batch.begin(), batch.end());
+  }
+  return rows;
 }
 
 }  // namespace sdb::search

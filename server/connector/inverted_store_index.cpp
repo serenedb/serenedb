@@ -20,6 +20,7 @@
 
 #include "connector/inverted_store_index.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -30,6 +31,7 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/append_state.hpp>
 #include <duckdb/storage/table_io_manager.hpp>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -361,24 +363,50 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     ReplayDelete(chunk, row_ids);
     return;
   }
-  auto writer = CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(
-    _table_id, _index_id, *conn);
-  if (!writer) {
+  std::shared_ptr<search::InvertedIndexStorage> storage;
+  if (auto inverted =
+        conn->CatalogSnapshot()->GetObject<catalog::InvertedIndex>(_index_id)) {
+    storage = inverted->GetData();
+  }
+  duckdb::UnifiedVectorFormat fmt;
+  row_ids.ToUnifiedFormat(count, fmt);
+  const auto* data = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
+  auto write_rows = [&](size_t n, auto&& row_at) {
+    auto writer = CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(
+      _table_id, _index_id, *conn);
+    if (!writer) {
+      return;
+    }
+    writer->Init(n, {});
+    std::string key;
+    for (size_t i = 0; i < n; ++i) {
+      key.clear();
+      primary_key::AppendSigned(key, row_at(i));
+      writer->DeleteRow(key);
+    }
+    writer->Finish();
+    conn->RegisterSearchFlush();
+  };
+  if (storage && storage->IsDeleteLogOpen()) {
+    const auto log_begin = storage->DeleteLogRowidBegin();
+    const auto log_end = storage->DeleteLogRowidEnd();
+    std::vector<int64_t> native;
+    std::vector<int64_t> logged;
+    native.reserve(count);
+    logged.reserve(count);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const int64_t row = data[fmt.sel->get_index(i)];
+      (row < log_begin || row >= log_end ? native : logged).push_back(row);
+    }
+    if (!logged.empty() && !storage->AppendDeleteLog(std::move(logged))) {
+      absl::c_move(logged, std::back_inserter(native));
+    }
+    if (!native.empty()) {
+      write_rows(native.size(), [&](size_t i) { return native[i]; });
+    }
     return;
   }
-  duckdb::UnifiedVectorFormat row_fmt;
-  row_ids.ToUnifiedFormat(count, row_fmt);
-  writer->Init(count, {});
-  std::string key;
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
-      row_fmt)[row_fmt.sel->get_index(i)];
-    key.clear();
-    primary_key::AppendSigned(key, static_cast<int64_t>(row));
-    writer->DeleteRow(key);
-  }
-  writer->Finish();
-  conn->RegisterSearchFlush();
+  write_rows(count, [&](size_t i) { return data[fmt.sel->get_index(i)]; });
 }
 
 idx_t InvertedStoreIndex::TryDelete(

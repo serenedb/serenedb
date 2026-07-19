@@ -1,0 +1,38 @@
+# Commit-on-flush rotation: an online inverted CREATE INDEX commits each
+# segment as soon as it fills (segment_docs_max here), so the published index
+# consists of many independently committed segments instead of one giant
+# final publish. compaction_interval is pushed out of the test window so the
+# committed segments stay observable.
+
+
+statement ok
+CREATE TABLE oci_rot(x bigint, label text);
+
+
+statement ok
+INSERT INTO oci_rot SELECT g, repeat(md5(g::text), 4) FROM generate_series(1, 50000) g;
+
+
+statement ok
+CREATE INDEX oci_rot_idx ON oci_rot USING inverted(label) WITH (segment_docs_max = 1000, compaction_interval = 3600000);
+
+
+query
+SELECT count(*) FROM oci_rot_idx;
+----
+count
+50000
+
+
+# Every backfill cut committed its own segment; the exact segment count
+# depends on sink parallelism, but with docs_max = 1000 a 50000-row build
+# must publish more than one.
+query
+SELECT value::bigint >= 2 AS rotated FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'oci_rot_idx');
+----
+rotated
+t
+
+
+statement ok
+DROP TABLE oci_rot CASCADE;

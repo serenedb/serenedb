@@ -1,0 +1,58 @@
+# Commit-on-flush makes backfill batches durable and visible DURING an online
+# inverted CREATE INDEX: pause_create_index_between_batches parks each sink
+# thread right after its first cut-and-commit, so sdb_metrics must already
+# report committed segments while the build is parked. Requires
+# SDB_FAULT_INJECTION, like the rest of the recovery suite.
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE oci_park(x bigint, label text);
+
+
+statement ok
+INSERT INTO oci_park SELECT g, repeat(md5(g::text), 4) FROM generate_series(1, 50000) g;
+
+
+statement ok
+SET sdb_faults = 'pause_create_index_between_batches';
+
+
+connection builder
+statement async ok
+CREATE INDEX oci_park_idx ON oci_park USING inverted(label) WITH (segment_docs_max = 1000, compaction_interval = 3600000);
+
+
+# The first committed batch becomes visible (via the 1s background refresh)
+# while the build is still parked between batches.
+connection default
+query ok retry 40 backoff 250ms
+SELECT value::bigint >= 1 AS committed FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'oci_park_idx');
+----
+committed
+t
+
+
+statement ok
+SET sdb_faults = '-pause_create_index_between_batches';
+
+
+wait
+
+
+query
+SELECT count(*) FROM oci_park_idx;
+----
+count
+50000
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP TABLE oci_park CASCADE;

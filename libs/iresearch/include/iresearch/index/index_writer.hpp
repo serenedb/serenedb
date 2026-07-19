@@ -385,11 +385,15 @@ class IndexWriter : private util::Noncopyable {
     // for insertion into the index index
     // applied upon return value deallocation
     // `disable_flush` don't trigger segment flush
+    // `commit_on_flush` (nullable): non-null makes a flush triggered by this
+    // insert (everything inserted before this batch) commit immediately --
+    // a commit failure throws -- and `*commit_on_flush` is set to true
     //
     // The changes are not visible until commit()
     // Transaction should be valid
-    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1) {
-      UpdateSegment(disable_flush);
+    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
+                    bool* commit_on_flush = nullptr) {
+      UpdateSegment(disable_flush, commit_on_flush);
       return {*_active.Segment(), SegmentWriter::DocContext{_queries},
               batch_size};
     }
@@ -404,7 +408,7 @@ class IndexWriter : private util::Noncopyable {
     // Transaction should be valid
     template<bool TickBound = true, typename Filter>
     void Remove(Filter&& filter) {
-      UpdateSegment(/*disable_flush=*/true);
+      UpdateSegment(/*disable_flush=*/true, /*commit_on_flush=*/nullptr);
       _active.Segment()->queries.emplace_back(std::forward<Filter>(filter),
                                               _queries, QueryContext::kDone);
       if constexpr (TickBound) {
@@ -422,7 +426,7 @@ class IndexWriter : private util::Noncopyable {
     // Transaction should be valid
     template<typename Filter>
     Document Replace(Filter&& filter, bool disable_flush = false) {
-      UpdateSegment(disable_flush);
+      UpdateSegment(disable_flush, /*commit_on_flush=*/nullptr);
       auto& segment = *_active.Segment();
       auto& query = segment.queries.emplace_back(
         std::forward<Filter>(filter), _queries, QueryContext::kReplace);
@@ -494,7 +498,7 @@ class IndexWriter : private util::Noncopyable {
     // refresh segment if required (guarded by FlushContext::context_mutex_)
     // is is thread-safe to use ctx_/segment_ while holding 'flush_context_ptr'
     // since active 'flush_context' will not change and hence no reload required
-    void UpdateSegment(bool disable_flush);
+    void UpdateSegment(bool disable_flush, bool* commit_on_flush);
 
     IndexWriter* _writer{nullptr};
     // the segment_context used for storing changes (lazy-initialized)

@@ -79,8 +79,13 @@ enum class ScanMode : uint8_t {
   Count,
   // ORDER BY score LIMIT k: parallel top-k collectors.
   TopK,
-  // Streaming DocIterator -> HitBatcher (WAND-seeded when eligible); match-all
-  // covered scans additionally take bulk FullScanner units.
+  // Match-all with every needed column covered (the FullScanner case): bulk
+  // work units read `.col` directly; a segment with deletes falls back to the
+  // masked streaming walk. Never scores, never touches the lookup source.
+  ColScan,
+  // Streaming DocIterator -> HitBatcher (WAND-seeded when eligible). The only
+  // mode that materializes through the lookup source, engaged if and only if
+  // a lookup column is needed -- for a filter or for the output.
   Stream,
 };
 
@@ -90,9 +95,16 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::vector<duckdb::ColumnIndex> projected_column_indexes;
   duckdb::ClientContext* client_context = nullptr;
 
-  std::vector<duckdb::idx_t> external_projected_columns;
+  // Disposition of the scanned real columns (ClassifyColumnstoreProjections):
+  // covered columns materialize from `.col` (`cs_projections`), the rest stay
+  // in `lookup_projected_columns` for the lookup source. `needs_lookup` is set
+  // if and only if a lookup column is needed -- in the output or by a pushed
+  // filter (the source applies it natively during materialization); a column
+  // needed by neither (left dangling by a statistics-eliminated filter) is
+  // read nowhere.
+  std::vector<duckdb::idx_t> lookup_projected_columns;
   std::vector<ColumnstoreProjection> cs_projections;
-  bool has_external_projections = false;
+  bool needs_lookup = false;
   bool has_real_column = false;
 
   bool scan_tableoid = false;
@@ -193,7 +205,9 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
     std::numeric_limits<irs::score_t>::lowest();
   uint32_t rerank_pool = 0;
 
-  // Bulk columnstore fast-path work units (match-all, covered, no filter).
+  // ColScan work units: `bulk` slices of all-live segments read `.col`
+  // directly; a segment with deletes becomes one non-bulk unit taking the
+  // masked streaming walk.
   struct ScanUnit {
     uint32_t seg;
     uint64_t begin;
@@ -212,20 +226,18 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::atomic_uint32_t prepare_count = 0;
   std::atomic_uint32_t collector_slots = 0;
 
-  bool BulkChunkEligible() const {
-    return has_real_column && !scan_score && !has_external_projections &&
-           scan->IsMatchAll() && !scan->EmitOffsets();
-  }
-
   duckdb::idx_t MaxThreads() const final {
-    if (mode == ScanMode::CountFast) {
-      return 1;
+    switch (mode) {
+      case ScanMode::CountFast:
+        return 1;
+      case ScanMode::ColScan:
+        return std::max<duckdb::idx_t>(1, scan_units.size());
+      default:
+        // The scorer prepare phase walks every segment (corpus-level term
+        // statistics), even ones the whole-file classification excluded.
+        return std::max<duckdb::idx_t>(
+          1, scorer_obj ? total_segments : claimable_segments);
     }
-    if (!scan_units.empty()) {
-      return std::max<duckdb::idx_t>(1, scan_units.size());
-    }
-    return std::max<duckdb::idx_t>(
-      1, scorer_obj ? total_segments : claimable_segments);
   }
 };
 
@@ -237,8 +249,6 @@ struct IResearchScanLocalState : public duckdb::LocalTableFunctionState {
 
   irs::PrepareCollector* prepare_collector = nullptr;
   bool prepared = false;
-
-  std::vector<std::unique_ptr<FullScanner>> full_scanners;
 
   // Whole-file filter classification of the segment this worker currently
   // scans: computed exactly once per claimed segment (at the claim site) and
@@ -306,11 +316,6 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
 
 void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data);
-
-FullScanner* GetOrOpenSegmentFullScanner(IResearchScanLocalState& lstate,
-                                         const IResearchScanGlobalState& gstate,
-                                         const irs::IndexReader& reader,
-                                         size_t seg_idx);
 
 struct HitsChunk {
   std::span<const irs::doc_id_t> docs;

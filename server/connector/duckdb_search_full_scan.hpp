@@ -43,6 +43,7 @@
 
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_table_function.h"
+#include "connector/full_scanner.h"
 #include "connector/offsets_collector.hpp"
 
 namespace sdb::connector {
@@ -62,16 +63,30 @@ struct SearchFullScanTopKLocalState : public SegDocBufferedScanLocalState {
 };
 
 struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
-  uint32_t current_seg_idx = 0;
-  uint64_t bulk_doc_in_seg = 0;
-  uint64_t bulk_seg_doc_count = 0;
-
   irs::DocIterator::ptr streaming_doc;
   irs::ScoreFunction streaming_score_function;
   irs::ColumnArgsFetcher score_fetcher;
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, IResearchScanGlobalState& g);
+  duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
+                          IResearchScanGlobalState& g,
+                          duckdb::DataChunk& output);
+
+ protected:
+  void PushHits(IResearchScanGlobalState& g);
+};
+
+// ColScan: bulk units read `.col` through per-segment FullScanners; a
+// non-bulk unit (segment with deletes) runs the inherited masked streaming
+// walk -- match-all, covered, unscored, so the batcher emit needs neither the
+// lookup source nor offsets.
+struct ColScanLocalState : public SearchFullScanScanLocalState {
+  uint32_t current_seg_idx = 0;
+  uint64_t bulk_doc_in_seg = 0;
+  uint64_t bulk_seg_doc_count = 0;
+  std::vector<std::unique_ptr<FullScanner>> full_scanners;
+
   void StartUnit(duckdb::ClientContext& ctx,
                  const IResearchScanGlobalState::ScanUnit& unit,
                  IResearchScanGlobalState& g);
@@ -80,7 +95,7 @@ struct SearchFullScanScanLocalState : public SegDocBufferedScanLocalState {
                           duckdb::DataChunk& output);
 
  private:
-  void PushHits(IResearchScanGlobalState& g);
+  FullScanner* OpenScanner(const IResearchScanGlobalState& g);
 };
 
 struct SearchFullScanCountLocalState : public IResearchScanLocalState {
@@ -113,6 +128,9 @@ void RunTopKScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
 void RunStreamingScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
                       SearchFullScanScanLocalState& l,
                       duckdb::DataChunk& output);
+
+void RunColScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
+                ColScanLocalState& l, duckdb::DataChunk& output);
 
 struct TsDictLocalState : public IResearchScanLocalState {
   // Per enumerated field: its output column slots.

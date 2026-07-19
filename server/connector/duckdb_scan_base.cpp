@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstring>
 #include <duckdb.hpp>
+#include <duckdb/common/projection_index.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
@@ -149,7 +150,7 @@ void InitScanState(IResearchScanGlobalState& state,
     }
   }
 
-  state.external_projected_columns = state.projected_columns;
+  state.lookup_projected_columns = state.projected_columns;
   state.has_real_column = absl::c_any_of(state.projected_columns, [](auto p) {
     return p != duckdb::DConstants::INVALID_INDEX;
   });
@@ -412,23 +413,20 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
   }
 }
 
+// Disposition of every scanned real column: a column in the output is
+// materialized (from `.col` when covered, else through the lookup source); a
+// filter-only column (kept in the scanned chunk by filter_prune, dropped from
+// the output by projection_ids) is evaluated in scratch by the covered chain
+// or applied natively by the lookup source's own scan; a column needed by
+// neither -- left dangling by a statistics-eliminated filter -- is read
+// nowhere. `needs_lookup` therefore holds exactly when a lookup column is
+// needed for the output or for a pushed filter.
 void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data) {
-  // A filter column pruned from the output (filter_prune keeps it in the
-  // scanned chunk, output_projection_ids drops it) is filter-only: the chain
-  // evaluates it in scratch (validity-only for bare null checks) and nothing
-  // reads its chunk slot, so no cs projection materializes it.
-  const auto filter_only = [&](duckdb::idx_t proj, catalog::Column::Id col_id) {
-    if (state.output_projection_ids.empty() ||
-        absl::c_find(state.output_projection_ids, proj) !=
-          state.output_projection_ids.end()) {
-      return false;
-    }
-    return absl::c_any_of(
-      state.col_filters, [&](const IResearchScanGlobalState::ColFilter& cf) {
-        return !cf.is_score &&
-               cf.field == static_cast<irs::field_id>(col_id.id());
-      });
+  const auto in_output = [&](duckdb::idx_t proj) {
+    return state.output_projection_ids.empty() ||
+           absl::c_find(state.output_projection_ids, proj) !=
+             state.output_projection_ids.end();
   };
   if (bind_data.IsSearchTableEntry()) {
     // Search table: every column lives in `.col`, so all projections are
@@ -440,12 +438,11 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
       if (bind_col == duckdb::DConstants::INVALID_INDEX) {
         continue;
       }
-      const auto col_id = bind_data.column_ids[bind_col];
-      if (filter_only(proj, col_id)) {
-        state.external_projected_columns[proj] =
-          duckdb::DConstants::INVALID_INDEX;
+      state.lookup_projected_columns[proj] = duckdb::DConstants::INVALID_INDEX;
+      if (!in_output(proj)) {
         continue;
       }
+      const auto col_id = bind_data.column_ids[bind_col];
       ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
       if (proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
@@ -460,19 +457,19 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
         }
       }
       state.cs_projections.emplace_back(std::move(cp));
-      state.external_projected_columns[proj] =
-        duckdb::DConstants::INVALID_INDEX;
     }
     if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
       state.cs_projections.emplace_back(ColumnstoreProjection{
         .output_slot = state.generated_pk_output_idx,
         .column_id = catalog::Column::kGeneratedPKId.id()});
     }
-    state.has_external_projections = false;
     return;
   }
   if (!bind_data.IsInvertedIndexEntry() || !bind_data.inverted_index) {
-    state.has_external_projections = state.has_real_column;
+    // Nothing is covered: every output column materializes through the source
+    // (base-table scans never receive pushed filters, so output columns are
+    // the only real ones scanned).
+    state.needs_lookup = state.has_real_column;
     return;
   }
 
@@ -485,14 +482,12 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
     const auto col_id = bind_data.column_ids[bind_col];
     const auto* info = bind_data.inverted_index->FindColumnInfo(col_id);
     if (info && info->IsStored()) {
-      if (filter_only(proj, col_id)) {
-        state.external_projected_columns[proj] =
-          duckdb::DConstants::INVALID_INDEX;
+      state.lookup_projected_columns[proj] = duckdb::DConstants::INVALID_INDEX;
+      if (!in_output(proj)) {
         continue;
       }
       ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id.id()};
-      if (info && info->store_values &&
-          proj < state.projected_column_indexes.size()) {
+      if (info->store_values && proj < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj];
         if (column_index.IsPushdownExtract() && column_index.HasChildren()) {
           path.clear();
@@ -505,56 +500,16 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
         }
       }
       state.cs_projections.emplace_back(std::move(cp));
-      state.external_projected_columns[proj] =
-        duckdb::DConstants::INVALID_INDEX;
       continue;
     }
-    state.has_external_projections = true;
-  }
-  if (state.has_external_projections) {
-    const auto pk_kind = bind_data.inverted_index->GetOptions().pk_column;
-    if (pk_kind == catalog::PkColumnKind::None) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("inverted index \"", bind_data.inverted_index->GetName(),
-                "\" was created WITH (store_pk = 'none'), so it does not store "
-                "row PKs and hits cannot be mapped back to source rows; select "
-                "only INCLUDE'd columns, counts or scores through this index"));
-    }
-    if (pk_kind == catalog::PkColumnKind::Unable) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("materialising real columns from this view-backed inverted "
-                "index is not yet supported -- view body must be a simple "
-                "`SELECT * FROM <reader>(literal_args)` over a recognised "
-                "fast-path source (read_parquet/csv/json/...)"));
+    if (in_output(proj) ||
+        (state.pushed_filters != nullptr &&
+         state.pushed_filters->HasFilter(duckdb::ProjectionIndex{proj}))) {
+      state.needs_lookup = true;
+    } else {
+      state.lookup_projected_columns[proj] = duckdb::DConstants::INVALID_INDEX;
     }
   }
-}
-
-FullScanner* GetOrOpenSegmentFullScanner(IResearchScanLocalState& lstate,
-                                         const IResearchScanGlobalState& gstate,
-                                         const irs::IndexReader& reader,
-                                         size_t seg_idx) {
-  if (gstate.cs_projections.empty() || seg_idx >= reader.size()) {
-    return nullptr;
-  }
-  if (lstate.full_scanners.size() < reader.size()) {
-    lstate.full_scanners.resize(reader.size());
-  }
-  auto& slot = lstate.full_scanners[seg_idx];
-  if (!slot) {
-    const auto* col_reader = reader[seg_idx].GetColReader();
-    if (!col_reader) {
-      return nullptr;
-    }
-    SDB_ASSERT(lstate.classified_seg == seg_idx,
-               "segment filters are classified at the claim site");
-    slot = std::make_unique<FullScanner>(
-      *col_reader, gstate.cs_projections, lstate.seg_cls.active,
-      gstate.client_context, lstate.filter_states);
-  }
-  return slot.get();
 }
 
 void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {

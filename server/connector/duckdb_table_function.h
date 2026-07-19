@@ -195,8 +195,6 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // different fields in one query each get their own request.
   std::vector<TsDictRequest> ts_dicts;
 
-  bool count_only = false;
-
   std::string lookup_label;
   // Whether the lookup source applies pushed table filters (native storage +
   // parquet yes; csv/json/text no). Filters on lookup columns are pushed only

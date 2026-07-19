@@ -91,7 +91,6 @@ void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
   dst.score_static_floor = src.score_static_floor;
   dst.offsets = src.offsets;
   dst.ts_dicts = src.ts_dicts;
-  dst.count_only = src.count_only;
   dst.lookup_label = src.lookup_label;
 }
 
@@ -531,10 +530,6 @@ void SereneDBScanBindData::AppendSummary(
           *req.having_filter, MakeFieldNameResolver(bind, *bind.inverted_index),
           MakeFieldKindResolver(bind, *bind.inverted_index))));
     }
-  }
-  if (count_only) {
-    out.insert("Output", "row-count only");
-    return;
   }
   if (text_scorer) {
     out.insert("Score", text_scorer->ToString());

@@ -59,6 +59,10 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
  private:
   duckdb::idx_t _num_proj_cols = 0;
   duckdb::idx_t _num_key_cols = 0;
+  // ExternalRowId: stored split as STRUCT{page, tuple} for compression, but
+  // bound/returned as the packed `rowid` int64 (page<<16|tuple) the connector
+  // pushes down.
+  bool _split_rowid = false;
 
   std::unique_ptr<duckdb::Connection> _con;
   std::unique_ptr<duckdb::PreparedStatement> _prepared;

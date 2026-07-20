@@ -96,7 +96,8 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
     });
 
   duckdb::vector<std::string> key_cols;
-  if (_fast_path.pk_spec == catalog::PkSpec::ExternalRowId) {
+  _split_rowid = _fast_path.pk_spec == catalog::PkSpec::ExternalRowId;
+  if (_split_rowid) {
     key_cols.push_back("rowid");
   } else {
     key_cols.reserve(_fast_path.key_columns.size());
@@ -168,8 +169,14 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   for (duckdb::idx_t i = 0; i < count; ++i) {
     duckdb::Value key = pk.column->GetValue(i);
     const auto& children = duckdb::StructValue::GetChildren(key);
-    for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-      _params[i * num_key_cols + k] = children[k];
+    if (_split_rowid) {
+      _params[i] = duckdb::Value::BIGINT(
+        (children[0].GetValue<int64_t>() << 16) |
+        children[1].GetValue<int64_t>());
+    } else {
+      for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+        _params[i * num_key_cols + k] = children[k];
+      }
     }
     _struct_slot.try_emplace(std::move(key), i);
   }
@@ -223,9 +230,15 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   drain(_struct_slot,
         [&](duckdb::DataChunk& chunk, duckdb::idx_t, duckdb::idx_t row) {
           duckdb::vector<duckdb::Value> children;
-          children.reserve(num_key_cols);
-          for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-            children.push_back(chunk.data[k].GetValue(row));
+          if (_split_rowid) {
+            const auto v = chunk.data[0].GetValue(row).GetValue<int64_t>();
+            children.push_back(duckdb::Value::BIGINT(v >> 16));
+            children.push_back(duckdb::Value::BIGINT(v & 0xFFFF));
+          } else {
+            children.reserve(num_key_cols);
+            for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+              children.push_back(chunk.data[k].GetValue(row));
+            }
           }
           return _struct_slot.find(
             duckdb::Value::STRUCT(key_type, std::move(children)));

@@ -91,6 +91,9 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::vector<InsertColumnMeta> columns;
 
   bool pk_term = false;
+  // ExternalRowId: the single projected rowid (ctid: page<<16|tuple) is split
+  // into STRUCT{page, tuple} at pack time -- the halves compress independently.
+  bool split_rowid = false;
   catalog::PkColumnKind pk_column = catalog::PkColumnKind::None;
   duckdb::idx_t pk_hi_col_idx = 0;
   duckdb::idx_t pk_lo_col_idx = 0;
@@ -352,7 +355,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     } else if (auto it = _info->options.find("_sdb_view_fast_path_pk");
                it != _info->options.end()) {
       const auto kind = it->second.GetValue<std::string>();
-      shape = kind == "external_struct_key" ? KeyShape::Struct
+      state->split_rowid = kind == "external_rowid_split";
+      shape = (kind == "external_struct_key" || state->split_rowid)
+                ? KeyShape::Struct
               : (kind == "file_index_plus_row_number" ||
                  kind == "file_index_plus_duckdb_rowid")
                 ? KeyShape::Two
@@ -624,10 +629,33 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       break;
     }
     case catalog::PkColumnKind::Struct: {
-      // Pack the trailing user key columns into ONE self-describing struct
-      // vector; field names are positional (the lookup uses field order).
       const auto base = gstate.pk_hi_col_idx;
       SDB_ASSERT(base < chunk.ColumnCount());
+      if (gstate.split_rowid) {
+        // Split the packed rowid into STRUCT{page, tuple}: the page half is
+        // run-heavy (RLE) and the tuple half is a small sawtooth (bitpacked),
+        // ~2x smaller than the packed int64 as one column.
+        SDB_ASSERT(base + 1 == chunk.ColumnCount());
+        auto& rowid_vec = chunk.data[base];
+        duckdb::UnifiedVectorFormat fmt;
+        rowid_vec.ToUnifiedFormat(num_rows, fmt);
+        const auto* packed = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
+        pk_scratch = std::make_unique<duckdb::Vector>(
+          duckdb::LogicalType::STRUCT({{"page", duckdb::LogicalType::BIGINT},
+                                       {"tuple", duckdb::LogicalType::BIGINT}}));
+        auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
+        auto* pages = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
+        auto* tuples = duckdb::FlatVector::GetDataMutable<int64_t>(entries[1]);
+        for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+          const auto v = packed[fmt.sel->get_index(row)];
+          pages[row] = v >> 16;
+          tuples[row] = v & 0xFFFF;
+        }
+        pk.column = pk_scratch.get();
+        break;
+      }
+      // Pack the trailing user key columns into ONE self-describing struct
+      // vector; field names are positional (the lookup uses field order).
       duckdb::child_list_t<duckdb::LogicalType> field_types;
       for (duckdb::idx_t i = base; i < chunk.ColumnCount(); ++i) {
         field_types.emplace_back(absl::StrCat("c", i - base),

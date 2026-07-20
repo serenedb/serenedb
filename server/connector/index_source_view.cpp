@@ -24,6 +24,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <numeric>
 
 #include "basics/assert.h"
@@ -96,14 +97,8 @@ void ViewIndexSourceBase::SortRows(const PrimaryKeyBatch& pk,
   absl::c_iota(_sort_perm, duckdb::idx_t{0});
   // Doc-id order already ascends in pk for contiguous-insert base tables and
   // single-file views: an O(n) sortedness check skips the O(n log n) sort.
-  bool sorted = true;
-  for (duckdb::idx_t k = 1; k < count; ++k) {
-    if (pk.rows[start + k] < pk.rows[start + k - 1]) {
-      sorted = false;
-      break;
-    }
-  }
-  if (!sorted) {
+  if (!std::is_sorted(pk.rows.begin() + start,
+                      pk.rows.begin() + start + count)) {
     absl::c_sort(_sort_perm, [&](duckdb::idx_t a, duckdb::idx_t b) {
       return pk.rows[start + a] < pk.rows[start + b];
     });
@@ -119,22 +114,16 @@ void ViewIndexSourceBase::SortFilesRows(const PrimaryKeyBatch& pk,
                                         duckdb::idx_t count) {
   _sort_perm.resize(count);
   absl::c_iota(_sort_perm, duckdb::idx_t{0});
-  // Skip the sort when (file, row) already ascends -- see SortRows.
-  bool sorted = true;
-  for (duckdb::idx_t k = 1; k < count; ++k) {
-    const auto pf = pk.files[start + k - 1], cf = pk.files[start + k];
-    if (cf < pf || (cf == pf && pk.rows[start + k] < pk.rows[start + k - 1])) {
-      sorted = false;
-      break;
+  // Skip the sort when (file, row) already ascends -- see SortRows. _sort_perm
+  // is the identity here, so is_sorted over it is exactly the pairwise check.
+  const auto cmp = [&](duckdb::idx_t a, duckdb::idx_t b) {
+    if (pk.files[start + a] != pk.files[start + b]) {
+      return pk.files[start + a] < pk.files[start + b];
     }
-  }
-  if (!sorted) {
-    absl::c_sort(_sort_perm, [&](duckdb::idx_t a, duckdb::idx_t b) {
-      if (pk.files[start + a] != pk.files[start + b]) {
-        return pk.files[start + a] < pk.files[start + b];
-      }
-      return pk.rows[start + a] < pk.rows[start + b];
-    });
+    return pk.rows[start + a] < pk.rows[start + b];
+  };
+  if (!absl::c_is_sorted(_sort_perm, cmp)) {
+    absl::c_sort(_sort_perm, cmp);
   }
   _sorted_files.resize(count);
   _sorted_rows.resize(count);
@@ -175,6 +164,29 @@ void ViewIndexSourceBase::RunCastPass(duckdb::DataChunk& output,
       _cast_executors[c]->ExecuteExpression(cast_input,
                                             output.data[_real_proj_slots[c]]);
     }
+  }
+}
+
+void ViewIndexSourceBase::BuildPushedFilters(
+  const duckdb::TableFilterSet* input_filters,
+  std::span<const duckdb::idx_t> rekey) {
+  if (!input_filters || !input_filters->HasFilters()) {
+    return;
+  }
+  auto set = duckdb::make_uniq<duckdb::TableFilterSet>();
+  for (duckdb::idx_t k = 0; k < _real_proj_slots.size(); ++k) {
+    auto filter = input_filters->TryGetFilterByColumnIndex(
+      duckdb::ProjectionIndex(_real_proj_slots[k]));
+    if (!filter) {
+      continue;
+    }
+    const auto& expr_filter = duckdb::ExpressionFilter::GetExpressionFilter(
+      *filter, "ViewIndexSourceBase::BuildPushedFilters");
+    set->PushFilter(duckdb::ProjectionIndex(rekey.empty() ? k : rekey[k]),
+                    expr_filter.Copy());
+  }
+  if (set->HasFilters()) {
+    _pushed_filters = std::move(set);
   }
 }
 

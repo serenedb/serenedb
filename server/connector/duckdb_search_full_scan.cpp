@@ -23,7 +23,9 @@
 #include <algorithm>
 #include <cmath>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -1045,6 +1047,42 @@ void RunCountScan(duckdb::ClientContext& /*ctx*/, IResearchScanGlobalState& g,
   l.local_emitted += batch;
 }
 
+// Feed the stored-PK column read for this batch into the PrimaryKeyBatch, per
+// the source's key shape. A struct key is borrowed, not copied: the lookup
+// reads the vector's field columns back generically.
+void AppendPrimaryKeysFromVector(PrimaryKeyBatch& pk, duckdb::Vector& vec,
+                                 size_t count) {
+  const auto type_id = vec.GetType().id();
+  if (pk.kind == PrimaryKeyBatch::Kind::Struct &&
+      type_id == duckdb::LogicalTypeId::STRUCT) {
+    pk.column = &vec;
+    pk.column_count = count;
+    return;
+  }
+  if (pk.kind == PrimaryKeyBatch::Kind::I64 &&
+      type_id == duckdb::LogicalTypeId::BIGINT) {
+    const auto* data = duckdb::FlatVector::GetData<int64_t>(vec);
+    for (size_t k = 0; k < count; ++k) {
+      pk.Append(data[k]);
+    }
+    return;
+  }
+  if (pk.kind == PrimaryKeyBatch::Kind::I64I64 &&
+      type_id == duckdb::LogicalTypeId::STRUCT) {
+    const auto& entries = duckdb::StructVector::GetEntries(vec);
+    SDB_ASSERT(entries.size() == 2);
+    const auto* hi = duckdb::FlatVector::GetData<int64_t>(entries[0]);
+    const auto* lo = duckdb::FlatVector::GetData<int64_t>(entries[1]);
+    for (size_t k = 0; k < count; ++k) {
+      pk.Append(hi[k], lo[k]);
+    }
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_MSG("stored PK column type ", vec.GetType().ToString(),
+            " does not match the index source's expected key shape"));
+}
+
 duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                              IResearchScanGlobalState& g,
                              SegDocBufferedScanLocalState& l,
@@ -1060,7 +1098,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
       l.index_source =
         MakeIndexSource(ctx, *l.bind_data, g.external_projected_columns,
                         g.projected_types, l.bind_data->column_ids,
-                        const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+                        g.pushed_filters);
     }
     if (l.pk_batch.kind == PrimaryKeyBatch::Kind::None) {
       l.pk_batch.kind = l.index_source->PkKind();

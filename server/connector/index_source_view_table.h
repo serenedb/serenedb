@@ -56,19 +56,16 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   duckdb::LogicalType AddFetchColumn(const duckdb::ColumnDefinition& col);
   // Sizes the fetch chunk; call after InitProjection.
   void FinishInit(duckdb::ClientContext& context);
-  // Builds `_pushed_filters` (keyed by fetch-column index) from the scan's
-  // pushed filters that target fetched columns; call after InitProjection.
-  void BuildPushedFilters(const duckdb::TableFilterSet* input_filters);
+
+  // Maps each projected column to the fetch-column index the native lookup
+  // scan understands (the re-key for BuildPushedFilters).
+  std::vector<duckdb::idx_t> _col_to_fetch;
 
  private:
   duckdb::TableCatalogEntry* _table = nullptr;
   duckdb::vector<duckdb::StorageIndex> _fetch_columns;
   duckdb::vector<duckdb::LogicalType> _fetch_types;
-  std::vector<duckdb::idx_t> _col_to_fetch;
   duckdb::DataChunk _fetch_chunk;
-  // Lookup-column filters keyed by fetch-column index (built from the scan's
-  // pushed filters); passed to the native lookup scan. Null when none apply.
-  duckdb::unique_ptr<duckdb::TableFilterSet> _pushed_filters;
   // Persistent lookup cursor, built once and reused across Materialize batches
   // so the scan/decode state (pinned blocks, FSST dicts) stays warm between
   // calls.
@@ -82,7 +79,7 @@ class ViewTableIndexSource final : public RowIdFetchIndexSource {
                        std::span<const duckdb::idx_t> projected_columns,
                        std::span<const duckdb::LogicalType> projected_types,
                        std::span<const catalog::Column::Id> bind_column_ids,
-                       duckdb::TableFilterSet* pushed_filters = nullptr);
+                       const duckdb::TableFilterSet* pushed_filters = nullptr);
 };
 
 // SereneDB tables: postings carry the store-table rowid; rows are fetched
@@ -95,7 +92,7 @@ class TableRowIdIndexSource final : public RowIdFetchIndexSource {
                         std::span<const duckdb::idx_t> projected_columns,
                         std::span<const duckdb::LogicalType> projected_types,
                         std::span<const catalog::Column::Id> bind_column_ids,
-                        duckdb::TableFilterSet* pushed_filters = nullptr);
+                        const duckdb::TableFilterSet* pushed_filters = nullptr);
 };
 
 }  // namespace sdb::connector

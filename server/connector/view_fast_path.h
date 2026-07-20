@@ -27,7 +27,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "catalog/pk_spec.h"
@@ -78,7 +77,7 @@ struct ViewFastPath {
   duckdb::vector<ExternalKeyColumn> key_columns;
   // Whether the backing reader's lookup applies pushed table filters (parquet /
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see
-  // IResearchSupportsPushdownType.
+  // IResearchSupportsPushdownFilter.
   bool supports_filters = false;
 };
 
@@ -102,10 +101,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   std::span<const std::string> key_columns = {});
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp);
-
-// Split a `key_columns` CREATE INDEX option value ("a, b, c") into trimmed
-// column names. Empty/absent -> {}.
-std::vector<std::string> ParseKeyColumns(std::string_view text);
 
 // The parsed `key_columns` CREATE INDEX option from an options map, or {} when
 // absent.

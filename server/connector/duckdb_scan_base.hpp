@@ -31,7 +31,6 @@
 #include <duckdb/planner/table_filter.hpp>
 #include <iresearch/index/index_source.hpp>
 #include <iresearch/index/iterators.hpp>
-#include <iresearch/index/pk_batch_helpers.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/types.hpp>

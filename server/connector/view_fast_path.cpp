@@ -201,8 +201,6 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
                           "\" has no (VARCHAR) overload"));
 }
 
-}  // namespace
-
 std::vector<std::string> ParseKeyColumns(std::string_view text) {
   std::vector<std::string> cols;
   for (auto part : absl::StrSplit(text, ',')) {
@@ -213,6 +211,21 @@ std::vector<std::string> ParseKeyColumns(std::string_view text) {
   }
   return cols;
 }
+
+std::optional<ExternalKeyColumn> FindKeyColumn(
+  const duckdb::TableCatalogEntry& entry, const std::string& name) {
+  duckdb::column_t pos = 0;
+  for (const auto& col : entry.GetColumns().Logical()) {
+    if (col.Name() == name) {
+      return ExternalKeyColumn{
+        .name = name, .source_index = pos, .type = col.GetType()};
+    }
+    ++pos;
+  }
+  return std::nullopt;
+}
+
+}  // namespace
 
 std::vector<std::string> KeyColumnsFromOptions(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
@@ -367,24 +380,14 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // key), overriding the auto-detected default (postgres ctid / clickhouse
       // PK). Any number of columns (>= 1) of any types. An unknown column name
       // falls back to no fast path.
-      duckdb::vector<ExternalKeyColumn> cols(key_columns.size());
-      std::vector<bool> found(key_columns.size(), false);
-      duckdb::idx_t pos = 0;
-      for (const auto& col : entry.GetColumns().Logical()) {
-        for (size_t k = 0; k < key_columns.size(); ++k) {
-          if (!found[k] && col.Name() == key_columns[k]) {
-            cols[k] = {.name = key_columns[k],
-                       .source_index = static_cast<duckdb::column_t>(pos),
-                       .type = col.GetType()};
-            found[k] = true;
-          }
-        }
-        ++pos;
-      }
-      for (const bool f : found) {
-        if (!f) {
+      duckdb::vector<ExternalKeyColumn> cols;
+      cols.reserve(key_columns.size());
+      for (const auto& name : key_columns) {
+        auto col = FindKeyColumn(entry, name);
+        if (!col) {
           return std::nullopt;
         }
+        cols.push_back(std::move(*col));
       }
       ViewFastPath out;
       out.catalog_ref = ext_ref;
@@ -433,26 +436,18 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (!pk_name) {
         return std::nullopt;
       }
-      duckdb::column_t pk_index = 0;
-      for (const auto& col : entry.GetColumns().Logical()) {
-        if (col.Name() == *pk_name) {
-          // v1: a signed 64-bit key -- both the int64 storage and the re-fetch
-          // are exact only for BIGINT.
-          if (col.GetType().id() != duckdb::LogicalTypeId::BIGINT) {
-            return std::nullopt;
-          }
-          ViewFastPath out;
-          out.catalog_ref = ext_ref;
-          out.pk_spec = catalog::PkSpec::ExternalColumnKey;
-          out.key_columns.push_back({.name = std::move(*pk_name),
-                                     .source_index = pk_index,
-                                     .type = duckdb::LogicalType::BIGINT});
-          out.projection_columns = std::move(projection_columns);
-          return out;
-        }
-        ++pk_index;
+      // v1: a signed 64-bit key -- both the int64 storage and the re-fetch are
+      // exact only for BIGINT.
+      auto key = FindKeyColumn(entry, *pk_name);
+      if (!key || key->type.id() != duckdb::LogicalTypeId::BIGINT) {
+        return std::nullopt;
       }
-      return std::nullopt;
+      ViewFastPath out;
+      out.catalog_ref = ext_ref;
+      out.pk_spec = catalog::PkSpec::ExternalColumnKey;
+      out.key_columns.push_back(std::move(*key));
+      out.projection_columns = std::move(projection_columns);
+      return out;
     }
     return std::nullopt;
   }

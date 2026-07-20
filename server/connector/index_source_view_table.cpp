@@ -106,38 +106,12 @@ void RowIdFetchIndexSource::FinishInit(duckdb::ClientContext& context) {
   _fetch_chunk.Initialize(context, _fetch_types);
 }
 
-void RowIdFetchIndexSource::BuildPushedFilters(
-  const duckdb::TableFilterSet* input_filters) {
-  if (!input_filters || !input_filters->HasFilters()) {
-    return;
-  }
-  // Each source column added by InitProjection sits at output slot
-  // _real_proj_slots[c] and fetch-column index _col_to_fetch[c]. The scan's
-  // pushed filters are keyed by output slot; re-key those hitting a fetched
-  // column to the fetch-column index the native lookup scan understands.
-  auto set = duckdb::make_uniq<duckdb::TableFilterSet>();
-  for (duckdb::idx_t c = 0; c < _real_proj_slots.size(); ++c) {
-    auto filter = input_filters->TryGetFilterByColumnIndex(
-      duckdb::ProjectionIndex(_real_proj_slots[c]));
-    if (!filter) {
-      continue;
-    }
-    const auto& expr_filter = duckdb::ExpressionFilter::GetExpressionFilter(
-      *filter, "BuildPushedFilters");
-    set->PushFilter(duckdb::ProjectionIndex(_col_to_fetch[c]),
-                    expr_filter.Copy());
-  }
-  if (set->HasFilters()) {
-    _pushed_filters = std::move(set);
-  }
-}
-
 ViewTableIndexSource::ViewTableIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
-  duckdb::TableFilterSet* pushed_filters)
+  const duckdb::TableFilterSet* pushed_filters)
   : RowIdFetchIndexSource{std::move(fast_path)} {
   auto& table = ResolveTableEntry(context, _fast_path);
   SetTable(table);
@@ -166,7 +140,7 @@ ViewTableIndexSource::ViewTableIndexSource(
         columns.GetColumn(duckdb::LogicalIndex(table_col_idx)));
     });
   FinishInit(context);
-  BuildPushedFilters(pushed_filters);
+  BuildPushedFilters(pushed_filters, _col_to_fetch);
 }
 
 TableRowIdIndexSource::TableRowIdIndexSource(
@@ -175,7 +149,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
-  duckdb::TableFilterSet* pushed_filters)
+  const duckdb::TableFilterSet* pushed_filters)
   : RowIdFetchIndexSource{ViewFastPath{}} {
   auto& table = ResolveStoreTableEntry(context, scan_entry, sdb_table);
   SetTable(table);
@@ -206,7 +180,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
         columns.GetColumn(duckdb::LogicalIndex(it->second)));
     });
   FinishInit(context);
-  BuildPushedFilters(pushed_filters);
+  BuildPushedFilters(pushed_filters, _col_to_fetch);
 }
 
 duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,

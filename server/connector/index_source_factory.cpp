@@ -42,7 +42,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
-  duckdb::TableFilterSet* pushed_filters) {
+  const duckdb::TableFilterSet* pushed_filters) {
   if (bind_data.IsViewBacked()) {
     const auto& vbd = bind_data.As<ViewScanBindData>();
     std::span<const std::string> key_cols;

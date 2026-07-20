@@ -34,7 +34,7 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
-  duckdb::TableFilterSet* pushed_filters)
+  const duckdb::TableFilterSet* pushed_filters)
   : ViewIndexSourceBase{std::move(fast_path)} {
   _bind_data = BindFastPathSource(context, _fast_path);
   _lookup_func = MakeFastPathLookupFunction(_fast_path);
@@ -60,34 +60,8 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
       _column_indexes.emplace_back(file_col_idx);
       return multi_bd.types[file_col_idx];
     });
-  BuildPushedFilters(pushed_filters);
-}
-
-void ViewFileIndexSourceBase::BuildPushedFilters(
-  const duckdb::TableFilterSet* input_filters) {
-  if (!input_filters || !input_filters->HasFilters()) {
-    return;
-  }
-  // Source columns sit at output slot `_real_proj_slots[k]` and reader column
-  // `_column_indexes[k]` (its k-th projected column). The scan's pushed filters
-  // are keyed by output slot; re-key those hitting a source column to the
-  // reader's projected-column index. Non-source slots (e.g. the score) are
-  // skipped -- they have no reader column and would mismatch on type.
   SDB_ASSERT(_real_proj_slots.size() == _column_indexes.size());
-  auto set = duckdb::make_uniq<duckdb::TableFilterSet>();
-  for (duckdb::idx_t k = 0; k < _real_proj_slots.size(); ++k) {
-    auto filter = input_filters->TryGetFilterByColumnIndex(
-      duckdb::ProjectionIndex(_real_proj_slots[k]));
-    if (!filter) {
-      continue;
-    }
-    const auto& expr_filter = duckdb::ExpressionFilter::GetExpressionFilter(
-      *filter, "ViewFileIndexSourceBase::BuildPushedFilters");
-    set->PushFilter(duckdb::ProjectionIndex(k), expr_filter.Copy());
-  }
-  if (set->HasFilters()) {
-    _pushed_filters = std::move(set);
-  }
+  BuildPushedFilters(pushed_filters, {});
 }
 
 ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
@@ -95,7 +69,7 @@ ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
-  duckdb::TableFilterSet* pushed_filters)
+  const duckdb::TableFilterSet* pushed_filters)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
                             projected_types, bind_column_ids, pushed_filters) {
   duckdb::TableFunctionInitInput init(_bind_data.get(), _column_indexes,
@@ -139,7 +113,7 @@ ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
-  duckdb::TableFilterSet* pushed_filters)
+  const duckdb::TableFilterSet* pushed_filters)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
                             projected_types, bind_column_ids, pushed_filters) {}
 

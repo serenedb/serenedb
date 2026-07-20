@@ -56,6 +56,12 @@ class ViewIndexSourceBase : public IndexSource {
 
   void AliasOutput(duckdb::DataChunk& output);
   void RunCastPass(duckdb::DataChunk& output, duckdb::idx_t row_count);
+  // Builds `_pushed_filters` from the scan's output-slot-keyed pushed filters,
+  // dropping non-lookup slots (e.g. the score) that have no source column.
+  // `rekey` maps projected-column ordinal k to the key the lookup scan expects
+  // (empty = identity); call after InitProjection.
+  void BuildPushedFilters(const duckdb::TableFilterSet* input_filters,
+                          std::span<const duckdb::idx_t> rekey);
   // Reorder the doc-id-keyed output columns (every slot the lookup did not
   // write) into survivor order, matching the compact lookup emit.
   // `survivor_idx` maps each output row to the requested-pk index it came from
@@ -64,6 +70,9 @@ class ViewIndexSourceBase : public IndexSource {
                               const duckdb::idx_t* survivor_idx);
 
   ViewFastPath _fast_path;
+  // Lookup-column filters forwarded to the lookup scan (which compacts to
+  // survivors). Null when none apply.
+  duckdb::unique_ptr<duckdb::TableFilterSet> _pushed_filters;
   std::vector<duckdb::idx_t> _real_proj_slots;
   duckdb::vector<duckdb::LogicalType> _scratch_types;
   duckdb::vector<duckdb::LogicalType> _projected_types;

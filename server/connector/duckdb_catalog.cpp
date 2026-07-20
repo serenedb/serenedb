@@ -1013,17 +1013,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateIndexInfo>(
       std::move(stmt.info));
 
-  // `_sdb_*` options are an internal channel this binder uses to hand state to
-  // the physical CREATE INDEX operator; the physical op trusts them (e.g. it
-  // treats the relation as a fast-path view). A user WITH-clause must never be
-  // able to forge one -- reject them before any internal stamping runs.
-  for (const auto& [key, value] : create_index_info->options) {
-    if (absl::StartsWithIgnoreCase(key, "_sdb_")) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("unrecognized index option \"", key, "\""));
-    }
-  }
-
   // DuckDB defaults to "" or "ART"; PG defaults to "btree".
   {
     auto& idx_type = create_index_info->index_type;

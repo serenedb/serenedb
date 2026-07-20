@@ -31,6 +31,7 @@
 #include <type_traits>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/resource_manager.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -712,7 +713,8 @@ void IndexWriter::Transaction::Abort() noexcept {
   SDB_ASSERT(_active.Segment() == nullptr);
 }
 
-void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
+void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
+                                             bool* commit_on_flush) {
   SDB_ASSERT(Valid());
   while (_active.Segment() == nullptr) {  // lazy init
     _active = _writer->GetSegmentContext();
@@ -757,6 +759,16 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
       //  with keeping already flushed data?
       segment.Reset(true);
       throw;
+    }
+    if (commit_on_flush) {
+      SDB_ASSERT(_queries == 0);
+      if (!Commit()) {
+        throw IllegalState{"commit-on-flush failed"};
+      }
+      *commit_on_flush = true;
+      SDB_WAIT_ON_FAILURE("pause_create_index_between_batches");
+      UpdateSegment(disable_flush, commit_on_flush);
+      return;
     }
   }
   // Hand the per-op options to the (pooled) writer before it materializes a

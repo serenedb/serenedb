@@ -75,6 +75,14 @@ class ExtractBinding {
   void MaterializeContiguous(uint64_t start_row, duckdb::idx_t count,
                              duckdb::Vector& out_vec) const;
 
+  // Survivor rows start_row + sel[0..survivors) into out_vec[0, survivors):
+  // the sel-backed row view goes through the same density-banded gathers as
+  // MaterializeRows (Scan / decode+Slice / scatter runs), no staging copy.
+  void MaterializeSelected(uint64_t start_row,
+                           const duckdb::SelectionVector& sel,
+                           duckdb::idx_t survivors,
+                           duckdb::Vector& out_vec) const;
+
  private:
   enum class ExtractKind : uint8_t {
     ScalarLeaf,

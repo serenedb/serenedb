@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_schema_entry.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/constants.hpp>
@@ -29,6 +31,7 @@
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -59,6 +62,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/inverted_index_options_util.h"
 #include "connector/pg_logical_types.h"
 #include "connector/search_table_dispatch.h"
 #include "connector/with_option_resolver.h"
@@ -603,8 +607,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       return ResolveUintWithOption(context, key, find_with(key));
     };
     catalog::InvertedIndexOptions options{
-      .row_group_size = resolve_uint("row_group_size"),
-      .norm_row_group_size = resolve_uint("norm_row_group_size"),
+      .row_group_size = resolve_uint(kRowGroupSizeSetting),
+      .norm_row_group_size = resolve_uint(kNormRowGroupSizeSetting),
       .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
       .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
       .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),
@@ -931,6 +935,98 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
 
   auto& table_info = info.Cast<duckdb::AlterTableInfo>();
   auto table_name = info.GetQualifiedName().Name().GetIdentifierName();
+
+  // ALTER INDEX <name> SET/RESET (option = ...): the maintenance/perf subset
+  // of the inverted-index WITH options is alterable; SET writes the given
+  // value, RESET restores the session-level default. Structural options
+  // (row_group_size, store_pk, optimize_top_k, ...) shape the indexed data
+  // and stay create-time only.
+  if (table_info.alter_table_type ==
+        duckdb::AlterTableType::SET_TABLE_OPTIONS ||
+      table_info.alter_table_type ==
+        duckdb::AlterTableType::RESET_TABLE_OPTIONS) {
+    auto& context = transaction.GetContext();
+    // ALTER TABLE <name> SET/RESET (...) (PG storage params) parses into the
+    // same info as ALTER INDEX: resolve the target first, only inverted
+    // indexes have alterable options. A missing name falls through to
+    // AlterInvertedIndexOptions (IF EXISTS / does-not-exist handling).
+    if (auto relation = catalog_impl.GetCatalogSnapshot()->GetRelation(
+          catalog::NoAccessCheck(), db, name.GetIdentifierName(), table_name)) {
+      if (relation->GetType() == catalog::ObjectType::SecondaryIndex) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+          ERR_MSG("\"", table_name, "\" is not an inverted index"));
+      }
+      if (relation->GetType() != catalog::ObjectType::InvertedIndex) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG("this ALTER TABLE operation is not supported"));
+      }
+    }
+    const auto require_alterable = [](std::string_view option) {
+      if (!absl::c_contains(kAlterableInvertedOptions, option)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("option \"", option,
+                                "\" cannot be changed with ALTER INDEX"));
+      }
+    };
+    std::vector<std::pair<std::string, uint64_t>> changes;
+    if (table_info.alter_table_type ==
+        duckdb::AlterTableType::SET_TABLE_OPTIONS) {
+      for (auto& [option, expr] :
+           table_info.Cast<duckdb::SetTableOptionsInfo>().table_options) {
+        if (!expr ||
+            expr->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("option \"", option, "\" requires a constant value"));
+        }
+        require_alterable(option);
+        changes.emplace_back(
+          option,
+          ValidateInvertedIndexOptionValue(
+            option, expr->Cast<duckdb::ConstantExpression>().GetValue()));
+      }
+    } else {
+      // RESET stores the session-resolved value, which goes through the same
+      // validator as an explicit SET.
+      for (const auto& option :
+           table_info.Cast<duckdb::ResetTableOptionsInfo>().table_options) {
+        const auto& option_name = option.GetIdentifierName();
+        require_alterable(option_name);
+        changes.emplace_back(
+          option_name,
+          ValidateInvertedIndexOptionValue(
+            option_name, duckdb::Value::UBIGINT(ResolveUbigintWithOption(
+                           context, option_name, nullptr))));
+      }
+    }
+    catalog_impl.AlterInvertedIndexOptions(
+      ax, db, name.GetIdentifierName(), table_name,
+      [&](catalog::InvertedIndexOptions& options) {
+        for (const auto& [option, value] : changes) {
+          if (option == kRefreshIntervalSetting) {
+            options.refresh_interval_ms = static_cast<uint32_t>(value);
+          } else if (option == kCompactionIntervalSetting) {
+            options.compaction_interval_ms = static_cast<uint32_t>(value);
+          } else if (option == kCleanupIntervalStepSetting) {
+            options.cleanup_interval_step = static_cast<uint32_t>(value);
+          } else if (option == kSegmentMemoryMaxSetting) {
+            options.segment_memory_max = value;
+          } else if (option == kSegmentDocsMaxSetting) {
+            options.segment_docs_max = static_cast<uint32_t>(value);
+          } else if (option == kCompactionMaxSegmentsSetting) {
+            options.compaction_max_segments = static_cast<uint32_t>(value);
+          } else if (option == kCompactionMaxSegmentsBytesSetting) {
+            options.compaction_max_segments_bytes = value;
+          } else {
+            SDB_ASSERT(option == kCompactionFloorSegmentBytesSetting);
+            options.compaction_floor_segment_bytes = value;
+          }
+        }
+      },
+      info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL);
+    return;
+  }
 
   // Search-backed tables have a fixed iresearch schema, so structural ALTERs
   // are rejected. Renames (table/column/constraint) are catalog-only metadata

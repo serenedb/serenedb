@@ -99,13 +99,8 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 
 duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
   duckdb::ClientContext& context) const {
-  auto store_name = catalog::StoreTableName(_sdb_table->GetId());
-  return duckdb::Catalog::GetEntry(
-           context, duckdb::CatalogType::TABLE_ENTRY,
-           duckdb::QualifiedName(
-             duckdb::Identifier{catalog::kStoreDatabaseName},
-             duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
-    .Cast<duckdb::TableCatalogEntry>();
+  return *catalog::GetStoreTableEntry(context, _sdb_table->GetId(),
+                                      duckdb::OnEntryNotFound::THROW_EXCEPTION);
 }
 
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(

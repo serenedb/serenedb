@@ -26,6 +26,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
@@ -231,6 +234,21 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(const Table& table,
   }
   def.table = StoreTableName(table.GetId());
   return def;
+}
+
+duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
+  duckdb::ClientContext& context, ObjectId table_id,
+  duckdb::OnEntryNotFound if_not_found) {
+  const duckdb::EntryLookupInfo lookup(
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName(duckdb::Identifier{kStoreDatabaseName},
+                          duckdb::Identifier{"main"},
+                          duckdb::Identifier{StoreTableName(table_id)}));
+  auto entry = duckdb::Catalog::GetEntry(context, lookup, if_not_found);
+  if (!entry) {
+    return nullptr;
+  }
+  return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
 StoreTableDef MakeStoreTableDef(const Table& table) {

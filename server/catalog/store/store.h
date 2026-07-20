@@ -76,6 +76,11 @@ std::string StoreIndexName(ObjectId index_id);
 // prefix, or nullopt when `name` is not of that shape.
 std::optional<ObjectId> ParseStoreId(char prefix, std::string_view name);
 
+// The store-side duckdb entry of a catalog table.
+duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
+  duckdb::ClientContext& context, ObjectId table_id,
+  duckdb::OnEntryNotFound if_not_found);
+
 struct StoreIndexDef {
   enum class Kind : uint8_t {
     // Native ART index on the store table (btree/secondary in PG terms).

@@ -277,8 +277,9 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
   }
 
   catalog::InvertedIndexOptions options{
-    .row_group_size = ResolveUintSetting(context, "row_group_size"),
-    .norm_row_group_size = ResolveUintSetting(context, "norm_row_group_size"),
+    .row_group_size = ResolveUintSetting(context, kRowGroupSizeSetting),
+    .norm_row_group_size =
+      ResolveUintSetting(context, kNormRowGroupSizeSetting),
     .refresh_interval_ms = ResolveUintSetting(context, kRefreshIntervalSetting),
     .compaction_interval_ms =
       ResolveUintSetting(context, kCompactionIntervalSetting),

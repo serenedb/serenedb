@@ -34,6 +34,7 @@ fi
 
 while true; do
 	"$SERENED" "$DATADIR" \
-		--listen "postgres://0.0.0.0:$PORT"
+		--listen "postgres://0.0.0.0:$PORT" \
+		--auth_timeout=600s
 	echo "serened exited with code $?, restarting..."
 done

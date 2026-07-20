@@ -3363,6 +3363,55 @@ void Catalog::ChangeColumnAcl(ObjectId database_id, std::string_view schema,
   });
 }
 
+void Catalog::AlterInvertedIndexOptions(
+  const AccessContext& ax, ObjectId database_id, std::string_view schema,
+  std::string_view name, absl::FunctionRef<void(InvertedIndexOptions&)> mutate,
+  bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  std::shared_ptr<Object> obj;
+  if (schema_id) {
+    if (auto object_id =
+          _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
+      obj = _snapshot->GetObject(*object_id);
+    }
+  }
+  if (!obj) {
+    if (missing_ok) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
+  if (obj->GetType() != ObjectType::InvertedIndex) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not an inverted index"));
+  }
+
+  auto& index = basics::downCast<InvertedIndex>(*obj);
+  auto options = index.GetOptions();
+  mutate(options);
+  auto updated = std::static_pointer_cast<InvertedIndex>(index.Clone());
+  updated->ReplaceOptions(std::move(options));
+
+  Apply(_snapshot, [&](auto& clone) {
+    clone->template ReplaceObject<ResolveType::Relation>(*schema_id, name,
+                                                         updated);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->Write([&](auto& ctx) {
+      ctx.PutDefinition(updated->GetRelationId(), ObjectType::InvertedIndex,
+                        updated->GetId(), bytes);
+    });
+  });
+
+  if (const auto& storage = updated->GetData()) {
+    storage->ApplyOptions(updated->GetOptions());
+  }
+}
+
 void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
                           std::string_view schema, std::string_view name,
                           ChangeCallback<Table> new_table,

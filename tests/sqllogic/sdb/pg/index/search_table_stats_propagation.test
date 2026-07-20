@@ -1,0 +1,204 @@
+# Table-level column statistics from the search-table snapshot feed DuckDB's
+# statistics propagation. Impossible pushed filters fold the whole scan to
+# EMPTY_RESULT at plan time, always-true filters are dropped from the scan,
+# and a range filter that only holds for non-NULL values is replaced by an
+# IS NOT NULL check. Stats include deleted rows, so after DELETE the fold
+# stays conservative: the filter is kept and execution returns 0 rows.
+# `n` is NULL exactly in the first segment; stats merge across two segments.
+
+statement ok
+CREATE TABLE stp (pk BIGINT PRIMARY KEY, x BIGINT, n BIGINT, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+INSERT INTO stp SELECT i, i, CASE WHEN i < 50 THEN NULL ELSE i END, 'r'||i
+  FROM generate_series(0,99) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stp;
+
+
+statement ok
+INSERT INTO stp SELECT i, i, i, 'r'||i FROM generate_series(100,199) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stp;
+
+
+# Below the merged minimum: the scan folds away at plan time.
+query
+EXPLAIN SELECT count(*) FROM stp WHERE x < 0;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS c FROM stp WHERE x < 0;
+----
+c
+0
+
+
+# Equality above the merged maximum folds as well.
+query
+EXPLAIN SELECT count(*) FROM stp WHERE x = 250;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS c FROM stp WHERE x = 250;
+----
+c
+0
+
+
+# String statistics fold too: every value starts with 'r'.
+query
+EXPLAIN SELECT count(*) FROM stp WHERE s < 'r';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS c FROM stp WHERE s < 'r';
+----
+c
+0
+
+
+# Always-true filter on a NOT NULL-valued column: dropped from the scan, and
+# the filter-only column drops out of the output, so the count stays count-only.
+query
+EXPLAIN SELECT count(*) FROM stp WHERE x >= 0;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: stp               │
+│ Lookup: search           │
+│ Output: row-count only   │
+│ ~40 rows                 │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS c FROM stp WHERE x >= 0;
+----
+c
+200
+
+
+# Range holds for every non-NULL value, but `n` has NULLs in the first
+# segment: the filter degrades to an IS NOT NULL check instead.
+query
+EXPLAIN SELECT count(*) FROM stp WHERE n >= 0;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────╮
+│ Aggregates: count_star()     │
+│ ~1 row                       │
+╰───────────────┬──────────────╯
+╭─ IRESEARCH_SCAN ─────────────╮
+│ Index: stp                   │
+│ Lookup: search               │
+│ Output: row-count only       │
+│ Column Filter: n IS NOT NULL │
+│ ~40 rows                     │
+╰──────────────────────────────╯
+
+
+query
+SELECT count(*) AS c FROM stp WHERE n >= 0;
+----
+c
+150
+
+
+# Below-minimum on the NULL-holding column: FALSE_OR_NULL folds away too.
+query
+EXPLAIN SELECT count(*) FROM stp WHERE n < 0;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS c FROM stp WHERE n < 0;
+----
+c
+0
+
+
+statement ok
+DELETE FROM stp WHERE x >= 150;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stp;
+
+
+# Merged stats still cover the deleted rows, so the range does not fold to
+# empty; the kept filter finds nothing at execution.
+query
+EXPLAIN SELECT count(*) FROM stp WHERE x >= 150;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: stp               │
+│ Lookup: search           │
+│ Output: row-count only   │
+│ Column Filter: x >= 150  │
+│ ~30 rows                 │
+╰──────────────────────────╯
+
+
+query
+SELECT count(*) AS c FROM stp WHERE x >= 150;
+----
+c
+0
+
+
+query
+SELECT count(*) AS c FROM stp;
+----
+c
+150
+
+
+statement ok
+DROP TABLE stp;

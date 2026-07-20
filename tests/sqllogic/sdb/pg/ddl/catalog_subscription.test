@@ -452,5 +452,14 @@ count
 0
 
 
+# pg_stat_subscription_stats has a row per subscription (even disabled), with
+# zeroed counters when there is no live apply worker; stats_reset is NULL.
+query
+SELECT apply_error_count, sync_error_count, confl_insert_exists, (stats_reset IS NULL) AS reset_null FROM pg_stat_subscription_stats WHERE subname = 'obs_disabled';
+----
+apply_error_count	sync_error_count	confl_insert_exists	reset_null
+0	0	0	t
+
+
 statement ok
 DROP SUBSCRIPTION obs_disabled;

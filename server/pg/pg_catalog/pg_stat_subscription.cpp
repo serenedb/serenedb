@@ -31,14 +31,12 @@
 #include "replication/subscription_engine.h"
 
 namespace sdb::pg {
-
 namespace {
 
 // PostgreSQL renders an LSN as two 32-bit halves in uppercase hex ("X/Y").
 std::string FormatLsn(uint64_t lsn) {
   char buf[24];
-  std::snprintf(buf, sizeof(buf), "%X/%X",
-                static_cast<uint32_t>(lsn >> 32),
+  std::snprintf(buf, sizeof(buf), "%X/%X", static_cast<uint32_t>(lsn >> 32),
                 static_cast<uint32_t>(lsn & 0xFFFFFFFFULL));
   return buf;
 }
@@ -46,7 +44,8 @@ std::string FormatLsn(uint64_t lsn) {
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgStatSubscription>::GetTableData() {
+catalog::MaterializedData
+SystemTableSnapshot<PgStatSubscription>::GetTableData() {
   auto catalog = _config.CatalogSnapshot();
   auto db_id = GetDatabaseId();
 
@@ -78,8 +77,9 @@ catalog::MaterializedData SystemTableSnapshot<PgStatSubscription>::GetTableData(
       .worker_type = Text{"apply"},
       // No OS process backs the async apply loop; expose a stable synthetic id.
       .pid = static_cast<int32_t>(rt.subscription_id.id() & 0x7FFFFFFFULL),
-      .leader_pid = 0,             // NULL (no parallel workers)
-      .relid = static_cast<Oid>(0),  // NULL (single apply worker, not per-table)
+      .leader_pid = 0,  // NULL (no parallel workers)
+      .relid =
+        static_cast<Oid>(0),  // NULL (single apply worker, not per-table)
       .received_lsn = Text{received},
       .last_msg_send_time = Timestamptz{},     // unknown (NULL)
       .last_msg_receipt_time = Timestamptz{},  // unknown (NULL)

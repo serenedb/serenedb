@@ -27,10 +27,10 @@
 
 namespace sdb::pg {
 
-// Synthesized from the live apply workers: one row per (subscription, replicated
-// local table). SereneDB has no separate tablesync worker stage, so a table
-// that is being applied is reported as Ready ('r'). srsublsn is NULL -- we do
-// not track a per-table sync-completion LSN. Only running subscriptions
+// Synthesized from the live apply workers: one row per (subscription,
+// replicated local table). SereneDB has no separate tablesync worker stage, so
+// a table that is being applied is reported as Ready ('r'). srsublsn is NULL --
+// we do not track a per-table sync-completion LSN. Only running subscriptions
 // contribute rows (a disabled subscription has no live worker).
 template<>
 catalog::MaterializedData

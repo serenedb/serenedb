@@ -27,6 +27,7 @@ target_sources(
         pg_catalog/pg_subscription.cpp
         pg_catalog/pg_subscription_rel.cpp
         pg_catalog/pg_stat_subscription.cpp
+        pg_catalog/pg_stat_subscription_stats.cpp
         pg_catalog/pg_type.cpp
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp

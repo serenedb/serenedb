@@ -96,6 +96,15 @@ class SubscriptionEngine final {
   // `database_id`. Safe to call from any thread.
   std::vector<SubRuntime> RuntimeSnapshot(ObjectId database_id) const;
 
+  // Cumulative error counters for pg_stat_subscription_stats. In-memory and
+  // per supervised subscription (reset when the supervisor stops -- i.e. on
+  // DISABLE/DROP/restart); subscriptions not currently supervised are absent.
+  struct SubErrorStat {
+    ObjectId subscription_id;
+    uint64_t apply_error_count = 0;
+  };
+  std::vector<SubErrorStat> ErrorStats(ObjectId database_id) const;
+
  private:
   void LaunchLocked(ObjectId database_id,
                     const std::shared_ptr<catalog::Subscription>& sub)
@@ -121,6 +130,7 @@ class SubscriptionEngine final {
     std::shared_ptr<asio_ns::steady_timer> retry;    // pending reconnect delay
     bool stopping = false;  // DROP/DISABLE/shutdown requested for this sub
     bool restart = false;   // reconnect immediately with the refreshed target
+    uint64_t apply_error_count = 0;  // pg_stat_subscription_stats
   };
 
   network::IoThreadPool& _pool;

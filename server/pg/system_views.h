@@ -1364,22 +1364,9 @@ inline constexpr SystemView kExternalViews[] = {
   //               subslotname, subsynccommit, subpublications, suborigin)
   //     ON pg_subscription TO public;)",
 
-  {"pg_catalog", "pg_stat_subscription_stats",
-   R"(SELECT
-          ss.subid,
-          s.subname,
-          ss.apply_error_count,
-          ss.sync_error_count,
-          ss.confl_insert_exists,
-          ss.confl_update_origin_differs,
-          ss.confl_update_exists,
-          ss.confl_update_missing,
-          ss.confl_delete_origin_differs,
-          ss.confl_delete_missing,
-          ss.confl_multiple_unique_conflicts,
-          ss.stats_reset
-      FROM pg_subscription as s,
-           pg_stat_get_subscription_stats(s.oid) as ss)"},
+  // pg_stat_subscription_stats is a synthesized system table (see
+  // pg_stat_subscription_stats.cpp), backed by the live SubscriptionEngine
+  // error counters, not a view over a stub function.
 
   {"pg_catalog", "pg_wait_events",
    R"(SELECT * FROM pg_get_wait_events())"},

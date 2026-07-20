@@ -139,6 +139,19 @@ std::vector<SubscriptionEngine::SubRuntime> SubscriptionEngine::RuntimeSnapshot(
   return out;
 }
 
+std::vector<SubscriptionEngine::SubErrorStat> SubscriptionEngine::ErrorStats(
+  ObjectId database_id) const {
+  std::vector<SubErrorStat> out;
+  absl::MutexLock lock{&_mu};
+  for (const auto& [sub_id, st] : _subs) {
+    if (st.target.database_id != database_id) {
+      continue;
+    }
+    out.push_back({sub_id, st.apply_error_count});
+  }
+  return out;
+}
+
 void SubscriptionEngine::LaunchLocked(
   ObjectId database_id, const std::shared_ptr<catalog::Subscription>& sub) {
   if (_stopping.load(std::memory_order_acquire)) {
@@ -212,6 +225,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(ObjectId sub_id) {
       absl::MutexLock lock{&_mu};
       auto it = _subs.find(sub_id);
       if (it != _subs.end()) {
+        ++it->second.apply_error_count;  // disable_on_error: this was an error
         it->second.client.reset();
       }
       break;
@@ -229,6 +243,12 @@ yaclib::Task<> SubscriptionEngine::Supervise(ObjectId sub_id) {
       }
       restart = it->second.restart;
       it->second.restart = false;
+      // A non-deliberate return from RunClient (not a config restart) means the
+      // apply stream dropped/errored -- count it. A restart (ALTER) is
+      // expected.
+      if (!restart) {
+        ++it->second.apply_error_count;
+      }
     }
     if (restart) {
       SDB_INFO(REPLICATION, "subscription '", sub_name,

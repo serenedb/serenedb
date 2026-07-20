@@ -28,10 +28,9 @@ namespace sdb::pg {
 // Synthesized from the live apply workers (SubscriptionEngine): one row per
 // running subscription. SereneDB has no separate worker processes/tablesync
 // workers, so there is a single worker_type='apply' row per active subscription
-// (relid/leader_pid NULL), pid is a synthetic worker id (no OS process), and the
-// message timestamps are unknown (NULL). Inactive/disabled subscriptions have
-// no live worker and therefore no row, matching PostgreSQL.
-// NOLINTBEGIN
+// (relid/leader_pid NULL), pid is a synthetic worker id (no OS process), and
+// the message timestamps are unknown (NULL). Inactive/disabled subscriptions
+// have no live worker and therefore no row, matching PostgreSQL. NOLINTBEGIN
 struct PgStatSubscription {
   static constexpr uint64_t kId = 170;
   static constexpr std::string_view kName = "pg_stat_subscription";
@@ -51,6 +50,7 @@ struct PgStatSubscription {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgStatSubscription>::GetTableData();
+catalog::MaterializedData
+SystemTableSnapshot<PgStatSubscription>::GetTableData();
 
 }  // namespace sdb::pg

@@ -1,0 +1,103 @@
+name: serenedb | helm chart release
+
+run-name: "serenedb | helm chart release [${{ inputs.PUBLISH && 'publish' || 'dry-run' }}]"
+
+# Versions are never committed: Chart.yaml holds placeholders, and this
+# workflow stamps the real ones at release time -- chart version derived from
+# the last published helm-chart-v* GitHub release (patch+1), appVersion from
+# the SereneDB release being shipped.
+
+on:
+  workflow_dispatch:
+    inputs:
+      SERENEDB_VERSION:
+        description: 'SereneDB version to pin as appVersion (e.g. 26.07.2). Required to publish.'
+        required: false
+        type: string
+        default: ''
+      CHART_VERSION:
+        description: 'Explicit chart version. Empty = last published helm-chart-v* patch + 1.'
+        required: false
+        type: string
+        default: ''
+      PUBLISH:
+        description: 'Create the GitHub Release (off = lint/package only, artifact uploaded)'
+        required: true
+        type: boolean
+        default: false
+  # Callable from release.yml so a SereneDB release also releases the chart.
+  workflow_call:
+    inputs:
+      SERENEDB_VERSION:
+        required: false
+        type: string
+        default: ''
+      CHART_VERSION:
+        required: false
+        type: string
+        default: ''
+      PUBLISH:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  helm-chart:
+    name: Lint, package, release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.16.4'
+
+      - name: Resolve chart version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CHART_VERSION="${{ inputs.CHART_VERSION }}"
+          if [[ -z "$CHART_VERSION" ]]; then
+            # Highest published helm-chart-v0.0.N -> next patch. No releases yet -> 0.0.1.
+            LAST=$(gh release list --repo "${{ github.repository }}" --limit 200 --json tagName,isDraft \
+              --jq '[.[] | select(.isDraft | not) | .tagName | select(startswith("helm-chart-v0.0.")) | ltrimstr("helm-chart-v0.0.") | select(test("^[0-9]+$")) | tonumber] | max // 0' \
+              2>/dev/null || echo "0")
+            CHART_VERSION="0.0.$((LAST + 1))"
+          fi
+          echo "chart_version=$CHART_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved chart version: $CHART_VERSION"
+
+      - name: Stamp versions
+        run: |
+          APP_VERSION="${{ inputs.SERENEDB_VERSION }}"
+          if [[ -z "$APP_VERSION" ]]; then
+            if [[ "${{ inputs.PUBLISH }}" == "true" ]]; then
+              echo "SERENEDB_VERSION is required when publishing" >&2
+              exit 1
+            fi
+            APP_VERSION="0.0.0"   # dry-run placeholder
+          fi
+          bash packages/helm/stamp_chart_version.bash "$APP_VERSION" "${{ steps.version.outputs.chart_version }}"
+          grep -E '^(version|appVersion):' packages/helm/serenedb/Chart.yaml
+
+      - name: Lint and package
+        run: bash packages/helm/package_chart.bash
+
+      - name: Upload chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: packages/helm/out/*.tgz
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: inputs.PUBLISH
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash packages/helm/release_chart.bash

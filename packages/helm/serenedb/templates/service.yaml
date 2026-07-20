@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "serenedb.fullname" . }}
+  labels:
+    {{- include "serenedb.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: postgres
+      port: {{ .Values.listeners.postgres.port }}
+      targetPort: postgres
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePort }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+    {{- if .Values.listeners.http.enabled }}
+    - name: http
+      port: {{ .Values.listeners.http.port }}
+      targetPort: http
+    {{- end }}
+  selector:
+    {{- include "serenedb.selectorLabels" . | nindent 4 }}
+---
+# Headless service: stable per-pod DNS, required by the StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "serenedb.fullname" . }}-hl
+  labels:
+    {{- include "serenedb.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: postgres
+      port: {{ .Values.listeners.postgres.port }}
+      targetPort: postgres
+  selector:
+    {{- include "serenedb.selectorLabels" . | nindent 4 }}

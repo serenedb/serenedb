@@ -279,7 +279,7 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
 // 0. This is the centroid residual quantizers (PQ/RaBitQ) rely on.
 TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
   constexpr uint32_t d = 4;
-  // 10 vectors << default posting_size -> root is a leaf.
+  // 10 vectors << posting_size -> root is a leaf.
   std::vector<float> data;
   for (size_t i = 0; i < 10; ++i) {
     for (uint32_t j = 0; j < d; ++j) {
@@ -298,8 +298,8 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
     m /= static_cast<float>(n);
   }
 
-  auto builder =
-    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, {});
+  auto builder = CentroidsBuilder::CreateFromSample(
+    data, d, VectorMetric::L2Sqr, {.posting_size = 1024});
   EXPECT_EQ(builder.NumClusters(), 1u);
 
   auto reordered = data;

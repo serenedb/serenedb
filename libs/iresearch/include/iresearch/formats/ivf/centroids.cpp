@@ -44,7 +44,6 @@ namespace {
 
 constexpr size_t kTrainSeed = 42;
 constexpr uint64_t kSampleSegmentOversample = 4;
-constexpr size_t kPostingSizeDefault = 1024;
 constexpr size_t kMaxFanout = 128;
 constexpr size_t kTrainPointsPerLeaf = 64;
 constexpr size_t kMaxTrainSample = 4ull * 1024 * 1024;
@@ -420,17 +419,25 @@ void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
   }
 }
 
+CentroidsBuilder CentroidsBuilder::BuildFromSample(std::vector<float> sample,
+                                                   uint32_t d,
+                                                   VectorMetric metric,
+                                                   size_t leaf_size,
+                                                   size_t max_fanout) {
+  CentroidsBuilder builder;
+  builder._metric = metric;
+  builder._d = d;
+  builder.BuildTree(std::move(sample), leaf_size,
+                    max_fanout != 0 ? max_fanout : kMaxFanout);
+  return builder;
+}
+
 CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
                                           ReadContext& ctx, size_t rows,
                                           VectorMetric metric, uint32_t d,
                                           const CentroidsBuildParams& params) {
-  CentroidsBuilder builder;
-  builder._metric = metric;
-  builder._d = d;
-  const size_t t =
-    params.posting_size != 0 ? params.posting_size : kPostingSizeDefault;
-  const size_t max_fanout =
-    params.max_fanout != 0 ? params.max_fanout : kMaxFanout;
+  const size_t t = params.posting_size;
+  SDB_ASSERT(t > 0);
 
   const auto* child = vector_column.Child();
   SDB_ASSERT(child);
@@ -456,22 +463,15 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
                                              valid_count * t));
   auto sample = GatherTrainingSample(*child, rows, d, ctx, valid, valid_count,
                                      sample_size, kTrainSeed);
-  builder.BuildTree(std::move(sample), tau, max_fanout);
-  return builder;
+  return BuildFromSample(std::move(sample), d, metric, tau, params.max_fanout);
 }
 
 CentroidsBuilder CentroidsBuilder::CreateFromSample(
   std::vector<float> sample, uint32_t d, VectorMetric metric,
   const CentroidsBuildParams& params) {
-  CentroidsBuilder builder;
-  builder._metric = metric;
-  builder._d = d;
-  const size_t t =
-    params.posting_size != 0 ? params.posting_size : kPostingSizeDefault;
-  const size_t max_fanout =
-    params.max_fanout != 0 ? params.max_fanout : kMaxFanout;
-  builder.BuildTree(std::move(sample), t, max_fanout);
-  return builder;
+  SDB_ASSERT(params.posting_size > 0);
+  return BuildFromSample(std::move(sample), d, metric, params.posting_size,
+                         params.max_fanout);
 }
 
 CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {

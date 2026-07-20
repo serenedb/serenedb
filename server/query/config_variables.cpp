@@ -372,8 +372,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::INTEGER,
         "Target IVF posting-list size (leaf cap t), captured into the index "
         "config at CREATE INDEX. Smaller values force deeper multi-level "
-        "centroid trees (useful for testing). Default 4096.",
-        [] { return duckdb::Value::INTEGER(4096); },
+        "centroid trees (useful for testing). Default 1024.",
+        [] { return duckdb::Value::INTEGER(1024); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (n < 1) {

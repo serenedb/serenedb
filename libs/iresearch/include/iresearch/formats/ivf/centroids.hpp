@@ -225,6 +225,10 @@ class CentroidsBuilder {
   size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
 
  private:
+  static CentroidsBuilder BuildFromSample(std::vector<float> sample, uint32_t d,
+                                          VectorMetric metric, size_t leaf_size,
+                                          size_t max_fanout);
+
   void BuildTree(std::vector<float> sample, size_t leaf_size,
                  size_t max_fanout);
 

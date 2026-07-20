@@ -433,8 +433,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (!pk_name) {
         return std::nullopt;
       }
-      std::optional<duckdb::column_t> pk_index;
-      duckdb::idx_t pos = 0;
+      duckdb::column_t pk_index = 0;
       for (const auto& col : entry.GetColumns().Logical()) {
         if (col.Name() == *pk_name) {
           // v1: a signed 64-bit key -- both the int64 storage and the re-fetch
@@ -442,22 +441,18 @@ std::optional<ViewFastPath> ResolveViewFastPath(
           if (col.GetType().id() != duckdb::LogicalTypeId::BIGINT) {
             return std::nullopt;
           }
-          pk_index = static_cast<duckdb::column_t>(pos);
-          break;
+          ViewFastPath out;
+          out.catalog_ref = ext_ref;
+          out.pk_spec = catalog::PkSpec::ExternalColumnKey;
+          out.key_columns.push_back({.name = std::move(*pk_name),
+                                     .source_index = pk_index,
+                                     .type = duckdb::LogicalType::BIGINT});
+          out.projection_columns = std::move(projection_columns);
+          return out;
         }
-        ++pos;
+        ++pk_index;
       }
-      if (!pk_index) {
-        return std::nullopt;
-      }
-      ViewFastPath out;
-      out.catalog_ref = ext_ref;
-      out.pk_spec = catalog::PkSpec::ExternalColumnKey;
-      out.key_columns.push_back({.name = std::move(*pk_name),
-                                 .source_index = *pk_index,
-                                 .type = duckdb::LogicalType::BIGINT});
-      out.projection_columns = std::move(projection_columns);
-      return out;
+      return std::nullopt;
     }
     return std::nullopt;
   }

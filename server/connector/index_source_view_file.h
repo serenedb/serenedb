@@ -89,10 +89,8 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
   };
   std::vector<CachedFileLookup> _file_cache;
 
-  // Each per-file lookup writes its survivors compactly from row 0 (the lookup
-  // TF's per-call contract). We run each file into `_file_target` and append
-  // its survivors into `_tf_target` at the running offset, so the batch
-  // accumulates across files instead of each file overwriting the last.
+  // Per-file lookup target: survivors land at row 0 per call and are appended
+  // into _tf_target at the running batch offset.
   duckdb::DataChunk _file_target;
   std::vector<duckdb::idx_t> _file_survivor_idx;
 };

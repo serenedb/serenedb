@@ -56,16 +56,12 @@ class ViewIndexSourceBase : public IndexSource {
 
   void AliasOutput(duckdb::DataChunk& output);
   void RunCastPass(duckdb::DataChunk& output, duckdb::idx_t row_count);
-  // Builds `_pushed_filters` from the scan's output-slot-keyed pushed filters,
-  // dropping non-lookup slots (e.g. the score) that have no source column.
-  // `rekey` maps projected-column ordinal k to the key the lookup scan expects
-  // (empty = identity); call after InitProjection.
+  // Builds _pushed_filters from the scan's output-slot-keyed filters, dropping
+  // non-lookup slots; `rekey` remaps ordinal k (empty = identity).
   void BuildPushedFilters(const duckdb::TableFilterSet* input_filters,
                           std::span<const duckdb::idx_t> rekey);
-  // Reorder the doc-id-keyed output columns (every slot the lookup did not
-  // write) into survivor order, matching the compact lookup emit.
-  // `survivor_idx` maps each output row to the requested-pk index it came from
-  // (always set).
+  // Reorder the doc-id-keyed output columns into survivor order;
+  // survivor_idx maps each output row to its requested-pk index.
   void GatherNonLookupColumns(duckdb::DataChunk& output, duckdb::idx_t count,
                               const duckdb::idx_t* survivor_idx);
 
@@ -84,9 +80,7 @@ class ViewIndexSourceBase : public IndexSource {
   std::vector<duckdb::idx_t> _sort_perm;
   std::vector<int64_t> _sorted_rows;
   std::vector<int64_t> _sorted_files;
-  // Doc-id-keyed (non-lookup) output slots + a reusable selection, computed
-  // once at init: GatherNonLookupColumns reorders exactly these slots each
-  // batch, so neither is rebuilt per batch.
+  // Non-lookup output slots + reusable selection, computed once at init.
   std::vector<duckdb::idx_t> _non_lookup_slots;
   duckdb::SelectionVector _gather_sel;
   // Filled by a filtered/compacted lookup: dense survivor row -> sorted-pk

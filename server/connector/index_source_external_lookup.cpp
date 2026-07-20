@@ -115,12 +115,9 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
     absl::StrAppend(&select_list, ", ", Quote(name));
   }
 
-  // A single key column renders a flat `key IN (?,...)`. Multiple columns
-  // render the exact tuple predicate `(a=? AND b=?) OR ...` -- DuckDB
-  // re-applies it locally so the source returns exactly the requested tuples
-  // (no cross-product). That fixed STANDARD_VECTOR_SIZE-term OR is deeper than
-  // the parser's default expression-depth limit, so raise it on this
-  // connection.
+  // Single key: flat `key IN (?,...)`. Multiple: `(a=? AND b=?) OR ...` --
+  // DuckDB re-applies the OR locally, so the source returns exactly the
+  // requested tuples. The fixed 2048-term OR exceeds the default parser depth.
   std::string predicate;
   if (_num_key_cols == 1) {
     predicate = absl::StrCat(
@@ -172,9 +169,8 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   const bool is_struct = _pk_kind == PrimaryKeyBatch::Kind::Struct;
   const duckdb::idx_t num_key_cols = _num_key_cols;
 
-  // _params is row-major: tuple i (one OR group) occupies [i*num_key_cols,
-  // i*num_key_cols + num_key_cols), matching the `(a=? AND b=?)` placeholder
-  // order (a single IN key column is the k=0 case).
+  // _params is row-major: tuple i occupies [i*num_key_cols, (i+1)*num_key_cols),
+  // matching the placeholder order.
   if (is_struct) {
     _struct_slot.clear();
     for (duckdb::idx_t i = 0; i < count; ++i) {

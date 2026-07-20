@@ -72,10 +72,8 @@ struct RegistryEntry {
   catalog::PkSpec single_pk_spec;
   catalog::PkSpec glob_pk_spec;
   duckdb::TableFunction (*make_lookup)();
-  // Whether the reader's lookup applies pushed table filters. csv/json/text
-  // only fetch rows by offset and ignore filters, so filters on their lookup
-  // columns must NOT be pushed (they'd be silently dropped) -- see
-  // supports_pushdown.
+  // csv/json/text lookups fetch by offset and ignore pushed filters, so
+  // filters on their lookup columns must NOT be pushed (silently dropped).
   bool supports_filters = false;
 };
 
@@ -375,11 +373,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       .table = entry.name.GetIdentifierName()};
     if ((cat_type == "clickhouse" || cat_type == "postgres") &&
         !key_columns.empty()) {
-      // User-specified lookup key via CREATE INDEX WITH (key_columns = '...'):
-      // the user asserts which column(s) are the key (their PK or a secondary
-      // key), overriding the auto-detected default (postgres ctid / clickhouse
-      // PK). Any number of columns (>= 1) of any types. An unknown column name
-      // falls back to no fast path.
+      // User key via WITH (key_columns = '...'): any column count/types, overrides
+      // the auto default (pg ctid / CH PK). Unknown column -> no fast path.
       duckdb::vector<ExternalKeyColumn> cols;
       cols.reserve(key_columns.size());
       for (const auto& name : key_columns) {
@@ -397,12 +392,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       return out;
     }
     if (cat_type == "postgres") {
-      // Postgres: key the lookup on the row's physical locator, ctid (surfaced
-      // by the connector as the duckdb rowid), NOT a real column. This is
-      // universal -- no PRIMARY KEY required, works for any table -- and a ctid
-      // is unique within the (static) index's snapshot. The build projects the
-      // rowid; the lookup renders `rowid IN (...)`, which postgres_filter_
-      // pushdown turns into a `ctid IN (...)` TID scan on the remote.
+      // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
+      // needed, unique within the index snapshot. The lookup's `rowid IN (...)`
+      // is pushed down as a `ctid IN (...)` TID scan.
       ViewFastPath out;
       out.catalog_ref = ext_ref;
       out.pk_spec = catalog::PkSpec::ExternalRowId;
@@ -410,15 +402,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       return out;
     }
     if (cat_type == "clickhouse") {
-      // ClickHouse can't use a physical locator: its part+offset row id is
-      // invalidated by background merges/compaction, so key on the MergeTree
-      // sorting-prefix PK column (from system.columns.is_in_primary_key, read
-      // via the engine-agnostic catalog API) -- i.e. auto-detected key_columns.
-      // v1: a single 64-bit integer column; anything else -> no fast path.
-      // NB: the ClickHouse "primary key" is only a sorting prefix, not a
-      // uniqueness constraint; duplicate key values each index their own
-      // document, and the lookup fills all of them from whichever source row
-      // the re-fetch returns first.
+      // ClickHouse: part+offset ids die on merges, so key on the single-BIGINT
+      // MergeTree PK column (v1; anything else -> no fast path). That "PK" is
+      // only a sorting prefix: duplicate keys each index their own document.
       std::optional<std::string> pk_name;
       for (const auto& constraint : entry.GetConstraints()) {
         if (constraint->type != duckdb::ConstraintType::UNIQUE) {

@@ -49,9 +49,8 @@ struct CatalogTableRef {
   std::string table;
 };
 
-// One column of a PkSpec::ExternalColumnKey lookup key. The list is the same
-// whether the columns came from the engine's PK metadata (clickhouse) or the
-// user's WITH (key_columns = '...').
+// One column of an ExternalColumnKey: same shape for engine PK metadata
+// (clickhouse) and user WITH (key_columns).
 struct ExternalKeyColumn {
   std::string name;               // source column name (WHERE + re-fetch)
   duckdb::column_t source_index;  // position in the source table (projection)
@@ -69,11 +68,8 @@ struct ViewFastPath {
   // 0 = not pinned. Set at query time from the index's commit payload.
   int64_t pinned_iceberg_snapshot_id = 0;
   catalog::PkSpec pk_spec;
-  // For PkSpec::ExternalColumnKey: the key columns, in order (any types, any
-  // count >= 1). Empty for PkSpec::ExternalRowId (postgres ctid -- keyed on the
-  // virtual rowid, no real columns). The lookup renders `WHERE rowid IN (...)`
-  // (ExternalRowId, pushed as a `ctid IN (...)` TID scan) or `WHERE col IN
-  // (...)` / an OR of per-row equalities (ExternalColumnKey).
+  // ExternalColumnKey: the key columns in order (any types, count >= 1);
+  // empty for ExternalRowId (pg ctid, keyed on the virtual rowid).
   duckdb::vector<ExternalKeyColumn> key_columns;
   // Whether the backing reader's lookup applies pushed table filters (parquet /
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see
@@ -81,10 +77,8 @@ struct ViewFastPath {
   bool supports_filters = false;
 };
 
-// An external key is stored as a single BIGINT column (I64) when it is the ctid
-// rowid or a single BIGINT column -- both fit the int64 fast path. Any other
-// shape (a non-BIGINT column, or more than one column) is stored as a STRUCT
-// column of the key columns' types.
+// A ctid rowid or single BIGINT column is stored as one BIGINT (I64); any
+// other shape as a STRUCT of the key columns' types.
 inline bool ExternalKeyIsI64(const ViewFastPath& fp) noexcept {
   return fp.pk_spec == catalog::PkSpec::ExternalRowId ||
          (fp.pk_spec == catalog::PkSpec::ExternalColumnKey &&
@@ -92,10 +86,8 @@ inline bool ExternalKeyIsI64(const ViewFastPath& fp) noexcept {
           fp.key_columns[0].type.id() == duckdb::LogicalTypeId::BIGINT);
 }
 
-// `key_columns`: user-specified external-DB lookup key columns (CREATE INDEX
-// WITH key_columns). Empty = auto-detect the default key (postgres ctid /
-// clickhouse PK). Build and lookup must pass the SAME value (from the CREATE
-// INDEX options and the persisted index options respectively).
+// key_columns: user lookup key columns; empty = auto (pg ctid / CH PK).
+// Build and lookup must pass the SAME value (CREATE INDEX / persisted opts).
 std::optional<ViewFastPath> ResolveViewFastPath(
   duckdb::ClientContext& context, const catalog::PgSqlView& view,
   std::span<const std::string> key_columns = {});

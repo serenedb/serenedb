@@ -76,9 +76,7 @@ void ViewIndexSourceBase::InitProjection(
   }
   _tf_target.Initialize(context, _scratch_types);
 
-  // The doc-id-keyed columns GatherNonLookupColumns reorders are every output
-  // slot the lookup does not write; this set is fixed for the query, so compute
-  // it once here (plus a reusable selection) instead of per batch.
+  // The non-lookup slot set is fixed for the query; compute it once.
   std::vector<bool> is_lookup(projected_columns.size(), false);
   for (const auto slot : _real_proj_slots) {
     is_lookup[slot] = true;
@@ -196,14 +194,9 @@ void ViewIndexSourceBase::GatherNonLookupColumns(
   if (count == 0) {
     return;
   }
-  // Materialize wrote the lookup columns in survivor order: output row w came
-  // from the survivor_idx[w]-th requested pk. The doc-id-keyed columns were
-  // filled earlier (AccountAndWriteVirtualColumns) in doc-id order, so reorder
-  // them to match -- only these small columns move, and nothing writes them
-  // afterwards, so a dictionary Slice suffices (no flatten/copy). The selection
-  // and slot list are reused across batches (built once in InitProjection).
-  // Sources that don't sort their pks (the external lookup) leave _sort_perm
-  // empty, meaning identity: survivor_idx already indexes the doc-id order.
+  // Lookup columns were written in survivor order; the doc-id-keyed columns
+  // were filled in doc-id order, so Slice them to match (dictionary, no copy).
+  // An empty _sort_perm means identity (sources that don't sort their pks).
   if (_sort_perm.empty()) {
     for (duckdb::idx_t k = 0; k < count; ++k) {
       _gather_sel.set_index(k, survivor_idx[k]);

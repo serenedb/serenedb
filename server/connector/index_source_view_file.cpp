@@ -90,9 +90,8 @@ duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
   SortRows(pk, start, count);
 
   AliasOutput(output);
-  // Dense: the lookup TF applies the pushed filters natively and appends
-  // survivors from size 0, then reports the survivor count via the chunk's
-  // cardinality and the sorted-pk index of each via pk_survivors.
+  // The lookup TF applies pushed filters natively, appends survivors from
+  // size 0, and reports each survivor's sorted-pk index via pk_survivors.
   _tf_target.SetCardinality(0);
   _survivor_idx.resize(count);
 
@@ -142,11 +141,8 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
   }
   _survivor_idx.resize(count);
 
-  // Each per-file lookup writes its survivors compactly from row 0 into
-  // _file_target (the lookup TF's per-call contract: pk_survivors is sized to
-  // that call's pk_lookups and filled 0-based). Copy each file's survivors into
-  // _tf_target at the running offset so the batch accumulates across files
-  // instead of each file overwriting the last.
+  // Each per-file lookup writes survivors from row 0 into _file_target; append
+  // them into _tf_target at the running offset so the batch accumulates.
   duckdb::idx_t total = 0;
   size_t i = 0;
   while (i < count) {
@@ -192,9 +188,8 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
                                      file_rows, /*source_offset=*/0,
                                      /*target_offset=*/total);
     }
-    // The reader wrote survivors as 0-based indices into this file's pk_lookups
-    // span (which starts at _sorted_rows[i]); shift to batch-global sorted-pk
-    // indices so GatherNonLookupColumns can reorder the doc-id-keyed columns.
+    // Shift the reader's 0-based per-file survivor indices to batch-global
+    // sorted-pk indices for the doc-id-keyed gather.
     for (duckdb::idx_t k = 0; k < file_rows; ++k) {
       _survivor_idx[total + k] = i + _file_survivor_idx[k];
     }

@@ -810,10 +810,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
   auto& table_entry = RequireBaseTable(op.table);
   if (table_entry.GetSereneDBTable()->GetEngine() ==
       catalog::TableEngine::Search) {
-    // MERGE INTO (and INSERT ... ON CONFLICT, which duckdb also lowers to
-    // MergeInto) delegates each action to the store mirror, which bypasses the
-    // iresearch index -- it silently corrupts the search index. Reject it with
-    // a clear error until search-backed MERGE is implemented.
+    // MERGE INTO (and INSERT ... ON CONFLICT, lowered to MergeInto) would bypass
+    // the iresearch index via the store mirror -- reject until supported.
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on "

@@ -201,11 +201,9 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   auto& transaction =
     duckdb::DuckTransaction::Get(context, _table->ParentCatalog());
 
-  // Single path: the scan writes survivors compactly and records each output
-  // row's requested-pk index in _survivor_idx (drives the doc-id-keyed gather).
-  // It evaluates any pushed lookup-column filters natively (FilterSelection +
-  // late materialization). A pk the source no longer holds behaves exactly
-  // like a filtered-out row: it is dropped from the batch.
+  // The scan writes survivors compactly, records each row's requested-pk index
+  // in _survivor_idx, and evaluates pushed lookup-column filters natively; a pk
+  // the source no longer holds is dropped like a filtered-out row.
   _survivor_idx.resize(count);
   const auto rows = storage.LookupScan(
     transaction, context, _fetch_columns, _pushed_filters.get(),

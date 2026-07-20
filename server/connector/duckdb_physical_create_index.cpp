@@ -552,10 +552,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       break;
     }
     case catalog::PkColumnKind::Struct: {
-      // The user key columns are the trailing projected columns [base, count).
-      // Pack them into ONE struct vector of their own types; the columnstore
-      // stores (and self-describes) that type, so the lookup reads it back
-      // generically. Field names are positional -- the lookup uses field order.
+      // Pack the trailing user key columns into ONE self-describing struct
+      // vector; field names are positional (the lookup uses field order).
       const auto base = gstate.pk_hi_col_idx;
       SDB_ASSERT(base < chunk.ColumnCount());
       duckdb::child_list_t<duckdb::LogicalType> field_types;

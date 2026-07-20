@@ -36,10 +36,8 @@ enum class PkColumnKind : uint8_t {
   I64,
   I64I64,
   Unable,
-  // A user-specified external lookup key (CREATE INDEX WITH key_columns): the
-  // key columns are stored together as one STRUCT column of their own types
-  // (any types, any count >= 1), read back as one struct column. Appended last
-  // to keep the persisted uint8 ordinals of the values above stable.
+  // User key_columns: stored as ONE STRUCT column of the columns' own types.
+  // Appended last to keep the persisted ordinals above stable.
   Struct,
 };
 
@@ -52,11 +50,9 @@ struct InvertedIndexOptions {
   bool pk_term = true;
   PkColumnKind pk_column = PkColumnKind::I64;
   std::optional<ScorerOptions> topk_scorer;
-  // CREATE INDEX ... WITH (key_columns = 'a, b, ...'): the source columns whose
-  // values re-fetch a matched row from an attached external DB. Empty = the
-  // default key (postgres ctid / clickhouse PK). Persisted so build and lookup
-  // agree. v1 renders `WHERE (cols) IN (...)`; the columns are stored as the
-  // index's key (a struct when there is more than one).
+  // CREATE INDEX WITH (key_columns = 'a, b'): the external-DB re-fetch key
+  // columns; empty = default (pg ctid / CH PK). Persisted so build and lookup
+  // agree.
   std::vector<std::string> key_columns;
 };
 

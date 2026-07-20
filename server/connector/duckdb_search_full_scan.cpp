@@ -1047,9 +1047,8 @@ void RunCountScan(duckdb::ClientContext& /*ctx*/, IResearchScanGlobalState& g,
   l.local_emitted += batch;
 }
 
-// Feed the stored-PK column read for this batch into the PrimaryKeyBatch, per
-// the source's key shape. A struct key is borrowed, not copied: the lookup
-// reads the vector's field columns back generically.
+// Feed the batch's stored-PK read into the PrimaryKeyBatch per key shape;
+// a struct key is borrowed, not copied.
 void AppendPrimaryKeysFromVector(PrimaryKeyBatch& pk, duckdb::Vector& vec,
                                  size_t count) {
   const auto type_id = vec.GetType().id();
@@ -1233,10 +1232,8 @@ void RunStreamingScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
     const auto added = l.EmitChunk(ctx, g, output);
     SDB_ASSERT(added <= STANDARD_VECTOR_SIZE);
     if (added != 0) {
-      // The lookup fetches the source columns for the materialized pks and
-      // applies any pushed lookup-column filters natively (FilterSelection +
-      // late materialization), returning the survivor count (== added when no
-      // lookup filter applies).
+      // The lookup fetches source columns for the pks and applies pushed
+      // lookup-column filters natively, returning the survivor count.
       const auto kept = FinalizeBatch(ctx, g, l, output, added);
       if (kept != 0) {
         output.SetChildCardinality(kept);

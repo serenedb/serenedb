@@ -66,9 +66,8 @@ class RowIdFetchIndexSource : public ViewIndexSourceBase {
   duckdb::vector<duckdb::StorageIndex> _fetch_columns;
   duckdb::vector<duckdb::LogicalType> _fetch_types;
   duckdb::DataChunk _fetch_chunk;
-  // Persistent lookup cursor, built once and reused across Materialize batches
-  // so the scan/decode state (pinned blocks, FSST dicts) stays warm between
-  // calls.
+  // Persistent lookup cursor reused across batches so scan/decode state
+  // (pinned blocks, FSST dicts) stays warm.
   duckdb::unique_ptr<duckdb::TableScanState> _lookup_scan_state;
 };
 

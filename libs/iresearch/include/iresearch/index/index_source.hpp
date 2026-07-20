@@ -48,10 +48,8 @@ struct PrimaryKeyBatch {
   Kind kind = Kind::None;
   std::vector<int64_t> files;
   std::vector<int64_t> rows;
-  // Kind::Struct only: a BORROWED pointer to the current batch's key column (a
-  // flattened STRUCT vector, `column_count` rows). Not owned, no per-row copy,
-  // no duckdb::Value -- valid only until the immediately-following Materialize
-  // consumes it. One batch is read per Materialize, so no accumulation.
+  // Kind::Struct only: BORROWS the batch's flattened STRUCT key vector
+  // (column_count rows); valid only until the next Materialize consumes it.
   duckdb::Vector* column = nullptr;
   duckdb::idx_t column_count = 0;
 
@@ -77,9 +75,8 @@ class IndexSource {
 
   virtual PrimaryKeyBatch::Kind PkKind() const = 0;
 
-  // Materializes the source columns for `count` pks starting at `start` and
-  // returns the number of output rows produced -- equal to `count` unless a
-  // pushed lookup-column filter compacted the batch to survivors.
+  // Materializes source columns for `count` pks from `start`; returns the rows
+  // produced (< count when compacted to survivors).
   virtual duckdb::idx_t Materialize(duckdb::ClientContext& context,
                                     PrimaryKeyBatch& batch, duckdb::idx_t start,
                                     duckdb::idx_t count,

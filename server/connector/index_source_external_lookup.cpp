@@ -107,8 +107,9 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   }
   _num_key_cols = key_cols.size();
   _num_proj_cols = select_names.size();
-  _pk_kind = ExternalKeyIsI64(_fast_path) ? PrimaryKeyBatch::Kind::I64
-                                          : PrimaryKeyBatch::Kind::Struct;
+  _pk_kind = _fast_path.pk_spec == catalog::PkSpec::ExternalRowId
+               ? PrimaryKeyBatch::Kind::I64
+               : PrimaryKeyBatch::Kind::Struct;
 
   std::string select_list = absl::StrJoin(key_cols, ", ");
   for (const auto& name : select_names) {

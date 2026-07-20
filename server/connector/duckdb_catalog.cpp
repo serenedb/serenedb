@@ -1163,11 +1163,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     create_index_info->SetSchema(target.ParentSchema().name);
     create_index_info->SetCatalog(target.ParentCatalog().GetName());
     if (view_fast_path && catalog::IsExternalPK(view_fast_path->pk_spec)) {
-      // External key: stored as one BIGINT (ctid rowid or a single BIGINT
-      // column) or as a struct of the key columns' types (ExternalKeyIsI64).
+      // External key: the ctid rowid is stored as one BIGINT; key columns are
+      // stored as a struct of their own types.
       create_index_info->options["_sdb_view_fast_path_pk"] = duckdb::Value(
-        ExternalKeyIsI64(*view_fast_path) ? "external_i64"
-                                          : "external_struct_key");
+        view_fast_path->pk_spec == catalog::PkSpec::ExternalRowId
+          ? "external_i64"
+          : "external_struct_key");
     } else if (view_fast_path) {
       switch (view_fast_path->pk_spec) {
         case catalog::PkSpec::DuckDBRowId:

@@ -77,15 +77,6 @@ struct ViewFastPath {
   bool supports_filters = false;
 };
 
-// A ctid rowid or single BIGINT column is stored as one BIGINT (I64); any
-// other shape as a STRUCT of the key columns' types.
-inline bool ExternalKeyIsI64(const ViewFastPath& fp) noexcept {
-  return fp.pk_spec == catalog::PkSpec::ExternalRowId ||
-         (fp.pk_spec == catalog::PkSpec::ExternalColumnKey &&
-          fp.key_columns.size() == 1 &&
-          fp.key_columns[0].type.id() == duckdb::LogicalTypeId::BIGINT);
-}
-
 // key_columns: user lookup key columns; empty = auto (pg ctid / CH PK).
 // Build and lookup must pass the SAME value (CREATE INDEX / persisted opts).
 std::optional<ViewFastPath> ResolveViewFastPath(

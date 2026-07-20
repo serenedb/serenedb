@@ -576,7 +576,7 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
   }
   if (fp.pk_spec == catalog::PkSpec::ExternalColumnKey) {
     // Project the key columns in order so the index sink can key postings by
-    // their values (stored as a single BIGINT or a struct -- ExternalKeyIsI64).
+    // their values (the ctid rowid as one BIGINT; key columns as a struct).
     std::vector<duckdb::column_t> ids;
     ids.reserve(fp.key_columns.size());
     for (const auto& kc : fp.key_columns) {

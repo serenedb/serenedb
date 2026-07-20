@@ -46,14 +46,9 @@ inline void EncodeCentroidTerm(uint32_t id, byte_type* out) noexcept {
 using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
                                    uint16_t);
 
-VectorDistanceFn ResolveVectorDistance(VectorMetric metric);
+VectorDistanceFn ResolveScoringDistance(VectorMetric metric);
 
 bool VectorMetricIsAngular(VectorMetric metric) noexcept;
-
-inline constexpr bool Better(bool nearest_is_largest, float candidate,
-                             float best) noexcept {
-  return nearest_is_largest ? candidate > best : candidate < best;
-}
 
 class IvfVectorReader {
  public:

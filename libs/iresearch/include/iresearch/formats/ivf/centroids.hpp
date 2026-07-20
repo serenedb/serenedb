@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -40,7 +41,6 @@ class ReadContext;
 struct IVFHeader {
   VectorMetric metric;
   uint32_t d;
-  bstring quant_stats;
 
   static IVFHeader Deserialize(IndexInput& in);
   void Serialize(IndexOutput& out) const;
@@ -84,15 +84,6 @@ struct CentroidsNode {
     std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total);
 
   template<VectorMetric Metric>
-  static bool Closer(float l, float r) noexcept {
-    if constexpr (VectorMetricNearestIsLargest(Metric)) {
-      return l > r;
-    } else {
-      return l < r;
-    }
-  }
-
-  template<VectorMetric Metric>
   static void Search(std::span<const float> query, IndexInput& in,
                      uint32_t beam, bool want_centroids, size_t level,
                      std::span<const CentroidsNodeView> nodes,
@@ -101,9 +92,6 @@ struct CentroidsNode {
     SDB_ASSERT(!nodes.empty());
     const uint16_t d = query.size();
     const auto* q = reinterpret_cast<const byte_type*>(query.data());
-    const auto by_dist = [](const auto& l, const auto& r) noexcept {
-      return Closer<Metric>(l.dist, r.dist);
-    };
 
     struct Scored {
       float dist;
@@ -135,7 +123,7 @@ struct CentroidsNode {
     }
     const auto k = std::min<size_t>(beam, scored.size());
     const auto mid = scored.begin() + k;
-    std::partial_sort(scored.begin(), mid, scored.end(), by_dist);
+    std::ranges::partial_sort(scored, mid, std::greater{}, &Scored::dist);
     std::vector<size_t> starts, sizes;
     starts.reserve(k);
     sizes.reserve(k);
@@ -179,14 +167,15 @@ class CentroidsTree {
   bool Empty() const noexcept { return _head.d == 0; }
 
   void SetQuantStats(bstring stats) noexcept {
-    _head.quant_stats = std::move(stats);
+    _quant_stats = std::move(stats);
   }
-  const bstring& QuantStats() const noexcept { return _head.quant_stats; }
+  const bstring& QuantStats() const noexcept { return _quant_stats; }
 
  private:
   IVFHeader _head;
   CentroidsNode _root;
   size_t _next_level_offset;
+  bstring _quant_stats;
 };
 
 struct CentroidsSpan {
@@ -205,12 +194,6 @@ struct CentroidsBuildParams {
   size_t max_centroids = 0;
   double sample_factor = 0;
   uint64_t min_train_sample = 0;
-  bool keep_sample = false;
-};
-
-struct CentroidsLayer {
-  std::vector<CentroidsNode> nodes;
-  size_t level;
 };
 
 class CentroidsBuilder {
@@ -240,11 +223,9 @@ class CentroidsBuilder {
 
   size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
 
-  std::span<const float> TrainingSample() const noexcept { return _sample; }
-
  private:
   void BuildTree(std::vector<float> sample, size_t leaf_size,
-                 size_t min_centroids, size_t max_centroids, bool keep_sample);
+                 size_t min_centroids, size_t max_centroids);
 
   void AssignCentroidsImpl(
     size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,
@@ -253,7 +234,6 @@ class CentroidsBuilder {
 
   std::vector<Node> _nodes;
   std::vector<size_t> _row_bases;
-  std::vector<float> _sample;
   VectorMetric _metric = VectorMetric::L2Sqr;
   uint32_t _d = 0;
   size_t _n_rows = 0;

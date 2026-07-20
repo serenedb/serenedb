@@ -657,9 +657,9 @@ TEST(clustering_test, superkmeans_injected_rotation_matches_self_init) {
   auto rotation = MakeRotation(d, seed);
   ASSERT_EQ(rotation.size(), static_cast<size_t>(d) * d);
 
-  auto injected = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, seed,
-                                 /*niter=*/8, /*nredo=*/1,
-                                 ClusteringAlgo::FlatSuperKMeans, rotation.data());
+  auto injected = TrainCentroids(
+    VectorMetric::L2Sqr, data.data(), n, k, d, seed,
+    /*niter=*/8, /*nredo=*/1, ClusteringAlgo::FlatSuperKMeans, rotation.data());
   auto self_init =
     TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, seed,
                    /*niter=*/8, /*nredo=*/1, ClusteringAlgo::FlatSuperKMeans,

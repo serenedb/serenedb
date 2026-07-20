@@ -21,7 +21,7 @@ CREATE TABLE pq_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[8])
 
 statement ok
 CREATE INDEX pq_l2_idx ON pq_l2
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 4, nlist = 8))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 4))
 
 # 300 bounded filler rows near the origin to train the codebook.
 statement ok
@@ -86,7 +86,7 @@ CREATE TABLE pq_ip (pk INTEGER PRIMARY KEY, emb FLOAT[8])
 
 statement ok
 CREATE INDEX pq_ip_idx ON pq_ip
-  USING inverted(pk, emb ivf (metric = 'ip', quant = 'pq', pq_m = 4, nlist = 4))
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'pq', pq_m = 4))
 
 statement ok
 INSERT INTO pq_ip

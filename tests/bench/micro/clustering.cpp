@@ -22,11 +22,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <random>
-#include <vector>
-
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/utils/vector.hpp>
+#include <random>
+#include <vector>
 
 // Compares the clustering primitive (produce k centroids from n sample vectors)
 // across three algorithms exposed by irs::TrainCentroids:
@@ -73,7 +72,8 @@ double MeanObjective(const std::vector<float>& data, size_t n, uint32_t d,
   double total = 0.0;
   size_t cnt = 0;
   for (size_t i = 0; i < n; i += step) {
-    const auto* x = reinterpret_cast<const irs::byte_type*>(data.data() + i * d);
+    const auto* x =
+      reinterpret_cast<const irs::byte_type*>(data.data() + i * d);
     float best = 0.f;
     for (uint32_t j = 0; j < k; ++j) {
       const auto* cj = reinterpret_cast<const irs::byte_type*>(
@@ -96,10 +96,10 @@ class ClusteringFixture : public benchmark::Fixture {
     if (data.empty()) {
       data = MakeMixture(kN, kDim, kSeed);
     }
-    auto warm = irs::TrainCentroids(
-      irs::VectorMetric::L2Sqr, data.data(), std::min<size_t>(kN, 4096),
-      /*k=*/64, kDim, kSeed, /*niter=*/3, /*nredo=*/1,
-      irs::ClusteringAlgo::Hskm);
+    auto warm = irs::TrainCentroids(irs::VectorMetric::L2Sqr, data.data(),
+                                    std::min<size_t>(kN, 4096),
+                                    /*k=*/64, kDim, kSeed, /*niter=*/3,
+                                    /*nredo=*/1, irs::ClusteringAlgo::Hskm);
     benchmark::DoNotOptimize(warm.data());
   }
 
@@ -123,19 +123,20 @@ void RunVariant(benchmark::State& state, irs::ClusteringAlgo algo,
 BENCHMARK_DEFINE_F(ClusteringFixture, Lloyd)(benchmark::State& state) {
   RunVariant(state, irs::ClusteringAlgo::Lloyd, data);
 }
-BENCHMARK_DEFINE_F(ClusteringFixture, FlatSuperKMeans)(benchmark::State& state) {
+BENCHMARK_DEFINE_F(ClusteringFixture,
+                   FlatSuperKMeans)(benchmark::State& state) {
   RunVariant(state, irs::ClusteringAlgo::FlatSuperKMeans, data);
 }
 BENCHMARK_DEFINE_F(ClusteringFixture, Hskm)(benchmark::State& state) {
   RunVariant(state, irs::ClusteringAlgo::Hskm, data);
 }
 
-#define CLUSTERING_REGISTER(Method)      \
+#define CLUSTERING_REGISTER(Method)               \
   BENCHMARK_REGISTER_F(ClusteringFixture, Method) \
-    ->Arg(256)                           \
-    ->Arg(1024)                          \
-    ->Arg(4096)                          \
-    ->Unit(benchmark::kMillisecond)      \
+    ->Arg(256)                                    \
+    ->Arg(1024)                                   \
+    ->Arg(4096)                                   \
+    ->Unit(benchmark::kMillisecond)               \
     ->Iterations(1)
 
 CLUSTERING_REGISTER(Lloyd);

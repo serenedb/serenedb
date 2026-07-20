@@ -88,7 +88,6 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
       .posting_size = _info.posting_size,
       .sample_factor = _info.sample_factor,
       .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
-      .keep_sample = pq && qw != nullptr,
     });
   const size_t n_clusters = centroids.NumClusters();
 
@@ -384,11 +383,9 @@ void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
-  const uint32_t pq_niter =
-    _info.cluster_iters != 0 ? _info.cluster_iters : kDefaultClusterIters;
   auto qw =
     MakeQuantizerWriter(_info.quant.kind, d, _info.metric, _info.quant.pq_m,
-                        pq_niter, _info.quant.nb_bits);
+                        kDefaultClusterIters, _info.quant.nb_bits);
 
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());

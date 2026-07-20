@@ -308,20 +308,20 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
   return RunLloyd(data, n, k, d, seed, niter, nredo);
 }
 
+namespace {
+
 template<VectorMetric Metric>
 uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,
                           uint32_t d) noexcept {
   const auto* q = reinterpret_cast<const byte_type*>(v);
   const auto dd = static_cast<uint16_t>(d);
-  constexpr bool kLargest = VectorMetricNearestIsLargest(Metric);
   uint32_t best = 0;
-  float best_score = kLargest ? -std::numeric_limits<float>::max()
-                              : std::numeric_limits<float>::max();
+  float best_score = -std::numeric_limits<float>::max();
   for (uint32_t s = 0; s < k; ++s) {
     const auto* cv = reinterpret_cast<const byte_type*>(
       centroids + static_cast<size_t>(s) * d);
     const float score = ComputeDistance<Metric>(q, cv, dd);
-    if (Better(kLargest, score, best_score)) {
+    if (score > best_score) {
       best_score = score;
       best = s;
     }
@@ -331,9 +331,7 @@ uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,
 
 template<VectorMetric Metric>
 void AssignNearestT(const float* data, size_t n, const float* centroids,
-                    uint32_t k, uint32_t d, std::vector<uint32_t>& out,
-                    std::span<std::span<const float>> nearest_centroids) {
-  SDB_ASSERT(nearest_centroids.empty() || nearest_centroids.size() == n);
+                    uint32_t k, uint32_t d, std::vector<uint32_t>& out) {
   const size_t base = out.size();
   out.resize(base + n);
   if (n == 0) {
@@ -358,43 +356,17 @@ void AssignNearestT(const float* data, size_t n, const float* centroids,
       out[base + i] = static_cast<uint32_t>(indexes[i]);
     }
   }
-  if (!nearest_centroids.empty() && k != 0) {
-    for (size_t i = 0; i < n; ++i) {
-      nearest_centroids[i] = std::span<const float>{
-        centroids + static_cast<size_t>(out[base + i]) * d, d};
-    }
-  }
-}
-
-#define IRS_INSTANTIATE_METRIC(M)                                             \
-  template uint32_t NearestCentroidT<M>(const float*, const float*, uint32_t, \
-                                        uint32_t) noexcept;                   \
-  template void AssignNearestT<M>(const float*, size_t, const float*,         \
-                                  uint32_t, uint32_t, std::vector<uint32_t>&, \
-                                  std::span<std::span<const float>>)
-IRS_INSTANTIATE_METRIC(VectorMetric::L2Sqr);
-IRS_INSTANTIATE_METRIC(VectorMetric::InnerProduct);
-IRS_INSTANTIATE_METRIC(VectorMetric::Cosine);
-IRS_INSTANTIATE_METRIC(VectorMetric::L1);
-#undef IRS_INSTANTIATE_METRIC
-
-uint32_t NearestCentroid(VectorMetric metric, const float* v,
-                         const float* centroids, uint32_t k, uint32_t d) {
-  uint32_t result = 0;
-  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric Metric>() {
-    result = NearestCentroidT<Metric>(v, centroids, k, d);
-  });
-  return result;
 }
 
 void AssignNearest(VectorMetric metric, const float* data, size_t n,
                    const float* centroids, uint32_t k, uint32_t d,
-                   std::vector<uint32_t>& out,
-                   std::span<std::span<const float>> nearest_centroids) {
+                   std::vector<uint32_t>& out) {
   ResolveEnum<VectorMetric>(metric, [&]<VectorMetric Metric>() {
-    AssignNearestT<Metric>(data, n, centroids, k, d, out, nearest_centroids);
+    AssignNearestT<Metric>(data, n, centroids, k, d, out);
   });
 }
+
+}  // namespace
 
 void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
                           size_t d, std::span<float> data,

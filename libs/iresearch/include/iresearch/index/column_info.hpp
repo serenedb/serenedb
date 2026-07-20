@@ -46,9 +46,9 @@ enum class VectorMetric : uint8_t {
 template<VectorMetric Metric>
 auto ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
   if constexpr (Metric == VectorMetric::L2Sqr) {
-    return vector::L2Space<float, float, float>::Dist(l, r, d);
+    return -vector::L2Space<float, float, float>::Dist(l, r, d);
   } else if constexpr (Metric == VectorMetric::L1) {
-    return vector::L1Space<float, float, float>::Dist(l, r, d);
+    return -vector::L1Space<float, float, float>::Dist(l, r, d);
   } else if constexpr (Metric == VectorMetric::InnerProduct) {
     return vector::DotProductImpl<float, float>::Compute(l, r, d);
   } else if constexpr (Metric == VectorMetric::Cosine) {
@@ -56,18 +56,6 @@ auto ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
       vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
     const float denom = std::sqrt(ll) * std::sqrt(rr);
     return denom == 0.f ? 0.f : lr / denom;
-  }
-  SDB_UNREACHABLE();
-}
-
-constexpr bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept {
-  switch (metric) {
-    case VectorMetric::InnerProduct:
-    case VectorMetric::Cosine:
-      return true;
-    case VectorMetric::L2Sqr:
-    case VectorMetric::L1:
-      return false;
   }
   SDB_UNREACHABLE();
 }
@@ -100,14 +88,6 @@ struct IvfInfo {
 
   VectorMetric metric = VectorMetric::L2Sqr;
   Quantizer quant;
-
-  uint32_t nlist = 0;
-
-  float nlist_factor = 0;
-
-  uint32_t train_sample = 0;
-
-  uint32_t cluster_iters = 0;
 
   float sample_factor = 0;
 

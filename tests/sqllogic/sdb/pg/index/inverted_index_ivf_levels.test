@@ -56,6 +56,18 @@ SELECT count(*) FROM lvl3_idx;
 count
 2000
 
+query
+SELECT pk FROM lvl3_idx
+  WHERE emb <-> [100.0, 0.0]::FLOAT[2] < 2.5
+  ORDER BY pk;
+----
+pk
+98
+99
+100
+101
+102
+
 statement ok
 RESET sdb_ivf_posting_size;
 

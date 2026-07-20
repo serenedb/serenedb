@@ -57,23 +57,6 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   ClusteringAlgo algo = ClusteringAlgo::Auto,
                                   const float* rotation = nullptr);
 
-template<VectorMetric Metric>
-uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,
-                          uint32_t d) noexcept;
-
-template<VectorMetric Metric>
-void AssignNearestT(const float* data, size_t n, const float* centroids,
-                    uint32_t k, uint32_t d, std::vector<uint32_t>& out,
-                    std::span<std::span<const float>> nearest_centroids = {});
-
-uint32_t NearestCentroid(VectorMetric metric, const float* v,
-                         const float* centroids, uint32_t k, uint32_t d);
-
-void AssignNearest(VectorMetric metric, const float* data, size_t n,
-                   const float* centroids, uint32_t k, uint32_t d,
-                   std::vector<uint32_t>& out,
-                   std::span<std::span<const float>> nearest_centroids = {});
-
 void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
                           size_t d, std::span<float> data,
                           std::span<size_t> ids, std::span<size_t> perm = {},

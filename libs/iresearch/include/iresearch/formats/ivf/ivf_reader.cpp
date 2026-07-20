@@ -20,50 +20,23 @@
 
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 
-#include <cmath>
 #include <cstring>
 #include <memory>
 #include <span>
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/misc.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "iresearch/utils/vector.hpp"
-#include "pg/sql_exception_macro.h"
 
 namespace irs {
-namespace {
 
-float CosineSimilarity(const byte_type* l, const byte_type* r, uint16_t d) {
-  const auto [ll, lr, rr] =
-    vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
-  const float denom = std::sqrt(ll) * std::sqrt(rr);
-  return denom == 0.f ? 0.f : lr / denom;
-}
-
-float NegL2SqrDistance(const byte_type* l, const byte_type* r, uint16_t d) {
-  return -vector::L2Space<float, float, float>::Dist(l, r, d);
-}
-
-float NegL1Distance(const byte_type* l, const byte_type* r, uint16_t d) {
-  return -vector::L1Space<float, float, float>::Dist(l, r, d);
-}
-
-}  // namespace
-
-VectorDistanceFn ResolveVectorDistance(VectorMetric metric) {
-  switch (metric) {
-    case VectorMetric::L2Sqr:
-      return &vector::L2Space<float, float, float>::Dist;
-    case VectorMetric::L1:
-      return &vector::L1Space<float, float, float>::Dist;
-    case VectorMetric::InnerProduct:
-      return &vector::DotProductImpl<float, float>::Compute;
-    case VectorMetric::Cosine:
-      return &CosineSimilarity;
-  }
-  THROW_SQL_ERROR(ERR_MSG("unsupported IVF vector metric"));
+VectorDistanceFn ResolveScoringDistance(VectorMetric metric) {
+  VectorDistanceFn fn = nullptr;
+  ResolveEnum<VectorMetric>(
+    metric, [&]<VectorMetric Metric>() { fn = &ComputeDistance<Metric>; });
+  return fn;
 }
 
 bool VectorMetricIsAngular(VectorMetric metric) noexcept {

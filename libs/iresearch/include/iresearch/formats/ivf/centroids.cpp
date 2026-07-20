@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <numeric>
 #include <random>
 #include <utility>
@@ -40,7 +41,6 @@
 namespace irs {
 namespace {
 
-constexpr size_t kCentroidsFactor = 2;
 constexpr double kBeamOverprobe = 3.0;
 constexpr size_t kTrainSeed = 42;
 constexpr uint64_t kSampleSegmentOversample = 4;
@@ -388,17 +388,12 @@ IVFHeader IVFHeader::Deserialize(IndexInput& in) {
   IVFHeader head;
   head.metric = static_cast<VectorMetric>(in.ReadByte());
   head.d = static_cast<uint32_t>(in.ReadI32());
-  const size_t quant_size = static_cast<size_t>(in.ReadI64());
-  head.quant_stats.resize(quant_size);
-  in.ReadData(head.quant_stats.data(), quant_size);
   return head;
 }
 
 void IVFHeader::Serialize(IndexOutput& out) const {
   out.WriteByte(static_cast<byte_type>(metric));
   out.WriteU32(d);
-  out.WriteU64(quant_stats.size());
-  out.WriteData(quant_stats.data(), quant_stats.size());
 }
 
 CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
@@ -438,12 +433,10 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     CentroidsNode::Search<Metric>(query, in, beam, out_centroids != nullptr,
                                   _root.level, std::span{&root_view, 1}, 0,
                                   _root.size, leaves);
-    const auto by_dist = [](const auto& l, const auto& r) noexcept {
-      return CentroidsNode::Closer<Metric>(l.dist, r.dist);
-    };
     const auto k = std::min<size_t>(nprobe, leaves.size());
     const auto mid = leaves.begin() + k;
-    std::partial_sort(leaves.begin(), mid, leaves.end(), by_dist);
+    std::ranges::partial_sort(leaves, mid, std::greater{},
+                              &CentroidsNode::Candidate::dist);
     out_ids.reserve(out_ids.size() + k);
     if (out_centroids) {
       out_centroids->reserve(out_centroids->size() + k * _head.d);
@@ -457,18 +450,8 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
   });
 }
 
-size_t CentroidsSize(size_t sample_size) {
-  return sample_size == 0
-           ? 0
-           : std::clamp<size_t>(
-               static_cast<size_t>(kCentroidsFactor *
-                                   std::sqrt(static_cast<double>(sample_size))),
-               1, sample_size);
-}
-
 void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
-                                 size_t min_centroids, size_t max_centroids,
-                                 bool keep_sample) {
+                                 size_t min_centroids, size_t max_centroids) {
   BuildSettings settings{
     .posting_size = std::max<size_t>(1, leaf_size),
     .max_centroids = max_centroids,
@@ -478,23 +461,14 @@ void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
   };
   const size_t n = sample.size() / _d;
   std::vector<size_t> ids(n);
-  std::vector<float> normalized;
-  std::span<float> train{sample};
   if (_metric == VectorMetric::Cosine) {
-    if (keep_sample) {
-      normalized.assign(sample.begin(), sample.end());
-      train = normalized;
-    }
-    NormalizeRows(train.data(), n, _d);
+    NormalizeRows(sample.data(), n, _d);
   }
-  Build(_nodes, train, _d, ids, settings);
+  Build(_nodes, sample, _d, ids, settings);
   _row_bases.resize(_nodes.size());
   for (size_t j = 0; j < _nodes.size(); ++j) {
     _row_bases[j] = _n_rows;
     _n_rows += _nodes[j].centroids.size() / _d;
-  }
-  if (keep_sample) {
-    _sample = std::move(sample);
   }
 }
 
@@ -536,7 +510,7 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
                                              valid_count * t));
   auto sample = GatherTrainingSample(*child, rows, d, ctx, valid, valid_count,
                                      sample_size, kTrainSeed);
-  builder.BuildTree(std::move(sample), tau, min_c, max_c, params.keep_sample);
+  builder.BuildTree(std::move(sample), tau, min_c, max_c);
   return builder;
 }
 
@@ -552,7 +526,7 @@ CentroidsBuilder CentroidsBuilder::CreateFromSample(
     params.min_centroids != 0 ? params.min_centroids : kMinCentroids;
   const size_t max_c =
     params.max_centroids != 0 ? params.max_centroids : kMaxCentroids;
-  builder.BuildTree(std::move(sample), t, min_c, max_c, params.keep_sample);
+  builder.BuildTree(std::move(sample), t, min_c, max_c);
   return builder;
 }
 

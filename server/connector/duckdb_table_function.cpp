@@ -48,7 +48,6 @@
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
-#include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/duckdb_table_entry.h"
 #include "connector/optimizer/iresearch_plan.h"
@@ -1093,32 +1092,6 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
 }
 
 }  // namespace
-
-bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
-                     const duckdb::TableFunctionInitInput& input) {
-  for (duckdb::idx_t i = 0; i < input.column_ids.size(); ++i) {
-    const auto col_id = input.column_ids[i];
-    if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY ||
-        col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
-      continue;
-    }
-    // A column materialized only to feed a pushed filter (present in column_ids
-    // but pruned from the output via projection_ids) does not make the scan
-    // emit rows, so it does not disqualify the count-only path -- the filter is
-    // applied by the TableFilterDocIterator's count().
-    if (!input.projection_ids.empty() &&
-        absl::c_find(input.projection_ids, i) == input.projection_ids.end()) {
-      continue;
-    }
-    if (col_id == kColumnIdentifierGeneratedPk ||
-        col_id == kColumnIdentifierTableOid ||
-        col_id >= duckdb::VIRTUAL_COLUMN_START ||
-        col_id < bind_data.column_ids.size()) {
-      return false;
-    }
-  }
-  return true;
-}
 
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{

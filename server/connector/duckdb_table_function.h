@@ -310,7 +310,4 @@ uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
 
 duckdb::TableFunction CreateIResearchScanFunction();
 
-bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
-                     const duckdb::TableFunctionInitInput& input);
-
 }  // namespace sdb::connector

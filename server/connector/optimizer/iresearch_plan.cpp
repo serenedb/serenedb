@@ -265,9 +265,6 @@ duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
 }
 
 bool ColumnIsNotNull(const catalog::Table& table, catalog::Column::Id col_id) {
-  if (absl::c_linear_search(table.PKColumns(), col_id)) {
-    return true;
-  }
   const auto* col = table.ColumnById(col_id);
   if (!col) {
     return false;

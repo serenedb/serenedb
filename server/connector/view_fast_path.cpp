@@ -22,6 +22,7 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -29,6 +30,7 @@
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/comparison_expression.hpp>
@@ -199,10 +201,45 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
                           "\" has no (VARCHAR) overload"));
 }
 
+std::vector<std::string> ParseKeyColumns(std::string_view text) {
+  std::vector<std::string> cols;
+  for (auto part : absl::StrSplit(text, ',')) {
+    auto trimmed = absl::StripAsciiWhitespace(part);
+    if (!trimmed.empty()) {
+      cols.emplace_back(trimmed);
+    }
+  }
+  return cols;
+}
+
+std::optional<ExternalKeyColumn> FindKeyColumn(
+  const duckdb::TableCatalogEntry& entry, const std::string& name) {
+  duckdb::column_t pos = 0;
+  for (const auto& col : entry.GetColumns().Logical()) {
+    if (col.Name() == name) {
+      return ExternalKeyColumn{
+        .name = name, .source_index = pos, .type = col.GetType()};
+    }
+    ++pos;
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
+std::vector<std::string> KeyColumnsFromOptions(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  auto it = options.find("key_columns");
+  if (it == options.end()) {
+    return {};
+  }
+  return ParseKeyColumns(it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+                           .GetValue<std::string>());
+}
+
 std::optional<ViewFastPath> ResolveViewFastPath(
-  duckdb::ClientContext& context, const catalog::PgSqlView& view) {
+  duckdb::ClientContext& context, const catalog::PgSqlView& view,
+  std::span<const std::string> key_columns) {
   const auto& info = view.GetInfo();
   if (!info.query) {
     return std::nullopt;
@@ -327,6 +364,76 @@ std::optional<ViewFastPath> ResolveViewFastPath(
                           entry.name.GetIdentifierName())};
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.supports_filters = true;
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    }
+    // The attached-external-DB branches below (user key_columns, postgres ctid,
+    // clickhouse metadata PK) all key on the same source table.
+    const CatalogTableRef ext_ref{
+      .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+      .schema = entry.ParentSchema().name.GetIdentifierName(),
+      .table = entry.name.GetIdentifierName()};
+    if ((cat_type == "clickhouse" || cat_type == "postgres") &&
+        !key_columns.empty()) {
+      // User key via WITH (key_columns = '...'): any column count/types, overrides
+      // the auto default (pg ctid / CH PK). Unknown column -> no fast path.
+      duckdb::vector<ExternalKeyColumn> cols;
+      cols.reserve(key_columns.size());
+      for (const auto& name : key_columns) {
+        auto col = FindKeyColumn(entry, name);
+        if (!col) {
+          return std::nullopt;
+        }
+        cols.push_back(std::move(*col));
+      }
+      ViewFastPath out;
+      out.catalog_ref = ext_ref;
+      out.pk_spec = catalog::PkSpec::ExternalColumnKey;
+      out.key_columns = std::move(cols);
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    }
+    if (cat_type == "postgres") {
+      // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
+      // needed, unique within the index snapshot. The lookup's `rowid IN (...)`
+      // is pushed down as a `ctid IN (...)` TID scan.
+      ViewFastPath out;
+      out.catalog_ref = ext_ref;
+      out.pk_spec = catalog::PkSpec::ExternalRowId;
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    }
+    if (cat_type == "clickhouse") {
+      // ClickHouse: part+offset ids die on merges, so key on the single-BIGINT
+      // MergeTree PK column (v1; anything else -> no fast path). That "PK" is
+      // only a sorting prefix: duplicate keys each index their own document.
+      std::optional<std::string> pk_name;
+      for (const auto& constraint : entry.GetConstraints()) {
+        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+          continue;
+        }
+        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+        if (!unique.IsPrimaryKey()) {
+          continue;
+        }
+        if (unique.GetColumnNames().size() != 1) {
+          return std::nullopt;
+        }
+        pk_name = unique.GetColumnNames()[0].GetIdentifierName();
+      }
+      if (!pk_name) {
+        return std::nullopt;
+      }
+      // v1: a signed 64-bit key -- both the int64 storage and the re-fetch are
+      // exact only for BIGINT.
+      auto key = FindKeyColumn(entry, *pk_name);
+      if (!key || key->type.id() != duckdb::LogicalTypeId::BIGINT) {
+        return std::nullopt;
+      }
+      ViewFastPath out;
+      out.catalog_ref = ext_ref;
+      out.pk_spec = catalog::PkSpec::ExternalColumnKey;
+      out.key_columns.push_back(std::move(*key));
       out.projection_columns = std::move(projection_columns);
       return out;
     }
@@ -463,6 +570,20 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
+  if (fp.pk_spec == catalog::PkSpec::ExternalRowId) {
+    // Postgres ctid: the key is the virtual rowid, not a real column.
+    return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+  }
+  if (fp.pk_spec == catalog::PkSpec::ExternalColumnKey) {
+    // Project the key columns in order so the index sink can key postings by
+    // their values (the ctid rowid as one BIGINT; key columns as a struct).
+    std::vector<duckdb::column_t> ids;
+    ids.reserve(fp.key_columns.size());
+    for (const auto& kc : fp.key_columns) {
+      ids.push_back(kc.source_index);
+    }
+    return ids;
+  }
   if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }

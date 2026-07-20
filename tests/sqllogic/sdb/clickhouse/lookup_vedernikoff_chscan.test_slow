@@ -1,0 +1,289 @@
+control substitution on
+
+# Comprehensive metadata-PK inverted-index lookup + materialisation over the
+# ATTACHed chtest.vedernikoff fixture. Sibling of
+# inverted_index_attach_chscan.test_slow, broadened to cover many phrases,
+# projection variants, ordering, multi-word phrases, and a combined id + @@
+# predicate.
+#
+# The source is a real catalog table, so serenedb reads its primary key from
+# the engine's metadata (ClickHouse system.columns.is_in_primary_key, surfaced
+# as a PRIMARY KEY constraint) and keys the inverted index on `id`
+# (PkSpec::ExternalDBKey). count(*) flows off the iresearch index; full-row
+# retrieval MATERIALISES real source columns by re-fetching matched rows
+# `WHERE id IN (...)` through the connector. No WITH (pk = ...) anywhere.
+#
+# Fixture chtest.vedernikoff(id Int64 [PK], val String), rows ORDER BY id:
+#   1 'clickclack babsky'
+#   2 'deadinside kostya'
+#   3 'vedernikoff pudge'
+#   4 'pudge goes mid'
+#   5 'vedernikoff kostya'
+#   6 'anchin reads manga'
+
+# Unique attach name -- tests run in parallel against one serened + one CH; the
+# global catalog name would otherwise collide with other files.
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chlk (TYPE clickhouse);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ch_lk_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW lk_vedernikoff_v AS SELECT * FROM chlk.chtest.vedernikoff;
+
+statement ok
+CREATE INDEX lk_vedernikoff_idx ON lk_vedernikoff_v USING inverted(id, val ch_lk_en);
+
+
+# --- (a) count(*) off the index for several phrases (no materialisation) ---
+
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('kostya');
+----
+count
+2
+
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('babsky');
+----
+count
+1
+
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('clickclack');
+----
+count
+1
+
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('anchin');
+----
+count
+1
+
+# count(1) takes the same iresearch doc-id-counting path as count(*).
+query
+SELECT count(1) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('deadinside');
+----
+count
+1
+
+# A phrase that matches NOTHING -> empty postings -> 0.
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('zzznomatch');
+----
+count
+0
+
+
+# --- (b) full-row materialisation: matched rows re-fetched by metadata PK ---
+
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+5	vedernikoff kostya
+
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('pudge') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+4	pudge goes mid
+
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('kostya') ORDER BY id;
+----
+id	val
+2	deadinside kostya
+5	vedernikoff kostya
+
+# Single-match phrase -> exactly one re-fetched row.
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('babsky') ORDER BY id;
+----
+id	val
+1	clickclack babsky
+
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('clickclack') ORDER BY id;
+----
+id	val
+1	clickclack babsky
+
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('anchin') ORDER BY id;
+----
+id	val
+6	anchin reads manga
+
+# No-match phrase -> zero rows materialised (header only).
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('zzznomatch') ORDER BY id;
+----
+id	val
+
+
+# --- (c) projection variants: each must materialise correctly ---
+
+# SELECT id only -- the PK column itself projected.
+query
+SELECT id FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id;
+----
+id
+3
+5
+
+# SELECT val only -- the PK still drives the lookup even though it is not in the
+# SELECT list; only the text column is materialised back.
+query
+SELECT val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('kostya') ORDER BY val;
+----
+val
+deadinside kostya
+vedernikoff kostya
+
+# SELECT * -- both columns materialise.
+query
+SELECT * FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('pudge') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+4	pudge goes mid
+
+
+# --- (d) ORDER BY id DESC over a materialised result ---
+
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id DESC;
+----
+id	val
+5	vedernikoff kostya
+3	vedernikoff pudge
+
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('kostya') ORDER BY id DESC;
+----
+id	val
+5	vedernikoff kostya
+2	deadinside kostya
+
+
+# --- (e) multi-word phrase: must match the consecutive-token sequence only ---
+
+# 'vedernikoff pudge' appears verbatim in id 3, not in id 5 ('vedernikoff
+# kostya'), so the phrase matches a single row.
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff pudge') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff pudge');
+----
+count
+1
+
+# 'pudge goes mid' matches only id 4.
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('pudge goes mid') ORDER BY id;
+----
+id	val
+4	pudge goes mid
+
+# 'anchin reads' (a contiguous subsequence of id 6) matches id 6.
+query
+SELECT id, val FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('anchin reads') ORDER BY id;
+----
+id	val
+6	anchin reads manga
+
+# A two-word phrase whose tokens both exist but NOT adjacently in this order
+# ('pudge vedernikoff' is the reverse of id 3) matches nothing.
+query
+SELECT count(*) FROM lk_vedernikoff_idx WHERE val @@ ts_phrase('pudge vedernikoff');
+----
+count
+0
+
+
+# --- (f) combine an id predicate with the @@ predicate ---
+
+# 'pudge' matches ids {3,4}; the extra id filter narrows to one row.
+query
+SELECT id, val FROM lk_vedernikoff_idx
+WHERE val @@ ts_phrase('pudge') AND id = 4
+ORDER BY id;
+----
+id	val
+4	pudge goes mid
+
+# Range on the PK alongside @@: 'kostya' matches {2,5}; id > 3 keeps only 5.
+query
+SELECT id, val FROM lk_vedernikoff_idx
+WHERE val @@ ts_phrase('kostya') AND id > 3
+ORDER BY id;
+----
+id	val
+5	vedernikoff kostya
+
+# IN-list on the PK alongside @@: 'vedernikoff' matches {3,5}; id IN (1,3) keeps 3.
+query
+SELECT id, val FROM lk_vedernikoff_idx
+WHERE val @@ ts_phrase('vedernikoff') AND id IN (1, 3)
+ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+
+# An id predicate that excludes every match -> empty result.
+query
+SELECT id, val FROM lk_vedernikoff_idx
+WHERE val @@ ts_phrase('vedernikoff') AND id = 1
+ORDER BY id;
+----
+id	val
+
+# count(*) with a combined predicate still flows off the index + filter.
+query
+SELECT count(*) FROM lk_vedernikoff_idx
+WHERE val @@ ts_phrase('pudge') AND id >= 4;
+----
+count
+1
+
+
+statement ok
+DROP INDEX lk_vedernikoff_idx;
+
+statement ok
+DROP VIEW lk_vedernikoff_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ch_lk_en;
+
+statement ok
+DETACH chlk;

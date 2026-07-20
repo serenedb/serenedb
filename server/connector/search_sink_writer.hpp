@@ -129,6 +129,11 @@ inline duckdb::LogicalType PkColumnType(catalog::PkColumnKind kind) {
         duckdb::LogicalType::STRUCT({{"hi", duckdb::LogicalType::BIGINT},
                                      {"lo", duckdb::LogicalType::BIGINT}});
       return kType;
+    case catalog::PkColumnKind::Struct:
+      // Not fixed: a user key struct's type depends on its key columns and is
+      // taken from the packed pk vector at write time (pk.column->GetType()).
+      SDB_ASSERT(false, "a struct pk has no fixed column type");
+      [[fallthrough]];
     case catalog::PkColumnKind::None:
     case catalog::PkColumnKind::Unable:
       return duckdb::LogicalType::SQLNULL;

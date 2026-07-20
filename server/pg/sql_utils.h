@@ -62,6 +62,10 @@ constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
       return "text search dictionary";
     case PgSqlType:
       return "type";
+    case ForeignServer:
+      return "foreign server";
+    case UserMapping:
+      return "user mapping";
     default:
       // usually used for error messages, so we want to specify the type.
       SDB_ASSERT(false);
@@ -92,6 +96,9 @@ constexpr catalog::ObjectType FromPgObjectTypeName(
   }
   if (word == "TYPE") {
     return PgSqlType;
+  }
+  if (word == "FOREIGN SERVER") {
+    return ForeignServer;
   }
   return Invalid;
 }

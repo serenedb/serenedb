@@ -1,0 +1,94 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "catalog/object.h"
+
+namespace duckdb {
+
+class Serializer;
+class Deserializer;
+class ClientContext;
+class Connection;
+
+}  // namespace duckdb
+namespace sdb::catalog {
+
+class ForeignServer : public Object {
+ public:
+  static std::shared_ptr<ForeignServer> Deserialize(duckdb::Deserializer& src,
+                                                    ReadContext ctx);
+
+  void Serialize(duckdb::Serializer& sink) const final;
+  std::shared_ptr<Object> Clone() const final;
+
+  ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
+                std::string_view name, std::string fdw_name,
+                std::vector<std::string> option_keys,
+                std::vector<std::string> option_values);
+
+  std::string_view GetFdwName() const noexcept { return _fdw_name; }
+
+  std::span<const std::string> OptionKeys() const noexcept {
+    return _option_keys;
+  }
+  std::span<const std::string> OptionValues() const noexcept {
+    return _option_values;
+  }
+  // "key=value" strings in insertion order (the pg_foreign_server text[]
+  // shape), unredacted -- pg_foreign_server is superuser-only.
+  std::vector<std::string> GetStringOptions() const;
+
+ private:
+  std::string _fdw_name;
+  std::vector<std::string> _option_keys;
+  std::vector<std::string> _option_values;
+};
+
+// True when the FDW name maps to a connector storage type (clickhouse_fdw,
+// postgres_fdw and their bare aliases).
+bool IsSupportedFdw(std::string_view fdw_name);
+
+// Registers the transient secret, runs the ATTACH on `conn`, drops the secret.
+// nullopt = unsupported FDW (nothing run); "" = success; else the connector
+// error. Credentials come from the server's OPTIONS. The attach alias is the
+// server name.
+std::optional<std::string> RunForeignServerAttach(duckdb::Connection& conn,
+                                                  const ForeignServer& server);
+
+// Best-effort DETACH of a server's live (instance-global) DuckDB attachment,
+// on a fresh engine connection. Used by DROP SERVER and by the DROP SCHEMA /
+// DROP DATABASE cascade sweeps -- the generic drop plan removes catalog state
+// only, never the attachment. The attachment may legitimately be absent (boot
+// replay skips a down remote), so errors are swallowed.
+void DetachForeignServerAttachment(std::string_view server_name);
+
+// Quote an SQL identifier with double quotes, doubling any embedded quote.
+std::string QuoteSqlIdentifier(std::string_view name);
+
+}  // namespace sdb::catalog

@@ -1,0 +1,360 @@
+control substitution on
+
+# Primary-key edge cases for the ClickHouse write path. ClickHouse has no
+# physical rowid, so UPDATE/DELETE use the table's single integer PRIMARY KEY as
+# the row identifier (PkSpec::ExternalDBKey / TryGetRowIdColumn). These tests pin
+# down exactly which PK shapes/types qualify, and that "complex" PK column names
+# (reserved words, mixed case, spaces, embedded backticks) round-trip correctly
+# through CREATE/scan/UPDATE/DELETE quoting.
+#
+# Unique attach name (chpk) + unique table prefix (pk_): tests run in parallel
+# (jobs) against one serened + one ClickHouse, so global names must not collide.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chpk (TYPE clickhouse);
+
+# =====================================================================
+# Group A: integer PK types that FIT int64 -> UPDATE/DELETE work.
+# =====================================================================
+
+statement ok
+CREATE TABLE chpk.default.pk_bigint (id BIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_bigint VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+UPDATE chpk.default.pk_bigint SET v = 'B' WHERE id = 2;
+
+statement ok
+DELETE FROM chpk.default.pk_bigint WHERE id = 1;
+
+query
+SELECT id, v FROM chpk.default.pk_bigint ORDER BY id;
+----
+id	v
+2	B
+3	c
+
+statement ok
+CREATE TABLE chpk.default.pk_integer (id INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_integer VALUES (10, 'x'), (20, 'y');
+
+statement ok
+UPDATE chpk.default.pk_integer SET v = 'Y' WHERE id = 20;
+
+statement ok
+DELETE FROM chpk.default.pk_integer WHERE id = 10;
+
+query
+SELECT id, v FROM chpk.default.pk_integer ORDER BY id;
+----
+id	v
+20	Y
+
+statement ok
+CREATE TABLE chpk.default.pk_smallint (id SMALLINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_smallint VALUES (1, 'a'), (2, 'b');
+
+statement ok
+DELETE FROM chpk.default.pk_smallint WHERE id = 1;
+
+query
+SELECT id, v FROM chpk.default.pk_smallint ORDER BY id;
+----
+id	v
+2	b
+
+statement ok
+CREATE TABLE chpk.default.pk_tinyint (id TINYINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_tinyint VALUES (1, 'a'), (2, 'b');
+
+statement ok
+UPDATE chpk.default.pk_tinyint SET v = 'A' WHERE id = 1;
+
+query
+SELECT id, v FROM chpk.default.pk_tinyint ORDER BY id;
+----
+id	v
+1	A
+2	b
+
+# Unsigned 32-bit fits int64, so it is accepted as a row identifier.
+statement ok
+CREATE TABLE chpk.default.pk_uinteger (id UINTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_uinteger VALUES (100, 'a'), (200, 'b');
+
+statement ok
+UPDATE chpk.default.pk_uinteger SET v = 'B' WHERE id = 200;
+
+statement ok
+DELETE FROM chpk.default.pk_uinteger WHERE id = 100;
+
+query
+SELECT id, v FROM chpk.default.pk_uinteger ORDER BY id;
+----
+id	v
+200	B
+
+# =====================================================================
+# Group B: PK types that do NOT qualify -> INSERT/SELECT work, UPDATE/DELETE error.
+# =====================================================================
+
+# UInt64 can exceed int64, so it is not usable as the int64 rowid.
+statement ok
+CREATE TABLE chpk.default.pk_ubigint (id UBIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_ubigint VALUES (1, 'a'), (2, 'b');
+
+query
+SELECT count(*) FROM chpk.default.pk_ubigint;
+----
+count
+2
+
+statement error
+UPDATE chpk.default.pk_ubigint SET v = 'z' WHERE id = 1;
+
+statement error
+DELETE FROM chpk.default.pk_ubigint WHERE id = 1;
+
+# String PK is not an integer rowid.
+statement ok
+CREATE TABLE chpk.default.pk_string (id VARCHAR PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_string VALUES ('k1', 'a'), ('k2', 'b');
+
+query
+SELECT count(*) FROM chpk.default.pk_string;
+----
+count
+2
+
+statement error
+UPDATE chpk.default.pk_string SET v = 'z' WHERE id = 'k1';
+
+statement error
+DELETE FROM chpk.default.pk_string WHERE id = 'k1';
+
+# =====================================================================
+# Group C: PK shapes that do NOT qualify -> UPDATE/DELETE error.
+# =====================================================================
+
+# Composite PK is not a single-column rowid.
+statement ok
+CREATE TABLE chpk.default.pk_composite (a BIGINT, b BIGINT, v VARCHAR, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO chpk.default.pk_composite VALUES (1, 1, 'a'), (1, 2, 'b');
+
+query
+SELECT count(*) FROM chpk.default.pk_composite;
+----
+count
+2
+
+statement error
+UPDATE chpk.default.pk_composite SET v = 'z' WHERE a = 1 AND b = 1;
+
+statement error
+DELETE FROM chpk.default.pk_composite WHERE a = 1 AND b = 1;
+
+# No PK at all (MergeTree ORDER BY tuple()).
+statement ok
+CREATE TABLE chpk.default.pk_none (a INTEGER, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_none VALUES (1, 'a'), (2, 'b');
+
+query
+SELECT count(*) FROM chpk.default.pk_none;
+----
+count
+2
+
+statement error
+UPDATE chpk.default.pk_none SET v = 'z' WHERE a = 1;
+
+statement error
+DELETE FROM chpk.default.pk_none WHERE a = 1;
+
+# =====================================================================
+# Group D: COMPLEX PK column names round-trip through CREATE/scan/UPDATE/DELETE.
+# =====================================================================
+
+# Reserved word as the PK column name.
+statement ok
+CREATE TABLE chpk.default.pk_reserved ("order" BIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_reserved VALUES (1, 'a'), (2, 'b');
+
+statement ok
+UPDATE chpk.default.pk_reserved SET v = 'B' WHERE "order" = 2;
+
+statement ok
+DELETE FROM chpk.default.pk_reserved WHERE "order" = 1;
+
+query
+SELECT "order", v FROM chpk.default.pk_reserved ORDER BY "order";
+----
+order	v
+2	B
+
+# Mixed-case PK column name. Quoted identifiers keep their case (the ClickHouse
+# column is `MyId`); the point here is that the UPDATE/DELETE resolve and
+# mutate the right rows through that name.
+statement ok
+CREATE TABLE chpk.default.pk_mixedcase ("MyId" BIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_mixedcase VALUES (1, 'a'), (2, 'b');
+
+statement ok
+UPDATE chpk.default.pk_mixedcase SET v = 'A' WHERE "MyId" = 1;
+
+statement ok
+DELETE FROM chpk.default.pk_mixedcase WHERE "MyId" = 2;
+
+query
+SELECT "MyId", v FROM chpk.default.pk_mixedcase ORDER BY "MyId";
+----
+MyId	v
+1	A
+
+# PK column name with a space.
+statement ok
+CREATE TABLE chpk.default.pk_space ("my id" BIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_space VALUES (1, 'a'), (2, 'b');
+
+statement ok
+UPDATE chpk.default.pk_space SET v = 'B' WHERE "my id" = 2;
+
+query
+SELECT "my id", v FROM chpk.default.pk_space ORDER BY "my id";
+----
+my id	v
+1	a
+2	B
+
+# PK column name containing a backtick -- exercises identifier escaping
+# (doubling) across the CREATE DDL, the scan rowid, and the UPDATE/DELETE WHERE.
+statement ok
+CREATE TABLE chpk.default.pk_backtick ("a`b" BIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_backtick VALUES (1, 'a'), (2, 'b');
+
+statement ok
+UPDATE chpk.default.pk_backtick SET v = 'B' WHERE "a`b" = 2;
+
+statement ok
+DELETE FROM chpk.default.pk_backtick WHERE "a`b" = 1;
+
+query
+SELECT "a`b", v FROM chpk.default.pk_backtick ORDER BY "a`b";
+----
+a`b	v
+2	B
+
+# =====================================================================
+# Cleanup
+# =====================================================================
+
+statement ok
+DROP TABLE chpk.default.pk_bigint;
+
+statement ok
+DROP TABLE chpk.default.pk_integer;
+
+statement ok
+DROP TABLE chpk.default.pk_smallint;
+
+statement ok
+DROP TABLE chpk.default.pk_tinyint;
+
+statement ok
+DROP TABLE chpk.default.pk_uinteger;
+
+statement ok
+DROP TABLE chpk.default.pk_ubigint;
+
+statement ok
+DROP TABLE chpk.default.pk_string;
+
+statement ok
+DROP TABLE chpk.default.pk_composite;
+
+statement ok
+DROP TABLE chpk.default.pk_none;
+
+statement ok
+DROP TABLE chpk.default.pk_reserved;
+
+statement ok
+DROP TABLE chpk.default.pk_mixedcase;
+
+statement ok
+DROP TABLE chpk.default.pk_space;
+
+statement ok
+DROP TABLE chpk.default.pk_backtick;
+
+# =====================================================================
+# Group E: INSERT ... ON CONFLICT (upsert). The binder rewrites it into
+# MERGE INTO through GetStorageInfo().index_info, which surfaces the
+# MergeTree PRIMARY KEY as a unique index -- without it the rewrite
+# fails with "no UNIQUE/PRIMARY KEY constraints" even though the
+# connector's MERGE INTO is implemented.
+# =====================================================================
+
+statement ok
+CREATE TABLE chpk.default.pk_upsert (id BIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chpk.default.pk_upsert VALUES (1, 'a'), (2, 'b');
+
+# Conflict on id=2 updates in place; id=3 inserts.
+statement ok
+INSERT INTO chpk.default.pk_upsert VALUES (2, 'B'), (3, 'c')
+ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v;
+
+query
+SELECT id, v FROM chpk.default.pk_upsert ORDER BY id;
+----
+id	v
+1	a
+2	B
+3	c
+
+# DO NOTHING leaves the existing row untouched and inserts the new one.
+statement ok
+INSERT INTO chpk.default.pk_upsert VALUES (3, 'X'), (4, 'd')
+ON CONFLICT (id) DO NOTHING;
+
+query
+SELECT id, v FROM chpk.default.pk_upsert ORDER BY id;
+----
+id	v
+1	a
+2	B
+3	c
+4	d
+
+statement ok
+DROP TABLE chpk.default.pk_upsert;
+
+statement ok
+DETACH chpk;

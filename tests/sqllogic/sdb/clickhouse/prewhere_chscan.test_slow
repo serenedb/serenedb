@@ -1,0 +1,29 @@
+control substitution on
+
+# Pushed filters on a MergeTree-family table render as PREWHERE (which is legal
+# only there), not WHERE -- PREWHERE reads the filter columns first and skips the
+# wide columns for non-matching rows. sqllogic cannot read the connector's stdout
+# query log, so this asserts CORRECTNESS of the filtered scan (the PREWHERE code
+# path); the PREWHERE keyword itself is verified out-of-band from the query log.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chpw (TYPE clickhouse);
+
+statement ok
+SET ch_debug_show_queries = true;
+
+# chtest.vedernikoff is a MergeTree table (the fixtures use ENGINE = MergeTree),
+# so this pushed filter goes out as `... PREWHERE (id > 3)`.
+query
+SELECT id FROM chpw.chtest.vedernikoff WHERE id > 3 ORDER BY id;
+----
+id
+4
+5
+6
+
+statement ok
+SET ch_debug_show_queries = false;
+
+statement ok
+DETACH chpw;

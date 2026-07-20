@@ -1,0 +1,156 @@
+control substitution on
+
+# User-specified lookup key (any types/count) over an ATTACHed ClickHouse table.
+#
+# WITH (key_columns = ...) names the key columns; they are stored together as ONE
+# struct column (PkColumnKind::Struct) of their own types and matched rows
+# re-fetch via `WHERE key IN (...)` (single column) or `(a=.. AND b=..) OR ...`
+# (multiple), which the connector pushes down (as PREWHERE on the MergeTree) --
+# the same ExternalLookupIndexSource the postgres path uses
+# (inverted_index_pgscan.test_slow), engine agnostic. Cases: two BIGINT columns,
+# and a (VARCHAR, BIGINT) mixed key. The single-BIGINT auto-PK path is pinned in
+# lookup_edge_chscan.test_slow.
+#
+# Unique attach name (chcmp) + table prefix (cmp_) so parallel _chscan files
+# sharing one ClickHouse do not collide.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chcmp (TYPE clickhouse);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY chcmp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# Idempotent: the runner replays this file once per wire engine against the same
+# ClickHouse, so drop any table a prior pass left behind before recreating it.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.cmp_shards');
+----
+n
+1
+
+
+statement ok
+CREATE TABLE chcmp.default.cmp_shards (
+  shard BIGINT,
+  id    BIGINT,
+  body  VARCHAR,
+  views INTEGER,
+  PRIMARY KEY (shard, id)
+);
+
+
+statement ok
+INSERT INTO chcmp.default.cmp_shards VALUES
+  (0, 1, 'pudge goes mid and dominates the lane', 1200),
+  (0, 2, 'anchin reads manga every weekend',      340),
+  (1, 1, 'pudge plays again in a ranked match',   870),
+  (1, 2, 'krivda writes sql for the new feature', 55),
+  (2, 1, 'mom reviews pudge highlight reel',      12);
+
+
+statement ok
+CREATE VIEW cmp_shards_v AS SELECT shard, id, body, views FROM chcmp.default.cmp_shards;
+
+
+statement ok
+CREATE INDEX cmp_shards_idx ON cmp_shards_v
+  USING inverted(body chcmp_en)
+  WITH (key_columns = 'shard, id');
+
+
+# count(*) flows from iresearch alone -- no source materialisation.
+query
+SELECT count(*) FROM cmp_shards_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# Real columns (body -- indexed, not stored -- and views) are materialised by
+# the composite key lookup: `WHERE (shard = .. AND id = ..) OR ...`.
+query
+SELECT body, views FROM cmp_shards_idx
+WHERE body @@ ts_phrase('pudge') ORDER BY views DESC;
+----
+body	views
+pudge goes mid and dominates the lane	1200
+pudge plays again in a ranked match	870
+mom reviews pudge highlight reel	12
+
+
+statement ok
+DROP INDEX cmp_shards_idx;
+
+statement ok
+DROP VIEW cmp_shards_v;
+
+
+# ===== mixed-type key: (region VARCHAR, id BIGINT) =====
+# A non-BIGINT key column: the struct stores (String, Int64) and the lookup
+# renders `(region = '..' AND id = ..) OR ...` -- the VARCHAR literal pushes down
+# as PREWHERE just like the numeric one.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.cmp_typed');
+----
+n
+1
+
+
+statement ok
+CREATE TABLE chcmp.default.cmp_typed (
+  region VARCHAR,
+  id     BIGINT,
+  body   VARCHAR,
+  PRIMARY KEY (region, id)
+);
+
+
+statement ok
+INSERT INTO chcmp.default.cmp_typed VALUES
+  ('eu', 1, 'pudge goes mid and dominates the lane'),
+  ('eu', 2, 'anchin reads manga every weekend'),
+  ('us', 1, 'pudge plays again in a ranked match'),
+  ('as', 9, 'mom reviews pudge highlight reel');
+
+
+statement ok
+CREATE VIEW cmp_typed_v AS SELECT region, id, body FROM chcmp.default.cmp_typed;
+
+
+statement ok
+CREATE INDEX cmp_typed_idx ON cmp_typed_v
+  USING inverted(body chcmp_en)
+  WITH (key_columns = 'region, id');
+
+
+query
+SELECT body FROM cmp_typed_idx
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body
+mom reviews pudge highlight reel
+pudge goes mid and dominates the lane
+pudge plays again in a ranked match
+
+
+statement ok
+DROP INDEX cmp_typed_idx;
+
+statement ok
+DROP VIEW cmp_typed_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY chcmp_en;
+
+statement ok
+DETACH chcmp;

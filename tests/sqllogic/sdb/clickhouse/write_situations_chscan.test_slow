@@ -1,0 +1,238 @@
+control substitution on
+
+# Assorted write situations over an ATTACHed ClickHouse database, themed on the
+# project's vedernikoff test data. Covers INSERT ... SELECT, partial-column
+# INSERT, cross-table INSERT (CH -> CH), multi-column / IN / range / no-match
+# UPDATE and DELETE, DELETE-all, CTAS with a transform, and COPY TO/FROM (COPY
+# FROM imports through the same INSERT operator, COPY TO through the scan).
+#
+# Unique attach (chsit) + table prefix (sit_): tests run in parallel against one
+# serened + one ClickHouse.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chsit (TYPE clickhouse);
+
+# ---------------------------------------------------------------------
+# INSERT ... SELECT from a VALUES list.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chsit.default.sit_players (id BIGINT PRIMARY KEY, handle VARCHAR, mmr INTEGER);
+
+statement ok
+INSERT INTO chsit.default.sit_players
+SELECT * FROM (VALUES (1,'clickclack',3000),(2,'deadinside',4500),(3,'vedernikoff',9000),(4,'babsky',1500),(5,'androed',6000));
+
+query
+SELECT id, handle, mmr FROM chsit.default.sit_players ORDER BY id;
+----
+id	handle	mmr
+1	clickclack	3000
+2	deadinside	4500
+3	vedernikoff	9000
+4	babsky	1500
+5	androed	6000
+
+# ---------------------------------------------------------------------
+# Multi-column UPDATE.
+# ---------------------------------------------------------------------
+statement ok
+UPDATE chsit.default.sit_players SET handle = 'pudge', mmr = 10000 WHERE id = 3;
+
+query
+SELECT handle, mmr FROM chsit.default.sit_players WHERE id = 3;
+----
+handle	mmr
+pudge	10000
+
+# ---------------------------------------------------------------------
+# UPDATE with an IN predicate (multiple rows).
+# ---------------------------------------------------------------------
+statement ok
+UPDATE chsit.default.sit_players SET mmr = mmr + 100 WHERE id IN (1, 2);
+
+query
+SELECT id, mmr FROM chsit.default.sit_players WHERE id IN (1, 2) ORDER BY id;
+----
+id	mmr
+1	3100
+2	4600
+
+# ---------------------------------------------------------------------
+# UPDATE with a range / OR predicate.
+# ---------------------------------------------------------------------
+statement ok
+UPDATE chsit.default.sit_players SET handle = 'lowmmr' WHERE mmr < 2000 OR mmr > 9000;
+
+query
+SELECT id, handle FROM chsit.default.sit_players ORDER BY id;
+----
+id	handle
+1	clickclack
+2	deadinside
+3	lowmmr
+4	lowmmr
+5	androed
+
+# ---------------------------------------------------------------------
+# UPDATE that matches no rows (no-op).
+# ---------------------------------------------------------------------
+statement ok
+UPDATE chsit.default.sit_players SET handle = 'noone' WHERE id = 999;
+
+query
+SELECT count(*) FROM chsit.default.sit_players WHERE handle = 'noone';
+----
+count
+0
+
+# ---------------------------------------------------------------------
+# DELETE with an IN predicate, then a no-match DELETE.
+# ---------------------------------------------------------------------
+statement ok
+DELETE FROM chsit.default.sit_players WHERE id IN (4, 5);
+
+query
+SELECT count(*) FROM chsit.default.sit_players;
+----
+count
+3
+
+statement ok
+DELETE FROM chsit.default.sit_players WHERE id = 999;
+
+query
+SELECT id, handle FROM chsit.default.sit_players ORDER BY id;
+----
+id	handle
+1	clickclack
+2	deadinside
+3	lowmmr
+
+# ---------------------------------------------------------------------
+# Cross-table INSERT ... SELECT (copy CH -> CH).
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chsit.default.sit_archive (id BIGINT PRIMARY KEY, handle VARCHAR, mmr INTEGER);
+
+statement ok
+INSERT INTO chsit.default.sit_archive SELECT id, handle, mmr FROM chsit.default.sit_players;
+
+query
+SELECT id, handle, mmr FROM chsit.default.sit_archive ORDER BY id;
+----
+id	handle	mmr
+1	clickclack	3100
+2	deadinside	4600
+3	lowmmr	10000
+
+# ---------------------------------------------------------------------
+# Partial-column INSERT: an omitted Nullable column becomes NULL.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chsit.default.sit_partial (id BIGINT PRIMARY KEY, handle VARCHAR, mmr INTEGER);
+
+statement ok
+INSERT INTO chsit.default.sit_partial (id, handle) VALUES (1, 'clickclack'), (2, 'deadinside');
+
+query
+SELECT id, handle, mmr FROM chsit.default.sit_partial ORDER BY id;
+----
+id	handle	mmr
+1	clickclack	NULL
+2	deadinside	NULL
+
+# DELETE-all (no WHERE), then an empty INSERT ... SELECT.
+statement ok
+DELETE FROM chsit.default.sit_partial;
+
+query
+SELECT count(*) FROM chsit.default.sit_partial;
+----
+count
+0
+
+statement ok
+INSERT INTO chsit.default.sit_partial SELECT id, handle, mmr FROM chsit.default.sit_players WHERE 1 = 0;
+
+query
+SELECT count(*) FROM chsit.default.sit_partial;
+----
+count
+0
+
+# ---------------------------------------------------------------------
+# CTAS with WHERE + projection + transform.
+# ---------------------------------------------------------------------
+statement ok
+CREATE TABLE chsit.default.sit_top AS
+SELECT id, upper(handle) AS upper_handle, mmr * 2 AS double_mmr
+FROM chsit.default.sit_players WHERE mmr >= 4000;
+
+query
+SELECT id, upper_handle, double_mmr FROM chsit.default.sit_top ORDER BY id;
+----
+id	upper_handle	double_mmr
+2	DEADINSIDE	9200
+3	LOWMMR	20000
+
+# ---------------------------------------------------------------------
+# COPY TO a file, then COPY FROM it into a fresh CH table (round-trip).
+# ---------------------------------------------------------------------
+statement ok
+COPY chsit.default.sit_archive TO '${__TEST_DIR__}/sit_archive.csv' (HEADER, DELIMITER ',');
+
+statement ok
+CREATE TABLE chsit.default.sit_restore (id BIGINT PRIMARY KEY, handle VARCHAR, mmr INTEGER);
+
+statement ok
+COPY chsit.default.sit_restore FROM '${__TEST_DIR__}/sit_archive.csv' (HEADER, DELIMITER ',');
+
+query
+SELECT id, handle, mmr FROM chsit.default.sit_restore ORDER BY id;
+----
+id	handle	mmr
+1	clickclack	3100
+2	deadinside	4600
+3	lowmmr	10000
+
+# COPY (query) TO a file, then re-import to verify the exported content.
+statement ok
+COPY (SELECT id, handle, mmr FROM chsit.default.sit_players WHERE mmr >= 4000 ORDER BY id)
+TO '${__TEST_DIR__}/sit_query.csv' (HEADER, DELIMITER ',');
+
+statement ok
+CREATE TABLE chsit.default.sit_query_restore (id BIGINT PRIMARY KEY, handle VARCHAR, mmr INTEGER);
+
+statement ok
+COPY chsit.default.sit_query_restore FROM '${__TEST_DIR__}/sit_query.csv' (HEADER, DELIMITER ',');
+
+query
+SELECT id, handle, mmr FROM chsit.default.sit_query_restore ORDER BY id;
+----
+id	handle	mmr
+2	deadinside	4600
+3	lowmmr	10000
+
+# ---------------------------------------------------------------------
+# Cleanup.
+# ---------------------------------------------------------------------
+statement ok
+DROP TABLE chsit.default.sit_query_restore;
+
+statement ok
+DROP TABLE chsit.default.sit_restore;
+
+statement ok
+DROP TABLE chsit.default.sit_top;
+
+statement ok
+DROP TABLE chsit.default.sit_partial;
+
+statement ok
+DROP TABLE chsit.default.sit_archive;
+
+statement ok
+DROP TABLE chsit.default.sit_players;
+
+statement ok
+DETACH chsit;

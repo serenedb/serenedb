@@ -1,0 +1,123 @@
+control substitution on
+
+# Inverted index over a ClickHouse-backed view -- the serenedb "index over an
+# external view" feature (same shape as inverted_index_view.test), with the
+# source rows coming from ClickHouse via the clickhouse_scanner connector
+# instead of read_parquet.
+#
+# Fixture chtest.vedernikoff(id, val) is pre-seeded by the container init
+# script (the connector is read-only and cannot create CH tables/data). `val`
+# holds name-like text reused from the catalog_inverted_index fixture.
+#
+# clickhouse_query is NOT a fast-path source (read_parquet/csv/json/...), so a
+# view over it is a GENERIC view: CREATE INDEX needs an explicit pk, and
+# count(*)/BM25/ranked search flow straight off the iresearch index, while
+# materialising real source columns through the view hits serenedb's
+# generic-view follow-up limitation (identical to the UNION ALL case in
+# inverted_index_view.test). Full row retrieval is shown below via the
+# materialise-then-index path over a native serenedb table.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ch_names_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# --- Inverted index directly over the ClickHouse view ---
+
+statement ok
+CREATE VIEW vedernikoff_v AS
+  SELECT * FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+                                 'SELECT id, val FROM chtest.vedernikoff ORDER BY id');
+
+# Generic view (clickhouse_query is not a fast-path reader). No WITH (pk = ...)
+# needed -- it's a no-op today; postings key on a synthetic row id, and INCLUDE
+# is what makes columns retrievable (see the codesearch UNION ALL views, which
+# index read_parquet views with no pk either).
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff_v USING inverted(id, val ch_names_en);
+
+# count(*) flows from iresearch doc-id counting -- no source materialisation.
+query
+SELECT count(*) FROM vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+query
+SELECT count(1) FROM vedernikoff_idx WHERE val @@ ts_phrase('pudge');
+----
+count
+2
+
+# BM25 score is emitted directly by iresearch (virtual column).
+query
+SELECT BM25(vedernikoff_idx.tableoid) > 0 AS has_score
+FROM vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff')
+ORDER BY BM25(vedernikoff_idx.tableoid) DESC LIMIT 1;
+----
+has_score
+t
+
+# Materialising real source columns through the generic view is not yet wired
+# (clickhouse_query/clickhouse_scan are not registered fast-path sources -- same
+# limitation as a UNION ALL view; needs the view_fast_path.cpp registry hook).
+statement error
+SELECT id, val FROM vedernikoff_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id;
+----
+db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
+
+
+# --- Full search WITH row retrieval: materialise the ClickHouse data into a
+#     native serenedb table (CTAS through the connector), then index it ---
+
+statement ok
+CREATE TABLE vedernikoff AS
+  SELECT * FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+                                 'SELECT id, val FROM chtest.vedernikoff ORDER BY id');
+
+statement ok
+CREATE INDEX vedernikoff_native_idx ON vedernikoff USING inverted(val ch_names_en);
+
+query
+SELECT count(*) FROM vedernikoff_native_idx WHERE val @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# Native-table inverted index materialises matched rows (TableRowIdIndexSource).
+query
+SELECT id, val FROM vedernikoff_native_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+5	vedernikoff kostya
+
+query
+SELECT id, val FROM vedernikoff_native_idx WHERE val @@ ts_phrase('pudge') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+4	pudge goes mid
+
+
+statement ok
+DROP INDEX vedernikoff_native_idx;
+
+statement ok
+DROP TABLE vedernikoff;
+
+statement ok
+DROP INDEX vedernikoff_idx;
+
+statement ok
+DROP VIEW vedernikoff_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ch_names_en;

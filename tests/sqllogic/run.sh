@@ -120,6 +120,8 @@ OLLAMA_CONTAINER_NAME=""
 OLLAMA_LOG_FILE=""
 POSTGRES_CONTAINER_NAME=""
 POSTGRES_LOG_FILE=""
+CLICKHOUSE_CONTAINER_NAME=""
+CLICKHOUSE_LOG_FILE=""
 TEST_NETWORK=""
 cancel_pid=""
 
@@ -195,11 +197,25 @@ cleanup_postgres() {
 	fi
 }
 
+cleanup_clickhouse() {
+	if [[ -n "$CLICKHOUSE_CONTAINER_NAME" ]]; then
+		local name="$CLICKHOUSE_CONTAINER_NAME"
+		CLICKHOUSE_CONTAINER_NAME=""
+		if [[ -n "$CLICKHOUSE_LOG_FILE" ]]; then
+			echo "Saving clickhouse logs to ${CLICKHOUSE_LOG_FILE}..."
+			docker logs "$name" >"${CLICKHOUSE_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping clickhouse container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
 cleanup_all() {
 	cleanup_cancel_pid
 	cleanup_iceberg_rest
 	cleanup_ollama
 	cleanup_postgres
+	cleanup_clickhouse
 	cleanup_minio
 	cleanup_test_network
 }
@@ -439,10 +455,129 @@ launch_postgres() {
 	echo
 }
 
+# Launches a clickhouse-server container, used by tests that read a real
+# ClickHouse via the clickhouse_scanner connector (filename suffix `_chscan.`).
+# The image runs /docker-entrypoint-initdb.d/*.sql at startup, so shared
+# read-only fixtures are pre-seeded by bind-mounting the fixtures dir there;
+# they deliberately include ClickHouse-native column types the connector's
+# write path cannot create (LowCardinality, IPv4, FixedString, plain
+# Date/DateTime), keeping read-decode coverage independent of the write path.
+# Write tests create their own tables in `default` through the connector.
+launch_clickhouse() {
+	local prefix
+	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	CLICKHOUSE_CONTAINER_NAME="${prefix}-serenedb-test-clickhouse-$$"
+	CLICKHOUSE_LOG_FILE="${LOG_DIR:-/tmp}/${CLICKHOUSE_CONTAINER_NAME}.log"
+	local fixtures_dir
+	fixtures_dir="$(cd "${SCRIPT_DIR}/../clickhouse_scanner/fixtures" && pwd)"
+
+	local network_args=()
+	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+		network_args=(--network "$COMPOSE_NETWORK")
+		export CHHOST="$CLICKHOUSE_CONTAINER_NAME"
+		export CHPORT=9000
+	else
+		if [[ -z "$TEST_NETWORK" ]]; then
+			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
+			docker network create "$TEST_NETWORK" >/dev/null
+		fi
+		CHPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+		network_args=(--network "$TEST_NETWORK" -p "$CHPORT:9000")
+		export CHHOST="localhost"
+		export CHPORT
+	fi
+	export CHUSER=default
+
+	echo "Starting clickhouse (host=$CHHOST, port=$CHPORT)..."
+	# CLICKHOUSE_SKIP_USER_SETUP opens the `default` user to all networks with no
+	# password (the image otherwise locks it to localhost, rejecting serened's
+	# host-side connection). Env-var auth, analogous to postgres's
+	# POSTGRES_HOST_AUTH_METHOD=trust -- no mounted config override needed.
+	docker run -d \
+		--name "$CLICKHOUSE_CONTAINER_NAME" \
+		"${network_args[@]}" \
+		-e CLICKHOUSE_SKIP_USER_SETUP=1 \
+		-v "${fixtures_dir}:/docker-entrypoint-initdb.d:ro" \
+		clickhouse/clickhouse-server:24.8
+
+	echo "Waiting for clickhouse to be ready..."
+	for i in $(seq 1 60); do
+		if docker exec "$CLICKHOUSE_CONTAINER_NAME" \
+			clickhouse-client --query "SELECT 1" >/dev/null 2>&1; then
+			echo "clickhouse is ready."
+			break
+		fi
+		if [[ $i -eq 60 ]]; then
+			echo "ERROR: clickhouse failed to start within 60 seconds"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	echo "Waiting for clickhouse fixtures to load..."
+	for i in $(seq 1 60); do
+		local table_count
+		table_count=$(docker exec "$CLICKHOUSE_CONTAINER_NAME" \
+			clickhouse-client --query "SELECT count() FROM system.tables WHERE database='chtest'" 2>/dev/null || echo 0)
+		if [[ "$table_count" =~ ^[0-9]+$ ]] && [[ "$table_count" -ge 3 ]]; then
+			echo "clickhouse fixtures loaded ($table_count tables)."
+			break
+		fi
+		if [[ $i -eq 60 ]]; then
+			echo "ERROR: clickhouse fixtures failed to load within 60 seconds"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	# The readiness checks above run `docker exec` INSIDE the container, but tests
+	# connect from the host through the published port. A bare TCP connect isn't
+	# enough: docker's userland proxy accepts the connection before ClickHouse's
+	# external native listener is up, so the first parallel tests still race it and
+	# fail their ATTACH "after 0 ms" (the whole suite then finishes in a fraction of
+	# the usual time). Speak the native handshake and require an actual server reply.
+	# Skipped in COMPOSE_NETWORK mode, where tests reach the container by name.
+	if [[ "$CHHOST" == "localhost" ]]; then
+		echo "Waiting for clickhouse to answer the native protocol on host port ${CHPORT}..."
+		for i in $(seq 1 60); do
+			if python3 - "${CHPORT}" <<'PY' 2>/dev/null; then
+import socket, sys
+port = int(sys.argv[1])
+def uv(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7f; n >>= 7
+        out.append(b | 0x80 if n else b)
+        if not n: break
+    return bytes(out)
+def us(s):
+    b = s.encode(); return uv(len(b)) + b
+try:
+    s = socket.socket(); s.settimeout(2); s.connect(("127.0.0.1", port))
+    s.sendall(uv(0) + us("readycheck") + uv(24) + uv(8) + uv(54448) + us("default") + us("default") + us(""))
+    sys.exit(0 if s.recv(1) else 1)
+except Exception:
+    sys.exit(1)
+PY
+				echo "clickhouse native protocol is answering."
+				break
+			fi
+			if [[ $i -eq 60 ]]; then
+				echo "ERROR: clickhouse native protocol on ${CHPORT} not answering within 60 seconds"
+				exit 1
+			fi
+			sleep 1
+		done
+	fi
+
+	echo "clickhouse running (host=$CHHOST, port=$CHPORT)."
+	echo
+}
+
 launch_external() {
 	shopt -s globstar
 	local pattern test_files f
-	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false
+	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false
 	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
@@ -455,13 +590,14 @@ launch_external() {
 			# package RTA, which has no docker -- exclude it. An external-service
 			# suffix on a plain .test is a mistake; fail loudly instead of
 			# letting the service launch blow up later.
-			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test)
+			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test | *_chscan.test)
 				misnamed+=("$f")
 				;;
 			*_s3.test_slow) needs_s3=true ;;
 			*_iceberg.test_slow) needs_iceberg=true ;;
 			*_ollama.test_slow) needs_ollama=true ;;
 			*_pgscan.test_slow) needs_postgres=true ;;
+			*_chscan.test_slow) needs_clickhouse=true ;;
 			esac
 		done <<<"$test_files"
 	done
@@ -501,6 +637,9 @@ launch_external() {
 	fi
 	if [[ "$needs_postgres" == "true" ]]; then
 		launch_postgres
+	fi
+	if [[ "$needs_clickhouse" == "true" ]]; then
+		launch_clickhouse
 	fi
 }
 

@@ -36,6 +36,7 @@
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
+#include "catalog/foreign_server.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -114,6 +115,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::InvertedIndex;
   } else if constexpr (std::is_same_v<T, Tokenizer>) {
     return ObjectType::Tokenizer;
+  } else if constexpr (std::is_same_v<T, ForeignServer>) {
+    return ObjectType::ForeignServer;
   } else if constexpr (std::is_same_v<T, Sequence>) {
     return ObjectType::Sequence;
   } else if constexpr (std::is_same_v<T, Role>) {
@@ -178,6 +181,9 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const;
   std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId database, std::string_view schema) const;
+  // Foreign servers are database children (PG: no schema).
+  std::vector<std::shared_ptr<ForeignServer>> GetForeignServers(
+    ObjectId database) const;
   std::vector<std::shared_ptr<PgSqlType>> GetTypes(
     ObjectId database, std::string_view schema) const;
 
@@ -211,6 +217,14 @@ struct Snapshot {
                                           ObjectId database,
                                           std::string_view schema,
                                           std::string_view name) const;
+  std::shared_ptr<ForeignServer> GetForeignServer(ObjectId database,
+                                                  std::string_view name) const;
+  // Resolve a foreign server by name alone: its attach alias is instance-wide
+  // and names are globally unique, so this searches every database (mirrors the
+  // instance-wide GetRole/GetDatabase by-name lookups). Used by query-time
+  // USAGE enforcement, where the referencing session may be in a different
+  // database than the one the server was created in.
+  std::shared_ptr<ForeignServer> GetForeignServer(std::string_view name) const;
   std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
                                      std::string_view schema,
                                      std::string_view name) const;
@@ -433,6 +447,8 @@ class Catalog final {
                         std::shared_ptr<PgSqlFunction> function);
   void RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
                          std::shared_ptr<Tokenizer> tokenizer);
+  void RegisterForeignServer(ObjectId database_id,
+                             std::shared_ptr<ForeignServer> foreign_server);
   void RegisterType(ObjectId database_id, ObjectId schema_id,
                     std::shared_ptr<PgSqlType> type);
   void RegisterTable(ObjectId database_id, ObjectId schema_id,
@@ -474,6 +490,15 @@ class Catalog final {
   bool CreateTokenizer(const AccessContext& ax, ObjectId database_id,
                        std::string_view schema, std::shared_ptr<Tokenizer> dict,
                        bool if_not_exists);
+  // Foreign servers are database children, like PG (no schema). Every check
+  // runs here, under the mutex: CREATE privilege, supported FDW, and name
+  // collisions in this or ANY database (the attach alias is instance-global).
+  // Returns false for the if_not_exists no-op. The live ATTACH happens
+  // AFTERWARDS in the command layer, compensated by a drop on failure -- so a
+  // denied or invalid CREATE never touches the network.
+  bool CreateForeignServer(const AccessContext& ax, ObjectId database_id,
+                           std::shared_ptr<ForeignServer> foreign_server,
+                           bool if_not_exists);
   bool CreateType(const AccessContext& ax, ObjectId database_id,
                   std::string_view schema, std::shared_ptr<PgSqlType> type,
                   bool if_not_exists);
@@ -546,6 +571,8 @@ class Catalog final {
                     bool cascade, bool missing_ok);
   bool DropTokenizer(std::string_view database, std::string_view schema,
                      std::string_view name, bool cascade, bool missing_ok);
+  bool DropForeignServer(const AccessContext& ax, std::string_view database,
+                         std::string_view name, bool cascade, bool missing_ok);
   bool DropTable(const AccessContext& ax, std::string_view database,
                  std::string_view schema, std::string_view name, bool cascade,
                  bool missing_ok);

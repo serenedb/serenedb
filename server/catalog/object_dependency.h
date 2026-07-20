@@ -385,11 +385,17 @@ struct SchemaDependency : ObjectDependencyBase {
 
 struct DatabaseDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> schemas;
+  // Foreign servers are database children, like PG (pg_foreign_server has no
+  // namespace column; DROP SCHEMA can never take a server down).
+  containers::FlatHashSet<ObjectId> foreign_servers;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<DatabaseDependency>(*this);
   }
   void Emit(DropEmitter& e, ObjectId self) const final {
     for (auto id : schemas) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : foreign_servers) {
       e.EmitAutoDrop(id);
     }
   }
@@ -413,6 +419,13 @@ struct RoleDependency : ObjectDependencyBase {
     return std::make_shared<RoleDependency>(*this);
   }
   void Emit(DropEmitter&, ObjectId) const final {}
+};
+
+struct ForeignServerDependency : ObjectDependencyBase {
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<ForeignServerDependency>(*this);
+  }
+  void Emit(DropEmitter& e, ObjectId self) const final {}
 };
 
 inline DropPlan DropEmitter::ComputePlan() && {

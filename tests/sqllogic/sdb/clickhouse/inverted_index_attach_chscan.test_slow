@@ -1,0 +1,83 @@
+control substitution on
+
+# Inverted index over an ATTACHed ClickHouse *table* (contrast with
+# inverted_index_chscan.test_slow, which indexes a clickhouse_query() view --
+# a generic view with no engine metadata, so real-column materialisation there
+# is unsupported).
+#
+# Here the source is a real catalog table, so serenedb reads its primary key
+# from the engine's own metadata (ClickHouse system.columns.is_in_primary_key,
+# surfaced as a standard PRIMARY KEY constraint on the attached table entry) and
+# keys the inverted index on that PK (PkSpec::ExternalDBKey). Searching then
+# MATERIALISES real source columns by re-fetching the matched rows with
+# `WHERE pk IN (...)` through the connector. No WITH (pk = ...) anywhere -- the
+# key comes purely from metadata.
+#
+# Fixture chtest.vedernikoff(id Int64, val String) is pre-seeded by the
+# container init script; `id` is the MergeTree primary key.
+
+# Unique attach name: tests run in parallel against one serened, and the global
+# catalog name would otherwise collide with attach_chscan's `ch`.
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chmat (TYPE clickhouse);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ch_attach_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW vedernikoff_attach_v AS SELECT * FROM chmat.chtest.vedernikoff;
+
+statement ok
+CREATE INDEX vedernikoff_attach_idx ON vedernikoff_attach_v USING inverted(id, val ch_attach_en);
+
+# count(*) flows off the iresearch index (no materialisation).
+query
+SELECT count(*) FROM vedernikoff_attach_idx WHERE val @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# Full row retrieval: matched rows re-fetched from ClickHouse by the metadata PK
+# (`WHERE id IN (...)`), then mapped back to output slots by key.
+query
+SELECT id, val FROM vedernikoff_attach_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+5	vedernikoff kostya
+
+query
+SELECT id, val FROM vedernikoff_attach_idx WHERE val @@ ts_phrase('pudge') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+4	pudge goes mid
+
+# Projection subset: materialise only the text column. The PK still drives the
+# lookup under the hood even though it is not in the SELECT list.
+query
+SELECT val FROM vedernikoff_attach_idx WHERE val @@ ts_phrase('kostya') ORDER BY val;
+----
+val
+deadinside kostya
+vedernikoff kostya
+
+statement ok
+DROP INDEX vedernikoff_attach_idx;
+
+statement ok
+DROP VIEW vedernikoff_attach_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ch_attach_en;
+
+statement ok
+DETACH chmat;

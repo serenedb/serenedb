@@ -1,0 +1,58 @@
+control substitution on
+
+# MERGE INTO against a ClickHouse target. Each action is lowered to the
+# connector's own INSERT / UPDATE / DELETE operator (PlanMergeInto delegates to
+# PlanInsert/PlanUpdate/PlanDelete), so UPDATE and DELETE key off the integer
+# PRIMARY KEY that serves as the ClickHouse row identifier. The per-row UPDATE
+# assignments become a `CASE pk WHEN ... THEN ...` expression, and mutations_sync
+# makes the changes visible to the following SELECT.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chm (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS chm.default.mtarget;
+
+statement ok
+CREATE TABLE chm.default.mtarget (id BIGINT PRIMARY KEY, name VARCHAR, qty INTEGER);
+
+statement ok
+INSERT INTO chm.default.mtarget VALUES (1, 'alpha', 10), (2, 'beta', 20), (3, 'gamma', 30);
+
+# MATCHED rows are updated (to per-row-distinct values), NOT MATCHED rows are
+# inserted. Source id 2,3 match; id 4 does not.
+statement ok
+MERGE INTO chm.default.mtarget AS t
+USING (SELECT * FROM (VALUES (2::BIGINT, 'beta2', 200), (3::BIGINT, 'gamma2', 300), (4::BIGINT, 'delta', 40)) AS v(id, name, qty)) AS s
+ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET name = s.name, qty = s.qty
+WHEN NOT MATCHED THEN INSERT (id, name, qty) VALUES (s.id, s.name, s.qty);
+
+query
+SELECT id, name, qty FROM chm.default.mtarget ORDER BY id;
+----
+id	name	qty
+1	alpha	10
+2	beta2	200
+3	gamma2	300
+4	delta	40
+
+# MATCHED rows are deleted; unmatched rows are left alone.
+statement ok
+MERGE INTO chm.default.mtarget AS t
+USING (SELECT * FROM (VALUES (1::BIGINT), (3::BIGINT)) AS v(id)) AS s
+ON t.id = s.id
+WHEN MATCHED THEN DELETE;
+
+query
+SELECT id, name, qty FROM chm.default.mtarget ORDER BY id;
+----
+id	name	qty
+2	beta2	200
+4	delta	40
+
+statement ok
+DROP TABLE chm.default.mtarget;
+
+statement ok
+DETACH chm;

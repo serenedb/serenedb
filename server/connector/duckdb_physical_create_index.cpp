@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -42,6 +43,7 @@
 #include "basics/primary_key.hpp"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
+#include "catalog/foreign_server.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
@@ -89,6 +91,9 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::vector<InsertColumnMeta> columns;
 
   bool pk_term = false;
+  // ExternalRowId: the single projected rowid (ctid: page<<16|tuple) is split
+  // into STRUCT{page, tuple} at pack time -- the halves compress independently.
+  bool split_rowid = false;
   catalog::PkColumnKind pk_column = catalog::PkColumnKind::None;
   duckdb::idx_t pk_hi_col_idx = 0;
   duckdb::idx_t pk_lo_col_idx = 0;
@@ -289,6 +294,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   // CREATE INDEX requires ownership of the target relation; the mutation
   // enforces it and throws "must be owner of table <name>" on a non-owner.
+
   bool created = false;
   if (state->index_type == catalog::ObjectType::InvertedIndex) {
     auto find_with = [&](std::string_view name) -> const duckdb::Value* {
@@ -330,6 +336,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
+    options.key_columns = KeyColumnsFromOptions(_info->options);
     std::string store_pk = "auto";
     if (auto* v = find_with("store_pk")) {
       store_pk = duckdb::StringUtil::Lower(
@@ -341,15 +348,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       }
     }
     const bool table_backed = IsDuckDBTable();
-    enum class KeyShape { Single, Two, Synth };
+    enum class KeyShape { Single, Two, Struct, Synth };
     auto shape = KeyShape::Synth;
     if (table_backed) {
       shape = KeyShape::Single;
     } else if (auto it = _info->options.find("_sdb_view_fast_path_pk");
                it != _info->options.end()) {
       const auto kind = it->second.GetValue<std::string>();
-      shape = (kind == "file_index_plus_row_number" ||
-               kind == "file_index_plus_duckdb_rowid")
+      state->split_rowid = kind == "external_rowid_split";
+      shape = (kind == "external_struct_key" || state->split_rowid)
+                ? KeyShape::Struct
+              : (kind == "file_index_plus_row_number" ||
+                 kind == "file_index_plus_duckdb_rowid")
                 ? KeyShape::Two
                 : KeyShape::Single;
     }
@@ -358,17 +368,20 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       options.pk_term = false;
       options.pk_column = catalog::PkColumnKind::None;
     } else if (store_pk == "auto") {
-      options.pk_column = shape == KeyShape::Single ? catalog::PkColumnKind::I64
-                          : shape == KeyShape::Two
-                            ? catalog::PkColumnKind::I64I64
-                            : catalog::PkColumnKind::Unable;
+      options.pk_column =
+        shape == KeyShape::Single   ? catalog::PkColumnKind::I64
+        : shape == KeyShape::Two    ? catalog::PkColumnKind::I64I64
+        : shape == KeyShape::Struct ? catalog::PkColumnKind::Struct
+                                    : catalog::PkColumnKind::Unable;
     } else if (store_pk == "i64") {
       if (shape != KeyShape::Single) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("store_pk = 'i64' requires a single-part row key; this "
                   "index's key is ",
-                  shape == KeyShape::Two ? "(file_index, row)" : "synthetic"));
+                  shape == KeyShape::Two      ? "(file_index, row)"
+                  : shape == KeyShape::Struct ? "a user key_columns struct"
+                                              : "synthetic"));
       }
       options.pk_column = catalog::PkColumnKind::I64;
     } else if (store_pk == "i64i64") {
@@ -579,7 +592,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   if (!gstate.created) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  const auto num_rows = chunk.size();
+  auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
@@ -612,6 +625,48 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
       entries[0].Reinterpret(chunk.data[gstate.pk_hi_col_idx]);
       entries[1].Reference(chunk.data[gstate.pk_lo_col_idx]);
+      pk.column = pk_scratch.get();
+      break;
+    }
+    case catalog::PkColumnKind::Struct: {
+      const auto base = gstate.pk_hi_col_idx;
+      SDB_ASSERT(base < chunk.ColumnCount());
+      if (gstate.split_rowid) {
+        // Split the packed rowid into STRUCT{page, tuple}: the page half is
+        // run-heavy (RLE) and the tuple half is a small sawtooth (bitpacked),
+        // ~2x smaller than the packed int64 as one column.
+        SDB_ASSERT(base + 1 == chunk.ColumnCount());
+        auto& rowid_vec = chunk.data[base];
+        duckdb::UnifiedVectorFormat fmt;
+        rowid_vec.ToUnifiedFormat(num_rows, fmt);
+        const auto* packed = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
+        pk_scratch = std::make_unique<duckdb::Vector>(
+          duckdb::LogicalType::STRUCT({{"page", duckdb::LogicalType::BIGINT},
+                                       {"tuple", duckdb::LogicalType::BIGINT}}));
+        auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
+        auto* pages = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
+        auto* tuples = duckdb::FlatVector::GetDataMutable<int64_t>(entries[1]);
+        for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+          const auto v = packed[fmt.sel->get_index(row)];
+          pages[row] = v >> 16;
+          tuples[row] = v & 0xFFFF;
+        }
+        pk.column = pk_scratch.get();
+        break;
+      }
+      // Pack the trailing user key columns into ONE self-describing struct
+      // vector; field names are positional (the lookup uses field order).
+      duckdb::child_list_t<duckdb::LogicalType> field_types;
+      for (duckdb::idx_t i = base; i < chunk.ColumnCount(); ++i) {
+        field_types.emplace_back(absl::StrCat("c", i - base),
+                                 chunk.data[i].GetType());
+      }
+      pk_scratch = std::make_unique<duckdb::Vector>(
+        duckdb::LogicalType::STRUCT(field_types));
+      auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
+      for (duckdb::idx_t i = 0; i < entries.size(); ++i) {
+        entries[i].Reference(chunk.data[base + i]);
+      }
       pk.column = pk_scratch.get();
       break;
     }

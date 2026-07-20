@@ -26,6 +26,7 @@
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/index_source_external_lookup.h"
 #include "connector/index_source_view_file.h"
 #include "connector/index_source_view_table.h"
 #include "connector/view_fast_path.h"
@@ -44,7 +45,11 @@ std::unique_ptr<IndexSource> MakeIndexSource(
   duckdb::TableFilterSet* pushed_filters) {
   if (bind_data.IsViewBacked()) {
     const auto& vbd = bind_data.As<ViewScanBindData>();
-    auto fp = ResolveViewFastPath(context, *vbd.view);
+    std::span<const std::string> key_cols;
+    if (vbd.inverted_index) {
+      key_cols = vbd.inverted_index->GetOptions().key_columns;
+    }
+    auto fp = ResolveViewFastPath(context, *vbd.view, key_cols);
     if (!fp) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -63,6 +68,11 @@ std::unique_ptr<IndexSource> MakeIndexSource(
       return std::make_unique<ViewTableIndexSource>(
         context, std::move(*fp), projected_columns, projected_types,
         bind_column_ids, pushed_filters);
+    }
+    if (fp->catalog_ref && catalog::IsExternalPK(fp->pk_spec)) {
+      return std::make_unique<ExternalLookupIndexSource>(
+        context, std::move(*fp), projected_columns, projected_types,
+        bind_column_ids);
     }
     if (catalog::IsGlobPK(fp->pk_spec)) {
       return std::make_unique<ViewFileGlobIndexSource>(

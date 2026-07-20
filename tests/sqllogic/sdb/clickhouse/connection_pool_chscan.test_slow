@@ -1,0 +1,92 @@
+control substitution on
+
+# Connection pooling via the shared dbconnector pool (the PostgresConnectionPool
+# analog): each attached catalog owns a pool with Ping health checks on lease,
+# idle/lifetime reaping, and FORCE/WAIT/TRY acquire modes (ch_pool_* settings;
+# live reconfiguration via clickhouse_configure_pool). ch_connection_cache stays
+# as the dynamic kill switch: off = every lease is a fresh detached connection.
+# Reuse itself is not directly observable, so this asserts the property that would
+# break if a reused connection were left in a bad state: many statements against one
+# attached catalog -- repeated full scans (each returns its drained connection to the
+# pool, the next reuses it), a LIMIT scan, and DML -- must all stay correct. The whole
+# rest of the suite also now runs through the pool, which is the real integration test.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chpool (TYPE clickhouse);
+
+# Repeated full scans: connection is returned to the pool after each and reused.
+query
+SELECT count(*) AS n FROM chpool.chtest.vedernikoff;
+----
+n
+6
+
+query
+SELECT count(*) AS n FROM chpool.chtest.vedernikoff;
+----
+n
+6
+
+query
+SELECT count(*) AS n FROM chpool.chtest.widgets;
+----
+n
+5
+
+# A LIMIT scan, then another full scan: the pool must still yield healthy connections.
+query
+SELECT count(*) AS n FROM (SELECT id FROM chpool.chtest.vedernikoff LIMIT 2);
+----
+n
+2
+
+query
+SELECT count(*) AS n FROM chpool.chtest.vedernikoff;
+----
+n
+6
+
+# Disable the cache: every lease opens fresh, returns drop -- still correct.
+statement ok
+SET ch_connection_cache = false;
+
+query
+SELECT count(*) AS n FROM chpool.chtest.widgets;
+----
+n
+5
+
+# Re-enable: pooling resumes, still correct.
+statement ok
+SET ch_connection_cache = true;
+
+query
+SELECT count(*) AS n FROM chpool.chtest.vedernikoff;
+----
+n
+6
+
+# The pool is the shared dbconnector pool (the postgres analog):
+# clickhouse_configure_pool introspects and reconfigures a live catalog's pool.
+query
+SELECT catalog_name, acquire_mode, max_connections
+FROM clickhouse_configure_pool(catalog_name := 'chpool', max_connections := 4);
+----
+catalog_name	acquire_mode	max_connections
+chpool	force	4
+
+# The new limit sticks, and scans keep working through the reconfigured pool.
+query
+SELECT max_connections FROM clickhouse_configure_pool(catalog_name := 'chpool');
+----
+max_connections
+4
+
+query
+SELECT count(*) AS n FROM chpool.chtest.widgets;
+----
+n
+5
+
+statement ok
+DETACH chpool;

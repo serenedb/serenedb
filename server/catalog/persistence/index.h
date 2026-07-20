@@ -36,6 +36,9 @@ enum class PkColumnKind : uint8_t {
   I64,
   I64I64,
   Unable,
+  // User key_columns: stored as ONE STRUCT column of the columns' own types.
+  // Appended last to keep the persisted ordinals above stable.
+  Struct,
 };
 
 // The initializers ARE the built-in defaults: options always hold concrete
@@ -56,6 +59,10 @@ struct InvertedIndexOptions {
   bool pk_term = true;
   PkColumnKind pk_column = PkColumnKind::I64;
   std::optional<ScorerOptions> topk_scorer;
+  // CREATE INDEX WITH (key_columns = 'a, b'): the external-DB re-fetch key
+  // columns; empty = default (pg ctid / CH PK). Persisted so build and lookup
+  // agree.
+  std::vector<std::string> key_columns;
 };
 
 // Shared expression payload for a computed index key. Each index kind persists

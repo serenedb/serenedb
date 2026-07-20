@@ -1,0 +1,169 @@
+control substitution on
+
+# RBAC on FDW in the ClickHouse-style model. A FOREIGN SERVER is owned by its
+# creator and carries USAGE (PG-style); there are no USER MAPPINGs. The gates:
+#   - CREATE SERVER is gated on CREATE on the DATABASE (servers are database
+#     children, not schema members);
+#   - DROP SERVER is owner-or-superuser;
+#   - querying through a server needs USAGE on it (owner/superuser exempt);
+#     GRANT/REVOKE USAGE ON FOREIGN SERVER toggles it at query time.
+# These tests act as a non-superuser via a named password connection (the
+# default connection is the superuser postgres); errors are asserted with
+# <slt:ignore> to swallow the DETAIL/SQLSTATE tail. Needs a live ClickHouse (the
+# _chscan suffix launches one); a server is eagerly attached at CREATE, so a
+# permitted CREATE actually connects.
+#
+# Unique names (fp_*) -- tests run in parallel against one serened.
+
+statement ok
+DROP SERVER IF EXISTS fp_srv;
+
+statement ok
+DROP SERVER IF EXISTS fp_denied;
+
+statement ok
+DROP ROLE IF EXISTS fp_owner;
+
+statement ok
+DROP ROLE IF EXISTS fp_other;
+
+# fp_owner will own a server; fp_other is an unrelated non-superuser. Both need
+# LOGIN + PASSWORD to open their own authenticated session.
+statement ok
+CREATE ROLE fp_owner LOGIN PASSWORD 'owner_pw';
+
+statement ok
+CREATE ROLE fp_other LOGIN PASSWORD 'other_pw';
+
+# ===== CREATE SERVER is gated on CREATE on the DATABASE =====
+
+# A plain non-superuser without CREATE on the database is denied -- with
+# REACHABLE credentials, so the denial must fire BEFORE the remote is attached.
+connection c_other user=fp_other password=other_pw
+statement error
+CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+----
+db error: ERROR: permission denied for database<slt:ignore>
+
+
+# The denied CREATE left no orphaned attachment: the superuser can create the
+# same name cleanly (a leaked ATTACH would make this fail "already attached").
+connection default
+statement ok
+CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+DROP SERVER fp_denied;
+
+# The superuser grants CREATE on the database to fp_owner (servers are
+# database children; a schema grant would not help).
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO fp_owner;
+
+# Now fp_owner may create its server (and it connects, proving attach ran).
+connection c_owner user=fp_owner password=owner_pw
+statement ok
+CREATE SERVER fp_srv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+# The server records fp_owner as its owner in pg_foreign_server.
+connection default
+query
+SELECT r.rolname FROM pg_foreign_server s JOIN pg_roles r ON s.srvowner = r.oid
+WHERE s.srvname = 'fp_srv';
+----
+rolname
+fp_owner
+
+# ===== DROP SERVER is owner-or-superuser =====
+
+# fp_other cannot drop someone else's server.
+connection c_other user=fp_other password=other_pw
+statement error
+DROP SERVER fp_srv;
+----
+db error: ERROR: must be owner of foreign server fp_srv<slt:ignore>
+
+
+# ===== querying needs USAGE on the server =====
+
+# fp_other is neither owner nor superuser and has no USAGE -- denied at query time.
+connection c_other user=fp_other password=other_pw
+statement error
+SELECT count(*) FROM fp_srv.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server fp_srv<slt:ignore>
+
+
+# The server owner can always query (no explicit USAGE needed).
+connection c_owner user=fp_owner password=owner_pw
+query
+SELECT count(*) AS n FROM fp_srv.chtest.vedernikoff;
+----
+n
+6
+
+# The owner grants USAGE to fp_other.
+connection c_owner user=fp_owner password=owner_pw
+statement ok
+GRANT USAGE ON FOREIGN SERVER fp_srv TO fp_other;
+
+# Now fp_other may query through it.
+connection c_other user=fp_other password=other_pw
+query
+SELECT count(*) AS n FROM fp_srv.chtest.vedernikoff;
+----
+n
+6
+
+# REVOKE takes USAGE away -- fp_other is denied again.
+connection c_owner user=fp_owner password=owner_pw
+statement ok
+REVOKE USAGE ON FOREIGN SERVER fp_srv FROM fp_other;
+
+connection c_other user=fp_other password=other_pw
+statement error
+SELECT count(*) FROM fp_srv.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server fp_srv<slt:ignore>
+
+
+# ===== GRANT ... ON FOREIGN SERVER accepts only USAGE =====
+
+# SELECT is not a valid privilege on a foreign server.
+connection default
+statement error
+GRANT SELECT ON FOREIGN SERVER fp_srv TO fp_other;
+----
+db error: ERROR: invalid privilege type SELECT for foreign server<slt:ignore>
+
+
+# GRANT USAGE on a nonexistent server blames the server.
+statement error
+GRANT USAGE ON FOREIGN SERVER fp_nope TO fp_other;
+----
+db error: ERROR: foreign server "fp_nope" does not exist<slt:ignore>
+
+
+# ===== the superuser can always drop, regardless of owner =====
+connection default
+statement ok
+DROP SERVER fp_srv;
+
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'fp_srv';
+----
+n
+0
+
+# Cleanup (superuser).
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM fp_owner;
+
+statement ok
+DROP ROLE fp_owner;
+
+statement ok
+DROP ROLE fp_other;

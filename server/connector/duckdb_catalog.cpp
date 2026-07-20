@@ -66,6 +66,7 @@
 
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/foreign_server.h"
 #include "catalog/pk_spec.h"
 #include "catalog/schema.h"
 #include "catalog/store/store.h"
@@ -315,6 +316,8 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
           ERR_MSG("cannot drop schema ", info_name,
                   " because it is required by the database system"));
       } else {
+        // Foreign servers are database children (PG shape): DROP SCHEMA can
+        // never take one down, so no attachment cleanup is needed here.
         dropped = catalog.DropSchema(catalog::ActingAs(context), info_catalog,
                                      info_name, info.cascade, missing_ok);
       }
@@ -884,7 +887,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         relation_obj->GetType() == catalog::ObjectType::PgSqlView) {
       auto view =
         std::static_pointer_cast<const catalog::PgSqlView>(relation_obj);
-      fp = ResolveViewFastPath(binder.context, *view);
+      auto key_cols = KeyColumnsFromOptions(
+        stmt.info->Cast<duckdb::CreateIndexInfo>().options);
+      fp = ResolveViewFastPath(binder.context, *view, key_cols);
     }
     duckdb::LogicalOperator* leaf_parent_chain_root = plan.get();
     duckdb::LogicalGet* leaf_get = nullptr;
@@ -910,9 +915,15 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       const auto leaf_orig_size = leaf_get->GetColumnIds().size();
       duckdb::vector<duckdb::LogicalType> pk_types;
       pk_types.reserve(vcols.size());
-      for (auto vcol : vcols) {
+      for (size_t i = 0; i < vcols.size(); ++i) {
+        const auto vcol = vcols[i];
         if (vcol == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
           pk_types.push_back(duckdb::LogicalType::UBIGINT);
+        } else if (view_fast_path->pk_spec ==
+                   catalog::PkSpec::ExternalColumnKey) {
+          // Real key columns of arbitrary types -- project their own types, not
+          // a hardcoded BIGINT (which only fits the file/rowid int64 keys).
+          pk_types.push_back(view_fast_path->key_columns[i].type);
         } else {
           pk_types.push_back(duckdb::LogicalType::BIGINT);
         }
@@ -1151,7 +1162,16 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         [](const std::string& n) { return duckdb::Identifier{n}; }));
     create_index_info->SetSchema(target.ParentSchema().name);
     create_index_info->SetCatalog(target.ParentCatalog().GetName());
-    if (view_fast_path) {
+    if (view_fast_path && catalog::IsExternalPK(view_fast_path->pk_spec)) {
+      // External key: stored as a struct of the key columns' own types. The
+      // ctid rowid is split into STRUCT{page, tuple} -- the two halves compress
+      // independently (the page column is run-heavy, the tuple column is a
+      // small sawtooth), 2x smaller than the packed int64 as one column.
+      create_index_info->options["_sdb_view_fast_path_pk"] = duckdb::Value(
+        view_fast_path->pk_spec == catalog::PkSpec::ExternalRowId
+          ? "external_rowid_split"
+          : "external_struct_key");
+    } else if (view_fast_path) {
       switch (view_fast_path->pk_spec) {
         case catalog::PkSpec::DuckDBRowId:
           create_index_info->options["_sdb_view_fast_path_pk"] =

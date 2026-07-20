@@ -4,16 +4,16 @@ hash-threshold 100
 
 # Inverted index built directly on a VIEW over an ATTACH'd postgres table.
 #
-# Partial support today:
+# The postgres table is a recognised fast-path source: serenedb reads its PK
+# from pg_constraint metadata (surfaced as a standard PRIMARY KEY constraint on
+# the attached table entry) and keys the index on it (PkSpec::ExternalDBKey).
 #   - CREATE INDEX succeeds (iresearch ingests rows at create time).
-#   - count(*) and BM25 score queries work (served from iresearch alone).
-#   - Selecting real source columns fails with the documented
-#     "not yet supported" error -- postgres_scan isn't in the fast-path
-#     registry yet (see server/connector/view_fast_path.cpp, the
-#     `// TODO: read_avro, postgres_scan / postgres_query` comment).
-#
-# When postgres_scan joins the fast-path registry, flip the `statement error`
-# block to `query` with the expected rows.
+#   - count(*) / BM25 are served from iresearch alone.
+#   - INCLUDE'd columns come from the iresearch columnstore.
+#   - Real (non-INCLUDE'd) source columns are MATERIALISED by re-fetching the
+#     matched rows from postgres via `WHERE pk IN (...)` through the connector.
+# No WITH (pk = ...) anywhere -- the key comes purely from metadata. v1 supports
+# a single BIGINT primary key.
 
 
 statement ok
@@ -21,12 +21,12 @@ ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__
 
 
 statement ok
-CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_docs;
+CREATE SCHEMA pg_${__DATABASE__}.iipgscan_docs;
 
 
 statement ok
-CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles (
-  id    INTEGER PRIMARY KEY,
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.articles (
+  id    BIGINT PRIMARY KEY,
   body  TEXT,
   tag   TEXT,
   views INTEGER
@@ -34,7 +34,7 @@ CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles (
 
 
 statement count 5
-INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_docs.articles VALUES
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.articles VALUES
   (1, 'pudge goes mid and dominates the lane', 'gameplay', 1200),
   (2, 'anchin reads manga every weekend',      'reading',  340),
   (3, 'pudge plays again in a ranked match',   'gameplay', 870),
@@ -57,7 +57,7 @@ CREATE TEXT SEARCH DICTIONARY pg_en_${__DATABASE__}(
 statement ok
 CREATE VIEW pg_articles_v_${__DATABASE__} AS
   SELECT id, body, tag, views
-  FROM pg_${__DATABASE__}.${__DATABASE__}_docs.articles;
+  FROM pg_${__DATABASE__}.iipgscan_docs.articles;
 
 
 statement ok
@@ -113,21 +113,417 @@ sum
 2082
 
 
-# Selecting real (non-indexed, non-INCLUDE'd) source columns fails because
-# postgres_scan isn't a fast-path source. Pin the documented error so
-# flipping the behaviour requires touching this assertion.
-statement error
-SELECT id, body FROM pg_articles_v_idx_${__DATABASE__} WHERE body @@ ts_phrase('pudge');
+# Selecting real (non-indexed, non-INCLUDE'd) source columns: the postgres table
+# is a fast-path source (PkSpec::ExternalDBKey), keyed by ctid -- the row's
+# physical locator, surfaced as the duckdb rowid. Matched rows are re-fetched
+# via `WHERE rowid IN (...)`, which the connector pushes down as a `ctid IN (...)`
+# TID scan, and mapped back to output slots by key. (The BIGINT PK on this table
+# is irrelevant to the lookup -- ctid is used regardless; see the no-PK case.)
+query
+SELECT id, body FROM pg_articles_v_idx_${__DATABASE__} WHERE body @@ ts_phrase('pudge') ORDER BY id;
 ----
-db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
+id	body
+1	pudge goes mid and dominates the lane
+3	pudge plays again in a ranked match
+5	mom reviews pudge highlight reel
+
+
+# ===== ctid needs NO primary key: the same lookup works on a keyless table =====
+# This is the universal-lookup win over a PK column: ctid is every row's physical
+# locator, so materialisation works even when the source table has no PK at all.
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.nopk (
+  body TEXT,
+  tag  TEXT
+);
+
+
+statement count 3
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.nopk VALUES
+  ('pudge roams the map',  'gameplay'),
+  ('anchin naps at noon',  'reading'),
+  ('pudge ults the carry', 'gameplay');
 
 
 statement ok
-DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_docs.articles;
+CREATE VIEW pg_nopk_v_${__DATABASE__} AS
+  SELECT body, tag FROM pg_${__DATABASE__}.iipgscan_docs.nopk;
 
 
 statement ok
-DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_docs;
+CREATE INDEX pg_nopk_v_idx_${__DATABASE__}
+  ON pg_nopk_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__});
+
+
+# Materialise real source columns (the indexed `body` -- its text is not stored
+# -- and the non-indexed `tag`) with NO PK on the table: both re-fetched by ctid.
+query
+SELECT body, tag FROM pg_nopk_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body	tag
+pudge roams the map	gameplay
+pudge ults the carry	gameplay
+
+
+statement ok
+DROP VIEW pg_nopk_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.nopk;
+
+
+# ===== user-specified lookup key: WITH (key_columns = 'id') =====
+# The user names the key column (their PK, or any BIGINT column), overriding the
+# default ctid: matched rows re-fetch via `WHERE id IN (...)` instead of by ctid.
+statement ok
+CREATE VIEW pg_artk_v_${__DATABASE__} AS
+  SELECT id, body, tag, views FROM pg_${__DATABASE__}.iipgscan_docs.articles;
+
+
+statement ok
+CREATE INDEX pg_artk_v_idx_${__DATABASE__}
+  ON pg_artk_v_${__DATABASE__}
+  USING inverted(id, body pg_en_${__DATABASE__})
+  WITH (key_columns = 'id');
+
+
+query
+SELECT id, body FROM pg_artk_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid and dominates the lane
+3	pudge plays again in a ranked match
+5	mom reviews pudge highlight reel
+
+
+statement ok
+DROP VIEW pg_artk_v_${__DATABASE__};
+
+
+# ===== composite (multi-column) user key: WITH (key_columns = 'shard, id') =====
+# Two columns form the lookup key. They are stored together as ONE struct column
+# (PkColumnKind::Struct) of their own types and matched rows re-fetch via
+# `WHERE (shard = .. AND id = ..) OR ...` -- generic over any multi-column key,
+# pushed down through the connector's AND/OR filter pushdown. The real columns
+# (body -- indexed, not stored -- and views) are materialised by the composite
+# lookup; neither is served from the columnstore.
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.shards (
+  shard BIGINT,
+  id    BIGINT,
+  body  TEXT,
+  views INTEGER,
+  PRIMARY KEY (shard, id)
+);
+
+
+statement count 5
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.shards VALUES
+  (0, 1, 'pudge goes mid and dominates the lane', 1200),
+  (0, 2, 'anchin reads manga every weekend',      340),
+  (1, 1, 'pudge plays again in a ranked match',   870),
+  (1, 2, 'krivda writes sql for the new feature', 55),
+  (2, 1, 'mom reviews pudge highlight reel',      12);
+
+
+statement ok
+CREATE VIEW pg_shards_v_${__DATABASE__} AS
+  SELECT shard, id, body, views FROM pg_${__DATABASE__}.iipgscan_docs.shards;
+
+
+statement ok
+CREATE INDEX pg_shards_v_idx_${__DATABASE__}
+  ON pg_shards_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__})
+  WITH (key_columns = 'shard, id');
+
+
+query
+SELECT body, views FROM pg_shards_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY views DESC;
+----
+body	views
+pudge goes mid and dominates the lane	1200
+pudge plays again in a ranked match	870
+mom reviews pudge highlight reel	12
+
+
+statement ok
+DROP VIEW pg_shards_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.shards;
+
+
+# ===== arbitrary-type user keys: VARCHAR single, and a mixed 3-column key =====
+# The key columns can be ANY types (not just BIGINT): they are stored as one
+# struct column of their own types and re-fetched with literals rendered per
+# type. Here: a single VARCHAR key, and a 3-column (VARCHAR, DATE, BIGINT) key.
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.typed (
+  code   TEXT,
+  region TEXT,
+  day    DATE,
+  seq    BIGINT,
+  body   TEXT
+);
+
+
+statement count 5
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.typed VALUES
+  ('a1', 'eu', DATE '2020-01-01', 1, 'pudge goes mid and dominates the lane'),
+  ('a2', 'eu', DATE '2020-01-02', 2, 'anchin reads manga every weekend'),
+  ('a3', 'us', DATE '2020-01-01', 1, 'pudge plays again in a ranked match'),
+  ('a4', 'us', DATE '2020-01-03', 5, 'krivda writes sql for the new feature'),
+  ('a5', 'as', DATE '2020-02-01', 9, 'mom reviews pudge highlight reel');
+
+
+# --- single VARCHAR key: `WHERE code IN ('a1','a3','a5')` ---
+statement ok
+CREATE VIEW pg_typedc_v_${__DATABASE__} AS
+  SELECT code, region, day, seq, body FROM pg_${__DATABASE__}.iipgscan_docs.typed;
+
+
+statement ok
+CREATE INDEX pg_typedc_v_idx_${__DATABASE__}
+  ON pg_typedc_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__})
+  WITH (key_columns = 'code');
+
+
+query
+SELECT body FROM pg_typedc_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body
+mom reviews pudge highlight reel
+pudge goes mid and dominates the lane
+pudge plays again in a ranked match
+
+
+statement ok
+DROP VIEW pg_typedc_v_${__DATABASE__};
+
+
+# --- mixed 3-column key (VARCHAR, DATE, BIGINT):
+#     `WHERE (region=.. AND day=.. AND seq=..) OR ...` ---
+statement ok
+CREATE VIEW pg_typedk_v_${__DATABASE__} AS
+  SELECT region, day, seq, body FROM pg_${__DATABASE__}.iipgscan_docs.typed;
+
+
+statement ok
+CREATE INDEX pg_typedk_v_idx_${__DATABASE__}
+  ON pg_typedk_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__})
+  WITH (key_columns = 'region, day, seq');
+
+
+query
+SELECT body FROM pg_typedk_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body
+mom reviews pudge highlight reel
+pudge goes mid and dominates the lane
+pudge plays again in a ranked match
+
+
+statement ok
+DROP VIEW pg_typedk_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.typed;
+
+
+# ===== wide projection: many real columns materialised through one lookup =====
+# Every non-indexed column below is re-fetched from postgres by the external
+# lookup (nothing is INCLUDE'd), covering a wide per-row column copy of mixed
+# types and NULLs in one batch.
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.vedernikoff (
+  id         BIGINT PRIMARY KEY,
+  body       TEXT,
+  kostya     SMALLINT,
+  gul        INTEGER,
+  deadinside BIGINT,
+  clickclack DOUBLE PRECISION,
+  abramov    NUMERIC(10,2),
+  arelav     DATE,
+  androed    TIMESTAMP,
+  ksimironov BOOLEAN,
+  krivda     VARCHAR
+);
+
+
+statement count 3
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.vedernikoff VALUES
+  (1, 'pudge hooks the courier', 42, 322, 10000000666, 1.5, 12.34,
+   DATE '2020-01-01', TIMESTAMP '2020-01-01 12:30:00', true, 'alpha'),
+  (2, 'anchin sleeps through the game', 8, 200, 20000000993, 2.5, 56.78,
+   DATE '2021-02-02', TIMESTAMP '2021-02-02 08:15:00', false, 'beta'),
+  (3, 'pudge misses every hook', NULL, NULL, NULL, NULL, NULL,
+   NULL, NULL, NULL, NULL);
+
+
+statement ok
+CREATE VIEW pg_vedernikoff_v_${__DATABASE__} AS
+  SELECT id, body, kostya, gul, deadinside, clickclack, abramov, arelav,
+         androed, ksimironov, krivda
+  FROM pg_${__DATABASE__}.iipgscan_docs.vedernikoff;
+
+
+statement ok
+CREATE INDEX pg_vedernikoff_v_idx_${__DATABASE__}
+  ON pg_vedernikoff_v_${__DATABASE__}
+  USING inverted(id, body pg_en_${__DATABASE__})
+  WITH (key_columns = 'id');
+
+
+query
+SELECT id, kostya, gul, deadinside, clickclack, abramov, arelav, androed,
+       ksimironov, krivda, body
+FROM pg_vedernikoff_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	kostya	gul	deadinside	clickclack	abramov	arelav	androed	ksimironov	krivda	body
+1	42	322	10000000666	1.5	12.34	2020-01-01	2020-01-01 12:30:00	t	alpha	pudge hooks the courier
+3	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	pudge misses every hook
+
+
+statement ok
+DROP VIEW pg_vedernikoff_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.vedernikoff;
+
+
+# ===== missing key: a source row deleted after CREATE INDEX is DROPPED =====
+# The index is a snapshot; if a matched doc's source row is later deleted, the
+# re-fetch returns nothing for that key and the row is dropped -- not surfaced as
+# a NULL row -- matching the native rowid-fetch sources (survivor compaction).
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.mdrop (
+  id   BIGINT PRIMARY KEY,
+  body TEXT
+);
+
+
+statement count 3
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.mdrop VALUES
+  (1, 'pudge one'),
+  (2, 'pudge two'),
+  (3, 'pudge three');
+
+
+statement ok
+CREATE VIEW pg_mdrop_v_${__DATABASE__} AS
+  SELECT id, body FROM pg_${__DATABASE__}.iipgscan_docs.mdrop;
+
+
+statement ok
+CREATE INDEX pg_mdrop_v_idx_${__DATABASE__}
+  ON pg_mdrop_v_${__DATABASE__}
+  USING inverted(id, body pg_en_${__DATABASE__})
+  WITH (key_columns = 'id');
+
+
+query
+SELECT id, body FROM pg_mdrop_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge one
+2	pudge two
+3	pudge three
+
+
+statement count 1
+DELETE FROM pg_${__DATABASE__}.iipgscan_docs.mdrop WHERE id = 2;
+
+
+# id=2's source row is gone -- dropped from the projection, no NULL row.
+query
+SELECT id, body FROM pg_mdrop_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge one
+3	pudge three
+
+
+statement ok
+DROP VIEW pg_mdrop_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.mdrop;
+
+
+# ===== NULL values in a composite key: the doc drops, and never crashes =====
+# A key column can hold NULL. The doc is indexed, but `col = NULL` never matches
+# on the re-fetch, so it is dropped like a missing key -- and a NULL (even a
+# wholly-NULL) key must not crash the struct-key path (the stored struct row
+# stays valid; only its children are NULL).
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.nullk (
+  grp  TEXT,
+  seq  BIGINT,
+  body TEXT
+);
+
+
+statement count 4
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.nullk VALUES
+  ('a',  1,    'pudge one'),
+  (NULL, 2,    'pudge two'),
+  (NULL, NULL, 'pudge three'),
+  ('b',  4,    'pudge four');
+
+
+statement ok
+CREATE VIEW pg_nullk_v_${__DATABASE__} AS
+  SELECT grp, seq, body FROM pg_${__DATABASE__}.iipgscan_docs.nullk;
+
+
+statement ok
+CREATE INDEX pg_nullk_v_idx_${__DATABASE__}
+  ON pg_nullk_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__})
+  WITH (key_columns = 'grp, seq');
+
+
+# Only the two docs with fully non-NULL keys are re-fetchable.
+query
+SELECT body FROM pg_nullk_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body
+pudge four
+pudge one
+
+
+statement ok
+DROP VIEW pg_nullk_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.nullk;
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.articles;
+
+
+statement ok
+DROP SCHEMA pg_${__DATABASE__}.iipgscan_docs;
 
 
 statement ok

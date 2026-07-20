@@ -1,0 +1,98 @@
+control substitution on
+
+# Foreign Data Wrapper DDL over the ClickHouse connector: CREATE SERVER. Unlike
+# ATTACH (in-memory, lost on restart), a SERVER is persisted catalog DDL that
+# survives restart and auto-attaches on boot. Restart-survival is covered by
+# recovery/catalog_foreign_server_chscan.test_slow. In the ClickHouse-style
+# model there are no USER MAPPINGs: credentials live in the server's OPTIONS and
+# CREATE USER MAPPING / DROP USER MAPPING are syntax errors. The ClickHouse
+# `default` user needs no auth, so a no-credentials CREATE SERVER attaches and
+# serves.
+#
+# Unique server name (chsrv): tests run in parallel against one serened and the
+# ATTACH alias is global, so a shared name would collide with other tests.
+
+# Rerun hygiene: created plain below, so clear a prior aborted run's leftover.
+statement ok
+DROP SERVER IF EXISTS chsrv;
+
+statement ok
+CREATE SERVER chsrv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+# Query the remote table through the named server.
+query
+SELECT id, val FROM chsrv.chtest.vedernikoff ORDER BY id;
+----
+id	val
+1	clickclack babsky
+2	deadinside kostya
+3	vedernikoff pudge
+4	pudge goes mid
+5	vedernikoff kostya
+6	anchin reads manga
+
+# The server is visible in pg_foreign_server.
+query
+SELECT srvname FROM pg_foreign_server WHERE srvname = 'chsrv';
+----
+srvname
+chsrv
+
+# IF NOT EXISTS is a no-op on an existing server.
+statement ok
+CREATE SERVER IF NOT EXISTS chsrv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}');
+
+# DROP SERVER (RESTRICT, the default) succeeds: with no user mappings there is
+# nothing left to depend on it.
+statement ok
+DROP SERVER chsrv;
+
+# Gone from the catalog after drop.
+query
+SELECT count(*) FROM pg_foreign_server WHERE srvname = 'chsrv';
+----
+count
+0
+
+# And the attachment is detached (querying the dropped server errors).
+statement error
+SELECT id FROM chsrv.chtest.vedernikoff LIMIT 1;
+
+# DROP SERVER IF EXISTS on a missing server is a no-op.
+statement ok
+DROP SERVER IF EXISTS chsrv;
+
+# ===== syntax-error battery =====
+
+# PG parity: a server name is a BARE identifier (PG's CREATE SERVER takes ColId,
+# servers are not schema-qualified) -- qualification is a syntax error, not a
+# server named "a.b".
+statement error
+CREATE SERVER a.b FOREIGN DATA WRAPPER clickhouse_fdw OPTIONS (host 'x');
+
+statement error
+DROP SERVER a.b;
+
+# PG parity: DATA is required -- FOREIGN WRAPPER is a syntax error, like PG.
+statement error
+CREATE SERVER cs_nodata FOREIGN WRAPPER clickhouse_fdw OPTIONS (host 'x');
+
+# PG parity: the server name is a ColId -- a bare reserved keyword is a syntax
+# error, not a server literally named "select".
+statement error
+CREATE SERVER select FOREIGN DATA WRAPPER clickhouse_fdw OPTIONS (host 'x');
+
+# There is no USER MAPPING in the ClickHouse-style model: the whole
+# CREATE / DROP USER MAPPING grammar is gone (a syntax error).
+statement error
+CREATE USER MAPPING FOR PUBLIC SERVER chsrv OPTIONS (user 'x');
+----
+db error: ERROR: syntax error at or near "FOR"<slt:ignore>
+
+
+statement error
+DROP USER MAPPING FOR PUBLIC SERVER chsrv;
+----
+db error: ERROR: syntax error at or near "FOR"<slt:ignore>

@@ -1,0 +1,177 @@
+control substitution on
+
+# Foreign Data Wrapper DDL over the postgres_scanner (postgres_fdw): CREATE
+# SERVER, the postgres counterpart of sdb/clickhouse/create_server_chscan.test_slow.
+# This is the only test of the postgres branch of catalog::PrepareForeignServerAttach
+# -- it exercises the fdw-name map (postgres_fdw -> storage "postgres") AND the
+# `database` -> `dbname` option canonicalisation in the attach secret: the server
+# below declares `database 'postgres'`, and CreateForeignServer attaches eagerly
+# (RunAttach) to validate connectivity BEFORE persisting. The postgres secret
+# overlay only reads `dbname`, never `database`, so a green CREATE SERVER proves
+# the rename happened. In the ClickHouse-style model there are no USER MAPPINGs:
+# credentials live in the server OPTIONS. Unlike ClickHouse (whose default user
+# needs no auth), postgres requires a real role even for this initial probe, so
+# `user` is in the server OPTIONS. Needs a postgres backend at ${PGHOST}:${PGPORT};
+# the _pgscan suffix tells run.sh to bring one up.
+#
+# Unique server names (${__DATABASE__}): tests run in parallel against one
+# serened and the ATTACH alias is instance-global, so a shared name collides.
+# The REMOTE schema is a literal (csrvpg_ved, unique to this file): the runner
+# derives ${__DATABASE__} from the sdb/pg/... path, so a derived remote schema
+# name would start with "pg_", which postgres reserves (same pattern as
+# iipgscan_docs in inverted_index_pgscan).
+
+statement ok
+DROP SERVER IF EXISTS srv_${__DATABASE__};
+
+statement ok
+DROP SERVER IF EXISTS atomic_${__DATABASE__};
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+# The server is visible in pg_foreign_server. (count, not the name: ${__DATABASE__}
+# is substituted in SQL but NOT in expected rows, so echoing the name can't match.)
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'srv_${__DATABASE__}';
+----
+n
+1
+
+
+# Seed the vedernikoff table on the remote postgres THROUGH the named server
+# (postgres_scanner supports writes), then read it back through the same server.
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.csrvpg_ved;
+
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.csrvpg_ved.vedernikoff (
+  id  INTEGER PRIMARY KEY,
+  val TEXT
+);
+
+
+statement count 6
+INSERT INTO srv_${__DATABASE__}.csrvpg_ved.vedernikoff VALUES
+  (1, 'clickclack babsky'),
+  (2, 'deadinside kostya'),
+  (3, 'vedernikoff pudge'),
+  (4, 'pudge goes mid'),
+  (5, 'vedernikoff kostya'),
+  (6, 'anchin reads manga');
+
+
+# Full scan through the server, ordered for determinism.
+query
+SELECT id, val FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff ORDER BY id;
+----
+id	val
+1	clickclack babsky
+2	deadinside kostya
+3	vedernikoff pudge
+4	pudge goes mid
+5	vedernikoff kostya
+6	anchin reads manga
+
+
+# Equality pushdown through the server.
+query
+SELECT id FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff
+WHERE val = 'vedernikoff pudge';
+----
+id
+3
+
+
+# IN pushdown through the server.
+query
+SELECT val FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff
+WHERE id IN (5, 6)
+ORDER BY id;
+----
+val
+vedernikoff kostya
+anchin reads manga
+
+
+# IF NOT EXISTS is a no-op on an existing server. (OPTIONS kept identical to the
+# original CREATE: CreateForeignServer short-circuits when the server already
+# exists, BEFORE RunAttach, so any OPTIONS here are inert -- matching them keeps
+# the line readable as the pure no-op it is, with no false hint of new coverage.)
+statement ok
+CREATE SERVER IF NOT EXISTS srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+# Clean up the remote objects through the server before detaching.
+statement ok
+DROP TABLE srv_${__DATABASE__}.csrvpg_ved.vedernikoff;
+
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.csrvpg_ved;
+
+
+# DROP SERVER (RESTRICT, the default) succeeds and detaches: with no user
+# mappings there is nothing left to depend on it.
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+
+# Gone from the catalog after drop.
+query
+SELECT count(*) FROM pg_foreign_server WHERE srvname = 'srv_${__DATABASE__}';
+----
+count
+0
+
+
+# DROP SERVER detached the attachment: the alias is gone from the database list.
+# (This isolates the DETACH from the remote table, which was already dropped, so
+# it is the assertion that actually proves detachment.)
+query
+SELECT count(*) AS n FROM (SHOW DATABASES) WHERE database_name = 'srv_${__DATABASE__}';
+----
+n
+0
+
+
+# Querying the dropped server errors (it was detached) -- a secondary check.
+statement error
+SELECT id FROM srv_${__DATABASE__}.csrvpg_ved.vedernikoff LIMIT 1;
+
+
+# The DROP fully detached with no orphan left behind: re-creating the same-named
+# server succeeds (a leaked attachment would make this fail "already attached").
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+
+# DROP SERVER IF EXISTS on a missing server is a no-op.
+statement ok
+DROP SERVER IF EXISTS srv_${__DATABASE__};
+
+
+# ===== eager connectivity validation at CREATE SERVER =====
+# CREATE SERVER attaches eagerly to validate connectivity before persisting.
+# Trust auth accepts any password, so a NONEXISTENT ROLE (not a bad password) is
+# what forces the connection failure -- and the whole CREATE is rejected.
+statement error
+CREATE SERVER atomic_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres',
+           user 'sdb_nosuchrole_${__DATABASE__}');
+
+
+# The rejected CREATE left no catalog row and no attachment.
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'atomic_${__DATABASE__}';
+----
+n
+0

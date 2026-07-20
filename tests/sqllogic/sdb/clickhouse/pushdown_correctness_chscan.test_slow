@@ -1,0 +1,103 @@
+control substitution on
+
+# Filter-pushdown correctness fixes:
+#  - IS [NOT] DISTINCT FROM in a pushed predicate must NOT abort the query -- the
+#    unsupported comparison is kept local instead of throwing.
+#  - an un-pushable OR branch (e.g. LIKE) must keep the WHOLE OR local, not push only
+#    the other branch (which would under-filter and silently lose rows).
+#  - DECIMAL / large-HUGEINT constants must compare exactly (pushed as toDecimal /
+#    toInt128, not as a lossy Float64 literal).
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chpd (TYPE clickhouse);
+
+# IS DISTINCT FROM (null-safe <>): correct rows, no abort. widgets.stock = 10,0,5,3,42.
+query
+SELECT id FROM chpd.chtest.widgets WHERE stock IS DISTINCT FROM 5 ORDER BY id;
+----
+id
+1
+2
+4
+5
+
+# IS DISTINCT FROM inside an OR -- the exact shape that threw before the fix.
+query
+SELECT id FROM chpd.chtest.widgets WHERE stock IS DISTINCT FROM 0 OR id = 1 ORDER BY id;
+----
+id
+1
+3
+4
+5
+
+# Un-pushable OR branch (LIKE): the whole OR stays local so no rows are lost. Before
+# the fix only `stock = 0` was pushed, dropping the LIKE rows (1,4).
+query
+SELECT id FROM chpd.chtest.widgets WHERE name LIKE 'gad%' OR stock = 0 ORDER BY id;
+----
+id
+1
+2
+4
+
+# DECIMAL boundary: price is Decimal(10,2); < excludes the exact-equal row (9.99),
+# <= includes it. A Float64-literal push would get the boundary wrong.
+query
+SELECT count(*) AS n FROM chpd.chtest.widgets WHERE price < 9.99;
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM chpd.chtest.widgets WHERE price <= 9.99;
+----
+n
+2
+
+statement ok
+DETACH chpd;
+
+# HUGEINT beyond 2^53: the two boundary literals differ only past Float64 precision,
+# so a bare-float push would mis-classify the big row; toInt128 keeps it exact.
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chpdw (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS chpdw.default.pd_huge;
+
+statement ok
+CREATE TABLE chpdw.default.pd_huge (id BIGINT PRIMARY KEY, big HUGEINT);
+
+statement ok
+INSERT INTO chpdw.default.pd_huge VALUES (1, 123456789012345678901234567890), (2, 5);
+
+query
+SELECT count(*) AS n FROM chpdw.default.pd_huge WHERE big < 123456789012345678901234567891;
+----
+n
+2
+
+query
+SELECT count(*) AS n FROM chpdw.default.pd_huge WHERE big > 123456789012345678901234567889;
+----
+n
+1
+
+# UPDATE renders the HUGEINT through the same exact literal path (toInt128), so a
+# >2^53 value survives the round-trip bit-exact (a bare literal would be parsed as
+# Float64 and silently corrupt it).
+statement ok
+UPDATE chpdw.default.pd_huge SET big = 123456789012345678901234567892 WHERE id = 2;
+
+query
+SELECT count(*) AS n FROM chpdw.default.pd_huge WHERE big = 123456789012345678901234567892;
+----
+n
+1
+
+statement ok
+DROP TABLE chpdw.default.pd_huge;
+
+statement ok
+DETACH chpdw;

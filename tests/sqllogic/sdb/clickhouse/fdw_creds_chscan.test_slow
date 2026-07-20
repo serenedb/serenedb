@@ -1,0 +1,201 @@
+control substitution on
+
+# FDW credential-handling regression tests for the ClickHouse-style model:
+# foreign-server credentials live ONLY in `CREATE SERVER ... OPTIONS` (there is
+# no USER MAPPING). Because server OPTIONS now carry credentials, the whole
+# pg_foreign_server catalog is SUPERUSER-ONLY (like pg_user_mapping) and its
+# option values are shown verbatim -- there is no per-value redaction. This
+# covers:
+#  A) a connection-option VALUE containing a space (a password) round-trips
+#     through the secret instead of corrupting it -- the eager attach connects;
+#  B) the superuser-only pg_foreign_server shows the FULL stored OPTIONS
+#     unredacted (the space password, the quoted mixed-case "PASSWORD", the
+#     clickhouse `passwd` alias, and an arbitrary `sslpassword` all resolve and
+#     appear verbatim);
+#  S) a plain non-superuser cannot read pg_foreign_server at all;
+#  R) server USAGE RBAC -- a non-owner LOGIN role without USAGE is denied at
+#     query time, GRANT USAGE lets it query, REVOKE denies it again.
+#
+# Uses the fixture user `scanner` (password 'pass word'); the default user
+# (opened password-less by CLICKHOUSE_SKIP_USER_SETUP) rejects a non-empty
+# password, so it cannot exercise the password paths. Unique server names
+# (fc_*): tests run in parallel against one serened.
+
+# Rerun hygiene: a previously aborted run on a long-lived instance may have
+# left these behind (servers/roles are instance-global).
+statement ok
+DROP SERVER IF EXISTS fc_space;
+
+statement ok
+DROP SERVER IF EXISTS fc_pwkey;
+
+statement ok
+DROP SERVER IF EXISTS fc_passwd;
+
+statement ok
+DROP SERVER IF EXISTS fc_failclosed;
+
+statement ok
+DROP SERVER IF EXISTS fc_rbac;
+
+statement ok
+DROP ROLE IF EXISTS fc_snoop;
+
+statement ok
+DROP ROLE IF EXISTS fc_user;
+
+# ===== A: a space in an option value round-trips through the secret =====
+statement ok
+CREATE SERVER fc_space FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+query
+SELECT count(*) FROM fc_space.chtest.vedernikoff;
+----
+count
+6
+
+# ===== B: pg_foreign_server shows the FULL stored OPTIONS unredacted =====
+# The space-containing password is stored verbatim and the plain keys are there
+# too (the whole catalog is superuser-only, so nothing is hidden from root).
+query
+SELECT array_to_string(srvoptions, ' ') LIKE '%password=pass word%' AS pw_visible,
+       array_to_string(srvoptions, ' ') LIKE '%database=chtest%' AS plain_visible
+FROM pg_foreign_server WHERE srvname = 'fc_space';
+----
+pw_visible	plain_visible
+t	t
+
+# A quoted "PASSWORD" key (mixed case) is normalised to lower-case and the
+# eager attach resolves it (the count proves it connected).
+statement ok
+CREATE SERVER fc_pwkey FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', "PASSWORD" 'pass word');
+
+query
+SELECT array_to_string(srvoptions, ' ') LIKE '%password=pass word%' AS pw_visible
+FROM pg_foreign_server WHERE srvname = 'fc_pwkey';
+----
+pw_visible
+t
+
+query
+SELECT count(*) FROM fc_pwkey.chtest.vedernikoff;
+----
+count
+6
+
+# The `passwd` alias (a valid clickhouse password key) also resolves and connects.
+statement ok
+CREATE SERVER fc_passwd FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', passwd 'pass word');
+
+query
+SELECT array_to_string(srvoptions, ' ') LIKE '%passwd=pass word%' AS pw_visible
+FROM pg_foreign_server WHERE srvname = 'fc_passwd';
+----
+pw_visible
+t
+
+query
+SELECT count(*) FROM fc_passwd.chtest.vedernikoff;
+----
+count
+6
+
+# An arbitrary credential-bearing key (sslpassword) is stored and shown verbatim
+# too -- there is no plain/secret allow-list anymore, the catalog is root-only.
+statement ok
+CREATE SERVER fc_failclosed FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner',
+           password 'pass word', sslpassword 'sup3r secret');
+
+query
+SELECT array_to_string(srvoptions, ' ') LIKE '%sslpassword=sup3r secret%' AS visible,
+       array_to_string(srvoptions, ' ') LIKE '%database=chtest%' AS plain_visible
+FROM pg_foreign_server WHERE srvname = 'fc_failclosed';
+----
+visible	plain_visible
+t	t
+
+# ===== S: pg_foreign_server is superuser-only =====
+# Server OPTIONS carry credentials, so a plain non-superuser is refused, like
+# pg_user_mapping. (NB: a `connection` record binds the NEXT record only.)
+statement ok
+CREATE ROLE fc_snoop LOGIN PASSWORD 'fc_snoop_pw';
+
+connection c_snoop user=fc_snoop password=fc_snoop_pw
+statement error
+SELECT srvname FROM pg_foreign_server WHERE srvname = 'fc_space';
+----
+db error: ERROR: permission denied for table pg_foreign_server<slt:ignore>
+
+
+connection default
+statement ok
+DROP ROLE fc_snoop;
+
+# ===== R: server USAGE RBAC is enforced at query time =====
+# A foreign server carries USAGE (PG-style). A role that is neither the owner
+# (the superuser `postgres` created these) nor a superuser, and lacks USAGE, is
+# denied at query time; GRANT USAGE lets it through; REVOKE denies it again.
+# fc_rbac connects via the scanner credentials in its OPTIONS.
+statement ok
+CREATE ROLE fc_user LOGIN PASSWORD 'fc_user_pw';
+
+statement ok
+CREATE SERVER fc_rbac FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+# Without USAGE, fc_user is denied.
+connection c_user user=fc_user password=fc_user_pw
+statement error
+SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server fc_rbac<slt:ignore>
+
+
+# The superuser grants USAGE on the server.
+connection default
+statement ok
+GRANT USAGE ON FOREIGN SERVER fc_rbac TO fc_user;
+
+# Now fc_user can query through it.
+connection c_user user=fc_user password=fc_user_pw
+query
+SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
+----
+count
+6
+
+# REVOKE takes the privilege away again.
+connection default
+statement ok
+REVOKE USAGE ON FOREIGN SERVER fc_rbac FROM fc_user;
+
+connection c_user user=fc_user password=fc_user_pw
+statement error
+SELECT count(*) FROM fc_rbac.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server fc_rbac<slt:ignore>
+
+
+# ===== cleanup =====
+connection default
+statement ok
+DROP SERVER fc_space;
+
+statement ok
+DROP SERVER fc_pwkey;
+
+statement ok
+DROP SERVER fc_passwd;
+
+statement ok
+DROP SERVER fc_failclosed;
+
+statement ok
+DROP SERVER fc_rbac;
+
+statement ok
+DROP ROLE fc_user;

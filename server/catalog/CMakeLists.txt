@@ -22,4 +22,5 @@ target_sources(
         scorer_options.cpp
         store/store.cpp
         tokenizer.cpp
+        foreign_server.cpp
 )

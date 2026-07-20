@@ -33,9 +33,16 @@
 namespace sdb::connector {
 
 inline void AppendPrimaryKeysFromVector(PrimaryKeyBatch& pk,
-                                        const duckdb::Vector& vec,
-                                        size_t count) {
+                                        duckdb::Vector& vec, size_t count) {
   const auto type_id = vec.GetType().id();
+  if (pk.kind == PrimaryKeyBatch::Kind::Struct &&
+      type_id == duckdb::LogicalTypeId::STRUCT) {
+    // Borrow the already-read key column (self-describing struct type); the
+    // lookup reads its field vectors back generically. No copy, no Value.
+    pk.column = &vec;
+    pk.column_count = count;
+    return;
+  }
   if (pk.kind == PrimaryKeyBatch::Kind::I64 &&
       type_id == duckdb::LogicalTypeId::BIGINT) {
     const auto* data = duckdb::FlatVector::GetData<int64_t>(vec);

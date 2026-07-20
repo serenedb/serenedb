@@ -1,0 +1,68 @@
+control substitution on
+
+# clickhouse_execute(connstr, sql): run a side-effecting statement (DDL/DML/
+# OPTIMIZE) against the server and return a single BOOLEAN "Success" row --
+# the postgres_execute analog. Unlike clickhouse_query it does not DESCRIBE the
+# statement, so it accepts statements that return no result set. vedernikoff
+# theme. Start from a clean slate for re-run safety.
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'DROP TABLE IF EXISTS default.ce_vedernikoff');
+----
+n
+1
+
+# DDL via execute.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} database=default',
+  'CREATE TABLE default.ce_vedernikoff (id Int64, val String) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+# DML via execute.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'INSERT INTO default.ce_vedernikoff VALUES (1, ''pudge''), (2, ''kostya''), (3, ''vedernikoff'')');
+----
+n
+1
+
+# The side effects are visible through clickhouse_query.
+query
+SELECT count(*) AS n FROM clickhouse_query('host=${CHHOST} port=${CHPORT}',
+  'SELECT * FROM default.ce_vedernikoff');
+----
+n
+3
+
+query
+SELECT val FROM clickhouse_query('host=${CHHOST} port=${CHPORT}',
+  'SELECT val FROM default.ce_vedernikoff ORDER BY id');
+----
+val
+pudge
+kostya
+vedernikoff
+
+# A statement that returns no result set (OPTIMIZE) -- which clickhouse_query
+# would reject at its DESCRIBE step -- runs fine through execute.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'OPTIMIZE TABLE default.ce_vedernikoff FINAL');
+----
+n
+1
+
+# Cleanup.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'DROP TABLE default.ce_vedernikoff');
+----
+n
+1
+
+# A malformed statement surfaces a clean error.
+statement error
+SELECT * FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'CREATE TABLE');

@@ -1,0 +1,124 @@
+control substitution on
+
+# Columns whose ClickHouse comparison/ordering semantics differ from DuckDB's
+# must not change the result -- a wrongly pushed predicate can silently EXCLUDE
+# rows, and a local re-check cannot recover rows that never crossed the wire:
+#   * FILTERS on such columns are kept local (ClickHouseComparisonUnsafe):
+#     Float NaN (DuckDB: NaN greater than everything, NaN = NaN; ClickHouse:
+#     IEEE, so `f > x` would drop NaN rows) and Enum (compared by label locally
+#     but by ordinal remotely; an unknown label ABORTS the remote query).
+#   * ORDER keys are REWRITTEN per dialect so the remote reproduces DuckDB's
+#     order and the sort still pushes: isNaN() prefix for floats, toString()
+#     for text-backed columns (Enum labels); compound keys nesting a divergent
+#     scalar cannot be rewritten and stay local.
+# The fixture is created server-side via clickhouse_execute so it can hold a NaN.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chdiv (TYPE clickhouse);
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'DROP TABLE IF EXISTS default.pdiv');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'CREATE TABLE default.pdiv (id Int64, f Float64, e Enum8(''zebra''=1, ''apple''=2)) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'INSERT INTO default.pdiv VALUES (1, 0.1, ''zebra''), (2, nan, ''apple''), (3, 5.0, ''zebra'')');
+----
+n
+1
+
+# NaN > 0.5 is TRUE in DuckDB -> id=2 (NaN) and id=3 (5.0) both return. If the
+# filter were pushed to ClickHouse, the NaN row would be silently dropped.
+query
+SELECT id FROM chdiv.default.pdiv WHERE f > 0.5 ORDER BY id;
+----
+id
+2
+3
+
+# An unknown enum label returns 0 rows in DuckDB; pushing it to ClickHouse would
+# abort the whole query with "Unknown element". It must not.
+query
+SELECT count(*) AS n FROM chdiv.default.pdiv WHERE e = 'notalabel';
+----
+n
+0
+
+# Enum equality on a KNOWN label still works (kept local, correct rows).
+query
+SELECT id FROM chdiv.default.pdiv WHERE e = 'apple' ORDER BY id;
+----
+id
+2
+
+# Enum ORDER BY is by label text in DuckDB ('apple' < 'zebra'); the native CH
+# order is by ordinal (zebra=1 < apple=2). The fold now pushes ORDER BY
+# toString(e), which sorts by label on the server too -- the answer must still
+# be 'apple', now computed remotely.
+query
+SELECT e FROM chdiv.default.pdiv ORDER BY e LIMIT 1;
+----
+e
+apple
+
+# Float ORDER BY folds with an isNaN() prefix key that pins NaN to the greatest
+# position like DuckDB: DESC LIMIT 1 must ship exactly the NaN row.
+query
+SELECT id FROM chdiv.default.pdiv ORDER BY f DESC LIMIT 1;
+----
+id
+2
+
+statement ok
+DROP TABLE chdiv.default.pdiv;
+
+# ===== nested divergent types: a Tuple field must behave like a top-level =====
+# column of that type. The vetoes key on the ORIGINAL ClickHouse type string,
+# so Tuple(f Float64) is comparison- and ordering-unsafe exactly like a bare
+# Float64: tupleElement filters stay local and ORDER BY the tuple stays local.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'CREATE TABLE default.pdiv_t (id Int64, s Tuple(f Float64)) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'INSERT INTO default.pdiv_t VALUES (1, tuple(0.1)), (2, tuple(nan)), (3, tuple(5.0))');
+----
+n
+1
+
+# NaN > 0.5 is TRUE in DuckDB; a pushed tupleElement(s,'f') > 0.5 would drop
+# the NaN row on the server.
+query
+SELECT id FROM chdiv.default.pdiv_t WHERE (s).f > 0.5 ORDER BY id;
+----
+id
+2
+3
+
+# ORDER BY the tuple column: DuckDB sorts NaN above everything, so DESC LIMIT 1
+# is the NaN row; ClickHouse's IEEE ordering would pick id=3 (5.0) instead.
+query
+SELECT id FROM chdiv.default.pdiv_t ORDER BY s DESC LIMIT 1;
+----
+id
+2
+
+statement ok
+DROP TABLE chdiv.default.pdiv_t;
+
+statement ok
+DETACH chdiv;

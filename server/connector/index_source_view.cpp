@@ -190,8 +190,16 @@ void ViewIndexSourceBase::GatherNonLookupColumns(
   // them to match -- only these small columns move, and nothing writes them
   // afterwards, so a dictionary Slice suffices (no flatten/copy). The selection
   // and slot list are reused across batches (built once in InitProjection).
-  for (duckdb::idx_t k = 0; k < count; ++k) {
-    _gather_sel.set_index(k, _sort_perm[survivor_idx[k]]);
+  // Sources that don't sort their pks (the external lookup) leave _sort_perm
+  // empty, meaning identity: survivor_idx already indexes the doc-id order.
+  if (_sort_perm.empty()) {
+    for (duckdb::idx_t k = 0; k < count; ++k) {
+      _gather_sel.set_index(k, survivor_idx[k]);
+    }
+  } else {
+    for (duckdb::idx_t k = 0; k < count; ++k) {
+      _gather_sel.set_index(k, _sort_perm[survivor_idx[k]]);
+    }
   }
   for (const auto c : _non_lookup_slots) {
     output.data[c].Slice(_gather_sel, count);

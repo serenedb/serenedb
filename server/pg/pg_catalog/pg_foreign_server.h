@@ -29,6 +29,10 @@ namespace sdb::pg {
 struct PgForeignServer {
   static constexpr uint64_t kId = 123;
   static constexpr std::string_view kName = "pg_foreign_server";
+  // Server OPTIONS now carry credentials (ClickHouse-style; no USER MAPPING),
+  // so the whole catalog is superuser-only -- like pg_user_mapping. Values are
+  // therefore rendered unredacted.
+  static constexpr bool kSuperuserOnly = true;
 
   enum class Fdwoptions : char {
     None = 'n',
@@ -42,8 +46,11 @@ struct PgForeignServer {
   Text srvtype;
   Text srvversion;
   AclColumn srvacl;
-  Array<Text> srvoptions;
+  std::vector<std::string> srvoptions;
 };
 // NOLINTEND
+
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData();
 
 }  // namespace sdb::pg

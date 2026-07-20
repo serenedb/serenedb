@@ -539,6 +539,41 @@ set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
 set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
 
 ################################################################################
+## clickhouse-cpp (submodule; compiled into our own static lib; do NOT
+## add_subdirectory its CMakeLists -- that bundles contrib/{absl,lz4,zstd}
+## and collides with ours)
+################################################################################
+
+file(
+    GLOB_RECURSE CLICKHOUSE_CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/*.cpp"
+)
+list(
+    APPEND CLICKHOUSE_CPP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash/city.cc"
+)
+
+add_library(clickhouse_cpp STATIC ${CLICKHOUSE_CPP_SOURCES})
+
+target_include_directories(
+    clickhouse_cpp
+    SYSTEM
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash"
+)
+
+target_compile_definitions(
+    clickhouse_cpp
+    PUBLIC WITH_OPENSSL=1 CH_MAP_BOOL_TO_UINT8=1
+)
+
+target_link_libraries(
+    clickhouse_cpp
+    PUBLIC lz4::lz4 zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
+)
+
+################################################################################
 ## IMMER
 ################################################################################
 
@@ -673,6 +708,15 @@ set(BUILD_EXTENSIONS
     ""
     FORCE
 )
+# Extensions whose build config lives NEXT TO the extension instead of as a
+# shim inside the duckdb fork (.github/config/extensions/): duckdb includes
+# these files after the BUILD_EXTENSIONS list is resolved.
+set(DUCKDB_EXTENSION_CONFIGS
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+    CACHE STRING
+    ""
+    FORCE
+)
 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
@@ -714,6 +758,7 @@ target_link_libraries(
         avro_extension
         iceberg_extension
         postgres_scanner_extension
+        clickhouse_scanner_extension
         autocomplete_extension
         icu_extension
         inet_extension

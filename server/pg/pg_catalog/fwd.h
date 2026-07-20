@@ -84,6 +84,11 @@ struct IsArray : std::false_type {};
 template<typename T>
 struct IsArray<Array<T>> : std::true_type {};
 
+// Owning variant: a row field may hold its array data directly instead of
+// spanning caller-kept storage.
+template<typename T>
+struct IsArray<std::vector<T>> : std::true_type {};
+
 }  // namespace sdb::pg
 namespace sdb::catalog {
 

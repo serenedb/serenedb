@@ -45,4 +45,8 @@ struct PgSubscriptionRel {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData
+SystemTableSnapshot<PgSubscriptionRel>::GetTableData();
+
 }  // namespace sdb::pg

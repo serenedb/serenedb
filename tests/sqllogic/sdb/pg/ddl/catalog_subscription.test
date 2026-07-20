@@ -429,3 +429,28 @@ on	t	t
 
 statement ok
 DROP SUBSCRIPTION opt_alt;
+
+
+# --- pg_subscription_rel / pg_stat_subscription are registered and queryable;
+# --- a disabled subscription has no live apply worker, so it contributes no
+# --- observability rows (both are synthesized from live engine state) ---
+statement ok
+CREATE SUBSCRIPTION obs_disabled CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false);
+
+
+query
+SELECT count(*) FROM pg_subscription_rel r JOIN pg_subscription s ON s.oid = r.srsubid WHERE s.subname = 'obs_disabled';
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_stat_subscription WHERE subname = 'obs_disabled';
+----
+count
+0
+
+
+statement ok
+DROP SUBSCRIPTION obs_disabled;

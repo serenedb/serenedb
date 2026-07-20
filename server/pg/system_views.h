@@ -1017,22 +1017,8 @@ inline constexpr SystemView kExternalViews[] = {
               s.io_depth
        FROM pg_stat_get_recovery_prefetch() s)"},
 
-  {"pg_catalog", "pg_stat_subscription",
-   R"(SELECT
-              su.oid AS subid,
-              su.subname,
-              st.worker_type,
-              st.pid,
-              st.leader_pid,
-              st.relid,
-              st.received_lsn,
-              st.last_msg_send_time,
-              st.last_msg_receipt_time,
-              st.latest_end_lsn,
-              st.latest_end_time
-      FROM pg_subscription su
-              LEFT JOIN pg_stat_get_subscription(NULL) st
-                        ON (st.subid = su.oid))"},
+  // pg_stat_subscription is a synthesized system table (see pg_stat_subscription
+  // .cpp), backed by the live apply workers, not a view over a stub function.
 
   {"pg_catalog", "pg_stat_ssl",
    R"(SELECT

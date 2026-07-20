@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
@@ -108,6 +110,18 @@ class PgReplicationClient final
     return _disable_requested.load(std::memory_order_acquire);
   }
 
+  // Observability snapshots (pg_stat_subscription / pg_subscription_rel), read
+  // from catalog scans on other threads.
+  uint64_t ReceivedLsn() const {
+    return _received_lsn.load(std::memory_order_relaxed);
+  }
+  uint64_t FlushedLsn() const {
+    return _flushed_lsn.load(std::memory_order_relaxed);
+  }
+  // Local table OIDs this subscription has replicated (initial copy + streamed
+  // relations). A copy, taken under _stat_mu.
+  std::vector<ObjectId> ReplicatedTables() const;
+
  private:
   // io-side one-shot: connect+auth, then DROP_REPLICATION_SLOT ... WAIT.
   yaclib::Task<> RunSlotDrop();
@@ -176,6 +190,9 @@ class PgReplicationClient final
   // thread that touches _send), so the duck-side control loop can request one
   // after a commit without racing the feeder's writes.
   void PostFeedback();
+  // Note a replicated local table for observability (idempotent). Written
+  // io-side (initial copy + OnRelation), read via ReplicatedTables().
+  void RecordReplicatedTable(ObjectId table_id);
 
   ReplicationTarget _target;
   // Publisher major version, parsed from the server_version startup parameter;
@@ -191,6 +208,11 @@ class PgReplicationClient final
   std::atomic<uint64_t> _flushed_lsn{0};   // highest committed end_lsn (apply)
   std::atomic<bool> _disable_requested{
     false};  // apply error + disable_on_error
+
+  // Replicated local table OIDs (observability only). Written io-side, read
+  // from catalog scans on other threads, so guarded.
+  mutable absl::Mutex _stat_mu;
+  std::vector<ObjectId> _replicated_tables ABSL_GUARDED_BY(_stat_mu);
 
   // Initial-sync handoff: the io side (which owns the socket) directs the duck
   // side (which runs the local COPY). _copy_phase's release/acquire fences the

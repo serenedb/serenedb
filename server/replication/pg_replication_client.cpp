@@ -728,6 +728,7 @@ yaclib::Task<> PgReplicationClient::MaybeInitialCopy() {
                "; skipped");
       continue;
     }
+    RecordReplicatedTable(local->GetId());
     locals[i] = std::move(local);
   }
 
@@ -1174,6 +1175,7 @@ void PgReplicationClient::OnRelation(const RelationMessage& msg) {
     return;
   }
   info.mapped = true;
+  RecordReplicatedTable(table->GetId());
   info.columns.reserve(msg.columns.size());
   for (const auto& rc : msg.columns) {
     RelColumn col;
@@ -1346,6 +1348,19 @@ void PgReplicationClient::PostFeedback() {
   // control loop runs on the duck task, so it hands the feedback send to io.
   auto self = this->shared_from_this();
   asio_ns::post(this->_io, [self, this] { SendFeedback(); });
+}
+
+void PgReplicationClient::RecordReplicatedTable(ObjectId table_id) {
+  absl::MutexLock lock{&_stat_mu};
+  if (std::find(_replicated_tables.begin(), _replicated_tables.end(),
+                table_id) == _replicated_tables.end()) {
+    _replicated_tables.push_back(table_id);
+  }
+}
+
+std::vector<ObjectId> PgReplicationClient::ReplicatedTables() const {
+  absl::MutexLock lock{&_stat_mu};
+  return _replicated_tables;
 }
 
 }  // namespace sdb::replication

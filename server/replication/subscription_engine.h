@@ -83,6 +83,19 @@ class SubscriptionEngine final {
   // the streaming connection has released the slot.
   void DropRemoteSlot(ReplicationTarget target);
 
+  // A live apply worker's runtime state, for the observability catalogs
+  // (pg_stat_subscription / pg_subscription_rel). Only subscriptions that
+  // currently have a connected apply client are reported.
+  struct SubRuntime {
+    ObjectId subscription_id;
+    uint64_t received_lsn = 0;
+    uint64_t flushed_lsn = 0;
+    std::vector<ObjectId> tables;  // replicated local table OIDs
+  };
+  // Snapshot the running apply workers whose subscription lives in
+  // `database_id`. Safe to call from any thread.
+  std::vector<SubRuntime> RuntimeSnapshot(ObjectId database_id) const;
+
  private:
   void LaunchLocked(ObjectId database_id,
                     const std::shared_ptr<catalog::Subscription>& sub)
@@ -112,7 +125,7 @@ class SubscriptionEngine final {
 
   network::IoThreadPool& _pool;
   std::atomic<bool> _stopping{false};
-  absl::Mutex _mu;
+  mutable absl::Mutex _mu;
   containers::NodeHashMap<ObjectId, SubState> _subs ABSL_GUARDED_BY(_mu);
 };
 

@@ -139,7 +139,7 @@ enum class CopyFormat : uint8_t { Other, Text, Binary, Parquet };
 // that own them).
 
 template<SocketKind Kind>
-class PgWireSession final
+class PgWireSession
   : public Transport<Kind, PgWireSession<Kind>>,
     public duckdb::enable_shared_from_this<PgWireSession<Kind>> {
  public:

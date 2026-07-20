@@ -120,6 +120,24 @@ std::optional<ReplicationTarget> SubscriptionEngine::MakeTarget(
   return target;
 }
 
+std::vector<SubscriptionEngine::SubRuntime> SubscriptionEngine::RuntimeSnapshot(
+  ObjectId database_id) const {
+  std::vector<SubRuntime> out;
+  absl::MutexLock lock{&_mu};
+  for (const auto& [sub_id, st] : _subs) {
+    if (!st.client || st.target.database_id != database_id) {
+      continue;
+    }
+    SubRuntime r;
+    r.subscription_id = sub_id;
+    r.received_lsn = st.client->ReceivedLsn();
+    r.flushed_lsn = st.client->FlushedLsn();
+    r.tables = st.client->ReplicatedTables();
+    out.push_back(std::move(r));
+  }
+  return out;
+}
+
 void SubscriptionEngine::LaunchLocked(
   ObjectId database_id, const std::shared_ptr<catalog::Subscription>& sub) {
   if (_stopping.load(std::memory_order_acquire)) {

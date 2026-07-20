@@ -36,7 +36,7 @@ SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
                                std::vector<ExpressionData> expressions,
                                bool unique)
   : Index(database_id, schema_id, id, relation_id, std::move(name),
-          DeriveIds(columns, expressions), ObjectType::SecondaryIndex),
+          DeriveIds(columns, expressions, {}), ObjectType::SecondaryIndex),
     _columns{std::move(columns)},
     _expressions{std::move(expressions)},
     _unique{unique} {}

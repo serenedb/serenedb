@@ -1,0 +1,129 @@
+# Online CREATE INDEX ... WHERE <predicate> vs concurrent DML. The partial
+# build runs async (commit-on-flush cuts + delete-log watermark) while DML
+# crosses the predicate boundary. The published partial index must contain
+# exactly the rows matching the predicate, with mid-build inserts/updates/
+# deletes reflected -- including rows that migrate in and out of the predicate.
+# Requires SDB_FAULT_INJECTION, like the rest of the recovery suite.
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE ocp_race(x bigint, label text, live boolean);
+
+
+# Even x are live (indexed), odd x are not.
+statement ok
+INSERT INTO ocp_race SELECT g, md5(g::text), g % 2 = 0 FROM generate_series(1, 200000) g;
+
+
+statement ok
+SET sdb_faults = 'pause_create_index_mid_build';
+
+
+connection builder
+statement async ok
+CREATE INDEX ocp_race_idx ON ocp_race USING inverted(label) WHERE live;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM pg_class WHERE relname = 'ocp_race_idx';
+----
+count
+1
+
+
+# Mid-build DML crossing the predicate boundary:
+#   x % 10 = 0 : all even (indexed) -> deleted; must not resurrect.
+statement ok retry 20 backoff 500ms
+DELETE FROM ocp_race WHERE x % 10 = 0;
+
+
+#   x % 10 = 2 : all even (indexed) -> live=false; must leave the index.
+statement ok retry 20 backoff 500ms
+UPDATE ocp_race SET live = false WHERE x % 10 = 2;
+
+
+#   x % 10 = 3 : all odd (not indexed) -> live=true; must enter the index.
+statement ok retry 20 backoff 500ms
+UPDATE ocp_race SET live = true WHERE x % 10 = 3;
+
+
+# Fresh rows inserted during the build: matching kept, non-matching excluded.
+statement ok
+INSERT INTO ocp_race VALUES (200001, 'fresh_live', true), (200002, 'fresh_dead', false);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ocp_race;
+
+
+statement ok
+SET sdb_faults = '-pause_create_index_mid_build';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ocp_race;
+
+
+# Live rows: 100000 initial even
+#   - 20000 deleted (x % 10 = 0, all even)
+#   - 20000 flipped off (x % 10 = 2, all even)
+#   + 20000 flipped on  (x % 10 = 3, all odd)
+#   + 1 fresh_live
+# = 80001.
+query ok retry 20 backoff 500ms
+SELECT count(*) FROM ocp_race_idx;
+----
+count
+80001
+
+
+# Deleted indexed row must not resurrect.
+query
+SELECT count(*) FROM ocp_race_idx WHERE label = md5('10'::text);
+----
+count
+0
+
+
+# Flipped off (was live) -> gone from the index.
+query
+SELECT count(*) FROM ocp_race_idx WHERE label = md5('2'::text);
+----
+count
+0
+
+
+# Flipped on (was not live) -> now in the index.
+query
+SELECT count(*) FROM ocp_race_idx WHERE label = md5('3'::text);
+----
+count
+1
+
+
+# Fresh rows: matching kept, non-matching excluded.
+query
+SELECT (SELECT count(*) FROM ocp_race_idx WHERE label = 'fresh_live') AS kept, (SELECT count(*) FROM ocp_race_idx WHERE label = 'fresh_dead') AS excluded;
+----
+kept	excluded
+1	0
+
+
+# Untouched live row still matches; untouched non-live row absent.
+query
+SELECT (SELECT count(*) FROM ocp_race_idx WHERE label = md5('4'::text)) AS live_row, (SELECT count(*) FROM ocp_race_idx WHERE label = md5('5'::text)) AS dead_row;
+----
+live_row	dead_row
+1	0
+
+
+statement ok
+RESET sdb_faults;

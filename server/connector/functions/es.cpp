@@ -290,7 +290,7 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
   const auto index_name = absl::StrCat(index, kEsTextIndexSuffix);
   catalog.CreateInvertedIndex(catalog::NoAccessCheck(), context, database_id,
                               kEsSchema, index, index_name,
-                              std::move(idx_columns), std::move(options),
+                              std::move(idx_columns), std::move(options), {},
                               {.create_with_tombstone = true});
 
   auto fresh = catalog.GetCatalogSnapshot();

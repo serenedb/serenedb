@@ -2430,7 +2430,7 @@ bool Catalog::CreateInvertedIndex(
   const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
   std::string_view schema, std::string_view relation, std::string name,
   std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
-  CreateIndexOperationOptions operation_options) {
+  ExpressionData predicate, CreateIndexOperationOptions operation_options) {
   if (columns.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Cannot create index without columns"));
@@ -2471,7 +2471,8 @@ bool Catalog::CreateInvertedIndex(
   }
   auto index = catalog::CreateInvertedIndex(
     context, database_id, schema, *schema_id, ObjectId{0}, resolved.relation_id,
-    std::move(name), std::move(columns), _snapshot, std::move(options));
+    std::move(name), std::move(columns), _snapshot, std::move(options),
+    std::move(predicate));
   CreateIndexImpl(schema, std::move(index), operation_options);
   return true;
 }

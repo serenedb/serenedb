@@ -110,17 +110,27 @@ class Index : public Object {
   static std::pair<std::vector<Column::Id>, containers::FlatHashSet<Column::Id>>
   DedupColumns(std::span<const Column::Id> columns);
 
+  // `extra_deps` are columns referenced by the index beyond its keys and
+  // expression dependencies (e.g. a partial-index predicate's columns); folded
+  // into the referenced set in the same dedup pass.
   template<typename Expressions>
   static DerivedColumnIds DeriveIds(std::span<const Column::Id> columns,
-                                    Expressions&& expressions) {
+                                    Expressions&& expressions,
+                                    std::span<const Column::Id> extra_deps) {
     auto [column_ids, seen] = DedupColumns(columns);
     auto referenced = column_ids;
+    auto add_dep = [&](Column::Id dep) {
+      if (seen.emplace(dep).second) {  // reuse the column dedup set
+        referenced.push_back(dep);
+      }
+    };
     for (const auto& expression : expressions) {
       for (const auto dep : expression.dependent_columns) {
-        if (seen.emplace(dep).second) {  // reuse the column dedup set
-          referenced.push_back(dep);
-        }
+        add_dep(dep);
       }
+    }
+    for (const auto dep : extra_deps) {
+      add_dep(dep);
     }
     return {std::move(column_ids), std::move(referenced), std::move(seen)};
   }
@@ -142,8 +152,8 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   std::string_view schema_name, ObjectId schema_id, ObjectId id,
   ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot,
-  InvertedIndexOptions options);
+  const std::shared_ptr<const Snapshot>& snapshot, InvertedIndexOptions options,
+  ExpressionData predicate);
 
 }  // namespace catalog
 }  // namespace sdb

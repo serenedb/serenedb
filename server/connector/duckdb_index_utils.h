@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_sink_writer_base.h"
@@ -42,7 +43,8 @@ enum class DuckDBWriteKind { Insert, Delete };
 template<DuckDBWriteKind Kind>
 std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
-  duckdb::optional_ptr<duckdb::ClientContext> expr_context = nullptr);
+  duckdb::optional_ptr<duckdb::ClientContext> expr_context = nullptr,
+  const catalog::ExpressionData** predicate = nullptr);
 
 std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,

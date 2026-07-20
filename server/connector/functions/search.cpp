@@ -69,6 +69,7 @@ void SearchStubFn(duckdb::DataChunk& /*args*/,
     ERR_MSG("Inverted index function called outside inverted index context. "
             "Use in WHERE clause on a table with an inverted index."));
 }
+
 namespace {
 
 void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,

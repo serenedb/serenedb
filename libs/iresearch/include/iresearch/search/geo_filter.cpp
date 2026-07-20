@@ -613,9 +613,8 @@ QueryBuilder::ptr PrepareOpenInterval(const SubReader& segment,
         break;
       case BoundType::Exclusive:
         if (greater) {
-          // dist > 0: full cap minus the singleton center. Used to AND in
-          // a ByColumnExistence gate on store_field_id; that's gone, so
-          // rows without a stored geo value pass the Not-singleton check.
+          // dist > 0: full cap minus the singleton center. Rows
+          // without a stored geo value pass the Not-singleton check.
           Exclusion root;
           auto& excl = root.exclude<GeoDistanceFilter>();
           *excl.mutable_field_id() = id;

@@ -1,6 +1,12 @@
 hash-threshold 100
 
 statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY mix_kw(template = 'keyword')
 
 statement ok
@@ -60,7 +66,7 @@ QUERY PLAN
 │ Index: mixt_idx                          │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~5 rows                                  │
+│ ~4 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query IT
@@ -100,14 +106,14 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0, #1                            │
-│ ~3 rows                                   │
+│ ~2 rows                                   │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: mixt_idx                           │
 │ TsDict: cat, opt                          │
 │ Projections: sdb_inverted_index_term$cat, │
 │              sdb_inverted_index_term$opt  │
-│ ~6 rows                                   │
+│ ~5 rows                                   │
 ╰───────────────────────────────────────────╯
 
 query TTI
@@ -354,6 +360,17 @@ SELECT count(DISTINCT cat) AS c FROM mixt_idx ORDER BY min(cat)
 ----
 c
 4
+
+
+# A pure ts_dict aggregate under GROUP BY has no sibling aggregate to trip
+# the mixed guard; it must still reject cleanly (the conversion would leave
+# the group key referencing a document column the term scan never exposes).
+statement error
+SELECT ts_dict_agg(cat) FROM mixt_idx GROUP BY opt
+----
+db error: ERROR: ts_dict_* aggregates cannot be combined with GROUP BY
+HINT: compute the ts_dict_* aggregate in a separate subquery
+
 
 statement ok
 DROP TABLE mixt

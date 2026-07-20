@@ -1,5 +1,11 @@
 hash-threshold 100
 
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
 # Term-dictionary enumeration composes with joins. Each scan of an inverted
 # index is an independent LogicalGet with its own table index, so a self-join
 # (the same index scanned twice) and cross-index joins resolve correctly even
@@ -82,7 +88,7 @@ QUERY PLAN
 │ Index: ja_idx                            │  │ Index: ja_idx                            │
 │ TsDict: cat                              │  │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │  │ Projections: sdb_inverted_index_term$cat │
-│ ~3 rows                                  │  │ ~3 rows                                  │
+│ ~2 rows                                  │  │ ~2 rows                                  │
 ╰──────────────────────────────────────────╯  ╰──────────────────────────────────────────╯
 
 # Each side of a self-join claims its own term filter independently.
@@ -138,7 +144,7 @@ QUERY PLAN
 │ Index: ja_idx                            │  │ Index: jb_idx                  │
 │ TsDict: cat                              │  │ TsDict: kind                   │
 │ Projections: sdb_inverted_index_term$cat │  │ Projections:                   │
-│ ~3 rows                                  │  │ sdb_inverted_index_term$kind   │
+│ ~2 rows                                  │  │ sdb_inverted_index_term$kind   │
 ╰──────────────────────────────────────────╯  │ ~2 rows                        │
                                               ╰────────────────────────────────╯
 

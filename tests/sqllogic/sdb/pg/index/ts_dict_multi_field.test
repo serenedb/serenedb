@@ -1,5 +1,11 @@
 hash-threshold 100
 
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
 # Multiple ts_dict_agg aggregations over different fields in one query: each
 # field is enumerated independently and returns its own list (lists may differ
 # in length). Internally each field's terms occupy their own scan rows with the
@@ -119,11 +125,11 @@ QUERY PLAN
 │ sdb_inverted_index_term$title IS NOT NULL, │
 │ sdb_inverted_index_term$body,              │
 │ sdb_inverted_index_term$body IS NOT NULL   │
-│ ~2 rows                                    │
+│ ~3 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ──────┴─────────────────────╮
 │ Groups: #0, #1                             │
-│ ~2 rows                                    │
+│ ~3 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: mf_idx                              │
@@ -131,12 +137,12 @@ QUERY PLAN
 │ Projections:                               │
 │ sdb_inverted_index_term$title,             │
 │ sdb_inverted_index_term$body               │
-│ ~4 rows                                    │
+│ ~6 rows                                    │
 ╰────────────────────────────────────────────╯
 
 
-# Multi-field WHERE: each conjunct routes to the enumerated field it names and
-# filters only that field's terms.
+# Multi-field WHERE is row-level: @@ conjuncts filter the shared document
+# set and every field's dictionary counts within it.
 query TT
 SELECT list_sort(ts_dict_agg(title)) AS t, list_sort(ts_dict_agg(body)) AS b FROM mf_idx
 WHERE title @@ ts_starts_with('r') AND body @@ ts_starts_with('a')
@@ -144,7 +150,53 @@ WHERE title @@ ts_starts_with('r') AND body @@ ts_starts_with('a')
 t	b
 {red}	{apple,banana,cherry}
 
-# A one-field WHERE leaves the other field's enumeration unconstrained.
+query
+EXPLAIN SELECT list_sort(ts_dict_agg(title)) AS t, list_sort(ts_dict_agg(body)) AS b FROM mf_idx
+WHERE title @@ ts_starts_with('r') AND body @@ ts_starts_with('a')
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────╮
+│ Projections: t, b                                 │
+│ ~1 row                                            │
+╰─────────────────────────┬─────────────────────────╯
+╭─ UNGROUPED_AGGREGATE ───┴─────────────────────────╮
+│ Aggregates:                                       │
+│ list(#0) FILTER (WHERE #1) Filter: #1,            │
+│ list(#2) FILTER (WHERE #3) Filter: #3             │
+│ ~1 row                                            │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ────────────┴─────────────────────────╮
+│ Projections:                                      │
+│ sdb_inverted_index_term$title,                    │
+│ sdb_inverted_index_term$title IS NOT NULL,        │
+│ sdb_inverted_index_term$body,                     │
+│ sdb_inverted_index_term$body IS NOT NULL          │
+│ ~3 rows                                           │
+╰─────────────────────────┬─────────────────────────╯
+╭─ HASH_GROUP_BY ─────────┴─────────────────────────╮
+│ Groups: #0, #1                                    │
+│ ~3 rows                                           │
+╰─────────────────────────┬─────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
+│ Index: mf_idx                                     │
+│ Index Filter:                                     │
+│ ╭─ And ────────────────╮                          │
+│ ╰───────────┬──────────╯                          │
+│             ├────────────────────────╮            │
+│ ╭─ Starts With ────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: title(string) │  │ Field: body(string) │ │
+│ │ Prefix: r            │  │ Prefix: a           │ │
+│ │ Limit: 1024          │  │ Limit: 1024         │ │
+│ ╰──────────────────────╯  ╰─────────────────────╯ │
+│ TsDict: title, body                               │
+│ Projections:                                      │
+│ sdb_inverted_index_term$title,                    │
+│ sdb_inverted_index_term$body                      │
+│ ~6 rows                                           │
+╰───────────────────────────────────────────────────╯
+
+# A one-field @@ WHERE still restricts the shared documents; the other field
+# enumerates the surviving documents' terms.
 query TT
 SELECT list_sort(ts_dict_agg(title)) AS t, list_sort(ts_dict_agg(body)) AS b FROM mf_idx
 WHERE body @@ ts_starts_with('d')

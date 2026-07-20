@@ -769,6 +769,88 @@ TEST(bitset_iterator_test, seek_next) {
 //   * hit  -> state advances to target, returns target.
 //   * miss -> value() unchanged, returns target + 1.
 // Contrast with seek(), which always positions at the next doc >= target.
+namespace {
+
+class LazyRefillIterator : public irs::BitsetDocIterator {
+ public:
+  LazyRefillIterator(const irs::bitset& bs, irs::CostAttr::Type cost)
+    : irs::BitsetDocIterator{cost}, _bs{&bs} {}
+
+ protected:
+  bool refill(const word_t** begin, const word_t** end) final {
+    if (!_bs) {
+      return false;
+    }
+    *begin = _bs->begin();
+    *end = _bs->end();
+    _bs = nullptr;
+    return true;
+  }
+
+ private:
+  const irs::bitset* _bs;
+};
+
+}  // namespace
+
+// A LazySeek that materializes the words via refill() and then misses
+// its bit must leave the iterator in a coherent state: the follow-up
+// advance() reads the refilled words, not the pre-refill (null) cursor.
+TEST(bitset_iterator_test, lazy_seek_refill_miss_then_advance) {
+  irs::bitset bs(128);
+  for (size_t d : {3u, 30u}) {
+    bs.set(d);
+  }
+  LazyRefillIterator it{bs, 2};
+  ASSERT_EQ(8u, it.LazySeek(7));
+  ASSERT_EQ(3u, it.advance());
+  ASSERT_EQ(30u, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// Refill happens on the LazySeek HIT path: full position committed.
+TEST(bitset_iterator_test, lazy_seek_refill_hit) {
+  irs::bitset bs(128);
+  for (size_t d : {7u, 30u}) {
+    bs.set(d);
+  }
+  LazyRefillIterator it{bs, 2};
+  ASSERT_EQ(7u, it.LazySeek(7));
+  ASSERT_EQ(7u, it.value());
+  ASSERT_EQ(30u, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// A seek() after a refill-and-miss probe lands on the refilled words.
+TEST(bitset_iterator_test, lazy_seek_refill_miss_then_seek) {
+  irs::bitset bs(128);
+  for (size_t d : {3u, 30u}) {
+    bs.set(d);
+  }
+  LazyRefillIterator it{bs, 2};
+  ASSERT_EQ(8u, it.LazySeek(7));
+  ASSERT_EQ(30u, it.seek(10));
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// The unscored FillBlock fast path: bits land at doc - min, the return
+// doc is the first match at/after max.
+TEST(bitset_iterator_test, fill_block_fast_path) {
+  irs::bitset bs(192);
+  for (size_t d : {3u, 70u, 130u}) {
+    bs.set(d);
+  }
+  irs::BitsetDocIterator it(bs.begin(), bs.end());
+  ASSERT_EQ(3u, it.advance());
+
+  uint64_t mask[2]{};
+  const auto [doc, _] = it.FillBlock(1, 100, mask, {}, {});
+  EXPECT_EQ(130u, doc);
+  EXPECT_TRUE(irs::CheckBit(mask[0], 2));
+  EXPECT_TRUE(irs::CheckBit(mask[1], 69 - 64));
+  EXPECT_EQ(2, std::popcount(mask[0]) + std::popcount(mask[1]));
+}
+
 TEST(bitset_iterator_test, lazy_seek) {
   using word_t = irs::bitset::word_t;
   constexpr auto kBits = irs::BitsRequired<word_t>();

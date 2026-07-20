@@ -26,11 +26,11 @@
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/bitset_doc_iterator.hpp"
 #include "iresearch/search/boolean_filter.hpp"
-#include "iresearch/search/column_existence_filter.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/granular_range_filter.hpp"
 #include "iresearch/search/nested_filter.hpp"
 #include "iresearch/search/prev_doc.hpp"
+#include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "search/filter_test_case_base.hpp"
@@ -241,10 +241,11 @@ auto MakeByTerm(irs::field_id field, std::string_view value) {
   return filter;
 }
 
-// Column id exists -- new ByColumnExistence takes a field_id, not a name.
-auto MakeByColumnExistence(irs::field_id id) {
-  auto filter = std::make_unique<irs::ByColumnExistence>();
-  *filter->mutable_id() = id;
+// Matches every doc holding a term in `field`: an unbounded range walks
+// the whole term dictionary of that field.
+auto MakeFieldPresence(irs::field_id field) {
+  auto filter = std::make_unique<irs::ByRange>();
+  *filter->mutable_field_id() = field;
   return filter;
 }
 
@@ -1532,17 +1533,14 @@ TEST_P(NestedFilterFormatsTestCase, JoinAnyParent) {
 
   irs::ByNestedFilter filter;
   auto& opts = *filter.mutable_options();
-  // Child filter targets the parent column -- only parent docs have it.
-  opts.child = MakeByColumnExistence(kParent);
+  // Only docs with a customer term -- exactly the provider's parents
+  // (order 15 has neither a customer nor a kParent column entry).
+  opts.child = MakeFieldPresence(kCustomer);
   opts.parent = MakeParentProvider(kParent);
 
   // Every match is itself a parent, so the nested join yields nothing.
-  // ByColumnExistence on the new cs reports cost == total segment row
-  // count (the row-count bitset was rewritten out -- per CLAUDE.md task
-  // #75) and the cost estimate covers every row whose column slot exists,
-  // not just those with a non-null value.
   const auto expected = Docs{};
-  CheckQuery(filter, expected, Costs{(HasPrevDocSupport() ? 20U : 0U)}, reader,
+  CheckQuery(filter, expected, Costs{(HasPrevDocSupport() ? 4U : 0U)}, reader,
              SOURCE_LOCATION);
 }
 

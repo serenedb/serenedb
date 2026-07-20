@@ -62,6 +62,7 @@
 #include "basics/log.h"
 #include "basics/misc.hpp"
 #include "basics/system-compiler.h"
+#include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
@@ -1496,6 +1497,47 @@ struct InetTextCore {
   }
 };
 
+std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                             duckdb::idx_t row) {
+  const auto read_string = [&](duckdb::idx_t child) -> std::string_view {
+    const auto& unified = vdata.children[child].unified;
+    const auto idx = unified.sel->get_index(row);
+    if (!unified.validity.RowIsValid(idx)) {
+      return {};
+    }
+    const auto& raw =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(unified)[idx];
+    return {raw.GetData(), raw.GetSize()};
+  };
+  const auto& boost_child =
+    vdata.children[connector::kTSQueryBoostChild].unified;
+  float boost = 1.0f;
+  if (const auto idx = boost_child.sel->get_index(row);
+      boost_child.validity.RowIsValid(idx)) {
+    boost = duckdb::UnifiedVectorFormat::GetData<float>(boost_child)[idx];
+  }
+  return connector::RenderTSQuery(
+    read_string(connector::kTSQueryTextChild),
+    read_string(connector::kTSQueryTokenizerChild), boost);
+}
+
+template<WrapContext InContainer>
+struct TsqueryTextCore {
+  IRS_FORCE_INLINE static void Render(
+    SerializationContext& ctx,
+    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
+    EmitTextItem<InContainer>(ctx, RenderTsqueryRow(vdata, idx));
+  }
+};
+
+struct TsqueryBinCore {
+  IRS_FORCE_INLINE static void Render(
+    SerializationContext& ctx,
+    const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
+    ctx.writer->Write(RenderTsqueryRow(vdata, idx));
+  }
+};
+
 struct InetBinCore {
   static constexpr uint32_t kMaxBytes = 4 + 16;
   IRS_FORCE_INLINE static size_t Render(
@@ -2210,6 +2252,11 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         return MakeArraySerializer<InetTextCore, InetBinCore, kInet>(
           format, context, kind);
       }
+      if (connector::IsTSQueryStructType(type)) {
+        return MakeArraySerializer<TsqueryTextCore<WrapContext::Array>,
+                                   TsqueryBinCore, kText>(format, context,
+                                                          kind);
+      }
       // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
       // kRecord, named record types yield their pg_type OID.
       return MakeArraySerializer<RecordTextCore<WrapContext::Array>,
@@ -2461,6 +2508,11 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       if (IsInet(type)) {
         return SelectFieldSerializer<InetTextCore, InetTextCore, InetBinCore>(
           format, context);
+      }
+      if (connector::IsTSQueryStructType(type)) {
+        return SelectFieldSerializer<TsqueryTextCore<WrapContext::None>,
+                                     TsqueryTextCore<WrapContext::Record>,
+                                     TsqueryBinCore>(format, context);
       }
       return SelectFieldSerializer<RecordTextCore<WrapContext::None>,
                                    RecordTextCore<WrapContext::Record>,

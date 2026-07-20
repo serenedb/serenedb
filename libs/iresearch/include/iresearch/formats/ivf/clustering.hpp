@@ -42,8 +42,11 @@ struct HskmHierarchy {
   std::vector<std::vector<float>> fine;
 };
 
+std::vector<float> MakeRotation(uint32_t d, uint32_t seed);
+
 HskmHierarchy RunHskmHierarchical(const float* data, size_t n, uint32_t k,
-                                  uint32_t d, uint32_t seed);
+                                  uint32_t d, uint32_t seed,
+                                  const float* rotation = nullptr);
 
 bool HskmQualifies(VectorMetric metric, uint32_t k, uint32_t d);
 
@@ -51,7 +54,8 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter = 8,
                                   uint32_t nredo = 1,
-                                  ClusteringAlgo algo = ClusteringAlgo::Auto);
+                                  ClusteringAlgo algo = ClusteringAlgo::Auto,
+                                  const float* rotation = nullptr);
 
 template<VectorMetric Metric>
 uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,

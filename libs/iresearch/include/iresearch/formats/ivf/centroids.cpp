@@ -171,21 +171,24 @@ struct BuildSettings {
 };
 
 auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
-                   size_t n_clusters, VectorMetric metric, size_t niter) {
+                   size_t n_clusters, VectorMetric metric, size_t niter,
+                   const float* rotation) {
   auto centroids = TrainCentroids(
     metric, data.data(), data.size() / d, static_cast<uint32_t>(n_clusters),
-    static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter));
+    static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter), 1u,
+    ClusteringAlgo::Auto, rotation);
   AssignNearestGrouped(metric, centroids, d, data, ids);
   return centroids;
 }
 
 void BuildMesoReuse(std::vector<CentroidsBuilder::Node>& nodes,
                     std::span<const float> sample, size_t d,
-                    size_t target_leaves, const BuildSettings& settings) {
+                    size_t target_leaves, const BuildSettings& settings,
+                    const float* rotation) {
   const size_t n = sample.size() / d;
   auto h =
     RunHskmHierarchical(sample.data(), n, static_cast<uint32_t>(target_leaves),
-                        static_cast<uint32_t>(d), kTrainSeed);
+                        static_cast<uint32_t>(d), kTrainSeed, rotation);
   const size_t m = h.fine.size();
   if (settings.metric == VectorMetric::Cosine) {
     NormalizeRows(h.meso.data(), m, static_cast<uint32_t>(d));
@@ -212,6 +215,9 @@ void BuildMesoReuse(std::vector<CentroidsBuilder::Node>& nodes,
 
 void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
            size_t d, std::span<size_t> ids, const BuildSettings& settings) {
+  const std::vector<float> rotation =
+    MakeRotation(static_cast<uint32_t>(d), kTrainSeed);
+  const float* rot = rotation.data();
   struct CentroidsEntry {
     size_t parent;
     std::span<float> sample;
@@ -232,9 +238,10 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
         nodes[entry.parent].leafs++;
         nodes[entry.parent].children.emplace_back(0);
       } else if (sample_size > 0) {
-        auto centroids =
-          TrainCentroids(settings.metric, entry.sample.data(), sample_size,
-                         /*k=*/1, static_cast<uint32_t>(d), kTrainSeed);
+        auto centroids = TrainCentroids(
+          settings.metric, entry.sample.data(), sample_size,
+          /*k=*/1, static_cast<uint32_t>(d), kTrainSeed, /*niter=*/8u,
+          /*nredo=*/1u, ClusteringAlgo::Auto, rot);
         nodes.emplace_back(CentroidsBuilder::Node{
           .centroids = std::move(centroids), .children = {0}, .leafs = 1});
       }
@@ -246,13 +253,13 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
         (sample_size + settings.posting_size - 1) / settings.posting_size;
       if (HskmQualifies(settings.metric, static_cast<uint32_t>(target_leaves),
                         static_cast<uint32_t>(d))) {
-        BuildMesoReuse(nodes, entry.sample, d, target_leaves, settings);
+        BuildMesoReuse(nodes, entry.sample, d, target_leaves, settings, rot);
         continue;
       }
     }
     size_t n_clusters = settings.ClusterSize(sample_size);
     auto centroids = BuildAndSplit(entry.sample, d, entry.ids, n_clusters,
-                                   settings.metric, settings.niter);
+                                   settings.metric, settings.niter, rot);
     const size_t n_built = centroids.size() / d;
 
     if (entry.parent < nodes.size()) {

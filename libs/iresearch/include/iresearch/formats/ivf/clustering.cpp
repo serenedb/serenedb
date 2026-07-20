@@ -23,6 +23,7 @@
 #include <faiss/Clustering.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/SuperKMeans.h>
+#include <faiss/VectorTransform.h>
 #include <faiss/utils/distances.h>
 
 #include <algorithm>
@@ -57,9 +58,11 @@ void ConfigureClusteringParams(faiss::ClusteringParameters& cp, uint32_t niter,
 
 std::vector<float> RunSuperKMeans(const float* data, size_t n, uint32_t k,
                                   uint32_t d, uint32_t seed, uint32_t niter,
-                                  uint32_t nredo) {
+                                  uint32_t nredo,
+                                  const float* rotation = nullptr) {
   faiss::SuperKMeansParameters cp;
   ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
+  cp.rotation = rotation;
   faiss::SuperKMeans kmeans(static_cast<int>(d), static_cast<int>(k), cp);
   kmeans.train(static_cast<faiss::idx_t>(n), data);
   return std::move(kmeans.centroids);
@@ -77,16 +80,17 @@ std::vector<float> RunLloyd(const float* data, size_t n, uint32_t k, uint32_t d,
 
 std::vector<float> RunFlatKMeans(const float* data, size_t n, uint32_t k,
                                  uint32_t d, uint32_t seed, uint32_t niter,
-                                 uint32_t nredo) {
+                                 uint32_t nredo,
+                                 const float* rotation = nullptr) {
   if (d >= kSuperKMeansMinD) {
-    return RunSuperKMeans(data, n, k, d, seed, niter, nredo);
+    return RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
   }
   return RunLloyd(data, n, k, d, seed, niter, nredo);
 }
 
 std::vector<float> RunHskm(const float* data, size_t n, uint32_t k, uint32_t d,
-                           uint32_t seed) {
-  auto h = RunHskmHierarchical(data, n, k, d, seed);
+                           uint32_t seed, const float* rotation = nullptr) {
+  auto h = RunHskmHierarchical(data, n, k, d, seed, rotation);
   std::vector<float> out;
   out.reserve(static_cast<size_t>(k) * d);
   for (const auto& block : h.fine) {
@@ -97,11 +101,19 @@ std::vector<float> RunHskm(const float* data, size_t n, uint32_t k, uint32_t d,
 
 }  // namespace
 
+std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
+  faiss::RandomRotationMatrix rotation(static_cast<int>(d),
+                                       static_cast<int>(d));
+  rotation.init(static_cast<int>(seed));
+  return std::move(rotation.A);
+}
+
 HskmHierarchy RunHskmHierarchical(const float* data, size_t n, uint32_t k,
-                                  uint32_t d, uint32_t seed) {
+                                  uint32_t d, uint32_t seed,
+                                  const float* rotation) {
   HskmHierarchy out;
   if (k <= 1 || n < 2) {
-    auto flat = RunFlatKMeans(data, n, k, d, seed, kMesoIters, 1);
+    auto flat = RunFlatKMeans(data, n, k, d, seed, kMesoIters, 1, rotation);
     out.meso = flat;
     out.fine.emplace_back(std::move(flat));
     return out;
@@ -244,7 +256,7 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter, uint32_t nredo,
-                                  ClusteringAlgo algo) {
+                                  ClusteringAlgo algo, const float* rotation) {
   if (n == 0 || k == 0) {
     return {};
   }
@@ -259,9 +271,9 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
       const bool use_hskm =
         algo == ClusteringAlgo::Hskm ||
         (algo != ClusteringAlgo::FlatSuperKMeans && k >= kHskmMinK);
-      auto centroids = use_hskm
-                         ? RunHskm(data, n, k, d, seed)
-                         : RunSuperKMeans(data, n, k, d, seed, niter, nredo);
+      auto centroids =
+        use_hskm ? RunHskm(data, n, k, d, seed, rotation)
+                 : RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
       NormalizeRows(centroids.data(), centroids.size() / d, d);
       return centroids;
     }
@@ -286,9 +298,9 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
   }
   switch (eff) {
     case ClusteringAlgo::Hskm:
-      return RunHskm(data, n, k, d, seed);
+      return RunHskm(data, n, k, d, seed, rotation);
     case ClusteringAlgo::FlatSuperKMeans:
-      return RunSuperKMeans(data, n, k, d, seed, niter, nredo);
+      return RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
     case ClusteringAlgo::Lloyd:
     case ClusteringAlgo::Auto:
       break;

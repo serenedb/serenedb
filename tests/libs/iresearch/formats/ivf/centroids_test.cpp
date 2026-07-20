@@ -646,6 +646,31 @@ TEST(clustering_test, hskm_matches_kmeans_quality_and_is_deterministic) {
     0, std::memcmp(hskm.data(), hskm2.data(), hskm.size() * sizeof(float)));
 }
 
+TEST(clustering_test, superkmeans_injected_rotation_matches_self_init) {
+  const uint32_t d = 64;
+  const size_t nclusters = 64, per = 20;
+  auto data = MakeClusters(d, nclusters, per);
+  const size_t n = nclusters * per;
+  const uint32_t k = 64;
+  const uint32_t seed = 1234;
+
+  auto rotation = MakeRotation(d, seed);
+  ASSERT_EQ(rotation.size(), static_cast<size_t>(d) * d);
+
+  auto injected = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, seed,
+                                 /*niter=*/8, /*nredo=*/1,
+                                 ClusteringAlgo::FlatSuperKMeans, rotation.data());
+  auto self_init =
+    TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, seed,
+                   /*niter=*/8, /*nredo=*/1, ClusteringAlgo::FlatSuperKMeans,
+                   /*rotation=*/nullptr);
+
+  ASSERT_EQ(injected.size(), static_cast<size_t>(k) * d);
+  ASSERT_EQ(injected.size(), self_init.size());
+  EXPECT_EQ(0, std::memcmp(injected.data(), self_init.data(),
+                           injected.size() * sizeof(float)));
+}
+
 TEST(clustering_test, hskm_hierarchical_structure_and_determinism) {
   const uint32_t d = 32;
   auto data = MakeClusters(d, /*n_clusters=*/1024, /*per_cluster=*/4);

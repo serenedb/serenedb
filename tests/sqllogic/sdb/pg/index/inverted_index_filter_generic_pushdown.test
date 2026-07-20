@@ -1,0 +1,98 @@
+# Generic single-column expressions pushed as `.col` ExpressionFilters
+# (pushdown_expression, like the native table scan): IS [NOT] NULL, arithmetic
+# and JSON-extract predicates evaluate in-scan against the decoded column
+# instead of a Filter node above the scan.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY gfp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE gfp (id INT PRIMARY KEY, body VARCHAR, meta JSON, tag VARCHAR, n BIGINT);
+
+
+statement ok
+INSERT INTO gfp VALUES
+ (1, 'fox', '{"k":"a","n":1}', 'x',  10),
+ (2, 'fox', '{"k":"b","n":2}', NULL, 15),
+ (3, 'fox', '{"k":"a","n":3}', 'y',  20),
+ (4, 'fox', NULL,              NULL, 25),
+ (5, 'dog', '{"k":"c"}',       'z',  30);
+
+
+statement ok
+CREATE INDEX gfp_idx ON gfp USING inverted(id, body gfp_en)
+  INCLUDE (meta, tag, n)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) gfp;
+
+
+query
+SELECT id FROM gfp_idx WHERE body @@ 'fox' AND tag IS NULL ORDER BY id;
+----
+id
+2
+4
+
+
+query
+SELECT id FROM gfp_idx WHERE body @@ 'fox' AND tag IS NOT NULL ORDER BY id;
+----
+id
+1
+3
+
+
+# JSON-extract predicate on a covered column: the pushed expression evaluates
+# against the decoded meta values (NULL meta fails the predicate).
+query
+SELECT id FROM gfp_idx WHERE body @@ 'fox' AND meta->>'k' = 'a' ORDER BY id;
+----
+id
+1
+3
+
+
+# Arithmetic predicate on a covered column.
+query
+SELECT id FROM gfp_idx WHERE body @@ 'fox' AND n % 4 = 0 ORDER BY id;
+----
+id
+3
+
+
+# Generic expression combined with a plain comparison (two-filter chain).
+query
+SELECT id FROM gfp_idx WHERE body @@ 'fox' AND n % 2 = 0 AND tag IS NOT NULL
+ORDER BY id;
+----
+id
+1
+3
+
+
+# Count-only path with a pushed generic expression.
+query
+SELECT count(*) AS c FROM gfp_idx WHERE body @@ 'fox' AND tag IS NULL;
+----
+c
+2
+
+
+statement ok
+DROP TABLE gfp;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY gfp_en;

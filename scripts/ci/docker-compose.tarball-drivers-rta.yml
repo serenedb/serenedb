@@ -20,6 +20,7 @@ services:
         exec /tmp/serenedb/usr/bin/serened \
           --flagfile=/tmp/serenedb/etc/serenedb/serened.conf \
           --listen postgres://0.0.0.0:7890 \
+          --auth_timeout=600s \
       '
 
   tests:

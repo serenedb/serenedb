@@ -1661,3 +1661,161 @@ QUERY PLAN
 │ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand                │
 │ ~5 rows                                                                           │
 ╰───────────────────────────────────────────────────────────────────────────────────╯
+
+# A view-backed inverted index (over read_parquet, another view, ...) has no
+# catalog table, so its keys carry no NOT NULL proof -- every key rides its
+# null-marker field for the synthesized NULL group. The GROUP BY facet still
+# converts to a term-dictionary scan, and an indexed-expression WHERE claims
+# into the document filter exactly as for a table-backed index.
+statement ok
+CREATE TEXT SEARCH DICTIONARY fvw_kw(template = 'keyword')
+
+statement ok
+CREATE TABLE fvw_base(id INTEGER PRIMARY KEY, sev VARCHAR, body VARCHAR NOT NULL)
+
+statement ok
+INSERT INTO fvw_base VALUES
+  (1, 'ERROR', 'disk error'),
+  (2, 'INFO',  'all ok'),
+  (3, NULL,    'net failed'),
+  (4, 'INFO',  'error retry')
+
+statement ok
+CREATE VIEW fvw AS SELECT id, sev AS SeverityText, body AS Body FROM fvw_base
+
+statement ok
+CREATE INDEX fvw_idx ON fvw USING inverted((ts_split_by_non_alpha(Body, true)) fvw_kw, SeverityText fvw_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) fvw_base;
+
+query TI
+SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
+WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['error', 'failed'])
+GROUP BY SeverityText ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+INFO	1
+NULL	1
+
+query
+EXPLAIN SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
+WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['error', 'failed'])
+GROUP BY SeverityText
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections:                                 │
+│ sdb_inverted_index_term$severitytext,        │
+│ CAST(#1 AS BIGINT)                           │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ HASH_GROUP_BY ───────┴──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: sum(#1)                          │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: fvw_idx                               │
+│ Index Filter:                                │
+│ ╭─ Terms ──────────────────────────────────╮ │
+│ │ Field: ts_split_by_non_alpha(body, true) │ │
+│ │ Values: 'error', 'failed'                │ │
+│ │ Min Match: 1                             │ │
+│ ╰──────────────────────────────────────────╯ │
+│ TsDict: severitytext                         │
+│ Projections:                                 │
+│ sdb_inverted_index_term$severitytext,        │
+│ sdb_inverted_index_term_count$severitytext   │
+│ ~2 rows                                      │
+╰──────────────────────────────────────────────╯
+
+query TI
+SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
+GROUP BY SeverityText ORDER BY n DESC, sev
+----
+sev	n
+INFO	2
+ERROR	1
+NULL	1
+
+# count(DISTINCT), min and max over the same view-backed index push down
+# (NULL-safe -- no null-marker needed).
+query I
+SELECT count(DISTINCT SeverityText) AS n FROM fvw_idx
+----
+n
+2
+
+query
+EXPLAIN SELECT count(DISTINCT SeverityText) FROM fvw_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────╮
+│ Aggregates: count(#0)                │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: fvw_idx                       │
+│ TsDict: severitytext                 │
+│ Projections:                         │
+│ sdb_inverted_index_term$severitytext │
+│ ~2 rows                              │
+╰──────────────────────────────────────╯
+
+query TT
+SELECT min(SeverityText) AS lo, max(SeverityText) AS hi FROM fvw_idx
+----
+lo	hi
+ERROR	INFO
+
+query
+EXPLAIN SELECT min(SeverityText), max(SeverityText) FROM fvw_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────╮
+│ Aggregates: min(#0), max(#0)         │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: fvw_idx                       │
+│ TsDict: severitytext                 │
+│ Projections:                         │
+│ sdb_inverted_index_term$severitytext │
+│ ~2 rows                              │
+╰──────────────────────────────────────╯
+
+# array_agg keeps a NULL element the term dictionary has none for, and the view
+# can't prove NOT NULL, so it stays a document scan (result still correct).
+query T
+SELECT array_agg(DISTINCT SeverityText ORDER BY SeverityText) AS lst FROM fvw_idx
+----
+lst
+{ERROR,INFO,NULL}
+
+query
+EXPLAIN SELECT array_agg(DISTINCT SeverityText) FROM fvw_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: array_agg(DISTINCT #0) │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Index: fvw_idx                     │
+│ Projections: severitytext          │
+│ ~4 rows                            │
+╰────────────────────────────────────╯
+
+# Explicit ts_dict_agg reads the dictionary terms directly (no NULL element).
+query T
+SELECT list_sort(ts_dict_agg(SeverityText)) AS terms FROM fvw_idx
+----
+terms
+{ERROR,INFO}

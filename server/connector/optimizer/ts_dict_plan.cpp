@@ -685,7 +685,6 @@ class TsDictFacetPushdown {
 
   FoundScan _found{};
   const catalog::InvertedIndex* _index = nullptr;
-  const connector::TableScanBindData* _tbd = nullptr;
   std::vector<TsDictFacetKey> _keys;
   std::vector<FacetCols> _cols;
   std::vector<duckdb::LogicalType> _old_types;
@@ -736,21 +735,28 @@ std::pair<duckdb::LogicalGet*, duckdb::LogicalFilter*> ImplicitTsDictTarget(
 
 // `array_agg(DISTINCT col)`, `count(DISTINCT col)`, `min(col)` and `max(col)`
 // over a keyword-analyzed inverted-index column reduce exactly the field's
-// distinct terms, so they can be served from the term dictionary. Only
-// list()/array_agg requires a NOT NULL column: it keeps a NULL element for
-// missing values while the term dictionary has none; count/min/max skip NULLs.
+// distinct terms, so they can be served from the term dictionary. count/min/max
+// skip NULLs and work on any such column, view-backed indexes included;
+// list()/array_agg keeps a NULL element the term dictionary has none for, so it
+// converts only for a proven-NOT-NULL table column and otherwise stays a scan.
 std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
   duckdb::BoundAggregateExpression& agg, duckdb::LogicalOperator& root,
   const duckdb::LogicalGet& target, const catalog::Snapshot& snapshot) {
   const auto& name = agg.Function().GetName();
-  const bool is_list = name == "array_agg" || name == "list";
-  const bool is_count = name == "count";
-  const bool is_min = name == "min";
-  const bool is_max = name == "max";
-  if (!is_list && !is_count && !is_min && !is_max) {
+  std::string_view agg_name;
+  if (name == "array_agg" || name == "list") {
+    agg_name = "list";
+  } else if (name == "count") {
+    agg_name = "count";
+  } else if (name == "min") {
+    agg_name = "min";
+  } else if (name == "max") {
+    agg_name = "max";
+  } else {
     return std::nullopt;
   }
-  if ((is_list || is_count) && !agg.IsDistinct()) {
+  const bool is_list = agg_name == "list";
+  if ((is_list || agg_name == "count") && !agg.IsDistinct()) {
     return std::nullopt;
   }
   if (agg.GetFilter() || agg.GetOrderBys()) {
@@ -765,9 +771,7 @@ std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
     return std::nullopt;
   }
   const auto resolved = ResolveIResearchScanColumn(root, col_ref.Binding());
-  if (!resolved || resolved->found.get != &target ||
-      resolved->found.bind_data->GetKind() !=
-        connector::SereneDBScanBindData::Kind::Table) {
+  if (!resolved || resolved->found.get != &target) {
     return std::nullopt;
   }
   const auto& found = resolved->found;
@@ -784,17 +788,10 @@ std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
   if (!index->IsKeywordField(snapshot, field_id)) {
     return std::nullopt;
   }
-  if (is_list) {
-    const auto& tbd = found.bind_data->As<connector::TableScanBindData>();
-    if (!tbd.table || !ColumnIsNotNull(*tbd.table, col_id)) {
-      return std::nullopt;
-    }
+  if (is_list && !found.bind_data->IsColumnNotNull(col_id)) {
+    return std::nullopt;
   }
-  return KeywordDictAgg{col_ref.Binding(), field_id,
-                        is_list    ? std::string_view{"list"}
-                        : is_count ? std::string_view{"count"}
-                        : is_min   ? std::string_view{"min"}
-                                   : std::string_view{"max"}};
+  return KeywordDictAgg{col_ref.Binding(), field_id, agg_name};
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
@@ -838,17 +835,11 @@ bool TsDictFacetPushdown::AdoptScan(std::optional<FoundScan> here) {
   if (_index) {
     return true;
   }
-  if (here->bind_data->GetKind() !=
-      connector::SereneDBScanBindData::Kind::Table) {
-    return false;
-  }
-  auto& table_bd = here->bind_data->As<connector::TableScanBindData>();
-  if (!here->bind_data->inverted_index || !table_bd.table) {
+  if (!here->bind_data->inverted_index) {
     return false;
   }
   _found = *here;
   _index = here->bind_data->inverted_index.get();
-  _tbd = &table_bd;
   return true;
 }
 
@@ -908,7 +899,7 @@ bool TsDictFacetPushdown::ResolveKeys() {
       if (col_id != catalog::Column::kInvalidId) {
         key.field_id = static_cast<irs::field_id>(col_id);
         key.col_id = col_id;
-        if (!ColumnIsNotNull(*_tbd->table, col_id)) {
+        if (!_found.bind_data->IsColumnNotNull(col_id)) {
           const auto* col_info = _index->FindColumnInfo(col_id);
           if (!col_info || !irs::field_limits::valid(col_info->null_field_id)) {
             return false;

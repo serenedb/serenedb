@@ -23,11 +23,19 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <duckdb.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <limits>
 #include <numeric>
 #include <random>
+#include <span>
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -96,6 +104,118 @@ std::vector<float> MakeDirClusters(uint32_t d, size_t n_clusters,
 
 CentroidsBuildParams DeepParams() {
   return {.posting_size = 4, .max_fanout = 4};
+}
+
+void WriteVectorColumn(Directory& dir, duckdb::DatabaseInstance& db,
+                       field_id id, uint32_t d, std::span<const float> data) {
+  const uint64_t n = data.size() / d;
+  const auto atype = duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, d);
+  ColWriter w{dir, "seg", db};
+  auto& cw = w.OpenColumn(id, atype, /*skip_validity=*/false, /*rg_size=*/4096);
+  uint64_t pos = 0;
+  while (pos < n) {
+    const auto take = std::min<duckdb::idx_t>(n - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector v{atype, STANDARD_VECTOR_SIZE};
+    auto& child = duckdb::ArrayVector::GetChildMutable(v);
+    auto* cd = duckdb::FlatVector::GetDataMutable<float>(child);
+    auto& av = duckdb::FlatVector::ValidityMutable(v);
+    auto& cv = duckdb::FlatVector::ValidityMutable(child);
+    av.Reset(STANDARD_VECTOR_SIZE);
+    cv.Reset(STANDARD_VECTOR_SIZE * d);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      const uint64_t g = pos + k;
+      for (uint32_t i = 0; i < d; ++i) {
+        cd[k * d + i] = data[g * d + i];
+      }
+    }
+    duckdb::FlatVector::SetSize(v, take);
+    cw.Append(v, take);
+    pos += take;
+  }
+  w.Commit(0);
+}
+
+std::vector<float> MakeRowMajor(uint32_t d, uint64_t n) {
+  std::vector<float> data(n * d);
+  for (uint64_t g = 0; g < n; ++g) {
+    for (uint32_t i = 0; i < d; ++i) {
+      data[g * d + i] = static_cast<float>(g * d + i);
+    }
+  }
+  return data;
+}
+
+size_t BuiltRootSize(const CentroidsBuilder& builder) {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  return CentroidsTree::Deserialize(in, byte_size).RootSize();
+}
+
+void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
+                                std::span<const float> data, uint32_t d) {
+  const size_t n = data.size() / d;
+
+  std::vector<float> reordered(data.begin(), data.end());
+  auto assigned =
+    builder.AssignCentroids({reordered.data(), reordered.size()}, d);
+  ASSERT_EQ(assigned.ids.size(), n);
+  ASSERT_EQ(assigned.perm.size(), n);
+  std::vector<size_t> row_cluster(n);
+  for (size_t j = 0; j < n; ++j) {
+    row_cluster[assigned.perm[j]] = assigned.ids[j];
+  }
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+
+  for (size_t q = 0; q < n; ++q) {
+    const std::span<const float> query{data.data() + q * d, d};
+
+    size_t nn = 0;
+    float best = std::numeric_limits<float>::max();
+    for (size_t r = 0; r < n; ++r) {
+      float dist = 0.f;
+      for (uint32_t i = 0; i < d; ++i) {
+        const float diff = data[r * d + i] - query[i];
+        dist += diff * diff;
+      }
+      if (dist < best) {
+        best = dist;
+        nn = r;
+      }
+    }
+
+    std::vector<uint32_t> ids;
+    tree.Search(query, in, /*nprobe=*/8, ids, nullptr);
+    ASSERT_FALSE(ids.empty()) << "query " << q;
+    const bool hit =
+      std::find(ids.begin(), ids.end(),
+                static_cast<uint32_t>(row_cluster[nn])) != ids.end();
+    EXPECT_TRUE(hit) << "query " << q << " nn " << nn;
+  }
 }
 
 // Build a genuine multi-level tree from an in-memory sample, then assert that
@@ -333,6 +453,50 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
   tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
   ASSERT_EQ(ids.size(), 1u);
   EXPECT_EQ(ids[0], 0u);
+}
+
+TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
+  constexpr uint32_t d = 4;
+  constexpr uint64_t n = 8;
+  constexpr field_id kVec = 1;
+  const auto data = MakeRowMajor(d, n);
+
+  duckdb::DuckDB db;
+  MemoryDirectory dir;
+  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+
+  ColReader r{dir, "seg", *db.instance};
+  const auto* col = r.Column(kVec);
+  ASSERT_NE(col, nullptr);
+
+  auto builder = CentroidsBuilder::Create(*col, r.Ctx(), n, VectorMetric::L2Sqr,
+                                          d, {.posting_size = 1024});
+  EXPECT_EQ(builder.NumClusters(), 1u);
+  EXPECT_EQ(BuiltRootSize(builder), 0u);
+  ExpectQueriesRouteToTrueNn(builder, data, d);
+}
+
+TEST(centroids_builder_test,
+     create_small_dataset_min_train_sample_one_centroid) {
+  constexpr uint32_t d = 4;
+  constexpr uint64_t n = 8;
+  constexpr field_id kVec = 1;
+  const auto data = MakeRowMajor(d, n);
+
+  duckdb::DuckDB db;
+  MemoryDirectory dir;
+  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+
+  ColReader r{dir, "seg", *db.instance};
+  const auto* col = r.Column(kVec);
+  ASSERT_NE(col, nullptr);
+
+  auto builder =
+    CentroidsBuilder::Create(*col, r.Ctx(), n, VectorMetric::L2Sqr, d,
+                             {.posting_size = 1024, .min_train_sample = 256});
+  EXPECT_EQ(builder.NumClusters(), 1u);
+  EXPECT_GE(BuiltRootSize(builder), 1u);
+  ExpectQueriesRouteToTrueNn(builder, data, d);
 }
 
 // Cosine build must route consistently after the "normalize the sample once in

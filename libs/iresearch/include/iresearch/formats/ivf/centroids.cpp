@@ -44,10 +44,33 @@ namespace {
 
 constexpr size_t kTrainSeed = 42;
 constexpr uint64_t kSampleSegmentOversample = 4;
-constexpr size_t kMaxFanout = 128;
+constexpr size_t kMaxFanout = 1024;
 constexpr size_t kTrainPointsPerLeaf = 64;
 constexpr size_t kMaxTrainSample = 4ull * 1024 * 1024;
 constexpr size_t kClusterIters = 15;
+constexpr size_t kLeafClusterIters = 8;
+constexpr size_t kClusterRedos = 1;
+
+struct LayerLayout {
+  size_t n_total;
+  size_t body_start;
+  size_t offsets_start;
+
+  static LayerLayout Read(IndexInput& in, size_t d) {
+    const size_t n_total = static_cast<size_t>(in.ReadI64());
+    const size_t body_start = static_cast<size_t>(in.Position());
+    return {n_total, body_start, body_start + n_total * d * sizeof(float)};
+  }
+  size_t CentroidPos(size_t start, size_t d) const {
+    return body_start + start * d * sizeof(float);
+  }
+  size_t OffsetsPos(size_t start) const {
+    return offsets_start + start * sizeof(size_t);
+  }
+  size_t FooterPos() const {
+    return offsets_start + (n_total + 1) * sizeof(size_t);
+  }
+};
 
 template<typename Sink>
 void StreamSelectedRanges(const ColumnReader& child,
@@ -164,10 +187,21 @@ auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
                    const float* rotation) {
   auto centroids = TrainCentroids(
     metric, data.data(), data.size() / d, static_cast<uint32_t>(n_clusters),
-    static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter), 1u,
-    ClusteringAlgo::Auto, rotation);
+    static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter),
+    static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rotation);
   AssignNearestGrouped(metric, centroids, d, data, ids);
   return centroids;
+}
+
+template<typename Fn>
+void ForEachGroup(std::span<const size_t> ids, size_t n_groups, Fn&& fn) {
+  for (size_t i = 0, current = 0; i < n_groups; ++i) {
+    const size_t start = current;
+    while (current < ids.size() && ids[current] == i) {
+      ++current;
+    }
+    fn(i, start, current - start);
+  }
 }
 
 void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
@@ -197,8 +231,9 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
       } else if (sample_size > 0) {
         auto centroids = TrainCentroids(
           settings.metric, entry.sample.data(), sample_size,
-          /*k=*/1, static_cast<uint32_t>(d), kTrainSeed, /*niter=*/8u,
-          /*nredo=*/1u, ClusteringAlgo::Auto, rot);
+          /*k=*/1, static_cast<uint32_t>(d), kTrainSeed,
+          static_cast<uint32_t>(kLeafClusterIters),
+          static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rot);
         nodes.emplace_back(CentroidsBuilder::Node{
           .centroids = std::move(centroids), .children = {0}, .leafs = 1});
       }
@@ -215,18 +250,13 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     }
     nodes.emplace_back(
       CentroidsBuilder::Node{.centroids = std::move(centroids)});
-    for (size_t i = 0, current = 0; i < n_built; ++i) {
-      size_t start = current;
-      while (current < entry.ids.size() && entry.ids[current] == i) {
-        current++;
-      }
-      CentroidsEntry child{
+    ForEachGroup(entry.ids, n_built, [&](size_t, size_t start, size_t count) {
+      centroids_build.emplace_back(CentroidsEntry{
         .parent = nodes.size() - 1,
-        .sample = entry.sample.subspan(start * d, (current - start) * d),
-        .ids = entry.ids.subspan(start, current - start),
-      };
-      centroids_build.emplace_back(std::move(child));
-    }
+        .sample = entry.sample.subspan(start * d, count * d),
+        .ids = entry.ids.subspan(start, count),
+      });
+    });
   }
   for (size_t i = nodes.size(); i--;) {
     for (auto&& child : nodes[i].children) {
@@ -244,16 +274,14 @@ std::vector<CentroidsNode> CentroidsNode::Deserialize(
   IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
   std::span<const size_t> sizes) {
   SDB_ASSERT(starts.size() == sizes.size());
-  const size_t n_total = static_cast<size_t>(in.ReadI64());
-  const size_t body_start = static_cast<size_t>(in.Position());
-  const size_t offsets_start = body_start + n_total * d * sizeof(float);
+  const auto layout = LayerLayout::Read(in, d);
   std::vector<CentroidsNode> nodes;
   nodes.reserve(starts.size());
   for (auto&& [start, size] : std::views::zip(starts, sizes)) {
     CentroidsNode node{level, d};
     node.size = size;
 
-    in.Seek(body_start + start * d * sizeof(float));
+    in.Seek(layout.CentroidPos(start, d));
     node.centroids.resize(node.size * d);
     if (node.size != 0) {
       in.ReadData(reinterpret_cast<byte_type*>(node.centroids.data()),
@@ -262,14 +290,14 @@ std::vector<CentroidsNode> CentroidsNode::Deserialize(
 
     if (level > 0) {
       node.child_offsets.resize(node.size + 1);
-      in.Seek(offsets_start + start * sizeof(size_t));
+      in.Seek(layout.OffsetsPos(start));
       in.ReadData(reinterpret_cast<byte_type*>(node.child_offsets.data()),
                   (node.size + 1) * sizeof(size_t));
     }
     nodes.emplace_back(std::move(node));
   }
   if (level > 0) {
-    in.Seek(offsets_start + (n_total + 1) * sizeof(size_t));
+    in.Seek(layout.FooterPos());
   }
   return nodes;
 }
@@ -278,9 +306,8 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
   IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
   std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total) {
   SDB_ASSERT(starts.size() == sizes.size());
-  n_total = static_cast<size_t>(in.ReadI64());
-  const size_t body_start = static_cast<size_t>(in.Position());
-  const uint64_t offsets_start = body_start + n_total * d * sizeof(float);
+  const auto layout = LayerLayout::Read(in, d);
+  n_total = layout.n_total;
   std::vector<CentroidsNodeView> nodes;
   nodes.reserve(starts.size());
   bufs.centroids.reserve(starts.size());
@@ -293,7 +320,7 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
       nodes.emplace_back(node);
       continue;
     }
-    const uint64_t offset = body_start + start * d * sizeof(float);
+    const uint64_t offset = layout.CentroidPos(start, d);
     const size_t centroids_bytes = size * d * sizeof(float);
     if (const byte_type* p = in.ReadStable(offset, centroids_bytes)) {
       node.centroids =
@@ -306,7 +333,7 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
     }
     if (level > 0) {
       auto& off = bufs.child_offsets.emplace_back(size + 1);
-      in.ReadData(offsets_start + start * sizeof(size_t),
+      in.ReadData(layout.OffsetsPos(start),
                   reinterpret_cast<byte_type*>(off.data()),
                   (size + 1) * sizeof(size_t));
       node.child_offsets = std::span<const size_t>{off.data(), size + 1};
@@ -314,7 +341,7 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
     nodes.emplace_back(node);
   }
   if (level > 0) {
-    in.Seek(offsets_start + (n_total + 1) * sizeof(size_t));
+    in.Seek(layout.FooterPos());
   }
   return nodes;
 }
@@ -415,7 +442,7 @@ void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
   _row_bases.resize(_nodes.size());
   for (size_t j = 0; j < _nodes.size(); ++j) {
     _row_bases[j] = _n_rows;
-    _n_rows += _nodes[j].centroids.size() / _d;
+    _n_rows += _nodes[j].Rows(_d);
   }
 }
 
@@ -477,17 +504,21 @@ CentroidsBuilder CentroidsBuilder::CreateFromSample(
 CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
   const IVFHeader head{.metric = _metric, .d = _d};
   const size_t offset = static_cast<size_t>(out.Position());
+  const auto span = [&] {
+    return CentroidsSpan{
+      .offset = offset,
+      .byte_size = static_cast<size_t>(out.Position()) - offset};
+  };
   head.Serialize(out);
   if (_nodes.empty()) {
     out.WriteU64(0);
     out.WriteU64(0);
-    return {.offset = offset,
-            .byte_size = static_cast<size_t>(out.Position()) - offset};
+    return span();
   }
 
   std::vector<size_t> depth(_nodes.size(), 0);
   for (size_t j = 0; j < _nodes.size(); ++j) {
-    SDB_ASSERT(_nodes[j].children.size() == _nodes[j].centroids.size() / _d);
+    SDB_ASSERT(_nodes[j].children.size() == _nodes[j].Rows(_d));
     for (const size_t child : _nodes[j].children) {
       if (child != 0) {
         SDB_ASSERT(child > j);
@@ -505,7 +536,7 @@ CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
   for (size_t first = 0; first < _nodes.size();) {
     Layer layer{.first = first, .last = first, .rows = 0};
     while (layer.last < _nodes.size() && depth[layer.last] == depth[first]) {
-      layer.rows += _nodes[layer.last].centroids.size() / _d;
+      layer.rows += _nodes[layer.last].Rows(_d);
       ++layer.last;
     }
     first = layer.last;
@@ -531,7 +562,7 @@ CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
     size_t running = 0;
     for (size_t j = layer.first; j < layer.last; ++j) {
       for (const size_t child : _nodes[j].children) {
-        running += child == 0 ? 0 : _nodes[child].centroids.size() / _d;
+        running += child == 0 ? 0 : _nodes[child].Rows(_d);
         offsets.push_back(running);
       }
     }
@@ -540,8 +571,7 @@ CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
     out.WriteData(reinterpret_cast<const byte_type*>(offsets.data()),
                   offsets.size() * sizeof(size_t));
   }
-  return {.offset = offset,
-          .byte_size = static_cast<size_t>(out.Position()) - offset};
+  return span();
 }
 
 void CentroidsBuilder::AssignCentroidsImpl(
@@ -551,23 +581,18 @@ void CentroidsBuilder::AssignCentroidsImpl(
   const auto& node = _nodes[node_index];
   AssignNearestGrouped(_metric, node.centroids, d, data, ids, perm,
                        centroids_out);
-  for (size_t i = 0, current = 0; i < node.centroids.size() / d; ++i) {
-    size_t start = current;
-    while (current < ids.size() && ids[current] == i) {
-      current++;
-    }
+  ForEachGroup(ids, node.Rows(d), [&](size_t i, size_t start, size_t count) {
     if (node.children[i] == 0) {
-      absl::c_fill(ids.subspan(start, current - start),
-                   _row_bases[node_index] + i);
-      continue;
+      absl::c_fill(ids.subspan(start, count), _row_bases[node_index] + i);
+      return;
     }
-    AssignCentroidsImpl(
-      node.children[i], data.subspan(start * d, (current - start) * d), d,
-      ids.subspan(start, current - start),
-      perm.empty() ? perm : perm.subspan(start, current - start),
-      centroids_out.empty() ? centroids_out
-                            : centroids_out.subspan(start, current - start));
-  }
+    AssignCentroidsImpl(node.children[i], data.subspan(start * d, count * d), d,
+                        ids.subspan(start, count),
+                        perm.empty() ? perm : perm.subspan(start, count),
+                        centroids_out.empty()
+                          ? centroids_out
+                          : centroids_out.subspan(start, count));
+  });
 }
 
 AssignedCentroids CentroidsBuilder::AssignCentroids(

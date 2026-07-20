@@ -27,10 +27,10 @@
 #include <faiss/utils/distances.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <numeric>
 
 #include "basics/misc.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
@@ -67,13 +67,24 @@ std::vector<float> RunSuperKMeans(const float* data, size_t n, uint32_t k,
 }
 
 std::vector<float> RunLloyd(const float* data, size_t n, uint32_t k, uint32_t d,
-                            uint32_t seed, uint32_t niter, uint32_t nredo) {
+                            uint32_t seed, uint32_t niter, uint32_t nredo,
+                            bool spherical = false) {
   faiss::ClusteringParameters cp;
   ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
+  cp.spherical = spherical;
   faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
-  faiss::IndexFlatL2 index(static_cast<int>(d));
-  clus.train(static_cast<faiss::idx_t>(n), data, index);
+  if (spherical) {
+    faiss::IndexFlatIP index(static_cast<int>(d));
+    clus.train(static_cast<faiss::idx_t>(n), data, index);
+  } else {
+    faiss::IndexFlatL2 index(static_cast<int>(d));
+    clus.train(static_cast<faiss::idx_t>(n), data, index);
+  }
   return std::move(clus.centroids);
+}
+
+bool SuperKMeansGate(uint32_t d, uint32_t k, uint32_t min_k) {
+  return d >= kSuperKMeansMinD && k >= min_k;
 }
 
 }  // namespace
@@ -88,17 +99,8 @@ std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
 void NormalizeRows(float* data, size_t n, uint32_t d) {
   for (size_t i = 0; i < n; ++i) {
     float* row = data + i * d;
-    float sum = 0.f;
-    for (uint32_t j = 0; j < d; ++j) {
-      sum += row[j] * row[j];
-    }
-    if (sum == 0.f) {
-      continue;
-    }
-    const float inv_norm = 1.f / std::sqrt(sum);
-    for (uint32_t j = 0; j < d; ++j) {
-      row[j] *= inv_norm;
-    }
+    vector::L2Space<float, float, float>::Normalize(
+      reinterpret_cast<const byte_type*>(row), static_cast<uint16_t>(d), row);
   }
 }
 
@@ -115,25 +117,19 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
     const bool use_skm =
       algo == ClusteringAlgo::FlatSuperKMeans ||
       (algo == ClusteringAlgo::Auto && metric == VectorMetric::Cosine &&
-       d >= kSuperKMeansMinD && k >= kSuperKMeansSphericalMinK);
+       SuperKMeansGate(d, k, kSuperKMeansSphericalMinK));
     if (use_skm) {
       auto centroids =
         RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
       NormalizeRows(centroids.data(), centroids.size() / d, d);
       return centroids;
     }
-    faiss::ClusteringParameters cp;
-    ConfigureClusteringParams(cp, niter, nredo, seed, n, k);
-    cp.spherical = true;
-    faiss::Clustering clus(static_cast<int>(d), static_cast<int>(k), cp);
-    faiss::IndexFlatIP index(static_cast<int>(d));
-    clus.train(static_cast<faiss::idx_t>(n), data, index);
-    return std::move(clus.centroids);
+    return RunLloyd(data, n, k, d, seed, niter, nredo, /*spherical=*/true);
   }
 
   ClusteringAlgo eff = algo;
   if (eff == ClusteringAlgo::Auto) {
-    eff = d >= kSuperKMeansMinD && k >= kSuperKMeansMinK
+    eff = SuperKMeansGate(d, k, kSuperKMeansMinK)
             ? ClusteringAlgo::FlatSuperKMeans
             : ClusteringAlgo::Lloyd;
   }
@@ -148,14 +144,12 @@ namespace {
 template<VectorMetric Metric>
 uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,
                           uint32_t d) noexcept {
-  const auto* q = reinterpret_cast<const byte_type*>(v);
   const auto dd = static_cast<uint16_t>(d);
   uint32_t best = 0;
   float best_score = -std::numeric_limits<float>::max();
   for (uint32_t s = 0; s < k; ++s) {
-    const auto* cv = reinterpret_cast<const byte_type*>(
-      centroids + static_cast<size_t>(s) * d);
-    const float score = ComputeDistance<Metric>(q, cv, dd);
+    const float score =
+      ComputeDistance<Metric>(v, centroids + static_cast<size_t>(s) * d, dd);
     if (score > best_score) {
       best_score = score;
       best = s;
@@ -224,11 +218,7 @@ void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
   for (const uint32_t a : assign) {
     ++cursor[a];
   }
-  for (size_t i = 0, start = 0; i < k; ++i) {
-    const size_t count = cursor[i];
-    cursor[i] = start;
-    start += count;
-  }
+  std::exclusive_scan(cursor.begin(), cursor.end(), cursor.begin(), size_t{0});
 
   std::vector<float> reordered(data.size());
   std::vector<size_t> reordered_perm(perm.empty() ? 0 : n);

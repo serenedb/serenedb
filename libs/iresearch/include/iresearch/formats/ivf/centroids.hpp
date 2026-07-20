@@ -91,7 +91,7 @@ struct CentroidsNode {
                      std::vector<Candidate>& leaves) {
     SDB_ASSERT(!nodes.empty());
     const uint16_t d = query.size();
-    const auto* q = reinterpret_cast<const byte_type*>(query.data());
+    const float* q = query.data();
 
     struct Scored {
       float dist;
@@ -103,15 +103,13 @@ struct CentroidsNode {
     for (const auto& node : nodes) {
       scored.clear();
       for (size_t i = 0; i < node.size; ++i) {
-        const byte_type* c =
-          reinterpret_cast<const byte_type*>(node.centroids.data() + d * i);
-        const float dist = ComputeDistance<Metric>(q, c, d);
+        const auto centroid = node.centroids.subspan(i * d, d);
+        const float dist = ComputeDistance<Metric>(q, centroid.data(), d);
         const bool is_leaf =
           level == 0 || node.child_offsets[i + 1] == node.child_offsets[i];
         if (is_leaf) {
           auto& cand = leaves.emplace_back(dist, layer_base + node.base + i);
           if (want_centroids) {
-            const auto centroid = node.centroids.subspan(i * d, d);
             cand.centroid.assign(centroid.begin(), centroid.end());
           }
         } else {
@@ -203,6 +201,8 @@ class CentroidsBuilder {
     std::vector<float> centroids;
     std::vector<size_t> children;
     size_t leafs = 0;
+
+    size_t Rows(size_t d) const noexcept { return centroids.size() / d; }
   };
 
   CentroidsBuilder() = default;

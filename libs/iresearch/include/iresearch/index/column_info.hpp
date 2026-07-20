@@ -60,6 +60,12 @@ auto ComputeDistance(const byte_type* l, const byte_type* r, uint16_t d) {
   SDB_UNREACHABLE();
 }
 
+template<VectorMetric Metric>
+auto ComputeDistance(const float* l, const float* r, uint16_t d) {
+  return ComputeDistance<Metric>(reinterpret_cast<const byte_type*>(l),
+                                 reinterpret_cast<const byte_type*>(r), d);
+}
+
 enum class VectorQuantization : uint8_t {
   None = 0,
   SQ8,

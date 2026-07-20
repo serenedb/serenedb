@@ -59,6 +59,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     std::vector<catalog::Column> view_columns, ObjectId database_id,
     duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
     std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
+    duckdb::unique_ptr<duckdb::Expression> bound_where,
     SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
@@ -105,6 +106,8 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   ObjectId _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
+  // Bound partial-index predicate (info->where_clause); null for full indexes.
+  duckdb::unique_ptr<duckdb::Expression> _bound_where;
   SereneDBSchemaEntry& _schema_entry;
 };
 

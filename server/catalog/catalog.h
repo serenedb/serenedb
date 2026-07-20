@@ -470,6 +470,7 @@ class Catalog final {
                            std::string name,
                            std::vector<CreateIndexColumn>&& columns,
                            InvertedIndexOptions options,
+                           ExpressionData predicate,
                            CreateIndexOperationOptions operation_options);
   bool CreateTokenizer(const AccessContext& ax, ObjectId database_id,
                        std::string_view schema, std::shared_ptr<Tokenizer> dict,

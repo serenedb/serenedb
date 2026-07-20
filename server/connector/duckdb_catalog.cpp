@@ -55,6 +55,7 @@
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
+#include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
@@ -553,6 +554,7 @@ namespace {
 std::vector<duckdb::idx_t> ComputeKeptViewPositions(
   const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     parsed_index_exprs,
+  const duckdb::ParsedExpression* predicate,
   const duckdb::ViewColumnInfo& column_info) {
   std::vector<duckdb::idx_t> kept;
   auto add = [&](std::string_view name) {
@@ -576,6 +578,9 @@ std::vector<duckdb::idx_t> ComputeKeptViewPositions(
   };
   for (const auto& expr : parsed_index_exprs) {
     collect(*expr);
+  }
+  if (predicate) {
+    collect(*predicate);
   }
   absl::c_sort(kept);
   kept.erase(std::unique(kept.begin(), kept.end()), kept.end());
@@ -859,6 +864,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   std::optional<ViewFastPath> view_fast_path;
   int64_t pinned_iceberg_snapshot_id = 0;
   std::optional<std::vector<duckdb::idx_t>> kept_view_positions;
+  const auto partial_view_index =
+    !!stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause;
   std::optional<std::vector<duckdb::column_t>> vcols_opt;
   if (target.type == duckdb::CatalogType::VIEW_ENTRY) {
     view_backed = true;
@@ -975,8 +982,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                  "the leaf get came from binding the view body");
       auto kept = ComputeKeptViewPositions(
         stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
+        stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause.get(),
         *column_info);
-      if (kept.size() < column_info->names.size()) {
+      if (kept.size() < column_info->names.size() || partial_view_index) {
         plan = InsertBackfillFilterProjection(
           std::move(plan), kept, column_info->names.size(), vcols.size(),
           binder.GenerateTableIndex());
@@ -987,8 +995,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       if (auto column_info = view_entry.GetColumnInfo()) {
         auto kept = ComputeKeptViewPositions(
           stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
+          stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause.get(),
           *column_info);
-        if (kept.size() < column_info->names.size()) {
+        if (kept.size() < column_info->names.size() || partial_view_index) {
           plan = InsertBackfillFilterProjection(
             std::move(plan), kept, column_info->names.size(),
             /*vcols_count=*/0, binder.GenerateTableIndex());
@@ -1026,6 +1035,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("unrecognized parameter \"", option, "\""));
       }
+    }
+  }
+
+  if (create_index_info->where_clause) {
+    if (create_index_info->index_type != "inverted") {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("partial indexes are only supported for inverted indexes"));
     }
   }
 
@@ -1101,6 +1118,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   for (auto& expr : create_index_info->parsed_expressions) {
     collect(*expr);
   }
+  if (create_index_info->where_clause) {
+    collect(*create_index_info->where_clause);
+  }
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
 
   auto leaf_get_from_plan =
@@ -1112,6 +1132,22 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     return cur->Cast<duckdb::LogicalGet>();
   };
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
+  // Partial-index predicate for the backfill: a LogicalFilter over the scan
+  // (built below) drops non-matching rows before they reach the create-index
+  // sink. The operator still receives the predicate (via expressions) to
+  // persist it for DML maintenance.
+  duckdb::unique_ptr<duckdb::Expression> backfill_filter_predicate;
+  auto bind_predicate = [&](duckdb::IndexBinder& index_binder) {
+    auto parsed = create_index_info->where_clause->Copy();
+    auto bound = index_binder.Bind(parsed);
+    if (bound->GetReturnType() != duckdb::LogicalType::BOOLEAN) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+        ERR_MSG("argument of WHERE must be type boolean, not type ",
+                bound->GetReturnType().ToString()));
+    }
+    return bound;
+  };
   if (!view_backed) {
     SDB_ASSERT(sdb_table);
     // Project only what the backfill actually needs: index columns + PK
@@ -1143,6 +1179,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                                      create_index_info.get());
     for (auto& parsed : create_index_info->expressions) {
       expressions.emplace_back(index_binder.Bind(parsed));
+    }
+    if (create_index_info->where_clause) {
+      auto bound_where = bind_predicate(index_binder);
+      backfill_filter_predicate = bound_where->Copy();
+      expressions.emplace_back(std::move(bound_where));
     }
   } else {
     create_index_info->names.assign_range(
@@ -1196,35 +1237,57 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     // chunk positions follow kept_view_positions' (sorted) order.
     duckdb::IndexBinder index_binder(binder, binder.context, nullptr,
                                      create_index_info.get());
+    // Remap col-ref bindings to (TableIndex(0), narrowed_position): the
+    // resolver matches LOGICAL_CREATE_INDEX exprs against TableIndex(0), and
+    // chunk positions follow kept_view_positions' (sorted) order. Applied to
+    // the index keys and the persisted partial-index predicate alike.
+    auto remap = [&](this auto& self, duckdb::Expression& e) -> void {
+      if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
+        auto col_idx = cref.Binding().column_index.GetIndex();
+        if (kept_view_positions) {
+          auto it = std::ranges::lower_bound(*kept_view_positions, col_idx);
+          SDB_ASSERT(it != kept_view_positions->end() && *it == col_idx,
+                     "view col ref references a non-kept position");
+          col_idx = static_cast<duckdb::idx_t>(
+            std::distance(kept_view_positions->begin(), it));
+        }
+        cref.BindingMutable() = duckdb::ColumnBinding(
+          duckdb::TableIndex(0), duckdb::ProjectionIndex(col_idx));
+      }
+      duckdb::ExpressionIterator::EnumerateChildren(
+        e, [&](duckdb::Expression& c) { self(c); });
+    };
     expressions.reserve(create_index_info->expressions.size());
     for (auto& parsed : create_index_info->expressions) {
       auto bound = index_binder.Bind(parsed);
-      auto remap = [&](this auto& self, duckdb::Expression& e) -> void {
-        if (e.GetExpressionClass() ==
-            duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-          auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
-          auto col_idx = cref.Binding().column_index.GetIndex();
-          if (kept_view_positions) {
-            auto it = std::ranges::lower_bound(*kept_view_positions, col_idx);
-            SDB_ASSERT(it != kept_view_positions->end() && *it == col_idx,
-                       "view col ref references a non-kept position");
-            col_idx = static_cast<duckdb::idx_t>(
-              std::distance(kept_view_positions->begin(), it));
-          }
-          cref.BindingMutable() = duckdb::ColumnBinding(
-            duckdb::TableIndex(0), duckdb::ProjectionIndex(col_idx));
-        }
-        duckdb::ExpressionIterator::EnumerateChildren(
-          e, [&](duckdb::Expression& c) { self(c); });
-      };
       remap(*bound);
       expressions.emplace_back(std::move(bound));
+    }
+    if (create_index_info->where_clause) {
+      auto bound_where = bind_predicate(index_binder);
+
+      SDB_ASSERT(plan->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION);
+      auto& proj = plan->Cast<duckdb::LogicalProjection>();
+      auto filter =
+        duckdb::make_uniq<duckdb::LogicalFilter>(bound_where->Copy());
+      filter->children.push_back(std::move(proj.children[0]));
+      proj.children[0] = std::move(filter);
+      // Persisted copy is normalized like the index keys.
+      remap(*bound_where);
+      expressions.emplace_back(std::move(bound_where));
     }
   }
 
   auto& target_for_op = view_backed
                           ? static_cast<duckdb::CatalogEntry&>(target)
                           : static_cast<duckdb::CatalogEntry&>(*resolved_table);
+  if (backfill_filter_predicate) {
+    auto filter = duckdb::make_uniq<duckdb::LogicalFilter>(
+      std::move(backfill_filter_predicate));
+    filter->children.push_back(std::move(plan));
+    plan = std::move(filter);
+  }
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(create_index_info), std::move(expressions), target_for_op,
     nullptr);

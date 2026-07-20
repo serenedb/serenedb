@@ -188,7 +188,8 @@ Did you mean "<slt:ignore>"?
 statement error
 CREATE INDEX ddl_index_part ON ddl_index_base (a) WHERE a > 5;
 ----
-db error: ERROR: Creating partial indexes is not supported currently
+db error: ERROR: Table with name ddl_index_base does not exist!
+Did you mean "<slt:ignore>"?
 
 
 # ddl_misc: CREATE SCHEMA

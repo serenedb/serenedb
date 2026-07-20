@@ -721,8 +721,8 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   std::string_view schema_name, ObjectId schema_id, ObjectId id,
   ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot,
-  InvertedIndexOptions options) {
+  const std::shared_ptr<const Snapshot>& snapshot, InvertedIndexOptions options,
+  ExpressionData predicate) {
   SDB_ASSERT(options.row_group_size != 0);
   SDB_ASSERT(options.norm_row_group_size != 0);
   ValidateInvertedIndexColumns(columns);
@@ -800,7 +800,7 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),
     std::move(key_columns), std::move(expression_keys), std::move(entries),
-    std::move(options));
+    std::move(options), std::move(predicate));
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,

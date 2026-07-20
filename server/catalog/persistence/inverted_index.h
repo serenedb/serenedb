@@ -87,6 +87,10 @@ struct InvertedIndexData {
   // Per-field iresearch config keyed by field_id.
   containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
   InvertedIndexOptions options;
+  // Partial-index predicate (CREATE INDEX ... WHERE): rows are indexed and
+  // maintained only when it evaluates to true. An empty serialized_expr
+  // means a full index. return_type is BOOLEAN.
+  ExpressionData predicate;
 };
 
 }  // namespace sdb::catalog::persistence

@@ -622,15 +622,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       catalog::ActingAs(context), context, database_id,
       name.GetIdentifierName(), sdb_table->GetName(),
       info.GetIndexName().GetIdentifierName(), std::move(idx_columns),
-      std::move(options),
-      /*operation_options=*/{.if_not_exists = if_not_exists});
+      std::move(options), {}, {.if_not_exists = if_not_exists});
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     created = catalog_impl.CreateSecondaryIndex(
       catalog::ActingAs(context), database_id, name.GetIdentifierName(),
       sdb_table->GetName(), info.GetIndexName().GetIdentifierName(),
-      std::move(idx_columns), unique,
-      /*operation_options=*/{.if_not_exists = if_not_exists});
+      std::move(idx_columns), unique, {.if_not_exists = if_not_exists});
   }
   if (!created) {
     return nullptr;

@@ -59,7 +59,8 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
 template<DuckDBWriteKind Kind>
 std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
-  duckdb::optional_ptr<duckdb::ClientContext> expr_context) {
+  duckdb::optional_ptr<duckdb::ClientContext> expr_context,
+  const catalog::ExpressionData** predicate) {
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
   auto snapshot = conn_ctx.CatalogSnapshot();
   conn_ctx.EnsureIndexesTransactions(
@@ -69,6 +70,9 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
       }
       auto& inverted_index =
         basics::downCast<const catalog::InvertedIndex>(index);
+      if (predicate) {
+        *predicate = inverted_index.Predicate();
+      }
       if constexpr (Kind == DuckDBWriteKind::Delete) {
         if (!inverted_index.GetOptions().pk_term) {
           THROW_SQL_ERROR(
@@ -102,11 +106,13 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
 template std::unique_ptr<DuckDBSinkIndexWriter>
 CreateInvertedIndexWriter<DuckDBWriteKind::Insert>(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
-  duckdb::optional_ptr<duckdb::ClientContext> expr_context);
+  duckdb::optional_ptr<duckdb::ClientContext> expr_context,
+  const catalog::ExpressionData** predicate);
 template std::unique_ptr<DuckDBSinkIndexWriter>
 CreateInvertedIndexWriter<DuckDBWriteKind::Delete>(
   ObjectId table_id, ObjectId index_id, ConnectionContext& conn_ctx,
-  duckdb::optional_ptr<duckdb::ClientContext> expr_context);
+  duckdb::optional_ptr<duckdb::ClientContext> expr_context,
+  const catalog::ExpressionData** predicate);
 
 std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,

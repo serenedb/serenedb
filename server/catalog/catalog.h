@@ -520,6 +520,13 @@ class Catalog final {
                    std::string_view schema, std::string_view name,
                    ChangeCallback<Table> callback,
                    const ChangeTableOptions& options = {});
+  // ALTER INDEX ... SET/RESET (...): persist the mutated options and push
+  // them into the running InvertedIndexStorage (writer limits + task
+  // settings take effect live).
+  void AlterInvertedIndexOptions(
+    const AccessContext& ax, ObjectId database_id, std::string_view schema,
+    std::string_view name,
+    absl::FunctionRef<void(InvertedIndexOptions&)> mutate, bool missing_ok);
   void ChangeRole(const AccessContext& ax, std::string_view name,
                   std::string_view verb, bool allow_self,
                   ChangeCallback<Role> callback);

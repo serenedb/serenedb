@@ -148,7 +148,8 @@ class SearchSinkInsertBaseImpl {
                            std::vector<IndexedExpression>&& indexed_exprs = {},
                            PkPolicy pk_policy = {});
 
-  void InitImpl(size_t batch_size, const PkChunk& pk = {});
+  void InitImpl(size_t batch_size, const PkChunk& pk = {},
+                bool* commit_on_flush = nullptr);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);

@@ -543,7 +543,7 @@ class ProductQuantizerReader final : public QuantizerReader {
   std::vector<uint8_t> _lutq;
   faiss::AlignedTable<uint8_t> _packed_lut;
   std::vector<byte_type> _codes_buf;
-  std::vector<uint16_t> _accu;
+  faiss::AlignedTable<uint16_t> _accu;
   std::vector<score_t> _scores;
   size_t _n = 0;
 };

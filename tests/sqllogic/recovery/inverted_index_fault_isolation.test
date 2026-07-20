@@ -223,6 +223,32 @@ statement ok
 SET sdb_faults = '-SearchIncludeFetchFault'
 
 
+# --- statistics-eliminated filter leaves a dangling covered column ----
+# `tag >= 100` holds for every row (tag statistics: [100, 300], no NULLs), so
+# statistics propagation removes the pushed filter at plan time. But column
+# pruning ran BEFORE that pass: it kept tag in the scan's column list because
+# it fed a filter (excluded from the output), and nothing re-prunes after the
+# filter dies. The scan is therefore handed a column that neither the output
+# nor any filter needs -- and must not read it at all.
+
+statement ok
+SET sdb_faults = 'SearchIncludeFetchFault'
+
+
+query
+SELECT pk, ext_only FROM doc_idx
+  WHERE body @@ ts_phrase('alpha') AND tag >= 100
+  ORDER BY pk;
+----
+pk	ext_only
+1	x-one
+2	x-two
+
+
+statement ok
+SET sdb_faults = '-SearchIncludeFetchFault'
+
+
 # --- eventually-consistent COUNT and covered SELECT after a post-refresh
 # delete (no subsequent refresh) --------------------------------------
 # The matched set is frozen at the last refresh. Deleting matched rows in a

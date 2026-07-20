@@ -59,6 +59,7 @@ struct ExecutionContext {
   const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
+  bool top_k_collect = false;
 };
 
 inline IndexFeatures GetFeatures(const Scorer* scorer) noexcept {
@@ -77,12 +78,6 @@ class QueryBuilder : public memory::Managed {
   static QueryBuilder::ptr Empty();
   virtual DocIterator::ptr Execute(const ExecutionContext& ctx,
                                    const StatsBuffer& stats) const = 0;
-
-  virtual bool CollectTopK(ScoreCollector& /*collector*/,
-                           const ExecutionContext& /*ctx*/,
-                           const StatsBuffer& /*stats*/) const {
-    return false;
-  }
 
   virtual void Visit(PreparedStateVisitor&, score_t boost) const = 0;
 

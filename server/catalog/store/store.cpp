@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -241,6 +242,22 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(std::string_view database,
 
 std::string StoreIndexName(ObjectId index_id) {
   return absl::StrCat("sdb_idx_", index_id.id());
+}
+
+duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
+  duckdb::ClientContext& context, std::string_view database,
+  std::string_view schema, std::string_view table,
+  duckdb::OnEntryNotFound if_not_found) {
+  const duckdb::EntryLookupInfo lookup(
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName(
+      duckdb::Identifier{kStoreDatabaseName}, duckdb::Identifier{"main"},
+      duckdb::Identifier{StoreTableName(database, schema, table)}));
+  auto entry = duckdb::Catalog::GetEntry(context, lookup, if_not_found);
+  if (!entry) {
+    return nullptr;
+  }
+  return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
 StoreTableDef MakeStoreTableDef(std::string_view database,

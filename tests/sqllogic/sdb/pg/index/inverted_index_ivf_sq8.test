@@ -525,3 +525,62 @@ SELECT pk, label FROM sq8_mc_dml_idx
 pk	label
 6	f
 5	e
+
+# ===========================================================================
+# 9. Tombstone the whole nearest cluster (both x-axis rows) as a docs_mask
+#    overlay -- DELETE without COMPACT. With a live docs_mask the top-k scan
+#    must return the seekable disjunction wrapped in a MaskDocIterator, not
+#    the collect-only DisjointClusterUnion fast path (valid only when
+#    docs_mask == nullptr); the survivors come from the other clusters.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sq8_del_mask (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX sq8_del_mask_idx ON sq8_del_mask
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+
+statement count 6
+INSERT INTO sq8_del_mask VALUES
+  (1, [100, 0, 0]::FLOAT[3]),
+  (2, [102, 0, 0]::FLOAT[3]),
+  (3, [0, 0, 40]::FLOAT[3]),
+  (4, [0, 60, 0]::FLOAT[3]),
+  (5, [0, 0, 90]::FLOAT[3]),
+  (6, [-80, 0, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_del_mask
+
+statement ok
+SET sdb_nprobe = 1000
+
+# baseline: the two x-axis rows are the nearest to [100, 0, 0].
+query
+SELECT pk FROM sq8_del_mask_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+statement ok
+DELETE FROM sq8_del_mask WHERE pk IN (1, 2)
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_del_mask
+
+# top-k skips both tombstoned rows and returns the cross-cluster survivors in
+# order (pk=3 at [0,0,40], then pk=4 at [0,60,0]); must not assert.
+query
+SELECT pk FROM sq8_del_mask_idx ORDER BY emb <-> [100, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+3
+4
+
+query
+SELECT count(*) FROM sq8_del_mask_idx;
+----
+count
+4

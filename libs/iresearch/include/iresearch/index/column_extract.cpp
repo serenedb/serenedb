@@ -229,11 +229,27 @@ void ExtractBinding::ExtractLeaf(const Rows& rows, duckdb::Vector& out_vec,
 
 namespace {
 
+struct SelRows {
+  uint64_t start;
+  const duckdb::SelectionVector* sel;
+  duckdb::idx_t first;
+  duckdb::idx_t n;
+
+  size_t size() const noexcept { return n; }
+  uint64_t operator[](size_t i) const noexcept {
+    return start + sel->get_index(first + i);
+  }
+};
+
 DocRows Sub(DocRows rows, size_t i, size_t n) {
   return DocRows{rows.docs.subspan(i, n)};
 }
 irs::IotaRange Sub(irs::IotaRange rows, size_t i, size_t n) {
   return irs::IotaRange{rows.start + i, n};
+}
+SelRows Sub(SelRows rows, size_t i, size_t n) {
+  return SelRows{rows.start, rows.sel, rows.first + i,
+                 static_cast<duckdb::idx_t>(n)};
 }
 
 template<typename Rows>
@@ -341,6 +357,15 @@ void ExtractBinding::PlaceCast(
   auto& casted = Scratch(scan_type, slot);
   duckdb::VectorOperations::Cast(*_context, src, casted, n);
   duckdb::VectorOperations::Copy(casted, out_vec, n, 0, at);
+}
+
+void ExtractBinding::MaterializeSelected(uint64_t start_row,
+                                         const duckdb::SelectionVector& sel,
+                                         duckdb::idx_t survivors,
+                                         duckdb::Vector& out_vec) const {
+  SDB_ASSERT(_context);
+  ExtractPath(SelRows{start_row, &sel, 0, survivors}, out_vec, 0,
+              /*contiguous=*/false, /*entire=*/true);
 }
 
 }  // namespace sdb::connector

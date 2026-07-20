@@ -162,26 +162,23 @@ EXPLAIN SELECT pk, note FROM m_idx
 WHERE body @@ ts_phrase('cat') AND note IS NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────╮
-│ Projections: pk, note    │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ FILTER ────┴────────────╮
-│ Expression: note IS NULL │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: m_idx             │
-│ Lookup: table            │
-│ Index Filter:            │
-│ ╭─ Term ──────────────╮  │
-│ │ Field: body(string) │  │
-│ │ Value: cat          │  │
-│ ╰─────────────────────╯  │
-│ Projections: note (i),   │
-│              pk (l)      │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ PROJECTION ────────────────╮
+│ Projections: pk, note       │
+│ ~1 row                      │
+╰──────────────┬──────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: m_idx                │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────╮     │
+│ │ Field: body(string) │     │
+│ │ Value: cat          │     │
+│ ╰─────────────────────╯     │
+│ Column Filter: note IS NULL │
+│ Projections: note (i),      │
+│              pk (l)         │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 query

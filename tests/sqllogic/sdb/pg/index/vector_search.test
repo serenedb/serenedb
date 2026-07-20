@@ -172,20 +172,13 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <#> emb < 0.7;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────╮
-│ Projections: #1                       │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ FILTER ──────────┴───────────────────╮
-│ Expression: ([0, 0, 0] <#> emb) < 0.7 │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ──┴───────────────────╮
-│ Index: l2_index                       │
-│ Lookup: table                         │
-│ Projections: emb (i), id (l)          │
-│ ~4 rows                               │
-╰───────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: l2_index                          │
+│ Lookup: table                            │
+│ Projections: id                          │
+│ Column Filter: ([0, 0, 0] <#> emb) < 0.7 │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 
 
@@ -357,20 +350,14 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE l2_distance(emb, emb) < 0.7;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────────╮
-│ Projections: #1                         │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ FILTER ───────────┴────────────────────╮
-│ Expression: l2_distance(emb, emb) < 0.7 │
-│ ~1 row                                  │
-╰────────────────────┬────────────────────╯
-╭─ IRESEARCH_SCAN ───┴────────────────────╮
-│ Index: l2_index                         │
-│ Lookup: table                           │
-│ Projections: emb (i), id (l)            │
-│ ~4 rows                                 │
-╰─────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: l2_index                │
+│ Lookup: table                  │
+│ Projections: id                │
+│ Column Filter:                 │
+│ l2_distance(emb, emb) < 0.7    │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 
 query
@@ -717,6 +704,41 @@ QUERY PLAN
 ╰────────────────────────────────────────╯
 
 
+# Identity-emit (user score == raw score) top-k with a static score lower
+# bound: the collector enforces the floor (Min Score), like text min_score.
+query
+EXPLAIN SELECT id FROM ip_index WHERE inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) > 50 ORDER BY inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 DESC                      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: ip_index                        │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: ip   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
+│ Top: 2                                 │
+│ Min Score: 50                          │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id FROM ip_index WHERE inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) > 50 ORDER BY inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) DESC LIMIT 2;
+----
+id
+1
+
+
 query
 EXPLAIN SELECT id FROM ip_index WHERE negative_inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.0;
 ----
@@ -1014,16 +1036,7 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 200 AND cosine_distance(emb, [0, 0, 0]::FLOAT[3]) < 0.5;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────╮
-│ Projections: #1                       │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ FILTER ──────────┴───────────────────╮
-│ Expression:                           │
-│ cosine_distance(emb, [0, 0, 0]) < 0.5 │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ──┴───────────────────╮
+╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: l2_index                       │
 │ Lookup: table                         │
 │ Index Filter:                         │
@@ -1033,8 +1046,10 @@ QUERY PLAN
 │ │ Dims: 3        │                    │
 │ │ Radius: < 200  │                    │
 │ ╰────────────────╯                    │
-│ Projections: emb (i), id (l)          │
-│ ~4 rows                               │
+│ Column Filter:                        │
+│ cosine_distance(emb, [0, 0, 0]) < 0.5 │
+│ Projections: id                       │
+│ ~1 row                                │
 ╰───────────────────────────────────────╯
 
 
@@ -1042,16 +1057,7 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE cosine_distance(emb, [0, 0, 0]::FLOAT[3]) < 0.5 AND emb <-> [0, 0, 0]::FLOAT[3] < 200;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────────────────╮
-│ Projections: #1                       │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ FILTER ──────────┴───────────────────╮
-│ Expression:                           │
-│ cosine_distance(emb, [0, 0, 0]) < 0.5 │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ──┴───────────────────╮
+╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: l2_index                       │
 │ Lookup: table                         │
 │ Index Filter:                         │
@@ -1061,8 +1067,10 @@ QUERY PLAN
 │ │ Dims: 3        │                    │
 │ │ Radius: < 200  │                    │
 │ ╰────────────────╯                    │
-│ Projections: emb (i), id (l)          │
-│ ~4 rows                               │
+│ Column Filter:                        │
+│ cosine_distance(emb, [0, 0, 0]) < 0.5 │
+│ Projections: id                       │
+│ ~1 row                                │
 ╰───────────────────────────────────────╯
 
 

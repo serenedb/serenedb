@@ -76,59 +76,58 @@ enum class ScanMode : uint8_t {
   Stream,
 };
 
+// Global scan state, filled by IResearchScanInitGlobal in pipeline order:
+// the projection walk (InitScanState), the pushed-filter classification
+// (BuildTableFilter), the column dispositions
+// (ClassifyColumnstoreProjections), then DecideScanMode and the decided
+// mode's own state. Per-mode state lives in named sub-structs -- always
+// present (no tag checks on access), used only by their mode.
 struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
+  // --- Query shape: the bind data and the snapshot it scans. ---------------
+  const SereneDBScanBindData* scan = nullptr;
+  duckdb::ClientContext* client_context = nullptr;
+  const irs::IndexReader* reader = nullptr;
+  size_t total_segments = 0;
+  const VectorScorerOptions* vector_scorer = nullptr;
+
+  // --- The projection walk: what duckdb asked the scan for. ----------------
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
   std::vector<duckdb::ColumnIndex> projected_column_indexes;
-  duckdb::ClientContext* client_context = nullptr;
-
-  // Disposition of the scanned real columns (ClassifyColumnstoreProjections):
-  // covered columns materialize from `.col` (`cs_projections`), the rest stay
-  // in `lookup_projected_columns` for the lookup source. `needs_lookup` is set
-  // if and only if a lookup column is needed -- in the output or by a pushed
-  // filter (the source applies it natively during materialization); a column
-  // needed by neither (left dangling by a statistics-eliminated filter) is
-  // read nowhere.
-  std::vector<duckdb::idx_t> lookup_projected_columns;
-  std::vector<ColumnstoreProjection> cs_projections;
-  bool needs_lookup = false;
-  bool has_real_column = false;
-  // Any output column that emits values (not the empty virtual column): false
-  // means the scan only reports row counts (count(*) shapes).
-  bool has_output_column = false;
-
+  // filter_prune: when set, the scanned column_ids include filter-only columns
+  // the output must not emit. These are indexes into the scanned columns that
+  // form the output (a reorder/narrow); empty = emit the scanned columns as-is.
+  duckdb::vector<duckdb::idx_t> output_projection_ids;
+  // Output slots of the scan-computed virtual columns; INVALID_INDEX when not
+  // projected. tableoid caches its constant value; the generated PK (search
+  // table rowid) materializes from `.col` as a covered column.
+  duckdb::idx_t score_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t tableoid_output_idx = duckdb::DConstants::INVALID_INDEX;
   int64_t tableoid_value = 0;
-
-  bool scan_score = false;
-  duckdb::idx_t score_output_idx = 0;
-  const VectorScorerOptions* vector_scorer = nullptr;
-
-  // Output slot for a search-table generated PK (rowid), materialized from
-  // `.col` as a covered column; INVALID_INDEX when not projected.
   duckdb::idx_t generated_pk_output_idx = duckdb::DConstants::INVALID_INDEX;
+  // Any real (non-virtual) column is scanned / any output column emits values
+  // (the empty virtual column does not): !has_output_column means the scan
+  // only reports row counts (count(*) shapes).
+  bool has_real_column = false;
+  bool has_output_column = false;
 
-  const irs::IndexReader* reader = nullptr;
-  size_t total_segments = 0;
-  std::atomic_uint32_t next_segment{0};
-  // The claimable segments: claimed slots in [0, claimable_segments) map
-  // through `segment_order` -- empty = identity over all segments. Init-time
-  // whole-file classification against the static pushed filters shrinks the
-  // list to survivors (a dynamic bound is still uninitialized at init, so it
-  // classifies NO_PRUNING and never excludes; survivors still classify at
-  // claim, where dynamic bounds have tightened), and ORDER BY <covered column>
-  // LIMIT (bind_data.scan_order) permutes it best-first (scheduling only --
-  // the TopN above still sorts). The scorer prepare phase walks every segment
-  // regardless (corpus-level term stats).
-  std::vector<uint32_t> segment_order;
-  uint32_t claimable_segments = 0;
-
-  uint32_t SegmentAt(uint32_t claimed) const {
-    return segment_order.empty() ? claimed : segment_order[claimed];
+  // The score column is scanned, so scores must be computed.
+  bool ScanScore() const noexcept {
+    return score_output_idx != duckdb::DConstants::INVALID_INDEX;
   }
 
-  std::atomic<duckdb::idx_t> produced_rows{0};
+  // --- Column dispositions (ClassifyColumnstoreProjections): covered columns
+  // materialize from `.col` (`cs_projections`), the rest stay in
+  // `lookup_projected_columns` for the lookup source. `needs_lookup` is set if
+  // and only if a lookup column is needed -- in the output or by a pushed
+  // filter (the source applies it natively during materialization); a column
+  // needed by neither (left dangling by a statistics-eliminated filter) is
+  // read nowhere. ------------------------------------------------------------
+  std::vector<ColumnstoreProjection> cs_projections;
+  std::vector<duckdb::idx_t> lookup_projected_columns;
+  bool needs_lookup = false;
 
+  // --- Pushed filters (BuildTableFilter). -----------------------------------
   // The scan's pushed filters (as duckdb hands them to us), forwarded verbatim
   // to the lookup source so its native scan evaluates lookup-column filters
   // (FilterSelection + late materialization). Lives for the query.
@@ -137,7 +136,6 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // applied during the source lookup, so it forbids the fast collector/bulk
   // paths (which never run the lookup per candidate) -- forces streaming.
   bool has_lookup_filter = false;
-
   // Covered (INCLUDE'd) `.col` filters, applied in-scan by wrapping the search
   // DocIterator in a TableFilterDocIterator (codec Filter + zonemap). `field`
   // keys the segment columnstore; `filter` is the pushed ExpressionFilter.
@@ -161,38 +159,54 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
     duckdb::unique_ptr<duckdb::TableFilter> not_null;
   };
   std::vector<ColFilter> col_filters;
-
-  // Streaming text-score WAND. `score_dynamic_filter` is the shared runtime
-  // bound TOP_N updates (captured from the pushed dynamic score filter; null
-  // when none). When `wand_streaming`, the streaming DocIterator runs with WAND
-  // and its ScoreThresholdAttr is seeded from that bound before each emit, so
-  // below-threshold blocks are skipped -- the HitBatcher score filter still
-  // enforces the exact boundary on the docs that are produced.
+  // Score-filter machinery. `score_dynamic_filter` is the shared runtime bound
+  // TOP_N updates (captured from the pushed dynamic score filter; null when
+  // none). `score_static_floor` is the lower bound implied by pushed static
+  // score filters (`score > c`, Lucene min_score-style): it seeds the WAND
+  // threshold and the top-k collectors so below-bound blocks are skipped from
+  // the first window; the pushed filter still enforces the exact bound
+  // (lowest() = no bound). When `wand_streaming` (Stream mode with a
+  // WAND-enabled text scorer and one of those bounds), the streaming
+  // DocIterator runs with WAND and its ScoreThresholdAttr is seeded from the
+  // bound before each emit -- the HitBatcher score filter still enforces the
+  // exact boundary on the docs that are produced.
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;
-  bool wand_streaming = false;
-  // Lower bound implied by pushed static score filters (`score > c`), Lucene
-  // min_score-style: seeds the WAND threshold (streaming) and the top-k
-  // collector so below-bound blocks are skipped from the first window; the
-  // pushed filter still enforces the exact bound. lowest() = no bound.
   float score_static_floor = std::numeric_limits<float>::lowest();
+  bool wand_streaming = false;
 
-  // filter_prune: when set, the scanned column_ids include filter-only columns
-  // the output must not emit. These are indexes into the scanned columns that
-  // form the output (a reorder/narrow); empty = emit the scanned columns as-is.
-  duckdb::vector<duckdb::idx_t> output_projection_ids;
-
-  // The search predicate (`@@` / vector query), the scorer, and the scan-source
-  // shape. `owned_filter` backs `filter` for vector/match-all queries.
+  // --- The search predicate (`@@` / vector query) and scoring machinery.
+  // `owned_filter` backs `filter` for vector/match-all queries; the prepare
+  // phase fills per-segment queries + merged term statistics. ----------------
   const irs::Filter* filter = nullptr;
   irs::Filter::ptr owned_filter;
   std::unique_ptr<irs::Scorer> scorer_obj;
-  const SereneDBScanBindData* scan = nullptr;
-  ScanMode mode = ScanMode::Stream;
+  std::vector<irs::QueryBuilder::ptr> queries;
+  std::vector<irs::PrepareCollector::ptr> collectors;
+  std::optional<irs::StatsBuffer> stats;
+  absl::Notification prepare_finished;
+  std::atomic_uint32_t prepare_segment = 0;
+  std::atomic_uint32_t prepare_count = 0;
+  std::atomic_uint32_t collector_slots = 0;
 
-  // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for WAND pruning.
-  std::atomic<irs::score_t> global_kth_score =
-    std::numeric_limits<irs::score_t>::lowest();
-  uint32_t rerank_pool = 0;
+  // --- Segment claiming: claimed slots in [0, claimable_segments) map through
+  // `segment_order` -- empty = identity over all segments. Init-time
+  // whole-file classification against the static pushed filters shrinks the
+  // list to survivors (a dynamic bound is still uninitialized at init, so it
+  // classifies NO_PRUNING and never excludes; survivors still classify at
+  // claim, where dynamic bounds have tightened), and ORDER BY <covered column>
+  // LIMIT (bind_data.scan_order) permutes it best-first (scheduling only --
+  // the TopN above still sorts). The scorer prepare phase walks every segment
+  // regardless (corpus-level term stats). ------------------------------------
+  std::vector<uint32_t> segment_order;
+  uint32_t claimable_segments = 0;
+  std::atomic_uint32_t next_segment{0};
+
+  uint32_t SegmentAt(uint32_t claimed) const {
+    return segment_order.empty() ? claimed : segment_order[claimed];
+  }
+
+  // --- The decided plan and its mode-specific state. ------------------------
+  ScanMode mode = ScanMode::Stream;
 
   // ColScan work units: `bulk` slices of all-live segments read `.col`
   // directly; a segment with deletes becomes one non-bulk unit taking the
@@ -203,24 +217,30 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
     uint64_t count;
     bool bulk;
   };
-  std::vector<ScanUnit> scan_units;
-  std::atomic_uint32_t next_unit{0};
+  struct ColScanState {
+    std::vector<ScanUnit> units;
+    std::atomic_uint32_t next_unit{0};
+  };
+  ColScanState col_scan;
 
-  // Prepare phase: per-segment queries + merged term statistics for scoring.
-  std::vector<irs::PrepareCollector::ptr> collectors;
-  std::vector<irs::QueryBuilder::ptr> queries;
-  std::optional<irs::StatsBuffer> stats;
-  absl::Notification prepare_finished;
-  std::atomic_uint32_t prepare_segment = 0;
-  std::atomic_uint32_t prepare_count = 0;
-  std::atomic_uint32_t collector_slots = 0;
+  // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for WAND pruning,
+  // and the over-fetch pool size when quantization / a lookup filter requires
+  // reranking or survivor slack.
+  struct TopKState {
+    std::atomic<irs::score_t> global_kth_score =
+      std::numeric_limits<irs::score_t>::lowest();
+    uint32_t rerank_pool = 0;
+  };
+  TopKState topk;
+
+  std::atomic<duckdb::idx_t> produced_rows{0};
 
   duckdb::idx_t MaxThreads() const final {
     switch (mode) {
       case ScanMode::CountFast:
         return 1;
       case ScanMode::ColScan:
-        return std::max<duckdb::idx_t>(1, scan_units.size());
+        return std::max<duckdb::idx_t>(1, col_scan.units.size());
       default:
         // The scorer prepare phase walks every segment (corpus-level term
         // statistics), even ones the whole-file classification excluded.

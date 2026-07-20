@@ -75,6 +75,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/functions/search.h"
+#include "connector/functions/ts_highlight.h"
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/vector.h"
 #include "connector/index_expression.hpp"
@@ -329,6 +330,27 @@ duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
     get.projection_ids.push_back(proj_idx);
   }
   get.types.push_back(col_type);
+  return get_col_idx;
+}
+
+duckdb::idx_t EnsureGetColumn(connector::SereneDBScanBindData& bind_data,
+                              duckdb::LogicalGet& get,
+                              catalog::Column::Id column_id) {
+  for (duckdb::idx_t i = 0; i < get.GetColumnIds().size(); ++i) {
+    if (ResolveColumnId({get.table_index, duckdb::ProjectionIndex{i}},
+                        bind_data, get) == column_id) {
+      return i;
+    }
+  }
+  const auto found = absl::c_find(bind_data.column_ids, column_id);
+  SDB_ASSERT(found != bind_data.column_ids.end());
+  const auto bind_idx = found - bind_data.column_ids.begin();
+  const auto get_col_idx = get.GetColumnIds().size();
+  const auto proj_idx = get.AddColumnId(bind_idx);
+  if (!get.projection_ids.empty()) {
+    get.projection_ids.push_back(proj_idx);
+  }
+  get.types.push_back(bind_data.column_types[bind_idx]);
   return get_col_idx;
 }
 
@@ -654,6 +676,78 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
     duckdb::Identifier{offsets_col_name}, col_type, binding);
   out->SetAlias(func.GetAlias());
   return out;
+}
+
+void PushdownHighlightsCall(duckdb::BoundFunctionExpression& func,
+                            duckdb::LogicalOperator& root,
+                            duckdb::ClientContext& context) {
+  auto& bind = func.BindInfoMutable()->Cast<connector::TsHighlightsBindData>();
+  if (!bind.field_names.empty()) {
+    return;
+  }
+  if ((func.GetChildren().size() != 1 && func.GetChildren().size() != 2) ||
+      func.GetChildren()[0]->GetExpressionClass() !=
+        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_highlights() first argument must be an index tableoid"));
+  }
+  const auto& anchor =
+    func.GetChildren()[0]->Cast<duckdb::BoundColumnRefExpression>();
+  auto found = FindIResearchScan(root, anchor.Binding().table_index);
+  if (!found) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("ts_highlights() requires an inverted index scan in the same "
+              "sub-query"));
+  }
+  if (!found->bind_data->inverted_index) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("ts_highlights() requires an inverted index"));
+  }
+
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
+  for (const auto column_id : found->bind_data->inverted_index->GetColumns()) {
+    const auto* info =
+      found->bind_data->inverted_index->FindColumnInfo(column_id);
+    if (!info || !info->HasTextDictionary()) {
+      continue;
+    }
+    const auto bind_col = absl::c_find(found->bind_data->column_ids, column_id);
+    if (bind_col == found->bind_data->column_ids.end()) {
+      continue;
+    }
+    const auto bind_idx = bind_col - found->bind_data->column_ids.begin();
+    const auto name = found->bind_data->ColumnNameById(column_id);
+    const auto& type = found->bind_data->column_types[bind_idx];
+    const auto get_col_idx =
+      EnsureGetColumn(*found->bind_data, *found->get, column_id);
+    const auto binding = ExposeGetColumnAt(
+      root, anchor.Binding().table_index, *found->get, get_col_idx, name, type);
+    auto body = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+      duckdb::Identifier{name}, type, binding);
+
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> offsets_args;
+    offsets_args.emplace_back(body->Copy());
+    if (bind.options.max_offsets != 0) {
+      offsets_args.emplace_back(
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value::INTEGER(
+            static_cast<int32_t>(bind.options.max_offsets))));
+    }
+    duckdb::FunctionBinder binder{context};
+    duckdb::ErrorData error;
+    auto offsets = binder.BindScalarFunction(
+      duckdb::Identifier{DEFAULT_SCHEMA},
+      duckdb::Identifier{connector::kOffsets}, std::move(offsets_args), error);
+    if (!offsets) {
+      error.Throw();
+    }
+    bind.field_names.emplace_back(name);
+    children.emplace_back(std::move(body));
+    children.emplace_back(std::move(offsets));
+  }
+  func.GetChildrenMutable() = std::move(children);
 }
 
 enum class TsDictColKind { Term, TermRaw, Count, Freq, Score };
@@ -1770,6 +1864,8 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
                       ERR_MSG(name,
                               "() requires an inverted index scan in the same "
                               "sub-query"));
+    } else if (name == connector::kTsHighlights) {
+      PushdownHighlightsCall(func, root, context);
     } else if (name == connector::kOffsets) {
       if (auto repl = PushdownOffsetsCall(func, root)) {
         expr = std::move(repl);

@@ -32,6 +32,7 @@
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/map_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
@@ -53,6 +54,16 @@
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
+
+duckdb::unique_ptr<duckdb::FunctionData> TsHighlightsBindData::Copy() const {
+  return duckdb::make_uniq<TsHighlightsBindData>(*this);
+}
+
+bool TsHighlightsBindData::Equals(const duckdb::FunctionData& other) const {
+  const auto& rhs = other.Cast<TsHighlightsBindData>();
+  return options == rhs.options && field_names == rhs.field_names;
+}
+
 namespace {
 
 struct UTextDeleter {
@@ -551,6 +562,125 @@ void TsHighlightOffsets(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   RenderChunk(local_state.state, args, bind.options, result);
 }
 
+duckdb::unique_ptr<duckdb::FunctionData> TsHighlightsBind(
+  duckdb::BindScalarFunctionInput& input) {
+  auto bind = duckdb::make_uniq<TsHighlightsBindData>();
+  const auto& args = input.GetArguments();
+  if (args.size() == 2) {
+    if (!args[1]->IsFoldable()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("ts_highlights: options must be a constant expression"));
+    }
+    auto value = duckdb::ExpressionExecutor::EvaluateScalar(
+      input.GetClientContext(), *args[1]);
+    if (!value.IsNull()) {
+      bind->options =
+        highlight::ParseHighlightOptions(duckdb::StringValue::Get(value));
+    }
+  } else if (args.size() != 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("ts_highlights expects tableoid and optional "
+                            "highlight options"));
+  }
+  return bind;
+}
+
+void TsHighlights(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                  duckdb::Vector& result) {
+  const auto& bind = state.expr.Cast<duckdb::BoundFunctionExpression>()
+                       .BindInfo()
+                       ->Cast<TsHighlightsBindData>();
+  if (args.ColumnCount() != bind.field_names.size() * 2) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("ts_highlights() requires an inverted index scan in the same "
+              "sub-query"));
+  }
+
+  const auto count = args.size();
+  std::vector<duckdb::Vector> rendered;
+  std::vector<duckdb::UnifiedVectorFormat> offsets_formats(
+    bind.field_names.size());
+  std::vector<duckdb::UnifiedVectorFormat> rendered_formats(
+    bind.field_names.size());
+  rendered.reserve(bind.field_names.size());
+
+  HighlightState highlight_state;
+  highlight_state.sentence_iter = CreateSentenceIterator();
+  highlight_state.word_iter = CreateWordIterator();
+  const auto offsets_type =
+    duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
+  for (size_t field = 0; field < bind.field_names.size(); ++field) {
+    duckdb::DataChunk pair;
+    pair.InitializeEmpty({duckdb::LogicalType::VARCHAR, offsets_type});
+    pair.data[0].Reference(args.data[field * 2]);
+    pair.data[1].Reference(args.data[field * 2 + 1]);
+    pair.SetCardinality(count);
+    rendered.emplace_back(duckdb::LogicalType::VARCHAR, count);
+    RenderChunk(highlight_state, pair, bind.options, rendered.back());
+    args.data[field * 2 + 1].ToUnifiedFormat(count, offsets_formats[field]);
+    rendered.back().ToUnifiedFormat(count, rendered_formats[field]);
+  }
+
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  duckdb::ListVector::SetListSize(result, 0);
+  duckdb::idx_t entries_count = 0;
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    for (size_t field = 0; field < bind.field_names.size(); ++field) {
+      const auto& format = offsets_formats[field];
+      const auto idx = format.sel->get_index(row);
+      if (!format.validity.RowIsValid(idx)) {
+        continue;
+      }
+      const auto* entries =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(format);
+      entries_count += entries[idx].length != 0;
+    }
+  }
+
+  duckdb::ListVector::Reserve(result, entries_count);
+  auto& keys = duckdb::MapVector::GetKeys(result);
+  auto& values = duckdb::MapVector::GetValues(result);
+  keys.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  values.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  auto* map_entries =
+    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+  auto* key_data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(keys);
+  auto* value_data =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(values);
+
+  duckdb::idx_t output_idx = 0;
+  for (duckdb::idx_t row = 0; row < count; ++row) {
+    const auto start = output_idx;
+    for (size_t field = 0; field < bind.field_names.size(); ++field) {
+      const auto& offsets = offsets_formats[field];
+      const auto offsets_idx = offsets.sel->get_index(row);
+      const auto* offsets_entries =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(offsets);
+      if (!offsets.validity.RowIsValid(offsets_idx) ||
+          offsets_entries[offsets_idx].length == 0) {
+        continue;
+      }
+      const auto& text = rendered_formats[field];
+      const auto text_idx = text.sel->get_index(row);
+      if (!text.validity.RowIsValid(text_idx)) {
+        continue;
+      }
+      const auto* text_data =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(text);
+      key_data[output_idx] =
+        duckdb::StringVector::AddString(keys, bind.field_names[field]);
+      value_data[output_idx] =
+        duckdb::StringVector::AddString(values, text_data[text_idx]);
+      ++output_idx;
+    }
+    map_entries[row] = {start, output_idx - start};
+  }
+  SDB_ASSERT(output_idx == entries_count);
+  duckdb::ListVector::SetListSize(result, output_idx);
+}
+
 duckdb::unique_ptr<duckdb::FunctionData> TsHighlightBind(
   duckdb::BindScalarFunctionInput& input) {
   auto& context = input.GetClientContext();
@@ -729,6 +859,18 @@ void RegisterTsHighlight(duckdb::ExtensionLoader& loader) {
   set.AddFunction(
     MakeSugarFn({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR}));
   loader.RegisterFunction(std::move(set));
+
+  duckdb::ScalarFunction highlights{
+    duckdb::Identifier{kTsHighlights},
+    {duckdb::LogicalType::BIGINT},
+    duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                             duckdb::LogicalType::VARCHAR),
+    TsHighlights,
+    TsHighlightsBind,
+  };
+  highlights.SetVarArgs(duckdb::LogicalType::ANY);
+  highlights.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+  loader.RegisterFunction(std::move(highlights));
 }
 
 }  // namespace sdb::connector

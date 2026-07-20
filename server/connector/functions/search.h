@@ -106,6 +106,7 @@ inline constexpr std::string_view kHasAnyTokens = "has_any_tokens";
 
 // Highlighting + position projections.
 inline constexpr std::string_view kTsHighlight = "ts_highlight";
+inline constexpr std::string_view kTsHighlights = "ts_highlights";
 inline constexpr std::string_view kOffsets = "ts_offsets";
 
 // Term-dictionary access -- optimizer-claimed aggregate stubs.

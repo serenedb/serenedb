@@ -1406,4 +1406,61 @@ The <b>quick</b> brown fox jumps over the lazy dog
 
 
 statement ok
+CREATE TABLE hl_multi (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    body VARCHAR
+)
+
+statement ok
+CREATE INDEX hl_multi_idx ON hl_multi
+USING inverted(id, title hl_simple, body hl_simple)
+
+statement ok
+INSERT INTO hl_multi VALUES
+    (1, 'quick tractor', 'quiet engine'),
+    (2, 'quiet tractor', 'quick engine'),
+    (3, 'quick tractor', 'quick engine')
+
+statement ok
+VACUUM (REFRESH_TABLE) hl_multi
+
+query
+SELECT id,
+       map_keys(ts_highlights(hl_multi_idx.tableoid)) AS fields,
+       coalesce(map_extract_value(ts_highlights(hl_multi_idx.tableoid), 'title'), '-') AS title,
+       coalesce(map_extract_value(ts_highlights(hl_multi_idx.tableoid), 'body'), '-') AS body
+FROM hl_multi_idx
+WHERE (title @@ ts_phrase('quick'))::boost(2.0)
+   OR (body @@ ts_phrase('quick'))::boost(3.0)
+ORDER BY id
+----
+id\tfields\ttitle\tbody
+1\t{title}\t<b>quick</b> tractor\t-
+2\t{body}\t-\t<b>quick</b> engine
+3\t{title,body}\t<b>quick</b> tractor\t<b>quick</b> engine
+
+query
+SELECT map_extract_value(
+    ts_highlights(hl_multi_idx.tableoid, 'StartSel=[, StopSel=]'),
+    'title') AS title
+FROM hl_multi_idx
+WHERE title @@ ts_phrase('quick') AND id = 1
+----
+title
+[quick] tractor
+
+query
+SELECT cardinality(ts_highlights(hl_multi_idx.tableoid)) AS fields
+FROM hl_multi_idx
+WHERE id = 1
+----
+fields
+0
+
+statement ok
+DROP TABLE hl_multi
+
+
+statement ok
 DROP TEXT SEARCH DICTIONARY hl_inplace_dict

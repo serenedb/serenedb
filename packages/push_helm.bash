@@ -8,16 +8,16 @@
 #   helm install mydb \
 #     https://github.com/<org>/<repo>/releases/download/helm-chart-v<ver>/serenedb-<ver>.tgz
 #
-# Usage: release_chart.bash [--draft]
-# Requires: gh (authenticated), a package produced by package_chart.bash.
+# Usage: push_helm.bash [--draft]
+# Requires: gh (authenticated), a package produced by build_helm.bash.
 # Published chart versions are immutable: refuses to overwrite an existing
 # non-draft release.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-CHART_YAML="${SCRIPT_DIR}/serenedb/Chart.yaml"
-OUT_DIR="${SCRIPT_DIR}/out"
+CHART_YAML="${SCRIPT_DIR}/helm/serenedb/Chart.yaml"
+OUT_DIR="${SCRIPT_DIR}/helm/out"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 error() {
@@ -35,7 +35,7 @@ APP_VERSION=$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CHART_Y
 TGZ="${OUT_DIR}/serenedb-${CHART_VERSION}.tgz"
 TAG="helm-chart-v${CHART_VERSION}"
 
-[[ -f "$TGZ" ]] || error "${TGZ} not found -- run package_chart.bash first"
+[[ -f "$TGZ" ]] || error "${TGZ} not found -- run build_helm.bash first"
 
 if gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q false; then
 	error "release ${TAG} already published -- bump the chart version instead of overwriting"

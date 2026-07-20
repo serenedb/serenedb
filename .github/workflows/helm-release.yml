@@ -83,11 +83,11 @@ jobs:
             fi
             APP_VERSION="0.0.0"   # dry-run placeholder
           fi
-          bash packages/helm/stamp_chart_version.bash "$APP_VERSION" "${{ steps.version.outputs.chart_version }}"
+          bash packages/stamp_helm_version.bash "$APP_VERSION" "${{ steps.version.outputs.chart_version }}"
           grep -E '^(version|appVersion):' packages/helm/serenedb/Chart.yaml
 
       - name: Lint and package
-        run: bash packages/helm/package_chart.bash
+        run: bash packages/build_helm.bash
 
       - name: Upload chart artifact
         uses: actions/upload-artifact@v4
@@ -100,4 +100,4 @@ jobs:
         if: inputs.PUBLISH
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash packages/helm/release_chart.bash
+        run: bash packages/push_helm.bash

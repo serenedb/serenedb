@@ -2,14 +2,14 @@
 
 # Lints and packages the serenedb helm chart into packages/helm/out/.
 #
-# Usage: package_chart.bash
+# Usage: build_helm.bash
 # Requires: helm 3.8+
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-CHART_DIR="${SCRIPT_DIR}/serenedb"
-OUT_DIR="${SCRIPT_DIR}/out"
+CHART_DIR="${SCRIPT_DIR}/helm/serenedb"
+OUT_DIR="${SCRIPT_DIR}/helm/out"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 error() {

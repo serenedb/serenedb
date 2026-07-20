@@ -5,7 +5,7 @@
 # published packages).
 #
 # Usage:
-#   stamp_chart_version.bash APP_VERSION CHART_VERSION
+#   stamp_helm_version.bash APP_VERSION CHART_VERSION
 #
 #   APP_VERSION    SereneDB version being shipped, e.g. 26.07.2
 #   CHART_VERSION  chart version to publish, e.g. 0.0.7
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-CHART_YAML="${SCRIPT_DIR}/serenedb/Chart.yaml"
+CHART_YAML="${SCRIPT_DIR}/helm/serenedb/Chart.yaml"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 error() {
@@ -21,8 +21,8 @@ error() {
 	exit 1
 }
 
-APP_VERSION="${1:?usage: stamp_chart_version.bash APP_VERSION CHART_VERSION}"
-CHART_VERSION="${2:?usage: stamp_chart_version.bash APP_VERSION CHART_VERSION}"
+APP_VERSION="${1:?usage: stamp_helm_version.bash APP_VERSION CHART_VERSION}"
+CHART_VERSION="${2:?usage: stamp_helm_version.bash APP_VERSION CHART_VERSION}"
 
 [[ -f "$CHART_YAML" ]] || error "$CHART_YAML not found"
 [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||

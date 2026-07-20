@@ -175,8 +175,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
 
 ObjectId TableScanBindData::RelationId() const { return table->GetId(); }
 
-bool SereneDBScanBindData::IsColumnNotNull(
-  catalog::Column::Id col_id) const {
+bool SereneDBScanBindData::IsColumnNotNull(catalog::Column::Id col_id) const {
   if (GetKind() != Kind::Table) {
     return false;
   }

@@ -5057,7 +5057,7 @@ void InitCatalog() {
       .options = static_cast<uint32_t>(RoleOption::All),
       .conn_limit = Role::kNoConnLimit,
       .valid_until = Role::kNoValidUntil,
-      .password_verifier = std::move(initial_verifier),
+      .password_verifier = {std::move(initial_verifier)},
     });
     GetCatalog().CreateRole(NoAccessCheck(), std::move(root));
   }

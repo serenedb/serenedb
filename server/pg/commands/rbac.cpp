@@ -211,8 +211,8 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
     .options = static_cast<uint32_t>(opts),
     .conn_limit = conn_limit,
     .valid_until = valid_until,
-    .password_verifier = MakePasswordVerifier(
-      options.has_password, options.password, options.password_is_null),
+    .password_verifier = {MakePasswordVerifier(
+      options.has_password, options.password, options.password_is_null)},
   });
 
   catalog.CreateRole(catalog::ActingAs(ctx.GetRoleId()), std::move(role));

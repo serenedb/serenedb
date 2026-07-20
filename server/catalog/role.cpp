@@ -49,7 +49,7 @@ Role::Role(persistence::RoleData data)
     _valid_until{std::move(data.valid_until)},
     _config{std::move(data.config)},
     _default_acls{std::move(data.default_acls)},
-    _password_verifier{std::move(data.password_verifier)} {
+    _password_verifier{std::move(data.password_verifier.value)} {
   if (_name == StaticStrings::kDefaultUser) {
     _options |= RoleOption::Superuser;
   }
@@ -65,7 +65,7 @@ void catalog::Role::Serialize(duckdb::Serializer& sink) const {
                              .valid_until = _valid_until,
                              .config = _config,
                              .default_acls = _default_acls,
-                             .password_verifier = _password_verifier,
+                             .password_verifier = {_password_verifier},
                            });
 }
 
@@ -153,7 +153,7 @@ std::shared_ptr<Object> Role::Clone() const {
     .valid_until = _valid_until,
     .config = _config,
     .default_acls = _default_acls,
-    .password_verifier = _password_verifier,
+    .password_verifier = {_password_verifier},
   });
 }
 

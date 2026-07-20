@@ -128,13 +128,23 @@ class UnionTokenizer final : public TypedAnalyzer<UnionTokenizer>,
 
 template<typename Context>
 void SerdeWrite(Context ctx, const UnionTokenizer::Options& o) {
-  sdb::basics::WriteTuple(ctx.io(), std::tie(o.children), ctx.arg());
+  if constexpr (std::is_same_v<typename Context::Format,
+                               sdb::basics::ObjectFormat>) {
+    sdb::basics::WriteObject(ctx.io(), std::tie(o.children), ctx.arg());
+  } else {
+    sdb::basics::WriteTuple(ctx.io(), std::tie(o.children), ctx.arg());
+  }
 }
 
 template<typename Context>
 void SerdeRead(Context ctx, UnionTokenizer::Options& o) {
   auto refs = std::tie(o.children);
-  sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+  if constexpr (std::is_same_v<typename Context::Format,
+                               sdb::basics::ObjectFormat>) {
+    sdb::basics::ReadObject(ctx.io(), refs, ctx.arg());
+  } else {
+    sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
+  }
 }
 
 }  // namespace irs::analysis

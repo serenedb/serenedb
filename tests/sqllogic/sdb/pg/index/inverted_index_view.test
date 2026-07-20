@@ -81,14 +81,6 @@ CREATE VIEW union_v AS
 statement ok
 CREATE INDEX union_idx ON union_v USING inverted(id, body view_idx_en);
 
-# on_conflict governs duplicate lookup keys for indexes over attached
-# external-DB tables only; a plain view has no external lookup key. It is
-# validated and sanitised at bind time (ApplyExternalKeyOnConflict), so the
-# physical operator only ever sees a bind-approved value -- a user WITH clause
-# cannot forge one to drive the op into a fast-path it does not satisfy.
-statement error
-CREATE INDEX union_oc_idx ON union_v USING inverted(id, body view_idx_en) WITH (on_conflict = 'nothing');
-
 query
 SELECT count(*) FROM union_idx WHERE body @@ ts_phrase('pudge');
 ----

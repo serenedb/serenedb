@@ -22,7 +22,6 @@
 
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -39,7 +38,6 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
-#include "basics/containers/flat_hash_set.h"
 #include "basics/debugging.h"
 #include "basics/primary_key.hpp"
 #include "basics/system-compiler.h"
@@ -77,50 +75,6 @@ struct InsertColumnMeta {
   size_t input_col_idx;
 };
 
-// on_conflict = 'throw' (the default): refuse to build an index over an
-// external-DB table whose lookup key has duplicated values -- the index
-// re-fetches matched rows by key value, which needs one row per key. Plain
-// DuckDB SQL through the attached catalog: projection pushdown ships only the
-// key column and the probe stops at the first offending key.
-void ThrowOnDuplicateExternalKeys(duckdb::ClientContext& context,
-                                  const ViewFastPath& fast_path) {
-  const auto& ref = *fast_path.catalog_ref;
-  const auto table = absl::StrCat(catalog::QuoteSqlIdentifier(ref.catalog), ".",
-                                  catalog::QuoteSqlIdentifier(ref.schema), ".",
-                                  catalog::QuoteSqlIdentifier(ref.table));
-  // Only an ExternalColumnKey (Unverified uniqueness) is probed; the GROUP BY /
-  // projection list is its key columns (auto metadata PK or user key_columns).
-  const auto n_key_cols = fast_path.key_columns.size();
-  std::string key;
-  for (const auto& kc : fast_path.key_columns) {
-    if (!key.empty()) {
-      absl::StrAppend(&key, ", ");
-    }
-    absl::StrAppend(&key, catalog::QuoteSqlIdentifier(kc.name));
-  }
-  const auto sql =
-    absl::StrCat("SELECT ", key, ", count(*) AS n FROM ", table, " GROUP BY ",
-                 key, " HAVING count(*) > 1 LIMIT 1");
-  duckdb::Connection con(*context.db);
-  auto result = con.Query(sql);
-  if (result->HasError()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-                    ERR_MSG("checking lookup-key uniqueness on ", table,
-                            " failed: ", result->GetError()));
-  }
-  auto chunk = result->Fetch();
-  if (chunk && chunk->size() > 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-      ERR_MSG("cannot index ", table, ": lookup key (", key,
-              ") is not unique (value ", chunk->GetValue(0, 0).ToString(),
-              " occurs ", chunk->GetValue(n_key_cols, 0).ToString(),
-              " times), so matched rows cannot be re-fetched by key; "
-              "deduplicate the table or use WITH (on_conflict = 'nothing') "
-              "to index one row per key"));
-  }
-}
-
 struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool created = false;
   bool finalized = false;
@@ -138,11 +92,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   catalog::PkColumnKind pk_column = catalog::PkColumnKind::None;
   duckdb::idx_t pk_hi_col_idx = 0;
   duckdb::idx_t pk_lo_col_idx = 0;
-  // on_conflict = 'nothing': Sink keeps the first row seen per external key
-  // and drops the rest, so the index holds one document per key value.
-  bool collapse_dup_keys = false;
-  absl::Mutex seen_keys_lock;
-  containers::FlatHashSet<int64_t> seen_keys;
 
   std::atomic<duckdb::idx_t> backfill_count_atomic{0};
 
@@ -330,35 +279,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   // CREATE INDEX requires ownership of the target relation; the mutation
   // enforces it and throws "must be owner of table <name>" on a non-owner.
-
-  if (auto it = _info->options.find("on_conflict");
-      it != _info->options.end()) {
-    if (it->second.GetValue<std::string>() == "nothing") {
-      state->collapse_dup_keys = true;
-    } else {
-      // 'throw': probe the source for duplicate keys before building. The
-      // option is stamped by BindCreateIndex only for an external-key view,
-      // but the source can change between bind and execute (DETACH, CREATE OR
-      // REPLACE VIEW, a remote PK ALTER), so re-resolve and error cleanly
-      // rather than blindly trusting the earlier decision -- a stale assumption
-      // here would be UB in release (asserts compiled out).
-      std::optional<ViewFastPath> fast_path;
-      if (_relation && _relation->GetType() == catalog::ObjectType::PgSqlView) {
-        auto key_cols = KeyColumnsFromOptions(_info->options);
-        fast_path = ResolveViewFastPath(
-          context, static_cast<const catalog::PgSqlView&>(*_relation),
-          key_cols);
-      }
-      if (!fast_path || !fast_path->catalog_ref) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("cannot build index \"", state->index_name,
-                  "\": its source is no longer an attached external-database "
-                  "table with a single-column key"));
-      }
-      ThrowOnDuplicateExternalKeys(context, *fast_path);
-    }
-  }
 
   bool created = false;
   if (state->index_type == catalog::ObjectType::InvertedIndex) {
@@ -598,34 +518,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
-
-  if (gstate.collapse_dup_keys) {
-    // on_conflict = 'nothing': the first row seen per key survives, across
-    // all sink threads; which row that is follows scan arrival order.
-    SDB_ASSERT(gstate.pk_column == catalog::PkColumnKind::I64);
-    SDB_ASSERT(gstate.pk_hi_col_idx < chunk.ColumnCount());
-    auto& key_vec = chunk.data[gstate.pk_hi_col_idx];
-    duckdb::UnifiedVectorFormat fmt;
-    key_vec.ToUnifiedFormat(num_rows, fmt);
-    auto* keys = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
-    duckdb::SelectionVector sel(num_rows);
-    duckdb::idx_t kept = 0;
-    {
-      absl::MutexLock lock{&gstate.seen_keys_lock};
-      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-        if (gstate.seen_keys.insert(keys[fmt.sel->get_index(row)]).second) {
-          sel.set_index(kept++, row);
-        }
-      }
-    }
-    if (kept == 0) {
-      return duckdb::SinkResultType::NEED_MORE_INPUT;
-    }
-    if (kept < num_rows) {
-      chunk.Slice(sel, kept);
-      num_rows = kept;
-    }
   }
 
   if (!ParallelSink()) {

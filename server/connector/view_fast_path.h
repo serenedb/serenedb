@@ -59,15 +59,6 @@ struct ExternalKeyColumn {
   duckdb::LogicalType type;       // projected + stored type
 };
 
-// What the source engine promises about the lookup key's uniqueness.
-enum class PkUniqueness {
-  // Only a sorting/ordering hint (a ClickHouse MergeTree "primary key") --
-  // duplicates are possible, CREATE INDEX must handle them (on_conflict).
-  Unverified,
-  // The engine enforces uniqueness itself (a postgres PRIMARY KEY).
-  Enforced,
-};
-
 struct ViewFastPath {
   duckdb::vector<duckdb::Value> args;
   duckdb::named_parameter_map_t named_params;
@@ -85,7 +76,6 @@ struct ViewFastPath {
   // (ExternalRowId, pushed as a `ctid IN (...)` TID scan) or `WHERE col IN
   // (...)` / an OR of per-row equalities (ExternalColumnKey).
   duckdb::vector<ExternalKeyColumn> key_columns;
-  PkUniqueness pk_uniqueness = PkUniqueness::Unverified;
   // Whether the backing reader's lookup applies pushed table filters (parquet /
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see
   // IResearchSupportsPushdownType.
@@ -93,9 +83,9 @@ struct ViewFastPath {
 };
 
 // An external key is stored as a single BIGINT column (I64) when it is the ctid
-// rowid or a single BIGINT column -- both fit the int64 fast path (and its
-// on_conflict = 'nothing' collapse). Any other shape (a non-BIGINT column, or
-// more than one column) is stored as a STRUCT column of the key columns' types.
+// rowid or a single BIGINT column -- both fit the int64 fast path. Any other
+// shape (a non-BIGINT column, or more than one column) is stored as a STRUCT
+// column of the key columns' types.
 inline bool ExternalKeyIsI64(const ViewFastPath& fp) noexcept {
   return fp.pk_spec == catalog::PkSpec::ExternalRowId ||
          (fp.pk_spec == catalog::PkSpec::ExternalColumnKey &&

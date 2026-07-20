@@ -342,6 +342,69 @@ statement ok
 DROP TABLE pg_${__DATABASE__}.iipgscan_docs.typed;
 
 
+# ===== wide projection: many real columns materialised through one lookup =====
+# Every non-indexed column below is re-fetched from postgres by the external
+# lookup (nothing is INCLUDE'd), covering a wide per-row column copy of mixed
+# types and NULLs in one batch.
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.vedernikoff (
+  id         BIGINT PRIMARY KEY,
+  body       TEXT,
+  kostya     SMALLINT,
+  gul        INTEGER,
+  deadinside BIGINT,
+  clickclack DOUBLE PRECISION,
+  abramov    NUMERIC(10,2),
+  arelav     DATE,
+  androed    TIMESTAMP,
+  ksimironov BOOLEAN,
+  krivda     VARCHAR
+);
+
+
+statement count 3
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.vedernikoff VALUES
+  (1, 'pudge hooks the courier', 42, 322, 10000000666, 1.5, 12.34,
+   DATE '2020-01-01', TIMESTAMP '2020-01-01 12:30:00', true, 'alpha'),
+  (2, 'anchin sleeps through the game', 8, 200, 20000000993, 2.5, 56.78,
+   DATE '2021-02-02', TIMESTAMP '2021-02-02 08:15:00', false, 'beta'),
+  (3, 'pudge misses every hook', NULL, NULL, NULL, NULL, NULL,
+   NULL, NULL, NULL, NULL);
+
+
+statement ok
+CREATE VIEW pg_vedernikoff_v_${__DATABASE__} AS
+  SELECT id, body, kostya, gul, deadinside, clickclack, abramov, arelav,
+         androed, ksimironov, krivda
+  FROM pg_${__DATABASE__}.iipgscan_docs.vedernikoff;
+
+
+statement ok
+CREATE INDEX pg_vedernikoff_v_idx_${__DATABASE__}
+  ON pg_vedernikoff_v_${__DATABASE__}
+  USING inverted(id, body pg_en_${__DATABASE__})
+  WITH (key_columns = 'id');
+
+
+query
+SELECT id, kostya, gul, deadinside, clickclack, abramov, arelav, androed,
+       ksimironov, krivda, body
+FROM pg_vedernikoff_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	kostya	gul	deadinside	clickclack	abramov	arelav	androed	ksimironov	krivda	body
+1	42	322	10000000666	1.5	12.34	2020-01-01	2020-01-01 12:30:00	t	alpha	pudge hooks the courier
+3	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	pudge misses every hook
+
+
+statement ok
+DROP VIEW pg_vedernikoff_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.vedernikoff;
+
+
 # ===== missing key: a source row deleted after CREATE INDEX is DROPPED =====
 # The index is a snapshot; if a matched doc's source row is later deleted, the
 # re-fetch returns nothing for that key and the row is dropped -- not surfaced as

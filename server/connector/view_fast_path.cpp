@@ -390,7 +390,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.catalog_ref = ext_ref;
       out.pk_spec = catalog::PkSpec::ExternalColumnKey;
       out.key_columns = std::move(cols);
-      out.pk_uniqueness = PkUniqueness::Unverified;
       out.projection_columns = std::move(projection_columns);
       return out;
     }
@@ -404,7 +403,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       ViewFastPath out;
       out.catalog_ref = ext_ref;
       out.pk_spec = catalog::PkSpec::ExternalRowId;
-      out.pk_uniqueness = PkUniqueness::Enforced;
       out.projection_columns = std::move(projection_columns);
       return out;
     }
@@ -415,8 +413,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // via the engine-agnostic catalog API) -- i.e. auto-detected key_columns.
       // v1: a single 64-bit integer column; anything else -> no fast path.
       // NB: the ClickHouse "primary key" is only a sorting prefix, not a
-      // uniqueness constraint (correctness assumes uniqueness -- see
-      // on_conflict).
+      // uniqueness constraint; duplicate key values each index their own
+      // document, and the lookup fills all of them from whichever source row
+      // the re-fetch returns first.
       std::optional<std::string> pk_name;
       for (const auto& constraint : entry.GetConstraints()) {
         if (constraint->type != duckdb::ConstraintType::UNIQUE) {
@@ -457,7 +456,6 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.key_columns.push_back({.name = std::move(*pk_name),
                                  .source_index = *pk_index,
                                  .type = duckdb::LogicalType::BIGINT});
-      out.pk_uniqueness = PkUniqueness::Unverified;
       out.projection_columns = std::move(projection_columns);
       return out;
     }

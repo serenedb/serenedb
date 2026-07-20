@@ -254,6 +254,7 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
 StoreTableDef MakeStoreTableDef(const Table& table) {
   StoreTableDef def;
   def.name = StoreTableName(table.GetId());
+  def.table_id = table.GetId();
   const auto& cols = table.Columns();
   std::vector<size_t> mirror_pos(cols.size(), SIZE_MAX);
   def.columns.reserve(cols.size());
@@ -534,6 +535,7 @@ void CatalogStore::WriteContext::DropStoreIndex(ObjectId index_id,
     .store_index =
       {
         .table = StoreTableName(relation_id),
+        .table_id = relation_id,
         .index_id = index_id,
       },
   });

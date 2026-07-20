@@ -55,6 +55,7 @@ struct StoreForeignKey {
 
 struct StoreTableDef {
   std::string name;
+  ObjectId table_id;
   std::vector<StoreTableColumn> columns;
   // Indices into `columns`.
   std::vector<size_t> not_null;

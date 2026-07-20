@@ -66,17 +66,6 @@ namespace {
 constexpr std::string_view kStoreAlias = kStoreDatabaseName;
 constexpr std::string_view kStoreFile = "data.db";
 
-duckdb::optional_ptr<duckdb::CatalogEntry> LookupStoreTable(
-  duckdb::ClientContext& context, const std::string& name) {
-  duckdb::EntryLookupInfo lookup{
-    duckdb::CatalogType::TABLE_ENTRY,
-    duckdb::QualifiedName{duckdb::Identifier{kStoreAlias},
-                          duckdb::Identifier{"main"},
-                          duckdb::Identifier{name}}};
-  return duckdb::Catalog::GetEntry(context, lookup,
-                                   duckdb::OnEntryNotFound::RETURN_NULL);
-}
-
 void ExecOrFatal(duckdb::Connection& conn, const std::string& sql) {
   auto res = conn.Query(sql);
   if (res->HasError()) {
@@ -274,13 +263,14 @@ absl::Status DataStore::ExecuteEntry(const CatalogStore::Entry& entry) {
         // and inject it into the live index list -- same publication point
         // as duckdb's own CREATE INDEX finalize (storage.AddIndex), so
         // commit-time feeding starts exactly where it used to.
-        auto table_entry = LookupStoreTable(*_conn->context, def.table);
+        auto table_entry = GetStoreTableEntry(
+          *_conn->context, def.table_id, duckdb::OnEntryNotFound::RETURN_NULL);
         if (!table_entry) {
           return absl::InternalError(
             absl::StrCat("store table ", def.table, " missing"));
         }
         SDB_ASSERT(entry.table_obj && entry.index_obj);
-        auto& storage = table_entry->Cast<duckdb::DuckTableEntry>().GetStorage();
+        auto& storage = table_entry->GetStorage();
         // Concurrency: the online build (SereneDBPhysicalCreateIndex) holds
         // this table's exclusive checkpoint lock across the injection and its
         // backfill-snapshot pin, so no commit straddles the publication. The
@@ -317,11 +307,10 @@ absl::Status DataStore::ExecuteEntry(const CatalogStore::Entry& entry) {
       // live list; anything else keeps the SQL drop. The table itself may
       // already be gone (index drops ride table/schema drops), then there is
       // nothing to unlink.
-      if (auto table_entry = LookupStoreTable(*_conn->context, def.table)) {
-        auto& list = table_entry->Cast<duckdb::DuckTableEntry>()
-                       .GetStorage()
-                       .GetDataTableInfo()
-                       ->GetIndexes();
+      if (auto table_entry = GetStoreTableEntry(
+            *_conn->context, def.table_id,
+            duckdb::OnEntryNotFound::RETURN_NULL)) {
+        auto& list = table_entry->GetStorage().GetDataTableInfo()->GetIndexes();
         const duckdb::Identifier name{StoreIndexName(def.index_id)};
         if (auto found = list.Find(name);
             found && found->GetIndexType() ==
@@ -514,11 +503,12 @@ namespace {
 // and type). Used to decide a PendingAlter's direction.
 bool StoreShapeMatches(duckdb::ClientContext& context,
                        const StoreTableDef& def) {
-  auto entry = LookupStoreTable(context, def.name);
+  auto entry = GetStoreTableEntry(context, def.table_id,
+                                  duckdb::OnEntryNotFound::RETURN_NULL);
   if (!entry) {
     return false;
   }
-  const auto& columns = entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
+  const auto& columns = entry->GetColumns();
   if (columns.LogicalColumnCount() != def.columns.size()) {
     return false;
   }
@@ -595,11 +585,11 @@ void DataStore::ValidateStoreTable(const StoreTableDef& def) {
     return;
   }
   try {
-    auto entry = LookupStoreTable(*_conn->context, def.name);
+    auto entry = GetStoreTableEntry(*_conn->context, def.table_id,
+                                    duckdb::OnEntryNotFound::RETURN_NULL);
     SDB_ASSERT(entry, "store table missing for ", def.name);
     if (entry) {
-      const auto& columns =
-        entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
+      const auto& columns = entry->GetColumns();
       SDB_ASSERT(columns.LogicalColumnCount() == def.columns.size(),
                  "store table column count mismatch for ", def.name);
       duckdb::idx_t i = 0;
@@ -718,9 +708,10 @@ void DataStore::ReconcileTable(const Table& table) {
   std::vector<ActualColumn> actual;
   bool exists = false;
   _conn->BeginTransaction();
-  if (auto entry = LookupStoreTable(*_conn->context, def.name)) {
+  if (auto entry = GetStoreTableEntry(*_conn->context, def.table_id,
+                                      duckdb::OnEntryNotFound::RETURN_NULL)) {
     exists = true;
-    const auto& columns = entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
+    const auto& columns = entry->GetColumns();
     actual.reserve(columns.LogicalColumnCount());
     for (const auto& col : columns.Logical()) {
       actual.push_back({col.Name().GetIdentifierName(), col.Type()});
@@ -804,10 +795,10 @@ void DataStore::ReconcileTable(const Table& table) {
     _conn->BeginTransaction();
     try {
       if (index_def->kind == StoreIndexDef::Kind::Inverted) {
-        if (auto table_entry =
-              LookupStoreTable(*_conn->context, index_def->table)) {
-          index_exists = table_entry->Cast<duckdb::DuckTableEntry>()
-                           .GetStorage()
+        if (auto table_entry = GetStoreTableEntry(
+              *_conn->context, index_def->table_id,
+              duckdb::OnEntryNotFound::RETURN_NULL)) {
+          index_exists = table_entry->GetStorage()
                            .GetDataTableInfo()
                            ->GetIndexes()
                            .Find(duckdb::Identifier{

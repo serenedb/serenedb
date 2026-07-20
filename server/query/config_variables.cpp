@@ -545,6 +545,27 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "password_encryption",
+      {
+        LogicalTypeId::VARCHAR,
+        "Algorithm used to encrypt passwords (always SCRAM-SHA-256). Accepted "
+        "for PostgreSQL compatibility (libpq \\password probes it).",
+        [] { return duckdb::Value{"scram-sha-256"}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "row_security",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Whether row-level security is applied. Accepted for PostgreSQL "
+        "compatibility (pg_dump emits SET row_security = off); no runtime "
+        "effect (RLS is not yet enforced).",
+        [] { return duckdb::Value::BOOLEAN(true); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       "server_encoding",
       {
         LogicalTypeId::VARCHAR,

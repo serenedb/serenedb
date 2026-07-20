@@ -928,6 +928,31 @@ inline constexpr SystemMacro kExternalMacros[] = {
         ELSE CAST(NULL AS TEXT[])
       END)"},
 
+  // makeaclitem(grantee, grantor, privileges, is_grantable): one aclitem in
+  // PG's `grantee=privchars[*]/grantor` text form. Chars emit in canonical
+  // order (not input order); the unrecognized-privilege error preserves the
+  // input token's case, like PG.
+  {"pg_catalog", "makeaclitem",
+   R"((grantee, grantor, privileges, is_grantable) AS (
+      WITH canon(ord,chr,nm) AS (VALUES
+          (1,'a','INSERT'),(2,'r','SELECT'),(3,'w','UPDATE'),(4,'d','DELETE'),
+          (5,'D','TRUNCATE'),(6,'x','REFERENCES'),(7,'t','TRIGGER'),(8,'m','MAINTAIN'),
+          (9,'X','EXECUTE'),(10,'U','USAGE'),(11,'C','CREATE'),(12,'T','TEMPORARY'),
+          (13,'c','CONNECT'),(12,'T','TEMP')),
+      toks AS (SELECT trim(t) AS tok FROM unnest(string_split(privileges, ',')) AS s(t)),
+      bad AS (SELECT tok FROM toks WHERE upper(tok) NOT IN (SELECT nm FROM canon) LIMIT 1)
+      SELECT CASE WHEN EXISTS (SELECT 1 FROM bad)
+        THEN error('unrecognized privilege type: "' || (SELECT tok FROM bad) || '"')
+        ELSE
+          CASE WHEN grantee = 0 THEN ''
+               ELSE COALESCE((SELECT rolname FROM pg_catalog.pg_authid WHERE oid=grantee), grantee::text) END
+          || '='
+          || COALESCE((SELECT string_agg(chr || CASE WHEN is_grantable THEN '*' ELSE '' END, '' ORDER BY ord)
+              FROM (SELECT DISTINCT ord,chr FROM canon WHERE nm IN (SELECT upper(tok) FROM toks)) d), '')
+          || '/'
+          || COALESCE((SELECT rolname FROM pg_catalog.pg_authid WHERE oid=grantor), grantor::text)
+        END))"},
+
   // Stubs for PG C built-in functions from ruleutils.c / misc.
   // These take OIDs and return text representations of database objects.
   // TODO(mbkkt): implement properly -- currently return NULL.
@@ -1143,12 +1168,12 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "has_language_privilege", "(a, b) AS true, (a, b, c) AS true"},
 
   // has_tablespace_privilege: SereneDB has only the hardcoded pg_default (oid
-  // 1663), whose default ACL grants nothing to PUBLIC (world_default =
-  // NO_RIGHTS). PG: superuser -> true; non-superuser on pg_default -> false (no
-  // PUBLIC create); non-superuser on a nonexistent oid -> NULL. Matches PG.
+  // 1663) and pg_global (1664), whose default ACLs grant nothing to PUBLIC
+  // (world_default = NO_RIGHTS). PG: superuser -> true; non-superuser on either
+  // -> false (no PUBLIC create); non-superuser on a nonexistent oid -> NULL.
   {"pg_catalog", "has_tablespace_privilege",
-   "(a, b) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = current_user) THEN true WHEN a::text = '1663' THEN false ELSE CAST(NULL AS BOOLEAN) END, "
-   "(a, b, c) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = a::text OR oid::text = a::text) THEN true WHEN b::text = '1663' THEN false ELSE CAST(NULL AS BOOLEAN) END"},
+   "(a, b) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = current_user) THEN true WHEN a::text IN ('1663', 'pg_default', '1664', 'pg_global') THEN false ELSE CAST(NULL AS BOOLEAN) END, "
+   "(a, b, c) AS CASE WHEN (SELECT rolsuper FROM pg_catalog.pg_authid WHERE rolname = a::text OR oid::text = a::text) THEN true WHEN b::text IN ('1663', 'pg_default', '1664', 'pg_global') THEN false ELSE CAST(NULL AS BOOLEAN) END"},
 
   // Real: name||'_'||oid, matching PG's nameconcatoid.
   {"pg_catalog", "nameconcatoid", "(a, b) AS CAST(a || '_' || CAST(b AS TEXT) AS TEXT)"},

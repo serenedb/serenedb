@@ -31,9 +31,10 @@
 namespace sdb::pg {
 namespace {
 
-constexpr uint64_t kNullMask = MaskFromNulls({
-  GetIndex(&PgAuthid::rolpassword),
-});
+// pg_authid is superuser-only, so (like PostgreSQL) it exposes the stored
+// password verifier -- pg_dumpall reads it to migrate passwords.
+constexpr uint64_t kRolpasswordNull =
+  MaskFromNulls({GetIndex(&PgAuthid::rolpassword)});
 
 Timestamptz ValidUntilOf(const catalog::Role& role) {
   if (!role.HasValidUntil()) {
@@ -61,6 +62,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
       .rolreplication = role->Has(RoleOption::Replication),
       .rolbypassrls = role->Has(RoleOption::BypassRls),
       .rolconnlimit = role->ConnLimit(),
+      .rolpassword = role->PasswordVerifier(),
       .rolvaliduntil = ValidUntilOf(*role),
     };
     values.push_back(std::move(row));
@@ -68,7 +70,9 @@ catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
 
   auto result = CreateColumns<PgAuthid>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *catalog);
+    const uint64_t mask =
+      values[row].rolpassword.empty() ? kRolpasswordNull : 0;
+    WriteData(result, values[row], mask, row, *catalog);
   }
   return {std::move(result), values.size()};
 }

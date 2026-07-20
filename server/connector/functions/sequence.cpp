@@ -45,7 +45,7 @@ namespace {
 
 std::shared_ptr<catalog::Sequence> ResolveSequence(
   duckdb::ClientContext& context, std::string_view qualified,
-  catalog::AclMode need) {
+  catalog::AclMode need, bool match_any = false) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
   std::string_view schema_name = qname.Schema().empty()
                                    ? StaticStrings::kPublic
@@ -59,9 +59,10 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  auto seq =
-    snapshot->GetSequence(catalog::RequireAccess(context, need), database_id,
-                          schema->GetId(), qname.Name().GetIdentifierName());
+  auto ax = match_any ? catalog::RequireAccessAny(context, need)
+                      : catalog::RequireAccess(context, need);
+  auto seq = snapshot->GetSequence(ax, database_id, schema->GetId(),
+                                   qname.Name().GetIdentifierName());
   if (!seq) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));
@@ -101,15 +102,19 @@ uint64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
 }
 
 uint64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
+  // PostgreSQL: nextval needs USAGE OR UPDATE (either suffices).
   return Nextval(
     *ResolveSequence(context, qualified,
-                     catalog::AclMode::Usage | catalog::AclMode::Update),
+                     catalog::AclMode::Usage | catalog::AclMode::Update,
+                     /*match_any=*/true),
     qualified);
 }
 
 uint64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
-  auto seq = ResolveSequence(
-    context, qualified, catalog::AclMode::Usage | catalog::AclMode::Select);
+  // PostgreSQL: currval needs USAGE OR SELECT (either suffices).
+  auto seq = ResolveSequence(context, qualified,
+                             catalog::AclMode::Usage | catalog::AclMode::Select,
+                             /*match_any=*/true);
   uint64_t raw = seq->Read();
   if (raw == seq->Options().Seed()) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -151,7 +156,8 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       duckdb::ConstantVector::GetData<duckdb::string_t>(args.data[0]);
     std::string_view qualified{name_data->GetData(), name_data->GetSize()};
     auto seq = ResolveSequence(
-      context, qualified, catalog::AclMode::Usage | catalog::AclMode::Update);
+      context, qualified, catalog::AclMode::Usage | catalog::AclMode::Update,
+      /*match_any=*/true);
     const auto& opts = seq->Options();
     uint64_t batch_span = static_cast<uint64_t>(num_rows) * opts.increment;
 

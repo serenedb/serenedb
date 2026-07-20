@@ -41,6 +41,7 @@
 #include "catalog/index.h"
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
+#include "catalog/persistence/policy.h"
 #include "catalog/resolution_table.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
@@ -63,6 +64,8 @@ using ChangeCallback = absl::FunctionRef<void(const T&, std::shared_ptr<T>&)>;
 
 class SecondaryIndex;
 class InvertedIndex;
+class Policy;
+class RowSecurity;
 
 struct CreateTableOperationOptions {
   // A valid id puts CreateTable in CTAS mode: the entry is created with this
@@ -118,6 +121,10 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Sequence;
   } else if constexpr (std::is_same_v<T, Role>) {
     return ObjectType::Role;
+  } else if constexpr (std::is_same_v<T, Policy>) {
+    return ObjectType::Policy;
+  } else if constexpr (std::is_same_v<T, RowSecurity>) {
+    return ObjectType::RowSecurity;
   } else {
     static_assert(false);
   }
@@ -126,6 +133,7 @@ constexpr ObjectType GetObjectType() noexcept {
 struct AccessContext {
   ObjectId role;
   AclMode need = AclMode::NoRights;
+  bool match_any = false;
 };
 
 AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need);
@@ -133,6 +141,9 @@ AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need);
 inline AccessContext RequireAccess(ObjectId role, AclMode need) {
   return {role, need};
 }
+
+// Same as RequireAccess but the role only needs ANY one of the `need` bits.
+AccessContext RequireAccessAny(duckdb::ClientContext& context, AclMode need);
 
 AccessContext ActingAs(duckdb::ClientContext& context);
 
@@ -157,9 +168,12 @@ struct Snapshot {
 
   void RebuildRoleClosures();
 
-  void RequireAccess(ObjectId role, const Object& object, AclMode need) const;
+  void RequireAccess(ObjectId role, const Object& object, AclMode need,
+                     bool match_any = false) const;
 
   std::size_t RoleDependentCount(ObjectId role) const;
+  // All objects that reference `role` (owner or privilege grant), sorted.
+  std::vector<ObjectId> RoleReferenceIds(ObjectId role) const;
 
   std::vector<std::shared_ptr<Role>> GetRoles() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;
@@ -263,6 +277,14 @@ struct Snapshot {
     }
     return basics::downCast<T>(obj);
   }
+
+  // RLS: the policy object ids attached to a table, and the enable/force pair.
+  std::vector<ObjectId> PolicyIds(ObjectId table_id) const;
+  struct RowSecurityState {
+    bool enabled = false;
+    bool forced = false;
+  };
+  RowSecurityState GetRowSecurity(ObjectId table_id) const;
 
  private:
   friend class Catalog;
@@ -439,6 +461,8 @@ class Catalog final {
                      std::shared_ptr<Table> table);
   void RegisterIndex(ObjectId database_id, ObjectId schema_id,
                      std::shared_ptr<Index> index);
+  void RegisterPolicy(std::shared_ptr<Policy> policy);
+  void RegisterRowSecurity(std::shared_ptr<RowSecurity> rs);
 
   bool CreateDatabase(const AccessContext& ax,
                       std::shared_ptr<Database> database, bool if_not_exists);
@@ -478,6 +502,25 @@ class Catalog final {
                   std::string_view schema, std::shared_ptr<PgSqlType> type,
                   bool if_not_exists);
 
+  // Row-Level Security. All require ownership of the target table.
+  void CreatePolicy(const AccessContext& ax, ObjectId database_id,
+                    std::string_view schema, std::string_view relation,
+                    persistence::PolicyData data);
+  // Applies only the fields flagged present in `patch`: roles if has_roles,
+  // using if has_using, check if has_check. `new_name` renames when non-empty.
+  void AlterPolicy(const AccessContext& ax, ObjectId database_id,
+                   std::string_view schema, std::string_view relation,
+                   std::string_view name, std::string_view new_name,
+                   bool has_roles, std::vector<ObjectId> roles, bool has_using,
+                   std::string using_text, bool has_check,
+                   std::string check_text);
+  void DropPolicy(const AccessContext& ax, ObjectId database_id,
+                  std::string_view schema, std::string_view relation,
+                  std::string_view name, bool if_exists);
+  void SetRowSecurity(const AccessContext& ax, ObjectId database_id,
+                      std::string_view schema, std::string_view relation,
+                      std::optional<bool> enabled, std::optional<bool> forced);
+
   void RenameView(const AccessContext& ax, ObjectId database_id,
                   std::string_view schema, std::string_view name,
                   std::string_view new_name);
@@ -504,11 +547,19 @@ class Catalog final {
   void ChangeMembership(const AccessContext& ax, ObjectId role,
                         std::string_view role_name, ObjectId member,
                         std::string_view member_name, const Membership& edge,
-                        bool revoke, bool admin_option_only);
+                        bool revoke, bool admin_option_only,
+                        ObjectId granted_by);
   void ChangeOwner(const AccessContext& ax, ObjectId database_id,
                    std::string_view schema, std::string_view name,
                    ObjectType type, ObjectId new_owner,
                    std::string_view new_owner_name);
+  void ReassignOwned(const AccessContext& ax,
+                     std::span<const std::string> from_roles,
+                     std::string_view to_role);
+  // Besides dropping the owned objects, also revokes the roles' privilege
+  // grants, so the roles become droppable (PostgreSQL semantics).
+  void DropOwned(const AccessContext& ax,
+                 std::span<const std::string> from_roles, bool cascade);
   void ChangeAcl(ObjectId database_id, std::string_view schema,
                  std::string_view name, ObjectType type, AclMutator mutate);
   void ChangeColumnAcl(ObjectId database_id, std::string_view schema,
@@ -537,8 +588,9 @@ class Catalog final {
   bool DropFunction(const AccessContext& ax, std::string_view database,
                     std::string_view schema, std::string_view name,
                     bool cascade, bool missing_ok);
-  bool DropTokenizer(std::string_view database, std::string_view schema,
-                     std::string_view name, bool cascade, bool missing_ok);
+  bool DropTokenizer(const AccessContext& ax, std::string_view database,
+                     std::string_view schema, std::string_view name,
+                     bool cascade, bool missing_ok);
   bool DropTable(const AccessContext& ax, std::string_view database,
                  std::string_view schema, std::string_view name, bool cascade,
                  bool missing_ok);

@@ -1,0 +1,88 @@
+# makeaclitem(grantee, grantor, privileges, is_grantable) builds one aclitem in
+# PostgreSQL's `grantee=privchars[*]/grantor` text form: privilege names are
+# case-insensitive, chars emit in canonical order (not input order), each
+# grantable char gets a '*', grantee oid 0 renders as PUBLIC (empty), and an
+# unrecognized privilege raises PG's exact error. It composes with aclexplode.
+#
+# Fixture prefix: mai_ (makeaclitem). Role oids differ across engines, so every
+# rendered value is name-based and aclexplode is compared to a resolved oid.
+
+statement ok
+DROP ROLE IF EXISTS mai_grantee;
+
+statement ok
+DROP ROLE IF EXISTS mai_grantor;
+
+statement ok
+CREATE ROLE mai_grantee;
+
+statement ok
+CREATE ROLE mai_grantor;
+
+
+# Grantable privileges get a '*'; chars come out in canonical order (a before r).
+# The ::text cast is required because PG's aclitem has no binary output function,
+# so the extended protocol cannot serialize a bare aclitem result.
+query
+SELECT makeaclitem('mai_grantee'::regrole, 'mai_grantor'::regrole, 'SELECT,INSERT', true)::text AS r;
+----
+r
+mai_grantee=a*r*/mai_grantor
+
+
+# grantee oid 0 is PUBLIC -> empty name before '='.
+query
+SELECT makeaclitem(0, 'mai_grantor'::regrole, 'INSERT,SELECT', false)::text AS r;
+----
+r
+=ar/mai_grantor
+
+
+# The full relation privilege set renders in canonical order arwdDxtm.
+query
+SELECT makeaclitem('mai_grantee'::regrole, 'mai_grantor'::regrole, 'INSERT,SELECT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN', false)::text AS r;
+----
+r
+mai_grantee=arwdDxtm/mai_grantor
+
+
+# EXECUTE / TEMPORARY / CONNECT canonicalize to X, T, c (in that order).
+query
+SELECT makeaclitem('mai_grantee'::regrole, 'mai_grantor'::regrole, 'CONNECT,TEMPORARY,EXECUTE', false)::text AS r;
+----
+r
+mai_grantee=XTc/mai_grantor
+
+
+# Privilege names are case-insensitive.
+query
+SELECT makeaclitem('mai_grantee'::regrole, 'mai_grantor'::regrole, 'select', false)::text AS r;
+----
+r
+mai_grantee=r/mai_grantor
+
+
+# An unrecognized privilege raises PG's exact error.
+statement error db error: ERROR: unrecognized privilege type: "BOGUS"
+SELECT makeaclitem('mai_grantee'::regrole, 'mai_grantor'::regrole, 'BOGUS', false);
+
+# The error preserves the input token's case.
+statement error db error: ERROR: unrecognized privilege type: "bogus"
+SELECT makeaclitem('mai_grantee'::regrole, 'mai_grantor'::regrole, 'bogus', false);
+
+
+# aclexplode expands the constructed aclitem; grantee matches the resolved oid.
+query
+SELECT (grantee = 'mai_grantee'::regrole::oid) AS grantee_ok, privilege_type, is_grantable
+FROM aclexplode(ARRAY[makeaclitem('mai_grantee'::regrole, 'mai_grantor'::regrole, 'SELECT', false)]);
+----
+grantee_ok	privilege_type	is_grantable
+t	SELECT	f
+
+
+# ---- cleanup ----
+statement ok
+DROP ROLE mai_grantee;
+
+statement ok
+DROP ROLE mai_grantor;

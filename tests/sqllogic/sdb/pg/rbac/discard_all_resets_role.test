@@ -1,0 +1,53 @@
+# DISCARD ALL resets SET ROLE and SET SESSION AUTHORIZATION (like PostgreSQL) so
+# a pooled connection doesn't carry one client's identity into the next. Narrow
+# DISCARD targets (TEMP/PLANS/SEQUENCES) do NOT touch the session identity.
+# sdb-only: the assertions rely on a single session's SET-then-DISCARD sequence
+# (the shared PG oracle runs fine; kept here to avoid connection-routing noise).
+#
+# Fixture prefix: dar_ (discard_all_reset).
+
+statement ok
+DROP ROLE IF EXISTS dar_r;
+
+statement ok
+CREATE ROLE dar_r LOGIN;
+
+statement ok
+GRANT dar_r TO postgres;
+
+
+statement ok
+SET ROLE dar_r;
+
+query
+SELECT current_user;
+----
+current_user
+dar_r
+
+
+# A narrow DISCARD leaves the role in place.
+statement ok
+DISCARD TEMP;
+
+query
+SELECT current_user;
+----
+current_user
+dar_r
+
+
+# DISCARD ALL resets to the session/login identity.
+statement ok
+DISCARD ALL;
+
+query
+SELECT current_user;
+----
+current_user
+postgres
+
+
+# ---- cleanup ----
+statement ok
+DROP ROLE dar_r;

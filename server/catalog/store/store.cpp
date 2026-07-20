@@ -1342,8 +1342,15 @@ void CatalogStore::EnsureSystemDatabase() {
                    database_bytes);
 
   const auto schema_id = NextId();
-  Schema schema{catalog::Permissions{id::kRootUser}, id::kSystemDB, schema_id,
-                StaticStrings::kPublic};
+  // PUBLIC gets USAGE on `public`, mirroring Catalog::CreateDatabase (and
+  // PostgreSQL) -- without it schema-USAGE enforcement locks every
+  // non-superuser out of the bootstrap database's default schema.
+  Schema schema{
+    catalog::Permissions{id::kRootUser, catalog::Acl{catalog::AclItem{
+                                          .grantee = catalog::kPublicGrantee,
+                                          .grantor = id::kRootUser,
+                                          .privs = catalog::AclMode::Usage}}},
+    id::kSystemDB, schema_id, StaticStrings::kPublic};
   auto schema_bytes = SerializeObject(schema, stream);
   CreateDefinition(id::kSystemDB, ObjectType::Schema, schema_id, schema_bytes);
 }

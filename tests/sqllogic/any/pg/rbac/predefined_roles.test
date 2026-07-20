@@ -1,0 +1,105 @@
+# Predefined roles pg_read_all_data / pg_write_all_data, like PostgreSQL:
+# membership confers SELECT (resp. INSERT/UPDATE/DELETE) on every table without
+# an explicit grant. NOLOGIN + INHERIT. has_table_privilege reflects membership.
+#
+# Fixture prefix: pr_ (predefined_roles).
+
+statement ok
+DROP TABLE IF EXISTS pr_vault;
+
+statement ok
+DROP ROLE IF EXISTS pr_reader;
+
+statement ok
+DROP ROLE IF EXISTS pr_writer;
+
+statement ok
+CREATE TABLE pr_vault (a int);
+
+statement ok
+INSERT INTO pr_vault VALUES (1);
+
+statement ok
+CREATE ROLE pr_reader LOGIN PASSWORD 'pr_pw';
+
+statement ok
+CREATE ROLE pr_writer;
+
+
+# The predefined roles exist and are NOLOGIN.
+query
+SELECT rolname FROM pg_roles
+WHERE rolname IN ('pg_read_all_data', 'pg_write_all_data')
+  AND rolcanlogin = false ORDER BY rolname;
+----
+rolname
+pg_read_all_data
+pg_write_all_data
+
+
+# Before any membership, the role has nothing on pr_vault.
+query
+SELECT has_table_privilege('pr_reader', 'pr_vault', 'SELECT');
+----
+has_table_privilege
+f
+
+
+# pg_read_all_data confers SELECT everywhere...
+statement ok
+GRANT pg_read_all_data TO pr_reader;
+
+query
+SELECT has_table_privilege('pr_reader', 'pr_vault', 'SELECT');
+----
+has_table_privilege
+t
+
+
+# ...but not writes.
+query
+SELECT has_table_privilege('pr_reader', 'pr_vault', 'INSERT');
+----
+has_table_privilege
+f
+
+
+# pg_write_all_data confers writes...
+statement ok
+GRANT pg_write_all_data TO pr_writer;
+
+query
+SELECT has_table_privilege('pr_writer', 'pr_vault', 'UPDATE');
+----
+has_table_privilege
+t
+
+
+# ...but not SELECT.
+query
+SELECT has_table_privilege('pr_writer', 'pr_vault', 'SELECT');
+----
+has_table_privilege
+f
+
+
+# Runtime enforcement: pr_reader (member of pg_read_all_data, no explicit grant)
+# can actually read the table over its own connection.
+connection c_reader user=pr_reader password=pr_pw
+query
+SELECT a FROM pr_vault;
+----
+a
+1
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP TABLE pr_vault;
+
+statement ok
+DROP ROLE pr_reader;
+
+statement ok
+DROP ROLE pr_writer;

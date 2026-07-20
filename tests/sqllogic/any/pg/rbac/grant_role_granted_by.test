@@ -1,0 +1,67 @@
+# GRANT <role> TO <member> GRANTED BY <grantor>, like PostgreSQL: the named
+# grantor must hold the ADMIN option on the role -- checked even when a
+# superuser issues the statement. A grantor WITH ADMIN OPTION is accepted.
+#
+# Fixture prefix: ggb_ (grant_granted_by).
+
+statement ok
+DROP ROLE IF EXISTS ggb_grp;
+
+statement ok
+DROP ROLE IF EXISTS ggb_mem;
+
+statement ok
+DROP ROLE IF EXISTS ggb_admin;
+
+statement ok
+DROP ROLE IF EXISTS ggb_outsider;
+
+statement ok
+CREATE ROLE ggb_grp;
+
+statement ok
+CREATE ROLE ggb_mem;
+
+statement ok
+CREATE ROLE ggb_admin;
+
+statement ok
+CREATE ROLE ggb_outsider;
+
+
+# A grantor with no ADMIN option on the role is rejected, even for a superuser.
+statement error db error: ERROR: permission denied to grant privileges as role "ggb_outsider"
+GRANT ggb_grp TO ggb_mem GRANTED BY ggb_outsider;
+
+
+# A nonexistent grantor is rejected outright.
+statement error db error: ERROR: role "ggb_ghost" does not exist
+GRANT ggb_grp TO ggb_mem GRANTED BY ggb_ghost;
+
+
+# Give ggb_admin the ADMIN option; GRANTED BY ggb_admin is then accepted.
+statement ok
+GRANT ggb_grp TO ggb_admin WITH ADMIN OPTION;
+
+statement ok
+GRANT ggb_grp TO ggb_mem GRANTED BY ggb_admin;
+
+query
+SELECT pg_has_role('ggb_mem', 'ggb_grp', 'MEMBER');
+----
+pg_has_role
+t
+
+
+# ---- cleanup ----
+statement ok
+DROP ROLE ggb_mem;
+
+statement ok
+DROP ROLE ggb_outsider;
+
+statement ok
+DROP ROLE ggb_admin;
+
+statement ok
+DROP ROLE ggb_grp;

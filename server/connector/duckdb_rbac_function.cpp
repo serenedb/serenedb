@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_rbac_function.h"
 
+#include <absl/strings/match.h>
+
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -210,19 +212,72 @@ void GrantTablePragma(duckdb::ClientContext& context,
   opts.granted_by = ArgStr(params, 8, "granted_by");
   const auto objtype = ArgStr(params, 5, "objtype");
   const auto privileges = ArgPrivList(params, 0, "privileges");
-  if (auto bulk = BulkObjTypeOf(objtype)) {
-    pg::GrantObjectAllInSchema(
-      conn_ctx, *bulk, privileges, ArgStr(params, 1, "name"),
-      ArgStr(params, 2, "grantee"), ArgBool(params, 3, "revoke"), opts);
-    return;
-  }
+  const auto revoke = ArgBool(params, 3, "revoke");
+  // `GRANT ... ON a, b TO r1, r2` -> the cartesian product of objects x
+  // grantees.
+  const auto names = ArgStrList(params, 1);
+  const auto grantees = ArgStrList(params, 2);
+  const auto bulk = BulkObjTypeOf(objtype);
   auto type = pg::FromPgObjectTypeName(objtype);
   if (type == catalog::ObjectType::Invalid) {
     type = catalog::ObjectType::Table;
   }
-  pg::GrantObject(conn_ctx, type, privileges, ArgStr(params, 1, "name"),
-                  ArgStr(params, 2, "grantee"), ArgBool(params, 3, "revoke"),
-                  opts);
+  for (const auto& name : names) {
+    for (const auto& grantee : grantees) {
+      if (bulk) {
+        pg::GrantObjectAllInSchema(conn_ctx, *bulk, privileges, name, grantee,
+                                   revoke, opts);
+      } else {
+        pg::GrantObject(conn_ctx, type, privileges, name, grantee, revoke,
+                        opts);
+      }
+    }
+  }
+}
+
+void CreatePolicyPragma(duckdb::ClientContext& context,
+                        const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  pg::CreatePolicyOptions opts;
+  opts.permissive = ArgBool(params, 2, "permissive");
+  opts.cmd = ArgStr(params, 3, "cmd");
+  opts.roles = ArgStrList(params, 4);
+  opts.has_using = ArgBool(params, 5, "has_using");
+  opts.using_text = ArgStr(params, 6, "using_text");
+  opts.has_check = ArgBool(params, 7, "has_check");
+  opts.check_text = ArgStr(params, 8, "check_text");
+  pg::CreatePolicy(conn_ctx, ArgStr(params, 0, "name"),
+                   ArgStr(params, 1, "table"), opts);
+}
+
+void AlterPolicyPragma(duckdb::ClientContext& context,
+                       const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  pg::AlterPolicyOptions opts;
+  opts.is_rename = ArgBool(params, 2, "is_rename");
+  opts.new_name = ArgStr(params, 3, "new_name");
+  opts.has_roles = ArgBool(params, 4, "has_roles");
+  opts.roles = ArgStrList(params, 5);
+  opts.has_using = ArgBool(params, 6, "has_using");
+  opts.using_text = ArgStr(params, 7, "using_text");
+  opts.has_check = ArgBool(params, 8, "has_check");
+  opts.check_text = ArgStr(params, 9, "check_text");
+  pg::AlterPolicy(conn_ctx, ArgStr(params, 0, "name"),
+                  ArgStr(params, 1, "table"), opts);
+}
+
+void DropPolicyPragma(duckdb::ClientContext& context,
+                      const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  pg::DropPolicy(conn_ctx, ArgStr(params, 0, "name"),
+                 ArgStr(params, 1, "table"), ArgBool(params, 2, "if_exists"));
+}
+
+void AlterTableRowSecurityPragma(duckdb::ClientContext& context,
+                                 const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  pg::SetTableRowSecurity(conn_ctx, ArgStr(params, 0, "table"),
+                          ArgStr(params, 1, "action"));
 }
 
 void AlterOwnerPragma(duckdb::ClientContext& context,
@@ -230,6 +285,40 @@ void AlterOwnerPragma(duckdb::ClientContext& context,
   auto& conn_ctx = GetSereneDBContext(context);
   pg::AlterOwner(conn_ctx, ArgStr(params, 0, "objtype"),
                  ArgStr(params, 1, "name"), ArgStr(params, 2, "new_owner"));
+}
+
+void ReassignOwnedPragma(duckdb::ClientContext& context,
+                         const duckdb::FunctionParameters& params) {
+  pg::ReassignOwned(GetSereneDBContext(context), ArgStrList(params, 0),
+                    ArgStr(params, 1, "to_role"));
+}
+
+void DropOwnedPragma(duckdb::ClientContext& context,
+                     const duckdb::FunctionParameters& params) {
+  pg::DropOwned(GetSereneDBContext(context), ArgStrList(params, 0),
+                ArgBool(params, 1, "cascade"));
+}
+
+// LOCK TABLE validation only (the lock itself is advisory under MVCC); the
+// 25P01 outside-transaction gate lives at the wire layer
+// (RequireLockInTransactionBlock).
+void LockTablePragma(duckdb::ClientContext& context,
+                     const duckdb::FunctionParameters& params) {
+  pg::LockTable(GetSereneDBContext(context), ArgStrList(params, 0),
+                ArgStr(params, 1, "mode"));
+}
+
+// SECURITY LABEL: like a stock PostgreSQL server with no label provider loaded.
+void SecurityLabelPragma(duckdb::ClientContext&,
+                         const duckdb::FunctionParameters& params) {
+  const auto provider = ArgStr(params, 0, "provider");
+  if (!provider.empty()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("security label provider \"", provider, "\" is not loaded"));
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("no security label providers have been loaded"));
 }
 
 void GrantRolePragma(duckdb::ClientContext& context,
@@ -240,9 +329,23 @@ void GrantRolePragma(duckdb::ClientContext& context,
   opts.inherit = ArgInt(params, 4, "inherit");
   opts.set = ArgInt(params, 5, "set");
   opts.admin_option_only = ArgBool(params, 6, "option_only");
+  opts.granted_by = ArgStr(params, 7, "granted_by");
   pg::GrantRole(conn_ctx, ArgStr(params, 0, "role"),
                 ArgStr(params, 1, "member"), ArgBool(params, 2, "revoke"),
                 opts);
+}
+
+// DISCARD <target>. Only DISCARD ALL resets session identity (SET ROLE / SET
+// SESSION AUTHORIZATION), like PostgreSQL -- connection poolers rely on it to
+// stop one client's role leaking into the next. serened has no temp tables,
+// session sequences, or exposed plan cache, so the other targets are no-ops.
+void DiscardPragma(duckdb::ClientContext& context,
+                   const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  if (absl::EqualsIgnoreCase(ArgStr(params, 0, "target"), "ALL")) {
+    pg::ResetSessionAuthorization(conn_ctx);
+    pg::ResetRole(conn_ctx);
+  }
 }
 
 }  // namespace
@@ -290,19 +393,60 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_grant_table", GrantTablePragma,
-    {PrivListType(), LogicalType::VARCHAR, LogicalType::VARCHAR,
-     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR,
-     LogicalType::BOOLEAN, LogicalType::BOOLEAN, LogicalType::VARCHAR}));
+    {PrivListType(), LogicalType::LIST(LogicalType::VARCHAR),
+     LogicalType::LIST(LogicalType::VARCHAR), LogicalType::BOOLEAN,
+     LogicalType::BOOLEAN, LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::BOOLEAN, LogicalType::VARCHAR}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_grant_role", GrantRolePragma,
     {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN,
      LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::INTEGER,
-     LogicalType::BOOLEAN}));
+     LogicalType::BOOLEAN, LogicalType::VARCHAR}));
 
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_alter_owner", AlterOwnerPragma,
     {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_discard", DiscardPragma, {LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_reassign_owned", ReassignOwnedPragma,
+    {LogicalType::LIST(LogicalType::VARCHAR), LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_drop_owned", DropOwnedPragma,
+    {LogicalType::LIST(LogicalType::VARCHAR), LogicalType::BOOLEAN}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_security_label", SecurityLabelPragma, {LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_lock_table", LockTablePragma,
+    {LogicalType::LIST(LogicalType::VARCHAR), LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_create_policy", CreatePolicyPragma,
+    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR),
+     LogicalType::BOOLEAN, LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_alter_policy", AlterPolicyPragma,
+    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::LIST(LogicalType::VARCHAR), LogicalType::BOOLEAN,
+     LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_drop_policy", DropPolicyPragma,
+    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_alter_table_row_security", AlterTableRowSecurityPragma,
+    {LogicalType::VARCHAR, LogicalType::VARCHAR}));
 }
 
 }  // namespace sdb::connector

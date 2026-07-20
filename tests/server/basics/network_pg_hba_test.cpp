@@ -97,13 +97,14 @@ TEST(HbaMethod, ParseFullVocabulary) {
   EXPECT_EQ(MethodExecutability(Method::Scram), MethodClass::Native);
   EXPECT_EQ(MethodExecutability(Method::Ldap), MethodClass::RejectAtConnect);
   EXPECT_EQ(MethodExecutability(Method::Peer), MethodClass::DeferredPeerIdent);
+  EXPECT_EQ(MethodExecutability(Method::Cert), MethodClass::DeferredCert);
 }
 
 // --- parse: everything PG parses --------------------------------------------
 
 TEST(HbaParse, UnsupportedMethodsParseNotError) {
-  // ldap/gss/cert are real PG keywords: they must PARSE (reject-at-connect),
-  // not fail parsing.
+  // ldap/gss are real PG keywords that must PARSE (reject-at-connect), not fail
+  // parsing; cert parses too and is decided at the session (DeferredCert).
   MustParse("hostssl all all 0.0.0.0/0 ldap ldapserver=x\n");
   MustParse("host all all 0.0.0.0/0 gss\n");
   MustParse("hostssl all all 0.0.0.0/0 cert clientcert=verify-full\n");
@@ -361,6 +362,12 @@ TEST(HbaDecision, PeerIsDeferred) {
   ClientInfo local{.is_local = true, .user = "u", .database = "d"};
   EXPECT_EQ(Decide(rs, local, kNoMembers).kind,
             Decision::Kind::DeferredPeerIdent);
+}
+
+TEST(HbaDecision, CertIsDeferred) {
+  auto rs = MustParse("hostssl all all 0.0.0.0/0 cert\n");
+  EXPECT_EQ(KindOf(rs, Ssl("10.0.0.1", "u", "d")),
+            Decision::Kind::DeferredCert);
 }
 
 TEST(HbaDecision, LocalIdentRewritesToPeer) {

@@ -49,4 +49,7 @@ struct PgPolicy {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData();
+
 }  // namespace sdb::pg

@@ -217,6 +217,30 @@ class Socket final {
     }
   }
 
+  // The Common Name of the client certificate, but only when the peer presented
+  // a certificate that passed verification against the listener's CA. Empty
+  // otherwise (no TLS, no client cert, or a failed verify). Backs HBA `cert`.
+  [[nodiscard]] std::string PeerCertCommonName() {
+    if constexpr (!kSslBacked) {
+      return {};
+    } else {
+      if (!IsTls() ||
+          SSL_get_verify_result(_stream.native_handle()) != X509_V_OK) {
+        return {};
+      }
+      X509* cert = SSL_get_peer_certificate(_stream.native_handle());
+      if (cert == nullptr) {
+        return {};
+      }
+      char cn[256];
+      const int len = X509_NAME_get_text_by_NID(X509_get_subject_name(cert),
+                                                NID_commonName, cn, sizeof(cn));
+      X509_free(cert);  // SSL_get_peer_certificate returns an owned reference
+      return len > 0 ? std::string{cn, static_cast<size_t>(len)}
+                     : std::string{};
+    }
+  }
+
   void Close() noexcept {
     auto& lowest = Lowest();
     if (lowest.is_open()) {

@@ -1,0 +1,23 @@
+# GRANT ... TO PUBLIC WITH GRANT OPTION is rejected, like PostgreSQL: PUBLIC is
+# a pseudo-role that cannot act as a grantor, so it cannot hold a grant option.
+# A plain GRANT ... TO PUBLIC (no grant option) is fine.
+
+statement ok
+DROP TABLE IF EXISTS gpg_t;
+
+statement ok
+CREATE TABLE gpg_t (a int);
+
+
+# Plain grant to PUBLIC works.
+statement ok
+GRANT SELECT ON gpg_t TO PUBLIC;
+
+
+# ...but WITH GRANT OPTION is refused.
+statement error db error: ERROR: grant options can only be granted to roles
+GRANT SELECT ON gpg_t TO PUBLIC WITH GRANT OPTION;
+
+
+statement ok
+DROP TABLE gpg_t;

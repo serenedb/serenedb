@@ -77,6 +77,11 @@ class ConnectionContext final : public query::Transaction {
   ObjectId GetDatabaseId() const { return _database_id; }
   int32_t GetBackendPid() const { return _backend_pid; }
 
+  // Client IP as text (empty for a local/unix peer); surfaced in
+  // pg_stat_activity.client_addr.
+  const std::string& GetClientAddr() const { return _client_addr; }
+  void SetClientAddr(std::string addr) { _client_addr = std::move(addr); }
+
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
   std::string GetCurrentSchema() const;
@@ -156,6 +161,7 @@ class ConnectionContext final : public query::Transaction {
   const std::string _database_name;
   const ObjectId _database_id;
   const int32_t _backend_pid;
+  std::string _client_addr;
   network::pg::CancelRegistry* const _cancel_registry;
   std::shared_ptr<catalog::Database> _database;
   message::Buffer* const _send_buffer;

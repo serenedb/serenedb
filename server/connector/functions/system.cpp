@@ -1128,6 +1128,51 @@ void HasObjectPrivilegeOid3Function(duckdb::DataChunk& args,
   }
 }
 
+// has_*_privilege(role name, obj oid, priv): the role is resolved by name, the
+// object by its oid. Mirrors the (oid role, oid obj, priv) form.
+template<catalog::ObjectType kType>
+void HasObjectPrivilegeNameOid3Function(duckdb::DataChunk& args,
+                                        duckdb::ExpressionState& state,
+                                        duckdb::Vector& result) {
+  auto snapshot = GlobalSnapshot();
+  duckdb::UnifiedVectorFormat rdata, odata, pdata;
+  args.data[0].ToUnifiedFormat(args.size(), rdata);
+  args.data[1].ToUnifiedFormat(args.size(), odata);
+  args.data[2].ToUnifiedFormat(args.size(), pdata);
+  const auto* rname =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(rdata);
+  const auto* ooid = duckdb::UnifiedVectorFormat::GetData<int64_t>(odata);
+  const auto* priv =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(pdata);
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
+  for (duckdb::idx_t i = 0; i < args.size(); i++) {
+    auto ri = rdata.sel->get_index(i);
+    auto oi = odata.sel->get_index(i);
+    auto pi = pdata.sel->get_index(i);
+    if (!rdata.validity.RowIsValid(ri) || !odata.validity.RowIsValid(oi) ||
+        !pdata.validity.RowIsValid(pi)) {
+      validity.SetInvalid(i);
+      continue;
+    }
+    auto role_id = ResolveRoleOrPublic(
+      *snapshot, {rname[ri].GetData(), rname[ri].GetSize()});
+    if (!role_id) {
+      ThrowRoleNotFound({rname[ri].GetData(), rname[ri].GetSize()});
+    }
+    bool is_null = false;
+    bool r = HasObjectPrivilegeByOidImpl(
+      *snapshot, kType, *role_id, ObjectId{static_cast<uint64_t>(ooid[oi])},
+      {priv[pi].GetData(), priv[pi].GetSize()}, is_null);
+    if (is_null) {
+      validity.SetInvalid(i);
+    } else {
+      out[i] = r;
+    }
+  }
+}
+
 template<catalog::ObjectType kType>
 void HasObjectPrivilegeOidName3Function(duckdb::DataChunk& args,
                                         duckdb::ExpressionState& state,
@@ -1716,6 +1761,94 @@ void HasColumnPrivilegeOidOidAttnum4Function(duckdb::DataChunk& args,
   }
 }
 
+void HasColumnPrivilegeNameOidCol4Function(duckdb::DataChunk& args,
+                                           duckdb::ExpressionState& state,
+                                           duckdb::Vector& result) {
+  auto snapshot = GlobalSnapshot();
+  duckdb::UnifiedVectorFormat ud, td, cd, pd;
+  args.data[0].ToUnifiedFormat(args.size(), ud);
+  args.data[1].ToUnifiedFormat(args.size(), td);
+  args.data[2].ToUnifiedFormat(args.size(), cd);
+  args.data[3].ToUnifiedFormat(args.size(), pd);
+  const auto* u = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(ud);
+  const auto* toid = duckdb::UnifiedVectorFormat::GetData<int64_t>(td);
+  const auto* c = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(cd);
+  const auto* p = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(pd);
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
+  for (duckdb::idx_t i = 0; i < args.size(); i++) {
+    auto ui = ud.sel->get_index(i), ti = td.sel->get_index(i);
+    auto ci = cd.sel->get_index(i), pi = pd.sel->get_index(i);
+    if (!ud.validity.RowIsValid(ui) || !td.validity.RowIsValid(ti) ||
+        !cd.validity.RowIsValid(ci) || !pd.validity.RowIsValid(pi)) {
+      validity.SetInvalid(i);
+      continue;
+    }
+    auto role = snapshot->GetRole({u[ui].GetData(), u[ui].GetSize()});
+    if (!role) {
+      ThrowRoleNotFound({u[ui].GetData(), u[ui].GetSize()});
+    }
+    auto table = snapshot->GetObject<catalog::Table>(
+      ObjectId{static_cast<uint64_t>(toid[ti])});
+    if (!table) {
+      validity.SetInvalid(i);
+      continue;
+    }
+    try {
+      out[i] = HasColumnPrivByName(*snapshot, role->GetId(), *table,
+                                   {c[ci].GetData(), c[ci].GetSize()},
+                                   {p[pi].GetData(), p[pi].GetSize()});
+    } catch (const SqlException& e) {
+      ThrowInvalidPrivilege(e);
+    }
+  }
+}
+
+void HasColumnPrivilegeNameOidAttnum4Function(duckdb::DataChunk& args,
+                                              duckdb::ExpressionState& state,
+                                              duckdb::Vector& result) {
+  auto snapshot = GlobalSnapshot();
+  duckdb::UnifiedVectorFormat ud, td, cd, pd;
+  args.data[0].ToUnifiedFormat(args.size(), ud);
+  args.data[1].ToUnifiedFormat(args.size(), td);
+  args.data[2].ToUnifiedFormat(args.size(), cd);
+  args.data[3].ToUnifiedFormat(args.size(), pd);
+  const auto* u = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(ud);
+  const auto* toid = duckdb::UnifiedVectorFormat::GetData<int64_t>(td);
+  const auto* attnum = duckdb::UnifiedVectorFormat::GetData<int16_t>(cd);
+  const auto* p = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(pd);
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
+  for (duckdb::idx_t i = 0; i < args.size(); i++) {
+    auto ui = ud.sel->get_index(i), ti = td.sel->get_index(i);
+    auto ci = cd.sel->get_index(i), pi = pd.sel->get_index(i);
+    if (!ud.validity.RowIsValid(ui) || !td.validity.RowIsValid(ti) ||
+        !cd.validity.RowIsValid(ci) || !pd.validity.RowIsValid(pi)) {
+      validity.SetInvalid(i);
+      continue;
+    }
+    auto role = snapshot->GetRole({u[ui].GetData(), u[ui].GetSize()});
+    if (!role) {
+      ThrowRoleNotFound({u[ui].GetData(), u[ui].GetSize()});
+    }
+    auto table = snapshot->GetObject<catalog::Table>(
+      ObjectId{static_cast<uint64_t>(toid[ti])});
+    if (!table || !AttnumExists(*table, attnum[ci])) {
+      validity.SetInvalid(i);
+      continue;
+    }
+    try {
+      out[i] =
+        HasColumnPrivByAttnum(*snapshot, role->GetId(), *table, attnum[ci],
+                              {p[pi].GetData(), p[pi].GetSize()});
+    } catch (const SqlException& e) {
+      ThrowInvalidPrivilege(e);
+    }
+  }
+}
+
 void HasAnyColumnPrivilegeName3Function(duckdb::DataChunk& args,
                                         duckdb::ExpressionState& state,
                                         duckdb::Vector& result) {
@@ -2190,6 +2323,15 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     {
       duckdb::ScalarFunction func{
         duckdb::Identifier{name},
+        {duckdb::LogicalType::VARCHAR, pg::OID(), duckdb::LogicalType::VARCHAR},
+        duckdb::LogicalType::BOOLEAN,
+        HasObjectPrivilegeNameOid3Function<kType>};
+      func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+      loader.RegisterFunction(func);
+    }
+    {
+      duckdb::ScalarFunction func{
+        duckdb::Identifier{name},
         {pg::OID(), pg::OID(), duckdb::LogicalType::VARCHAR},
         duckdb::LogicalType::BOOLEAN,
         HasObjectPrivilegeOid3Function<kType>};
@@ -2300,6 +2442,26 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
        duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BOOLEAN,
       HasColumnPrivilegeOidOidAttnum4Function};
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    loader.RegisterFunction(func);
+  }
+  {
+    duckdb::ScalarFunction func{
+      "has_column_privilege",
+      {duckdb::LogicalType::VARCHAR, pg::REGCLASS(),
+       duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::BOOLEAN,
+      HasColumnPrivilegeNameOidCol4Function};
+    func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    loader.RegisterFunction(func);
+  }
+  {
+    duckdb::ScalarFunction func{
+      "has_column_privilege",
+      {duckdb::LogicalType::VARCHAR, pg::REGCLASS(),
+       duckdb::LogicalType::SMALLINT, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::BOOLEAN,
+      HasColumnPrivilegeNameOidAttnum4Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     loader.RegisterFunction(func);
   }

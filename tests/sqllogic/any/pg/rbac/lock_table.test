@@ -1,0 +1,153 @@
+# LOCK [TABLE] [ONLY] name,... [IN <mode> MODE] [NOWAIT]. serened uses MVCC
+# snapshots so the lock is advisory (a no-op for correctness), but the statement
+# is validated exactly like PostgreSQL:
+#   - it must run inside a transaction block (else 25P01),
+#   - every named relation must exist,
+#   - the caller needs the mode-appropriate privilege: ACCESS SHARE accepts any
+#     of SELECT/INSERT/UPDATE/DELETE/TRUNCATE/MAINTAIN; every stronger mode needs
+#     one of UPDATE/DELETE/TRUNCATE/MAINTAIN. Owner and superuser bypass.
+#
+# Each statement is its own line (no multi-statement queries) so the extended
+# protocol runs it too; the role is switched with SET LOCAL ROLE inside the
+# transaction (following set_local_role.test) rather than by reconnecting.
+#
+# Lore: vedernikoff is the role; clickclack the table.
+
+statement ok
+DROP TABLE IF EXISTS lk_clickclack;
+
+statement ok
+DROP TABLE IF EXISTS lk_clackclick;
+
+statement ok
+DROP ROLE IF EXISTS lk_vedernikoff;
+
+statement ok
+CREATE TABLE lk_clickclack (a int);
+
+statement ok
+CREATE TABLE lk_clackclick (a int);
+
+statement ok
+CREATE ROLE lk_vedernikoff;
+
+statement ok
+GRANT lk_vedernikoff TO postgres;
+
+
+# ---- accepted forms (superuser owner; every lock mode + ONLY/NOWAIT/multi) ----
+
+statement ok
+BEGIN;
+
+statement ok
+LOCK TABLE lk_clickclack;
+
+statement ok
+LOCK lk_clickclack IN ACCESS SHARE MODE;
+
+statement ok
+LOCK lk_clickclack IN ROW SHARE MODE;
+
+statement ok
+LOCK lk_clickclack IN ROW EXCLUSIVE MODE;
+
+statement ok
+LOCK lk_clickclack IN SHARE UPDATE EXCLUSIVE MODE;
+
+statement ok
+LOCK lk_clickclack IN SHARE MODE;
+
+statement ok
+LOCK lk_clickclack IN SHARE ROW EXCLUSIVE MODE;
+
+statement ok
+LOCK lk_clickclack IN EXCLUSIVE MODE;
+
+statement ok
+LOCK lk_clickclack IN ACCESS EXCLUSIVE MODE;
+
+statement ok
+LOCK TABLE ONLY lk_clickclack, lk_clackclick IN SHARE MODE NOWAIT;
+
+statement ok
+COMMIT;
+
+
+# ---- outside a transaction block -> 25P01 ----
+statement error db error: ERROR: LOCK TABLE can only be used in transaction blocks
+LOCK TABLE lk_clickclack;
+
+
+# ---- a non-existent relation -> undefined_table, even inside a txn ----
+statement ok
+BEGIN;
+
+statement error db error: ERROR: relation "lk_ghost" does not exist
+LOCK TABLE lk_ghost;
+
+statement ok
+ROLLBACK;
+
+
+# ---- privilege by mode: only SELECT granted ----
+statement ok
+GRANT SELECT ON lk_clickclack TO lk_vedernikoff;
+
+# ACCESS SHARE accepts SELECT -> OK.
+statement ok
+BEGIN;
+
+statement ok
+SET LOCAL ROLE lk_vedernikoff;
+
+statement ok
+LOCK lk_clickclack IN ACCESS SHARE MODE;
+
+# A stronger mode needs UPDATE/DELETE/TRUNCATE/MAINTAIN; SELECT is insufficient.
+statement error db error: ERROR: permission denied for table lk_clickclack
+LOCK lk_clickclack IN ACCESS EXCLUSIVE MODE;
+
+statement ok
+ROLLBACK;
+
+# ROW SHARE is already stronger than ACCESS SHARE, so SELECT is insufficient.
+statement ok
+BEGIN;
+
+statement ok
+SET LOCAL ROLE lk_vedernikoff;
+
+statement error db error: ERROR: permission denied for table lk_clickclack
+LOCK lk_clickclack IN ROW SHARE MODE;
+
+statement ok
+ROLLBACK;
+
+
+# ---- privilege by mode: UPDATE granted (satisfies every mode) ----
+statement ok
+GRANT UPDATE ON lk_clickclack TO lk_vedernikoff;
+
+statement ok
+BEGIN;
+
+statement ok
+SET LOCAL ROLE lk_vedernikoff;
+
+statement ok
+LOCK lk_clickclack IN ACCESS EXCLUSIVE MODE;
+
+statement ok
+ROLLBACK;
+
+
+# ---- cleanup ----
+statement ok
+DROP TABLE lk_clickclack;
+
+statement ok
+DROP TABLE lk_clackclick;
+
+statement ok
+DROP ROLE lk_vedernikoff;

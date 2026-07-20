@@ -223,6 +223,15 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
       continue;
     }
 
+    // USAGE on the containing schema is required before the object's own
+    // privilege (PostgreSQL reports the schema denial first).
+    if (auto schema = snapshot->GetObject<catalog::Schema>(obj->GetParentId());
+        schema && !closure.Can(*schema, catalog::AclMode::Usage)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied for schema ", schema->GetName()));
+    }
+
     if (obj->GetType() == catalog::ObjectType::PgSqlView) {
       if (!closure.Can(*obj, catalog::AclMode::Select)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),

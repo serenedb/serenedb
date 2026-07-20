@@ -509,12 +509,13 @@ MethodClass MethodExecutability(Method method) {
     case Method::Ident:
     case Method::Peer:
       return MethodClass::DeferredPeerIdent;
+    case Method::Cert:
+      return MethodClass::DeferredCert;
     case Method::Gss:
     case Method::Sspi:
     case Method::Pam:
     case Method::Bsd:
     case Method::Ldap:
-    case Method::Cert:
     case Method::Oauth:
       return MethodClass::RejectAtConnect;
   }
@@ -770,11 +771,18 @@ Decision Decide(const Ruleset& ruleset, const ClientInfo& client,
         }
         return {Decision::Kind::Method, rule.method, rule.options, {}, &rule};
       case MethodClass::DeferredPeerIdent:
+        // peer executes at the session (SO_PEERCRED, unix sockets only);
+        // ident (TCP) is rejected there with this reason.
         return {Decision::Kind::DeferredPeerIdent,
                 rule.method,
                 {},
-                "peer/ident authentication is not yet supported",
+                absl::StrCat("\"", MethodName(rule.method),
+                             "\" authentication is not supported"),
                 &rule};
+      case MethodClass::DeferredCert:
+        // cert executes at the session (verified client-cert CN, hostssl only).
+        return {
+          Decision::Kind::DeferredCert, rule.method, rule.options, {}, &rule};
       case MethodClass::RejectAtConnect:
         return {Decision::Kind::Unsupported,
                 rule.method,

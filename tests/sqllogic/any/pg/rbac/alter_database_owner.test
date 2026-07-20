@@ -1,0 +1,49 @@
+# ALTER DATABASE <db> OWNER TO <role>, like PostgreSQL: must be able to SET ROLE
+# to the new owner (a superuser bypasses); pg_database.datdba reflects the change.
+
+statement ok
+DROP DATABASE IF EXISTS adb_clickclack;
+
+statement ok
+DROP ROLE IF EXISTS adb_vedernikoff;
+
+statement ok
+CREATE ROLE adb_vedernikoff;
+
+statement ok
+CREATE DATABASE adb_clickclack;
+
+
+# datdba starts as the creating superuser (id 10 in PG's bootstrap; assert via
+# the join rather than a hardcoded oid).
+query
+SELECT r.rolname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+WHERE d.datname = 'adb_clickclack';
+----
+rolname
+postgres
+
+
+statement ok
+ALTER DATABASE adb_clickclack OWNER TO adb_vedernikoff;
+
+
+query
+SELECT r.rolname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+WHERE d.datname = 'adb_clickclack';
+----
+rolname
+adb_vedernikoff
+
+
+# A non-existent target role is rejected.
+statement error db error: ERROR: role "adb_ghost" does not exist
+ALTER DATABASE adb_clickclack OWNER TO adb_ghost;
+
+
+# ---- cleanup ----
+statement ok
+DROP DATABASE adb_clickclack;
+
+statement ok
+DROP ROLE adb_vedernikoff;

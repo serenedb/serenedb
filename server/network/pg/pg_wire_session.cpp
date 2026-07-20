@@ -22,16 +22,20 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/strings/escaping.h>
+#include <pwd.h>
+#include <sys/socket.h>
 
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/pragma_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
+#include "basics/log.h"
 #include "basics/metrics.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
@@ -203,6 +207,76 @@ inline void StagePendingCopyProgress(connector::SereneDBClientState& state,
   state.pending_copy_relid = ResolveCopyTableId(conn, info);
 }
 
+// COPY to/from a server-side file is a superuser-only capability, like
+// PostgreSQL (which gates it on pg_read/write_server_files or superuser).
+// STDIN/STDOUT (the pg-wire path) is open to everyone. Must be called BEFORE
+// Prepare -- a COPY FROM's CSV sniff opens the file during Prepare.
+inline void RequireCopyFileAccess(ConnectionContext& conn,
+                                  const duckdb::SQLStatement& statement) {
+  if (statement.type != duckdb::StatementType::COPY_STATEMENT) {
+    return;
+  }
+  const auto& copy = statement.Cast<duckdb::CopyStatement>();
+  if (!copy.info) {
+    return;
+  }
+  const auto& fp = copy.info->file_path;
+  if (fp == "/dev/stdin" || fp == "/dev/stdout") {
+    return;
+  }
+  // Superusers, and members of pg_read_server_files (COPY FROM) /
+  // pg_write_server_files (COPY TO), may touch server-side files (PostgreSQL).
+  const auto& closure = conn.CatalogSnapshot()->ClosureFor(conn.GetRoleId());
+  const ObjectId needed =
+    copy.info->is_from ? id::kPgReadServerFiles : id::kPgWriteServerFiles;
+  if (closure.is_superuser || closure.MemberOf(needed)) {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied to COPY ", copy.info->is_from ? "from" : "to",
+            " a file"),
+    ERR_DETAIL(
+      "Only roles with privileges of the \"",
+      copy.info->is_from ? "pg_read_server_files" : "pg_write_server_files",
+      "\" role may COPY ", copy.info->is_from ? "from" : "to", " a file."),
+    ERR_HINT("Anyone can COPY to stdout or from stdin. psql's \\copy command "
+             "also works for anyone."));
+}
+
+// CREATE TEMPORARY TABLE / SEQUENCE requires the TEMP privilege on the
+// connected database, like PostgreSQL (PUBLIC holds it by default; a
+// `REVOKE TEMP ON DATABASE ... FROM ...` takes it away). Temp objects bypass
+// the catalog, so this is the enforcement point. Only real user temp relations
+// are gated -- the bind-time PIVOT enum is a TYPE, not a table/sequence.
+inline void RequireCreateTempAccess(ConnectionContext& conn,
+                                    const duckdb::SQLStatement& statement) {
+  if (statement.type != duckdb::StatementType::CREATE_STATEMENT) {
+    return;
+  }
+  const auto& create = statement.Cast<duckdb::CreateStatement>();
+  if (!create.info || !create.info->temporary) {
+    return;
+  }
+  if (create.info->type != duckdb::CatalogType::TABLE_ENTRY &&
+      create.info->type != duckdb::CatalogType::SEQUENCE_ENTRY) {
+    return;
+  }
+  const auto& database = conn.GetDatabasePtr();
+  if (!database) {
+    return;
+  }
+  if (conn.CatalogSnapshot()
+        ->ClosureFor(conn.GetRoleId())
+        .Can(*database, catalog::AclMode::CreateTemp)) {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied to create temporary tables in database \"",
+            conn.GetDatabase(), "\""));
+}
+
 // A temporary CREATE -- e.g. a value-extracting PIVOT's bind-time enum, which
 // the parser emits ahead of the SELECT (TEMPORARY + REPLACE_ON_CONFLICT,
 // session scoped). Leading scaffolding like this is run at Parse and dropped
@@ -212,6 +286,23 @@ inline void StagePendingCopyProgress(connector::SereneDBClientState& state,
 inline bool IsTemporaryCreate(const duckdb::SQLStatement& statement) {
   return statement.type == duckdb::StatementType::CREATE_STATEMENT &&
          statement.Cast<duckdb::CreateStatement>().info->temporary;
+}
+
+// LOCK [TABLE] is transformed into the serenedb_lock_table pragma; PG rejects
+// it outside a transaction block (25P01). Only the unbound statement carries
+// the pragma name, so the check runs at the wire layer where that is available.
+void RequireLockInTransactionBlock(ConnectionContext& conn,
+                                   const duckdb::SQLStatement* unbound) {
+  if (!unbound || unbound->type != duckdb::StatementType::PRAGMA_STATEMENT) {
+    return;
+  }
+  if (unbound->Cast<duckdb::PragmaStatement>().info->name !=
+        "serenedb_lock_table" ||
+      conn.IsExplicitTransaction()) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
+                  ERR_MSG("LOCK TABLE can only be used in transaction blocks"));
 }
 
 bool IsCatalogDdl(duckdb::StatementType type) {
@@ -410,6 +501,9 @@ bool PgWireSession<Kind>::SetupConnection() {
     *_conn->context, user, role->GetId(), DatabaseName(), database_id,
     std::move(database), &this->_send, nullptr,
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
+  if (!_peer_addr.is_unspecified()) {
+    _connection_ctx->SetClientAddr(_peer_addr.to_string());
+  }
   _client_state =
     &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
@@ -455,6 +549,30 @@ bool PgWireSession<Kind>::SetupConnection() {
                               false);
   _connection_ctx->SetSetting("is_superuser",
                               role->IsSuperuser() ? "on" : "off", false);
+
+  // Per-role GUC defaults from `ALTER ROLE ... SET name = value`, stored as
+  // "name=value" entries. Applied before the client's startup parameters so
+  // those still win, matching PostgreSQL's precedence (role config < startup
+  // options < SET). A catalog-backed setter (e.g. search_path) needs an active
+  // transaction, which does not exist yet at connect, so wrap the whole burst
+  // in one. A stored setting that no longer validates must not abort the
+  // connection -- warn and continue, like PostgreSQL.
+  if (const auto role_config = role->Config(); !role_config.empty()) {
+    _conn->BeginTransaction();
+    for (const std::string_view entry : role_config) {
+      const auto eq = entry.find('=');
+      if (eq == std::string_view::npos) {
+        continue;
+      }
+      try {
+        _connection_ctx->SetSettingChecked(
+          entry.substr(0, eq), std::string{entry.substr(eq + 1)}, false);
+      } catch (const std::exception& e) {
+        SDB_WARN(GENERAL, "invalid role setting \"", entry, "\": ", e.what());
+      }
+    }
+    _conn->Commit();
+  }
 
   for (const auto& [name, value] : _params) {
     // user/database are consumed by the connection identity; replication and
@@ -609,9 +727,12 @@ PgWireSession<Kind>::PendingStatementEnsured(
   const std::shared_ptr<WireSinkContext>& wire) {
   _connection_ctx->AcquireCatalogSnapshot();
   StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
+  RequireCopyFileAccess(*_connection_ctx, *statement);
+  RequireCreateTempAccess(*_connection_ctx, *statement);
   // Statement type is parse-time, and the check must precede PendingQuery:
   // execution tasks (including the DDL itself) can run inside it.
   NoticeDdlInTransaction(statement->type);
+  RequireLockInTransactionBlock(*_connection_ctx, statement.get());
   FillContext(*_connection_ctx, wire->proto);
   _client_state->wire_sink = wire;
   auto pending =
@@ -908,6 +1029,58 @@ void PgWireSession<Kind>::WriteCommandTag(
 }
 
 template<SocketKind Kind>
+bool PgWireSession<Kind>::PeerAuthenticate() {
+  const auto fail = [&] {
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+        ERR_MSG("peer authentication failed for user \"", UserName(), "\"")));
+    return false;
+  };
+  ucred cred{};
+  socklen_t len = sizeof(cred);
+  if (getsockopt(this->_socket.Lowest().native_handle(), SOL_SOCKET,
+                 SO_PEERCRED, &cred, &len) != 0) {
+    SDB_WARN(GENERAL, "could not get peer credentials: ", strerror(errno));
+    return fail();
+  }
+  passwd pwd{};
+  passwd* entry = nullptr;
+  char buf[4096];
+  getpwuid_r(cred.uid, &pwd, buf, sizeof(buf), &entry);
+  if (entry == nullptr) {
+    SDB_WARN(GENERAL, "peer authentication failed for user \"", UserName(),
+             "\": local user with ID ", cred.uid, " does not exist");
+    return fail();
+  }
+  if (UserName() != entry->pw_name) {
+    SDB_WARN(GENERAL, "peer authentication failed for user \"", UserName(),
+             "\": local user \"", entry->pw_name, "\" does not match");
+    return fail();
+  }
+  return true;  // SetupConnection still enforces CanLogin / role-exists
+}
+
+template<SocketKind Kind>
+bool PgWireSession<Kind>::CertAuthenticate() {
+  const std::string cn = this->_socket.PeerCertCommonName();
+  if (cn.empty() || UserName() != cn) {
+    SDB_WARN(GENERAL, "certificate authentication failed for user \"",
+             UserName(), "\"",
+             cn.empty() ? ": no valid client certificate"
+                        : ": certificate CN does not match");
+    WriteFatalResponse(
+      this->_send,
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+                     ERR_MSG("certificate authentication failed for user \"",
+                             UserName(), "\"")));
+    return false;
+  }
+  return true;  // SetupConnection still enforces CanLogin / role-exists
+}
+
+template<SocketKind Kind>
 yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   CapturePeerAddress();
 
@@ -954,16 +1127,36 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   switch (decision.kind) {
     case DKind::Trust:
       co_return true;  // SetupConnection still enforces CanLogin / role-exists
-    case DKind::Reject:
+    case DKind::Reject: {
+      const std::string host =
+        _peer_addr.is_unspecified() ? "local" : _peer_addr.to_string();
+      SDB_WARN(GENERAL, "authentication failed: no pg_hba.conf entry for host ",
+               host, ", user \"", UserName(), "\", database \"", DatabaseName(),
+               "\"");
       WriteFatalResponse(
         this->_send,
         SQL_ERROR_DATA(
           ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-          ERR_MSG("no pg_hba.conf entry for host, user \"", UserName(),
-                  "\", database \"", DatabaseName(), "\"")));
+          ERR_MSG("no pg_hba.conf entry for host \"", host, "\", user \"",
+                  UserName(), "\", database \"", DatabaseName(), "\"")));
       co_return false;
-    case DKind::Unsupported:
+    }
     case DKind::DeferredPeerIdent:
+      if constexpr (Kind == SocketKind::Unix) {
+        // peer rules only match local (unix) connections by construction.
+        if (decision.method == hba::Method::Peer) {
+          co_return PeerAuthenticate();
+        }
+      }
+      [[fallthrough]];  // ident (TCP) stays unsupported
+    case DKind::DeferredCert:
+      if constexpr (decltype(this->_socket)::kSslBacked) {
+        // cert requires hostssl; the grammar rejects it on non-ssl lines. A
+        // MaybeTls client that never upgraded fails inside (empty CN).
+        co_return CertAuthenticate();
+      }
+      [[fallthrough]];  // a unix listener cannot do cert
+    case DKind::Unsupported:
     case DKind::MatchedHostnameDeferred:
       WriteFatalResponse(
         this->_send,
@@ -982,6 +1175,8 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   const auto credential =
     _credentials ? _credentials->LookupCredential(UserName()) : std::nullopt;
   if (!credential) {
+    SDB_WARN(GENERAL, "authentication failed for user \"", UserName(),
+             "\": role has no usable password");
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
@@ -1021,16 +1216,24 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     method_ok = false;
   }
   if (!method_ok) {
+    // Don't tell the client that the stored credential form is incompatible
+    // with the HBA method -- that leaks which secret form is stored. PostgreSQL
+    // returns the generic failure; the real reason goes to the server log.
+    SDB_WARN(GENERAL, "authentication failed for user \"", UserName(),
+             "\": stored credential cannot satisfy method \"",
+             hba::MethodName(hba_method), "\"");
     WriteFatalResponse(
       this->_send,
-      SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-        ERR_MSG("authentication method \"", hba::MethodName(hba_method),
-                "\" cannot verify the stored password for user \"", UserName(),
-                "\"")));
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
+                     ERR_MSG("password authentication failed for user \"",
+                             UserName(), "\"")));
     co_return false;
   }
   if (!ok) {
+    // The wrong-password response was already sent by the SASL/md5 exchange;
+    // record the failure server-side (PostgreSQL logs every auth failure).
+    SDB_WARN(GENERAL, "authentication failed for user \"", UserName(),
+             "\": password mismatch");
     co_return false;
   }
 
@@ -1038,6 +1241,8 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   if (login_role && login_role->HasValidUntil() &&
       duckdb::Timestamp::GetCurrentTimestamp().value >=
         login_role->ValidUntil()) {
+    SDB_WARN(GENERAL, "authentication failed for user \"", UserName(),
+             "\": password has expired (VALID UNTIL)");
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
@@ -2021,6 +2226,8 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     // The temp-DDL scaffolding above ran full query lifecycles whose statement
     // end released the Parse-time snapshot.
     auto bind_snapshot = _connection_ctx->AcquireCatalogSnapshot();
+    RequireCopyFileAccess(*_connection_ctx, *extracted[0]);
+    RequireCreateTempAccess(*_connection_ctx, *extracted[0]);
     auto prepared = _conn->Prepare(std::move(extracted[0]),
                                    type_hints.empty() ? nullptr : &type_hints);
     if (prepared->HasError()) {
@@ -2152,6 +2359,15 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
     IsTransactionExit(*statement.GetPrepared().data->unbound_statement);
   if (_txn_state->StatusByte() == 'E' && !is_txn_exit) {
     ThrowAbortedTransaction();
+  }
+  // LOCK TABLE outside a transaction block (extended protocol): reject at Bind,
+  // where the explicit-block bit is still accurate (before Execute opens the
+  // per-statement implicit block). The simple path is guarded in
+  // PendingStatementEnsured.
+  if (statement.GetKind() == Statement::Kind::Prepared &&
+      statement.GetPrepared().data) {
+    RequireLockInTransactionBlock(
+      *_connection_ctx, statement.GetPrepared().data->unbound_statement.get());
   }
 
   Portal portal;

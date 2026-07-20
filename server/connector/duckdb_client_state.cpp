@@ -55,6 +55,7 @@ SereneDBClientState& SereneDBClientState::Register(
   }
   source->user = registered._connection_ctx->user();
   source->database = registered._connection_ctx->GetDatabase();
+  source->client_addr = registered._connection_ctx->GetClientAddr();
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   source->ctx = &client_ctx;
   registered.progress_source = source;

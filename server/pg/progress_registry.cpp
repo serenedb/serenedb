@@ -164,6 +164,7 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
     s.datid = source->datid;
     s.user = source->user;
     s.database = source->database;
+    s.client_addr = source->client_addr;
     s.backend_start_us = source->backend_start_us;
     s.query_start_us = source->query_start_us.load(std::memory_order_relaxed);
 
@@ -186,11 +187,18 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
 
     absl::MutexLock lock{&source->mu};
     s.query = source->query;
-    if (source->ctx && s.query_start_us != 0) {
-      auto progress = source->ctx->GetQueryProgress();
-      s.percent = progress.GetPercentage();
-      s.rows_processed = static_cast<int64_t>(progress.GetRowsProcessed());
-      s.rows_total = static_cast<int64_t>(progress.GetTotalRowsToProcess());
+    if (source->ctx) {
+      if (duckdb::Value v;
+          source->ctx->TryGetCurrentSetting("application_name", v) &&
+          !v.IsNull()) {
+        s.application_name = v.ToString();
+      }
+      if (s.query_start_us != 0) {
+        auto progress = source->ctx->GetQueryProgress();
+        s.percent = progress.GetPercentage();
+        s.rows_processed = static_cast<int64_t>(progress.GetRowsProcessed());
+        s.rows_total = static_cast<int64_t>(progress.GetTotalRowsToProcess());
+      }
     }
   }
   return result;

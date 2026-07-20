@@ -1,0 +1,62 @@
+# has_column_privilege with an explicit role name and a regclass table argument,
+# resolving the column either by name or by 1-based attnum. Column-level GRANT is
+# honored: a role granted SELECT on only column a holds it there, not on b.
+# A non-existent role raises PostgreSQL's exact error.
+#
+# Fixture prefix: hcp_ (has_column_privilege).
+
+statement ok
+DROP TABLE IF EXISTS hcp_t;
+
+statement ok
+DROP ROLE IF EXISTS hcp_r;
+
+statement ok
+CREATE ROLE hcp_r;
+
+statement ok
+CREATE TABLE hcp_t (a int, b int);
+
+statement ok
+GRANT SELECT (a) ON hcp_t TO hcp_r;
+
+
+# Column a was granted (by name and by attnum 1).
+query
+SELECT has_column_privilege('hcp_r', 'hcp_t'::regclass, 'a', 'SELECT') AS r;
+----
+r
+t
+
+query
+SELECT has_column_privilege('hcp_r', 'hcp_t'::regclass, 1::int2, 'SELECT') AS r;
+----
+r
+t
+
+
+# Column b was not granted (by name and by attnum 2).
+query
+SELECT has_column_privilege('hcp_r', 'hcp_t'::regclass, 'b', 'SELECT') AS r;
+----
+r
+f
+
+query
+SELECT has_column_privilege('hcp_r', 'hcp_t'::regclass, 2::int2, 'SELECT') AS r;
+----
+r
+f
+
+
+# A non-existent role is rejected with PG's exact error.
+statement error db error: ERROR: role "hcp_ghost" does not exist
+SELECT has_column_privilege('hcp_ghost', 'hcp_t'::regclass, 'a', 'SELECT');
+
+
+# ---- cleanup ----
+statement ok
+DROP TABLE hcp_t;
+
+statement ok
+DROP ROLE hcp_r;

@@ -20,7 +20,9 @@ target_sources(
         pg_catalog/pg_language.cpp
         pg_catalog/pg_namespace.cpp
         pg_catalog/pg_opclass.cpp
+        pg_catalog/pg_policy.cpp
         pg_catalog/pg_proc.cpp
+        pg_catalog/pg_sequence.cpp
         pg_catalog/pg_tablespace.cpp
         pg_catalog/pg_ts_dict.cpp
         pg_catalog/sdb_progress.cpp

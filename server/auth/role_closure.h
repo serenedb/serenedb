@@ -64,6 +64,17 @@ struct RoleClosure {
   // permission-to-SET-ROLE decision, which is about the actor, not an object).
   bool is_superuser = false;
 
+  // Membership in a predefined capability role (PostgreSQL's pg_read_all_data /
+  // pg_write_all_data), inherited through the closure like ordinary membership.
+  // Folded into the privilege predicates below via PredefinedModes.
+  bool read_all_data = false;
+  bool write_all_data = false;
+  bool maintain_all = false;
+
+  // The privileges the predefined-role memberships confer on an object of this
+  // type without an ACL entry; NoRights when none applies.
+  catalog::AclMode PredefinedModes(catalog::ObjectType type) const;
+
   // Does this principal act as role `r`? (member-of-or-equals; superuser: all.)
   bool MemberOf(ObjectId r) const {
     return is_superuser || std::ranges::binary_search(closure, r);

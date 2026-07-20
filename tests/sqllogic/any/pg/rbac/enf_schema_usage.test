@@ -1,0 +1,56 @@
+# A role needs USAGE on a schema to reach objects inside it, even with a direct
+# privilege on the object -- exactly like PostgreSQL, which reports the schema
+# denial first. USAGE on `public` is granted to PUBLIC by default, so this only
+# bites for other schemas.
+#
+# Fixture prefix: esu_ (enf_schema_usage). Lore: the vault lives in mop.
+
+statement ok
+DROP SCHEMA IF EXISTS esu_mop CASCADE;
+
+statement ok
+DROP ROLE IF EXISTS esu_vedernikoff;
+
+statement ok
+CREATE ROLE esu_vedernikoff LOGIN PASSWORD 'esu_pw';
+
+statement ok
+CREATE SCHEMA esu_mop;
+
+statement ok
+CREATE TABLE esu_mop.vault (id int, secret text);
+
+statement ok
+INSERT INTO esu_mop.vault VALUES (1, 'clickclack');
+
+
+# The role has SELECT on the table but no USAGE on the schema: PG denies on the
+# schema first.
+statement ok
+GRANT SELECT ON esu_mop.vault TO esu_vedernikoff;
+
+connection c_ved user=esu_vedernikoff password=esu_pw
+statement error db error: ERROR: permission denied for schema esu_mop
+SELECT * FROM esu_mop.vault;
+
+
+# Granting USAGE on the schema unblocks the (already-granted) SELECT.
+connection default
+statement ok
+GRANT USAGE ON SCHEMA esu_mop TO esu_vedernikoff;
+
+connection c_ved2 user=esu_vedernikoff password=esu_pw
+query
+SELECT secret FROM esu_mop.vault;
+----
+secret
+clickclack
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP SCHEMA esu_mop CASCADE;
+
+statement ok
+DROP ROLE esu_vedernikoff;

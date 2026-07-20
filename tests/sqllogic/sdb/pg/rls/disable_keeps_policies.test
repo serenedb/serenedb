@@ -1,0 +1,88 @@
+# serenedb-only RLS: DISABLE ROW LEVEL SECURITY keeps the policies but stops
+# enforcing them (all rows visible again); re-ENABLE brings them back. Dropping
+# the enable does not drop the policy objects.
+#
+# Lore: the clickclack ledger's guard rail can be lowered and raised.
+
+statement ok
+DROP TABLE IF EXISTS dk_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS dk_user;
+
+
+statement ok
+CREATE TABLE dk_ledger (owner text, amount int);
+
+
+statement ok
+INSERT INTO dk_ledger VALUES ('dk_user', 1), ('other', 2);
+
+
+statement ok
+CREATE ROLE dk_user LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON dk_ledger TO dk_user;
+
+
+statement ok
+ALTER TABLE dk_ledger ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p_self ON dk_ledger FOR SELECT USING (owner = current_user);
+
+
+# Enabled: only own row.
+connection c1 user=dk_user password=pw
+query
+SELECT owner FROM dk_ledger ORDER BY owner;
+----
+owner
+dk_user
+
+
+# Disable: policy kept but ignored -> all rows.
+statement ok
+ALTER TABLE dk_ledger DISABLE ROW LEVEL SECURITY;
+
+
+connection c2 user=dk_user password=pw
+query
+SELECT owner FROM dk_ledger ORDER BY owner;
+----
+owner
+dk_user
+other
+
+
+# The policy still exists in the catalog while disabled.
+query
+SELECT policyname FROM pg_catalog.pg_policies WHERE tablename = 'dk_ledger';
+----
+policyname
+p_self
+
+
+# Re-enable: filtering resumes with the same policy.
+statement ok
+ALTER TABLE dk_ledger ENABLE ROW LEVEL SECURITY;
+
+
+connection c3 user=dk_user password=pw
+query ?
+SELECT owner FROM dk_ledger ORDER BY owner;
+----
+owner
+dk_user
+
+
+statement ok
+DROP TABLE dk_ledger;
+
+
+statement ok
+DROP ROLE dk_user;

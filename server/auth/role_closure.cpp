@@ -109,6 +109,11 @@ RoleClosure ComputeRoleClosure(const catalog::Snapshot& snapshot,
   if (auto start = snapshot.GetObject<catalog::Role>(role)) {
     out.is_superuser = start->IsSuperuser();
   }
+  out.read_all_data =
+    std::ranges::binary_search(out.closure, id::kPgReadAllData);
+  out.write_all_data =
+    std::ranges::binary_search(out.closure, id::kPgWriteAllData);
+  out.maintain_all = std::ranges::binary_search(out.closure, id::kPgMaintain);
   return out;
 }
 
@@ -151,10 +156,36 @@ bool HasAdminOption(const catalog::Snapshot& snapshot, ObjectId member,
   return false;
 }
 
+catalog::AclMode RoleClosure::PredefinedModes(catalog::ObjectType type) const {
+  using catalog::AclMode;
+  using enum catalog::ObjectType;
+  AclMode modes = AclMode::NoRights;
+  if (type == Table || type == PgSqlView || type == Sequence) {
+    if (read_all_data) {
+      modes |= AclMode::Select;
+    }
+    if (write_all_data) {
+      modes |= AclMode::Insert | AclMode::Update | AclMode::Delete;
+    }
+    if (maintain_all) {
+      modes |= AclMode::Maintain;
+    }
+  } else if (type == Schema && (read_all_data || write_all_data)) {
+    modes |= AclMode::Usage;
+  }
+  return modes;
+}
+
 bool RoleClosure::Can(const catalog::Object& object,
                       catalog::AclMode need) const {
   // The owner (and a superuser, who owns everything) holds every privilege.
   if (Owns(object)) {
+    return true;
+  }
+  // A predefined capability role (pg_read/write_all_data) confers its privilege
+  // on every object of the relevant type without an ACL entry.
+  if (const auto pd = PredefinedModes(object.GetType());
+      need != catalog::AclMode::NoRights && (pd & need) == need) {
     return true;
   }
   return AclCheckSorted(object.GetAcl(), object.GetType(), object.GetOwner(),
@@ -164,6 +195,10 @@ bool RoleClosure::Can(const catalog::Object& object,
 bool RoleClosure::CanAny(const catalog::Object& object,
                          catalog::AclMode need) const {
   if (Owns(object)) {
+    return true;
+  }
+  if ((PredefinedModes(object.GetType()) & need) !=
+      catalog::AclMode::NoRights) {
     return true;
   }
   return AclCheckSorted(object.GetAcl(), object.GetType(), object.GetOwner(),

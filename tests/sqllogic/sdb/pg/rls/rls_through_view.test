@@ -1,0 +1,124 @@
+# serenedb-only RLS: policies are evaluated as the EFFECTIVE role, which a view
+# can shift. A default (definer-rights) view accesses its base tables as the
+# VIEW OWNER, so the owner's RLS policies apply -- not the querying user's. A
+# security_invoker view keeps the querying user. This mirrors PostgreSQL and
+# reuses the same EffectiveDefiner fold as the RBAC table checks.
+#
+# NOTE: policies written with a literal `current_user` in the USING expression
+# still evaluate current_user to the SESSION user at runtime (a known divergence
+# from PG, which resolves it to the view owner for a definer view). Policies that
+# gate by `TO <role>` -- the case this test covers -- fold correctly.
+#
+# Lore: the clickclack auditors' view lets a clerk read through the auditor's eyes.
+
+statement ok
+DROP VIEW IF EXISTS rtv_view;
+
+
+statement ok
+DROP TABLE IF EXISTS rtv_base;
+
+
+statement ok
+DROP ROLE IF EXISTS rtv_clerk;
+
+
+statement ok
+DROP ROLE IF EXISTS rtv_auditor;
+
+
+statement ok
+CREATE TABLE rtv_base (tag text, secret int);
+
+
+statement ok
+INSERT INTO rtv_base VALUES ('x', 100), ('y', 200);
+
+
+statement ok
+CREATE ROLE rtv_clerk LOGIN PASSWORD 'cpw';
+
+
+statement ok
+CREATE ROLE rtv_auditor LOGIN PASSWORD 'apw';
+
+
+statement ok
+GRANT SELECT ON rtv_base TO rtv_clerk;
+
+
+statement ok
+GRANT SELECT ON rtv_base TO rtv_auditor;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO rtv_auditor;
+
+
+statement ok
+ALTER TABLE rtv_base ENABLE ROW LEVEL SECURITY;
+
+
+# The policy applies ONLY to the auditor role (not the clerk).
+statement ok
+CREATE POLICY p_audit ON rtv_base FOR SELECT TO rtv_auditor USING (true);
+
+
+# The auditor owns a plain (definer-rights) view over the base table.
+connection c_own user=rtv_auditor password=apw
+statement ok
+CREATE VIEW rtv_view AS SELECT * FROM rtv_base;
+
+
+connection c_own2 user=rtv_auditor password=apw
+statement ok
+GRANT SELECT ON rtv_view TO rtv_clerk;
+
+
+# The clerk querying the base table DIRECTLY: no policy applies -> default-deny.
+connection c_direct user=rtv_clerk password=cpw
+query
+SELECT tag FROM rtv_base ORDER BY tag;
+----
+tag
+
+
+# The clerk querying THROUGH the auditor's definer view: RLS runs as the auditor,
+# whose policy allows everything -> the clerk sees all rows.
+connection c_view user=rtv_clerk password=cpw
+query
+SELECT tag FROM rtv_view ORDER BY tag;
+----
+tag
+x
+y
+
+
+# The auditor querying its own view also sees all rows.
+connection c_own3 user=rtv_auditor password=apw
+query
+SELECT tag FROM rtv_view ORDER BY tag;
+----
+tag
+x
+y
+
+
+statement ok
+DROP VIEW rtv_view;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM rtv_auditor;
+
+
+statement ok
+DROP TABLE rtv_base;
+
+
+statement ok
+DROP ROLE rtv_clerk;
+
+
+statement ok
+DROP ROLE rtv_auditor;

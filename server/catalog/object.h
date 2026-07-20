@@ -66,6 +66,8 @@ enum class ObjectType : uint8_t {
   Table,
   SecondaryIndex,
   InvertedIndex,
+  Policy,
+  RowSecurity,
 
   Column,           // loaded as a part of a Table, not as a separate object
   CheckConstraint,  // loaded as a part of a Table, not as a separate object

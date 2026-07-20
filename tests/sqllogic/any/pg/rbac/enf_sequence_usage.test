@@ -1,0 +1,69 @@
+# Sequence privileges are either-or, like PostgreSQL: nextval() needs USAGE OR
+# UPDATE, currval() needs USAGE OR SELECT (not both). Regression guard: the
+# checks used to AND the bits, so the standard `GRANT USAGE ON SEQUENCE` idiom
+# (what serial/nextval workflows use) was wrongly refused.
+#
+# Lore: vedernikoff draws from the counter with only USAGE.
+
+statement ok
+DROP SEQUENCE IF EXISTS esu_counter;
+
+statement ok
+DROP ROLE IF EXISTS esu_usage;
+
+statement ok
+DROP ROLE IF EXISTS esu_update;
+
+statement ok
+DROP ROLE IF EXISTS esu_none;
+
+statement ok
+CREATE SEQUENCE esu_counter;
+
+statement ok
+CREATE ROLE esu_usage LOGIN PASSWORD 'esu_usage_pw';
+
+statement ok
+CREATE ROLE esu_update LOGIN PASSWORD 'esu_update_pw';
+
+statement ok
+CREATE ROLE esu_none LOGIN PASSWORD 'esu_none_pw';
+
+statement ok
+GRANT USAGE ON SEQUENCE esu_counter TO esu_usage;
+
+statement ok
+GRANT UPDATE ON SEQUENCE esu_counter TO esu_update;
+
+
+# USAGE alone is enough for nextval (the common serial idiom).
+connection c_usage user=esu_usage password=esu_usage_pw
+query
+SELECT nextval('esu_counter');
+----
+nextval
+1
+
+
+# UPDATE alone is also enough for nextval.
+connection c_update user=esu_update password=esu_update_pw
+query
+SELECT nextval('esu_counter');
+----
+nextval
+2
+
+
+# Neither privilege -> refused.
+connection c_none user=esu_none password=esu_none_pw
+statement error db error: ERROR: permission denied for sequence esu_counter
+SELECT nextval('esu_counter');
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP SEQUENCE esu_counter;
+
+statement ok
+DROP ROLE esu_usage, esu_update, esu_none;

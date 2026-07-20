@@ -1,0 +1,72 @@
+# REVOKE GRANT OPTION FOR must respect dependent grants, like PostgreSQL: when a
+# WITH-GRANT-OPTION grantee has passed the privilege on, revoking their grant
+# option is refused by default (RESTRICT) because those onward grants depend on
+# it, and CASCADE removes them while keeping the grantee's own privilege.
+# Regression guard: the grant_option_only branch used to skip the dependent
+# check and ignore CASCADE, silently orphaning the dependent grant.
+#
+# Lore: vedernikoff delegates to babsky, who re-delegates to clickclack.
+
+statement ok
+DROP TABLE IF EXISTS rgo_ledger;
+
+statement ok
+DROP ROLE IF EXISTS rgo_babsky;
+
+statement ok
+DROP ROLE IF EXISTS rgo_clickclack;
+
+statement ok
+CREATE ROLE rgo_babsky LOGIN PASSWORD 'rgo_babsky_pw';
+
+statement ok
+CREATE ROLE rgo_clickclack LOGIN PASSWORD 'rgo_clickclack_pw';
+
+statement ok
+CREATE TABLE rgo_ledger (id int);
+
+statement ok
+GRANT SELECT ON rgo_ledger TO rgo_babsky WITH GRANT OPTION;
+
+
+# babsky passes SELECT on to clickclack, creating a dependent grant.
+connection c_bab user=rgo_babsky password=rgo_babsky_pw
+statement ok
+GRANT SELECT ON rgo_ledger TO rgo_clickclack;
+
+
+# RESTRICT (default): revoking babsky's grant option is refused while
+# clickclack's grant depends on it.
+connection default
+statement error db error: ERROR: dependent privileges exist
+REVOKE GRANT OPTION FOR SELECT ON rgo_ledger FROM rgo_babsky;
+
+
+# The dependent grant is still in place.
+query
+SELECT has_table_privilege('rgo_clickclack', 'rgo_ledger', 'SELECT') AS dep_intact;
+----
+dep_intact
+t
+
+
+# CASCADE removes the dependent grant AND drops babsky's grant option, but keeps
+# babsky's own SELECT.
+statement ok
+REVOKE GRANT OPTION FOR SELECT ON rgo_ledger FROM rgo_babsky CASCADE;
+
+query
+SELECT has_table_privilege('rgo_babsky', 'rgo_ledger', 'SELECT') AS babsky_reads,
+       has_table_privilege('rgo_babsky', 'rgo_ledger', 'SELECT WITH GRANT OPTION') AS babsky_can_grant,
+       has_table_privilege('rgo_clickclack', 'rgo_ledger', 'SELECT') AS clickclack_reads;
+----
+babsky_reads	babsky_can_grant	clickclack_reads
+t	f	f
+
+
+# ---- cleanup ----
+statement ok
+DROP TABLE rgo_ledger;
+
+statement ok
+DROP ROLE rgo_babsky, rgo_clickclack;

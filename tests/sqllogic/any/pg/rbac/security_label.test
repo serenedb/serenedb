@@ -1,0 +1,41 @@
+# SECURITY LABEL parses for the common object forms and errors exactly like a
+# stock PostgreSQL server with no label provider loaded (which is the default).
+#
+# Fixture prefix: sl_ (security_label).
+
+statement ok
+DROP TABLE IF EXISTS sl_t;
+
+statement ok
+DROP ROLE IF EXISTS sl_r;
+
+statement ok
+CREATE TABLE sl_t (a int);
+
+statement ok
+CREATE ROLE sl_r;
+
+
+statement error db error: ERROR: no security label providers have been loaded
+SECURITY LABEL ON TABLE sl_t IS 'secret';
+
+statement error db error: ERROR: no security label providers have been loaded
+SECURITY LABEL ON ROLE sl_r IS 'secret';
+
+statement error db error: ERROR: no security label providers have been loaded
+SECURITY LABEL ON COLUMN sl_t.a IS 'secret';
+
+statement error db error: ERROR: security label provider "selinux" is not loaded
+SECURITY LABEL FOR selinux ON SCHEMA public IS NULL;
+
+# A provider named like an unreserved keyword parses too.
+statement error db error: ERROR: security label provider "version" is not loaded
+SECURITY LABEL FOR version ON TABLE sl_t IS 'x';
+
+
+# ---- cleanup ----
+statement ok
+DROP TABLE sl_t;
+
+statement ok
+DROP ROLE sl_r;

@@ -105,8 +105,8 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
-  if (!catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema, name.relation,
-                             false, missing_ok)) {
+  if (!catalog.DropTokenizer(catalog::ActingAs(context), conn_ctx.GetDatabase(),
+                             name.schema, name.relation, false, missing_ok)) {
     conn_ctx.AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                      ERR_MSG("text search dictionary \"", name.relation,

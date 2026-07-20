@@ -67,10 +67,16 @@ enum class Method : uint8_t {
 
 // How SerenedB treats a matched rule's method.
 //  Native            -- SDB evaluates it (trust/reject/password/md5/scram).
-//  DeferredPeerIdent -- parses; enforcement not yet built (unix SO_PEERCRED).
+//  DeferredPeerIdent -- decided at the session: peer runs via SO_PEERCRED on
+//  unix sockets; ident (TCP) is refused.
 //  RejectAtConnect   -- parses; a matched connection is refused (SDB can't do
 //  it).
-enum class MethodClass : uint8_t { Native, DeferredPeerIdent, RejectAtConnect };
+enum class MethodClass : uint8_t {
+  Native,
+  DeferredPeerIdent,
+  DeferredCert,
+  RejectAtConnect
+};
 
 MethodClass MethodExecutability(Method method);
 
@@ -169,7 +175,9 @@ struct Decision {
     Trust,              // matched a trust rule -- skip the password exchange
     Reject,             // matched a reject rule OR no rule matched (see rule)
     Method,             // matched a native password method (Password/Md5/Scram)
-    DeferredPeerIdent,  // matched peer/ident -- not yet supported
+    DeferredPeerIdent,  // matched peer/ident -- the session decides (see
+                        // method)
+    DeferredCert,       // matched cert -- the session verifies the client cert
     Unsupported,        // matched a method SDB can't perform (ldap/gss/...)
     MatchedHostnameDeferred,  // matched a samehost/samenet/hostname rule
   };

@@ -49,6 +49,12 @@
 namespace sdb::pg {
 namespace {
 
+// The access context every mutating catalog call runs under (the caller's role).
+catalog::AccessContext Acting(ConnectionContext& ctx) {
+  const ObjectId role = ctx.GetRoleId();
+  return catalog::ActingAs(role);
+}
+
 auto FindAclItem(catalog::Acl& acl, ObjectId grantee, ObjectId grantor) {
   return std::ranges::find_if(acl, [&](const catalog::AclItem& item) {
     return item.grantee == grantee && item.grantor == grantor;
@@ -133,6 +139,26 @@ void AclRemoveGrantOption(catalog::Acl& acl, ObjectId grantee, ObjectId grantor,
   }
 }
 
+// REVOKE GRANT OPTION FOR ... CASCADE: drop the grantee's grant option (keeping
+// the privilege itself) and cascade-revoke every grant that depended on it (the
+// grants the grantee made, and their subtrees).
+void AclRemoveGrantOptionCascade(catalog::Acl& acl, ObjectId grantee,
+                                 ObjectId grantor, catalog::AclMode privs) {
+  std::vector<std::pair<ObjectId, catalog::AclMode>> dependents;
+  for (const auto& item : acl) {
+    if (item.grantor == grantee) {
+      const auto bits = item.privs & privs;
+      if (bits != catalog::AclMode::NoRights) {
+        dependents.emplace_back(item.grantee, bits);
+      }
+    }
+  }
+  for (const auto& [dep_grantee, dep_bits] : dependents) {
+    AclRevokeCascade(acl, dep_grantee, grantee, dep_bits);
+  }
+  AclRemoveGrantOption(acl, grantee, grantor, privs);
+}
+
 catalog::Catalog& GlobalCatalog() { return catalog::GetCatalog(); }
 
 std::shared_ptr<const catalog::Snapshot> FreshSnapshot() {
@@ -155,9 +181,17 @@ int64_t ValidUntilOrUnset(bool has_valid_until, int64_t micros) {
   return has_valid_until ? micros : catalog::Role::kNoValidUntil;
 }
 
-std::string MakePasswordVerifier(bool has_password, std::string_view password,
-                                 bool is_null) {
+std::string MakePasswordVerifier(ConnectionContext& ctx, bool has_password,
+                                 std::string_view password, bool is_null) {
   if (!has_password || is_null) {
+    return {};
+  }
+  // PostgreSQL: `PASSWORD ''` is not a valid password -- it warns and clears
+  // the password rather than storing a verifier for the empty string.
+  if (password.empty()) {
+    ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_WARNING),
+      ERR_MSG("empty string is not a valid password, clearing password")));
     return {};
   }
   // A pre-hashed verifier (SCRAM or md5, from pg_dumpall / psql \password /
@@ -178,6 +212,20 @@ std::string MakePasswordVerifier(bool has_password, std::string_view password,
 
 void CreateRole(ConnectionContext& ctx, std::string_view name,
                 const CreateRoleOptions& options) {
+  // Reserved role names (PostgreSQL rejects these as reserved_name): the `pg_`
+  // prefix is reserved for predefined roles, and `public`/`none` are reserved
+  // pseudo-roles (PUBLIC = every role; NONE used by SET ROLE).
+  if (absl::StartsWithIgnoreCase(name, "pg_")) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_RESERVED_NAME),
+      ERR_MSG("role name \"", name, "\" is reserved"),
+      ERR_DETAIL("Role names starting with \"pg_\" are reserved."));
+  }
+  if (absl::EqualsIgnoreCase(name, "public") ||
+      absl::EqualsIgnoreCase(name, "none")) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_RESERVED_NAME),
+                    ERR_MSG("role name \"", name, "\" is reserved"));
+  }
   const int32_t conn_limit =
     ParseConnLimit(options.has_conn_limit, options.conn_limit);
   const int64_t valid_until =
@@ -212,10 +260,10 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
     .conn_limit = conn_limit,
     .valid_until = valid_until,
     .password_verifier = MakePasswordVerifier(
-      options.has_password, options.password, options.password_is_null),
+      ctx, options.has_password, options.password, options.password_is_null),
   });
 
-  catalog.CreateRole(catalog::ActingAs(ctx.GetRoleId()), std::move(role));
+  catalog.CreateRole(Acting(ctx), std::move(role));
 
   for (const auto& g : options.in_roles) {
     GrantRole(ctx, g, name, /*revoke=*/false, MemberOptions{});
@@ -230,7 +278,7 @@ void CreateRole(ConnectionContext& ctx, std::string_view name,
 
 void DropRole(ConnectionContext& ctx, std::string_view name, bool missing_ok) {
   auto& catalog = GlobalCatalog();
-  if (!catalog.DropRole(catalog::ActingAs(ctx.GetRoleId()), name, missing_ok)) {
+  if (!catalog.DropRole(Acting(ctx), name, missing_ok)) {
     ctx.AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                      ERR_MSG("role \"", name, "\" does not exist, skipping")));
@@ -267,11 +315,11 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
 
   // Hash outside the mutate lambda (which runs under the catalog lock).
   const std::string verifier = MakePasswordVerifier(
-    opts.has_password, opts.password, opts.password_is_null);
+    ctx, opts.has_password, opts.password, opts.password_is_null);
 
   auto& catalog = GlobalCatalog();
   catalog.ChangeRole(
-    catalog::ActingAs(ctx.GetRoleId()), name, "alter",
+    Acting(ctx), name, "alter",
     /*allow_self=*/false,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) {
@@ -300,8 +348,20 @@ void AlterRole(ConnectionContext& ctx, std::string_view name,
 void RenameRole(ConnectionContext& ctx, std::string_view name,
                 std::string_view new_name) {
   auto& catalog = GlobalCatalog();
+  // PostgreSQL refuses to rename the session or current user.
+  if (auto target = FreshSnapshot()->GetRole(name)) {
+    const auto target_id = target->GetId();
+    if (target_id == ctx.GetSessionRoleId()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("session user cannot be renamed"));
+    }
+    if (target_id == ctx.GetRoleId()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("current user cannot be renamed"));
+    }
+  }
   catalog.ChangeRole(
-    catalog::ActingAs(ctx.GetRoleId()), name, "rename",
+    Acting(ctx), name, "rename",
     /*allow_self=*/false,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) {
@@ -375,7 +435,7 @@ void AlterRoleConfig(ConnectionContext& ctx, std::string_view name,
 
   auto& catalog = GlobalCatalog();
   catalog.ChangeRole(
-    catalog::ActingAs(ctx.GetRoleId()), name, "alter",
+    Acting(ctx), name, "alter",
     /*allow_self=*/is_self,
     [&](const catalog::Role& old_role,
         std::shared_ptr<catalog::Role>& new_role) {
@@ -431,10 +491,38 @@ bool AnyColumnPrivs(std::span<const ParsedPriv> parsed) {
     parsed, [](const ParsedPriv& p) { return !p.columns.empty(); });
 }
 
-ObjectId ResolveGranteeId(const catalog::Snapshot& snap,
+// OWNER TO / REASSIGN OWNED TO role spec: the parser uppercases the keyword
+// alternatives, identifiers arrive lower-folded. CURRENT_USER / CURRENT_ROLE
+// resolve to the effective role, SESSION_USER to the session role.
+std::string ResolveRoleSpecName(ConnectionContext& ctx,
+                                const catalog::Snapshot& snap,
+                                std::string_view spec) {
+  ObjectId id;
+  if (spec == "CURRENT_USER" || spec == "CURRENT_ROLE") {
+    id = ctx.GetRoleId();
+  } else if (spec == "SESSION_USER") {
+    id = ctx.GetSessionRoleId();
+  } else {
+    return std::string{spec};
+  }
+  auto role = snap.GetObject<catalog::Role>(id);
+  SDB_ASSERT(role);
+  return std::string{role->GetName()};
+}
+
+ObjectId ResolveGranteeId(ConnectionContext& ctx, const catalog::Snapshot& snap,
                           std::string_view grantee) {
   if (grantee == "PUBLIC" || grantee == "public") {
     return catalog::kPublicGrantee;
+  }
+  // Exact match only: the parser lower-folds the unquoted keywords, and a
+  // quoted mixed-case role name (e.g. "Current_User") must stay a role name.
+  if (grantee == "CURRENT_USER" || grantee == "current_user" ||
+      grantee == "CURRENT_ROLE" || grantee == "current_role") {
+    return ctx.GetRoleId();
+  }
+  if (grantee == "SESSION_USER" || grantee == "session_user") {
+    return ctx.GetSessionRoleId();
   }
   auto grantee_role = snap.GetRole(grantee);
   if (!grantee_role) {
@@ -492,7 +580,7 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
   }
   const ObjectId defacl_role_id = defacl_role->GetId();
 
-  const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
+  const ObjectId grantee_id = ResolveGranteeId(ctx, *snapshot, grantee);
 
   ObjectId schema_id = id::kInvalid;
   if (!opts.in_schema.empty()) {
@@ -510,7 +598,7 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
 
   const catalog::AclMode privs = ParseAclModeOrThrow(privileges, type);
 
-  catalog.ChangeDefaultAcl(catalog::ActingAs(ctx.GetRoleId()), defacl_role_name,
+  catalog.ChangeDefaultAcl(Acting(ctx), defacl_role_name,
                            schema_id, objtype_c, type, [&](catalog::Acl& acl) {
                              ApplyAclChange(
                                acl, grantee_id, defacl_role_id, privs, revoke,
@@ -592,16 +680,29 @@ void ApplyAclGrant(const catalog::Snapshot& live, ObjectId owner,
     return;
   }
   if (!gc.revoke) {
+    // PUBLIC cannot act as a grantor, so it cannot hold a grant option
+    // (PostgreSQL rejects `GRANT ... TO PUBLIC WITH GRANT OPTION`).
+    if (gc.opts.with_grant_option && gc.grantee_id == catalog::kPublicGrantee) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
+                      ERR_MSG("grant options can only be granted to roles"));
+    }
     const auto grant_option =
       gc.opts.with_grant_option ? allowed : catalog::AclMode::NoRights;
     AclGrant(acl, gc.grantee_id, grantor, allowed, grant_option);
+  } else if (!gc.opts.cascade &&
+             AclDependentPrivs(acl, gc.grantee_id, allowed) !=
+               catalog::AclMode::NoRights) {
+    // Dependent grants (ones the grantee made) block RESTRICT (the default);
+    // CASCADE removes them.
+    *gc.dependents_block = true;
   } else if (gc.opts.grant_option_only) {
-    AclRemoveGrantOption(acl, gc.grantee_id, grantor, allowed);
+    if (gc.opts.cascade) {
+      AclRemoveGrantOptionCascade(acl, gc.grantee_id, grantor, allowed);
+    } else {
+      AclRemoveGrantOption(acl, gc.grantee_id, grantor, allowed);
+    }
   } else if (gc.opts.cascade) {
     AclRevokeCascade(acl, gc.grantee_id, grantor, allowed);
-  } else if (AclDependentPrivs(acl, gc.grantee_id, allowed) !=
-             catalog::AclMode::NoRights) {
-    *gc.dependents_block = true;
   } else {
     AclRevoke(acl, gc.grantee_id, grantor, allowed);
   }
@@ -623,7 +724,7 @@ void GrantObjectColumns(ConnectionContext& ctx, catalog::ObjectType type,
                     ERR_MSG("relation \"", rel_name, "\" does not exist"));
   }
   const ObjectId current_id = ctx.GetRoleId();
-  const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
+  const ObjectId grantee_id = ResolveGranteeId(ctx, *snapshot, grantee);
 
   const ObjectId granted_by_id = ResolveGrantedBy(*snapshot, opts.granted_by);
 
@@ -714,7 +815,7 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
 
   const ObjectId current_id = ctx.GetRoleId();
 
-  const ObjectId grantee_id = ResolveGranteeId(*snapshot, grantee);
+  const ObjectId grantee_id = ResolveGranteeId(ctx, *snapshot, grantee);
 
   const ObjectId granted_by_id = ResolveGrantedBy(*snapshot, opts.granted_by);
 
@@ -837,9 +938,11 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
     .set_option = opts.set != 0,
   };
 
-  catalog.ChangeMembership(catalog::ActingAs(ctx.GetRoleId()), role_id, role,
+  const ObjectId granted_by_id = ResolveGrantedBy(*snapshot, opts.granted_by);
+
+  catalog.ChangeMembership(Acting(ctx), role_id, role,
                            member_id, member, edge, revoke,
-                           opts.admin_option_only);
+                           opts.admin_option_only, granted_by_id);
 }
 
 void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
@@ -851,11 +954,8 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
 
   const ObjectId current_id = ctx.GetRoleId();
 
-  std::string_view new_owner_name = new_owner;
-  if (new_owner == "CURRENT_USER" || new_owner == "SESSION_USER" ||
-      new_owner == "CURRENT_ROLE") {
-    new_owner_name = ctx.user();
-  }
+  const std::string new_owner_name =
+    ResolveRoleSpecName(ctx, *snapshot, new_owner);
   auto new_owner_role = snapshot->GetRole(new_owner_name);
   if (!new_owner_role) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -865,17 +965,180 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
 
   std::string schema_name;
   std::string rel_name;
+  ObjectId target_database_id = ctx.GetDatabaseId();
   if (type == catalog::ObjectType::Schema) {
     rel_name = std::string{name};
+  } else if (type == catalog::ObjectType::Database) {
+    // The target is the named database, possibly not the connected one.
+    rel_name = std::string{name};
+    auto target_db = snapshot->GetDatabase(name);
+    if (!target_db) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                      ERR_MSG("database \"", name, "\" does not exist"));
+    }
+    target_database_id = target_db->GetId();
   } else {
     const std::string current_schema = ctx.GetCurrentSchema();
     const auto parsed = ParseObjectName(name, current_schema);
     schema_name = parsed.schema;
     rel_name = parsed.relation;
   }
-  catalog.ChangeOwner(catalog::ActingAs(current_id), ctx.GetDatabaseId(),
+  catalog.ChangeOwner(catalog::ActingAs(current_id), target_database_id,
                       schema_name, rel_name, type, new_owner_id,
                       new_owner_name);
+}
+
+void ReassignOwned(ConnectionContext& ctx,
+                   std::span<const std::string> from_roles,
+                   std::string_view to_role) {
+  GlobalCatalog().ReassignOwned(
+    Acting(ctx), from_roles,
+    ResolveRoleSpecName(ctx, *FreshSnapshot(), to_role));
+}
+
+void DropOwned(ConnectionContext& ctx, std::span<const std::string> from_roles,
+               bool cascade) {
+  GlobalCatalog().DropOwned(Acting(ctx), from_roles,
+                            cascade);
+}
+
+// LOCK [TABLE] name,... IN <mode> MODE. serened's MVCC snapshots make the lock
+// advisory, so this validates like PG (each relation must exist and the caller
+// must hold the mode-appropriate privilege) and otherwise no-ops. ACCESS SHARE
+// needs any of SELECT/INSERT/UPDATE/DELETE/TRUNCATE/MAINTAIN; every stronger
+// mode needs one of UPDATE/DELETE/TRUNCATE/MAINTAIN. Superuser and owner
+// bypass.
+void LockTable(ConnectionContext& ctx, std::span<const std::string> names,
+               std::string_view mode) {
+  using catalog::AclMode;
+  const AclMode required =
+    mode == "ACCESS SHARE"
+      ? (AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::Delete |
+         AclMode::Truncate | AclMode::Maintain)
+      : (AclMode::Update | AclMode::Delete | AclMode::Truncate |
+         AclMode::Maintain);
+
+  auto snapshot = FreshSnapshot();
+  const auto& rc = snapshot->ClosureFor(ctx.GetRoleId());
+  const std::string current_schema = ctx.GetCurrentSchema();
+  for (const auto& raw : names) {
+    const auto parsed = ParseObjectName(raw, current_schema);
+    auto table =
+      snapshot->GetRelation(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
+                            parsed.schema, parsed.relation);
+    if (!table || table->GetType() != catalog::ObjectType::Table) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+        ERR_MSG("relation \"", parsed.relation, "\" does not exist"));
+    }
+    if (rc.is_superuser || rc.Owns(*table) ||
+        (rc.HeldModes(table->GetAcl()) & required) != AclMode::NoRights) {
+      continue;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for table ", parsed.relation));
+  }
+}
+
+namespace {
+
+catalog::persistence::PolicyCommand ParsePolicyCommand(std::string_view cmd) {
+  using PC = catalog::persistence::PolicyCommand;
+  if (cmd == "SELECT") {
+    return PC::Select;
+  }
+  if (cmd == "INSERT") {
+    return PC::Insert;
+  }
+  if (cmd == "UPDATE") {
+    return PC::Update;
+  }
+  if (cmd == "DELETE") {
+    return PC::Delete;
+  }
+  return PC::All;
+}
+
+// Resolve policy role names to ids. PUBLIC (or an empty list) -> empty vector,
+// which the enforcement path treats as "applies to every role".
+std::vector<ObjectId> ResolvePolicyRoles(
+  ConnectionContext& ctx, const catalog::Snapshot& snap,
+  std::span<const std::string> roles) {
+  std::vector<ObjectId> out;
+  for (const auto& role : roles) {
+    auto id = ResolveGranteeId(ctx, snap, role);
+    if (id == catalog::kPublicGrantee) {
+      return {};
+    }
+    out.push_back(id);
+  }
+  return out;
+}
+
+}  // namespace
+
+void CreatePolicy(ConnectionContext& ctx, std::string_view name,
+                  std::string_view table, const CreatePolicyOptions& opts) {
+  auto snapshot = FreshSnapshot();
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(table, current_schema);
+
+  catalog::persistence::PolicyData data;
+  data.name = std::string{name};
+  data.command = ParsePolicyCommand(opts.cmd);
+  data.permissive = opts.permissive;
+  data.roles = ResolvePolicyRoles(ctx, *snapshot, opts.roles);
+  data.has_using = opts.has_using;
+  data.using_text = opts.using_text;
+  data.has_check = opts.has_check;
+  data.check_text = opts.check_text;
+
+  GlobalCatalog().CreatePolicy(Acting(ctx), ctx.GetDatabaseId(), parsed.schema,
+                               parsed.relation, std::move(data));
+}
+
+void AlterPolicy(ConnectionContext& ctx, std::string_view name,
+                 std::string_view table, const AlterPolicyOptions& opts) {
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(table, current_schema);
+
+  std::vector<ObjectId> roles;
+  if (opts.has_roles) {
+    roles = ResolvePolicyRoles(ctx, *FreshSnapshot(), opts.roles);
+  }
+  GlobalCatalog().AlterPolicy(
+    Acting(ctx), ctx.GetDatabaseId(), parsed.schema, parsed.relation, name,
+    opts.is_rename ? opts.new_name : std::string_view{}, opts.has_roles,
+    std::move(roles), opts.has_using, opts.using_text, opts.has_check,
+    opts.check_text);
+}
+
+void DropPolicy(ConnectionContext& ctx, std::string_view name,
+                std::string_view table, bool if_exists) {
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(table, current_schema);
+  GlobalCatalog().DropPolicy(Acting(ctx), ctx.GetDatabaseId(), parsed.schema,
+                             parsed.relation, name, if_exists);
+}
+
+void SetTableRowSecurity(ConnectionContext& ctx, std::string_view table,
+                         std::string_view action) {
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(table, current_schema);
+  std::optional<bool> enabled;
+  std::optional<bool> forced;
+  if (action == "ENABLE") {
+    enabled = true;
+  } else if (action == "DISABLE") {
+    enabled = false;
+  } else if (action == "FORCE") {
+    forced = true;
+  } else if (action == "NOFORCE") {
+    forced = false;
+  }
+  GlobalCatalog().SetRowSecurity(Acting(ctx), ctx.GetDatabaseId(),
+                                 parsed.schema, parsed.relation, enabled,
+                                 forced);
 }
 
 }  // namespace sdb::pg

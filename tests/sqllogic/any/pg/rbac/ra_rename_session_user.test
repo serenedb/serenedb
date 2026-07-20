@@ -1,0 +1,33 @@
+# PostgreSQL refuses to rename the session/current user, like serenedb — this
+# also protects the bootstrap superuser from a self-inflicted lockout.
+#
+# Fixture prefix: rsu_ (rename_session_user).
+
+# The connected superuser cannot rename itself (it is the session user).
+statement error db error: ERROR: session user cannot be renamed
+ALTER ROLE postgres RENAME TO rsu_postgres_renamed;
+
+
+# Renaming an unrelated role still works.
+statement ok
+DROP ROLE IF EXISTS rsu_a;
+
+statement ok
+DROP ROLE IF EXISTS rsu_b;
+
+statement ok
+CREATE ROLE rsu_a;
+
+statement ok
+ALTER ROLE rsu_a RENAME TO rsu_b;
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'rsu_b';
+----
+count
+1
+
+
+# ---- cleanup ----
+statement ok
+DROP ROLE rsu_b;

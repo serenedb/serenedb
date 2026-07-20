@@ -1,0 +1,39 @@
+# `ALTER ROLE ... SET name = value` stores a per-role GUC default that is
+# applied at the start of every new session for that role, like PostgreSQL.
+
+statement ok
+DROP ROLE IF EXISTS ars_vedernikoff;
+
+statement ok
+CREATE ROLE ars_vedernikoff LOGIN PASSWORD 'ars_pw';
+
+statement ok
+ALTER ROLE ars_vedernikoff SET search_path = ars_clickclack;
+
+
+# A fresh session for the role picks up the stored default.
+connection c_ver user=ars_vedernikoff password=ars_pw
+query
+SELECT current_setting('search_path');
+----
+current_setting
+ars_clickclack
+
+
+# RESET removes it: the next session falls back to the default search_path.
+connection default
+statement ok
+ALTER ROLE ars_vedernikoff RESET search_path;
+
+connection c_ver2 user=ars_vedernikoff password=ars_pw
+query
+SELECT current_setting('search_path');
+----
+current_setting
+"$user", public
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP ROLE ars_vedernikoff;

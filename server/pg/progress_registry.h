@@ -137,6 +137,7 @@ struct ProgressSource {
   int64_t datid{0};
   std::string user;
   std::string database;
+  std::string client_addr;
   int64_t backend_start_us{0};
 
   absl::Mutex mu;
@@ -157,6 +158,8 @@ struct ProgressSnapshot {
   std::string user;
   std::string database;
   std::string query;
+  std::string application_name;
+  std::string client_addr;
   int64_t backend_start_us{0};
   int64_t query_start_us{0};
   double percent{-1};

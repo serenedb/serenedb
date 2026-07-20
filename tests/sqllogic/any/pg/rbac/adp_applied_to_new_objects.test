@@ -1,0 +1,95 @@
+# ALTER DEFAULT PRIVILEGES seeds the ACL of objects created afterwards by the
+# target role, like PostgreSQL: a global (no IN SCHEMA) default and a
+# schema-specific default both take effect; schema-specific wins where both
+# apply. Grants made before the object existed are visible via has_*_privilege.
+
+statement ok
+DROP TABLE IF EXISTS adp_pre;
+
+statement ok
+DROP ROLE IF EXISTS adp_reader;
+
+statement ok
+CREATE ROLE adp_reader;
+
+
+# Objects that already exist are NOT retroactively affected.
+statement ok
+CREATE TABLE adp_pre (a int);
+
+query
+SELECT has_table_privilege('adp_reader', 'adp_pre', 'SELECT');
+----
+has_table_privilege
+f
+
+
+# A global default: every table the current user creates afterwards grants
+# SELECT to adp_reader.
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO adp_reader;
+
+statement ok
+CREATE TABLE adp_post (a int);
+
+query
+SELECT has_table_privilege('adp_reader', 'adp_post', 'SELECT');
+----
+has_table_privilege
+t
+
+
+# ...and it did not leak onto the pre-existing table.
+query
+SELECT has_table_privilege('adp_reader', 'adp_pre', 'SELECT');
+----
+has_table_privilege
+f
+
+
+# Sequence defaults apply to a standalone CREATE SEQUENCE.
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT USAGE ON SEQUENCES TO adp_reader;
+
+statement ok
+CREATE SEQUENCE adp_seq;
+
+query
+SELECT has_sequence_privilege('adp_reader', 'adp_seq', 'USAGE');
+----
+has_sequence_privilege
+t
+
+
+# Revoking the default stops future objects from inheriting it.
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM adp_reader;
+
+statement ok
+CREATE TABLE adp_after_revoke (a int);
+
+query
+SELECT has_table_privilege('adp_reader', 'adp_after_revoke', 'SELECT');
+----
+has_table_privilege
+f
+
+
+# ---- cleanup ----
+statement ok
+DROP TABLE adp_pre;
+
+statement ok
+DROP TABLE adp_post;
+
+statement ok
+DROP TABLE adp_after_revoke;
+
+statement ok
+DROP SEQUENCE adp_seq;
+
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE USAGE ON SEQUENCES FROM adp_reader;
+
+statement ok
+DROP ROLE adp_reader;

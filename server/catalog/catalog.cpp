@@ -70,6 +70,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
+#include "catalog/policy.h"
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/persistence/role.h"
@@ -101,6 +102,11 @@ namespace sdb::catalog {
 AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need) {
   return RequireAccess(connector::GetSereneDBContext(context).GetRoleId(),
                        need);
+}
+
+AccessContext RequireAccessAny(duckdb::ClientContext& context, AclMode need) {
+  return {connector::GetSereneDBContext(context).GetRoleId(), need,
+          /*match_any=*/true};
 }
 
 AccessContext ActingAs(duckdb::ClientContext& context) {
@@ -415,6 +421,10 @@ void Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
   } else if constexpr (std::is_same_v<T, Role>) {
     AddToResolution<ResolveType::Role>(parent_id, object->GetId(),
                                        object->GetName(), replace);
+    AddObjectDefinition(parent_id, std::move(object));
+  } else if constexpr (std::is_same_v<T, Policy> ||
+                       std::is_same_v<T, RowSecurity>) {
+    // Not in a resolution namespace; addressed via the table's dependency set.
     AddObjectDefinition(parent_id, std::move(object));
   } else {
     static_assert(false);
@@ -830,6 +840,18 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
                                         id, EdgeAction::Add);
       }
     } break;
+    case ObjectType::Policy: {
+      const auto& policy = basics::downCast<Policy>(obj);
+      GetDependencyForWrite<TableDependency>(policy.GetRelationId())
+        ->policies.insert(id);
+    } break;
+    case ObjectType::RowSecurity: {
+      const auto& rs = basics::downCast<RowSecurity>(obj);
+      auto deps = GetDependencyForWrite<TableDependency>(rs.GetRelationId());
+      deps->row_security_id = rs.GetId();
+      deps->rls_enabled = rs.Enabled();
+      deps->rls_forced = rs.Forced();
+    } break;
     case ObjectType::Virtual:
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
@@ -1135,9 +1157,27 @@ std::size_t Snapshot::RoleDependentCount(ObjectId role) const {
     .referencing_objects.size();
 }
 
-void Snapshot::RequireAccess(ObjectId role, const Object& object,
-                             AclMode need) const {
-  if (need == AclMode::NoRights || ClosureFor(role).Can(object, need)) {
+std::vector<ObjectId> Snapshot::RoleReferenceIds(ObjectId role) const {
+  std::vector<ObjectId> refs;
+  auto dep = _deps.TryGetDependency(role);
+  if (!dep) {
+    return refs;
+  }
+  const auto& set =
+    basics::downCast<const RoleDependency>(*dep).referencing_objects;
+  refs.assign(set.begin(), set.end());
+  // Deterministic order so a bulk reassign/drop is reproducible.
+  std::ranges::sort(refs);
+  return refs;
+}
+
+void Snapshot::RequireAccess(ObjectId role, const Object& object, AclMode need,
+                             bool match_any) const {
+  if (need == AclMode::NoRights) {
+    return;
+  }
+  const auto& closure = ClosureFor(role);
+  if (match_any ? closure.CanAny(object, need) : closure.Can(object, need)) {
     return;
   }
   THROW_SQL_ERROR(
@@ -1149,8 +1189,15 @@ void Snapshot::RequireAccess(ObjectId role, const Object& object,
 template<typename T>
 std::shared_ptr<T> Snapshot::EnforceRead(const AccessContext& ax,
                                          std::shared_ptr<T> obj) const {
-  if (obj) {
-    RequireAccess(ax.role, *obj, ax.need);
+  if (obj && ax.need != AclMode::NoRights) {
+    // PostgreSQL checks USAGE on the containing schema before the object's own
+    // privilege (and reports "permission denied for schema X" first). Every
+    // schema-scoped object exposes its schema via GetParentId(); a superuser
+    // bypasses inside RequireAccess/ClosureFor.
+    if (auto schema = GetObject<Schema>(obj->GetParentId())) {
+      RequireAccess(ax.role, *schema, AclMode::Usage);
+    }
+    RequireAccess(ax.role, *obj, ax.need, ax.match_any);
   }
   return obj;
 }
@@ -1646,6 +1693,21 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           schema_deps->sequences.erase(id);
         }
       } break;
+      case ObjectType::Policy: {
+        const auto& policy = basics::downCast<Policy>(*obj);
+        auto deps =
+          GetDependencyForWrite<TableDependency>(policy.GetRelationId());
+        SDB_ASSERT(deps);
+        deps->policies.erase(id);
+      } break;
+      case ObjectType::RowSecurity: {
+        const auto& rs = basics::downCast<RowSecurity>(*obj);
+        auto deps = GetDependencyForWrite<TableDependency>(rs.GetRelationId());
+        SDB_ASSERT(deps);
+        deps->row_security_id = ObjectId::none();
+        deps->rls_enabled = false;
+        deps->rls_forced = false;
+      } break;
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
       case ObjectType::Column:
@@ -1701,9 +1763,22 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           RemoveObjectDefinition(id, index_id);
         }
       }
+      if (obj->GetType() == ObjectType::Table) {
+        const auto& table_deps =
+          basics::downCast<TableDependency>(*relation_deps);
+        auto policy_ids = table_deps.policies;
+        for (auto policy_id : policy_ids) {
+          RemoveObjectDefinition(id, policy_id);
+        }
+        if (auto rs_id = table_deps.row_security_id; rs_id.isSet()) {
+          RemoveObjectDefinition(id, rs_id);
+        }
+      }
     } break;
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
+    case ObjectType::Policy:
+    case ObjectType::RowSecurity:
       break;
     case ObjectType::PgSqlFunction:
     case ObjectType::PgSqlType:
@@ -1852,8 +1927,14 @@ bool Catalog::CreateDatabase(const AccessContext& ax,
                                   database_id, bytes);
       }
 
+      // PostgreSQL seeds the `public` schema with USAGE for PUBLIC (every
+      // role), so schema-USAGE enforcement doesn't lock everyone out of it.
       auto schema = std::make_shared<Schema>(
-        database->GetOwner(), database_id, ObjectId{}, StaticStrings::kPublic);
+        Permissions{database->GetOwner(),
+                    Acl{AclItem{.grantee = kPublicGrantee,
+                                .grantor = database->GetOwner(),
+                                .privs = AclMode::Usage}}},
+        database_id, ObjectId{}, StaticStrings::kPublic);
       clone->RegisterObject(schema, database_id, false);
       auto bytes = catalog::SerializeObject(*schema, stream);
       _engine->CreateDefinition(database_id, ObjectType::Schema,
@@ -1940,6 +2021,20 @@ void Catalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   Apply(_snapshot, [&](auto& clone) {
     clone->RegisterObject(index, index->GetRelationId(), false);
+  });
+}
+
+void Catalog::RegisterPolicy(std::shared_ptr<Policy> policy) {
+  absl::MutexLock lock{&_mutex};
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RegisterObject(policy, policy->GetRelationId(), false);
+  });
+}
+
+void Catalog::RegisterRowSecurity(std::shared_ptr<RowSecurity> rs) {
+  absl::MutexLock lock{&_mutex};
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RegisterObject(rs, rs->GetRelationId(), false);
   });
 }
 
@@ -2229,6 +2324,191 @@ bool Catalog::CreateSecondaryIndex(
   return true;
 }
 
+std::vector<ObjectId> Snapshot::PolicyIds(ObjectId table_id) const {
+  std::vector<ObjectId> out;
+  auto deps = GetDependency<TableDependency>(table_id);
+  if (!deps) {
+    return out;
+  }
+  out.assign(deps->policies.begin(), deps->policies.end());
+  return out;
+}
+
+Snapshot::RowSecurityState Snapshot::GetRowSecurity(ObjectId table_id) const {
+  auto deps = GetDependency<TableDependency>(table_id);
+  if (!deps) {
+    return {};
+  }
+  return {deps->rls_enabled, deps->rls_forced};
+}
+
+namespace {
+
+std::shared_ptr<Policy> FindPolicy(const Snapshot& snap, ObjectId table_id,
+                                   std::string_view name) {
+  for (auto policy_id : snap.PolicyIds(table_id)) {
+    if (auto p = snap.GetObject<Policy>(policy_id); p && p->GetName() == name) {
+      return p;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+void Catalog::CreatePolicy(const AccessContext& ax, ObjectId database_id,
+                           std::string_view schema, std::string_view relation,
+                           persistence::PolicyData data) {
+  absl::MutexLock lock{&_mutex};
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  if (!rel) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  if (FindPolicy(*_snapshot, rel->GetId(), data.name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("policy \"", data.name, "\" for table \"", relation,
+                            "\" already exists"));
+  }
+  auto schema_id = rel->GetParentId();
+  auto policy = std::make_shared<Policy>(database_id, schema_id, NextId(),
+                                         rel->GetId(), std::move(data));
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RegisterObject(policy, policy->GetRelationId(), false);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*policy, stream);
+    _engine->CreateDefinition(policy->GetRelationId(), ObjectType::Policy,
+                              policy->GetId(), bytes);
+  });
+}
+
+void Catalog::AlterPolicy(const AccessContext& ax, ObjectId database_id,
+                          std::string_view schema, std::string_view relation,
+                          std::string_view name, std::string_view new_name,
+                          bool has_roles, std::vector<ObjectId> roles,
+                          bool has_using, std::string using_text, bool has_check,
+                          std::string check_text) {
+  absl::MutexLock lock{&_mutex};
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  if (!rel) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto existing = FindPolicy(*_snapshot, rel->GetId(), name);
+  if (!existing) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("policy \"", name, "\" for table \"", relation,
+                            "\" does not exist"));
+  }
+  if (!new_name.empty() && new_name != name &&
+      FindPolicy(*_snapshot, rel->GetId(), new_name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("policy \"", new_name, "\" for table \"", relation,
+                            "\" already exists"));
+  }
+  auto updated = std::static_pointer_cast<Policy>(existing->Clone());
+  auto& d = updated->MutableData();
+  if (!new_name.empty()) {
+    d.name = std::string(new_name);
+    updated->SetName(new_name);
+  }
+  if (has_roles) {
+    d.roles = std::move(roles);
+  }
+  if (has_using) {
+    d.has_using = true;
+    d.using_text = std::move(using_text);
+  }
+  if (has_check) {
+    d.has_check = true;
+    d.check_text = std::move(check_text);
+  }
+  auto policy_id = updated->GetId();
+  auto table_id = updated->GetRelationId();
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RemoveObjectDefinition(table_id, policy_id, /*root=*/true);
+    clone->RegisterObject(updated, table_id, false);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->CreateDefinition(table_id, ObjectType::Policy, policy_id, bytes);
+  });
+}
+
+void Catalog::DropPolicy(const AccessContext& ax, ObjectId database_id,
+                         std::string_view schema, std::string_view relation,
+                         std::string_view name, bool if_exists) {
+  absl::MutexLock lock{&_mutex};
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  if (!rel) {
+    if (if_exists) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto existing = FindPolicy(*_snapshot, rel->GetId(), name);
+  if (!existing) {
+    if (if_exists) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("policy \"", name, "\" for table \"", relation,
+                            "\" does not exist"));
+  }
+  auto policy_id = existing->GetId();
+  auto table_id = rel->GetId();
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RemoveObjectDefinition(table_id, policy_id, /*root=*/true);
+    _engine->DropDefinition(table_id, ObjectType::Policy, policy_id);
+  });
+}
+
+void Catalog::SetRowSecurity(const AccessContext& ax, ObjectId database_id,
+                             std::string_view schema, std::string_view relation,
+                             std::optional<bool> enabled,
+                             std::optional<bool> forced) {
+  absl::MutexLock lock{&_mutex};
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  if (!rel) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto table_id = rel->GetId();
+  auto deps = _snapshot->GetDependency<TableDependency>(table_id);
+  persistence::RowSecurityData data;
+  if (deps) {
+    data.enabled = deps->rls_enabled;
+    data.forced = deps->rls_forced;
+  }
+  if (enabled) {
+    data.enabled = *enabled;
+  }
+  if (forced) {
+    data.forced = *forced;
+  }
+  auto existing_id = deps ? deps->row_security_id : ObjectId::none();
+  auto rs_id = existing_id.isSet() ? existing_id : NextId();
+  auto rs = std::make_shared<RowSecurity>(database_id, rel->GetParentId(), rs_id,
+                                          table_id, data);
+  Apply(_snapshot, [&](auto& clone) {
+    if (existing_id.isSet()) {
+      clone->RemoveObjectDefinition(table_id, existing_id, /*root=*/true);
+    }
+    clone->RegisterObject(rs, table_id, false);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*rs, stream);
+    _engine->CreateDefinition(table_id, ObjectType::RowSecurity, rs_id, bytes);
+  });
+}
+
 bool Catalog::CreateInvertedIndex(
   const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
   std::string_view schema, std::string_view relation, std::string name,
@@ -2347,6 +2627,39 @@ bool Catalog::CreateView(const AccessContext& ax, ObjectId database_id,
   return true;
 }
 
+namespace {
+
+// The default-privilege grants a newly created object inherits from its owner's
+// ALTER DEFAULT PRIVILEGES rules. A schema-specific rule (defaclnamespace = the
+// target schema) wins over a global one (defaclnamespace = 0 / id::kInvalid),
+// matching PostgreSQL. Returns the storable (non-owner) grants.
+Acl DefaultAclForOwner(const Snapshot& snapshot, ObjectId owner,
+                       ObjectId schema_id, char objtype, ObjectType type) {
+  auto role = snapshot.GetObject<Role>(owner);
+  if (!role) {
+    return {};
+  }
+  const DefaultAcl* chosen = nullptr;
+  for (const auto& d : role->DefaultAcls()) {
+    if (d.objtype != objtype) {
+      continue;
+    }
+    if (d.schema == schema_id) {
+      chosen = &d;
+      break;
+    }
+    if (d.schema == id::kInvalid) {
+      chosen = &d;
+    }
+  }
+  if (!chosen) {
+    return {};
+  }
+  return auth::AclForStorage(chosen->acl, type, owner);
+}
+
+}  // namespace
+
 bool Catalog::CreateSequence(const AccessContext& ax, ObjectId database_id,
                              std::string_view schema,
                              std::shared_ptr<Sequence> sequence,
@@ -2369,6 +2682,11 @@ bool Catalog::CreateSequence(const AccessContext& ax, ObjectId database_id,
       ERR_MSG("relation \"", sequence->GetName(), "\" already exists"));
   }
   sequence->SetParentId(*schema_id);
+  if (Acl defaults = DefaultAclForOwner(*_snapshot, sequence->GetOwner(),
+                                        *schema_id, 'S', ObjectType::Sequence);
+      !defaults.empty()) {
+    sequence->SetPermissions({sequence->GetOwner(), std::move(defaults)});
+  }
 
   Apply(
     _snapshot,
@@ -2608,11 +2926,13 @@ bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
   }
 
   auto table = std::make_shared<Table>(
-    Permissions{owner}, *schema_id, table_id, options.name,
-    std::move(options.columns), std::move(options.pk_columns),
-    std::move(options.check_constraints), generated_pk_seq_id, options.engine,
-    std::move(options.unique_constraints), std::move(options.foreign_keys),
-    std::move(options.pk_name), pk_constraint_id, pk_index_id);
+    Permissions{owner, DefaultAclForOwner(*_snapshot, owner, *schema_id, 'r',
+                                          ObjectType::Table)},
+    *schema_id, table_id, options.name, std::move(options.columns),
+    std::move(options.pk_columns), std::move(options.check_constraints),
+    generated_pk_seq_id, options.engine, std::move(options.unique_constraints),
+    std::move(options.foreign_keys), std::move(options.pk_name),
+    pk_constraint_id, pk_index_id);
   table->SetSearchOptions(options.search_options);
   if (with_tombstone) {
     table->SetTombstoned(true);
@@ -2937,7 +3257,14 @@ void Catalog::RenameRelation(const AccessContext& ax, ObjectId database_id,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", name, "\" does not exist"));
   }
-  RequireObjectOwner(*_snapshot, ax.role, *object_id);
+  // An index has no independent owner (its relowner is derived from the parent
+  // table); gate the rename on the parent table's owner, mirroring DropIndex.
+  if (IsIndex(object->GetType())) {
+    const auto& index = basics::downCast<Index>(*object);
+    RequireObjectOwner(*_snapshot, ax.role, index.GetRelationId(), index);
+  } else {
+    RequireObjectOwner(*_snapshot, ax.role, *object_id);
+  }
 
   auto database = _snapshot->GetObject<Database>(database_id);
   SDB_ASSERT(database);
@@ -3037,11 +3364,41 @@ void Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
                                std::string_view role_name, ObjectId member,
                                std::string_view member_name,
                                const Membership& edge, bool revoke,
-                               bool admin_option_only) {
+                               bool admin_option_only, ObjectId granted_by) {
   absl::MutexLock lock{&_mutex};
   auto actor = _snapshot->GetObject<Role>(ax.role);
-  if (!(actor && actor->IsSuperuser()) &&
-      !auth::HasAdminOption(*_snapshot, ax.role, role)) {
+  const bool actor_super = actor && actor->IsSuperuser();
+  if (granted_by.isSet()) {
+    // GRANTED BY g names g as the grantor. PostgreSQL requires the actor to be
+    // able to act as g (superuser bypasses) and g itself to hold the ADMIN
+    // option on the role -- the latter checked even for a superuser actor.
+    auto gb = _snapshot->GetObject<Role>(granted_by);
+    std::string_view gb_name;
+    if (gb) {
+      gb_name = gb->GetName();
+    }
+    if (!actor_super && !auth::ComputeMembershipClosure(*_snapshot, ax.role)
+                           .contains(granted_by)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied to grant privileges as role \"", gb_name,
+                "\""),
+        ERR_DETAIL("The role granting the privilege must have the privileges "
+                   "of the role \"",
+                   gb_name, "\"."));
+    }
+    // A superuser grantor implicitly holds ADMIN on every role (PostgreSQL
+    // admits GRANTED BY <superuser> without an explicit membership edge).
+    if (!(gb && gb->IsSuperuser()) &&
+        !auth::HasAdminOption(*_snapshot, granted_by, role)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied to grant privileges as role \"", gb_name,
+                "\""),
+        ERR_DETAIL("The grantor must have the ADMIN option on role \"",
+                   role_name, "\"."));
+    }
+  } else if (!actor_super && !auth::HasAdminOption(*_snapshot, ax.role, role)) {
     const auto verb = revoke ? "revoke" : "grant";
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -3186,6 +3543,30 @@ void Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
     return;
   }
 
+  // Databases live at the instance root; the caller resolves the target by name
+  // and passes its id as `database_id` (mirrors ChangeAcl).
+  if (type == ObjectType::Database) {
+    auto obj = _snapshot->GetObject(database_id);
+    if (!obj) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+                      ERR_MSG("database \"", name, "\" does not exist"));
+    }
+    require_owner_change(*obj);
+    auto cloned = obj->Clone();
+    TransferOwner(*cloned, new_owner);
+    Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*cloned, stream);
+      clone->ReplaceObject<ResolveType::Database>({}, cloned->GetName(),
+                                                  cloned);
+      _engine->Write([&](auto& ctx) {
+        ctx.PutDefinition(id::kInstance, ObjectType::Database, cloned->GetId(),
+                          bytes);
+      });
+    });
+    return;
+  }
+
   // Types live in their own per-schema namespace, separate from relations.
   if (type == ObjectType::PgSqlType) {
     auto schema_id =
@@ -3266,6 +3647,187 @@ void Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
       restamp(dep);
     }
   });
+}
+
+namespace {
+
+struct OwnedTarget {
+  ObjectType type;
+  ObjectId db_id;  // for ChangeOwner (and Database targets: the db's own id)
+  std::string db_name;  // for Drop*
+  std::string schema;   // empty for schema/database targets
+  std::string name;
+};
+
+struct OwnedRefs {
+  std::vector<OwnedTarget> owned;  // objects owned by the role
+  std::vector<OwnedTarget>
+    grant_refs;                    // objects where the role is grantee/grantor
+  std::vector<ObjectId> from_ids;  // the resolved from-roles
+};
+
+// Describe a schema-scoped or top-level object as an (type, db, schema, name)
+// target, or nullopt for types not handled (functions/indexes).
+std::optional<OwnedTarget> DescribeTarget(const Snapshot& snapshot,
+                                          const Object& obj) {
+  const auto type = obj.GetType();
+  if (type == ObjectType::PgSqlFunction || IsIndex(type)) {
+    return std::nullopt;  // functions: separate gap; indexes follow their table
+  }
+  if (type == ObjectType::Database) {
+    return OwnedTarget{type,
+                       obj.GetId(),
+                       std::string{obj.GetName()},
+                       {},
+                       std::string{obj.GetName()}};
+  }
+  if (type == ObjectType::Schema) {
+    const ObjectId db = obj.GetParentId();
+    auto db_obj = snapshot.GetObject<Database>(db);
+    return OwnedTarget{type,
+                       db,
+                       db_obj ? std::string{db_obj->GetName()} : "",
+                       {},
+                       std::string{obj.GetName()}};
+  }
+  auto schema = snapshot.GetObject<Schema>(obj.GetParentId());
+  if (!schema) {
+    return std::nullopt;
+  }
+  const ObjectId db = schema->GetParentId();
+  auto db_obj = snapshot.GetObject<Database>(db);
+  return OwnedTarget{type, db, db_obj ? std::string{db_obj->GetName()} : "",
+                     std::string{schema->GetName()},
+                     std::string{obj.GetName()}};
+}
+
+// Collection for REASSIGN/DROP OWNED: resolve each from-role, check the actor
+// may act on it, and split its referencing objects into owned (reassign/drop)
+// and grant-reference (revoke). Caller holds the catalog lock; it then mutates
+// each target lock-free (ChangeOwner/Drop*/ChangeAcl re-lock).
+OwnedRefs CollectOwnedTargets(const Snapshot& snapshot,
+                              const auth::RoleClosure& actor,
+                              std::span<const std::string> from_roles) {
+  OwnedRefs refs;
+  for (const auto& from_name : from_roles) {
+    auto from_role = snapshot.GetRole(from_name);
+    if (!from_role) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role \"", from_name, "\" does not exist"));
+    }
+    const ObjectId from_id = from_role->GetId();
+    if (!actor.is_superuser && !actor.MemberOf(from_id)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG(
+          "permission denied to reassign or drop objects owned by role \"",
+          from_name, "\""),
+        ERR_DETAIL("Only roles with privileges of role \"", from_name,
+                   "\" (or a superuser) may do this."));
+    }
+    refs.from_ids.push_back(from_id);
+    for (ObjectId oid : snapshot.RoleReferenceIds(from_id)) {
+      auto obj = snapshot.GetObject(oid);
+      if (!obj) {
+        continue;
+      }
+      auto target = DescribeTarget(snapshot, *obj);
+      if (!target) {
+        continue;
+      }
+      if (obj->GetOwner() == from_id) {
+        refs.owned.push_back(*target);
+      } else {
+        refs.grant_refs.push_back(*target);
+      }
+    }
+  }
+  return refs;
+}
+
+}  // namespace
+
+void Catalog::ReassignOwned(const AccessContext& ax,
+                            std::span<const std::string> from_roles,
+                            std::string_view to_role) {
+  ObjectId to_id;
+  std::string to_name;
+  OwnedRefs refs;
+  {
+    absl::MutexLock lock{&_mutex};
+    auto to = _snapshot->GetRole(to_role);
+    if (!to) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("role \"", to_role, "\" does not exist"));
+    }
+    to_id = to->GetId();
+    to_name = to->GetName();
+    refs = CollectOwnedTargets(*_snapshot, _snapshot->ClosureFor(ax.role),
+                               from_roles);
+  }
+  // Root actor bypasses ChangeOwner's owner/SET-ROLE checks; the reassign
+  // authority was verified in CollectOwnedTargets. (REASSIGN OWNED transfers
+  // ownership only; grants held by the role are left intact, like PostgreSQL.)
+  for (const auto& t : refs.owned) {
+    ChangeOwner(NoAccessCheck(), t.db_id, t.schema, t.name, t.type, to_id,
+                to_name);
+  }
+}
+
+void Catalog::DropOwned(const AccessContext& ax,
+                        std::span<const std::string> from_roles, bool cascade) {
+  OwnedRefs refs;
+  {
+    absl::MutexLock lock{&_mutex};
+    refs = CollectOwnedTargets(*_snapshot, _snapshot->ClosureFor(ax.role),
+                               from_roles);
+  }
+  const auto& from_ids = refs.from_ids;
+  // Revoke every privilege granted to (or by) the role on objects it doesn't
+  // own -- PostgreSQL's DROP OWNED removes these too, so the role becomes
+  // droppable. Runs before the object drops so a revoke on a to-be-dropped
+  // object is harmless.
+  for (const auto& t : refs.grant_refs) {
+    ChangeAcl(t.db_id, t.schema, t.name, t.type,
+              [&](const Snapshot&, ObjectId, Acl& acl) {
+                std::erase_if(acl, [&](const AclItem& item) {
+                  return std::ranges::contains(from_ids, item.grantee) ||
+                         std::ranges::contains(from_ids, item.grantor);
+                });
+              });
+  }
+  auto& targets = refs.owned;
+  // Databases are not dropped by DROP OWNED in PostgreSQL either.
+  std::erase_if(targets, [](const OwnedTarget& t) {
+    return t.type == ObjectType::Database;
+  });
+  // Drop contained objects before their schemas.
+  std::ranges::stable_sort(
+    targets, [](const OwnedTarget& a, const OwnedTarget& b) {
+      return (a.type == ObjectType::Schema) < (b.type == ObjectType::Schema);
+    });
+  for (const auto& t : targets) {
+    switch (t.type) {
+      case ObjectType::Table:
+        DropTable(NoAccessCheck(), t.db_name, t.schema, t.name, cascade, true);
+        break;
+      case ObjectType::PgSqlView:
+        DropView(NoAccessCheck(), t.db_name, t.schema, t.name, cascade, true);
+        break;
+      case ObjectType::Sequence:
+        DropSequence(NoAccessCheck(), t.db_name, t.schema, t.name, cascade,
+                     true);
+        break;
+      case ObjectType::PgSqlType:
+        DropType(NoAccessCheck(), t.db_name, t.schema, t.name, cascade, true);
+        break;
+      case ObjectType::Schema:
+        DropSchema(NoAccessCheck(), t.db_name, t.name, cascade, true);
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
@@ -4371,9 +4933,9 @@ bool Catalog::DropFunction(const AccessContext& ax, std::string_view database,
   return true;
 }
 
-bool Catalog::DropTokenizer(std::string_view database, std::string_view schema,
-                            std::string_view name, bool cascade,
-                            bool missing_ok) {
+bool Catalog::DropTokenizer(const AccessContext& ax, std::string_view database,
+                            std::string_view schema, std::string_view name,
+                            bool cascade, bool missing_ok) {
   absl::MutexLock lock{&_mutex};
 
   const auto database_id =
@@ -4406,6 +4968,8 @@ bool Catalog::DropTokenizer(std::string_view database, std::string_view schema,
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
       ERR_MSG("text search dictionary \"", name, "\" does not exist"));
   }
+
+  RequireObjectOwner(*_snapshot, ax.role, *tokenizer_id);
 
   auto plan = _snapshot->ComputeDropPlan(*tokenizer_id);
   if (!cascade && plan.IsCascade()) {
@@ -4572,6 +5136,8 @@ class OpenDatabase {
   void RegisterInvertedStorage(const std::shared_ptr<Index>& index);
   void RegisterSearchTable(ObjectId db_id, ObjectId schema_id,
                            const Table& table);
+  void RegisterPolicies(ObjectId database_id, ObjectId schema_id,
+                        ObjectId table_id);
   void RegisterIndexes(ObjectId database_id, ObjectId schema_id,
                        ObjectId table_id);
 
@@ -4853,6 +5419,43 @@ void OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
     ClearDeletedDefinitions(DeletedScope::Relation);
   };
   RegisterIndexes(db_id, schema_id, table_id);
+  RegisterPolicies(db_id, schema_id, table_id);
+}
+
+void OpenDatabase::RegisterPolicies(ObjectId db_id, ObjectId schema_id,
+                                    ObjectId table_id) {
+  GetCatalogStore().VisitBoot(
+    table_id, ObjectType::RowSecurity,
+    [&](CatalogStore::Key key, std::string_view bytes) {
+      if (IsDeleted(key.id, DeletedScope::Relation)) {
+        return true;
+      }
+      auto rs = catalog::DeserializeObject<RowSecurity>(
+        bytes, {.id = key.id,
+                .database_id = db_id,
+                .schema_id = schema_id,
+                .relation_id = table_id});
+      if (rs) {
+        _catalog.RegisterRowSecurity(std::move(rs));
+      }
+      return true;
+    });
+  GetCatalogStore().VisitBoot(
+    table_id, ObjectType::Policy,
+    [&](CatalogStore::Key key, std::string_view bytes) {
+      if (IsDeleted(key.id, DeletedScope::Relation)) {
+        return true;
+      }
+      auto policy = catalog::DeserializeObject<Policy>(
+        bytes, {.id = key.id,
+                .database_id = db_id,
+                .schema_id = schema_id,
+                .relation_id = table_id});
+      if (policy) {
+        _catalog.RegisterPolicy(std::move(policy));
+      }
+      return true;
+    });
 }
 
 void OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
@@ -4955,6 +5558,60 @@ void InitCatalog() {
       .password_verifier = std::move(initial_verifier),
     });
     GetCatalog().CreateRole(NoAccessCheck(), std::move(root));
+  }
+
+  // Seed PostgreSQL's predefined roles (idempotent, so existing datadirs gain
+  // them on upgrade). All are NOLOGIN + INHERIT. Powers are enforced through
+  // RoleClosure where serened has the matching gate; the rest exist for
+  // GRANT/membership parity. pg_monitor is a pure grouping of the three
+  // read-all/stat roles (PostgreSQL wires it that way).
+  {
+    struct PredefinedRole {
+      ObjectId id;
+      std::string_view name;
+      std::vector<ObjectId> member_of;
+    };
+    const std::vector<PredefinedRole> predefined{
+      {id::kPgReadAllData, "pg_read_all_data", {}},
+      {id::kPgWriteAllData, "pg_write_all_data", {}},
+      {id::kPgReadAllSettings, "pg_read_all_settings", {}},
+      {id::kPgReadAllStats, "pg_read_all_stats", {}},
+      {id::kPgStatScanTables, "pg_stat_scan_tables", {}},
+      {id::kPgMonitor,
+       "pg_monitor",
+       {id::kPgReadAllSettings, id::kPgReadAllStats, id::kPgStatScanTables}},
+      {id::kPgDatabaseOwner, "pg_database_owner", {}},
+      {id::kPgSignalBackend, "pg_signal_backend", {}},
+      {id::kPgReadServerFiles, "pg_read_server_files", {}},
+      {id::kPgWriteServerFiles, "pg_write_server_files", {}},
+      {id::kPgExecuteServerProgram, "pg_execute_server_program", {}},
+      {id::kPgCheckpoint, "pg_checkpoint", {}},
+      {id::kPgMaintain, "pg_maintain", {}},
+      {id::kPgUseReservedConnections, "pg_use_reserved_connections", {}},
+      {id::kPgCreateSubscription, "pg_create_subscription", {}},
+      {id::kPgSignalAutovacuumWorker, "pg_signal_autovacuum_worker", {}},
+    };
+    auto snapshot = GetCatalog().GetCatalogSnapshot();
+    for (const auto& def : predefined) {
+      if (snapshot->GetObject<Role>(def.id)) {
+        continue;
+      }
+      persistence::RoleData data{
+        .id = def.id,
+        .name = std::string{def.name},
+        .options = static_cast<uint32_t>(RoleOption::Inherit),
+        .conn_limit = Role::kNoConnLimit,
+        .valid_until = Role::kNoValidUntil,
+      };
+      for (ObjectId parent : def.member_of) {
+        data.member_of.push_back(Membership{.role = parent,
+                                            .admin_option = false,
+                                            .inherit_option = true,
+                                            .set_option = true});
+      }
+      GetCatalog().CreateRole(NoAccessCheck(),
+                              std::make_shared<Role>(std::move(data)));
+    }
   }
 
   try {

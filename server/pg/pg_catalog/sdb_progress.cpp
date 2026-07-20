@@ -36,6 +36,7 @@ catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
     GetIndex(&SdbProgress::datname),
     GetIndex(&SdbProgress::state),
     GetIndex(&SdbProgress::query),
+    GetIndex(&SdbProgress::application_name),
     GetIndex(&SdbProgress::backend_start_us),
   });
   static constexpr uint64_t kActiveMask = MaskFromNonNulls({
@@ -45,6 +46,7 @@ catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
     GetIndex(&SdbProgress::datname),
     GetIndex(&SdbProgress::state),
     GetIndex(&SdbProgress::query),
+    GetIndex(&SdbProgress::application_name),
     GetIndex(&SdbProgress::backend_start_us),
     GetIndex(&SdbProgress::query_start_us),
     GetIndex(&SdbProgress::rows_processed),
@@ -69,6 +71,9 @@ catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
   });
   static constexpr uint64_t kPercentNullBit =
     MaskFromNulls({GetIndex(&SdbProgress::percent)});
+  // client_addr is NULL for a local (unix) peer, the IP otherwise -- per-row.
+  static constexpr uint64_t kClientAddrNullBit =
+    MaskFromNulls({GetIndex(&SdbProgress::client_addr)});
 
   auto result = CreateColumns<SdbProgress>(snapshots.size());
   size_t row = 0;
@@ -83,6 +88,8 @@ catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
       .datname = std::move(s.database),
       .state = active ? "active" : "idle",
       .query = std::move(s.query),
+      .application_name = std::move(s.application_name),
+      .client_addr = std::move(s.client_addr),
       .backend_start_us = s.backend_start_us,
       .query_start_us = s.query_start_us,
       .percent = s.percent,
@@ -114,6 +121,9 @@ catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
       if (s.percent >= 0) {
         mask &= ~kPercentNullBit;
       }
+    }
+    if (!value.client_addr.empty()) {
+      mask &= ~kClientAddrNullBit;
     }
     WriteData(result, value, mask, row++, *_config.CatalogSnapshot());
   }

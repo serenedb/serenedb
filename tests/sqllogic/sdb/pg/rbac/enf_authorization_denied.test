@@ -103,9 +103,13 @@ MERGE INTO clickclack_vault USING (SELECT 1 AS id) s ON clickclack_vault.id = s.
 db error: ERROR: permission denied for table clickclack_vault
 
 
+# COPY TO STDOUT (allowed for everyone) surfaces the table-privilege denial.
+# A COPY to a server-side *file* is gated earlier by the superuser file check
+# (see enf_copy_server_file.test) -- PostgreSQL reports that first too -- so it
+# would mask the table denial this case is about.
 connection c_intern user=vedernikoff_intern password=vedernikoff_intern_pw
 statement error
-COPY clickclack_vault TO '${__TEST_DIR__}/rbac_authorization_denied_never_written.csv';
+COPY clickclack_vault TO STDOUT;
 ----
 db error: ERROR: permission denied for table clickclack_vault
 

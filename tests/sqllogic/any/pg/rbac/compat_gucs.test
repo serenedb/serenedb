@@ -1,0 +1,24 @@
+# password_encryption and row_security GUCs exist for PostgreSQL compatibility:
+# pg_dump emits `SET row_security = off` in its header, and libpq's \password
+# probes password_encryption. Both must be accepted (SHOW/SET) rather than
+# erroring. They have no runtime effect in serenedb (storage is always SCRAM;
+# RLS is not yet enforced) -- this test only asserts the compat surface.
+
+query
+SHOW password_encryption;
+----
+password_encryption
+scram-sha-256
+
+
+statement ok
+SET password_encryption = 'scram-sha-256';
+
+
+# The pg_dump header line -- must not error.
+statement ok
+SET row_security = off;
+
+
+statement ok
+SET row_security = on;

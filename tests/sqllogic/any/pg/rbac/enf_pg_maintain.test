@@ -1,0 +1,44 @@
+# Membership in pg_maintain confers the MAINTAIN privilege on every table,
+# like PostgreSQL (has_table_privilege reflects it without an explicit grant).
+#
+# Fixture prefix: pm_ (pg_maintain).
+
+statement ok
+DROP TABLE IF EXISTS pm_t;
+
+statement ok
+DROP ROLE IF EXISTS pm_r;
+
+statement ok
+CREATE TABLE pm_t (a int);
+
+statement ok
+CREATE ROLE pm_r;
+
+
+# Without membership: no MAINTAIN.
+query
+SELECT has_table_privilege('pm_r', 'pm_t', 'MAINTAIN');
+----
+has_table_privilege
+f
+
+
+# With pg_maintain: MAINTAIN everywhere, but not (say) SELECT.
+statement ok
+GRANT pg_maintain TO pm_r;
+
+query
+SELECT has_table_privilege('pm_r', 'pm_t', 'MAINTAIN') AS maint,
+       has_table_privilege('pm_r', 'pm_t', 'SELECT')   AS sel;
+----
+maint	sel
+t	f
+
+
+# ---- cleanup ----
+statement ok
+DROP TABLE pm_t;
+
+statement ok
+DROP ROLE pm_r;

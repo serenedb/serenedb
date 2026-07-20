@@ -75,16 +75,14 @@ table_name
 vedernikoff_clickclack
 
 
-# Known gap: sequences are not currently rendered into pg_class with
-# relkind='S', so pg_sequences (which joins pg_sequence with pg_class on
-# relkind='S') returns no rows for user-created sequences. When that gap is
-# closed, sequenceowner should be 'postgres' here -- update the expected
-# output accordingly.
+# pg_sequences is populated for user sequences (pg_sequence joined to pg_class
+# relkind='S'); the sequence owner is the creating role.
 query
 SELECT sequencename, sequenceowner FROM pg_sequences
 WHERE sequencename = 'vedernikoff_seq'
 ----
 sequencename	sequenceowner
+vedernikoff_seq	postgres
 
 
 statement ok

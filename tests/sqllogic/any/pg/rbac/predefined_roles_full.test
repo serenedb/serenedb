@@ -1,0 +1,38 @@
+# PostgreSQL's full set of predefined roles exist as NOLOGIN roles, and
+# pg_monitor is a member of pg_read_all_settings / pg_read_all_stats /
+# pg_stat_scan_tables (so granting pg_monitor confers all three).
+#
+# Fixture prefix: prf_ (predefined_roles_full).
+
+statement ok
+DROP ROLE IF EXISTS prf_ops;
+
+statement ok
+CREATE ROLE prf_ops;
+
+
+# All 16 predefined roles are present and NOLOGIN.
+query
+SELECT count(*) FROM pg_roles
+WHERE rolname LIKE 'pg\_%' AND rolcanlogin = false;
+----
+count
+16
+
+
+# pg_monitor's membership chain resolves: a member of pg_monitor is (indirectly)
+# a member of pg_read_all_stats.
+statement ok
+GRANT pg_monitor TO prf_ops;
+
+query
+SELECT pg_has_role('prf_ops', 'pg_read_all_stats', 'MEMBER') AS stats,
+       pg_has_role('prf_ops', 'pg_read_all_settings', 'MEMBER') AS settings;
+----
+stats	settings
+t	t
+
+
+# ---- cleanup ----
+statement ok
+DROP ROLE prf_ops;

@@ -1,0 +1,43 @@
+# serenedb-only: COPY to/from a server-side FILE is superuser-only, like
+# PostgreSQL (which gates it on pg_read/write_server_files or superuser).
+# STDIN/STDOUT (the pg-wire path) stays open to everyone. Regression guard for a
+# security hole: a non-superuser could read (`COPY t FROM '/etc/hostname'`) and
+# write (`COPY t TO '/path'`) arbitrary server files. Runs sdb-only because the
+# shared PG oracle connects as a superuser, which would mask the refusal.
+#
+# Lore: babsky may stream over the wire but not touch the server's disk.
+
+statement ok
+DROP TABLE IF EXISTS ecf_ledger;
+
+statement ok
+DROP ROLE IF EXISTS ecf_babsky;
+
+statement ok
+CREATE TABLE ecf_ledger (a int, b text);
+
+statement ok
+INSERT INTO ecf_ledger VALUES (1, 'x'), (2, 'y');
+
+statement ok
+CREATE ROLE ecf_babsky LOGIN PASSWORD 'ecf_babsky_pw';
+
+statement ok
+GRANT SELECT, INSERT ON ecf_ledger TO ecf_babsky;
+
+
+# Non-superuser cannot COPY to a server-side file (COPY FROM is gated by the
+# same check -- verified via psql; the sqllogictest runner routes COPY FROM to
+# its default superuser connection, so it can't be asserted here).
+connection c_bab user=ecf_babsky password=ecf_babsky_pw
+statement error db error: ERROR: permission denied to COPY to a file
+COPY ecf_ledger TO '/tmp/ecf_should_not_exist.csv';
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP TABLE ecf_ledger;
+
+statement ok
+DROP ROLE ecf_babsky;

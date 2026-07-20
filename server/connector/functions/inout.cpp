@@ -25,6 +25,7 @@
 
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
+#include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
@@ -270,6 +271,30 @@ duckdb::BoundCastInfo PgVarcharToRegclassBind(duckdb::BindCastInput& input,
     duckdb::make_uniq<RegCastData>(input.context.get()));
 }
 
+bool PgVarcharToRegroleCast(duckdb::Vector& source, duckdb::Vector& result,
+                            duckdb::idx_t count,
+                            duckdb::CastParameters& params) {
+  auto snap = GetSereneDBContext(*params.cast_data->Cast<RegCastData>().ctx)
+                .CatalogSnapshot();
+  return PgVarcharToOidCast(
+    source, result, count, [&](std::string_view name) -> int64_t {
+      auto role = snap->GetRole(name);
+      if (!role) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("role \"", name, "\" does not exist"));
+      }
+      return static_cast<int64_t>(role->GetId().id());
+    });
+}
+
+duckdb::BoundCastInfo PgVarcharToRegroleBind(duckdb::BindCastInput& input,
+                                             const duckdb::LogicalType&,
+                                             const duckdb::LogicalType&) {
+  return duckdb::BoundCastInfo(
+    PgVarcharToRegroleCast,
+    duckdb::make_uniq<RegCastData>(input.context.get()));
+}
+
 bool PgVarcharToRegtypeCast(duckdb::Vector& source, duckdb::Vector& result,
                             duckdb::idx_t count, duckdb::CastParameters&) {
   return PgVarcharToOidCast(
@@ -341,6 +366,26 @@ duckdb::BoundCastInfo PgRegclassToVarcharBind(duckdb::BindCastInput& input,
     duckdb::make_uniq<RegCastData>(input.context.get()));
 }
 
+bool PgRegroleToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
+                            duckdb::idx_t count,
+                            duckdb::CastParameters& params) {
+  auto snap = GetSereneDBContext(*params.cast_data->Cast<RegCastData>().ctx)
+                .CatalogSnapshot();
+  return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
+    auto role = snap->GetObject<catalog::Role>(sdb::ObjectId{oid});
+    // PostgreSQL renders a dropped role's oid numerically.
+    return role ? std::string{role->GetName()} : std::to_string(oid);
+  });
+}
+
+duckdb::BoundCastInfo PgRegroleToVarcharBind(duckdb::BindCastInput& input,
+                                             const duckdb::LogicalType&,
+                                             const duckdb::LogicalType&) {
+  return duckdb::BoundCastInfo(
+    PgRegroleToVarcharCast,
+    duckdb::make_uniq<RegCastData>(input.context.get()));
+}
+
 bool PgRegnamespaceToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
                                  duckdb::idx_t count,
                                  duckdb::CastParameters& params) {
@@ -357,6 +402,13 @@ duckdb::BoundCastInfo PgRegnamespaceToVarcharBind(duckdb::BindCastInput& input,
   return duckdb::BoundCastInfo(
     PgRegnamespaceToVarcharCast,
     duckdb::make_uniq<RegCastData>(input.context.get()));
+}
+
+// regprocedure -> oid: both are BIGINT-backed, so the cast is a no-op.
+duckdb::BoundCastInfo PgRegprocedureToOidBind(duckdb::BindCastInput&,
+                                              const duckdb::LogicalType&,
+                                              const duckdb::LogicalType&) {
+  return duckdb::BoundCastInfo(duckdb::DefaultCasts::NopCast);
 }
 
 }  // namespace
@@ -381,6 +433,13 @@ void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), pg::REGCLASS(),
     PgVarcharToRegclassBind, 50);
 
+  // VARCHAR/STRING_LITERAL -> regrole
+  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, pg::REGROLE(),
+                             PgVarcharToRegroleBind, 50);
+  casts.RegisterCastFunction(
+    duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), pg::REGROLE(),
+    PgVarcharToRegroleBind, 50);
+
   // VARCHAR/STRING_LITERAL -> regtype
   casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, pg::REGTYPE(),
                              PgVarcharToRegtypeBind, 50);
@@ -396,9 +455,18 @@ void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
   casts.RegisterCastFunction(pg::REGCLASS(), duckdb::LogicalType::VARCHAR,
                              PgRegclassToVarcharBind, 50);
 
+  // regrole -> VARCHAR
+  casts.RegisterCastFunction(pg::REGROLE(), duckdb::LogicalType::VARCHAR,
+                             PgRegroleToVarcharBind, 50);
+
   // regnamespace -> VARCHAR
   casts.RegisterCastFunction(pg::REGNAMESPACE(), duckdb::LogicalType::VARCHAR,
                              PgRegnamespaceToVarcharBind, 50);
+
+  // regprocedure -> oid: implicit, like PostgreSQL's reg* -> oid coercion; lets
+  // a regprocedure flow into the oid-typed has_function_privilege overloads.
+  casts.RegisterCastFunction(pg::REGPROCEDURE(), pg::OID(),
+                             PgRegprocedureToOidBind, 50);
 
   // VARCHAR -> BLOB / BLOB -> VARCHAR (bytea)
   casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR,

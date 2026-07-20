@@ -33,5 +33,18 @@ if ! command -v psql >/dev/null 2>&1; then
 	exit 0
 fi
 
+rc=0
+
 echo "[network] running HBA mask test (serened=$SERENED)"
-python3 "${SCRIPT_DIR}/hba_mask_test.py" --serened "$SERENED"
+python3 "${SCRIPT_DIR}/hba_mask_test.py" --serened "$SERENED" || rc=1
+
+echo "[network] running RBAC temp-privilege test (serened=$SERENED)"
+python3 "${SCRIPT_DIR}/rbac_temp_test.py" --serened "$SERENED" || rc=1
+
+echo "[network] running HBA peer-auth test (serened=$SERENED)"
+python3 "${SCRIPT_DIR}/peer_auth_test.py" --serened "$SERENED" || rc=1
+
+echo "[network] running HBA cert-auth test (serened=$SERENED)"
+python3 "${SCRIPT_DIR}/cert_auth_test.py" --serened "$SERENED" || rc=1
+
+exit "$rc"

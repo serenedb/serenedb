@@ -1,0 +1,62 @@
+# ALTER INDEX ... RENAME is gated on the PARENT TABLE's owner (an index has no
+# independent owner; its relowner is derived from the table). So the table owner
+# may rename their own index, and a non-owner may not -- matching PostgreSQL.
+# Regression guard: the rename used to check the index's own (unset) owner, which
+# defaulted to the bootstrap superuser, so even the legitimate table owner was
+# refused.
+#
+# Lore: vedernikoff owns the ledger and its index; babsky is a bystander.
+
+statement ok
+DROP TABLE IF EXISTS air_ledger;
+
+statement ok
+DROP ROLE IF EXISTS air_vedernikoff;
+
+statement ok
+DROP ROLE IF EXISTS air_babsky;
+
+statement ok
+CREATE ROLE air_vedernikoff LOGIN PASSWORD 'air_vedernikoff_pw';
+
+statement ok
+CREATE ROLE air_babsky LOGIN PASSWORD 'air_babsky_pw';
+
+statement ok
+CREATE TABLE air_ledger (id int);
+
+statement ok
+CREATE INDEX air_idx ON air_ledger (id);
+
+statement ok
+ALTER TABLE air_ledger OWNER TO air_vedernikoff;
+
+
+# RENAME also needs CREATE on the containing schema (PostgreSQL rule), so grant
+# it -- isolating this test to the ownership check.
+statement ok
+GRANT CREATE ON SCHEMA public TO air_vedernikoff;
+
+
+# The table owner (with schema CREATE) can rename her own index.
+connection c_ved user=air_vedernikoff password=air_vedernikoff_pw
+statement ok
+ALTER INDEX air_idx RENAME TO air_idx2;
+
+
+# A non-owner cannot.
+connection c_bab user=air_babsky password=air_babsky_pw
+statement error db error: ERROR: must be owner of index air_idx2
+ALTER INDEX air_idx2 RENAME TO air_idx3;
+
+
+# ---- cleanup ----
+connection default
+statement ok
+DROP TABLE air_ledger;
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM air_vedernikoff;
+
+statement ok
+DROP ROLE air_vedernikoff, air_babsky;

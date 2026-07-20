@@ -1,0 +1,32 @@
+# serenedb-only: DROP TEXT SEARCH DICTIONARY requires ownership. A non-owner,
+# non-superuser role must NOT be able to drop a dictionary it does not own
+# (regression guard for a destructive escalation: DropTokenizer used to take no
+# AccessContext and never checked the owner). The dictionary is owned by the
+# bootstrap superuser, so the unprivileged role is refused; the owner drops it.
+#
+# Lore: vedernikoff guards the tokenizer; babsky is not allowed to touch it.
+
+statement ok
+DROP ROLE IF EXISTS dtd_babsky;
+
+statement ok
+CREATE ROLE dtd_babsky LOGIN PASSWORD 'dtd_babsky_pw';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dtd_dict (template = 'keyword');
+
+
+# A non-owner cannot drop it.
+connection c_bab user=dtd_babsky password=dtd_babsky_pw
+statement error db error: ERROR: must be owner of text search dictionary dtd_dict
+DROP TEXT SEARCH DICTIONARY dtd_dict;
+
+
+# The owner (superuser) drops it fine.
+connection default
+statement ok
+DROP TEXT SEARCH DICTIONARY dtd_dict;
+
+
+statement ok
+DROP ROLE dtd_babsky;

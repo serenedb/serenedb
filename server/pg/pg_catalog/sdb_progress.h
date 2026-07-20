@@ -39,6 +39,8 @@ struct SdbProgress {
   std::string datname;
   std::string_view state;
   std::string query;
+  std::string application_name;
+  std::string client_addr;
   int64_t backend_start_us;
   int64_t query_start_us;
   double percent;

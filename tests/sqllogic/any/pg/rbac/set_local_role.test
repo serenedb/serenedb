@@ -1,0 +1,98 @@
+# SET LOCAL ROLE / SET LOCAL SESSION AUTHORIZATION, like PostgreSQL: the change
+# is transaction-scoped and reverts at COMMIT. Plain SET ROLE persists. (The
+# outside-a-transaction case is omitted: PG warns and ignores, serened errors --
+# a pre-existing generic SET LOCAL divergence, not role-specific.)
+#
+# Fixture prefix: slr_ (set_local_role).
+
+statement ok
+DROP ROLE IF EXISTS slr_vedernikoff;
+
+statement ok
+CREATE ROLE slr_vedernikoff LOGIN;
+
+statement ok
+GRANT slr_vedernikoff TO postgres;
+
+
+# SET SESSION ROLE is the explicit-session spelling of plain SET ROLE.
+statement ok
+SET SESSION ROLE slr_vedernikoff;
+
+query
+SELECT current_user;
+----
+current_user
+slr_vedernikoff
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+BEGIN;
+
+statement ok
+SET LOCAL ROLE slr_vedernikoff;
+
+query
+SELECT current_user;
+----
+current_user
+slr_vedernikoff
+
+statement ok
+COMMIT;
+
+
+# Reverted after commit.
+query
+SELECT current_user;
+----
+current_user
+postgres
+
+
+# SET LOCAL SESSION AUTHORIZATION follows the same transaction scoping.
+statement ok
+BEGIN;
+
+statement ok
+SET LOCAL SESSION AUTHORIZATION slr_vedernikoff;
+
+query
+SELECT session_user;
+----
+session_user
+slr_vedernikoff
+
+statement ok
+COMMIT;
+
+query
+SELECT session_user;
+----
+session_user
+postgres
+
+
+# Plain SET ROLE persists past a transaction.
+statement ok
+SET ROLE slr_vedernikoff;
+
+query
+SELECT current_user;
+----
+current_user
+slr_vedernikoff
+
+statement ok
+RESET ROLE;
+
+
+# ---- cleanup ----
+statement ok
+REVOKE slr_vedernikoff FROM postgres;
+
+statement ok
+DROP ROLE slr_vedernikoff;

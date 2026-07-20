@@ -64,5 +64,26 @@ inline constexpr ObjectId kPgAmInverted{kMinSystem.id() + 300};
 inline constexpr ObjectId kPgAmIresearch{kMinSystem.id() + 301};
 inline constexpr ObjectId kPgAmSecondary{kMinSystem.id() + 303};
 
+// Predefined (bootstrap) roles -- NOLOGIN/INHERIT, seeded on startup, fixed ids
+// so membership edges persist. Enforced via RoleClosure where serened has the
+// matching gate (read/write_all_data, maintain, read/write_server_files);
+// others are present for GRANT/membership parity + the pg_monitor chain.
+inline constexpr ObjectId kPgReadAllData{kMinSystem.id() + 400};
+inline constexpr ObjectId kPgWriteAllData{kMinSystem.id() + 401};
+inline constexpr ObjectId kPgReadAllSettings{kMinSystem.id() + 402};
+inline constexpr ObjectId kPgReadAllStats{kMinSystem.id() + 403};
+inline constexpr ObjectId kPgStatScanTables{kMinSystem.id() + 404};
+inline constexpr ObjectId kPgMonitor{kMinSystem.id() + 405};
+inline constexpr ObjectId kPgDatabaseOwner{kMinSystem.id() + 406};
+inline constexpr ObjectId kPgSignalBackend{kMinSystem.id() + 407};
+inline constexpr ObjectId kPgReadServerFiles{kMinSystem.id() + 408};
+inline constexpr ObjectId kPgWriteServerFiles{kMinSystem.id() + 409};
+inline constexpr ObjectId kPgExecuteServerProgram{kMinSystem.id() + 410};
+inline constexpr ObjectId kPgCheckpoint{kMinSystem.id() + 411};
+inline constexpr ObjectId kPgMaintain{kMinSystem.id() + 412};
+inline constexpr ObjectId kPgUseReservedConnections{kMinSystem.id() + 413};
+inline constexpr ObjectId kPgCreateSubscription{kMinSystem.id() + 414};
+inline constexpr ObjectId kPgSignalAutovacuumWorker{kMinSystem.id() + 415};
+
 }  // namespace id
 }  // namespace sdb

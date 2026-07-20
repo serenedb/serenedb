@@ -255,6 +255,12 @@ class PgWireSession
   void AfterTxnStatement();
 
   yaclib::Task<bool> Authenticate();
+  // HBA `peer` (unix sockets): SO_PEERCRED uid -> OS user name, which must
+  // equal the requested role name. Writes the failure response itself.
+  bool PeerAuthenticate();
+  // HBA `cert` (hostssl): the verified client certificate's CN must equal the
+  // requested role name. Writes the failure response itself.
+  bool CertAuthenticate();
   void CapturePeerAddress();
   yaclib::Task<bool> AuthenticateCleartext(const Credential& credential);
   yaclib::Task<bool> AuthenticateMd5(std::string stored_md5);

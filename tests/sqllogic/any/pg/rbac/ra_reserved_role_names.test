@@ -1,0 +1,14 @@
+# Reserved role names, like PostgreSQL: the `pg_` prefix is reserved for
+# predefined roles, and `public` / `none` are reserved pseudo-roles (PUBLIC =
+# every role; NONE is used by SET ROLE). CREATE ROLE with any of these is a
+# reserved_name error (42939). Regression guard: `pg_`-prefixed names used to be
+# creatable, allowing an attacker-controlled role to shadow a predefined name.
+
+statement error db error: ERROR: role name "pg_shadow_role" is reserved
+CREATE ROLE pg_shadow_role;
+
+statement error db error: ERROR: role name "public" is reserved
+CREATE ROLE public;
+
+statement error db error: ERROR: role name "none" is reserved
+CREATE ROLE none;

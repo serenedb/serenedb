@@ -1,0 +1,37 @@
+# The regrole type round-trips by name and by oid, like PostgreSQL:
+#   'name'::regrole  resolves the role name to its oid
+#   oid::regrole::text renders the role name (dropped roles render numerically)
+#
+# Fixture prefix: rrc_ (regrole_cast).
+
+statement ok
+DROP ROLE IF EXISTS rrc_vedernikoff;
+
+statement ok
+CREATE ROLE rrc_vedernikoff;
+
+
+# Name -> regrole -> name round-trips.
+query
+SELECT 'rrc_vedernikoff'::regrole::text AS r;
+----
+r
+rrc_vedernikoff
+
+
+# A role's oid cast to regrole renders its name (idiomatic introspection).
+query
+SELECT (oid::regrole)::text AS r FROM pg_roles WHERE rolname = 'rrc_vedernikoff';
+----
+r
+rrc_vedernikoff
+
+
+# A non-existent role name is rejected.
+statement error db error: ERROR: role "rrc_ghost" does not exist
+SELECT 'rrc_ghost'::regrole;
+
+
+# ---- cleanup ----
+statement ok
+DROP ROLE rrc_vedernikoff;

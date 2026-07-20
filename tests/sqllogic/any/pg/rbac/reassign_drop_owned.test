@@ -1,0 +1,98 @@
+# REASSIGN OWNED BY and DROP OWNED BY, like PostgreSQL -- the tools to offboard
+# a role. REASSIGN transfers ownership of the role's objects; DROP OWNED drops
+# them and revokes privileges granted to the role, after which the role drops.
+#
+# Fixture prefix: rdo_ (reassign_drop_owned).
+
+statement ok
+DROP ROLE IF EXISTS rdo_a;
+
+statement ok
+DROP ROLE IF EXISTS rdo_new;
+
+statement ok
+CREATE ROLE rdo_a;
+
+statement ok
+CREATE ROLE rdo_new;
+
+statement ok
+GRANT CREATE ON SCHEMA public TO rdo_a;
+
+statement ok
+GRANT CREATE ON SCHEMA public TO rdo_new;
+
+
+# rdo_a creates objects it owns.
+connection default
+statement ok
+SET ROLE rdo_a;
+
+statement ok
+CREATE TABLE rdo_t (x int);
+
+statement ok
+CREATE SEQUENCE rdo_s;
+
+statement ok
+RESET ROLE;
+
+
+# REASSIGN OWNED transfers ownership to rdo_new.
+statement ok
+REASSIGN OWNED BY rdo_a TO rdo_new;
+
+query
+SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'rdo_t';
+----
+pg_get_userbyid
+rdo_new
+
+
+# Now DROP OWNED BY rdo_new drops those objects and revokes rdo_new's CREATE
+# grant, so rdo_new becomes droppable.
+statement ok
+DROP OWNED BY rdo_new;
+
+query
+SELECT count(*) FROM pg_class WHERE relname IN ('rdo_t', 'rdo_s');
+----
+count
+0
+
+statement ok
+DROP ROLE rdo_new;
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'rdo_new';
+----
+count
+0
+
+
+# REASSIGN accepts the CURRENT_USER keyword as the target.
+statement ok
+CREATE TABLE rdo_cu (x int);
+
+statement ok
+ALTER TABLE rdo_cu OWNER TO rdo_a;
+
+statement ok
+REASSIGN OWNED BY rdo_a TO CURRENT_USER;
+
+query
+SELECT pg_get_userbyid(relowner) FROM pg_class WHERE relname = 'rdo_cu';
+----
+pg_get_userbyid
+postgres
+
+statement ok
+DROP TABLE rdo_cu;
+
+
+# ---- cleanup ----
+statement ok
+DROP OWNED BY rdo_a;
+
+statement ok
+DROP ROLE rdo_a;

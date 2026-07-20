@@ -1,0 +1,41 @@
+# CREATE/ALTER/DROP GROUP are legacy aliases for the ROLE commands, like
+# PostgreSQL: GROUP creates a NOLOGIN role (same default as CREATE ROLE).
+#
+# Fixture prefix: grp_ (group_aliases).
+
+statement ok
+DROP ROLE IF EXISTS grp_a;
+
+statement ok
+DROP ROLE IF EXISTS grp_b;
+
+
+# CREATE GROUP makes a NOLOGIN role.
+statement ok
+CREATE GROUP grp_a;
+
+query
+SELECT rolcanlogin FROM pg_roles WHERE rolname = 'grp_a';
+----
+rolcanlogin
+f
+
+
+# ALTER GROUP ... RENAME and DROP GROUP behave like the ROLE forms.
+statement ok
+ALTER GROUP grp_a RENAME TO grp_b;
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'grp_b';
+----
+count
+1
+
+statement ok
+DROP GROUP grp_b;
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname IN ('grp_a', 'grp_b');
+----
+count
+0

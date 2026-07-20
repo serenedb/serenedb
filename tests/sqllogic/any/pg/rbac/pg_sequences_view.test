@@ -1,0 +1,32 @@
+# The pg_sequence catalog (and the pg_sequences view built on it) is populated
+# for standalone sequences, like PostgreSQL -- it was empty before.
+#
+# Fixture prefix: psv_ (pg_sequences_view).
+
+statement ok
+DROP SEQUENCE IF EXISTS psv_seq;
+
+statement ok
+CREATE SEQUENCE psv_seq START 5 INCREMENT 2 MAXVALUE 100;
+
+
+query
+SELECT start_value || '/' || increment_by || '/' || max_value || '/' || data_type::text
+FROM pg_sequences WHERE sequencename = 'psv_seq';
+----
+?column?
+5/2/100/bigint
+
+
+# pg_sequence catalog also joins to pg_class by seqrelid.
+query
+SELECT count(*) FROM pg_sequence S JOIN pg_class C ON C.oid = S.seqrelid
+WHERE C.relname = 'psv_seq';
+----
+count
+1
+
+
+# ---- cleanup ----
+statement ok
+DROP SEQUENCE psv_seq;

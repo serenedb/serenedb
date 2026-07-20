@@ -1,0 +1,80 @@
+# GRANT/REVOKE against multiple objects and multiple grantees at once
+# (`ON a, b TO r1, r2`), and the keyword grantees CURRENT_USER / CURRENT_ROLE /
+# SESSION_USER -- all like PostgreSQL.
+#
+# Fixture prefix: gmk_ (grant_multi_keyword).
+
+statement ok
+DROP TABLE IF EXISTS gmk_a;
+
+statement ok
+DROP TABLE IF EXISTS gmk_b;
+
+statement ok
+DROP ROLE IF EXISTS gmk_r1;
+
+statement ok
+DROP ROLE IF EXISTS gmk_r2;
+
+statement ok
+CREATE TABLE gmk_a (x int);
+
+statement ok
+CREATE TABLE gmk_b (x int);
+
+statement ok
+CREATE ROLE gmk_r1;
+
+statement ok
+CREATE ROLE gmk_r2;
+
+
+# One statement grants the full product: {a,b} x {r1,r2}.
+statement ok
+GRANT SELECT, INSERT ON gmk_a, gmk_b TO gmk_r1, gmk_r2;
+
+query
+SELECT has_table_privilege('gmk_r1','gmk_a','SELECT') AS r1a_s,
+       has_table_privilege('gmk_r1','gmk_b','INSERT') AS r1b_i,
+       has_table_privilege('gmk_r2','gmk_a','INSERT') AS r2a_i,
+       has_table_privilege('gmk_r2','gmk_b','SELECT') AS r2b_s;
+----
+r1a_s	r1b_i	r2a_i	r2b_s
+t	t	t	t
+
+
+# Multi-target REVOKE removes across the product.
+statement ok
+REVOKE SELECT ON gmk_a, gmk_b FROM gmk_r1, gmk_r2;
+
+query
+SELECT has_table_privilege('gmk_r1','gmk_a','SELECT') AS r1a,
+       has_table_privilege('gmk_r2','gmk_b','SELECT') AS r2b;
+----
+r1a	r2b
+f	f
+
+
+# Keyword grantee CURRENT_USER resolves to the executing role (postgres here).
+statement ok
+GRANT SELECT ON gmk_a TO CURRENT_USER;
+
+query
+SELECT has_table_privilege('postgres','gmk_a','SELECT');
+----
+has_table_privilege
+t
+
+
+# ---- cleanup ----
+statement ok
+DROP TABLE gmk_a;
+
+statement ok
+DROP TABLE gmk_b;
+
+statement ok
+DROP ROLE gmk_r1;
+
+statement ok
+DROP ROLE gmk_r2;

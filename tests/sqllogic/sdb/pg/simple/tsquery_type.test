@@ -1,0 +1,448 @@
+# TSQUERY as a first-class value: STRUCT(text VARCHAR, tokenizer VARCHAR,
+# boost FLOAT). String-origin queries ('...'::tsquery, bare strings at @@)
+# become struct values; ts_* constructor calls stay bind-time expression
+# trees claimed by the inverted-index optimizer. `^ K` and `::boost(K)`
+# fold the factor into the boost field on values; `::tokenize(n)` stays a
+# bind-time expression dispatched at `@@`.
+
+
+# ----------------------------------------------------------------------
+# 1. Values are inspectable: canonical text rendering via ::text.
+# ----------------------------------------------------------------------
+
+query
+SELECT ('cat & dog'::tsquery)::text AS t;
+----
+t
+cat & dog
+
+query
+SELECT 'quick fox'::tsquery AS q;
+----
+q
+quick fox
+
+# Non-default boost renders as a `^` suffix on the parenthesised text.
+query
+SELECT ('quick'::tsquery ^ 2.0)::text AS t;
+----
+t
+('quick'::tsquery ^ 2)
+
+# `::boost(K)` is the composable cast form of `^ K`; both fold into the
+# boost field and compose multiplicatively.
+query
+SELECT ('quick'::tsquery::boost(2.0))::text AS t;
+----
+t
+('quick'::tsquery ^ 2)
+
+query
+SELECT ('quick'::tsquery::boost(2.0) ^ 3.0)::text AS t;
+----
+t
+('quick'::tsquery ^ 6)
+
+query
+SELECT (('quick'::tsquery ^ 2.0)::boost(3.0))::text AS t;
+----
+t
+('quick'::tsquery ^ 6)
+
+query
+SELECT ('quick'::tsquery::boost(2.0)::boost(3.0))::text AS t;
+----
+t
+('quick'::tsquery ^ 6)
+
+# Field access shows the triple directly.
+query
+SELECT q.text, q.tokenizer, q.boost FROM (SELECT 'quick'::tsquery ^ 2.5 AS q);
+----
+text	tokenizer	boost
+quick	(empty)	2.5
+
+# NULL propagates.
+query
+SELECT (NULL::tsquery)::text AS t;
+----
+t
+NULL
+
+# A boosted cast-qualified leg renders without redundant transit casts
+# and round-trips as a fixpoint.
+query
+SELECT ('x'::tsquery::boost(2.0) || 'y')::text AS t;
+----
+t
+(('x'::tsquery ^ 2) || 'y')
+
+query
+SELECT ((('x'::tsquery::boost(2.0) || 'y')::text)::tsquery)::text AS t;
+----
+t
+(('x'::tsquery ^ 2) || 'y')
+
+# Canonical text is re-parseable: a boosted value survives the text
+# round-trip with its boost intact (fixpoint).
+query
+SELECT ((('quick'::tsquery ^ 2.0)::text)::tsquery)::text AS t;
+----
+t
+('quick'::tsquery ^ 2)
+
+
+# ----------------------------------------------------------------------
+# 2. Corpus for match behaviour: two columns with different dictionaries.
+#    b lowercases, c uppercases -- the ambient (empty) tokenizer of one
+#    value resolves per target column at @@.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tqt_lower(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tqt_upper(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'upper',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE TABLE tqt (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
+
+statement ok
+CREATE INDEX tqt_idx ON tqt USING inverted(a, b tqt_lower, c tqt_upper);
+
+statement ok
+INSERT INTO tqt VALUES
+    (1, 'quick fox', 'quick fox'),
+    (2, 'lazy dog', 'lazy dog'),
+    (3, 'grey turtle', 'grey turtle');
+
+statement ok
+VACUUM (REFRESH_TABLE) tqt;
+
+# The same string-origin value works against both columns: b indexes
+# lowercase terms, c indexes uppercase terms, and 'Quick' resolves
+# through each column's own analyzer.
+query
+SELECT a FROM tqt_idx WHERE b @@ 'Quick'::tsquery ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tqt_idx WHERE c @@ 'Quick'::tsquery ORDER BY a;
+----
+a
+1
+
+# Round-trip: rendering a value and casting it back matches the same
+# rows.
+query
+SELECT a FROM tqt_idx WHERE b @@ (('quick fox'::tsquery)::text)::tsquery ORDER BY a;
+----
+a
+1
+
+# Multi-token values keep OR semantics after the round-trip.
+query
+SELECT a FROM tqt_idx WHERE b @@ (('quick turtle'::tsquery)::text)::tsquery ORDER BY a;
+----
+a
+1
+3
+
+
+# ----------------------------------------------------------------------
+# 3. `::tokenize(n)` stays an expression: pinned analyzers override the
+#    ambient column analyzer per leg.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tqt_idx WHERE b @@ 'quick'::tokenize('keyword') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tqt_idx WHERE b @@ 'Quick'::tokenize('keyword');
+----
+a
+
+query
+SELECT a FROM tqt_idx WHERE b @@ ('Quick'::tokenize('tqt_lower') || 'TURTLE'::tokenize('tqt_upper')) ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tqt_idx WHERE c @@ ('Quick'::tokenize('tqt_upper') || 'turtle'::tokenize('tqt_lower')) ORDER BY a;
+----
+a
+1
+
+
+# ----------------------------------------------------------------------
+# 4. Value boost affects BM25 exactly like the inline `^` form.
+# ----------------------------------------------------------------------
+
+query IR
+SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
+WHERE b @@ ts_phrase('quick') ORDER BY a;
+----
+a	s
+1	0.9808291
+
+query IR
+SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
+WHERE b @@ (ts_phrase('quick') ^ 2.0) ORDER BY a;
+----
+a	s
+1	1.9616582
+
+query IR
+SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
+WHERE b @@ ('quick'::tsquery ^ 2.0) ORDER BY a;
+----
+a	s
+1	1.9616582
+
+query IR
+SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
+WHERE b @@ ('quick'::tsquery::boost(2.0)) ORDER BY a;
+----
+a	s
+1	1.9616582
+
+# `::boost(K)` and `::tokenize(n)` compose in either order on values:
+# the boost folds into the value's boost field, the tokenize cast
+# survives to `@@` and pins the analyzer for the subtree.
+query IR
+SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
+WHERE b @@ ('quick'::tsquery::boost(2.0)::tokenize('keyword')) ORDER BY a;
+----
+a	s
+1	1.9616582
+
+query IR
+SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
+WHERE b @@ ('quick'::tsquery::tokenize('keyword')::boost(2.0)) ORDER BY a;
+----
+a	s
+1	1.9616582
+
+# Boost survives composition with a plain leg: the boosted leg folds to
+# a value, the composition stays a bind-time tree, and the walker reads
+# the boost from the value.
+query IR
+SELECT a, BM25(tqt_idx.tableoid) AS s FROM tqt_idx
+WHERE b @@ ('quick'::tsquery ^ 2.0 || 'turtle') ORDER BY a;
+----
+a	s
+1	1.9616582
+3	0.9808291
+
+
+# ----------------------------------------------------------------------
+# 5. Detached construction: constructors fold to values whose text is
+# their canonical SQL expression; modifier casts on plain strings still
+# only compile at @@.
+# ----------------------------------------------------------------------
+
+query
+SELECT ts_phrase('quick')::text AS t;
+----
+t
+ts_phrase('quick')
+
+query
+SELECT (ts_any(['a','b'], 2) ^ 2.0)::text AS t;
+----
+t
+((ts_any(['a', 'b'], 2)) ^ 2)
+
+query
+SELECT (ts_phrase('a') || 'b c')::text AS t;
+----
+t
+((ts_phrase('a')) || 'b c')
+
+statement error
+SELECT ('quick'::tokenize('keyword'))::text;
+
+statement error
+SELECT 'quick'::tsquery::boost(-1.0);
+
+statement error
+SELECT 'quick'::tsquery::boost(NULL);
+
+# ----------------------------------------------------------------------
+# 6. Fold rendering per constructor family: the value's text is its
+# canonical SQL expression.
+# ----------------------------------------------------------------------
+
+query
+SELECT ts_like('qui%')::text AS t;
+----
+t
+ts_like('qui%')
+
+query
+SELECT ts_starts_with('qui')::text AS t;
+----
+t
+ts_starts_with('qui')
+
+query
+SELECT ts_regexp('fox(es)?')::text AS t;
+----
+t
+ts_regexp('fox(es)?')
+
+query
+SELECT ts_levenshtein('fax', 1)::text AS t;
+----
+t
+ts_levenshtein('fax', 1)
+
+query
+SELECT ts_between(1, 100, true, false)::text AS t;
+----
+t
+ts_between(1, 100, true, false)
+
+query
+SELECT ts_compound(NULL, NULL, ['quick','dog'])::text AS t;
+----
+t
+ts_compound(NULL::tsquery, NULL::tsquery, ['quick', 'dog'])
+
+query
+SELECT ts_tokenize('Quick Fox', 'keyword')::text AS t;
+----
+t
+ts_tokenize('Quick Fox', 'keyword')
+
+query
+SELECT to_tsquery('cat & hat')::text AS t;
+----
+t
+to_tsquery('cat & hat')
+
+query
+SELECT tsquery_phrase(ts_phrase('a'), 'b'::tsquery, 3)::text AS t;
+----
+t
+tsquery_phrase((ts_phrase('a')), 'b'::tsquery, 3)
+
+query
+SELECT (!!ts_phrase('x'))::text AS t;
+----
+t
+(!!(ts_phrase('x')))
+
+query
+SELECT ('quick' || ts_phrase('x'))::text AS t;
+----
+t
+('quick' || (ts_phrase('x')))
+
+query
+SELECT (ts_phrase('x') ^ 2.5)::text AS t;
+----
+t
+((ts_phrase('x')) ^ 2.5)
+
+# Quote escaping survives the render.
+query
+SELECT (ts_phrase('it''s') && 'a b')::text AS t;
+----
+t
+((ts_phrase('it''s')) && 'a b')
+
+# Rendering is idempotent: text -> value -> text is a fixpoint.
+query
+SELECT (((ts_phrase('it''s') && 'a b')::text)::tsquery)::text AS t;
+----
+t
+((ts_phrase('it''s')) && 'a b')
+
+query
+SELECT (NULL::tsquery)::text AS t;
+----
+t
+NULL
+
+# ----------------------------------------------------------------------
+# 7. Composite fold rendering: nested conditions, numeric casts and
+# fixpoints; failure shapes.
+# ----------------------------------------------------------------------
+
+query
+SELECT ((ts_phrase('a') && ts_any(['b', 'c'], 2)) || !!ts_like('d%'))::text AS t;
+----
+t
+((((ts_phrase('a')) && (ts_any(['b', 'c'], 2)))) || ((!!(ts_like('d%')))))
+
+query
+SELECT ((((ts_phrase('a') && ts_any(['b', 'c'], 2)) || !!ts_like('d%'))::text)::tsquery)::text AS t;
+----
+t
+((((ts_phrase('a')) && (ts_any(['b', 'c'], 2)))) || ((!!(ts_like('d%')))))
+
+query
+SELECT ts_between(-5, +10, true, true)::text AS t;
+----
+t
+ts_between(-5, 10, true, true)
+
+query
+SELECT ts_levenshtein('fax', 1::INT4)::text AS t;
+----
+t
+ts_levenshtein('fax', 1)
+
+query
+SELECT ts_between(0.5::DECIMAL(4,2), 2::UBIGINT, true, false)::text AS t;
+----
+t
+ts_between(0.50, 2, true, false)
+
+query
+SELECT tsquery_phrase(ts_phrase('a'), tsquery_phrase(ts_phrase('b'), 'c'::tsquery, 2), 3)::text AS t;
+----
+t
+tsquery_phrase((ts_phrase('a')), (tsquery_phrase((ts_phrase('b')), 'c'::tsquery, 2)), 3)
+
+query
+SELECT ts_all(list_value('a', 'b'))::text AS t;
+----
+t
+ts_all(['a', 'b'])
+
+statement error
+SELECT (ts_phrase('x') ^ -2.0);
+
+# Unlike ::boost(NULL) -- a modifier that must be a valid constant -- the
+# ^ operator is NULL-propagating like any SQL operator.
+query
+SELECT ('quick'::tsquery ^ NULL)::text AS t;
+----
+t
+NULL

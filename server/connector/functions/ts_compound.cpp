@@ -59,9 +59,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
         if (val.IsNull()) {
           return;
         }
-        const auto& children = type_id == duckdb::LogicalTypeId::ARRAY
-                                 ? duckdb::ArrayValue::GetChildren(val)
-                                 : duckdb::ListValue::GetChildren(val);
+        const auto& children = ListOrArrayChildren(val);
         for (const auto& child_val : children) {
           synthesised.push_back(
             duckdb::make_uniq<duckdb::BoundConstantExpression>(child_val));
@@ -100,12 +98,11 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
   extract(*func.GetChildren()[2], "should", should, synthesised);
 
   if (must.empty() && must_not.empty() && should.empty()) {
-    AddFilter<irs::Empty>(parent);
+    AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
 
-  auto& and_filter =
-    ctx.negated ? Negate<irs::And>(parent) : AddFilter<irs::And>(parent);
+  auto& and_filter = AddMaybeNegated<irs::And>(parent, ctx, column_info);
   and_filter.boost(ctx.boost);
 
   auto inner_ctx = ctx;

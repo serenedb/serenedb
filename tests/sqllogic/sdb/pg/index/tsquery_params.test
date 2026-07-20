@@ -1,0 +1,621 @@
+hash-threshold 100
+
+# Prepared-statement parameters flowing into @@.
+# DuckDB rebinds parameterized statements on every EXECUTE with the values
+# substituted as constants, so the claim compiles the filter exactly as for
+# inline queries; the PREPARE-time template plan declines parameter-bearing
+# conjuncts and is never executed.
+
+statement ok
+CREATE TABLE tqp (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tqp_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX tqp_idx ON tqp USING inverted(a, b tqp_english);
+
+statement ok
+INSERT INTO tqp VALUES (1, 'quick brown fox'), (2, 'lazy dog'), (3, NULL),
+                       (4, 'quick dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) tqp;
+
+# ----------------------------------------------------------------------
+# Whole-value parameter, re-executed with different values
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_match AS SELECT a FROM tqp_idx WHERE b @@ $1 ORDER BY a;
+
+query
+EXECUTE tqp_match('quick');
+----
+a
+1
+4
+
+query
+EXECUTE tqp_match('dog');
+----
+a
+2
+4
+
+query
+EXECUTE tqp_match('nomatch');
+----
+a
+
+# NULL query value matches nothing (Empty filter semantics).
+query
+EXECUTE tqp_match(NULL);
+----
+a
+
+# ----------------------------------------------------------------------
+# Explicit tsquery cast on the parameter
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_cast AS SELECT a FROM tqp_idx WHERE b @@ $1::tsquery ORDER BY a;
+
+query
+EXECUTE tqp_cast('lazy');
+----
+a
+2
+
+# ----------------------------------------------------------------------
+# Scored execution through the parameterized claim
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_scored AS SELECT a FROM tqp_idx WHERE b @@ $1
+    ORDER BY bm25(tableoid) DESC, a LIMIT 2;
+
+query
+EXECUTE tqp_scored('quick');
+----
+a
+1
+4
+
+# ----------------------------------------------------------------------
+# Function forms: parameters become constants at EXECUTE rebind
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_phrase AS SELECT a FROM tqp_idx WHERE b @@ ts_phrase($1) ORDER BY a;
+
+query
+EXECUTE tqp_phrase('quick brown');
+----
+a
+1
+
+query
+EXECUTE tqp_phrase('lazy dog');
+----
+a
+2
+
+statement ok
+PREPARE tqp_any AS SELECT a FROM tqp_idx WHERE b @@ ts_any([$1, $2]) ORDER BY a;
+
+query
+EXECUTE tqp_any('lazy', 'fox');
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# ts_dict enumeration and facet conversion under a parameterized WHERE
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_dict AS SELECT unnest(ts_dict_agg(b)) AS term FROM tqp_idx
+    WHERE b @@ $1 ORDER BY term;
+
+query
+EXECUTE tqp_dict('quick');
+----
+term
+brown
+dog
+fox
+quick
+
+statement ok
+PREPARE tqp_facet AS SELECT b, count(*) AS c FROM tqp_idx
+    WHERE b @@ $1 GROUP BY b ORDER BY b;
+
+query
+EXECUTE tqp_facet('dog');
+----
+b	c
+lazy dog	1
+quick dog	1
+
+# ----------------------------------------------------------------------
+# Multi-token parameter text composes with OR (min_match=1), like an
+# inline bare string
+# ----------------------------------------------------------------------
+
+query
+EXECUTE tqp_match('brown lazy');
+----
+a
+1
+2
+
+# Empty-string query value produces no tokens and matches nothing.
+query
+EXECUTE tqp_match('');
+----
+a
+
+# ----------------------------------------------------------------------
+# SQL three-valued logic: negated parameterized match excludes NULL rows
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_not AS SELECT a FROM tqp_idx WHERE NOT (b @@ $1) ORDER BY a;
+
+query
+EXECUTE tqp_not('quick');
+----
+a
+2
+
+query
+EXECUTE tqp_not('nomatch');
+----
+a
+1
+2
+4
+
+# ----------------------------------------------------------------------
+# Modifier casts on the parameter
+# ----------------------------------------------------------------------
+
+# Raw keyword routing: the analyzed index lowercases at write time, so a
+# raw uppercase term misses while the lowercase term hits.
+statement ok
+PREPARE tqp_kw AS SELECT a FROM tqp_idx
+    WHERE b @@ $1::tokenize('keyword') ORDER BY a;
+
+query
+EXECUTE tqp_kw('quick');
+----
+a
+1
+4
+
+query
+EXECUTE tqp_kw('Quick');
+----
+a
+
+# Boost composes with the parameter value: ^ doubles the claimed score.
+statement ok
+PREPARE tqp_score1 AS SELECT a, round(bm25(tableoid) * 100000)::BIGINT AS s
+    FROM tqp_idx WHERE b @@ $1::tsquery ORDER BY a;
+
+statement ok
+PREPARE tqp_score2 AS SELECT a, round(bm25(tableoid) * 100000)::BIGINT AS s
+    FROM tqp_idx WHERE b @@ ($1::tsquery ^ 2.0) ORDER BY a;
+
+query
+EXECUTE tqp_score1('lazy');
+----
+a	s
+2	128007
+
+query
+EXECUTE tqp_score2('lazy');
+----
+a	s
+2	256013
+
+# ----------------------------------------------------------------------
+# Parameters mixed with other conjuncts
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_mixed AS SELECT a FROM tqp_idx
+    WHERE b @@ $1 AND a > $2 ORDER BY a;
+
+query
+EXECUTE tqp_mixed('quick', 1);
+----
+a
+4
+
+statement ok
+PREPARE tqp_mixed_const AS SELECT a FROM tqp_idx
+    WHERE b @@ $1 AND a < 4 ORDER BY a;
+
+query
+EXECUTE tqp_mixed_const('quick');
+----
+a
+1
+
+# ----------------------------------------------------------------------
+# PG-compat parser functions over a parameter
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_plain AS SELECT a FROM tqp_idx
+    WHERE b @@ plainto_tsquery($1) ORDER BY a;
+
+query
+EXECUTE tqp_plain('Quick Fox');
+----
+a
+1
+
+statement ok
+PREPARE tqp_web AS SELECT a FROM tqp_idx
+    WHERE b @@ websearch_to_tsquery($1) ORDER BY a;
+
+query
+EXECUTE tqp_web('dog');
+----
+a
+2
+4
+
+# ----------------------------------------------------------------------
+# Value round-trip: parameter -> TSQUERY -> text rendering
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_render AS SELECT ($1::tsquery)::text AS t;
+
+query
+EXECUTE tqp_render('quick fox');
+----
+t
+quick fox
+
+# ----------------------------------------------------------------------
+# ts_dict min/max seek shortcut under a parameterized document WHERE
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_minmax AS SELECT ts_dict_min(b) AS lo, ts_dict_max(b) AS hi
+    FROM tqp_idx WHERE b @@ $1;
+
+query
+EXECUTE tqp_minmax('quick');
+----
+lo	hi
+brown	quick
+
+# ----------------------------------------------------------------------
+# ts_offsets rides the parameterized claimed filter
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_offsets AS SELECT a, ts_offsets(b) AS o FROM tqp_idx
+    WHERE b @@ $1 ORDER BY a;
+
+query
+EXECUTE tqp_offsets('fox');
+----
+a	o
+1	{12,15}
+
+# ----------------------------------------------------------------------
+# Re-EXECUTE after a catalog refresh sees the new rows
+# ----------------------------------------------------------------------
+
+statement ok
+INSERT INTO tqp VALUES (5, 'quick turtle');
+
+statement ok
+VACUUM (REFRESH_TABLE) tqp;
+
+query
+EXECUTE tqp_match('quick');
+----
+a
+1
+4
+5
+
+query
+EXECUTE tqp_scored('quick');
+----
+a
+1
+4
+
+# ----------------------------------------------------------------------
+# Structured value text as the parameter: binding a
+# whitelisted constructor expression compiles it structurally; arbitrary
+# names stay leaf tokens.
+# ----------------------------------------------------------------------
+
+query
+EXECUTE tqp_match('ts_like(''qui%'')');
+----
+a
+1
+4
+5
+
+query
+EXECUTE tqp_match('ts_any([''lazy'', ''turtle''])');
+----
+a
+2
+5
+
+query
+EXECUTE tqp_match('current_date');
+----
+a
+
+
+# ----------------------------------------------------------------------
+# Composite structured parameters: nested conditions compile
+# structurally through the whitelist.
+# ----------------------------------------------------------------------
+
+query
+EXECUTE tqp_match('(ts_phrase(''quick'') && ts_like(''do%''))');
+----
+a
+4
+
+query
+EXECUTE tqp_match('(ts_phrase(''lazy dog'') || ts_phrase(''brown fox''))');
+----
+a
+1
+2
+
+query
+EXECUTE tqp_match('ts_any([''fox'', ''dog''], 1)');
+----
+a
+1
+2
+4
+
+query
+EXECUTE tqp_match('(ts_all(list_value(''quick'', ''dog'')) ^ 2.0)');
+----
+a
+4
+
+query
+EXECUTE tqp_match('ts_phrase(''quick dog'')');
+----
+a
+4
+
+query
+EXECUTE tqp_match('(!!ts_like(''qui%''))');
+----
+a
+2
+
+# Numeric casts inside a constructor fold, including SQL aliases (INT4).
+query
+EXECUTE tqp_match('ts_levenshtein(''lazi'', 1::INT4)');
+----
+a
+2
+
+query
+EXECUTE tqp_match('ts_levenshtein(''lazi'', 1::TINYINT)');
+----
+a
+2
+
+# Comments are part of the expression grammar, not a rejection reason.
+query
+EXECUTE tqp_match('ts_phrase(/* adjacency */ ''quick dog'')');
+----
+a
+4
+
+# ----------------------------------------------------------------------
+# Rejected shapes degrade to bag-of-words over the raw text -- searched,
+# never executed.
+# ----------------------------------------------------------------------
+
+# Schema-qualified constructor: rejected; the fallback tokenization still
+# finds 'quick' as a plain token.
+query
+EXECUTE tqp_match('main.ts_phrase(''quick'')');
+----
+a
+1
+4
+5
+
+query
+EXECUTE tqp_match('ts_phrase(x := ''quick'')');
+----
+a
+1
+4
+5
+
+query
+EXECUTE tqp_match('ts_phrase(DISTINCT ''quick'')');
+----
+a
+1
+4
+5
+
+# TRY_CAST is not whitelisted; no corpus token survives.
+query
+EXECUTE tqp_match('ts_levenshtein(''lazi'', try_cast(''1'' AS INTEGER))');
+----
+a
+
+# A cast to a non-numeric type poisons the whole tree.
+query
+EXECUTE tqp_match('ts_phrase(''quick''::VARCHAR)');
+----
+a
+1
+4
+5
+
+query
+EXECUTE tqp_match('(SELECT 1)');
+----
+a
+
+# Statement injection does not parse as a single expression; the text is
+# searched, not executed.
+query
+EXECUTE tqp_match('ts_phrase(''quick''); DROP TABLE tqp');
+----
+a
+1
+4
+5
+
+query
+SELECT count(*) AS n FROM tqp;
+----
+n
+5
+
+# Depth cap: 70 nested unary minuses exceed the whitelist depth and the
+# text falls back to tokens (none in the corpus).
+query
+EXECUTE tqp_match('- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 1');
+----
+a
+
+# Size cap: text beyond 64 KiB is never parsed as an expression.
+query
+EXECUTE tqp_match(repeat('x', 70000));
+----
+a
+
+
+# ----------------------------------------------------------------------
+# Array parameters: TSQUERY[] flows through bind via the VARCHAR[] ->
+# TSQUERY[] list cast; elements are full tsquery values (structured text
+# included). Bare `@@ $1` with an array has no overload by design --
+# ts_any / ts_all / ts_compound are the array carriers.
+# ----------------------------------------------------------------------
+
+statement ok
+PREPARE tqp_any AS SELECT a FROM tqp_idx WHERE b @@ ts_any($1) ORDER BY a;
+
+query
+EXECUTE tqp_any(['fox', 'lazy']);
+----
+a
+1
+2
+
+statement ok
+PREPARE tqp_any2 AS SELECT a FROM tqp_idx WHERE b @@ ts_any($1, 2) ORDER BY a;
+
+query
+EXECUTE tqp_any2(['quick', 'dog', 'fox']);
+----
+a
+1
+4
+
+statement ok
+PREPARE tqp_must AS SELECT a FROM tqp_idx WHERE b @@ ts_compound($1, NULL, NULL) ORDER BY a;
+
+query
+EXECUTE tqp_must(['quick', 'dog']);
+----
+a
+4
+
+query
+EXECUTE tqp_must(['ts_like(''qui%'')']);
+----
+a
+1
+4
+5
+
+statement ok
+PREPARE tqp_mustnot AS SELECT a FROM tqp_idx WHERE b @@ ts_compound(NULL, $1, NULL) ORDER BY a;
+
+query
+EXECUTE tqp_mustnot(['quick']);
+----
+a
+2
+
+statement ok
+PREPARE tqp_should AS SELECT a FROM tqp_idx WHERE b @@ ts_compound(NULL, NULL, $1, 2) ORDER BY a;
+
+query
+EXECUTE tqp_should(['quick', 'dog', 'fox']);
+----
+a
+1
+4
+
+statement ok
+PREPARE tqp_mix AS SELECT a FROM tqp_idx WHERE b @@ ts_compound($1, $2, NULL) ORDER BY a;
+
+query
+EXECUTE tqp_mix(['quick'], ['fox']);
+----
+a
+4
+5
+
+statement error
+PREPARE tqp_bare_list AS SELECT a FROM tqp_idx WHERE b @@ $1 ORDER BY a;
+EXECUTE tqp_bare_list(['fox', 'lazy']);
+
+statement ok
+DEALLOCATE tqp_any;
+
+statement ok
+DEALLOCATE tqp_any2;
+
+statement ok
+DEALLOCATE tqp_must;
+
+statement ok
+DEALLOCATE tqp_mustnot;
+
+statement ok
+DEALLOCATE tqp_should;
+
+statement ok
+DEALLOCATE tqp_mix;
+
+statement ok
+DEALLOCATE tqp_match;
+
+statement ok
+DROP TABLE tqp;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tqp_english;

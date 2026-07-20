@@ -1,0 +1,120 @@
+# Pushed filters over an RLE-compressed `.col` column (long constant runs with
+# jumpy boundaries make the analyze step pick RLE over delta-bitpacking): the
+# codec filter evaluates each run once and narrows the selection per run.
+# Covers matching/missing/mixed windows, a null-bearing sibling column (whose
+# spans fall back to the decode path), combined filters, unfoldable
+# expressions, and deletes. Results are pinned against the generator formula.
+
+statement ok
+CREATE TABLE srlef (pk BIGINT PRIMARY KEY, r BIGINT, n BIGINT, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+INSERT INTO srlef SELECT i, (i // 2000) * 7919,
+  CASE WHEN i % 10 = 0 THEN NULL ELSE (i // 2000) * 7919 END, 'v' || (i // 2000)
+  FROM generate_series(0, 11999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) srlef;
+
+
+statement ok
+INSERT INTO srlef SELECT i, (i // 2000) * 7919,
+  CASE WHEN i % 10 = 0 THEN NULL ELSE (i // 2000) * 7919 END, 'v' || (i // 2000)
+  FROM generate_series(12000, 23999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) srlef;
+
+
+# One full run matches (run 5: rows 10000..11999).
+query
+SELECT count(*) AS c, sum(pk) AS s FROM srlef WHERE r = 39595;
+----
+c	s
+2000	21999000
+
+
+# Between two run values: nothing matches anywhere.
+query
+SELECT count(*) AS c FROM srlef WHERE r = 39596;
+----
+c
+0
+
+
+# Range spanning three runs across both segments.
+query
+SELECT count(*) AS c, sum(pk) AS s FROM srlef WHERE r BETWEEN 39595 AND 55433;
+----
+c	s
+6000	77997000
+
+
+# Match-heavy: every run but the first passes.
+query
+SELECT count(*) AS c FROM srlef WHERE r <> 0;
+----
+c
+22000
+
+
+# The null-bearing sibling: its spans take the decode path.
+query
+SELECT count(*) AS c FROM srlef WHERE n IS NULL;
+----
+c
+2400
+
+
+query
+SELECT count(*) AS c, sum(r) AS s FROM srlef WHERE n = 39595;
+----
+c	s
+1800	71271000
+
+
+# RLE filter combined with a dictionary-string filter on the same rows.
+query
+SELECT count(*) AS c FROM srlef WHERE r = 39595 AND s = 'v5';
+----
+c
+2000
+
+
+# Unfoldable expression on the RLE column evaluates per row.
+query
+SELECT count(*) AS c FROM srlef WHERE r % 7919 = 0;
+----
+c
+24000
+
+
+statement ok
+DELETE FROM srlef WHERE pk >= 10500 AND pk < 11500;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) srlef;
+
+
+# The matching run now has a hole from the delete masks.
+query
+SELECT count(*) AS c, sum(pk) AS s FROM srlef WHERE r = 39595;
+----
+c	s
+1000	10999500
+
+
+query
+SELECT count(*) AS c FROM srlef;
+----
+c
+23000
+
+
+statement ok
+DROP TABLE srlef;

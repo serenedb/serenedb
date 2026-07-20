@@ -1,0 +1,767 @@
+hash-threshold 100
+
+# SQL three-valued logic over claimed filters: a NULL row satisfies no
+# comparison, and a bare irs::Not runs against ALL live docs and would
+# readmit it. The claim loop hoists the rejection to the conjunction level:
+# one IS-NOT-NULL guard conjunct per negated column, elided when a positive
+# sibling conjunct on the same column already rejects NULL rows; negations
+# under a disjunction keep a local null exclusion instead (the guard would
+# not be sound there). IS [NOT] NULL claims directly against the null-marker
+# term. IS DISTINCT FROM keeps NULL rows by definition. Every index result
+# is pinned against the base-table oracle above it. Range comparisons absorb
+# negation by operator inversion (postings-only, null-safe by construction).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ns_kw(template = 'keyword')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ns_tx(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    frequency = true,
+    position = true
+)
+
+statement ok
+CREATE TABLE ns(id INTEGER PRIMARY KEY, scope VARCHAR, body VARCHAR,
+                pad VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX ns_idx ON ns USING inverted(scope ns_kw, body ns_tx, pad ns_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO ns VALUES
+  (1, 'a',  'red blue', 'p'),
+  (2, NULL, NULL,       'p'),
+  (3, 'y',  'red',      'p')
+
+statement ok
+VACUUM (REFRESH_TABLE) ns;
+
+query I
+SELECT id FROM ns WHERE scope != 'y' ORDER BY id
+----
+id
+1
+
+query I
+SELECT id FROM ns_idx WHERE scope != 'y' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE scope != 'y'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: ns_idx                                    │
+│ Lookup: table                                    │
+│ Index Filter:                                    │
+│ ╭─ Not ────────────────╮                         │
+│ ╰───────────┬──────────╯                         │
+│             ├────────────────────────╮           │
+│ ╭─ Term ────┴──────────╮  ╭─ Term ───┴─────────╮ │
+│ │ Field: scope(string) │  │ Field: scope(null) │ │
+│ │ Value: y             │  │ Value:             │ │
+│ ╰──────────────────────╯  ╰────────────────────╯ │
+│ Projections: id                                  │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
+
+query I
+SELECT id FROM ns WHERE scope NOT IN ('y', 'z') ORDER BY id
+----
+id
+1
+
+query I
+SELECT id FROM ns_idx WHERE scope NOT IN ('y', 'z') ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE scope NOT IN ('y', 'z')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: ns_idx                                    │
+│ Lookup: table                                    │
+│ Index Filter:                                    │
+│ ╭─ Not ────────────────╮                         │
+│ ╰───────────┬──────────╯                         │
+│             ├────────────────────────╮           │
+│ ╭─ Terms ───┴──────────╮  ╭─ Term ───┴─────────╮ │
+│ │ Field: scope(string) │  │ Field: scope(null) │ │
+│ │ Values: 'y', 'z'     │  │ Value:             │ │
+│ │ Min Match: 1         │  ╰────────────────────╯ │
+│ ╰──────────────────────╯                         │
+│ Projections: id                                  │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
+
+query I
+SELECT id FROM ns WHERE NOT (scope = 'y') ORDER BY id
+----
+id
+1
+
+query I
+SELECT id FROM ns_idx WHERE NOT (scope = 'y') ORDER BY id
+----
+id
+1
+
+query I
+SELECT id FROM ns WHERE scope NOT LIKE 'y%' ORDER BY id
+----
+id
+1
+
+query I
+SELECT id FROM ns_idx WHERE scope NOT LIKE 'y%' ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE scope NOT LIKE 'y%'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: ns_idx                                    │
+│ Lookup: table                                    │
+│ Index Filter:                                    │
+│ ╭─ Not ────────────────╮                         │
+│ ╰───────────┬──────────╯                         │
+│             ├────────────────────────╮           │
+│ ╭─ Starts With ────────╮  ╭─ Term ───┴─────────╮ │
+│ │ Field: scope(string) │  │ Field: scope(null) │ │
+│ │ Prefix: y            │  │ Value:             │ │
+│ │ Limit: 1024          │  ╰────────────────────╯ │
+│ ╰──────────────────────╯                         │
+│ Projections: id                                  │
+│ ~1 row                                           │
+╰──────────────────────────────────────────────────╯
+
+# IS DISTINCT FROM keeps NULL rows: distinctness is not a comparison.
+query I
+SELECT id FROM ns WHERE scope IS DISTINCT FROM 'y' ORDER BY id
+----
+id
+1
+2
+
+query I
+SELECT id FROM ns_idx WHERE scope IS DISTINCT FROM 'y' ORDER BY id
+----
+id
+1
+2
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE scope IS DISTINCT FROM 'y'
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #1                        │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: scope IS DISTINCT FROM 'y' │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: ns_idx                          │
+│ Lookup: table                          │
+│ Projections: scope, id                 │
+│ ~3 rows                                │
+╰────────────────────────────────────────╯
+
+query I
+SELECT id FROM ns WHERE scope IS NULL ORDER BY id
+----
+id
+2
+
+query I
+SELECT id FROM ns_idx WHERE scope IS NULL ORDER BY id
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE scope IS NULL
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: ns_idx          │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: scope(null) │ │
+│ │ Value:             │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query I
+SELECT id FROM ns WHERE scope IS NOT NULL ORDER BY id
+----
+id
+1
+3
+
+query I
+SELECT id FROM ns_idx WHERE scope IS NOT NULL ORDER BY id
+----
+id
+1
+3
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE scope IS NOT NULL
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: ns_idx          │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Not ──────────────╮ │
+│ ╰──────────┬─────────╯ │
+│ ╭─ Term ───┴─────────╮ │
+│ │ Field: scope(null) │ │
+│ │ Value:             │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+# Negated tsquery forms: a NULL document has no tokens and never matches,
+# negated or not.
+query I
+SELECT id FROM ns_idx WHERE NOT (body @@ 'blue') ORDER BY id
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE NOT (body @@ 'blue')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: ns_idx                                  │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Not ───────────────╮                        │
+│ ╰──────────┬──────────╯                        │
+│            ├───────────────────────╮           │
+│ ╭─ Term ───┴──────────╮  ╭─ Term ──┴─────────╮ │
+│ │ Field: body(string) │  │ Field: body(null) │ │
+│ │ Value: blue         │  │ Value:            │ │
+│ ╰─────────────────────╯  ╰───────────────────╯ │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query I
+SELECT id FROM ns_idx WHERE body @@ !!('blue') ORDER BY id
+----
+id
+3
+
+query I
+SELECT id FROM ns_idx WHERE body @@ !!(ts_phrase('red', 'blue')) ORDER BY id
+----
+id
+3
+
+query error
+SELECT id FROM ns_idx WHERE body @@ !!(ts_prefix('blu')) ORDER BY id
+----
+db error: ERROR: Scalar Function with name ts_prefix does not exist!
+Did you mean "prefix"?
+
+
+query I
+SELECT id FROM ns_idx WHERE body @@ !!(ts_any(['blue', 'green'])) ORDER BY id
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE body @@ !!(ts_any(['blue', 'green']))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: ns_idx                                      │
+│ Lookup: table                                      │
+│ Index Filter:                                      │
+│ ╭─ Not ───────────────────╮                        │
+│ ╰────────────┬────────────╯                        │
+│              ├─────────────────────────╮           │
+│ ╭─ Terms ────┴────────────╮  ╭─ Term ──┴─────────╮ │
+│ │ Field: body(string)     │  │ Field: body(null) │ │
+│ │ Values: 'blue', 'green' │  │ Value:            │ │
+│ │ Min Match: 1            │  ╰───────────────────╯ │
+│ ╰─────────────────────────╯                        │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
+
+# Range negation inverts the operator; postings-only, no null wrap needed.
+query I
+SELECT id FROM ns WHERE NOT (scope < 'y') ORDER BY id
+----
+id
+3
+
+query I
+SELECT id FROM ns_idx WHERE NOT (scope < 'y') ORDER BY id
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE NOT (scope < 'y')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: ns_idx            │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Range ──────────────╮ │
+│ │ Field: scope(string) │ │
+│ │ Range: >=y           │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+# NOT over a comparison group De-Morgans into inverted leaves; each leaf
+# stays null-safe on its own column.
+query I
+SELECT id FROM ns WHERE NOT (scope = 'y' OR pad = 'q') ORDER BY id
+----
+id
+1
+
+query I
+SELECT id FROM ns_idx WHERE NOT (scope = 'y' OR pad = 'q') ORDER BY id
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE NOT (scope = 'y' OR pad = 'q')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────╮
+│ Index: ns_idx                                                            │
+│ Lookup: table                                                            │
+│ Index Filter:                                                            │
+│ ╭─ Not ────────────────╮                                                 │
+│ ╰───────────┬──────────╯                                                 │
+│             ├────────────────────────┬───────────────────────╮           │
+│ ╭─ Term ────┴──────────╮  ╭─ Term ───┴─────────╮  ╭─ Term ───┴─────────╮ │
+│ │ Field: scope(string) │  │ Field: pad(string) │  │ Field: scope(null) │ │
+│ │ Value: y             │  │ Value: q           │  │ Value:             │ │
+│ ╰──────────────────────╯  ╰────────────────────╯  ╰────────────────────╯ │
+│ Projections: id                                                          │
+│ ~1 row                                                                   │
+╰──────────────────────────────────────────────────────────────────────────╯
+
+# A NOT NULL column has no null-marker to exclude: negations stay plain
+# acceptor shapes, and IS [NOT] NULL declines the claim (row filter over the
+# scan, correctly empty / all rows).
+query I
+SELECT id FROM ns_idx WHERE pad IS NULL ORDER BY id
+----
+id
+
+query I
+SELECT id FROM ns_idx WHERE pad IS NOT NULL ORDER BY id
+----
+id
+1
+2
+3
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE pad IS NULL
+----
+QUERY PLAN
+╭─ PROJECTION ────────────╮
+│ Projections: #1         │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ FILTER ───┴────────────╮
+│ Expression: pad IS NULL │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: ns_idx           │
+│ Lookup: table           │
+│ Projections: pad, id    │
+│ ~3 rows                 │
+╰─────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE pad != 'q'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: ns_idx          │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Not ──────────────╮ │
+│ ╰──────────┬─────────╯ │
+│ ╭─ Term ───┴─────────╮ │
+│ │ Field: pad(string) │ │
+│ │ Value: q           │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+
+# ---- NOT IN with a NULL list element is never TRUE: the implicit
+# `col != NULL` conjunct is UNKNOWN on every row, so the claim is Empty.
+query I
+SELECT id FROM ns WHERE scope NOT IN ('y', 'z', NULL) ORDER BY id
+----
+id
+
+query I
+SELECT id FROM ns_idx WHERE scope NOT IN ('y', 'z', NULL) ORDER BY id
+----
+id
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE scope NOT IN ('y', 'z', NULL)
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: ns_idx    │
+│ Lookup: table    │
+│ Index Filter:    │
+│ ╭─ Empty ─╮      │
+│ ╰─────────╯      │
+│ Projections: id  │
+│ ~0 rows          │
+╰──────────────────╯
+
+
+# ---- Degenerate negated match: '' tokenizes to nothing, so `body @@ ''`
+# is FALSE on every non-NULL body and UNKNOWN on NULL body (PG: NULL @@ q
+# is NULL); its negation returns exactly the non-NULL body rows.
+query I
+SELECT id FROM ns_idx WHERE NOT (body @@ '') ORDER BY id
+----
+id
+1
+3
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE NOT (body @@ '')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: ns_idx         │
+│ Lookup: table         │
+│ Index Filter:         │
+│ ╭─ Not ─────────────╮ │
+│ ╰─────────┬─────────╯ │
+│ ╭─ Term ──┴─────────╮ │
+│ │ Field: body(null) │ │
+│ │ Value:            │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
+
+
+# ---- A negated group mixing an index-only predicate with a shape that
+# must stay a row filter throws instead of failing later in the stub.
+statement error
+SELECT id FROM ns_idx WHERE NOT (body @@ 'red' AND scope = 'a')
+----
+db error: ERROR: negated group over nullable columns mixes index-only search predicates with a shape that must stay a row filter
+HINT: Rewrite the negation as a strict disjunction, or add `IS NOT NULL` conjuncts on the nullable columns.
+
+
+# ---- Degenerate negated matches across the constructor family: each
+# positive form compiles to Empty (no tokens / no clauses), so the
+# negation returns exactly the non-NULL body rows.
+query I
+SELECT id FROM ns_idx WHERE NOT (body @@ ts_compound(NULL, NULL, NULL))
+ORDER BY id
+----
+id
+1
+3
+
+query I
+SELECT id FROM ns_idx WHERE NOT (body @@ websearch_to_tsquery(''))
+ORDER BY id
+----
+id
+1
+3
+
+query I
+SELECT id FROM ns_idx WHERE NOT (body @@ ts_any(ts_tokenize([''])))
+ORDER BY id
+----
+id
+1
+3
+
+query I
+SELECT id FROM ns_idx WHERE NOT (body @@ ts_lt('')) ORDER BY id
+----
+id
+1
+3
+
+query
+EXPLAIN SELECT id FROM ns_idx WHERE NOT (body @@ ts_lt(''))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: ns_idx         │
+│ Lookup: table         │
+│ Index Filter:         │
+│ ╭─ Not ─────────────╮ │
+│ ╰─────────┬─────────╯ │
+│ ╭─ Term ──┴─────────╮ │
+│ │ Field: body(null) │ │
+│ │ Value:            │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
+
+
+# ---- Negated strict disjunction over an indexed EXPRESSION collects the
+# expression's own null marker (raw itself is not indexed; lower(raw) is).
+statement ok
+CREATE TABLE nse(id INTEGER PRIMARY KEY, raw VARCHAR)
+
+statement ok
+CREATE INDEX nse_idx ON nse USING inverted(id, (lower(raw)) ns_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO nse VALUES (1, 'A'), (2, NULL), (3, 'C')
+
+statement ok
+VACUUM (REFRESH_TABLE) nse
+
+query I
+SELECT id FROM nse WHERE NOT (lower(raw) = 'a' OR lower(raw) = 'b')
+ORDER BY id
+----
+id
+3
+
+query I
+SELECT id FROM nse_idx WHERE NOT (lower(raw) = 'a' OR lower(raw) = 'b')
+ORDER BY id
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM nse_idx
+WHERE NOT (lower(raw) = 'a' OR lower(raw) = 'b')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────────╮
+│ Index: nse_idx                                                                            │
+│ Lookup: table                                                                             │
+│ Index Filter:                                                                             │
+│ ╭─ Not ─────────────────────╮                                                             │
+│ ╰─────────────┬─────────────╯                                                             │
+│               ├──────────────────────────────┬─────────────────────────────╮              │
+│ ╭─ Term ──────┴─────────────╮  ╭─ Term ──────┴─────────────╮  ╭─ Term ─────┴────────────╮ │
+│ │ Field: lower(raw)(string) │  │ Field: lower(raw)(string) │  │ Field: lower(raw)(null) │ │
+│ │ Value: a                  │  │ Value: b                  │  │ Value:                  │ │
+│ ╰───────────────────────────╯  ╰───────────────────────────╯  ╰─────────────────────────╯ │
+│ Projections: id                                                                           │
+│ ~1 row                                                                                    │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+# ---- Regression: a LazySeek probe that commits an exclusion's include
+# iterator must not make the enclosing block-disjunction's window refill
+# skip that doc (row 3: kw NULL, num 9 was dropped). Corpus is the fuzz
+# seed-12345 distribution; the drop needs this doc layout.
+statement ok
+CREATE TABLE nsx(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
+                 pad VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX nsx_idx ON nsx USING inverted(id, kw ns_kw, num, pad ns_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO nsx VALUES
+  (1, 'a', 5, 'q'),
+  (2, 'c', 3, 'q'),
+  (3, NULL, 9, 'p'),
+  (4, 'b', 2, 'q'),
+  (5, 'b', NULL, 'p'),
+  (6, NULL, 1, 'q'),
+  (7, 'e', 7, 'p'),
+  (8, NULL, 3, 'p'),
+  (9, NULL, 2, 'p'),
+  (10, 'b', 6, 'p'),
+  (11, NULL, 4, 'p'),
+  (12, NULL, 3, 'p'),
+  (13, 'c', 1, 'p'),
+  (14, 'c', 3, 'q'),
+  (15, 'a', NULL, 'q'),
+  (16, NULL, 3, 'p'),
+  (17, 'c', NULL, 'p'),
+  (18, 'a', NULL, 'q'),
+  (19, 'e', 9, 'p'),
+  (20, 'a', 2, 'q'),
+  (21, NULL, 4, 'p'),
+  (22, NULL, NULL, 'p'),
+  (23, 'a', NULL, 'q'),
+  (24, 'e', 2, 'q'),
+  (25, 'd', NULL, 'q'),
+  (26, 'b', 3, 'p'),
+  (27, 'b', 3, 'p'),
+  (28, 'e', 6, 'p'),
+  (29, NULL, 4, 'p'),
+  (30, 'e', 6, 'q'),
+  (31, NULL, 1, 'q'),
+  (32, 'a', 9, 'p'),
+  (33, 'a', NULL, 'p'),
+  (34, NULL, 6, 'q'),
+  (35, 'e', NULL, 'q'),
+  (36, 'c', 4, 'q'),
+  (37, NULL, NULL, 'p'),
+  (38, NULL, 4, 'q'),
+  (39, 'c', 5, 'q'),
+  (40, 'a', 6, 'p')
+
+statement ok
+VACUUM (REFRESH_TABLE) nsx
+
+query I
+SELECT id FROM nsx WHERE num > 3 AND ((num != 4 AND kw IS NULL) OR pad = 'q')
+ORDER BY id
+----
+id
+1
+3
+30
+34
+36
+38
+39
+
+query I
+SELECT id FROM nsx_idx
+WHERE num > 3 AND ((num != 4 AND kw IS NULL) OR pad = 'q')
+ORDER BY id
+----
+id
+1
+3
+30
+34
+36
+38
+39
+
+
+# ---- Regression: granular-range disjunction under a range-led
+# conjunction (the LazySeek/refill family; this shape used to segfault
+# in BitsetDocIterator::advance). Corpus is the fuzz seed-7 layout.
+statement ok
+CREATE TABLE nsx7(id INTEGER PRIMARY KEY, kw VARCHAR, num INTEGER,
+                  pad VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX nsx7_idx ON nsx7 USING inverted(id, kw ns_kw, num, pad ns_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO nsx7 VALUES
+  (1, 'b', 1, 'p'),
+  (2, 'a', 1, 'p'),
+  (3, NULL, 2, 'p'),
+  (4, NULL, 2, 'p'),
+  (5, 'e', 7, 'p'),
+  (6, 'a', 3, 'q'),
+  (7, 'e', NULL, 'q'),
+  (8, 'b', NULL, 'p'),
+  (9, 'e', 1, 'p'),
+  (10, 'e', 6, 'q'),
+  (11, 'd', 4, 'p'),
+  (12, 'b', NULL, 'q'),
+  (13, 'c', 5, 'p'),
+  (14, NULL, 6, 'p'),
+  (15, 'd', NULL, 'p'),
+  (16, 'e', 6, 'q'),
+  (17, 'e', 8, 'p'),
+  (18, 'c', 2, 'p'),
+  (19, 'c', 8, 'q'),
+  (20, 'c', NULL, 'q'),
+  (21, 'e', NULL, 'p'),
+  (22, NULL, NULL, 'p'),
+  (23, 'd', NULL, 'q'),
+  (24, 'c', 7, 'q'),
+  (25, 'c', 7, 'p'),
+  (26, NULL, NULL, 'p'),
+  (27, 'a', 3, 'q'),
+  (28, NULL, NULL, 'q'),
+  (29, 'c', 9, 'p'),
+  (30, 'e', 7, 'q'),
+  (31, NULL, 1, 'p'),
+  (32, NULL, NULL, 'p'),
+  (33, NULL, 2, 'p'),
+  (34, 'e', NULL, 'q'),
+  (35, 'a', 7, 'p'),
+  (36, 'c', 8, 'p'),
+  (37, NULL, 8, 'q'),
+  (38, 'a', NULL, 'q'),
+  (39, 'd', 3, 'p'),
+  (40, NULL, 6, 'p')
+
+statement ok
+VACUUM (REFRESH_TABLE) nsx7
+
+query I
+SELECT id FROM nsx7 WHERE (num < 6 OR num > 7) AND num BETWEEN 4 AND 9
+ORDER BY id
+----
+id
+11
+13
+17
+19
+29
+36
+37
+
+query I
+SELECT id FROM nsx7_idx WHERE (num < 6 OR num > 7) AND num BETWEEN 4 AND 9
+ORDER BY id
+----
+id
+11
+13
+17
+19
+29
+36
+37

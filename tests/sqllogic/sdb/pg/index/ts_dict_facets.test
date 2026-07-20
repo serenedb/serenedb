@@ -1,13 +1,32 @@
 hash-threshold 100
 
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
 # `SELECT col, count(*) FROM idx GROUP BY col` over a keyword NOT NULL column
 # is a facet served from the term dictionary: the groups are exactly the
 # field's live terms and each group's size is the term's live document count.
 # The user's own GROUP BY merges the per-segment term rows (summing counts), so
-# results stay exact under deletion masks. A nullable column converts too for
-# the bare shape, with the NULL group synthesized from the null-marker field;
-# count(col), any WHERE on a nullable column, extra aggregates, multiple group
-# keys and cross-field WHERE clauses fall back to the document scan.
+# results stay exact under deletion masks. A nullable column converts too, with
+# the NULL group synthesized from the null-marker field (restricted by the
+# claimed document filter under WHERE). Cross-field and tsquery WHERE clauses
+# convert when every conjunct is index-claimable: they compile into the scan's
+# document filter and terms are counted against the matched doc set.
+# Group keys are indexed keyword columns or indexed keyword expressions (the
+# latter have no NOT NULL proof, so their NULL group always rides the
+# null-marker field). GROUPING SETS over distinct singleton keyword keys
+# convert to a multi-field term scan regrouped as GROUP BY (terms...) +
+# sum(coalesce) when at most ONE key is nullable (a second nullable key's
+# genuine NULL group would collide with the first one's all-NULL group key);
+# a WHERE conjunct on one NOT NULL set column prunes its own set's
+# enumeration and is re-claimed into the document filter so the other sets
+# respect it. count(col) over a nullable column, extra aggregates,
+# non-claimable WHERE conjuncts, same-field WHERE on a nullable column,
+# multiple plain group keys, GROUPING() markers and non-singleton or empty
+# sets fall back to the document scan.
 # Background maintenance is disabled; visibility is driven by
 # VACUUM (REFRESH_TABLE).
 
@@ -57,6 +76,29 @@ blue	1
 green	2
 red	3
 
+query
+EXPLAIN SELECT cat, count(cat) AS n FROM ft_idx GROUP BY cat 
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: ft_idx                             │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~3 rows                                   │
+╰───────────────────────────────────────────╯
+
 query T
 SELECT cat FROM ft_idx GROUP BY cat ORDER BY cat
 ----
@@ -64,6 +106,21 @@ cat
 blue
 green
 red
+
+query
+EXPLAIN SELECT cat FROM ft_idx GROUP BY cat 
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: ft_idx                            │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~3 rows                                  │
+╰──────────────────────────────────────────╯
 
 query TI
 SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
@@ -73,6 +130,36 @@ cat	n
 red	3
 green	2
 
+query
+EXPLAIN SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
+ORDER BY n DESC, cat LIMIT 2
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────────────╮
+│ Top: 2                                    │
+│ Order By: count_star() DESC,              │
+│           ft_idx.cat ASC                  │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: ft_idx                             │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~3 rows                                   │
+╰───────────────────────────────────────────╯
+
 query TI
 SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
 HAVING count(*) > 1 ORDER BY cat
@@ -81,6 +168,34 @@ cat	n
 green	2
 red	3
 
+query
+EXPLAIN SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
+HAVING count(*) > 1 
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ FILTER ────────────┴─────────────────────╮
+│ Expression: CAST(#1 AS BIGINT) > 1        │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: ft_idx                             │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~3 rows                                   │
+╰───────────────────────────────────────────╯
+
 # Same-field WHERE composes: acceptor or post-filter over the terms.
 query TI
 SELECT cat, count(*) AS n FROM ft_idx WHERE cat LIKE 'r%'
@@ -88,6 +203,36 @@ GROUP BY cat ORDER BY cat
 ----
 cat	n
 red	3
+
+query
+EXPLAIN SELECT cat, count(*) AS n FROM ft_idx WHERE cat LIKE 'r%'
+GROUP BY cat 
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: ft_idx                             │
+│ Index Filter:                             │
+│ ╭─ Starts With ──────╮                    │
+│ │ Field: cat(string) │                    │
+│ │ Prefix: r          │                    │
+│ │ Limit: 1024        │                    │
+│ ╰────────────────────╯                    │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
 
 query TI
 SELECT cat, count(*) AS n FROM ft_idx WHERE cat = 'blue' OR length(cat) = 5
@@ -98,18 +243,45 @@ blue	1
 green	2
 
 query
+EXPLAIN SELECT cat, count(*) AS n FROM ft_idx WHERE cat = 'blue' OR length(cat) = 5
+GROUP BY cat 
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, CAST(#1 AS BIGINT)                        │
+│ ~0 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────┴──────────────────────────────────────────╮
+│ Groups: #0                                                                          │
+│ Aggregates: sum(#1)                                                                 │
+│ ~0 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ FILTER ─────────────────────────────────┴──────────────────────────────────────────╮
+│ Expression:                                                                         │
+│ (sdb_inverted_index_term$cat = 'blue') OR (length(sdb_inverted_index_term$cat) = 5) │
+│ ~1 row                                                                              │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
+│ Index: ft_idx                                                                       │
+│ TsDict: cat                                                                         │
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term_count$cat                      │
+│ ~3 rows                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+query
 EXPLAIN SELECT cat, count(*) AS n FROM ft_idx GROUP BY cat
 ----
 QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$cat, │
 │              CAST(#1 AS BIGINT)           │
-│ ~3 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~3 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
@@ -117,7 +289,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$cat,              │
 │ sdb_inverted_index_term_count$cat         │
-│ ~6 rows                                   │
+│ ~3 rows                                   │
 ╰───────────────────────────────────────────╯
 
 # A nullable column converts for the bare facet shape: the scan synthesizes
@@ -139,12 +311,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$opt, │
 │              CAST(#1 AS BIGINT)           │
-│ ~3 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~3 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: ft_idx                             │
@@ -152,7 +324,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$opt,              │
 │ sdb_inverted_index_term_count$opt         │
-│ ~6 rows                                   │
+│ ~3 rows                                   │
 ╰───────────────────────────────────────────╯
 
 query T
@@ -164,6 +336,21 @@ x
 y
 z
 
+query
+EXPLAIN SELECT opt FROM ft_idx GROUP BY opt 
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: ft_idx                            │
+│ TsDict: opt                              │
+│ Projections: sdb_inverted_index_term$opt │
+│ ~3 rows                                  │
+╰──────────────────────────────────────────╯
+
 query TI
 SELECT opt, count(opt) AS n FROM ft_idx GROUP BY opt ORDER BY opt NULLS FIRST
 ----
@@ -173,11 +360,48 @@ x	3
 y	1
 z	1
 
+query
+EXPLAIN SELECT opt, count(opt) AS n FROM ft_idx GROUP BY opt 
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ───────╮
+│ Groups: #0            │
+│ Aggregates: count(#0) │
+│ ~3 rows               │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: ft_idx         │
+│ Lookup: table         │
+│ Projections: opt      │
+│ ~6 rows               │
+╰───────────────────────╯
+
 query TI
 SELECT opt, count(*) AS n FROM ft_idx WHERE opt IS NULL GROUP BY opt
 ----
 opt	n
 NULL	1
+
+query
+EXPLAIN SELECT opt, count(*) AS n FROM ft_idx WHERE opt IS NULL GROUP BY opt
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~0 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: ft_idx            │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Term ───────────╮     │
+│ │ Field: opt(null) │     │
+│ │ Value:           │     │
+│ ╰──────────────────╯     │
+│ Projections: opt         │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 query TII
 SELECT cat, count(*) AS n, sum(id) AS s FROM ft_idx GROUP BY cat ORDER BY cat
@@ -187,12 +411,46 @@ blue	1	4
 green	2	8
 red	3	9
 
+query
+EXPLAIN SELECT cat, count(*) AS n, sum(id) AS s FROM ft_idx GROUP BY cat 
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ───────────╮
+│ Groups: #0                │
+│ Aggregates: count_star(), │
+│             sum(#1)       │
+│ ~3 rows                   │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: ft_idx             │
+│ Lookup: table             │
+│ Projections: cat, id      │
+│ ~6 rows                   │
+╰───────────────────────────╯
+
 query TI
 SELECT cat, count(*) AS n FROM ft_idx WHERE id < 3 GROUP BY cat ORDER BY cat
 ----
 cat	n
 green	1
 red	1
+
+query
+EXPLAIN SELECT cat, count(*) AS n FROM ft_idx WHERE id < 3 GROUP BY cat 
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~0 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: ft_idx            │
+│ Lookup: table            │
+│ Projections: cat         │
+│ Column Filter: id < 3    │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 # Deletions: 'blue' dies with row 4 and 'red' loses row 5; facet counts are
 # live-exact on the still-dirty segment.
@@ -310,3 +568,1096 @@ opt	n
 x	2
 y	1
 z	1
+
+# A text-tokenized column must NOT convert: its terms are word tokens, so a
+# term-dictionary facet would return token counts instead of row counts. The
+# IsKeywordField gate forces the document-scan fallback; groups are whole
+# column values with row-exact counts.
+statement ok
+CREATE TEXT SEARCH DICTIONARY fct_tx(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    frequency = true,
+    position = true
+)
+
+statement ok
+CREATE TABLE ftx(id INTEGER PRIMARY KEY, descr VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX ftx_idx ON ftx USING inverted(descr fct_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO ftx VALUES
+  (1, 'quick brown fox'),
+  (2, 'quick red fox'),
+  (3, 'lazy dog')
+
+statement ok
+VACUUM (REFRESH_TABLE) ftx;
+
+query TI
+SELECT descr, count(*) AS n FROM ftx_idx GROUP BY descr ORDER BY descr
+----
+descr	n
+lazy dog	1
+quick brown fox	1
+quick red fox	1
+
+query TI
+SELECT descr, count(*) AS n FROM ftx GROUP BY descr ORDER BY descr
+----
+descr	n
+lazy dog	1
+quick brown fox	1
+quick red fox	1
+
+query
+EXPLAIN SELECT descr, count(*) AS n FROM ftx_idx GROUP BY descr
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: ftx_idx           │
+│ Lookup: table            │
+│ Projections: descr       │
+│ ~3 rows                  │
+╰──────────────────────────╯
+
+# A fully index-claimable WHERE converts even when it is a tsquery on another
+# field: the conjuncts compile into the scan's document filter and each term
+# is counted against the matched doc set, so the facet stays filter-exact
+# without materializing rows.
+statement ok
+CREATE TEXT SEARCH DICTIONARY fct_body(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    frequency = true,
+    position = true
+)
+
+statement ok
+CREATE TABLE ffw(id INTEGER PRIMARY KEY, scope VARCHAR NOT NULL, body VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX ffw_idx ON ffw USING inverted(scope fct_kw, body fct_body)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO ffw VALUES
+  (1, 'auth',    'charging session started'),
+  (2, 'auth',    'idle'),
+  (3, 'billing', 'charge failed'),
+  (4, 'billing', 'charging done'),
+  (5, 'net',     'packet drop')
+
+statement ok
+VACUUM (REFRESH_TABLE) ffw;
+
+query TI
+SELECT scope, count(*) AS n FROM ffw_idx
+WHERE body @@ ts_regexp('charg.*') GROUP BY scope ORDER BY n DESC, scope
+----
+scope	n
+billing	2
+auth	1
+
+query
+EXPLAIN SELECT scope, count(*) AS n FROM ffw_idx
+WHERE body @@ ts_regexp('charg.*') GROUP BY scope
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────╮
+│ Projections:                         │
+│ sdb_inverted_index_term$scope,       │
+│ CAST(#1 AS BIGINT)                   │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ Aggregates: sum(#1)                  │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: ffw_idx                       │
+│ Index Filter:                        │
+│ ╭─ Starts With ───────╮              │
+│ │ Field: body(string) │              │
+│ │ Prefix: charg       │              │
+│ │ Limit: 1024         │              │
+│ ╰─────────────────────╯              │
+│ TsDict: scope                        │
+│ Projections:                         │
+│ sdb_inverted_index_term$scope,       │
+│ sdb_inverted_index_term_count$scope  │
+│ ~3 rows                              │
+╰──────────────────────────────────────╯
+
+# Same-field tsquery WHERE converts when it compiles to a term acceptor.
+query TI
+SELECT scope, count(*) AS n FROM ffw_idx WHERE scope @@ 'auth' GROUP BY scope
+----
+scope	n
+auth	2
+
+query
+EXPLAIN SELECT scope, count(*) AS n FROM ffw_idx WHERE scope @@ 'auth' GROUP BY scope
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────╮
+│ Projections:                         │
+│ sdb_inverted_index_term$scope,       │
+│ CAST(#1 AS BIGINT)                   │
+│ ~0 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ Aggregates: sum(#1)                  │
+│ ~0 rows                              │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: ffw_idx                       │
+│ Index Filter:                        │
+│ ╭─ Term ───────────────╮             │
+│ │ Field: scope(string) │             │
+│ │ Value: auth          │             │
+│ ╰──────────────────────╯             │
+│ TsDict: scope                        │
+│ Projections:                         │
+│ sdb_inverted_index_term$scope,       │
+│ sdb_inverted_index_term_count$scope  │
+│ ~1 row                               │
+╰──────────────────────────────────────╯
+
+# Mixed conjuncts: the same-field scalar rides the term routes while the
+# cross-field tsquery claims as the document filter.
+query TI
+SELECT scope, count(*) AS n FROM ffw_idx
+WHERE scope != 'net' AND body @@ ts_regexp('charg.*')
+GROUP BY scope ORDER BY n DESC, scope
+----
+scope	n
+billing	2
+auth	1
+
+query
+EXPLAIN SELECT scope, count(*) AS n FROM ffw_idx
+WHERE scope != 'net' AND body @@ ts_regexp('charg.*')
+GROUP BY scope 
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────╮
+│ Projections:                                      │
+│ sdb_inverted_index_term$scope, CAST(#1 AS BIGINT) │
+│ ~0 rows                                           │
+╰─────────────────────────┬─────────────────────────╯
+╭─ HASH_GROUP_BY ─────────┴─────────────────────────╮
+│ Groups: #0                                        │
+│ Aggregates: sum(#1)                               │
+│ ~0 rows                                           │
+╰─────────────────────────┬─────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
+│ Index: ffw_idx                                    │
+│ Index Filter:                                     │
+│ ╭─ Exclusion ─────────╮                           │
+│ ╰──────────┬──────────╯                           │
+│            ├─────────────────────────╮            │
+│ ╭─ Starts With ───────╮  ╭─ Term ────┴──────────╮ │
+│ │ Field: body(string) │  │ Field: scope(string) │ │
+│ │ Prefix: charg       │  │ Value: net           │ │
+│ │ Limit: 1024         │  ╰──────────────────────╯ │
+│ ╰─────────────────────╯                           │
+│ TsDict: scope                                     │
+│ Projections:                                      │
+│ sdb_inverted_index_term$scope,                    │
+│ sdb_inverted_index_term_count$scope               │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
+
+# A conjunct the index cannot claim (id is not indexed) falls back.
+query
+EXPLAIN SELECT scope, count(*) AS n FROM ffw_idx WHERE id < 3 GROUP BY scope
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~0 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: ffw_idx           │
+│ Lookup: table            │
+│ Projections: scope       │
+│ Column Filter: id < 3    │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+# Nullable facet column under a cross-field WHERE: the NULL group is counted
+# from the null-marker field restricted by the document filter, and groups
+# whose filtered count is zero disappear.
+statement ok
+CREATE TABLE fnw(id INTEGER PRIMARY KEY, opt VARCHAR, body VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX fnw_idx ON fnw USING inverted(opt fct_kw, body fct_body)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO fnw VALUES
+  (1, 'x',  'red apple'),
+  (2, NULL, 'red pear'),
+  (3, 'y',  'green pear'),
+  (4, NULL, 'green apple'),
+  (5, 'x',  'red plum')
+
+statement ok
+VACUUM (REFRESH_TABLE) fnw;
+
+query TI
+SELECT opt, count(*) AS n FROM fnw_idx WHERE body @@ 'red'
+GROUP BY opt ORDER BY n DESC, opt
+----
+opt	n
+x	2
+NULL	1
+
+query TI
+SELECT opt, count(*) AS n FROM fnw_idx WHERE body @@ 'green'
+GROUP BY opt ORDER BY n DESC, opt
+----
+opt	n
+y	1
+NULL	1
+
+query
+EXPLAIN SELECT opt, count(*) AS n FROM fnw_idx WHERE body @@ 'green'
+GROUP BY opt 
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$opt, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: fnw_idx                            │
+│ Index Filter:                             │
+│ ╭─ Term ──────────────╮                   │
+│ │ Field: body(string) │                   │
+│ │ Value: green        │                   │
+│ ╰─────────────────────╯                   │
+│ TsDict: opt                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$opt,              │
+│ sdb_inverted_index_term_count$opt         │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT opt, count(*) AS n FROM fnw_idx WHERE body @@ 'red' GROUP BY opt
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$opt, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: fnw_idx                            │
+│ Index Filter:                             │
+│ ╭─ Term ──────────────╮                   │
+│ │ Field: body(string) │                   │
+│ │ Value: red          │                   │
+│ ╰─────────────────────╯                   │
+│ TsDict: opt                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$opt,              │
+│ sdb_inverted_index_term_count$opt         │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
+
+# Same-field WHERE on a nullable column keeps falling back: SQL drops the
+# NULL rows while the term routes would still synthesize the NULL group.
+query TI
+SELECT opt, count(*) AS n FROM fnw_idx WHERE opt = 'x' GROUP BY opt
+----
+opt	n
+x	2
+
+query
+EXPLAIN SELECT opt, count(*) AS n FROM fnw_idx WHERE opt = 'x' GROUP BY opt
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~0 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: fnw_idx           │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Term ─────────────╮   │
+│ │ Field: opt(string) │   │
+│ │ Value: x           │   │
+│ ╰────────────────────╯   │
+│ Projections: opt         │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+# GROUPING SETS over singleton NOT NULL keyword columns convert to one
+# multi-field term scan: each set's terms come from its own dictionary and the
+# padded NULLs of the other set columns regroup exactly as the sets demand.
+statement ok
+CREATE TABLE gsf(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL,
+                 color VARCHAR NOT NULL, body VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX gsf_idx ON gsf USING inverted(brand fct_kw, color fct_kw, body fct_body)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO gsf VALUES
+  (1, 'acme', 'red',  'fast charging dock'),
+  (2, 'acme', 'blue', 'slow charger'),
+  (3, 'bolt', 'red',  'charging cable'),
+  (4, 'bolt', 'red',  'usb hub'),
+  (5, 'core', 'blue', 'wall charger')
+
+statement ok
+VACUUM (REFRESH_TABLE) gsf;
+
+query TTI
+SELECT brand, color, count(*) AS n FROM gsf_idx
+GROUP BY GROUPING SETS ((brand), (color))
+ORDER BY brand NULLS LAST, color
+----
+brand	color	n
+acme	NULL	2
+bolt	NULL	2
+core	NULL	1
+NULL	blue	2
+NULL	red	3
+
+query
+EXPLAIN SELECT brand, color, count(*) AS n FROM gsf_idx
+GROUP BY GROUPING SETS ((brand), (color))
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$color, CAST(#2 AS BIGINT)    │
+│ ~4 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────┴──────────────────────────────────────────╮
+│ Groups: #0, #1                                                                      │
+│ Aggregates: sum(#2)                                                                 │
+│ ~4 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────┴──────────────────────────────────────────╮
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$color,                       │
+│ COALESCE(sdb_inverted_index_term_count$brand, sdb_inverted_index_term_count$color)  │
+│ ~5 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
+│ Index: gsf_idx                                                                      │
+│ TsDict: brand, color                                                                │
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand,                 │
+│ sdb_inverted_index_term$color, sdb_inverted_index_term_count$color                  │
+│ ~5 rows                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+# Filtered grouping sets: the claimed document filter restricts every set.
+query TTI
+SELECT brand, color, count(*) AS n FROM gsf_idx
+WHERE body @@ ts_regexp('charg.*')
+GROUP BY GROUPING SETS ((brand), (color))
+ORDER BY brand NULLS LAST, color
+----
+brand	color	n
+acme	NULL	2
+bolt	NULL	1
+core	NULL	1
+NULL	blue	2
+NULL	red	2
+
+query
+EXPLAIN SELECT brand, color, count(*) AS n FROM gsf_idx
+WHERE body @@ ts_regexp('charg.*')
+GROUP BY GROUPING SETS ((brand), (color))
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$color, CAST(#2 AS BIGINT)    │
+│ ~4 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────┴──────────────────────────────────────────╮
+│ Groups: #0, #1                                                                      │
+│ Aggregates: sum(#2)                                                                 │
+│ ~4 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────┴──────────────────────────────────────────╮
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$color,                       │
+│ COALESCE(sdb_inverted_index_term_count$brand, sdb_inverted_index_term_count$color)  │
+│ ~5 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
+│ Index: gsf_idx                                                                      │
+│ Index Filter:                                                                       │
+│ ╭─ Starts With ───────╮                                                             │
+│ │ Field: body(string) │                                                             │
+│ │ Prefix: charg       │                                                             │
+│ │ Limit: 1024         │                                                             │
+│ ╰─────────────────────╯                                                             │
+│ TsDict: brand, color                                                                │
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand,                 │
+│ sdb_inverted_index_term$color, sdb_inverted_index_term_count$color                  │
+│ ~5 rows                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+# WHERE on a grouping-set column converts when it compiles to a term
+# acceptor: it prunes its own set's enumeration and is re-claimed into the
+# document filter so the other sets' counts respect it too.
+query TTI
+SELECT brand, color, count(*) AS n FROM gsf_idx
+WHERE brand != 'acme'
+GROUP BY GROUPING SETS ((brand), (color))
+ORDER BY brand NULLS LAST, color
+----
+brand	color	n
+bolt	NULL	2
+core	NULL	1
+NULL	blue	1
+NULL	red	2
+
+query TTI
+SELECT brand, color, count(*) AS n FROM gsf_idx
+WHERE brand != 'acme' AND body @@ ts_regexp('charg.*')
+GROUP BY GROUPING SETS ((brand), (color))
+ORDER BY brand NULLS LAST, color
+----
+brand	color	n
+bolt	NULL	1
+core	NULL	1
+NULL	blue	1
+NULL	red	1
+
+query
+EXPLAIN SELECT brand, color, count(*) AS n FROM gsf_idx
+WHERE brand != 'acme' AND body @@ ts_regexp('charg.*')
+GROUP BY GROUPING SETS ((brand), (color))
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$color, CAST(#2 AS BIGINT)    │
+│ ~2 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────┴──────────────────────────────────────────╮
+│ Groups: #0, #1                                                                      │
+│ Aggregates: sum(#2)                                                                 │
+│ ~2 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────┴──────────────────────────────────────────╮
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$color,                       │
+│ COALESCE(sdb_inverted_index_term_count$brand, sdb_inverted_index_term_count$color)  │
+│ ~3 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
+│ Index: gsf_idx                                                                      │
+│ Index Filter:                                                                       │
+│ ╭─ Exclusion ─────────╮                                                             │
+│ ╰──────────┬──────────╯                                                             │
+│            ├─────────────────────────╮                                              │
+│ ╭─ Starts With ───────╮  ╭─ Term ────┴──────────╮                                   │
+│ │ Field: body(string) │  │ Field: brand(string) │                                   │
+│ │ Prefix: charg       │  │ Value: acme          │                                   │
+│ │ Limit: 1024         │  ╰──────────────────────╯                                   │
+│ ╰─────────────────────╯                                                             │
+│ Index Filter(brand):                                                                │
+│ ╭─ Not ────────────────╮                                                            │
+│ ╰───────────┬──────────╯                                                            │
+│ ╭─ Term ────┴──────────╮                                                            │
+│ │ Field: brand(string) │                                                            │
+│ │ Value: acme          │                                                            │
+│ ╰──────────────────────╯                                                            │
+│ TsDict: brand, color                                                                │
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand,                 │
+│ sdb_inverted_index_term$color, sdb_inverted_index_term_count$color                  │
+│ ~3 rows                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT brand, color, count(*) AS n FROM gsf_idx
+WHERE brand != 'acme'
+GROUP BY GROUPING SETS ((brand), (color))
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$color, CAST(#2 AS BIGINT)    │
+│ ~2 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────┴──────────────────────────────────────────╮
+│ Groups: #0, #1                                                                      │
+│ Aggregates: sum(#2)                                                                 │
+│ ~2 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────┴──────────────────────────────────────────╮
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$color,                       │
+│ COALESCE(sdb_inverted_index_term_count$brand, sdb_inverted_index_term_count$color)  │
+│ ~3 rows                                                                             │
+╰──────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
+│ Index: gsf_idx                                                                      │
+│ Index Filter:                                                                       │
+│ ╭─ Not ────────────────╮                                                            │
+│ ╰───────────┬──────────╯                                                            │
+│ ╭─ Term ────┴──────────╮                                                            │
+│ │ Field: brand(string) │                                                            │
+│ │ Value: acme          │                                                            │
+│ ╰──────────────────────╯                                                            │
+│ Index Filter(brand):                                                                │
+│ ╭─ Not ────────────────╮                                                            │
+│ ╰───────────┬──────────╯                                                            │
+│ ╭─ Term ────┴──────────╮                                                            │
+│ │ Field: brand(string) │                                                            │
+│ │ Value: acme          │                                                            │
+│ ╰──────────────────────╯                                                            │
+│ TsDict: brand, color                                                                │
+│ Projections:                                                                        │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand,                 │
+│ sdb_inverted_index_term$color, sdb_inverted_index_term_count$color                  │
+│ ~3 rows                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+# A conjunct the index cannot claim keeps falling back with sets too.
+query TTI
+SELECT brand, color, count(*) AS n FROM gsf_idx
+WHERE id < 3
+GROUP BY GROUPING SETS ((brand), (color))
+ORDER BY brand NULLS LAST, color
+----
+brand	color	n
+acme	NULL	2
+NULL	blue	1
+NULL	red	1
+
+query
+EXPLAIN SELECT brand, color, count(*) AS n FROM gsf_idx
+WHERE id < 3
+GROUP BY GROUPING SETS ((brand), (color))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0, #1           │
+│ Aggregates: count_star() │
+│ ~0 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gsf_idx           │
+│ Lookup: table            │
+│ Projections: brand,      │
+│              color       │
+│ Column Filter: id < 3    │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+# Non-singleton and empty sets fall back.
+query TTI
+SELECT brand, color, count(*) AS n FROM gsf_idx
+GROUP BY GROUPING SETS ((brand), (color), ())
+ORDER BY brand NULLS LAST, color NULLS LAST
+----
+brand	color	n
+acme	NULL	2
+bolt	NULL	2
+core	NULL	1
+NULL	blue	2
+NULL	red	3
+NULL	NULL	5
+
+query
+EXPLAIN SELECT brand, color, count(*) AS n FROM gsf_idx
+GROUP BY GROUPING SETS ((brand), (color), ())
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0, #1           │
+│ Aggregates: count_star() │
+│ ~3 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gsf_idx           │
+│ Lookup: table            │
+│ Projections: brand,      │
+│              color       │
+│ ~5 rows                  │
+╰──────────────────────────╯
+
+query TTI
+SELECT brand, color, count(*) AS n FROM gsf_idx
+GROUP BY GROUPING SETS ((brand, color))
+ORDER BY brand, color
+----
+brand	color	n
+acme	blue	1
+acme	red	1
+bolt	red	2
+core	blue	1
+
+query
+EXPLAIN SELECT brand, color, count(*) AS n FROM gsf_idx
+GROUP BY GROUPING SETS ((brand, color))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0, #1           │
+│ Aggregates: count_star() │
+│ ~4 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gsf_idx           │
+│ Lookup: table            │
+│ Projections: brand,      │
+│              color       │
+│ ~5 rows                  │
+╰──────────────────────────╯
+
+# GROUPING() markers fall back.
+query TTII
+SELECT brand, color, count(*) AS n, GROUPING(brand) AS g FROM gsf_idx
+GROUP BY GROUPING SETS ((brand), (color))
+ORDER BY brand NULLS LAST, color
+----
+brand	color	n	g
+acme	NULL	2	0
+bolt	NULL	2	0
+core	NULL	1	0
+NULL	blue	2	1
+NULL	red	3	1
+
+query
+EXPLAIN SELECT brand, color, count(*) AS n, GROUPING(brand) AS g FROM gsf_idx
+GROUP BY GROUPING SETS ((brand), (color))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0, #1           │
+│ Aggregates: count_star() │
+│ ~3 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gsf_idx           │
+│ Lookup: table            │
+│ Projections: brand,      │
+│              color       │
+│ ~5 rows                  │
+╰──────────────────────────╯
+
+# One nullable key among the sets converts: its genuine NULL group is the
+# only all-NULL group key, so it cannot collide with the other sets' padding.
+statement ok
+CREATE TABLE gsn(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL, opt VARCHAR)
+
+statement ok
+CREATE INDEX gsn_idx ON gsn USING inverted(brand fct_kw, opt fct_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO gsn VALUES
+  (1, 'acme', 'x'),
+  (2, 'acme', NULL),
+  (3, 'bolt', 'x')
+
+statement ok
+VACUUM (REFRESH_TABLE) gsn;
+
+query TTI
+SELECT brand, opt, count(*) AS n FROM gsn_idx
+GROUP BY GROUPING SETS ((brand), (opt))
+ORDER BY brand NULLS LAST, opt NULLS LAST
+----
+brand	opt	n
+acme	NULL	2
+bolt	NULL	1
+NULL	x	2
+NULL	NULL	1
+
+query
+EXPLAIN SELECT brand, opt, count(*) AS n FROM gsn_idx
+GROUP BY GROUPING SETS ((brand), (opt))
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$opt, CAST(#2 AS BIGINT)    │
+│ ~2 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ─────────────────────────┴─────────────────────────────────────────╮
+│ Groups: #0, #1                                                                    │
+│ Aggregates: sum(#2)                                                               │
+│ ~2 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────┴─────────────────────────────────────────╮
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term$opt,                       │
+│ COALESCE(sdb_inverted_index_term_count$brand, sdb_inverted_index_term_count$opt)  │
+│ ~3 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────┴─────────────────────────────────────────╮
+│ Index: gsn_idx                                                                    │
+│ TsDict: brand, opt                                                                │
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand,               │
+│ sdb_inverted_index_term$opt, sdb_inverted_index_term_count$opt                    │
+│ ~3 rows                                                                           │
+╰───────────────────────────────────────────────────────────────────────────────────╯
+
+# GROUP BY over an indexed keyword expression converts: the group key
+# resolves to the expression's own term dictionary and the NULL group rides
+# its null-marker field (no NOT NULL proof exists for an expression). An
+# indexed-expression WHERE conjunct claims into the document filter. A
+# generated STORED column carrying the same expression converts identically.
+statement ok
+CREATE TABLE fex(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, body VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX fex_idx ON fex USING inverted((lower(cat)) fct_kw, (ts_split_by_non_alpha(body, true)) fct_body)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO fex VALUES
+  (1, 'Red',  'alpha beta'),
+  (2, 'RED',  'alpha'),
+  (3, 'Blue', 'gamma')
+
+statement ok
+VACUUM (REFRESH_TABLE) fex;
+
+query TI
+SELECT lower(cat) AS lc, count(*) AS n FROM fex_idx
+WHERE ts_split_by_non_alpha(body, true) @@ 'alpha'
+GROUP BY lower(cat) ORDER BY lc
+----
+lc	n
+red	2
+
+query
+EXPLAIN SELECT lower(cat) AS lc, count(*) AS n FROM fex_idx
+WHERE ts_split_by_non_alpha(body, true) @@ 'alpha'
+GROUP BY lower(cat)
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections:                                 │
+│ sdb_inverted_index_term$lower(cat),          │
+│ CAST(#1 AS BIGINT)                           │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ HASH_GROUP_BY ───────┴──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: sum(#1)                          │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: fex_idx                               │
+│ Index Filter:                                │
+│ ╭─ Term ───────────────────────────────────╮ │
+│ │ Field: ts_split_by_non_alpha(body, true) │ │
+│ │ Value: alpha                             │ │
+│ ╰──────────────────────────────────────────╯ │
+│ TsDict: lower(cat)                           │
+│ Projections:                                 │
+│ sdb_inverted_index_term$lower(cat),          │
+│ sdb_inverted_index_term_count$lower(cat)     │
+│ ~2 rows                                      │
+╰──────────────────────────────────────────────╯
+
+# The indexed expression projected by a subquery directly over the scan
+# (no WHERE in between) converts too.
+query TI
+SELECT lc, count(*) AS n
+FROM (SELECT lower(cat) AS lc FROM fex_idx) q
+GROUP BY lc ORDER BY lc
+----
+lc	n
+blue	1
+red	2
+
+query
+EXPLAIN SELECT lc, count(*) AS n
+FROM (SELECT lower(cat) AS lc FROM fex_idx) q
+GROUP BY lc
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections:                              │
+│ sdb_inverted_index_term$lower(cat),       │
+│ CAST(#1 AS BIGINT)                        │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: fex_idx                            │
+│ TsDict: lower(cat)                        │
+│ Projections:                              │
+│ sdb_inverted_index_term$lower(cat),       │
+│ sdb_inverted_index_term_count$lower(cat)  │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
+
+statement ok
+CREATE TABLE fes(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL,
+                 lc VARCHAR GENERATED ALWAYS AS (lower(cat)) STORED NOT NULL,
+                 body VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX fes_idx ON fes USING inverted(lc fct_kw, (ts_split_by_non_alpha(body, true)) fct_body)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO fes(id, cat, body) VALUES
+  (1, 'Red',  'alpha beta'),
+  (2, 'RED',  'alpha'),
+  (3, 'Blue', 'gamma')
+
+statement ok
+VACUUM (REFRESH_TABLE) fes;
+
+query TI
+SELECT lc, count(*) AS n FROM fes_idx
+WHERE ts_split_by_non_alpha(body, true) @@ 'alpha'
+GROUP BY lc ORDER BY lc
+----
+lc	n
+red	2
+
+query
+EXPLAIN SELECT lc, count(*) AS n FROM fes_idx
+WHERE ts_split_by_non_alpha(body, true) @@ 'alpha'
+GROUP BY lc
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections: sdb_inverted_index_term$lc,     │
+│              CAST(#1 AS BIGINT)              │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ HASH_GROUP_BY ───────┴──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: sum(#1)                          │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: fes_idx                               │
+│ Index Filter:                                │
+│ ╭─ Term ───────────────────────────────────╮ │
+│ │ Field: ts_split_by_non_alpha(body, true) │ │
+│ │ Value: alpha                             │ │
+│ ╰──────────────────────────────────────────╯ │
+│ TsDict: lc                                   │
+│ Projections:                                 │
+│ sdb_inverted_index_term$lc,                  │
+│ sdb_inverted_index_term_count$lc             │
+│ ~2 rows                                      │
+╰──────────────────────────────────────────────╯
+
+# Expression keys join grouping sets as the single nullable key.
+statement ok
+CREATE TABLE fexs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, brand VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX fexs_idx ON fexs USING inverted((lower(cat)) fct_kw, brand fct_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO fexs VALUES
+  (1, 'Red',  'acme'),
+  (2, 'RED',  'bolt'),
+  (3, 'Blue', 'acme')
+
+statement ok
+VACUUM (REFRESH_TABLE) fexs;
+
+query TTI
+SELECT lower(cat) AS lc, brand, count(*) AS n FROM fexs_idx
+GROUP BY GROUPING SETS ((lower(cat)), (brand))
+ORDER BY lc NULLS LAST, brand
+----
+lc	brand	n
+blue	NULL	1
+red	NULL	2
+NULL	acme	2
+NULL	bolt	1
+
+query
+EXPLAIN SELECT lower(cat) AS lc, brand, count(*) AS n FROM fexs_idx
+GROUP BY GROUPING SETS ((lower(cat)), (brand))
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                             │
+│ sdb_inverted_index_term$lower(cat), sdb_inverted_index_term$brand, CAST(#2 AS BIGINT)    │
+│ ~3 rows                                                                                  │
+╰─────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ─────────────────────────────┴────────────────────────────────────────────╮
+│ Groups: #0, #1                                                                           │
+│ Aggregates: sum(#2)                                                                      │
+│ ~3 rows                                                                                  │
+╰─────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────┴────────────────────────────────────────────╮
+│ Projections:                                                                             │
+│ sdb_inverted_index_term$lower(cat), sdb_inverted_index_term$brand,                       │
+│ COALESCE(sdb_inverted_index_term_count$lower(cat), sdb_inverted_index_term_count$brand)  │
+│ ~4 rows                                                                                  │
+╰─────────────────────────────────────────────┬────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────┴────────────────────────────────────────────╮
+│ Index: fexs_idx                                                                          │
+│ TsDict: lower(cat), brand                                                                │
+│ Projections:                                                                             │
+│ sdb_inverted_index_term$lower(cat), sdb_inverted_index_term_count$lower(cat),            │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand                       │
+│ ~4 rows                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+
+# Two keys without a NOT NULL proof fall back.
+statement ok
+CREATE TABLE ftwo(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX ftwo_idx ON ftwo USING inverted(a fct_kw, (lower(b)) fct_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO ftwo VALUES (1, 'x', 'Q'), (2, NULL, 'q')
+
+statement ok
+VACUUM (REFRESH_TABLE) ftwo;
+
+query TTI
+SELECT a, lower(b) AS lb, count(*) AS n FROM ftwo_idx
+GROUP BY GROUPING SETS ((a), (lower(b)))
+ORDER BY a NULLS LAST, lb
+----
+a	lb	n
+x	NULL	1
+NULL	q	2
+NULL	NULL	1
+
+query
+EXPLAIN SELECT a, lower(b) AS lb, count(*) AS n FROM ftwo_idx
+GROUP BY GROUPING SETS ((a), (lower(b)))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0, #1           │
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: a, lower(b) │
+│ ~2 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: ftwo_idx          │
+│ Lookup: table            │
+│ Projections: a, b        │
+│ ~2 rows                  │
+╰──────────────────────────╯
+
+# The nullable set key's NULL group stays filter-exact under a claimable
+# WHERE, and its zero-count groups vanish.
+statement ok
+CREATE TABLE gsnw(id INTEGER PRIMARY KEY, opt VARCHAR, brand VARCHAR NOT NULL,
+                  body VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX gsnw_idx ON gsnw USING inverted(opt fct_kw, brand fct_kw, body fct_body)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO gsnw VALUES
+  (1, 'x',  'acme', 'red apple'),
+  (2, NULL, 'acme', 'red pear'),
+  (3, 'y',  'bolt', 'green pear'),
+  (4, NULL, 'bolt', 'green apple'),
+  (5, 'x',  'core', 'red plum')
+
+statement ok
+VACUUM (REFRESH_TABLE) gsnw;
+
+query TTI
+SELECT opt, brand, count(*) AS n FROM gsnw_idx WHERE body @@ 'red'
+GROUP BY GROUPING SETS ((opt), (brand))
+ORDER BY opt NULLS LAST, brand NULLS LAST
+----
+opt	brand	n
+x	NULL	2
+NULL	acme	2
+NULL	core	1
+NULL	NULL	1
+
+query
+EXPLAIN SELECT opt, brand, count(*) AS n FROM gsnw_idx WHERE body @@ 'red'
+GROUP BY GROUPING SETS ((opt), (brand))
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$opt, sdb_inverted_index_term$brand, CAST(#2 AS BIGINT)    │
+│ ~4 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ─────────────────────────┴─────────────────────────────────────────╮
+│ Groups: #0, #1                                                                    │
+│ Aggregates: sum(#2)                                                               │
+│ ~4 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────┴─────────────────────────────────────────╮
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$opt, sdb_inverted_index_term$brand,                       │
+│ COALESCE(sdb_inverted_index_term_count$opt, sdb_inverted_index_term_count$brand)  │
+│ ~5 rows                                                                           │
+╰─────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────┴─────────────────────────────────────────╮
+│ Index: gsnw_idx                                                                   │
+│ Index Filter:                                                                     │
+│ ╭─ Term ──────────────╮                                                           │
+│ │ Field: body(string) │                                                           │
+│ │ Value: red          │                                                           │
+│ ╰─────────────────────╯                                                           │
+│ TsDict: opt, brand                                                                │
+│ Projections:                                                                      │
+│ sdb_inverted_index_term$opt, sdb_inverted_index_term_count$opt,                   │
+│ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand                │
+│ ~5 rows                                                                           │
+╰───────────────────────────────────────────────────────────────────────────────────╯

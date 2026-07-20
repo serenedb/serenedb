@@ -348,24 +348,6 @@ id
 1
 2
 
-# DOCS_TEST: ts_is_null
-# DOCS_TEST_BODY
-query
-SELECT id FROM docs_idx WHERE dual @@ ts_is_null() ORDER BY id;
-----
-id
-2
-
-# DOCS_TEST: ts_is_not_null
-# DOCS_TEST_BODY
-query
-SELECT id FROM docs_idx WHERE dual @@ ts_is_not_null() ORDER BY id;
-----
-id
-1
-3
-4
-
 # DOCS_TEST: a--b-or
 # DOCS_TEST_BODY
 query
@@ -503,6 +485,24 @@ SELECT id FROM docs_idx WHERE has_any_tokens(body, ['grey', 'red'], 1) ORDER BY 
 id
 2
 3
+
+# DOCS_TEST: is-null
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE dual IS NULL ORDER BY id;
+----
+id
+2
+
+# DOCS_TEST: is-not-null
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE dual IS NOT NULL ORDER BY id;
+----
+id
+1
+3
+4
 
 # DOCS_TEST: bm25
 # DOCS_TEST_BODY

@@ -23,6 +23,7 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "connector/functions/ts_query_codec.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search.h"
@@ -30,11 +31,6 @@
 
 namespace sdb::connector {
 namespace {
-
-bool IsTSQueryType(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::VARCHAR &&
-         type.GetAlias() == kTSQueryTypeName;
-}
 
 bool IsTokenizeListCall(const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
@@ -45,7 +41,7 @@ bool IsTokenizeListCall(const duckdb::Expression& expr) {
     return false;
   }
   return f.GetReturnType().id() == duckdb::LogicalTypeId::LIST &&
-         IsTSQueryType(duckdb::ListType::GetChildType(f.GetReturnType()));
+         IsTSQueryStructType(duckdb::ListType::GetChildType(f.GetReturnType()));
 }
 
 void FromTokenizeListInAnyAllOf(
@@ -137,9 +133,7 @@ void FromTokenizeListInAnyAllOf(
                     ERR_HINT(kSyntaxHint));
   }
   std::vector<irs::bstring> tokens;
-  const auto& elems = list_const_id == duckdb::LogicalTypeId::ARRAY
-                        ? duckdb::ArrayValue::GetChildren(*list_const)
-                        : duckdb::ListValue::GetChildren(*list_const);
+  const auto& elems = ListOrArrayChildren(*list_const);
   for (const auto& elem : elems) {
     if (elem.IsNull()) {
       continue;
@@ -171,14 +165,13 @@ void FromTokenizeListInAnyAllOf(
   }
 
   if (tokens.empty()) {
-    AddFilter<irs::Empty>(parent);
+    AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
 
   // Single-token short-circuit -> ByTerm.
   if (tokens.size() == 1) {
-    auto& term = ctx.negated ? Negate<irs::ByTerm>(parent)
-                             : AddFilter<irs::ByTerm>(parent);
+    auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, column_info);
     term.boost(ctx.boost);
     *term.mutable_field_id() =
       PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
@@ -196,8 +189,7 @@ void FromTokenizeListInAnyAllOf(
   } else if (min_match) {
     min_match_value = std::min<size_t>(*min_match, tokens.size());
   }
-  auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
-                            : AddFilter<irs::ByTerms>(parent);
+  auto& terms = AddMaybeNegated<irs::ByTerms>(parent, ctx, column_info);
   terms.boost(ctx.boost);
   *terms.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
@@ -247,9 +239,7 @@ void ExtractAnyAllOfArgs(
                       ERR_MSG("list arg must not be NULL"),
                       ERR_HINT(kSyntaxHint));
     }
-    const auto& children = list_type_id == duckdb::LogicalTypeId::ARRAY
-                             ? duckdb::ArrayValue::GetChildren(val)
-                             : duckdb::ListValue::GetChildren(val);
+    const auto& children = ListOrArrayChildren(val);
     for (const auto& child_val : children) {
       synthesised.push_back(
         duckdb::make_uniq<duckdb::BoundConstantExpression>(child_val));
@@ -325,15 +315,13 @@ void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   irs::BooleanFilter* group;
   if (is_any) {
-    auto& or_group =
-      ctx.negated ? Negate<irs::Or>(parent) : AddFilter<irs::Or>(parent);
+    auto& or_group = AddMaybeNegated<irs::Or>(parent, ctx, column_info);
     if (min_match && *min_match > 1) {
       or_group.min_match_count(*min_match);
     }
     group = &or_group;
   } else {
-    group =
-      ctx.negated ? &Negate<irs::And>(parent) : &AddFilter<irs::And>(parent);
+    group = &AddMaybeNegated<irs::And>(parent, ctx, column_info);
   }
   group->boost(ctx.boost);
   for (const auto* arg : args) {

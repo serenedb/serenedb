@@ -27,7 +27,6 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/column_existence_filter.hpp>
 #include <iresearch/search/geo_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
@@ -461,12 +460,6 @@ struct FilterPrinter {
         node.attributes["Match"] = "<Predicate>";
       }
       node.children.push_back(Build(*child));
-      return node;
-    }
-    if (type == Type<ByColumnExistence>::id()) {
-      ExplainNode node{"Exists"};
-      node.attributes["Field"] =
-        FieldName(downCast<const ByColumnExistence>(filter).id());
       return node;
     }
     if (type == Type<ByWildcard>::id()) {

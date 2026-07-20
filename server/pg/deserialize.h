@@ -111,6 +111,8 @@ struct VectorSink {
     duckdb::FlatVector::GetDataMutable<duckdb::hugeint_t>(vec)[row] = v;
   }
 
+  void Tsquery(std::string_view text);
+
   template<typename Phys>
   void Decimal(Phys v, uint8_t, uint8_t) {
     duckdb::FlatVector::GetDataMutable<Phys>(vec)[row] = v;
@@ -161,6 +163,8 @@ struct ValueSink {
   }
 
   void Uuid(duckdb::hugeint_t v) { out = duckdb::Value::UUID(v); }
+
+  void Tsquery(std::string_view text);
 
   template<typename Phys>
   void Decimal(Phys v, uint8_t width, uint8_t scale) {

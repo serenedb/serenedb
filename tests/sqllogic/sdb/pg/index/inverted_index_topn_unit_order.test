@@ -1,0 +1,142 @@
+# ORDER BY <covered column> LIMIT over an inverted index: segments are
+# claimed best-first by whole-file statistics and, one level below, a
+# segment's bulk scan units are claimed best-first by the order key's
+# per-column-segment statistics. Scheduling only -- the TopN above sorts, so
+# results must be exact for any claim order. Segments exceed one scan unit
+# (122880 rows), and the key ascends within the first segment but descends
+# within the second, so ASC and DESC each find their best unit at opposite
+# ends of a file. A post-refresh DELETE demotes a segment to the masked
+# streaming walk, which cannot reorder -- results still exact.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY uo_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE uo (id BIGINT PRIMARY KEY, body VARCHAR, c BIGINT);
+
+
+statement ok
+CREATE INDEX uo_idx ON uo USING inverted(id, body uo_en)
+  INCLUDE (c)
+  WITH (compaction_interval = 0);
+
+
+# Segment 1: c ascends 0..130000 (best DESC values in the tail unit); two
+# NULL keys for the NULLS FIRST shapes.
+statement ok
+INSERT INTO uo
+  SELECT i, 'fox', CASE WHEN i < 2 THEN NULL ELSE i END
+  FROM generate_series(0, 130000) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) uo;
+
+
+# Segment 2: c descends 269999..139999 (best DESC values in the head unit).
+statement ok
+INSERT INTO uo
+  SELECT i, 'dog', 400000 - i
+  FROM generate_series(130001, 260001) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) uo;
+
+
+query
+SELECT c FROM uo_idx ORDER BY c DESC LIMIT 3;
+----
+c
+269999
+269998
+269997
+
+
+query
+SELECT c FROM uo_idx ORDER BY c ASC LIMIT 3;
+----
+c
+2
+3
+4
+
+
+query
+SELECT c FROM uo_idx ORDER BY c DESC NULLS FIRST LIMIT 3;
+----
+c
+NULL
+NULL
+269999
+
+
+query
+SELECT c FROM uo_idx ORDER BY c ASC NULLS LAST LIMIT 2;
+----
+c
+2
+3
+
+
+# A pushable covered filter keeps the bulk units; the order key's dynamic
+# bound and the filter prune together.
+query
+SELECT c FROM uo_idx WHERE c >= 139999 ORDER BY c ASC LIMIT 3;
+----
+c
+139999
+140000
+140001
+
+
+query
+SELECT sum(x.c) FROM (SELECT c FROM uo_idx ORDER BY c DESC LIMIT 1000) x;
+----
+sum
+269499500
+
+
+# Deleting a matched row after refresh does not change the last-refresh
+# matched set; after the refresh below, segment 2 carries a mask and takes
+# the forward masked walk (no reordering) -- results stay exact.
+statement ok
+DELETE FROM uo WHERE c = 269999;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) uo;
+
+
+query
+SELECT c FROM uo_idx ORDER BY c DESC LIMIT 3;
+----
+c
+269998
+269997
+269996
+
+
+query
+SELECT c FROM uo_idx ORDER BY c ASC LIMIT 2;
+----
+c
+2
+3
+
+
+statement ok
+DROP TABLE uo;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY uo_en;

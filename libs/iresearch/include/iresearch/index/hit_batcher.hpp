@@ -38,32 +38,44 @@ namespace sdb::connector {
 
 class HitBatcher {
  public:
-  // `filters` are the pushed `.col`/score table filters applied in-scan
-  // (RowGroup::Scan-style: codec Filter narrows survivors, decoded once into
-  // the projected output slot then Sliced). Empty on the count/top-k paths,
-  // where filtering happens in the DocIterator instead.
   HitBatcher(std::span<const ColumnstoreProjection> projections,
-             irs::field_id pk_field_id, bool track_scores,
-             std::span<const TableFilterDocIterator::FilterSpec> filters = {});
+             irs::field_id pk_field_id, bool track_scores);
 
   HitBatcher(const HitBatcher&) = delete;
   HitBatcher& operator=(const HitBatcher&) = delete;
   ~HitBatcher();
 
-  void BeginSegment(uint32_t seg_idx, const irs::ColReader* col_reader,
-                    duckdb::ClientContext* context);
+  // `filters` are this segment's ACTIVE pushed `.col`/score table filters,
+  // applied in-scan (RowGroup::Scan-style: codec Filter narrows survivors,
+  // decoded once into the projected output slot then Sliced). The caller has
+  // already classified them against the segment's whole-file statistics
+  // (ClassifySegmentColFilters) -- no re-check here, and `states` is the
+  // worker's filter-state cache backing them. Both empty/null on the
+  // count/top-k paths, where filtering happens in the DocIterator instead.
+  void BeginSegment(
+    uint32_t seg_idx, const irs::ColReader* col_reader,
+    duckdb::ClientContext* context, ColFilterStateCache* states = nullptr,
+    std::span<const TableFilterDocIterator::FilterSpec> filters = {});
 
   duckdb::idx_t OpenWindow(uint64_t row);
   // Batched fill: the current window's ids/scores go to [WindowHead(), ...) /
   // [ScoreHead(), ...), then CommitWindow(n) records how many were emitted.
   irs::doc_id_t* WindowHead() noexcept { return &_docs[_len]; }
-  irs::score_t* ScoreHead() noexcept { return &_scores[_len]; }
+  irs::score_t* ScoreHead() { return ScoreData() + _len; }
   void CommitWindow(duckdb::idx_t n) noexcept {
     _len += n;
     SDB_ASSERT(_len <= STANDARD_VECTOR_SIZE);
   }
 
   void Finalize();
+
+  // The segment's bound `.col` filter chain (empty when none): the streaming
+  // loop consults its zonemap skip before staging windows.
+  ColFilterChain& Filters() noexcept { return _filters; }
+  // Rows in the segment's columnstore (0 when no column is bound).
+  uint64_t SegmentRowCount() const noexcept {
+    return _rg_col != nullptr ? _rg_col->RowCount() : 0;
+  }
 
   uint32_t Segment() const noexcept { return _seg_idx; }
 
@@ -77,6 +89,9 @@ class HitBatcher {
     std::span<const float> scores;
     uint32_t seg = 0;
     duckdb::Vector* pk = nullptr;
+    // The staged score vector backing `scores` (null when scores are not
+    // tracked): the output chunk References it -- no copy at emit.
+    duckdb::Vector* score_vec = nullptr;
     duckdb::idx_t count = 0;
   };
 
@@ -89,40 +104,32 @@ class HitBatcher {
     bool is_pk = false;
     bool extract = false;
     bool list_like = false;
+    // The emitted batch References scratch into the output chunk, which stays
+    // referenced until the consumer pulls the next batch -- so batches
+    // alternate between two cache-backed buffers instead of allocating a
+    // fresh Vector per batch.
+    uint8_t scratch_idx = 0;
     duckdb::LogicalType out_type;
     std::unique_ptr<irs::ColumnReader::ScanState> state;
     std::unique_ptr<ExtractBinding> extract_binding;
-    std::unique_ptr<duckdb::Vector> scratch;
-  };
-
-  // A pushed `.col` filter for this segment. `output_slots` are the projected
-  // slots the filter column also outputs to (a column can be projected more
-  // than once): the codec decode doubles as the materialization of the first
-  // slot (Sliced), and the rest Reference it zero-copy. Empty => filter-only:
-  // the column decodes into `scratch` purely to evaluate the predicate.
-  struct FilterCol {
-    const irs::ColumnReader* reader = nullptr;
-    irs::field_id field = 0;
-    const duckdb::TableFilter* filter = nullptr;
-    std::vector<duckdb::idx_t> output_slots;
-    std::unique_ptr<duckdb::TableFilterState> state;
-    std::unique_ptr<irs::ColumnReader::ScanState> scan;
-    // Codec Scan/Filter may morph the vector (e.g. dict_fsst emits a
-    // DICTIONARY view over codec-owned buffers), so every use goes through
-    // VectorScratch::Reset() -- never reuse it dirty.
-    std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
+    std::array<std::unique_ptr<irs::ColumnReader::VectorScratch>, 2> scratch;
   };
 
   enum class Pending : uint8_t { None, Dense, Scratch };
 
   bool HasFilters() const noexcept {
-    return !_filters.empty() || _score_filter != nullptr;
+    return !_filters.Empty() || _score_filter != nullptr;
   }
 
   void CloseGroup();
   void ScatterGroup();
   Batch EmitFiltered(duckdb::DataChunk& output);
   void Compact();
+  float* ScoreData();
+  duckdb::Vector* ScoreVector() noexcept {
+    auto& s = _score_bufs[_score_idx];
+    return s ? &s->vector : nullptr;
+  }
   void MaterializeColumn(Column& c, uint64_t anchor, duckdb::idx_t span,
                          duckdb::idx_t hits, duckdb::idx_t first,
                          duckdb::Vector& out, duckdb::idx_t at, bool dense);
@@ -145,7 +152,11 @@ class HitBatcher {
   const irs::ColumnReader* _rg_col = nullptr;
 
   std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE> _docs;
-  std::array<irs::score_t, STANDARD_VECTOR_SIZE> _scores;
+  // Score staging IS the output: the emitted batch's chunk References the
+  // staged vector (no copy), so batches ping-pong between two cache-backed
+  // buffers -- Compact() flips and carries the leftover tail across.
+  std::array<std::unique_ptr<irs::ColumnReader::VectorScratch>, 2> _score_bufs;
+  uint8_t _score_idx = 0;
   duckdb::idx_t _len = 0;
   duckdb::idx_t _group = 0;
   duckdb::idx_t _batch = 0;
@@ -156,14 +167,13 @@ class HitBatcher {
   // VectorScratch::Reset() -- a stale pointer outlives the segment's pins.
   std::unique_ptr<irs::ColumnReader::VectorScratch> _pk_out;
 
-  // Pushed table filters. `_filter_specs` is the query-level description
-  // (copied at construction); `_filters` are the per-segment readers/scan
-  // states rebuilt by BeginSegment. `_score_filter` is the (computed)
-  // score-column filter, applied on `_scores` before the `.col` pass.
-  std::vector<TableFilterDocIterator::FilterSpec> _filter_specs;
-  std::vector<FilterCol> _filters;
+  // Pushed table filters: the per-segment chain rebuilt by BeginSegment from
+  // the segment's active specs. `_score_filter` is the (computed) score-column
+  // filter, applied on `_scores` before the `.col` pass; its state is owned by
+  // the worker's ColFilterStateCache.
+  ColFilterChain _filters;
   const duckdb::TableFilter* _score_filter = nullptr;
-  std::unique_ptr<duckdb::TableFilterState> _score_state;
+  duckdb::TableFilterState* _score_state = nullptr;
 
   duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
   duckdb::SelectionVector _sel;

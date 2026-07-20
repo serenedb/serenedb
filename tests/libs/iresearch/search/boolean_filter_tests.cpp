@@ -21,6 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include "filter_test_case_base.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -34,6 +36,7 @@
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/exclusion.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/granular_range_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/prefix_filter.hpp"
@@ -90,6 +93,22 @@ Filter& Append(irs::BooleanFilter& root, irs::field_id field,
   *sub.mutable_field_id() = field;
   sub.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return sub;
+}
+
+sdb::containers::FlatHashSet<irs::field_id> ByTermFields(irs::Filter& root) {
+  sdb::containers::FlatHashSet<irs::field_id> fields;
+  const auto walk = [&](this auto& self, irs::Filter& f) -> void {
+    if (f.type() == irs::Type<irs::ByTerm>::id()) {
+      fields.insert(sdb::basics::downCast<irs::ByTerm>(f).field_id());
+    }
+    for (auto& child : f.GetChildren()) {
+      if (child) {
+        self(*child);
+      }
+    }
+  };
+  walk(root);
+  return fields;
 }
 
 }  // namespace
@@ -3289,6 +3308,179 @@ TEST(block_disjunction_test, check_attributes) {
     });
     ASSERT_FALSE(score.IsDefault());
   }
+}
+
+namespace {
+
+// Emulates a probe-committing composite (e.g. an exclusion over a
+// seek-backed include): LazySeek moves the internal cursor without
+// publishing value(); advance() steps PAST the internal cursor, so only
+// seek() can settle on the probe-committed doc without losing it.
+class ProbeCommittingIterator : public irs::DocIterator {
+ public:
+  explicit ProbeCommittingIterator(std::vector<irs::doc_id_t> docs)
+    : _docs{std::move(docs)},
+      _cost{static_cast<irs::CostAttr::Type>(_docs.size())} {}
+
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
+    return irs::Type<irs::CostAttr>::id() == id ? &_cost : nullptr;
+  }
+
+  irs::doc_id_t advance() final {
+    ++_pos;
+    return _doc = Internal();
+  }
+
+  irs::doc_id_t seek(irs::doc_id_t target) final {
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
+    Commit(target);
+    return _doc = Internal();
+  }
+
+  irs::doc_id_t LazySeek(irs::doc_id_t target) final {
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
+    Commit(target);
+    const auto doc = Internal();
+    if (doc != target) {
+      return doc;
+    }
+    return _doc = doc;
+  }
+
+  IRS_DOC_ITERATOR_DEFAULTS
+
+ private:
+  irs::doc_id_t Internal() const {
+    if (_pos < 0) {
+      return irs::doc_limits::invalid();
+    }
+    if (static_cast<size_t>(_pos) >= _docs.size()) {
+      return irs::doc_limits::eof();
+    }
+    return _docs[static_cast<size_t>(_pos)];
+  }
+
+  void Commit(irs::doc_id_t target) {
+    while (Internal() < target) {
+      ++_pos;
+    }
+  }
+
+  std::vector<irs::doc_id_t> _docs;
+  ptrdiff_t _pos{-1};
+  irs::CostAttr _cost;
+};
+
+}  // namespace
+namespace {
+
+// Bitset-flavored probe: a LazySeek miss moves NOTHING (pure in-word
+// check), so the iterator can be arbitrarily far behind the window.
+class NonCommittingProbeIterator : public irs::DocIterator {
+ public:
+  explicit NonCommittingProbeIterator(std::vector<irs::doc_id_t> docs)
+    : _docs{std::move(docs)},
+      _cost{static_cast<irs::CostAttr::Type>(_docs.size())} {}
+
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
+    return irs::Type<irs::CostAttr>::id() == id ? &_cost : nullptr;
+  }
+
+  irs::doc_id_t advance() final {
+    ++_pos;
+    return _doc = Internal();
+  }
+
+  irs::doc_id_t seek(irs::doc_id_t target) final {
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
+    while (Internal() < target) {
+      ++_pos;
+    }
+    return _doc = Internal();
+  }
+
+  irs::doc_id_t LazySeek(irs::doc_id_t target) final {
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
+    if (absl::c_binary_search(_docs, target)) {
+      seek(target);
+      return _doc;
+    }
+    return target + 1;
+  }
+
+  IRS_DOC_ITERATOR_DEFAULTS
+
+ private:
+  irs::doc_id_t Internal() const {
+    if (_pos < 0) {
+      return irs::doc_limits::invalid();
+    }
+    if (static_cast<size_t>(_pos) >= _docs.size()) {
+      return irs::doc_limits::eof();
+    }
+    return _docs[static_cast<size_t>(_pos)];
+  }
+
+  std::vector<irs::doc_id_t> _docs;
+  ptrdiff_t _pos{-1};
+  irs::CostAttr _cost;
+};
+
+}  // namespace
+
+// The deep-behind flavor: a pure-probe sub never moved, so it sits far
+// below the window. seek() walks it inside; a single advance() would
+// hand FillBlock a doc below the window (precondition violation -- the
+// assert/heap-scribble flavor of the recovery bug).
+TEST(block_disjunction_test, refill_recovers_deep_behind_probe_via_seek) {
+  using Disjunction = irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+    irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 64>>;
+
+  Disjunction::Adapters itrs;
+  itrs.emplace_back(irs::memory::make_managed<NonCommittingProbeIterator>(
+    std::vector<irs::doc_id_t>{2, 50}));
+  itrs.emplace_back(irs::memory::make_managed<NonCommittingProbeIterator>(
+    std::vector<irs::doc_id_t>{40}));
+  Disjunction it{std::move(itrs), irs::doc_id_t{60}};
+
+  ASSERT_EQ(40u, it.LazySeek(40));
+  ASSERT_EQ(40u, it.value());
+
+  ASSERT_EQ(50u, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
+}
+
+// Pins the RefillImpl recovery choice: a sub left behind the window by a
+// LazySeek probe must be recovered with seek(), which settles on the
+// probe-committed internal position; advance() (or advance-then-seek)
+// steps past it and silently drops the doc.
+TEST(block_disjunction_test, refill_recovers_probe_residue_via_seek) {
+  using Disjunction = irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+    irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 64>>;
+
+  Disjunction::Adapters itrs;
+  itrs.emplace_back(irs::memory::make_managed<ProbeCommittingIterator>(
+    std::vector<irs::doc_id_t>{3, 6}));
+  itrs.emplace_back(irs::memory::make_managed<ProbeCommittingIterator>(
+    std::vector<irs::doc_id_t>{1}));
+  Disjunction it{std::move(itrs), irs::doc_id_t{40}};
+
+  ASSERT_EQ(1u, it.LazySeek(1));
+  ASSERT_EQ(1u, it.value());
+
+  ASSERT_EQ(3u, it.advance());
+  ASSERT_EQ(6u, it.advance());
+  ASSERT_TRUE(irs::doc_limits::eof(it.advance()));
 }
 
 TEST(block_disjunction_test, next) {
@@ -16584,6 +16776,600 @@ bool FusedAccepts(const irs::AutomatonFilter& fused, std::string_view term) {
 }
 
 }  // namespace
+
+TEST(ExclusionSplit_test, splits_or_excludes_and_dedups) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  auto& neg1 = root->add<irs::Not>();
+  auto& group1 = neg1.filter<irs::Or>();
+  Append<irs::ByTerm>(group1, kFieldTestField, "kiwi");
+  Append<irs::ByTerm>(group1, kFieldTestField + 1, "");
+  auto& neg2 = root->add<irs::Not>();
+  auto& group2 = neg2.filter<irs::Or>();
+  Append<irs::ByTerm>(group2, kFieldTestField, "mango");
+  Append<irs::ByTerm>(group2, kFieldTestField + 1, "");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), filter->type());
+  const auto& exclusion = sdb::basics::downCast<irs::Exclusion>(*filter);
+  ASSERT_TRUE(exclusion.GetInclude());
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), exclusion.GetInclude()->type());
+  const auto excludes = exclusion.GetExcludes();
+  ASSERT_EQ(3, excludes.size());
+  ASSERT_TRUE(absl::c_all_of(
+    excludes, [](const irs::Filter::ptr& excluded) { return bool(excluded); }));
+  EXPECT_EQ(0, absl::c_count_if(excludes, [](const irs::Filter::ptr& excluded) {
+              return excluded->type() == irs::Type<irs::Or>::id();
+            }));
+  const auto is_marker = [](const irs::Filter::ptr& excluded) {
+    return excluded->type() == irs::Type<irs::ByTerm>::id() &&
+           sdb::basics::downCast<irs::ByTerm>(*excluded).field_id() ==
+             kFieldTestField + 1;
+  };
+  EXPECT_EQ(1, absl::c_count_if(excludes, is_marker));
+}
+
+TEST(ExclusionSplit_test, keeps_min_match_or_intact) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  group.min_match_count(2);
+  Append<irs::ByTerm>(group, kFieldTestField, "kiwi");
+  Append<irs::ByTerm>(group, kFieldTestField, "mango");
+  Append<irs::ByTerm>(group, kFieldTestField, "melon");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::Exclusion>::id(), filter->type());
+  const auto& exclusion = sdb::basics::downCast<irs::Exclusion>(*filter);
+  ASSERT_EQ(1, exclusion.GetExcludes().size());
+  const auto& excluded = *exclusion.GetExcludes()[0];
+  ASSERT_EQ(irs::Type<irs::ByTerms>::id(), excluded.type());
+  EXPECT_EQ(2,
+            sdb::basics::downCast<irs::ByTerms>(excluded).options().min_match);
+}
+
+TEST(AndNullExclusion_test, prunes_anchored_marker) {
+  constexpr irs::field_id kField = kFieldTestField;
+  constexpr irs::field_id kMarker = kFieldTestField + 1;
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kField, "ax");
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  Append<irs::ByTerm>(group, kField, "kiwi");
+  Append<irs::ByTerm>(group, kMarker, "");
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kMarker] = kField;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.null_markers = &markers});
+
+  const auto fields = ByTermFields(*filter);
+  EXPECT_FALSE(fields.contains(kMarker));
+  EXPECT_TRUE(fields.contains(kField));
+}
+
+TEST(AndNullExclusion_test, keeps_unanchored_and_foreign_markers) {
+  constexpr irs::field_id kField = kFieldTestField;
+  constexpr irs::field_id kOther = kFieldTestField + 1;
+  constexpr irs::field_id kMarker = kFieldTestField + 2;
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByPrefix>(*root, kOther, "ax");
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  Append<irs::ByTerm>(group, kField, "kiwi");
+  Append<irs::ByTerm>(group, kMarker, "");
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kMarker] = kField;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.null_markers = &markers});
+
+  EXPECT_TRUE(ByTermFields(*filter).contains(kMarker));
+}
+
+TEST(AndNullExclusion_test, prunes_marker_anchored_by_or_intersection) {
+  constexpr irs::field_id kField = kFieldTestField;
+  constexpr irs::field_id kMarker = kFieldTestField + 1;
+  auto root = std::make_unique<irs::And>();
+  auto& ranges = root->add<irs::Or>();
+  {
+    auto& range = ranges.add<irs::ByRange>();
+    *range.mutable_field_id() = kField;
+    range.mutable_options()->range.max = irs::bstring{B("d")};
+    range.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  }
+  {
+    auto& range = ranges.add<irs::ByRange>();
+    *range.mutable_field_id() = kField;
+    range.mutable_options()->range.min = irs::bstring{B("m")};
+    range.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  }
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  Append<irs::ByTerm>(group, kField, "kiwi");
+  Append<irs::ByTerm>(group, kMarker, "");
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kMarker] = kField;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.null_markers = &markers});
+
+  const auto fields = ByTermFields(*filter);
+  EXPECT_FALSE(fields.contains(kMarker));
+  EXPECT_TRUE(fields.contains(kField));
+}
+
+TEST(AndNullExclusion_test, or_intersection_spans_and_branches) {
+  constexpr irs::field_id kField = kFieldTestField;
+  constexpr irs::field_id kOther = kFieldTestField + 1;
+  constexpr irs::field_id kThird = kFieldTestField + 2;
+  constexpr irs::field_id kMarkerA = kFieldTestField + 3;
+  constexpr irs::field_id kMarkerB = kFieldTestField + 4;
+  auto root = std::make_unique<irs::And>();
+  auto& alternatives = root->add<irs::Or>();
+  {
+    auto& branch = alternatives.add<irs::And>();
+    Append<irs::ByTerm>(branch, kField, "x");
+    Append<irs::ByTerm>(branch, kOther, "y");
+  }
+  {
+    auto& branch = alternatives.add<irs::And>();
+    Append<irs::ByTerm>(branch, kField, "z");
+    Append<irs::ByTerm>(branch, kThird, "w");
+  }
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  Append<irs::ByTerm>(group, kField, "kiwi");
+  Append<irs::ByTerm>(group, kOther, "plum");
+  Append<irs::ByTerm>(group, kMarkerA, "");
+  Append<irs::ByTerm>(group, kMarkerB, "");
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kMarkerA] = kField;
+  markers[kMarkerB] = kOther;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.null_markers = &markers});
+
+  const auto fields = ByTermFields(*filter);
+  EXPECT_FALSE(fields.contains(kMarkerA));
+  EXPECT_TRUE(fields.contains(kMarkerB));
+}
+
+TEST(AndNullExclusion_test, anchors_through_nested_exclusion_include) {
+  constexpr irs::field_id kField = kFieldTestField;
+  constexpr irs::field_id kOther = kFieldTestField + 1;
+  constexpr irs::field_id kThird = kFieldTestField + 2;
+  constexpr irs::field_id kMarkerA = kFieldTestField + 3;
+  constexpr irs::field_id kMarkerB = kFieldTestField + 4;
+  auto root = std::make_unique<irs::And>();
+  auto& alternatives = root->add<irs::Or>();
+  {
+    auto& branch = alternatives.add<irs::And>();
+    Append<irs::ByTerm>(branch, kField, "x");
+    auto& inner = branch.add<irs::Not>();
+    Append<irs::ByTerm>(inner.filter<irs::Or>(), kOther, "y");
+  }
+  {
+    auto& branch = alternatives.add<irs::And>();
+    Append<irs::ByTerm>(branch, kField, "z");
+    Append<irs::ByTerm>(branch, kThird, "w");
+  }
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  Append<irs::ByTerm>(group, kField, "kiwi");
+  Append<irs::ByTerm>(group, kOther, "plum");
+  Append<irs::ByTerm>(group, kMarkerA, "");
+  Append<irs::ByTerm>(group, kMarkerB, "");
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kMarkerA] = kField;
+  markers[kMarkerB] = kOther;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.null_markers = &markers});
+
+  const auto fields = ByTermFields(*filter);
+  EXPECT_FALSE(fields.contains(kMarkerA));
+  EXPECT_TRUE(fields.contains(kMarkerB));
+}
+
+TEST(AndNullExclusion_test, keeps_marker_for_cross_field_or) {
+  constexpr irs::field_id kField = kFieldTestField;
+  constexpr irs::field_id kOther = kFieldTestField + 1;
+  constexpr irs::field_id kMarker = kFieldTestField + 2;
+  auto root = std::make_unique<irs::And>();
+  auto& ranges = root->add<irs::Or>();
+  {
+    auto& range = ranges.add<irs::ByRange>();
+    *range.mutable_field_id() = kField;
+    range.mutable_options()->range.max = irs::bstring{B("d")};
+    range.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  }
+  {
+    auto& range = ranges.add<irs::ByRange>();
+    *range.mutable_field_id() = kOther;
+    range.mutable_options()->range.min = irs::bstring{B("m")};
+    range.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  }
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  Append<irs::ByTerm>(group, kField, "kiwi");
+  Append<irs::ByTerm>(group, kMarker, "");
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kMarker] = kField;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.null_markers = &markers});
+
+  EXPECT_TRUE(ByTermFields(*filter).contains(kMarker));
+}
+
+TEST(AndNullExclusion_test, keeps_marker_without_include_anchor) {
+  constexpr irs::field_id kField = kFieldTestField;
+  constexpr irs::field_id kMarker = kFieldTestField + 1;
+  auto root = std::make_unique<irs::And>();
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  Append<irs::ByTerm>(group, kField, "kiwi");
+  Append<irs::ByTerm>(group, kMarker, "");
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kMarker] = kField;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.null_markers = &markers});
+
+  EXPECT_TRUE(ByTermFields(*filter).contains(kMarker));
+}
+
+TEST(AndNullExclusion_test, min_match_zero_terms_do_not_anchor) {
+  constexpr irs::field_id kField = kFieldTestField;
+  constexpr irs::field_id kMarker = kFieldTestField + 1;
+  auto root = std::make_unique<irs::And>();
+  auto& terms = root->add<irs::ByTerms>();
+  *terms.mutable_field_id() = kField;
+  terms.mutable_options()->min_match = 0;
+  terms.mutable_options()->terms.emplace(B("apple"));
+  auto& negation = root->add<irs::Not>();
+  auto& group = negation.filter<irs::Or>();
+  Append<irs::ByTerm>(group, kField, "kiwi");
+  Append<irs::ByTerm>(group, kMarker, "");
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kMarker] = kField;
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.null_markers = &markers});
+
+  EXPECT_TRUE(ByTermFields(*filter).contains(kMarker));
+}
+
+TEST(AndRangeMerge_test, inverted_bounds_merge_to_empty) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("m")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max = irs::bstring{B("d")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(RangeDegenerate_test, inverted_bounds_become_empty) {
+  auto range = std::make_unique<irs::ByRange>();
+  *range->mutable_field_id() = kFieldTestField;
+  range->mutable_options()->range.min = irs::bstring{B("z")};
+  range->mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  range->mutable_options()->range.max = irs::bstring{B("a")};
+  range->mutable_options()->range.max_type = irs::BoundType::Inclusive;
+
+  irs::Filter::ptr filter = std::move(range);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(GranularRangeDegenerate_test, inverted_bounds_become_empty) {
+  auto range = std::make_unique<irs::ByGranularRange>();
+  *range->mutable_field_id() = kFieldTestField;
+  range->mutable_options()->range.min.emplace_back(irs::bstring{B("z")});
+  range->mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  range->mutable_options()->range.max.emplace_back(irs::bstring{B("a")});
+  range->mutable_options()->range.max_type = irs::BoundType::Inclusive;
+
+  irs::Filter::ptr filter = std::move(range);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(AndRangeMerge_test, merges_complementary_bounds) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+    lo.boost(2.f);
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max = irs::bstring{B("m")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+    hi.boost(3.f);
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
+  const auto& merged = sdb::basics::downCast<irs::ByRange>(*filter);
+  EXPECT_EQ(kFieldTestField, merged.field_id());
+  EXPECT_EQ(irs::bstring{B("b")}, merged.options().range.min);
+  EXPECT_EQ(irs::BoundType::Inclusive, merged.options().range.min_type);
+  EXPECT_EQ(irs::bstring{B("m")}, merged.options().range.max);
+  EXPECT_EQ(irs::BoundType::Exclusive, merged.options().range.max_type);
+  EXPECT_EQ(5.f, merged.Boost());
+}
+
+TEST(AndRangeMerge_test, max_merge_type_takes_max_boost) {
+  auto root = std::make_unique<irs::And>();
+  root->merge_type(irs::ScoreMergeType::Max);
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+    lo.boost(2.f);
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max = irs::bstring{B("m")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+    hi.boost(3.f);
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
+  EXPECT_EQ(3.f, sdb::basics::downCast<irs::ByRange>(*filter).Boost());
+}
+
+TEST(AndRangeMerge_test, noop_merge_type_drops_boost) {
+  auto root = std::make_unique<irs::And>();
+  root->merge_type(irs::ScoreMergeType::Noop);
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+    lo.boost(2.f);
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max = irs::bstring{B("m")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+    hi.boost(3.f);
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::ByRange>::id(), filter->type());
+  EXPECT_EQ(irs::kNoBoost,
+            sdb::basics::downCast<irs::ByRange>(*filter).Boost());
+}
+
+TEST(AndRangeMerge_test, equal_bounds_inclusive_become_term) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max = irs::bstring{B("b")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), filter->type());
+  const auto& term = sdb::basics::downCast<irs::ByTerm>(*filter);
+  EXPECT_EQ(kFieldTestField, term.field_id());
+  EXPECT_EQ(irs::bstring{B("b")}, term.options().term);
+}
+
+TEST(AndRangeMerge_test, equal_bounds_exclusive_become_empty) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max = irs::bstring{B("b")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(AndRangeMerge_test, keeps_different_fields) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField + 1;
+    hi.mutable_options()->range.max = irs::bstring{B("m")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::And>::id(), filter->type());
+  EXPECT_EQ(2, filter->GetChildren().size());
+}
+
+TEST(AndRangeMerge_test, keeps_analyzed_fields) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max = irs::bstring{B("m")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.analyzed_fields = {kFieldTestField}});
+
+  ASSERT_EQ(irs::Type<irs::And>::id(), filter->type());
+  EXPECT_EQ(2, filter->GetChildren().size());
+}
+
+TEST(AndRangeMerge_test, keeps_scored) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min = irs::bstring{B("b")};
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  }
+  {
+    auto& hi = root->add<irs::ByRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max = irs::bstring{B("m")};
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true});
+
+  ASSERT_EQ(irs::Type<irs::And>::id(), filter->type());
+  EXPECT_EQ(2, filter->GetChildren().size());
+}
+
+TEST(AndRangeMerge_test, granular_merges_complementary_bounds) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByGranularRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min.emplace_back(irs::bstring{B("b")});
+    lo.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  }
+  {
+    auto& hi = root->add<irs::ByGranularRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max.emplace_back(irs::bstring{B("m")});
+    hi.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::ByGranularRange>::id(), filter->type());
+  const auto& merged = sdb::basics::downCast<irs::ByGranularRange>(*filter);
+  ASSERT_EQ(1, merged.options().range.min.size());
+  ASSERT_EQ(1, merged.options().range.max.size());
+  EXPECT_EQ(irs::bstring{B("b")}, merged.options().range.min.front());
+  EXPECT_EQ(irs::BoundType::Inclusive, merged.options().range.min_type);
+  EXPECT_EQ(irs::bstring{B("m")}, merged.options().range.max.front());
+  EXPECT_EQ(irs::BoundType::Exclusive, merged.options().range.max_type);
+}
+
+TEST(AndRangeMerge_test, granular_inverted_bounds_merge_to_empty) {
+  auto root = std::make_unique<irs::And>();
+  {
+    auto& lo = root->add<irs::ByGranularRange>();
+    *lo.mutable_field_id() = kFieldTestField;
+    lo.mutable_options()->range.min.emplace_back(irs::bstring{B("m")});
+    lo.mutable_options()->range.min_type = irs::BoundType::Exclusive;
+  }
+  {
+    auto& hi = root->add<irs::ByGranularRange>();
+    *hi.mutable_field_id() = kFieldTestField;
+    hi.mutable_options()->range.max.emplace_back(irs::bstring{B("d")});
+    hi.mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  }
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(RangeDegenerate_test, equal_inclusive_bounds_become_term) {
+  auto range = std::make_unique<irs::ByRange>();
+  *range->mutable_field_id() = kFieldTestField;
+  range->mutable_options()->range.min = irs::bstring{B("b")};
+  range->mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  range->mutable_options()->range.max = irs::bstring{B("b")};
+  range->mutable_options()->range.max_type = irs::BoundType::Inclusive;
+  range->boost(2.f);
+
+  irs::Filter::ptr filter = std::move(range);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), filter->type());
+  const auto& term = sdb::basics::downCast<irs::ByTerm>(*filter);
+  EXPECT_EQ(kFieldTestField, term.field_id());
+  EXPECT_EQ(irs::bstring{B("b")}, term.options().term);
+  EXPECT_EQ(2.f, term.Boost());
+}
+
+TEST(GranularRangeDegenerate_test, equal_inclusive_bounds_become_term) {
+  auto range = std::make_unique<irs::ByGranularRange>();
+  *range->mutable_field_id() = kFieldTestField;
+  range->mutable_options()->range.min.emplace_back(irs::bstring{B("b")});
+  range->mutable_options()->range.min_type = irs::BoundType::Inclusive;
+  range->mutable_options()->range.max.emplace_back(irs::bstring{B("b")});
+  range->mutable_options()->range.max_type = irs::BoundType::Inclusive;
+
+  irs::Filter::ptr filter = std::move(range);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::ByTerm>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("b")},
+            sdb::basics::downCast<irs::ByTerm>(*filter).options().term);
+}
 
 TEST(OrAcceptorFusion_test, fuses_mixed_acceptors) {
   auto root = std::make_unique<irs::Or>();

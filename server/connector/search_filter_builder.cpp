@@ -24,7 +24,6 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
-#include <algorithm>
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -34,6 +33,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -42,7 +42,6 @@
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/automaton_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/column_existence_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/mixed_boolean_filter.hpp>
@@ -62,20 +61,18 @@
 #include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
-#include <map>
 #include <optional>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/node_hash_map.h"
-#include "basics/string_utils.h"
 #include "basics/system-compiler.h"
 #include "comparison_op.hpp"
 #include "connector/common.h"
-#include "connector/json_extract_names.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
 #include "functions/ts_common.hpp"
+#include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -138,10 +135,6 @@ customize::enum_name<sdb::connector::TSQueryOp>(
       return sdb::connector::kToTsquery;
     case Compound:
       return sdb::connector::kTSQCompound;
-    case IsNull:
-      return sdb::connector::kTSQIsNull;
-    case IsNotNull:
-      return sdb::connector::kTSQIsNotNull;
     case Unknown:
     case Term:
       return invalid_tag;
@@ -171,6 +164,29 @@ irs::bytes_view AsRawBytes(const duckdb::Value& value) {
     std::string_view{duckdb::StringValue::Get(value)});
 }
 
+bool TryEncodeTerm(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
+                   irs::bstring& out) {
+  if (type_id == duckdb::LogicalTypeId::VARCHAR ||
+      type_id == duckdb::LogicalTypeId::BLOB) {
+    out.assign(AsRawBytes(value));
+    return true;
+  }
+  if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
+    out.assign(irs::ViewCast<irs::byte_type>(
+      irs::BooleanTokenizer::value(value.GetValue<bool>())));
+    return true;
+  }
+  if (IsNumericTypeId(type_id)) {
+    irs::NumericTokenizer stream;
+    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
+    ResetNumericStream(stream, type_id, value);
+    stream.next();
+    out.assign(token->value);
+    return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 absl::Status SetupTermFilter(irs::ByTerm& filter,
@@ -187,19 +203,7 @@ absl::Status SetupTermFilter(irs::ByTerm& filter,
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
 
-  if (type_id == duckdb::LogicalTypeId::VARCHAR ||
-      type_id == duckdb::LogicalTypeId::BLOB) {
-    filter.mutable_options()->term.assign(AsRawBytes(value));
-  } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    filter.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(
-      irs::BooleanTokenizer::value(value.GetValue<bool>())));
-  } else if (IsNumericTypeId(type_id)) {
-    irs::NumericTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    ResetNumericStream(stream, type_id, value);
-    stream.next();
-    filter.mutable_options()->term.assign(token->value);
-  } else {
+  if (!TryEncodeTerm(type_id, value, filter.mutable_options()->term)) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for term filter: ", static_cast<int>(type_id)));
   }
@@ -250,20 +254,13 @@ std::vector<duckdb::unique_ptr<duckdb::Expression>> MakeChildren(
   return v;
 }
 
-bool IsAnyTSQueryType(const duckdb::LogicalType& type) {
-  if (type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return false;
-  }
-  const auto alias = type.GetAlias();
-  return alias == kTSQueryTypeName || alias == kTokenizedTSQueryTypeName ||
-         alias == kBoostedTSQueryTypeName;
-}
+}  // namespace
 
 // Bind does NOT pre-resolve the tokenizer name to a live analyzer
 // because the analyzer is stateful (one tokenization stream per use)
 // and can't be shared across queries.
 std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type) {
-  if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
+  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
     return {};
   }
   const auto* ext = type.GetExtensionInfo().get();
@@ -278,7 +275,7 @@ std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type) {
 // Boost and tokenizer modifiers are distinguished by value type
 // (DOUBLE vs VARCHAR) so the two never alias each other.
 std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type) {
-  if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
+  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
     return {};
   }
   const auto* ext = type.GetExtensionInfo().get();
@@ -290,26 +287,25 @@ std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type) {
   return mods[0].value.GetValue<double>();
 }
 
+namespace {
+
 bool IsComparisonExpr(const duckdb::Expression& expr) {
   return duckdb::BoundComparisonExpression::IsComparison(expr) &&
          GetComparisonOp(expr.GetExpressionType()) != ComparisonOp::None;
 }
 
-// Unwraps reinterpret casts between VARCHAR / TSQUERY / TOKENIZED_TSQUERY
-// so the filter builder sees through both directions of implicit
-// promotion:
-//   - VARCHAR -> TSQUERY  (bare string literals into TSQUERY contexts)
-//   - TSQUERY -> VARCHAR  (TSQUERY-typed children flowing into VARCHAR
-//     mirror overloads of `##`, e.g. ts_phrase('a') ## 1, where DuckDB
-//     wraps the LHS in BOUND_CAST<VARCHAR>)
-//   - TOK <-> TSQ / VARCHAR transit casts that DON'T carry a tokenize
-//     modifier on the cast's return_type. Modifier-bearing casts are
-//     preserved here so the BuildTSQuery walker can read the override
-//     before continuing to dispatch the inner expression.
-// Iterative because casts can chain (e.g. ts_phrase('x')::tokenize('y')
-// inside @@ becomes BoundCast<TSQ>(BoundCast<TOK-mod-y>(PHRASE)) -- we
-// peel the outer transit cast and stop at the modifier-bearing cast).
-// Peels the BOOSTED_TSQUERY -> BOOLEAN coercion that the WhereBinder
+absl::Status RequireKeywordAnalyzed(const SearchColumnInfo& info,
+                                    std::string_view hint) {
+  if (info.logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
+      info.tokenizer.analyzer->type() !=
+        irs::Type<irs::StringTokenizer>::id()) {
+    return absl::InvalidArgumentError(
+      absl::StrCat("Field is not indexed by keyword analyzer. ", hint));
+  }
+  return absl::OkStatus();
+}
+
+// Peels the TSQUERY_MODIFIER -> BOOLEAN coercion that the WhereBinder
 // inserts when a `(predicate)::boost(K)` cast appears at the WHERE
 // root. Returns the inner cast (whose return_type carries the boost
 // modifier) so the SQL-surface peel can read the factor. If `expr`
@@ -336,11 +332,154 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs);
 
+void FillNullMarker(irs::ByTerm& term, irs::field_id null_field_id) {
+  *term.mutable_field_id() = null_field_id;
+  term.mutable_options()->term.assign(
+    irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+}
+
+}  // namespace
+
+irs::ByTerm& AddNullMarkerTerm(irs::BooleanFilter& parent,
+                               irs::field_id null_field_id) {
+  auto& term = AddFilter<irs::ByTerm>(parent);
+  FillNullMarker(term, null_field_id);
+  return term;
+}
+
+void AddNegated(irs::BooleanFilter& parent, const SearchColumnInfo& info,
+                irs::Filter::ptr target) {
+  if (irs::field_limits::valid(info.null_field_id)) {
+    auto& group = Negate<irs::Or>(parent);
+    group.add(std::move(target));
+    AddNullMarkerTerm(group, info.null_field_id);
+    return;
+  }
+  AddNot(parent).mutable_filter() = std::move(target);
+}
+
+namespace {
+
+void CollectNullableMarkers(const FilterContext& ctx,
+                            const duckdb::Expression& expr,
+                            std::vector<irs::field_id>& markers) {
+  if (const auto* info = FindColumnInfoForExpr(ctx, expr)) {
+    if (irs::field_limits::valid(info->null_field_id) &&
+        !absl::c_linear_search(markers, info->null_field_id)) {
+      markers.push_back(info->null_field_id);
+    }
+    return;
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      CollectNullableMarkers(ctx, child, markers);
+    });
+}
+
+catalog::Tokenizer::TokenizerWrapper ResolveTokenizerOrThrow(
+  const FilterContext& ctx, std::string_view name) {
+  auto wrapper = AcquireTokenizer(ctx.client_context, name);
+  if (!wrapper) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("::tokenize('", name, "'): tokenizer not found in catalog"),
+      ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
+               "or use 'keyword' for raw bytes."));
+  }
+  return wrapper;
+}
+
+template<typename Pred>
+bool AnyExprNode(const duckdb::Expression& expr, const Pred& pred) {
+  if (pred(expr)) {
+    return true;
+  }
+  bool found = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      found = found || AnyExprNode(child, pred);
+    });
+  return found;
+}
+
+bool ContainsNullConstant(const duckdb::Expression& expr) {
+  return AnyExprNode(expr, [](const duckdb::Expression& node) {
+    return node.GetExpressionClass() ==
+             duckdb::ExpressionClass::BOUND_CONSTANT &&
+           node.Cast<duckdb::BoundConstantExpression>().GetValue().IsNull();
+  });
+}
+
+}  // namespace
+
+bool IsIndexOnlyPredicateName(std::string_view name) {
+  return name == "@@" || name == kPhraseMatches || name == kNgramMatches ||
+         name == kLevenshteinMatches || name == kHasAllTokens ||
+         name == kHasAnyTokens;
+}
+
+bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr) {
+  return AnyExprNode(expr, [](const duckdb::Expression& node) {
+    return node.GetExpressionClass() ==
+             duckdb::ExpressionClass::BOUND_FUNCTION &&
+           IsIndexOnlyPredicateName(node.Cast<duckdb::BoundFunctionExpression>()
+                                      .Function()
+                                      .GetName()
+                                      .GetIdentifierName());
+  });
+}
+
+// Term-surface comparison shapes: comparisons plus the scalar pattern
+// functions, excluding the index-only match sugar.
+bool IsStrictComparisonShape(const duckdb::Expression& expr) {
+  switch (expr.GetExpressionType()) {
+    case duckdb::ExpressionType::COMPARE_EQUAL:
+    case duckdb::ExpressionType::COMPARE_NOTEQUAL:
+    case duckdb::ExpressionType::COMPARE_LESSTHAN:
+    case duckdb::ExpressionType::COMPARE_GREATERTHAN:
+    case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
+    case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+    case duckdb::ExpressionType::COMPARE_BETWEEN:
+    case duckdb::ExpressionType::COMPARE_IN:
+    case duckdb::ExpressionType::COMPARE_NOT_IN:
+      return true;
+    default:
+      break;
+  }
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& name = expr.Cast<duckdb::BoundFunctionExpression>()
+                         .Function()
+                         .GetName()
+                         .GetIdentifierName();
+    return name == "~~" || name == "prefix" || name == "starts_with" ||
+           name == "^@";
+  }
+  return false;
+}
+
+namespace {
+
+// UNKNOWN exactly on NULL operands; false for shapes whose null behavior
+// is not provably strict.
+bool IsStrictPredicate(const duckdb::Expression& expr) {
+  if (IsStrictComparisonShape(expr)) {
+    return true;
+  }
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return IsIndexOnlyPredicateName(expr.Cast<duckdb::BoundFunctionExpression>()
+                                      .Function()
+                                      .GetName()
+                                      .GetIdentifierName());
+  }
+  return false;
+}
+
 template<typename Filter>
 absl::Status MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
                        const duckdb::BoundConjunctionExpression& conj) {
   auto sub_ctx = ctx;
   sub_ctx.boost = irs::kNoBoost;
+  std::vector<irs::field_id> markers;
   irs::BooleanFilter* group_root;
   if (ctx.negated && absl::c_all_of(conj.GetChildren(), [](const auto& child) {
         SDB_ASSERT(child);
@@ -352,11 +491,51 @@ absl::Status MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
       irs::Type<Filter>::id() == irs::Type<irs::And>::id()
         ? static_cast<irs::BooleanFilter*>(&AddFilter<irs::Or>(parent))
         : static_cast<irs::BooleanFilter*>(&AddFilter<irs::And>(parent));
+  } else if (ctx.negated) {
+    // A negated group claims soundly only as a strict DISJUNCTION over
+    // nullable columns: any NULL operand keeps the OR non-false, so SQL
+    // rejects the row and the group's exclusion may match the columns'
+    // null markers too. A negated conjunction has no such shape (Kleene
+    // FALSE AND UNKNOWN is FALSE), so it stays a row filter. A NULL
+    // literal inside a child makes it UNKNOWN-capable on non-NULL rows
+    // (its positive claim compiles the literal away), so it defeats the
+    // claim regardless of column nullability.
+    if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {
+          return ContainsNullConstant(*child);
+        })) {
+      return absl::InvalidArgumentError(
+        "negated group with NULL literals can be UNKNOWN on non-NULL rows");
+    }
+    for (const auto& child : conj.GetChildren()) {
+      CollectNullableMarkers(ctx, *child, markers);
+    }
+    if (!markers.empty()) {
+      const bool claimable =
+        irs::Type<Filter>::id() == irs::Type<irs::Or>::id() &&
+        absl::c_all_of(conj.GetChildren(), [](const auto& child) {
+          return IsStrictPredicate(*child);
+        });
+      if (!claimable) {
+        if (absl::c_any_of(conj.GetChildren(), [](const auto& child) {
+              return ContainsIndexOnlyPredicate(*child);
+            })) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("negated group over nullable columns mixes index-only "
+                    "search predicates with a shape that must stay a row "
+                    "filter"),
+            ERR_HINT("Rewrite the negation as a strict disjunction, or add "
+                     "`IS NOT NULL` conjuncts on the nullable columns."));
+        }
+        return absl::InvalidArgumentError(
+          "negated group over nullable columns is only index-claimable as a "
+          "strict disjunction");
+      }
+    }
+    group_root = &Negate<Filter>(parent);
+    sub_ctx.negated = false;
   } else {
-    group_root =
-      ctx.negated
-        ? static_cast<irs::BooleanFilter*>(&Negate<Filter>(parent))
-        : static_cast<irs::BooleanFilter*>(&AddFilter<Filter>(parent));
+    group_root = &AddFilter<Filter>(parent);
     sub_ctx.negated = false;
   }
   group_root->boost(ctx.boost);
@@ -364,6 +543,9 @@ absl::Status MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (auto s = FromExpression(*group_root, sub_ctx, *child); !s.ok()) {
       return s;
     }
+  }
+  for (const auto marker : markers) {
+    AddNullMarkerTerm(*group_root, marker);
   }
   return absl::OkStatus();
 }
@@ -377,14 +559,15 @@ absl::Status FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
     return absl::InvalidArgumentError(
       "IS NULL input is not a reference to an indexed column");
   }
+  if (!irs::field_limits::valid(column_info->null_field_id)) {
+    return absl::InvalidArgumentError(
+      "IS NULL over a column without a null-marker field (NOT NULL or "
+      "legacy index)");
+  }
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
-  SDB_ENSURE(irs::field_limits::valid(column_info->null_field_id),
-             "FromIsNull: column_info has no null_field_id allocated");
-  *term_filter.mutable_field_id() = column_info->null_field_id;
-  term_filter.mutable_options()->term.assign(
-    irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+  FillNullMarker(term_filter, column_info->null_field_id);
   return absl::OkStatus();
 }
 
@@ -423,18 +606,17 @@ absl::Status FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
     return absl::OkStatus();
   }
   if constexpr (GenericVersion) {
-    if (column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
-        column_info->tokenizer.analyzer->type() !=
-          irs::Type<irs::StringTokenizer>::id()) {
-      return absl::InvalidArgumentError(
-        "Field is not indexed by keyword analyzer. Use `col @@ "
-        "'value'` (tokenised) or `col @@ "
-        "'value'::tokenize('keyword')` (raw).");
+    if (auto s =
+          RequireKeywordAnalyzed(*column_info,
+                                 "Use `col @@ 'value'` (tokenised) or `col @@ "
+                                 "'value'::tokenize('keyword')` (raw).");
+        !s.ok()) {
+      return s;
     }
   }
 
   auto& term_filter = (ctx.negated != not_equal)
-                        ? Negate<irs::ByTerm>(filter)
+                        ? NegateScoped<irs::ByTerm>(filter, *column_info)
                         : AddFilter<irs::ByTerm>(filter);
 
   term_filter.boost(ctx.boost);
@@ -477,15 +659,14 @@ absl::Status FromComparison(irs::BooleanFilter& filter,
     return absl::OkStatus();
   }
   if constexpr (GenericVersion) {
-    if (column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
-        column_info->tokenizer.analyzer->type() !=
-          irs::Type<irs::StringTokenizer>::id()) {
-      return absl::InvalidArgumentError(
-        "Field is not indexed by keyword analyzer. Range predicates "
-        "(<, <=, >, >=, BETWEEN) require an keyword-analyzed column. "
-        "Use `col @@ ts_lt('value')` / `LESS_EQ` / `GREATER` / "
-        "`GREATER_EQ` / `ts_between(min, max, ...)` (tokenised through the "
-        "column's analyzer) instead.");
+    if (auto s = RequireKeywordAnalyzed(
+          *column_info,
+          "Range predicates (<, <=, >, >=, BETWEEN) require an "
+          "keyword-analyzed column. Use `col @@ ts_lt('value')` / `LESS_EQ` "
+          "/ `GREATER` / `GREATER_EQ` / `ts_between(min, max, ...)` "
+          "(tokenised through the column's analyzer) instead.");
+        !s.ok()) {
+      return s;
     }
   }
 
@@ -566,33 +747,16 @@ absl::Status FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
     return absl::InvalidArgumentError("BETWEEN bounds must be constants");
   }
 
-  if (!ctx.negated) {
-    // field >= lower AND field <= upper (with inclusivity flags)
-    auto lower = lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt;
-    auto upper = upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt;
+  const auto lower =
+    ctx.negated ? (lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le)
+                : (lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt);
+  const auto upper =
+    ctx.negated ? (upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge)
+                : (upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt);
 
-    auto& group = AddFilter<irs::And>(filter);
-    group.boost(ctx.boost);
-
-    // Sub-context: not negated, no extra boost (already on group)
-    FilterContext sub_ctx = ctx;
-    sub_ctx.negated = false;
-    sub_ctx.boost = irs::kNoBoost;
-
-    if (auto s = FromComparison<true>(group, sub_ctx, between_input,
-                                      between_lower, lower);
-        !s.ok()) {
-      return s;
-    }
-    return FromComparison<true>(group, sub_ctx, between_input, between_upper,
-                                upper);
-  }
-
-  // NOT BETWEEN: De Morgan -> field < lower OR field > upper
-  auto lower = lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le;
-  auto upper = upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge;
-
-  auto& group = AddFilter<irs::Or>(filter);
+  auto& group = ctx.negated
+                  ? static_cast<irs::BooleanFilter&>(AddFilter<irs::Or>(filter))
+                  : AddFilter<irs::And>(filter);
   group.boost(ctx.boost);
 
   FilterContext sub_ctx = ctx;
@@ -621,31 +785,36 @@ absl::Status FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   if constexpr (GenericVersion) {
-    if (column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
-        column_info->tokenizer.analyzer->type() !=
-          irs::Type<irs::StringTokenizer>::id()) {
-      return absl::InvalidArgumentError(
-        "Field is not indexed by keyword analyzer. Use `col @@ "
-        "ts_any('a', 'b', ...)` (tokenised) or `col @@ ts_any("
-        "'a'::tokenize('keyword'), ...)` (raw).");
+    if (auto s = RequireKeywordAnalyzed(
+          *column_info,
+          "Use `col @@ ts_any('a', 'b', ...)` (tokenised) or `col @@ "
+          "ts_any('a'::tokenize('keyword'), ...)` (raw).");
+        !s.ok()) {
+      return s;
     }
   }
 
-  // Collect constant values from children[1..]
+  // Collect constant values from children[1..]. NULL elements never
+  // satisfy the IN, but they keep NOT IN from ever being TRUE (the
+  // conjunct `x != NULL` is UNKNOWN), so under negation they force the
+  // empty result.
   std::vector<const duckdb::Value*> values;
   values.reserve(op_expr.GetChildren().size() - 1);
+  bool has_null = false;
   for (size_t i = 1; i < op_expr.GetChildren().size(); ++i) {
     const auto* val = TryGetConstant(*op_expr.GetChildren()[i]);
     if (!val) {
       return absl::InvalidArgumentError(
         "Failed to evaluate IN value as constant");
     }
-    if (!val->IsNull()) {
+    if (val->IsNull()) {
+      has_null = true;
+    } else {
       values.push_back(val);
     }
   }
 
-  if (values.empty()) {
+  if ((ctx.negated && has_null) || values.empty()) {
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
   }
@@ -656,28 +825,18 @@ absl::Status FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
 
-  auto& terms_filter = ctx.negated ? Negate<irs::ByTerms>(filter)
-                                   : AddFilter<irs::ByTerms>(filter);
+  auto& terms_filter = AddMaybeNegated<irs::ByTerms>(filter, ctx, *column_info);
   terms_filter.boost(ctx.boost);
   *terms_filter.mutable_field_id() = PickPerKindFieldId(*column_info, type_id);
   auto& opts = *terms_filter.mutable_options();
 
   for (const auto* value : values) {
-    if (type_id == duckdb::LogicalTypeId::VARCHAR) {
-      opts.terms.emplace(AsRawBytes(*value));
-    } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-      opts.terms.emplace(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(value->GetValue<bool>())));
-    } else if (IsNumericTypeId(type_id)) {
-      irs::NumericTokenizer stream;
-      const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      ResetNumericStream(stream, type_id, *value);
-      stream.next();
-      opts.terms.emplace(token->value);
-    } else {
+    irs::bstring term;
+    if (!TryEncodeTerm(type_id, *value, term)) {
       return absl::UnimplementedError(absl::StrCat(
         "Unsupported type for IN filter: ", static_cast<int>(type_id)));
     }
+    opts.terms.emplace(std::move(term));
   }
   return absl::OkStatus();
 }
@@ -956,11 +1115,9 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
   SDB_ASSERT(func.GetChildren().size() == 2);
   irs::BooleanFilter* group;
   if (is_and) {
-    group =
-      ctx.negated ? &Negate<irs::And>(parent) : &AddFilter<irs::And>(parent);
+    group = &AddMaybeNegated<irs::And>(parent, ctx, column_info);
   } else {
-    group =
-      ctx.negated ? &Negate<irs::Or>(parent) : &AddFilter<irs::Or>(parent);
+    group = &AddMaybeNegated<irs::Or>(parent, ctx, column_info);
   }
   group->boost(ctx.boost);
   auto sub_ctx = ctx;
@@ -1008,55 +1165,44 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
 // and recurses on the inner. Returns false if `peeled` carries no
 // boost modifier; true if it claimed and dispatched the cast (any
 // dispatch failure throws via the inner BuildTSQuery / BuildFts*).
+const duckdb::Expression* TryPeelBoostCast(const duckdb::Expression& peeled,
+                                           irs::score_t& factor) {
+  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+    return nullptr;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto boost = TryGetBoostModifier(cast_expr.GetReturnType());
+  if (!boost) {
+    return nullptr;
+  }
+  factor = static_cast<irs::score_t>(*boost);
+  return &cast_expr.Child();
+}
+
 bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
                           const SearchColumnInfo& column_info,
                           const duckdb::Expression& peeled) {
-  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-    const auto boost = TryGetBoostModifier(cast_expr.GetReturnType());
-    if (!boost) {
-      return false;
-    }
-    BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*boost)),
-                 column_info, cast_expr.Child());
-    return true;
+  irs::score_t factor;
+  const auto* child = TryPeelBoostCast(peeled, factor);
+  if (!child) {
+    return false;
   }
-  if (peeled.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
-    const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().GetValue();
-    const auto boost = TryGetBoostModifier(cv.type());
-    if (!boost) {
-      return false;
-    }
-    // Strip the BOOSTED alias before recursing, otherwise we re-enter
-    // this branch on the same value.
-    duckdb::Value cleaned = cv;
-    cleaned.Reinterpret(MakeTSQueryType());
-    duckdb::BoundConstantExpression cleaned_expr(std::move(cleaned));
-    BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*boost)),
-                 column_info, cleaned_expr);
-    return true;
-  }
-  return false;
+  BuildTSQuery(parent, ctx.WithBoost(factor), column_info, *child);
+  return true;
 }
 
 bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
                              const FilterContext& ctx,
                              const duckdb::Expression& peeled) {
-  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
-    return false;
-  }
-  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-  const auto boost = TryGetBoostModifier(cast_expr.GetReturnType());
-  if (!boost) {
+  irs::score_t factor;
+  const auto* child = TryPeelBoostCast(peeled, factor);
+  if (!child) {
     return false;
   }
   // ::boost is only meaningful inside an inverted-index match, so a child
   // predicate the index cannot claim is a user error even when building
   // speculatively.
-  if (auto s =
-        FromExpression(filter, ctx.WithBoost(static_cast<irs::score_t>(*boost)),
-                       cast_expr.Child());
-      !s.ok()) {
+  if (auto s = FromExpression(filter, ctx.WithBoost(factor), *child); !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("::boost(K) used on a predicate the inverted index could not "
@@ -1084,13 +1230,9 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
     if (!tokenizer.empty()) {
       expr = &cast_expr.Child();
       val = TryGetConstant(UnwrapTSQueryCast(*expr));
-    }
-  } else if (peeled.GetExpressionClass() ==
-             duckdb::ExpressionClass::BOUND_CONSTANT) {
-    const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().GetValue();
-    tokenizer = TryGetTokenizerModifier(cv.type());
-    if (!tokenizer.empty()) {
-      val = &cv;
+      if (val && IsTSQueryStructType(val->type())) {
+        val = nullptr;
+      }
     }
   }
   if (tokenizer.empty()) {
@@ -1111,14 +1253,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
       ERR_MSG("::tokenize('keyword'): inner expression has unsupported "
               "shape"));
   }
-  auto wrapper = AcquireTokenizer(ctx.client_context, tokenizer);
-  if (!wrapper) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("::tokenize('", tokenizer, "'): tokenizer not found in catalog"),
-      ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
-               "or use 'keyword' for raw bytes."));
-  }
+  auto wrapper = ResolveTokenizerOrThrow(ctx, tokenizer);
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
   if (val) {
     // Don't recurse on a folded constant: its type still carries the
@@ -1231,7 +1366,7 @@ absl::Status FromOperatorExpression(
 absl::Status FromExpression(irs::BooleanFilter& filter,
                             const FilterContext& ctx,
                             const duckdb::Expression& expr) {
-  // Peel the BOOSTED_TSQUERY -> BOOLEAN coercion that the WHERE-binder
+  // Peel the TSQUERY_MODIFIER -> BOOLEAN coercion that the WHERE-binder
   // inserts around `(predicate)::boost(K)` at the predicate root.
   if (TryDispatchSqlBoostCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
     return absl::OkStatus();
@@ -1435,7 +1570,26 @@ bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
          id == duckdb::LogicalTypeId::DECIMAL;
 }
 
+// Sees through the transit casts
+// between string-ish types and the TSQUERY struct family in both
+// directions of implicit promotion:
+//   - VARCHAR -> TSQUERY  (bare string literals into TSQUERY contexts)
+//   - TSQUERY -> VARCHAR  (TSQUERY-typed children flowing into VARCHAR
+//     mirror overloads of `##`, e.g. ts_phrase('a') ## 1, where DuckDB
+//     wraps the LHS in BOUND_CAST<VARCHAR>)
+//   - TOK <-> TSQ / VARCHAR transit casts that DON'T carry a tokenize
+//     modifier on the cast's return_type. Modifier-bearing casts are
+//     preserved here so the BuildTSQuery walker can read the override
+//     before continuing to dispatch the inner expression.
+// Iterative because casts can chain (e.g. ts_phrase('x')::tokenize('y')
+// inside @@ becomes BoundCast<TSQ>(BoundCast<TOK-mod-y>(PHRASE)) -- we
+// peel the outer transit cast and stop at the modifier-bearing cast).
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
+  const auto is_stringish = [](const duckdb::LogicalType& type) {
+    return type.id() == duckdb::LogicalTypeId::VARCHAR ||
+           type.id() == duckdb::LogicalTypeId::BLOB ||
+           type.id() == duckdb::LogicalTypeId::STRING_LITERAL;
+  };
   const duckdb::Expression* cur = &expr;
   while (cur->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
@@ -1446,13 +1600,13 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
         TryGetBoostModifier(target)) {
       break;
     }
-    // Peel transit casts within {VARCHAR, TSQUERY, TOKENIZED_TSQUERY}
-    // only -- a plain VARCHAR->VARCHAR cast must stay.
-    if (target.id() != duckdb::LogicalTypeId::VARCHAR ||
-        source.id() != duckdb::LogicalTypeId::VARCHAR) {
-      break;
-    }
-    if (!IsAnyTSQueryType(target) && !IsAnyTSQueryType(source)) {
+    // Peel transit casts between string-ish types and the TSQUERY
+    // struct family only -- a plain VARCHAR->VARCHAR cast must stay.
+    const auto in_family = [&](const duckdb::LogicalType& type) {
+      return IsTSQueryStructType(type) || is_stringish(type);
+    };
+    if ((!IsTSQueryStructType(target) && !IsTSQueryStructType(source)) ||
+        !in_family(target) || !in_family(source)) {
       break;
     }
     cur = &cast.Child();
@@ -1495,6 +1649,17 @@ void GetVarcharArg(const duckdb::Expression& expr, std::string& out,
   if (!val || val->IsNull()) {
     ThrowArgError(err, " must be a non-null VARCHAR constant");
   }
+  if (IsTSQueryStructType(val->type())) {
+    auto parts = TryGetTSQueryParts(*val);
+    if (!parts) {
+      ThrowArgError(err, " must be a non-null VARCHAR constant");
+    }
+    if (!parts->tokenizer.empty() || parts->boost != 1.0f) {
+      ThrowArgError(err, " must not carry boost or tokenize modifiers");
+    }
+    out = std::move(parts->text);
+    return;
+  }
   if (val->type().id() == duckdb::LogicalTypeId::BLOB) {
     out = duckdb::StringValue::Get(*val);
     return;
@@ -1509,21 +1674,8 @@ void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err) {
   if (!val || val->IsNull()) {
     ThrowArgError(err, " must be a non-null INTEGER constant");
   }
-  switch (val->type().id()) {
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-    case duckdb::LogicalTypeId::INTEGER:
-    case duckdb::LogicalTypeId::BIGINT:
-    case duckdb::LogicalTypeId::UTINYINT:
-    case duckdb::LogicalTypeId::USMALLINT:
-    case duckdb::LogicalTypeId::UINTEGER:
-    case duckdb::LogicalTypeId::UBIGINT:
-      out = val->GetValue<int64_t>();
-      return;
-    default:
-      if (!TryCoerce(*val, duckdb::LogicalTypeId::BIGINT, out)) {
-        ThrowArgError(err, " must be an INTEGER constant");
-      }
+  if (!TryCoerce(*val, duckdb::LogicalTypeId::BIGINT, out)) {
+    ThrowArgError(err, " must be an INTEGER constant");
   }
 }
 
@@ -1542,20 +1694,8 @@ void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err) {
   if (!val || val->IsNull()) {
     ThrowArgError(err, " must be a non-null numeric constant");
   }
-  switch (val->type().id()) {
-    case duckdb::LogicalTypeId::FLOAT:
-    case duckdb::LogicalTypeId::DOUBLE:
-    case duckdb::LogicalTypeId::DECIMAL:
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-    case duckdb::LogicalTypeId::INTEGER:
-    case duckdb::LogicalTypeId::BIGINT:
-      out = val->GetValue<double>();
-      return;
-    default:
-      if (!TryCoerce(*val, duckdb::LogicalTypeId::DOUBLE, out)) {
-        ThrowArgError(err, " must be a numeric constant");
-      }
+  if (!TryCoerce(*val, duckdb::LogicalTypeId::DOUBLE, out)) {
+    ThrowArgError(err, " must be a numeric constant");
   }
 }
 
@@ -1614,6 +1754,39 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
   return magic_enum::enum_cast<TSQueryOp>(name).value_or(TSQueryOp::Unknown);
 }
 
+namespace {
+
+void BuildTSQueryValue(irs::BooleanFilter& parent, const FilterContext& ctx,
+                       const SearchColumnInfo& column_info,
+                       const duckdb::Value& value) {
+  auto parts = TryGetTSQueryParts(value);
+  if (!parts) {
+    AddFilter<irs::Empty>(parent);
+    return;
+  }
+  const auto structured =
+    TryParseStructuredTSQueryText(parts->text, ctx.client_context);
+  const auto emit = [&](const FilterContext& sub_ctx) {
+    if (structured) {
+      BuildTSQuery(parent, sub_ctx, column_info, *structured);
+    } else {
+      BuildFtsTokens(parent, sub_ctx, column_info, parts->text,
+                     /*require_all=*/false);
+    }
+  };
+  auto boosted = ctx.WithBoost(parts->boost);
+  if (parts->tokenizer.empty()) {
+    return emit(boosted);
+  }
+  if (parts->tokenizer == irs::StringTokenizer::type_name()) {
+    return emit(boosted.WithTokenizer(boosted.identity));
+  }
+  auto wrapper = ResolveTokenizerOrThrow(ctx, parts->tokenizer);
+  emit(boosted.WithTokenizer(*wrapper));
+}
+
+}  // namespace
+
 void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Expression& expr) {
@@ -1663,6 +1836,10 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       unwrapped.Cast<duckdb::BoundConstantExpression>().GetValue();
     if (val.IsNull()) {
       AddFilter<irs::Empty>(parent);
+      return;
+    }
+    if (IsTSQueryStructType(val.type())) {
+      BuildTSQueryValue(parent, ctx, column_info, val);
       return;
     }
     if (val.type().id() == duckdb::LogicalTypeId::VARCHAR ||
@@ -1747,20 +1924,6 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       return FromTsqueryPhrase(parent, ctx, column_info, func);
     case TSQueryOp::ToTSQuery:
       return FromToTsquery(parent, ctx, column_info, func);
-    case TSQueryOp::IsNull:
-    case TSQueryOp::IsNotNull: {
-      // `col @@ ts_is_null()` -> Not(ByColumnExistence(col_id));
-      // `col @@ ts_is_not_null()` -> ByColumnExistence(col_id). The cs
-      // column id space and the catalog column id space are aligned
-      // (see search_pk_lookup.h's cast for the PK).
-      const bool exists = (op == TSQueryOp::IsNotNull);
-      auto& existence = (ctx.negated ^ exists)
-                          ? AddFilter<irs::ByColumnExistence>(parent)
-                          : Negate<irs::ByColumnExistence>(parent);
-      existence.boost(ctx.boost);
-      *existence.mutable_id() = column_info.field_id;
-      return;
-    }
     case TSQueryOp::Unknown:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

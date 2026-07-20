@@ -71,8 +71,8 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
                "`Frequency` features attached to the column."));
   }
 
-  auto& ngram = ctx.negated ? Negate<irs::ByNGramSimilarity>(filter)
-                            : AddFilter<irs::ByNGramSimilarity>(filter);
+  auto& ngram =
+    AddMaybeNegated<irs::ByNGramSimilarity>(filter, ctx, column_info);
   ngram.boost(ctx.boost);
   *ngram.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);

@@ -100,6 +100,9 @@ template<typename Range>
 Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
                              ScoreMergeType merge_type) {
   const score_t boost = MergedBoost(merge_type, lo.Boost(), hi.Boost());
+  if (RangeBound(lo, true) > RangeBound(hi, false)) {
+    return std::make_unique<Empty>();
+  }
   if (RangeBound(lo, true) == RangeBound(hi, false)) {
     if (lo.options().range.min_type == BoundType::Inclusive &&
         hi.options().range.max_type == BoundType::Inclusive) {
@@ -174,7 +177,14 @@ bool RangeDegenerateRule::Apply(Filter::ptr& slot,
   auto& node = sdb::basics::downCast<ByRange>(*slot);
   const auto& rng = node.options().range;
   if (rng.min_type == BoundType::Unbounded ||
-      rng.max_type == BoundType::Unbounded || rng.min != rng.max) {
+      rng.max_type == BoundType::Unbounded) {
+    return false;
+  }
+  if (rng.min > rng.max) {
+    slot = std::make_unique<Empty>();
+    return true;
+  }
+  if (rng.min != rng.max) {
     return false;
   }
   if (rng.min_type == BoundType::Inclusive &&
@@ -194,8 +204,14 @@ bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
                                         const OptimizeContext& /*ctx*/) {
   auto& node = sdb::basics::downCast<ByGranularRange>(*slot);
   const auto& rng = node.options().range;
-  if (rng.min.empty() || rng.max.empty() ||
-      rng.min.front() != rng.max.front()) {
+  if (rng.min.empty() || rng.max.empty()) {
+    return false;
+  }
+  if (rng.min.front() > rng.max.front()) {
+    slot = std::make_unique<Empty>();
+    return true;
+  }
+  if (rng.min.front() != rng.max.front()) {
     return false;
   }
   if (rng.min_type == BoundType::Inclusive &&

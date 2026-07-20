@@ -111,6 +111,10 @@ doc_id_t BitsetDocIterator::LazySeek(doc_id_t target) {
       _word = 0;
       return _doc = doc_limits::eof();
     }
+    // Keep _next/_word/_base coherent with the refilled words: the miss
+    // path below returns without committing a position, and a later
+    // advance() must not read the stale (possibly null) _next.
+    reset();
   }
 
   const doc_id_t bit_idx = target % BitsRequired<word_t>();

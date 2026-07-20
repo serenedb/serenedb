@@ -15,12 +15,10 @@ apt-get install -y /workspace/"$DEB_PACKAGE"
 # Configure for testing: listen on all interfaces so the tests container can reach us
 sed -i 's|^--listen=.*|--listen=postgres://0.0.0.0:7890|' /etc/serenedb/serened.conf
 
-# On slow ARM cores catalog-DDL bursts starve new connections' startup/auth past
+# Under CI load catalog-DDL bursts can starve new connections' startup/auth past
 # the 30s slowloris deadline, which closes them without a log line and fails the
-# sqllogic step with `connection closed`
-if [[ "$(uname -m)" == "aarch64" ]]; then
-	echo '--auth_timeout=600s' >>/etc/serenedb/serened.conf
-fi
+# sqllogic step with `connection closed` -- every test serened runs with 600s.
+echo '--auth_timeout=600s' >>/etc/serenedb/serened.conf
 
 # Apply the new endpoint (postinst already started the service)
 systemctl restart serenedb

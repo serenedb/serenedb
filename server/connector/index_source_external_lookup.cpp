@@ -29,7 +29,6 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector.hpp>
-#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/common/vector_size.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -107,9 +106,6 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   }
   _num_key_cols = key_cols.size();
   _num_proj_cols = select_names.size();
-  _pk_kind = _fast_path.pk_spec == catalog::PkSpec::ExternalRowId
-               ? PrimaryKeyBatch::Kind::I64
-               : PrimaryKeyBatch::Kind::Struct;
 
   std::string select_list = absl::StrJoin(key_cols, ", ");
   for (const auto& name : select_names) {
@@ -151,11 +147,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   }
 
   _params.resize(static_cast<size_t>(STANDARD_VECTOR_SIZE) * _num_key_cols);
-  if (_pk_kind == PrimaryKeyBatch::Kind::Struct) {
-    _struct_slot.reserve(STANDARD_VECTOR_SIZE);
-  } else {
-    _i64_slot.reserve(STANDARD_VECTOR_SIZE);
-  }
+  _struct_slot.reserve(STANDARD_VECTOR_SIZE);
 }
 
 duckdb::idx_t ExternalLookupIndexSource::Materialize(
@@ -165,30 +157,21 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
     return 0;
   }
   auto& pk = batch;
-  SDB_ASSERT(pk.kind == _pk_kind);
+  SDB_ASSERT(pk.kind == PrimaryKeyBatch::Kind::Struct);
+  SDB_ASSERT(pk.column && start == 0 && count <= pk.column_count);
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
-  const bool is_struct = _pk_kind == PrimaryKeyBatch::Kind::Struct;
   const duckdb::idx_t num_key_cols = _num_key_cols;
 
   // _params is row-major: tuple i occupies [i*num_key_cols, (i+1)*num_key_cols),
   // matching the placeholder order.
-  if (is_struct) {
-    _struct_slot.clear();
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      duckdb::Value key = pk.column->GetValue(i);
-      const auto& children = duckdb::StructValue::GetChildren(key);
-      for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-        _params[i * num_key_cols + k] = children[k];
-      }
-      _struct_slot.try_emplace(std::move(key), i);
+  _struct_slot.clear();
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    duckdb::Value key = pk.column->GetValue(i);
+    const auto& children = duckdb::StructValue::GetChildren(key);
+    for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+      _params[i * num_key_cols + k] = children[k];
     }
-  } else {
-    _i64_slot.clear();
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      const int64_t key = pk.rows[start + i];
-      _params[i] = duckdb::Value::BIGINT(key);
-      _i64_slot.try_emplace(key, i);
-    }
+    _struct_slot.try_emplace(std::move(key), i);
   }
 
   // Pad the unused groups of a partial last batch by repeating the first tuple.
@@ -236,30 +219,17 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
       }
     }
   };
-  if (is_struct) {
-    const auto& key_type = pk.column->GetType();
-    drain(_struct_slot,
-          [&](duckdb::DataChunk& chunk, duckdb::idx_t, duckdb::idx_t row) {
-            duckdb::vector<duckdb::Value> children;
-            children.reserve(num_key_cols);
-            for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-              children.push_back(chunk.data[k].GetValue(row));
-            }
-            return _struct_slot.find(
-              duckdb::Value::STRUCT(key_type, std::move(children)));
-          });
-  } else {
-    // The key column is BIGINT (rowid / single BIGINT column), read raw.
-    drain(_i64_slot,
-          [&](duckdb::DataChunk& chunk, duckdb::idx_t n, duckdb::idx_t row) {
-            auto& keycol = chunk.data[0];
-            keycol.Flatten(n);
-            const auto* keys = duckdb::FlatVector::GetData<int64_t>(keycol);
-            const auto& valid = duckdb::FlatVector::Validity(keycol);
-            return valid.RowIsValid(row) ? _i64_slot.find(keys[row])
-                                         : _i64_slot.end();
-          });
-  }
+  const auto& key_type = pk.column->GetType();
+  drain(_struct_slot,
+        [&](duckdb::DataChunk& chunk, duckdb::idx_t, duckdb::idx_t row) {
+          duckdb::vector<duckdb::Value> children;
+          children.reserve(num_key_cols);
+          for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+            children.push_back(chunk.data[k].GetValue(row));
+          }
+          return _struct_slot.find(
+            duckdb::Value::STRUCT(key_type, std::move(children)));
+        });
 
   _tf_target.SetCardinality(rows);
   RunCastPass(output, rows);

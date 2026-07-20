@@ -32,7 +32,6 @@
 #include <memory>
 #include <span>
 
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/table_options.h"
 #include "connector/index_source_view.h"
 #include "connector/view_fast_path.h"
@@ -48,7 +47,9 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     std::span<const catalog::Column::Id> bind_column_ids);
   ~ExternalLookupIndexSource() final = default;
 
-  PrimaryKeyBatch::Kind PkKind() const final { return _pk_kind; }
+  PrimaryKeyBatch::Kind PkKind() const final {
+    return PrimaryKeyBatch::Kind::Struct;
+  }
 
   duckdb::idx_t Materialize(duckdb::ClientContext& context,
                             PrimaryKeyBatch& batch, duckdb::idx_t start,
@@ -58,13 +59,11 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
  private:
   duckdb::idx_t _num_proj_cols = 0;
   duckdb::idx_t _num_key_cols = 0;
-  PrimaryKeyBatch::Kind _pk_kind = PrimaryKeyBatch::Kind::I64;
 
   std::unique_ptr<duckdb::Connection> _con;
   std::unique_ptr<duckdb::PreparedStatement> _prepared;
 
   duckdb::vector<duckdb::Value> _params;
-  containers::FlatHashMap<int64_t, duckdb::idx_t> _i64_slot;
   absl::flat_hash_map<duckdb::Value, duckdb::idx_t> _struct_slot;
 };
 

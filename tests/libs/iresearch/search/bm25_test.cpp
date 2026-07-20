@@ -30,7 +30,6 @@
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/column_existence_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
@@ -1191,76 +1190,6 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      ASSERT_FALSE(values.IsNull(docs->value()));
-      ++doc;
-      ASSERT_EQ(0.f, score_value);
-    }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // column existence
-  {
-    irs::tests::BlobPointReader values{segment, *column};
-
-    irs::ByColumnExistence filter;
-    *filter.mutable_id() = kSeq;
-
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
-    fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .scorer = &scorer,
-      .segment = &segment,
-    });
-    ASSERT_TRUE(score.IsDefault());
-
-    irs::doc_id_t doc = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(docs->advance())) {
-      ASSERT_EQ(doc, docs->value());
-
-      fetcher.Fetch(docs->value());
-      docs->FetchScoreArgs(0);
-      irs::score_t score_value{};
-      score.Score(&score_value, 1);
-      ASSERT_FALSE(values.IsNull(docs->value()));
-      ++doc;
-      ASSERT_EQ(0.f, score_value);
-    }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
-  }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
-
-  // column existence
-  {
-    irs::tests::BlobPointReader values{segment, *column};
-
-    irs::ByColumnExistence filter;
-    *filter.mutable_id() = kSeq;
-    filter.boost(0.f);
-
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
-    fetcher.Clear();
-    auto docs = prepared_filter.Execute(0);
-    auto score = docs->PrepareScore({
-      .scorer = &scorer,
-      .segment = &segment,
-    });
-    ASSERT_TRUE(score.IsDefault());
-
-    irs::doc_id_t doc = irs::doc_limits::min();
-    while (!irs::doc_limits::eof(docs->advance())) {
-      ASSERT_EQ(doc, docs->value());
-
-      fetcher.Fetch(docs->value());
-      docs->FetchScoreArgs(0);
-      irs::score_t score_value{};
-      score.Score(&score_value, 1);
-
       ASSERT_FALSE(values.IsNull(docs->value()));
       ++doc;
       ASSERT_EQ(0.f, score_value);

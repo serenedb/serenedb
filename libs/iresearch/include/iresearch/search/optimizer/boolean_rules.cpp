@@ -21,6 +21,7 @@
 #include "iresearch/search/optimizer/boolean_rules.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/hash/hash.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <re2/re2.h>
@@ -37,9 +38,11 @@
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/granular_range_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/optimizer/common.hpp"
+#include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
@@ -112,6 +115,24 @@ struct OrAllFoldRule {
 struct SingleChildRule {
   static constexpr std::string_view kName = "single_child";
   static constexpr std::array kTargets{Type<And>::id(), Type<Or>::id()};
+  static constexpr bool kEnable = true;
+
+  static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
+};
+
+// Exclusion normal form. Three algebraic steps over the excludes list:
+// an excluded any-of disjunction (min_match 1) splits into flat siblings
+// (A \ (a|b) == A \ a \ b), excluding the same filter twice is excluding
+// it once, and
+// a null-marker exclude is dropped when the include side anchors its
+// parent column -- a postings-only positive on F already rejects every
+// row F's marker matches (OptimizeContext.null_markers is the embedder's
+// contract for that disjointness; without the map the marker step is
+// inert). Only the flat Exclusion shape needs handling: coalescing
+// normalizes every And/Not combination to it within the same slot visit.
+struct ExclusionNormalizeRule {
+  static constexpr std::string_view kName = "exclusion_normalize";
+  static constexpr std::array kTargets{Type<Exclusion>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
@@ -828,10 +849,170 @@ void InitBooleanRules() {
   RegisterRule<OrAllFoldRule>();
   RegisterRule<SingleChildRule>();
   RegisterRule<ByTermsRule>();
+  RegisterRule<ExclusionNormalizeRule>();
   RegisterRule<OrAcceptorFusionRule>();
   RegisterRule<OrUnsatRule>();
   RegisterRule<OrAllRequiredRule>();
   RegisterRule<MixedDegenerateRule>();
+}
+
+namespace {
+
+// The field a postings-requiring leaf constrains: every match holds at
+// least one posting of that field. Shared by anchor collection (such a
+// leaf proves the field non-NULL for every match) and marker pruning (on
+// a one-term marker dictionary any such leaf is the marker itself).
+template<typename... Ts>
+field_id AnyFieldOf(const Filter& node) {
+  field_id field = field_limits::invalid();
+  (void)((node.type() == Type<Ts>::id()
+            ? (field = sdb::basics::downCast<Ts>(node).field_id(), true)
+            : false) ||
+         ...);
+  return field;
+}
+
+field_id RequiringLeafFieldOf(const Filter& node) {
+  if (node.type() == Type<ByTerms>::id()) {
+    const auto& terms = sdb::basics::downCast<ByTerms>(node);
+    if (terms.options().min_match >= 1) {
+      return terms.field_id();
+    }
+    return field_limits::invalid();
+  }
+  return AnyFieldOf<ByTerm, ByPrefix, ByRange, ByGranularRange, ByPhrase,
+                    AutomatonFilter, LevenshteinAutomatonFilter>(node);
+}
+
+// Dedup identity for excludes: deep operator== plus a consistent hash
+// over (leaf field, ByTerm term bytes) -- the shape negation claims
+// mass-produce -- so duplicates resolve in one probe; unequal filters
+// may hash-collide and the set's equality disambiguates.
+struct ExcludeHasher {
+  size_t operator()(const Filter* filter) const {
+    bytes_view term;
+    if (filter->type() == Type<ByTerm>::id()) {
+      term = sdb::basics::downCast<ByTerm>(*filter).options().term;
+    }
+    return absl::HashOf(
+      AnyFieldOf<ByTerm, ByTerms, ByPrefix, ByRange, ByGranularRange, ByPhrase,
+                 AutomatonFilter, LevenshteinAutomatonFilter>(*filter),
+      term);
+  }
+};
+
+struct ExcludeEqual {
+  bool operator()(const Filter* lhs, const Filter* rhs) const noexcept {
+    return *lhs == *rhs;
+  }
+};
+
+void CollectAnchorFields(Filter& node,
+                         sdb::containers::FlatHashSet<field_id>& out) {
+  if (node.type() == Type<And>::id()) {
+    for (auto& child : node.GetChildren()) {
+      if (child) {
+        CollectAnchorFields(*child, out);
+      }
+    }
+    return;
+  }
+  if (node.type() == Type<Exclusion>::id()) {
+    auto& exclusion = sdb::basics::downCast<Exclusion>(node);
+    if (exclusion.GetInclude()) {
+      CollectAnchorFields(*exclusion.mutable_include(), out);
+    }
+    return;
+  }
+  if (node.type() == Type<Or>::id()) {
+    auto& disjunction = sdb::basics::downCast<Or>(node);
+    const auto children = disjunction.GetChildren();
+    if (disjunction.min_match_count() < 1 || children.empty() ||
+        !children.front()) {
+      return;
+    }
+    sdb::containers::FlatHashSet<field_id> common;
+    CollectAnchorFields(*children.front(), common);
+    sdb::containers::FlatHashSet<field_id> branch;
+    for (auto& child : children.subspan(1)) {
+      if (!child || common.empty()) {
+        return;
+      }
+      branch.clear();
+      CollectAnchorFields(*child, branch);
+      if (branch.size() < common.size()) {
+        std::swap(common, branch);
+      }
+      absl::erase_if(
+        common, [&](const field_id field) { return !branch.contains(field); });
+    }
+    out.insert(common.begin(), common.end());
+    return;
+  }
+  if (const auto field = RequiringLeafFieldOf(node);
+      field_limits::valid(field)) {
+    out.insert(field);
+  }
+}
+
+}  // namespace
+
+bool ExclusionNormalizeRule::Apply(Filter::ptr& slot,
+                                   const OptimizeContext& ctx) {
+  auto& exclusion = sdb::basics::downCast<Exclusion>(*slot);
+  bool changed = false;
+  std::vector<Filter::ptr> split;
+  for (auto& excluded : exclusion.mutable_excludes()) {
+    if (!excluded || excluded->type() != Type<Or>::id()) {
+      continue;
+    }
+    auto& disjunction = sdb::basics::downCast<Or>(*excluded);
+    if (disjunction.min_match_count() != 1) {
+      continue;
+    }
+    auto& branches = disjunction.mutable_filters();
+    if (branches.empty()) {
+      continue;
+    }
+    for (size_t i = 1; i < branches.size(); ++i) {
+      split.push_back(std::move(branches[i]));
+    }
+    auto first = std::move(branches.front());
+    excluded = std::move(first);
+    changed = true;
+  }
+  for (auto& extra : split) {
+    exclusion.exclude(std::move(extra));
+  }
+
+  const bool can_prune =
+    ctx.null_markers && !ctx.null_markers->empty() && exclusion.GetInclude();
+  sdb::containers::FlatHashSet<field_id> anchors;
+  bool anchors_ready = false;
+  sdb::containers::FlatHashSet<const Filter*, ExcludeHasher, ExcludeEqual> kept;
+  kept.reserve(exclusion.GetExcludes().size());
+  changed |= exclusion.EraseExcludesIf([&](const Filter::ptr& f) {
+    if (!f) {
+      return false;
+    }
+    if (can_prune) {
+      if (const auto field = RequiringLeafFieldOf(*f);
+          field_limits::valid(field)) {
+        const auto it = ctx.null_markers->find(field);
+        if (it != ctx.null_markers->end()) {
+          if (!anchors_ready) {
+            anchors_ready = true;
+            CollectAnchorFields(*exclusion.mutable_include(), anchors);
+          }
+          if (anchors.contains(it->second)) {
+            return true;
+          }
+        }
+      }
+    }
+    return !kept.insert(f.get()).second;
+  });
+  return changed;
 }
 
 size_t AcceptorRank(const Filter& filter) noexcept {

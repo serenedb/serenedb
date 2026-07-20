@@ -51,8 +51,7 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
-    auto& wf = ctx.negated ? Negate<irs::ByWildcardNgram>(parent)
-                           : AddFilter<irs::ByWildcardNgram>(parent);
+    auto& wf = AddMaybeNegated<irs::ByWildcardNgram>(parent, ctx, column_info);
     wf.boost(ctx.boost);
     *wf.mutable_field_id() =
       PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
@@ -77,12 +76,7 @@ void FromLike(irs::BooleanFilter& parent, const FilterContext& ctx,
     parent.add(std::move(wildcard));
     return;
   }
-  auto negated = std::make_unique<irs::Not>(std::move(wildcard));
-  if (parent.type() == irs::Type<irs::Or>::id()) {
-    AddFilter<irs::And>(parent).add(std::move(negated));
-  } else {
-    parent.add(std::move(negated));
-  }
+  AddNegated(parent, column_info, std::move(wildcard));
 }
 
 }  // namespace sdb::connector

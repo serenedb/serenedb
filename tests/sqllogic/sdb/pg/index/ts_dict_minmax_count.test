@@ -1,5 +1,11 @@
 hash-threshold 100
 
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
 # count(DISTINCT col), min(col) and max(col) over a keyword-analyzed
 # inverted-index column reduce exactly the field's distinct terms, so the
 # optimizer serves them from the term dictionary like array_agg(DISTINCT).
@@ -74,13 +80,13 @@ QUERY PLAN
 ╰─────────────────────┬────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴────────────────────╮
 │ Groups: #0                               │
-│ ~2 rows                                  │
+│ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: mc_idx                            │
 │ TsDict: opt                              │
 │ Projections: sdb_inverted_index_term$opt │
-│ ~5 rows                                  │
+│ ~2 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query
@@ -143,7 +149,7 @@ QUERY PLAN
 │ Index: mc_idx                            │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~5 rows                                  │
+│ ~4 rows                                  │
 ╰──────────────────────────────────────────╯
 
 # count(*) needs document rows: the node is not converted and both aggregates

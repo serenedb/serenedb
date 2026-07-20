@@ -380,7 +380,7 @@ ColumnTokenizer InvertedIndex::GetTokenizer(
 
 bool InvertedIndex::IsKeywordField(const Snapshot& snapshot,
                                    irs::field_id field_id) const noexcept {
-  const auto* info = FindColumnInfo(static_cast<Column::Id>(field_id));
+  const auto* info = FindEntry(field_id);
   if (info == nullptr || !info->IsTermDict()) {
     return false;
   }

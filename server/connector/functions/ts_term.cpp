@@ -43,8 +43,7 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
 
-  auto& term =
-    ctx.negated ? Negate<irs::ByTerm>(parent) : AddFilter<irs::ByTerm>(parent);
+  auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, column_info);
   term.boost(ctx.boost);
   // SetupTermFilter declines for unsupported column types (it is shared with
   // the speculative comparison path); under ts_* syntax that is a user error.
@@ -76,22 +75,20 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   if (tokens.empty()) {
-    AddFilter<irs::Empty>(parent);
+    AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
   const auto field_id =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   if (tokens.size() == 1) {
-    auto& term = ctx.negated ? Negate<irs::ByTerm>(parent)
-                             : AddFilter<irs::ByTerm>(parent);
+    auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, column_info);
     term.boost(ctx.boost);
     *term.mutable_field_id() = field_id;
     term.mutable_options()->term.assign(tokens[0]);
     return;
   }
   // Multi-token: ByTerms with min_match=1 (OR) or N (AND).
-  auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
-                            : AddFilter<irs::ByTerms>(parent);
+  auto& terms = AddMaybeNegated<irs::ByTerms>(parent, ctx, column_info);
   terms.boost(ctx.boost);
   *terms.mutable_field_id() = field_id;
   auto& opts = *terms.mutable_options();

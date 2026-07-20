@@ -1,5 +1,11 @@
 hash-threshold 100
 
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
 # min/max/count(DISTINCT) over keyword inverted-index columns crossed with
 # WHERE acceptors, deletion masks and NULLs. min-only requests stop after the
 # first live term per segment and max-only requests seek to the greatest term

@@ -148,6 +148,8 @@ class CheckConstraint final : public Object {
   std::optional<size_t> IsNotNull(
     std::span<const Column> columns) const noexcept;
 
+  std::optional<std::string_view> NotNullColumnName() const noexcept;
+
   std::shared_ptr<ColumnExpr> expr;
 };
 

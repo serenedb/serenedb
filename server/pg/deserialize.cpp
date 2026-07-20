@@ -49,12 +49,30 @@
 #include <utility>
 #include <vector>
 
+#include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
+
+void VectorSink::Tsquery(std::string_view text) {
+  auto& entries = duckdb::StructVector::GetEntries(vec);
+  auto& text_vec = entries[connector::kTSQueryTextChild];
+  duckdb::FlatVector::GetDataMutable<duckdb::string_t>(text_vec)[row] =
+    duckdb::StringVector::AddString(text_vec, text.data(), text.size());
+  auto& tok_vec = entries[connector::kTSQueryTokenizerChild];
+  duckdb::FlatVector::GetDataMutable<duckdb::string_t>(tok_vec)[row] =
+    duckdb::StringVector::AddString(tok_vec, "", 0);
+  auto& boost_vec = entries[connector::kTSQueryBoostChild];
+  duckdb::FlatVector::GetDataMutable<float>(boost_vec)[row] = 1.0f;
+}
+
+void ValueSink::Tsquery(std::string_view text) {
+  out = connector::MakeTSQueryValue(type, text);
+}
+
 namespace {
 
 // Decode cores are the deserialize twin of the serialize framework's leaf
@@ -1719,6 +1737,16 @@ struct StructText {
   }
 };
 
+// The wire form of a TSQUERY value is its query text (OID 25 in both
+// formats); the struct's tokenizer/boost fields take their defaults.
+struct TsqueryCore {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    sink.Tsquery(data);
+    return true;
+  }
+};
+
 struct MapBin {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
@@ -1840,6 +1868,9 @@ DeserializationFunction<Sink> GetDeserialization(
     case STRUCT:
       if (IsInet(type)) {
         return SelectDecoder<InetBin, InetText, Sink>(binary);
+      }
+      if (connector::IsTSQueryStructType(type)) {
+        return &TsqueryCore::template Decode<Sink>;
       }
       return SelectDecoder<StructBin, StructText, Sink>(binary);
     case MAP:

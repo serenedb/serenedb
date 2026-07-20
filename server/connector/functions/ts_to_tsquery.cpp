@@ -132,7 +132,7 @@ void ParseWebsearchQuery(std::string_view text,
                          const FilterContext& ctx, irs::BooleanFilter& parent) {
   const auto groups = GroupWebsearch(LexWebsearch(text));
   if (groups.empty()) {
-    AddFilter<irs::Empty>(parent);
+    AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
 
@@ -153,8 +153,7 @@ void ParseWebsearchQuery(std::string_view text,
       emit_atom(group[0], into, c);
       return;
     }
-    auto& or_group =
-      c.negated ? Negate<irs::Or>(into) : AddFilter<irs::Or>(into);
+    auto& or_group = AddMaybeNegated<irs::Or>(into, c, column_info);
     or_group.boost(c.boost);
     auto inner = c;
     inner.negated = false;
@@ -169,8 +168,7 @@ void ParseWebsearchQuery(std::string_view text,
     return;
   }
 
-  auto& and_group =
-    ctx.negated ? Negate<irs::And>(parent) : AddFilter<irs::And>(parent);
+  auto& and_group = AddMaybeNegated<irs::And>(parent, ctx, column_info);
   and_group.boost(ctx.boost);
   auto inner = ctx;
   inner.negated = false;
@@ -229,8 +227,8 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
   SDB_ASSERT(func.GetChildren().size() == 1);
   std::string text;
   GetVarcharArg(*func.GetChildren()[0], text, {"to_tsquery text", kSyntaxHint});
-  auto& mixed = ctx.negated ? Negate<irs::MixedBooleanFilter>(parent)
-                            : AddFilter<irs::MixedBooleanFilter>(parent);
+  auto& mixed =
+    AddMaybeNegated<irs::MixedBooleanFilter>(parent, ctx, column_info);
   mixed.boost(ctx.boost);
   sdb::ParserContext parser_ctx{
     mixed, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),

@@ -681,8 +681,10 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   duckdb::OperatorSinkCombineInput& input) const {
   if (auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state)) {
     lstate->writer.reset();
+    // Flush this thread's tail segment here (in parallel Combines) rather than
+    // leaving it for the single-threaded Finalize refresh to write.
     const bool committed =
-      lstate->search_trx ? lstate->search_trx->Commit() : false;
+      lstate->search_trx ? lstate->search_trx->FlushAndCommit() : false;
     lstate->search_trx.reset();
     if (committed) {
       // The final commit went through: nothing pending here anymore, drop

@@ -98,8 +98,10 @@ struct CentroidsNode {
       size_t start;
       size_t count;
     };
+    std::vector<size_t> starts, sizes;
     std::vector<Scored> scored;
     for (const auto& node : nodes) {
+      scored.clear();
       for (size_t i = 0; i < node.size; ++i) {
         const byte_type* c =
           reinterpret_cast<const byte_type*>(node.centroids.data() + d * i);
@@ -117,19 +119,17 @@ struct CentroidsNode {
                             node.child_offsets[i + 1] - node.child_offsets[i]});
         }
       }
+      const auto k = std::min<size_t>(beam, scored.size());
+      const auto mid = scored.begin() + k;
+      std::ranges::nth_element(scored, mid, std::greater{}, &Scored::dist);
+      std::ranges::sort(scored.begin(), mid, std::greater{}, &Scored::dist);
+      for (auto it = scored.begin(); it != mid; ++it) {
+        starts.emplace_back(it->start);
+        sizes.emplace_back(it->count);
+      }
     }
-    if (level == 0 || scored.empty()) {
+    if (level == 0 || starts.empty()) {
       return;
-    }
-    const auto k = std::min<size_t>(beam, scored.size());
-    const auto mid = scored.begin() + k;
-    std::ranges::partial_sort(scored, mid, std::greater{}, &Scored::dist);
-    std::vector<size_t> starts, sizes;
-    starts.reserve(k);
-    sizes.reserve(k);
-    for (auto it = scored.begin(); it != mid; ++it) {
-      starts.emplace_back(it->start);
-      sizes.emplace_back(it->count);
     }
     LayerBuffers bufs;
     size_t n_total = 0;

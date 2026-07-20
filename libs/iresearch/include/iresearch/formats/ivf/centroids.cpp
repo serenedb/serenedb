@@ -41,7 +41,6 @@
 namespace irs {
 namespace {
 
-constexpr double kBeamOverprobe = 3.0;
 constexpr size_t kTrainSeed = 42;
 constexpr uint64_t kSampleSegmentOversample = 4;
 constexpr size_t kPostingSizeDefault = 1024;
@@ -364,11 +363,9 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     out_ids.push_back(0);
     return;
   }
-  auto beam = static_cast<uint32_t>(
-    std::ceil(kBeamOverprobe * std::sqrt(static_cast<double>(nprobe))));
-  if (_root.level >= 2) {
-    beam = std::max(beam, nprobe);
-  }
+  const double levels = static_cast<double>(_root.level + 1);
+  const auto beam = static_cast<uint32_t>(
+    std::ceil(std::pow(levels * static_cast<double>(nprobe), 1.0 / levels)));
   if (_root.level > 0) {
     in.Seek(_next_level_offset);
   }
@@ -384,8 +381,10 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                                   _root.size, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());
     const auto mid = leaves.begin() + k;
-    std::ranges::partial_sort(leaves, mid, std::greater{},
-                              &CentroidsNode::Candidate::dist);
+    std::ranges::nth_element(leaves, mid, std::greater{},
+                             &CentroidsNode::Candidate::dist);
+    std::ranges::sort(leaves.begin(), mid, std::greater{},
+                      &CentroidsNode::Candidate::dist);
     out_ids.reserve(out_ids.size() + k);
     if (out_centroids) {
       out_centroids->reserve(out_centroids->size() + k * _head.d);

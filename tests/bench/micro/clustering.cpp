@@ -20,21 +20,30 @@
 
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/utils/vector.hpp>
+#include <limits>
 #include <random>
 #include <vector>
 
 // Compares the clustering primitive (produce k centroids from n sample vectors)
-// across three algorithms exposed by irs::TrainCentroids:
-//   - Lloyd            (plain k-means, main's baseline)
-//   - FlatSuperKMeans  (ADSampling-pruned flat SuperKMeans)
-//   - Hskm             (Hierarchical SuperKMeans: meso sqrt(k) + fine)
-// Reports wall time plus the k-means objective (mean squared distance of a
-// sample of points to their nearest centroid) so speed can be read at ~equal
-// quality. Data and cache warm-up happen in SetUp, outside the timed loop.
+// across four strategies:
+//   - Lloyd            (flat k-means, main's baseline)
+//   - FlatSuperKMeans  (flat ADSampling-pruned SuperKMeans)
+//   - HierLloyd        (meso sqrt(k) Lloyd + fine Lloyd -- what the IVF tree
+//   does
+//                       per node)
+//   - Hskm             (meso sqrt(k) SuperKMeans + fine Lloyd -- the old H-SKM)
+// The two hierarchical variants only differ in the meso clusterer, isolating
+// whether SuperKMeans helps at the coarse level. Reports wall time plus the
+// k-means objective (mean squared distance of a sample of points to their
+// nearest centroid) so speed can be read at ~equal quality. Data and cache
+// warm-up happen in SetUp, outside the timed loop.
 
 namespace {
 
@@ -90,6 +99,86 @@ double MeanObjective(const std::vector<float>& data, size_t n, uint32_t d,
   return cnt ? total / static_cast<double>(cnt) : 0.0;
 }
 
+// Two-level k-means: cluster n points into ~sqrt(k) meso centroids with
+// meso_algo, then Lloyd-split each meso group into a proportional share of the
+// k fine centroids. This is the per-node decomposition the IVF tree performs;
+// meso_algo=Lloyd is HierLloyd, meso_algo=FlatSuperKMeans is the old H-SKM.
+std::vector<float> RunHierarchical(const std::vector<float>& data, size_t n,
+                                   uint32_t k, uint32_t d, uint32_t seed,
+                                   irs::ClusteringAlgo meso_algo) {
+  const uint32_t k_meso = static_cast<uint32_t>(std::clamp<size_t>(
+    static_cast<size_t>(std::lround(std::sqrt(static_cast<double>(k)))),
+    size_t{2}, size_t{k}));
+  auto meso =
+    irs::TrainCentroids(irs::VectorMetric::L2Sqr, data.data(), n, k_meso, d,
+                        seed, /*niter=*/8, /*nredo=*/1, meso_algo);
+  const uint32_t km = static_cast<uint32_t>(meso.size() / d);
+
+  std::vector<uint32_t> label(n);
+  std::vector<size_t> counts(km, 0);
+  for (size_t i = 0; i < n; ++i) {
+    const auto* x =
+      reinterpret_cast<const irs::byte_type*>(data.data() + i * d);
+    float best = std::numeric_limits<float>::max();
+    uint32_t bg = 0;
+    for (uint32_t g = 0; g < km; ++g) {
+      const auto* cg = reinterpret_cast<const irs::byte_type*>(
+        meso.data() + static_cast<size_t>(g) * d);
+      const float dist = irs::vector::L2Space<float, float, float>::Dist(
+        x, cg, static_cast<uint16_t>(d));
+      if (dist < best) {
+        best = dist;
+        bg = g;
+      }
+    }
+    label[i] = bg;
+    counts[bg]++;
+  }
+
+  std::vector<size_t> offset(km + 1, 0);
+  for (uint32_t g = 0; g < km; ++g) {
+    offset[g + 1] = offset[g] + counts[g];
+  }
+  std::vector<float> grouped(n * d);
+  std::vector<size_t> cursor(offset.begin(), offset.end() - 1);
+  for (size_t i = 0; i < n; ++i) {
+    const size_t p = cursor[label[i]]++;
+    std::memcpy(grouped.data() + p * d, data.data() + i * d, d * sizeof(float));
+  }
+
+  std::vector<uint32_t> kg(km, 0);
+  uint32_t assigned = 0;
+  for (uint32_t g = 0; g < km; ++g) {
+    if (counts[g] == 0) {
+      continue;
+    }
+    kg[g] = std::clamp<uint32_t>(
+      static_cast<uint32_t>(static_cast<double>(k) *
+                            static_cast<double>(counts[g]) / n),
+      1u, static_cast<uint32_t>(counts[g]));
+    assigned += kg[g];
+  }
+  for (uint32_t g = 0; assigned < k && g < km; ++g) {
+    if (kg[g] != 0 && kg[g] < counts[g]) {
+      ++kg[g];
+      ++assigned;
+    }
+  }
+
+  std::vector<float> out;
+  out.reserve(static_cast<size_t>(k) * d);
+  for (uint32_t g = 0; g < km; ++g) {
+    if (kg[g] == 0) {
+      continue;
+    }
+    auto c = irs::TrainCentroids(
+      irs::VectorMetric::L2Sqr, grouped.data() + offset[g] * d, counts[g],
+      kg[g], d, seed, /*niter=*/5, /*nredo=*/1, irs::ClusteringAlgo::Lloyd);
+    out.insert(out.end(), c.begin(), c.end());
+  }
+  return out;
+}
+
 class ClusteringFixture : public benchmark::Fixture {
  public:
   void SetUp(benchmark::State&) override {
@@ -120,12 +209,31 @@ void RunVariant(benchmark::State& state, irs::ClusteringAlgo algo,
   state.counters["obj"] = MeanObjective(data, kN, kDim, c, k, kObjSample);
 }
 
+void RunHierVariant(benchmark::State& state, irs::ClusteringAlgo meso_algo,
+                    const std::vector<float>& data) {
+  const uint32_t k = static_cast<uint32_t>(state.range(0));
+  std::vector<float> c;
+  for (auto _ : state) {
+    c = RunHierarchical(data, kN, k, kDim, kSeed, meso_algo);
+    benchmark::DoNotOptimize(c.data());
+  }
+  state.counters["k"] = static_cast<double>(k);
+  state.counters["centroids"] = static_cast<double>(c.size() / kDim);
+  state.counters["obj"] = MeanObjective(data, kN, kDim, c, k, kObjSample);
+}
+
 BENCHMARK_DEFINE_F(ClusteringFixture, Lloyd)(benchmark::State& state) {
   RunVariant(state, irs::ClusteringAlgo::Lloyd, data);
 }
 BENCHMARK_DEFINE_F(ClusteringFixture,
                    FlatSuperKMeans)(benchmark::State& state) {
   RunVariant(state, irs::ClusteringAlgo::FlatSuperKMeans, data);
+}
+BENCHMARK_DEFINE_F(ClusteringFixture, HierLloyd)(benchmark::State& state) {
+  RunHierVariant(state, irs::ClusteringAlgo::Lloyd, data);
+}
+BENCHMARK_DEFINE_F(ClusteringFixture, Hskm)(benchmark::State& state) {
+  RunHierVariant(state, irs::ClusteringAlgo::FlatSuperKMeans, data);
 }
 #define CLUSTERING_REGISTER(Method)               \
   BENCHMARK_REGISTER_F(ClusteringFixture, Method) \
@@ -137,6 +245,8 @@ BENCHMARK_DEFINE_F(ClusteringFixture,
 
 CLUSTERING_REGISTER(Lloyd);
 CLUSTERING_REGISTER(FlatSuperKMeans);
+CLUSTERING_REGISTER(HierLloyd);
+CLUSTERING_REGISTER(Hskm);
 
 }  // namespace
 

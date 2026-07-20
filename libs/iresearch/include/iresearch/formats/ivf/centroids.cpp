@@ -21,6 +21,7 @@
 #include "iresearch/formats/ivf/centroids.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/random/random.h>
 
 #include <algorithm>
 #include <array>
@@ -76,7 +77,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& child,
                                         uint64_t valid_count, uint64_t n_train,
                                         uint32_t seed) {
   std::vector<float> sample(static_cast<size_t>(n_train) * d);
-  std::mt19937_64 rng{seed};
+  absl::InsecureBitGen rng(std::seed_seq{seed});
   uint64_t seen = 0;
   const auto reservoir_sink = [&](uint64_t first, duckdb::idx_t n,
                                   const float* p) {
@@ -108,7 +109,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& child,
   } else {
     std::vector<size_t> order(n_seg);
     std::iota(order.begin(), order.end(), size_t{0});
-    std::mt19937_64 seg_rng{seed};
+    absl::InsecureBitGen seg_rng(std::seed_seq{seed});
     std::shuffle(order.begin(), order.end(), seg_rng);
 
     std::vector<std::pair<uint64_t, uint64_t>> ranges;

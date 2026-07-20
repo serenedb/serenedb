@@ -1,15 +1,13 @@
 hash-threshold 100
 
-# Coverage for the `ts_is_null()` / `ts_is_not_null()` TSQUERY constructors
-# (irs::ByColumnExistence pushdown). Both require a column that has cs
-# storage *and* an analyzer (i.e. indexed OR dual-purpose indexed+INCLUDE).
-# `dual` here is declared both `inverted(... dual en ...)` AND `INCLUDE
-# (dual)` so its catalog id has a cs column behind it that the iterator
-# can probe.
-#
-# Filter is expressed in the EXPLAIN as `AND[EXISTS[<col_id>]]` for
-# IS NOT NULL and `AND[NOT[EXISTS[<col_id>]]]` for IS NULL. The column
-# id here is `2` (pk=0, body=1, dual=2 in declaration order).
+# SQL `IS NULL` / `IS NOT NULL` claimed through the inverted index: both
+# compile to the column's null-marker term (negated for IS NOT NULL), so
+# they work on ANY indexed column, with or without INCLUDE storage. This
+# corpus pins the dual-purpose case (`dual` is indexed AND INCLUDE'd),
+# the marker claim combined with a positive @@ conjunct, and a plain
+# indexed column without INCLUDE. The former surface pinned here -- the
+# ts_is_null()/ts_is_not_null() constructors riding
+# irs::ByColumnExistence -- was retired in favor of the SQL operators.
 
 statement ok
 CREATE TABLE ce (
@@ -56,62 +54,64 @@ statement ok
 VACUUM (REFRESH_TABLE) ce
 
 
-# ---- 1. ts_is_null() pushes down as NOT[EXISTS[col_id]] ----
+# ---- 1. IS NULL claims the null-marker term ----
 query
-EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual @@ ts_is_null();
+EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual IS NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: pk, dual   │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ IRESEARCH_SCAN ────────╮
-│ Index: ce_idx           │
-│ Lookup: table           │
-│ Index Filter:           │
-│ ╭─ Not ───────────────╮ │
-│ ╰──────────┬──────────╯ │
-│ ╭─ Exists ─┴──────────╮ │
-│ │ Field: dual(string) │ │
-│ ╰─────────────────────╯ │
-│ Projections: dual (i),  │
-│              pk (l)     │
-│ ~1 row                  │
-╰─────────────────────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: pk, dual  │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: ce_idx          │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Term ────────────╮  │
+│ │ Field: dual(null) │  │
+│ │ Value:            │  │
+│ ╰───────────────────╯  │
+│ Projections: dual (i), │
+│              pk (l)    │
+│ ~1 row                 │
+╰────────────────────────╯
 
 
 query
-SELECT pk, dual FROM ce_idx WHERE dual @@ ts_is_null() ORDER BY pk;
+SELECT pk, dual FROM ce_idx WHERE dual IS NULL ORDER BY pk;
 ----
 pk	dual
 2	NULL
 4	NULL
 
 
-# ---- 2. ts_is_not_null() pushes down as EXISTS[col_id] ----
+# ---- 2. IS NOT NULL claims the negated marker ----
 query
-EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual @@ ts_is_not_null();
+EXPLAIN SELECT pk, dual FROM ce_idx WHERE dual IS NOT NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────╮
-│ Projections: pk, dual   │
-│ ~1 row                  │
-╰────────────┬────────────╯
-╭─ IRESEARCH_SCAN ────────╮
-│ Index: ce_idx           │
-│ Lookup: table           │
-│ Index Filter:           │
-│ ╭─ Exists ────────────╮ │
-│ │ Field: dual(string) │ │
-│ ╰─────────────────────╯ │
-│ Projections: dual (i),  │
-│              pk (l)     │
-│ ~1 row                  │
-╰─────────────────────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: pk, dual  │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: ce_idx          │
+│ Lookup: table          │
+│ Index Filter:          │
+│ ╭─ Not ─────────────╮  │
+│ ╰─────────┬─────────╯  │
+│ ╭─ Term ──┴─────────╮  │
+│ │ Field: dual(null) │  │
+│ │ Value:            │  │
+│ ╰───────────────────╯  │
+│ Projections: dual (i), │
+│              pk (l)    │
+│ ~1 row                 │
+╰────────────────────────╯
 
 
 query
-SELECT pk, dual FROM ce_idx WHERE dual @@ ts_is_not_null() ORDER BY pk;
+SELECT pk, dual FROM ce_idx WHERE dual IS NOT NULL ORDER BY pk;
 ----
 pk	dual
 1	red apple
@@ -123,32 +123,32 @@ pk	dual
 # above the IRESEARCH_SCAN.
 query
 EXPLAIN SELECT pk, dual FROM ce_idx
-WHERE body @@ ts_phrase('cat') AND dual @@ ts_is_not_null();
+WHERE body @@ ts_phrase('cat') AND dual IS NOT NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections: pk, dual                            │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
-│ Index: ce_idx                                    │
-│ Lookup: table                                    │
-│ Index Filter:                                    │
-│ ╭─ And ───────────────╮                          │
-│ ╰──────────┬──────────╯                          │
-│            ├────────────────────────╮            │
-│ ╭─ Term ───┴──────────╮  ╭─ Exists ─┴──────────╮ │
-│ │ Field: body(string) │  │ Field: dual(string) │ │
-│ │ Value: cat          │  ╰─────────────────────╯ │
-│ ╰─────────────────────╯                          │
-│ Projections: dual (i), pk (l)                    │
-│ ~1 row                                           │
-╰──────────────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────────╮
+│ Projections: pk, dual                          │
+│ ~1 row                                         │
+╰────────────────────────┬───────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
+│ Index: ce_idx                                  │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Exclusion ─────────╮                        │
+│ ╰──────────┬──────────╯                        │
+│            ├───────────────────────╮           │
+│ ╭─ Term ───┴──────────╮  ╭─ Term ──┴─────────╮ │
+│ │ Field: body(string) │  │ Field: dual(null) │ │
+│ │ Value: cat          │  │ Value:            │ │
+│ ╰─────────────────────╯  ╰───────────────────╯ │
+│ Projections: dual (i), pk (l)                  │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
 
 
 query
 SELECT pk, body, dual FROM ce_idx
-WHERE body @@ ts_phrase('cat') AND dual @@ ts_is_not_null()
+WHERE body @@ ts_phrase('cat') AND dual IS NOT NULL
 ORDER BY pk;
 ----
 pk	body	dual
@@ -156,51 +156,114 @@ pk	body	dual
 3	gamma cat	green leaf
 
 
-# ---- 4. Same shape with negated existence ----
+# ---- 4. Same shape with IS NULL ----
 query
 EXPLAIN SELECT pk, dual FROM ce_idx
-WHERE body @@ ts_phrase('cat') AND dual @@ ts_is_null();
+WHERE body @@ ts_phrase('cat') AND dual IS NULL;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────────────────────────────╮
-│ Projections: pk, dual                            │
-│ ~1 row                                           │
-╰─────────────────────────┬────────────────────────╯
-╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
-│ Index: ce_idx                                    │
-│ Lookup: table                                    │
-│ Index Filter:                                    │
-│ ╭─ Exclusion ─────────╮                          │
-│ ╰──────────┬──────────╯                          │
-│            ├────────────────────────╮            │
-│ ╭─ Term ───┴──────────╮  ╭─ Exists ─┴──────────╮ │
-│ │ Field: body(string) │  │ Field: dual(string) │ │
-│ │ Value: cat          │  ╰─────────────────────╯ │
-│ ╰─────────────────────╯                          │
-│ Projections: dual (i), pk (l)                    │
-│ ~1 row                                           │
-╰──────────────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────────────╮
+│ Projections: pk, dual                          │
+│ ~1 row                                         │
+╰────────────────────────┬───────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
+│ Index: ce_idx                                  │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ And ───────────────╮                        │
+│ ╰──────────┬──────────╯                        │
+│            ├───────────────────────╮           │
+│ ╭─ Term ───┴──────────╮  ╭─ Term ──┴─────────╮ │
+│ │ Field: body(string) │  │ Field: dual(null) │ │
+│ │ Value: cat          │  │ Value:            │ │
+│ ╰─────────────────────╯  ╰───────────────────╯ │
+│ Projections: dual (i), pk (l)                  │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
 
 
 query
 SELECT pk, body, dual FROM ce_idx
-WHERE body @@ ts_phrase('cat') AND dual @@ ts_is_null()
+WHERE body @@ ts_phrase('cat') AND dual IS NULL
 ORDER BY pk;
 ----
 pk	body	dual
 
 
-# ---- 5. Sanity: ts_is_null is exactly the row-set complement of
-# ts_is_not_null over `dual`, and the two together cover every row.
+# ---- 5. Sanity: IS NULL is exactly the row-set complement of
+# IS NOT NULL over `dual`, and the two together cover every row.
 query
-SELECT count(*) FROM ce_idx WHERE dual @@ ts_is_null();
+SELECT count(*) FROM ce_idx WHERE dual IS NULL;
 ----
 count
 2
 
 
 query
-SELECT count(*) FROM ce_idx WHERE dual @@ ts_is_not_null();
+SELECT count(*) FROM ce_idx WHERE dual IS NOT NULL;
 ----
 count
 2
+
+
+# ---- 6. A plain indexed column without INCLUDE storage: `body` has a
+# null-marker field like any indexed column; the claim needs no
+# columnstore. ----
+query IT
+SELECT pk, body FROM ce_idx WHERE body IS NULL ORDER BY pk
+----
+pk	body
+
+
+query IT
+SELECT pk, body FROM ce_idx WHERE body IS NOT NULL ORDER BY pk
+----
+pk	body
+1	alpha cat
+2	beta dog
+3	gamma cat
+4	delta
+
+
+query
+EXPLAIN SELECT pk, body FROM ce_idx WHERE body IS NOT NULL ORDER BY pk
+----
+QUERY PLAN
+╭─ ORDER_BY ──────────────╮
+│ Order By: ce_idx.pk ASC │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ PROJECTION ────────────╮
+│ Projections: pk, body   │
+│ ~1 row                  │
+╰────────────┬────────────╯
+╭─ IRESEARCH_SCAN ────────╮
+│ Index: ce_idx           │
+│ Lookup: table           │
+│ Index Filter:           │
+│ ╭─ Not ─────────────╮   │
+│ ╰─────────┬─────────╯   │
+│ ╭─ Term ──┴─────────╮   │
+│ │ Field: body(null) │   │
+│ │ Value:            │   │
+│ ╰───────────────────╯   │
+│ Projections: body, pk   │
+│ ~1 row                  │
+╰─────────────────────────╯
+
+
+query
+EXPLAIN SELECT pk FROM ce_idx WHERE body IS NULL
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: ce_idx         │
+│ Lookup: table         │
+│ Index Filter:         │
+│ ╭─ Term ────────────╮ │
+│ │ Field: body(null) │ │
+│ │ Value:            │ │
+│ ╰───────────────────╯ │
+│ Projections: pk       │
+│ ~1 row                │
+╰───────────────────────╯

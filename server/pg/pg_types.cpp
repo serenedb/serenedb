@@ -34,6 +34,7 @@
 #include "catalog/catalog.h"
 #include "catalog/user_type.h"
 #include "catalog/virtual_table.h"
+#include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -199,6 +200,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
     case STRUCT: {
       if (IsInet(type)) {
         return make(kInet, kInetArray, -1);
+      }
+      if (connector::IsTSQueryStructType(type)) {
+        return make(kText, kTextArray, -1);
       }
       auto ext = type.GetExtensionInfo();
       // null in case of anonymous record types (e.g. SELECT ROW(1, 2))

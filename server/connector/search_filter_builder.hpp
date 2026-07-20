@@ -42,6 +42,11 @@ namespace sdb::connector {
 // matters; the writer/printer paths don't need to.
 struct SearchColumnInfo {
   irs::field_id field_id = irs::field_limits::invalid();
+  // Valid iff NULL rows can exist here: producers invalidate it when a table
+  // constraint proves the column NOT NULL (or the surface has no NULLs, e.g.
+  // term columns). Negation claims exclude it so SQL three-valued logic
+  // holds; IS NULL claims match it; invalid keeps negations plain acceptor
+  // shapes and declines IS NULL claims.
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
@@ -96,5 +101,13 @@ inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
   }
   return column_info.field_id;
 }
+
+// True when the expression tree contains an optimizer-claimed index-only
+// predicate (`@@` or the match sugar) that cannot run as a scalar.
+bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);
+
+// Term-surface comparison shapes: comparisons plus the scalar pattern
+// functions, excluding the index-only match sugar.
+bool IsStrictComparisonShape(const duckdb::Expression& expr);
 
 }  // namespace sdb::connector

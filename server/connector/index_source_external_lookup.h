@@ -20,31 +20,25 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
+
+#include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/common/vector.hpp>
+#include <duckdb/main/connection.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+#include <memory>
 #include <span>
-#include <string>
 
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/table_options.h"
 #include "connector/index_source_view.h"
 #include "connector/view_fast_path.h"
 
 namespace sdb::connector {
 
-// Point lookup for a view over an attached external-DB table (ClickHouse,
-// postgres) keyed by the table's own primary-key value
-// (PkSpec::ExternalRowId / ExternalColumnKey). Matched rows are re-fetched with
-//   SELECT <pk>, <projection> FROM <catalog>.<schema>.<table>
-//   WHERE <pk> IN (<keys>)
-// -- plain DuckDB SQL through the attached catalog, so the connector's own
-// scan, projection and filter pushdown do the work.
-//
-// CREATE INDEX guarantees at most one indexed document per key value
-// (on_conflict = 'throw' refused duplicates, 'nothing' collapsed them), so
-// each key resolves to one row: the first source row returned for a key fills
-// every output slot that requested it; further rows with the same key --
-// duplicates written after a 'nothing' build, ClickHouse's sorting key is not
-// unique -- are ignored; a key the source no longer has leaves its slots NULL.
 class ExternalLookupIndexSource final : public ViewIndexSourceBase {
  public:
   ExternalLookupIndexSource(
@@ -52,6 +46,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
     std::span<const catalog::Column::Id> bind_column_ids);
+  ~ExternalLookupIndexSource() final = default;
 
   PrimaryKeyBatch::Kind PkKind() const final { return _pk_kind; }
 
@@ -61,19 +56,16 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
                             duckdb::DataChunk& output) final;
 
  private:
-  // "SELECT <keys>, <cols> FROM <table> WHERE " -- constant across
-  // Materialize() calls; the key predicate (built per call from the batch)
-  // follows. <keys> is the key column(s) in order.
-  std::string _sql_prefix;
   duckdb::idx_t _num_proj_cols = 0;
-  // The key column expressions, in order (quoted PK/key column names, or the
-  // bare `rowid` keyword for the postgres ctid path). One entry for an I64 key
-  // (rowid / clickhouse PK), N for a user Struct key. A single key renders
-  // `key IN (v,...)`; multiple render `(a=.. AND b=..) OR ...`.
-  duckdb::vector<std::string> _key_cols;
-  // I64 (single int64 key from pk.rows) or Struct (arbitrary-typed key columns
-  // borrowed from pk.column). Drives how the per-doc keys are read.
+  duckdb::idx_t _num_key_cols = 0;
   PrimaryKeyBatch::Kind _pk_kind = PrimaryKeyBatch::Kind::I64;
+
+  std::unique_ptr<duckdb::Connection> _con;
+  std::unique_ptr<duckdb::PreparedStatement> _prepared;
+
+  duckdb::vector<duckdb::Value> _params;
+  containers::FlatHashMap<int64_t, duckdb::idx_t> _i64_slot;
+  absl::flat_hash_map<duckdb::Value, duckdb::idx_t> _struct_slot;
 };
 
 }  // namespace sdb::connector

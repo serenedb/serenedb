@@ -42,9 +42,6 @@ struct PrimaryKeyBatch {
     None,
     I64,
     I64I64,
-    // A user-specified external lookup key: one STRUCT column of arbitrary
-    // field types/count. The batch does NOT copy it -- `column` borrows the
-    // already-read key vector for the current batch (see below).
     Struct,
   };
 

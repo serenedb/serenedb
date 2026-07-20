@@ -23,13 +23,15 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector.hpp>
-#include <duckdb/common/vector/struct_vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/common/vector_size.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
@@ -38,6 +40,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -93,176 +96,178 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
       return types[source_col];
     });
 
-  // The key column expression(s). ExternalRowId keys on the bare `rowid`
-  // keyword (a `rowid IN (...)` predicate the connector pushes down as a `ctid
-  // IN (...)` TID scan; `rowid` is a pseudo-column, never quoted).
-  // ExternalColumnKey keys on the quoted key columns (metadata PK or user
-  // key_columns, 1..N). Storage is int64 (ExternalKeyIsI64: rowid or a single
-  // BIGINT column) or a struct -- which drives how Materialize reads the batch.
+  duckdb::vector<std::string> key_cols;
   if (_fast_path.pk_spec == catalog::PkSpec::ExternalRowId) {
-    _key_cols.push_back("rowid");
+    key_cols.push_back("rowid");
   } else {
-    _key_cols.reserve(_fast_path.key_columns.size());
+    key_cols.reserve(_fast_path.key_columns.size());
     for (const auto& kc : _fast_path.key_columns) {
-      _key_cols.push_back(Quote(kc.name));
+      key_cols.push_back(Quote(kc.name));
     }
   }
+  _num_key_cols = key_cols.size();
+  _num_proj_cols = select_names.size();
   _pk_kind = ExternalKeyIsI64(_fast_path) ? PrimaryKeyBatch::Kind::I64
                                           : PrimaryKeyBatch::Kind::Struct;
 
-  // The key column(s) always lead the result; the projected real columns
-  // follow at <num_keys>..N. A fixed leading key keeps the layout valid even
-  // when no real column is projected.
-  std::string select_list = absl::StrJoin(_key_cols, ", ");
+  std::string select_list = absl::StrJoin(key_cols, ", ");
   for (const auto& name : select_names) {
     absl::StrAppend(&select_list, ", ", Quote(name));
   }
-  _sql_prefix =
-    absl::StrCat("SELECT ", select_list, " FROM ", Quote(ref.catalog), ".",
-                 Quote(ref.schema), ".", Quote(ref.table), " WHERE ");
-  _num_proj_cols = select_names.size();
+
+  // A single key column renders a flat `key IN (?,...)`. Multiple columns
+  // render the exact tuple predicate `(a=? AND b=?) OR ...` -- DuckDB
+  // re-applies it locally so the source returns exactly the requested tuples
+  // (no cross-product). That fixed STANDARD_VECTOR_SIZE-term OR is deeper than
+  // the parser's default expression-depth limit, so raise it on this
+  // connection.
+  std::string predicate;
+  if (_num_key_cols == 1) {
+    predicate = absl::StrCat(
+      key_cols[0], " IN (",
+      absl::StrJoin(std::vector<std::string_view>(STANDARD_VECTOR_SIZE, "?"),
+                    ","),
+      ")");
+  } else {
+    const std::string term = absl::StrJoin(
+      key_cols, " AND ", [](std::string* out, const std::string& kc) {
+        absl::StrAppend(out, kc, " = ?");
+      });
+    predicate =
+      absl::StrJoin(std::vector<std::string>(STANDARD_VECTOR_SIZE,
+                                             absl::StrCat("(", term, ")")),
+                    " OR ");
+  }
+
+  _con = std::make_unique<duckdb::Connection>(*context.db);
+  if (_num_key_cols > 1) {
+    _con->Query(
+      absl::StrCat("SET max_expression_depth TO ", 4 * STANDARD_VECTOR_SIZE));
+  }
+  _prepared = _con->Prepare(absl::StrCat(
+    "SELECT ", select_list, " FROM ", Quote(ref.catalog), ".",
+    Quote(ref.schema), ".", Quote(ref.table), " WHERE ", predicate));
+  if (_prepared->HasError()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+                    ERR_MSG("external lookup failed: ", _prepared->GetError()));
+  }
+
+  _params.resize(static_cast<size_t>(STANDARD_VECTOR_SIZE) * _num_key_cols);
+  if (_pk_kind == PrimaryKeyBatch::Kind::Struct) {
+    _struct_slot.reserve(STANDARD_VECTOR_SIZE);
+  } else {
+    _i64_slot.reserve(STANDARD_VECTOR_SIZE);
+  }
 }
 
 duckdb::idx_t ExternalLookupIndexSource::Materialize(
-  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
-  duckdb::idx_t count, duckdb::DataChunk& output) {
+  duckdb::ClientContext& /*context*/, PrimaryKeyBatch& batch,
+  duckdb::idx_t start, duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
     return 0;
   }
   auto& pk = batch;
   SDB_ASSERT(pk.kind == _pk_kind);
+  SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
   const bool is_struct = _pk_kind == PrimaryKeyBatch::Kind::Struct;
+  const duckdb::idx_t num_key_cols = _num_key_cols;
 
-  const duckdb::idx_t num_key_cols = _key_cols.size();
-  const bool single = num_key_cols == 1;
-
-  // The per-doc key columns: the borrowed struct's fields, or the single I64
-  // column. A key value is read on demand (no persisted per-doc copy).
-  duckdb::vector<duckdb::Vector>* fields = nullptr;
+  // _params is row-major: tuple i (one OR group) occupies [i*num_key_cols,
+  // i*num_key_cols + num_key_cols), matching the `(a=? AND b=?)` placeholder
+  // order (a single IN key column is the k=0 case).
   if (is_struct) {
-    // The key column is borrowed whole (one batch per Materialize), so start is
-    // always 0 and the borrowed vector holds exactly `count` rows.
-    SDB_ASSERT(pk.column != nullptr && start == 0 && count <= pk.column_count);
-    fields = &duckdb::StructVector::GetEntries(*pk.column);
-    SDB_ASSERT(fields->size() == num_key_cols);
+    _struct_slot.clear();
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      duckdb::Value key = pk.column->GetValue(i);
+      const auto& children = duckdb::StructValue::GetChildren(key);
+      for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+        _params[i * num_key_cols + k] = children[k];
+      }
+      _struct_slot.try_emplace(std::move(key), i);
+    }
   } else {
-    SDB_ASSERT(start + count <= pk.rows.size());
+    _i64_slot.clear();
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const int64_t key = pk.rows[start + i];
+      _params[i] = duckdb::Value::BIGINT(key);
+      _i64_slot.try_emplace(key, i);
+    }
   }
-  const auto key_value = [&](duckdb::idx_t i,
-                             duckdb::idx_t k) -> duckdb::Value {
-    return is_struct ? (*fields)[k].GetValue(i)
-                     : duckdb::Value::BIGINT(pk.rows[start + i]);
-  };
 
-  // Key -> output slots still waiting for their row. One slot per key in the
-  // ordinary case (the build kept one document per key); if a key reaches the
-  // batch twice, all its slots receive the same source row. Keyed by the
-  // tab-joined value strings, matched against the re-fetched rows below.
-  containers::FlatHashMap<std::string, duckdb::vector<duckdb::idx_t>> pending;
-  pending.reserve(count);
-  // The key predicate is built with `?` placeholders and the key values are
-  // BOUND as parameters (not interpolated): `key IN (?,?,...)` for a single key
-  // column, or an OR of per-row equalities `(a=? AND b=?) OR ...` for several.
-  // DuckDB substitutes the params as constants, so the connector still pushes
-  // the IN / AND-OR filter down (a list parameter would NOT push down).
-  duckdb::vector<duckdb::Value> params;
-  duckdb::vector<duckdb::Value> keyvals(num_key_cols);
-  std::string predicate;
-  std::string canonical;
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    canonical.clear();
+  // Pad the unused groups of a partial last batch by repeating the first tuple.
+  for (duckdb::idx_t i = count; i < STANDARD_VECTOR_SIZE; ++i) {
     for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-      keyvals[k] = key_value(i, k);
-      if (k != 0) {
-        canonical += '\t';
-      }
-      canonical += keyvals[k].ToString();
+      _params[i * num_key_cols + k] = _params[k];
     }
-    auto [it, inserted] = pending.try_emplace(canonical);
-    if (inserted) {
-      if (single) {
-        predicate += predicate.empty() ? "?" : ",?";
-        params.push_back(std::move(keyvals[0]));
-      } else {
-        if (!predicate.empty()) {
-          predicate += " OR ";
-        }
-        predicate += '(';
-        for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-          if (k != 0) {
-            predicate += " AND ";
-          }
-          absl::StrAppend(&predicate, _key_cols[k], " = ?");
-          params.push_back(std::move(keyvals[k]));
-        }
-        predicate += ')';
-      }
-    }
-    it->second.push_back(i);
   }
-  const std::string where =
-    single ? absl::StrCat(_key_cols[0], " IN (", predicate, ")")
-           : absl::StrCat("(", predicate, ")");
 
-  duckdb::Connection con(*context.db);
-  auto prepared = con.Prepare(absl::StrCat(_sql_prefix, where));
-  if (prepared->HasError()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-                    ERR_MSG("external lookup failed: ", prepared->GetError()));
-  }
-  auto result = prepared->Execute(params, /*allow_stream_result=*/false);
+  auto result = _prepared->Execute(_params, /*allow_stream_result=*/false);
   if (result->HasError()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
                     ERR_MSG("external lookup failed: ", result->GetError()));
   }
 
   AliasOutput(output);
-  _tf_target.SetCardinality(count);
 
-  // Slots whose key the source does not return must read NULL, never stale
-  // data left in a recycled chunk.
-  for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
-    for (duckdb::idx_t k = 0; k < count; ++k) {
-      duckdb::FlatVector::SetNull(_tf_target.data[c], k, true);
+  _survivor_idx.resize(count);
+  duckdb::idx_t rows = 0;
+
+  const auto take_row = [&](duckdb::DataChunk& chunk, duckdb::idx_t row,
+                            duckdb::idx_t doc) {
+    for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
+      duckdb::VectorOperations::Copy(chunk.data[c + num_key_cols],
+                                     _tf_target.data[c], row + 1, row, rows);
     }
+    _survivor_idx[rows] = doc;
+    ++rows;
+  };
+
+  const auto drain = [&](auto& slot, auto probe) {
+    while (!slot.empty()) {
+      auto chunk = result->Fetch();
+      if (!chunk || chunk->size() == 0) {
+        break;
+      }
+      const auto n = chunk->size();
+      for (duckdb::idx_t row = 0; row < n && !slot.empty(); ++row) {
+        auto it = probe(*chunk, n, row);
+        if (it == slot.end()) {
+          continue;
+        }
+        take_row(*chunk, row, it->second);
+        slot.erase(it);
+      }
+    }
+  };
+  if (is_struct) {
+    const auto& key_type = pk.column->GetType();
+    drain(_struct_slot,
+          [&](duckdb::DataChunk& chunk, duckdb::idx_t, duckdb::idx_t row) {
+            duckdb::vector<duckdb::Value> children;
+            children.reserve(num_key_cols);
+            for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+              children.push_back(chunk.data[k].GetValue(row));
+            }
+            return _struct_slot.find(
+              duckdb::Value::STRUCT(key_type, std::move(children)));
+          });
+  } else {
+    // The key column is BIGINT (rowid / single BIGINT column), read raw.
+    drain(_i64_slot,
+          [&](duckdb::DataChunk& chunk, duckdb::idx_t n, duckdb::idx_t row) {
+            auto& keycol = chunk.data[0];
+            keycol.Flatten(n);
+            const auto* keys = duckdb::FlatVector::GetData<int64_t>(keycol);
+            const auto& valid = duckdb::FlatVector::Validity(keycol);
+            return valid.RowIsValid(row) ? _i64_slot.find(keys[row])
+                                         : _i64_slot.end();
+          });
   }
 
-  // Scan the re-fetched rows chunk by chunk: match each row by the same
-  // tab-joined key-value string, then physically copy the projected columns
-  // into the waiting slots (no duckdb::Value round-trip on the copy).
-  while (!pending.empty()) {
-    auto chunk = result->Fetch();
-    if (!chunk || chunk->size() == 0) {
-      break;
-    }
-    const auto n = chunk->size();
-    for (duckdb::idx_t row = 0; row < n && !pending.empty(); ++row) {
-      canonical.clear();
-      for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-        if (k != 0) {
-          canonical += '\t';
-        }
-        canonical += chunk->data[k].GetValue(row).ToString();
-      }
-      auto it = pending.find(canonical);
-      if (it == pending.end()) {
-        continue;
-      }
-      for (const auto slot : it->second) {
-        for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
-          duckdb::VectorOperations::Copy(chunk->data[c + num_key_cols],
-                                         _tf_target.data[c], row + 1, row,
-                                         slot);
-        }
-      }
-      pending.erase(it);
-    }
-  }
-
-  RunCastPass(output, count);
-  // No filter pushdown on the external-lookup path (supports_filters=false),
-  // so every requested key materialises a row.
-  return count;
+  _tf_target.SetCardinality(rows);
+  RunCastPass(output, rows);
+  GatherNonLookupColumns(output, rows, _survivor_idx.data());
+  return rows;
 }
 
 }  // namespace sdb::connector

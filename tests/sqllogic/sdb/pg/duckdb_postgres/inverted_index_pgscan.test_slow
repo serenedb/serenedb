@@ -342,6 +342,119 @@ statement ok
 DROP TABLE pg_${__DATABASE__}.iipgscan_docs.typed;
 
 
+# ===== missing key: a source row deleted after CREATE INDEX is DROPPED =====
+# The index is a snapshot; if a matched doc's source row is later deleted, the
+# re-fetch returns nothing for that key and the row is dropped -- not surfaced as
+# a NULL row -- matching the native rowid-fetch sources (survivor compaction).
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.mdrop (
+  id   BIGINT PRIMARY KEY,
+  body TEXT
+);
+
+
+statement count 3
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.mdrop VALUES
+  (1, 'pudge one'),
+  (2, 'pudge two'),
+  (3, 'pudge three');
+
+
+statement ok
+CREATE VIEW pg_mdrop_v_${__DATABASE__} AS
+  SELECT id, body FROM pg_${__DATABASE__}.iipgscan_docs.mdrop;
+
+
+statement ok
+CREATE INDEX pg_mdrop_v_idx_${__DATABASE__}
+  ON pg_mdrop_v_${__DATABASE__}
+  USING inverted(id, body pg_en_${__DATABASE__})
+  WITH (key_columns = 'id');
+
+
+query
+SELECT id, body FROM pg_mdrop_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge one
+2	pudge two
+3	pudge three
+
+
+statement count 1
+DELETE FROM pg_${__DATABASE__}.iipgscan_docs.mdrop WHERE id = 2;
+
+
+# id=2's source row is gone -- dropped from the projection, no NULL row.
+query
+SELECT id, body FROM pg_mdrop_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge one
+3	pudge three
+
+
+statement ok
+DROP VIEW pg_mdrop_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.mdrop;
+
+
+# ===== NULL values in a composite key: the doc drops, and never crashes =====
+# A key column can hold NULL. The doc is indexed, but `col = NULL` never matches
+# on the re-fetch, so it is dropped like a missing key -- and a NULL (even a
+# wholly-NULL) key must not crash the struct-key path (the stored struct row
+# stays valid; only its children are NULL).
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.nullk (
+  grp  TEXT,
+  seq  BIGINT,
+  body TEXT
+);
+
+
+statement count 4
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.nullk VALUES
+  ('a',  1,    'pudge one'),
+  (NULL, 2,    'pudge two'),
+  (NULL, NULL, 'pudge three'),
+  ('b',  4,    'pudge four');
+
+
+statement ok
+CREATE VIEW pg_nullk_v_${__DATABASE__} AS
+  SELECT grp, seq, body FROM pg_${__DATABASE__}.iipgscan_docs.nullk;
+
+
+statement ok
+CREATE INDEX pg_nullk_v_idx_${__DATABASE__}
+  ON pg_nullk_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__})
+  WITH (key_columns = 'grp, seq');
+
+
+# Only the two docs with fully non-NULL keys are re-fetchable.
+query
+SELECT body FROM pg_nullk_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body
+pudge four
+pudge one
+
+
+statement ok
+DROP VIEW pg_nullk_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.nullk;
+
+
 statement ok
 DROP TABLE pg_${__DATABASE__}.iipgscan_docs.articles;
 

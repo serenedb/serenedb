@@ -46,6 +46,7 @@
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
 #include "catalog/store/store.h"
+#include "catalog/subscription.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -118,6 +119,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Sequence;
   } else if constexpr (std::is_same_v<T, Role>) {
     return ObjectType::Role;
+  } else if constexpr (std::is_same_v<T, Subscription>) {
+    return ObjectType::Subscription;
   } else {
     static_assert(false);
   }
@@ -243,6 +246,17 @@ struct Snapshot {
 
   std::vector<std::shared_ptr<Index>> GetIndexesByRelation(
     ObjectId relation_id) const;
+
+  std::vector<std::shared_ptr<Subscription>> GetSubscriptions(
+    ObjectId database_id) const {
+    std::vector<std::shared_ptr<Subscription>> result;
+    for (auto id : _resolution_table.GetSubscriptions(database_id)) {
+      if (auto sub = GetObject<Subscription>(id)) {
+        result.push_back(sub);
+      }
+    }
+    return result;
+  }
 
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
@@ -435,6 +449,8 @@ class Catalog final {
                          std::shared_ptr<Tokenizer> tokenizer);
   void RegisterType(ObjectId database_id, ObjectId schema_id,
                     std::shared_ptr<PgSqlType> type);
+  void RegisterSubscription(ObjectId database_id,
+                            std::shared_ptr<Subscription> sub);
   void RegisterTable(ObjectId database_id, ObjectId schema_id,
                      std::shared_ptr<Table> table);
   void RegisterIndex(ObjectId database_id, ObjectId schema_id,
@@ -477,6 +493,19 @@ class Catalog final {
   bool CreateType(const AccessContext& ax, ObjectId database_id,
                   std::string_view schema, std::shared_ptr<PgSqlType> type,
                   bool if_not_exists);
+  void CreateSubscription(const AccessContext& ax, ObjectId database_id,
+                          std::shared_ptr<Subscription> sub);
+  bool DropSubscription(const AccessContext& ax, ObjectId database_id,
+                        std::string_view name, bool missing_ok);
+  void SetSubscriptionEnabled(const AccessContext& ax, ObjectId database_id,
+                              std::string_view name, bool enabled);
+  void SetSubscriptionConfig(const AccessContext& ax, ObjectId database_id,
+                             std::string_view name,
+                             Subscription::Config config);
+  void RenameSubscription(const AccessContext& ax, ObjectId database_id,
+                          std::string_view name, std::string_view new_name);
+  void SetSubscriptionOwner(const AccessContext& ax, ObjectId database_id,
+                            std::string_view name, ObjectId new_owner);
 
   void RenameView(const AccessContext& ax, ObjectId database_id,
                   std::string_view schema, std::string_view name,

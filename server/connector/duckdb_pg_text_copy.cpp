@@ -42,6 +42,8 @@
 
 #include "basics/message_buffer.h"
 #include "basics/string_utils.h"
+#include "catalog/catalog.h"
+#include "catalog/table.h"
 #include "connector/copy_byte_source.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -79,7 +81,7 @@ void ApplyTextCopyOption(TextCopyOptions& out, std::string_view key,
     }
     out.delim = value.front();
   } else if (key == "null" || key == "nullstr") {
-    out.null_str = std::string{value};
+    out.null_str.assign(value);
   } else if (key == "header") {
     out.header = ParseCopyBool(value);
   } else if (key == "quote" || key == "escape" || key == "force_quote" ||

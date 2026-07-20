@@ -89,14 +89,8 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
               " requires SereneDB client state (not registered)"));
   }
   auto& conn = state->GetConnectionContext();
-  auto* send = conn.GetSendBuffer();
-  if (!send) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("COPY ", path,
-              " requires a PG wire connection (transport not attached)"));
-  }
-  return {conn.GetCopyQueue(), conn.GetCopyInBridge(), send, *state};
+  return {conn.GetCopyQueue(), conn.GetCopyInBridge(), conn.GetSendBuffer(),
+          *state};
 }
 
 }  // namespace
@@ -112,7 +106,7 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
   // already sent CopyInResponse, so the handle doesn't.
   CopyInFileHandle(duckdb::FileSystem& fs, SereneDBClientState& state,
                    pg::CopyMessagesQueue* queue, pg::CopyInBridge* bridge,
-                   message::Buffer& send_buffer)
+                   message::Buffer* send_buffer)
     : duckdb::FileHandle(
         fs, std::string{kDevStdin},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_READ)),
@@ -131,7 +125,7 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
     }
     if (queue) {
       queue->StartListening();
-      SendCopyResponse(send_buffer, PQ_MSG_COPY_IN_RESPONSE);
+      SendCopyResponse(*send_buffer, PQ_MSG_COPY_IN_RESPONSE);
       _iterator.emplace(*queue);
     }
   }
@@ -213,10 +207,16 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
     }
     return duckdb::make_uniq<CopyInFileHandle>(*this, plumbing.state,
                                                plumbing.queue, plumbing.bridge,
-                                               *plumbing.send_buffer);
+                                               plumbing.send_buffer);
   }
   if (path == kDevStdout) {
     auto plumbing = GetPlumbing(opener.get(), path);
+    if (!plumbing.send_buffer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("COPY ", path,
+                " requires a PG wire connection (transport not attached)"));
+    }
     return duckdb::make_uniq<CopyOutFileHandle>(*this, *plumbing.send_buffer);
   }
   THROW_SQL_ERROR(

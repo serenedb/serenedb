@@ -210,6 +210,7 @@ void DatabaseDrop::Finalize() {
   // Range-delete schema Definitions under db. Per-schema standalone-seq
   // counter wipes already ran inside each SchemaDrop::Finalize above.
   server.DropEntry(_id, catalog::ObjectType::Schema);
+  server.DropEntry(_id, catalog::ObjectType::Subscription);
   server.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
   server.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone, _id);
 }

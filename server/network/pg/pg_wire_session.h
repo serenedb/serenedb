@@ -219,7 +219,21 @@ class PgWireSession final
     }
   }
 
- private:
+  // Everything below is protected (not private) so the outbound replication
+  // subscriber (PgReplicationClient) can reuse the frame assembler, the recv/
+  // send transport, the CpuResumer split and the local-apply drive while it
+  // substitutes its own client startup and stream-consume loop.
+ protected:
+  // Client-mode construction (outbound subscriber): only the transport + frame
+  // assembler are wired up; the server-config members keep their defaults.
+  struct ClientTag {};
+  PgWireSession(IoExecutor& exec, ClientTag)
+    requires(Kind == SocketKind::Tcp)
+    : Transport<Kind, PgWireSession<Kind>>{exec},
+      _io{exec.Context()},
+      _deadline{exec.Context()},
+      _frames{this->_recv} {}
+
   // The session owner. Starts the writer, negotiates startup+auth, hands off to
   // the cpu task, pumps recv, then stops everything and joins the cpu + writer
   // futures before its frame (and the session) is destroyed.

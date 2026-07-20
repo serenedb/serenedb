@@ -70,6 +70,8 @@ enum class ObjectType : uint8_t {
   Column,           // loaded as a part of a Table, not as a separate object
   CheckConstraint,  // loaded as a part of a Table, not as a separate object
 
+  Subscription,
+
   // Runtime only, not persisted.
   Virtual = 255,
 };

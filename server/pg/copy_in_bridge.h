@@ -53,10 +53,10 @@ class CopyInBridge {
       // races (the feeder can publish the next frame before the worker
       // re-checks _len, leaving a _data_ready Set unconsumed so the next
       // Publish/Finish double-Sets and corrupts the event -> SIGSEGV).
+      // `_err` is only read AFTER the Wait: the feeder writes it before the
+      // Set that this Wait pairs with, so the wake carries the happens-before
+      // (reading it before the Wait would race the feeder's Fail()).
       if (_armed) {
-        if (_err) {
-          std::rethrow_exception(_err);
-        }
         _data_ready.Wait();
         _data_ready.Reset();
         _armed = false;
@@ -92,12 +92,12 @@ class CopyInBridge {
   // parser work runs between draining a frame and asking for the next.
   std::span<const char> Window() {
     if (_armed) {
-      if (_err) {
-        std::rethrow_exception(_err);
-      }
       _data_ready.Wait();
       _data_ready.Reset();
       _armed = false;
+      // Read _err only after the Wait -- it pairs with the feeder's Set, which
+      // follows its _err write, so this is ordered (a pre-Wait read would
+      // race).
       if (_len == 0 && _err) {
         std::rethrow_exception(_err);
       }

@@ -135,6 +135,9 @@ template<ResolveType Type>
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
       ERR_MSG("text search dictionary \"", name, "\" already exists"));
+  } else if constexpr (Type == ResolveType::Subscription) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("subscription \"", name, "\" already exists"));
   } else {
     static_assert(Type == ResolveType::Role);
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
@@ -416,6 +419,10 @@ void Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     AddToResolution<ResolveType::Role>(parent_id, object->GetId(),
                                        object->GetName(), replace);
     AddObjectDefinition(parent_id, std::move(object));
+  } else if constexpr (std::is_same_v<T, Subscription>) {
+    AddToResolution<ResolveType::Subscription>(parent_id, object->GetId(),
+                                               object->GetName(), replace);
+    AddObjectDefinition(parent_id, std::move(object));
   } else {
     static_assert(false);
   }
@@ -455,6 +462,9 @@ void Snapshot::UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     RemoveFromResolution<ResolveType::Relation>(
       object->GetParentId(), object->GetName(), maybe_not_found);
     parent_id = object->GetRelationId();
+  } else if constexpr (std::is_same_v<T, Subscription>) {
+    RemoveFromResolution<ResolveType::Subscription>(
+      parent_id, object->GetName(), maybe_not_found);
   } else {
     static_assert(false);
   }
@@ -834,6 +844,10 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
       SDB_ASSERT(_in_load);
+      break;
+    case ObjectType::Subscription:
+      GetDependencyForWrite<DatabaseDependency>(parent_id)
+        ->subscriptions.insert(id);
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
@@ -1646,6 +1660,11 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           schema_deps->sequences.erase(id);
         }
       } break;
+      case ObjectType::Subscription: {
+        auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
+        SDB_ASSERT(db_deps);
+        db_deps->subscriptions.erase(id);
+      } break;
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
       case ObjectType::Column:
@@ -1659,6 +1678,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::Database: {
       auto db_deps = GetDependency<DatabaseDependency>(id);
       drop_childs(db_deps->schemas);
+      drop_childs(db_deps->subscriptions);
     } break;
     case ObjectType::Role:
       break;
@@ -1709,6 +1729,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::PgSqlType:
     case ObjectType::Tokenizer:
     case ObjectType::Sequence:
+    case ObjectType::Subscription:
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
@@ -1821,6 +1842,14 @@ void Catalog::RegisterType(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   Apply(_snapshot, [&](auto& clone) {
     clone->RegisterObject(std::move(type), schema_id, false);
+  });
+}
+
+void Catalog::RegisterSubscription(ObjectId database_id,
+                                   std::shared_ptr<Subscription> sub) {
+  absl::MutexLock lock{&_mutex};
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RegisterObject(std::move(sub), database_id, false);
   });
 }
 
@@ -2767,6 +2796,177 @@ bool Catalog::CreateType(const AccessContext& ax, ObjectId database_id,
     },
     [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
   return true;
+}
+
+void Catalog::CreateSubscription(const AccessContext& ax, ObjectId database_id,
+                                 std::shared_ptr<Subscription> sub) {
+  absl::MutexLock lock{&_mutex};
+
+  RequireCreateOn(*_snapshot, ax.role, database_id);
+  sub->SetParentId(database_id);
+
+  Apply(
+    _snapshot,
+    [&](auto& clone) {
+      clone->RegisterObject(sub, database_id, /*replace=*/false);
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*sub, stream);
+      _engine->CreateDefinition(database_id, ObjectType::Subscription,
+                                sub->GetId(), bytes);
+    },
+    [&](auto& clone) { clone->UnregisterObject(sub, database_id, true); });
+}
+
+bool Catalog::DropSubscription(const AccessContext& ax, ObjectId database_id,
+                               std::string_view name, bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto subscription_id =
+    _snapshot->GetObjectId<ResolveType::Subscription>(database_id, name);
+  if (!subscription_id) {
+    if (missing_ok) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("subscription \"", name, "\" does not exist"));
+  }
+
+  RequireObjectOwner(*_snapshot, ax.role, *subscription_id);
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    SDB_ASSERT(clone);
+    auto sub = clone->GetObject<Subscription>(*subscription_id);
+    SDB_ASSERT(sub);
+    _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(database_id, ObjectType::Subscription,
+                         *subscription_id);
+    });
+    clone->UnregisterObject(std::move(sub), database_id);
+  });
+  return true;
+}
+
+void Catalog::SetSubscriptionEnabled(const AccessContext& ax,
+                                     ObjectId database_id,
+                                     std::string_view name, bool enabled) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto subscription_id =
+    _snapshot->GetObjectId<ResolveType::Subscription>(database_id, name);
+  if (!subscription_id) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("subscription \"", name, "\" does not exist"));
+  }
+
+  RequireObjectOwner(*_snapshot, ax.role, *subscription_id);
+
+  auto sub = _snapshot->GetObject<Subscription>(*subscription_id);
+  SDB_ASSERT(sub);
+  if (sub->GetConfig().enabled == enabled) {
+    return;
+  }
+
+  auto updated = std::static_pointer_cast<Subscription>(sub->Clone());
+  updated->SetEnabled(enabled);
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    clone->ReplaceObject<ResolveType::Subscription>(database_id, name, updated);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->CreateDefinition(database_id, ObjectType::Subscription,
+                              updated->GetId(), bytes);
+  });
+}
+
+void Catalog::SetSubscriptionConfig(const AccessContext& ax,
+                                    ObjectId database_id, std::string_view name,
+                                    Subscription::Config config) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto subscription_id =
+    _snapshot->GetObjectId<ResolveType::Subscription>(database_id, name);
+  if (!subscription_id) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("subscription \"", name, "\" does not exist"));
+  }
+
+  RequireObjectOwner(*_snapshot, ax.role, *subscription_id);
+
+  auto sub = _snapshot->GetObject<Subscription>(*subscription_id);
+  SDB_ASSERT(sub);
+
+  auto updated = std::static_pointer_cast<Subscription>(sub->Clone());
+  updated->SetConfig(std::move(config));
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    clone->ReplaceObject<ResolveType::Subscription>(database_id, name, updated);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->CreateDefinition(database_id, ObjectType::Subscription,
+                              updated->GetId(), bytes);
+  });
+}
+
+void Catalog::RenameSubscription(const AccessContext& ax, ObjectId database_id,
+                                 std::string_view name,
+                                 std::string_view new_name) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto subscription_id =
+    _snapshot->GetObjectId<ResolveType::Subscription>(database_id, name);
+  if (!subscription_id) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("subscription \"", name, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, *subscription_id);
+
+  auto sub = _snapshot->GetObject<Subscription>(*subscription_id);
+  SDB_ASSERT(sub);
+  auto updated = std::static_pointer_cast<Subscription>(sub->Clone());
+  updated->SetName(new_name);
+
+  // ReplaceObject with a changed name rewrites the resolution entry (and throws
+  // ThrowDuplicateName if new_name is taken).
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    clone->ReplaceObject<ResolveType::Subscription>(database_id, name, updated);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->CreateDefinition(database_id, ObjectType::Subscription,
+                              updated->GetId(), bytes);
+  });
+}
+
+void Catalog::SetSubscriptionOwner(const AccessContext& ax,
+                                   ObjectId database_id, std::string_view name,
+                                   ObjectId new_owner) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto subscription_id =
+    _snapshot->GetObjectId<ResolveType::Subscription>(database_id, name);
+  if (!subscription_id) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("subscription \"", name, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, *subscription_id);
+
+  auto sub = _snapshot->GetObject<Subscription>(*subscription_id);
+  SDB_ASSERT(sub);
+  if (sub->GetOwner() == new_owner) {
+    return;
+  }
+  auto updated = std::static_pointer_cast<Subscription>(sub->Clone());
+  auto perm = updated->GetPermissions();
+  perm.owner = new_owner;
+  updated->SetPermissions(std::move(perm));
+
+  // ReplaceObject refreshes the object (and the owner role-dependency edge).
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    clone->ReplaceObject<ResolveType::Subscription>(database_id, name, updated);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->CreateDefinition(database_id, ObjectType::Subscription,
+                              updated->GetId(), bytes);
+  });
 }
 
 template<typename T>
@@ -4609,6 +4809,7 @@ class OpenDatabase {
 
   void RegisterDatabases();
   void RegisterSchemas(ObjectId database_id);
+  void RegisterSubscriptions(ObjectId database_id);
   void RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   void RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   void RegisterViews(ObjectId database_id, ObjectId schema_id);
@@ -4632,6 +4833,8 @@ class OpenDatabase {
   void AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                 ObjectId index_id, ObjectType entry_type,
                 std::string_view bytes);
+  void AddSubscription(ObjectId database_id, ObjectId subscription_id,
+                       std::string_view bytes);
 
   bool IsDeleted(ObjectId id, DeletedScope scope) {
     return _deleted[magic_enum::enum_integer(scope)].contains(id);
@@ -4691,6 +4894,7 @@ void OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
     ClearDeletedDefinitions(DeletedScope::Database);
   };
   RegisterSchemas(database_id);
+  RegisterSubscriptions(database_id);
 }
 
 void OpenDatabase::RegisterDatabases() {
@@ -4720,6 +4924,17 @@ void OpenDatabase::RegisterSchemas(ObjectId database_id) {
       DropTask::Schedule(
         CreateSchemaDrop(GetCatalogStore(), database_id, key.id, true))
         .Detach();
+      return true;
+    });
+}
+
+void OpenDatabase::RegisterSubscriptions(ObjectId database_id) {
+  GetCatalogStore().VisitBoot(
+    database_id, ObjectType::Subscription,
+    [&](CatalogStore::Key key, std::string_view bytes) {
+      if (!IsDeleted(key.id, DeletedScope::Database)) {
+        AddSubscription(database_id, key.id, bytes);
+      }
       return true;
     });
 }
@@ -4961,6 +5176,17 @@ void OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   RegisterTables(db_id, schema_id);
   RegisterViews(db_id, schema_id);
   RegisterSequences(db_id, schema_id, true);
+}
+
+void OpenDatabase::AddSubscription(ObjectId database_id,
+                                   ObjectId subscription_id,
+                                   std::string_view bytes) {
+  auto sub = catalog::DeserializeObject<catalog::Subscription>(
+    bytes, {.id = subscription_id, .database_id = database_id});
+  if (!sub) {
+    THROW_SQL_ERROR(ERR_MSG("Failed to read subscription definition"));
+  }
+  _catalog.RegisterSubscription(database_id, std::move(sub));
 }
 
 }  // namespace

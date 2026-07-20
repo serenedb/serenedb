@@ -1,0 +1,47 @@
+# GRANT/REVOKE ON DATABASE re-registers the database in the resolution table
+# via ReplaceObject<Database>(replace=true); the per-database subscription map
+# must survive that re-registration (regression: SDB_ASSERT(inserted_sub) in
+# ResolutionTable::AddObject aborted the server on any database-level GRANT
+# once subscriptions existed in the catalog).
+#
+# Lore: vedernikoff borrows the temp closet; the subscription stays put.
+
+statement ok
+DROP ROLE IF EXISTS dbsub_vedernikoff;
+
+
+statement ok
+CREATE ROLE dbsub_vedernikoff;
+
+
+statement ok
+CREATE SUBSCRIPTION dbsub_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION dbsub_pub1;
+
+
+# The GRANT goes through ChangeAcl -> ReplaceObject<Database>; before the fix
+# this aborted the server.
+statement ok
+GRANT TEMP ON DATABASE postgres TO dbsub_vedernikoff;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname LIKE 'dbsub_%' ORDER BY subname;
+----
+subname
+dbsub_sub1
+
+
+# REVOKE takes the same replace path; the subscription must still resolve.
+statement ok
+REVOKE ALL ON DATABASE postgres FROM dbsub_vedernikoff;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname LIKE 'dbsub_%' ORDER BY subname;
+----
+subname
+dbsub_sub1
+
+
+statement ok
+DROP ROLE dbsub_vedernikoff;

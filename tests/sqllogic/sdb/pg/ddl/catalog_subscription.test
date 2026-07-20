@@ -1,0 +1,431 @@
+# Tests for CREATE SUBSCRIPTION syntax.
+# The PEG grammar accepts CONNECTION and PUBLICATION as optional, so the
+# mandatory-clause checks (as in Postgres) live in the create_subscription
+# pragma handler and fire at execution time.
+
+# --- Name is required (rejected by the parser, not the pragma) ---
+statement error
+CREATE SUBSCRIPTION;
+----
+db error: ERROR: syntax error at or near ";"
+
+
+# --- Bare form: CONNECTION is required ---
+statement error
+CREATE SUBSCRIPTION my_sub1;
+----
+db error: ERROR: CREATE SUBSCRIPTION requires CONNECTION
+
+
+# --- CONNECTION without PUBLICATION is rejected ---
+statement error
+CREATE SUBSCRIPTION my_sub1 CONNECTION 'host=localhost dbname=mydb';
+----
+db error: ERROR: CREATE SUBSCRIPTION requires PUBLICATION
+
+
+# Failed statements must not leave anything behind.
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+
+
+# --- CONNECTION + single PUBLICATION ---
+statement ok
+CREATE SUBSCRIPTION my_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+
+
+# --- CHECK DUPLICATE ---
+statement error
+CREATE SUBSCRIPTION my_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+----
+db error: ERROR: subscription "my_sub1" already exists
+
+
+# --- CONNECTION + multiple PUBLICATIONs ---
+statement ok
+CREATE SUBSCRIPTION my_sub2 CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub2;
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+my_sub1
+my_sub2
+
+
+# --- WITH (binary = true) sets subbinary; default is false ---
+statement ok
+CREATE SUBSCRIPTION my_sub_bin CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (binary = true);
+
+
+query
+SELECT subbinary FROM pg_subscription WHERE subname = 'my_sub_bin';
+----
+subbinary
+t
+
+
+query
+SELECT subbinary FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subbinary
+f
+
+
+statement ok
+DROP SUBSCRIPTION my_sub_bin;
+
+
+# --- WITH (slot_name = ..., origin = ...) override the defaults ---
+statement ok
+CREATE SUBSCRIPTION my_sub_opt CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (slot_name = 'custom_slot', origin = 'none');
+
+
+query
+SELECT subslotname, suborigin FROM pg_subscription WHERE subname = 'my_sub_opt';
+----
+subslotname	suborigin
+custom_slot	none
+
+
+# origin only accepts 'any' or 'none'
+statement error
+CREATE SUBSCRIPTION my_sub_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (origin = 'bogus');
+----
+db error: ERROR: unrecognized origin value: "bogus" (expected "any" or "none")
+
+
+statement ok
+DROP SUBSCRIPTION my_sub_opt;
+
+
+# --- WITH (connect = false) creates the subscription disabled ---
+statement ok
+CREATE SUBSCRIPTION my_sub_noconn CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false);
+
+
+query
+SELECT subenabled FROM pg_subscription WHERE subname = 'my_sub_noconn';
+----
+subenabled
+f
+
+
+statement ok
+DROP SUBSCRIPTION my_sub_noconn;
+
+
+# --- WITH (disable_on_error = true) is reflected in subdisableonerr ---
+statement ok
+CREATE SUBSCRIPTION my_sub_doe CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, disable_on_error = true);
+
+
+query
+SELECT subdisableonerr FROM pg_subscription WHERE subname = 'my_sub_doe';
+----
+subdisableonerr
+t
+
+
+statement ok
+DROP SUBSCRIPTION my_sub_doe;
+
+
+statement ok
+CREATE SUBSCRIPTION my_subscription CONNECTION 'host=publisher_host dbname=source_db user=repl_user password=secret' PUBLICATION my_publication;
+
+
+query
+SELECT subname, subconninfo, subslotname, subpublications FROM pg_subscription WHERE subname='my_subscription';
+----
+subname	subconninfo	subslotname	subpublications
+my_subscription	host=publisher_host dbname=source_db user=repl_user password=secret	my_subscription	{my_publication}
+
+
+# --- Quoted name with a dot is a single identifier ---
+statement ok
+CREATE SUBSCRIPTION "dotted.name" CONNECTION 'host=localhost dbname=mydb' PUBLICATION my_pub;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname = 'dotted.name';
+----
+subname
+dotted.name
+
+
+# --- DROP SUBSCRIPTION removes the entry ---
+statement ok
+DROP SUBSCRIPTION my_sub1;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname = 'my_sub1';
+----
+subname
+
+
+# --- DROP SUBSCRIPTION IF EXISTS on a missing subscription is a no-op ---
+statement ok
+DROP SUBSCRIPTION IF EXISTS my_sub1;
+
+
+# --- DROP SUBSCRIPTION on a missing subscription errors ---
+statement error
+DROP SUBSCRIPTION my_sub1;
+----
+db error: ERROR: subscription "my_sub1" does not exist
+
+
+# --- the other subscriptions are untouched by the drops above ---
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+dotted.name
+my_sub2
+my_subscription
+
+
+# --- ALTER SUBSCRIPTION DISABLE/ENABLE toggles the enabled flag ---
+statement ok
+ALTER SUBSCRIPTION my_sub2 DISABLE;
+
+
+query
+SELECT subname, subenabled FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subname	subenabled
+my_sub2	f
+
+
+statement ok
+ALTER SUBSCRIPTION my_sub2 ENABLE;
+
+
+query
+SELECT subname, subenabled FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subname	subenabled
+my_sub2	t
+
+
+# --- ALTER SUBSCRIPTION ... SET (binary = ...) toggles the binary flag ---
+statement ok
+ALTER SUBSCRIPTION my_sub2 SET (binary = true);
+
+
+query
+SELECT subbinary FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subbinary
+t
+
+
+statement ok
+ALTER SUBSCRIPTION my_sub2 SET (binary = false);
+
+
+query
+SELECT subbinary FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subbinary
+f
+
+
+# --- ALTER SET (origin, disable_on_error) ---
+statement ok
+ALTER SUBSCRIPTION my_sub2 SET (origin = 'none', disable_on_error = true);
+
+
+query
+SELECT suborigin, subdisableonerr FROM pg_subscription WHERE subname = 'my_sub2';
+----
+suborigin	subdisableonerr
+none	t
+
+
+# --- ALTER CONNECTION changes the endpoint ---
+statement ok
+ALTER SUBSCRIPTION my_sub2 CONNECTION 'host=other dbname=elsewhere';
+
+
+query
+SELECT subconninfo FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subconninfo
+host=other dbname=elsewhere
+
+
+# --- ALTER {ADD,DROP,SET} PUBLICATION change the replicated set ---
+statement ok
+ALTER SUBSCRIPTION my_sub2 ADD PUBLICATION extra_pub;
+
+
+query
+SELECT subpublications FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subpublications
+{pub1,pub2,extra_pub}
+
+
+statement ok
+ALTER SUBSCRIPTION my_sub2 DROP PUBLICATION pub1;
+
+
+query
+SELECT subpublications FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subpublications
+{pub2,extra_pub}
+
+
+statement ok
+ALTER SUBSCRIPTION my_sub2 SET PUBLICATION only_pub;
+
+
+query
+SELECT subpublications FROM pg_subscription WHERE subname = 'my_sub2';
+----
+subpublications
+{only_pub}
+
+
+# --- ALTER RENAME TO / OWNER TO ---
+statement ok
+CREATE SUBSCRIPTION my_sub_ro CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1;
+
+
+statement ok
+ALTER SUBSCRIPTION my_sub_ro RENAME TO my_sub_ro2;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname IN ('my_sub_ro', 'my_sub_ro2');
+----
+subname
+my_sub_ro2
+
+
+statement ok
+CREATE ROLE sub_owner;
+
+
+statement ok
+ALTER SUBSCRIPTION my_sub_ro2 OWNER TO sub_owner;
+
+
+query
+SELECT r.rolname FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'my_sub_ro2';
+----
+rolname
+sub_owner
+
+
+statement ok
+DROP SUBSCRIPTION my_sub_ro2;
+
+
+statement ok
+DROP ROLE sub_owner;
+
+
+# --- ALTER on a missing subscription errors ---
+statement error
+ALTER SUBSCRIPTION nope ENABLE;
+----
+db error: ERROR: subscription "nope" does not exist
+
+
+# --- WITH (synchronous_commit / run_as_owner / failover) reflect in pg_subscription ---
+statement ok
+CREATE SUBSCRIPTION opt_sub CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, synchronous_commit = 'remote_apply', run_as_owner = true, failover = true);
+
+
+query
+SELECT subsynccommit, subrunasowner, subfailover, subpasswordrequired FROM pg_subscription WHERE subname = 'opt_sub';
+----
+subsynccommit	subrunasowner	subfailover	subpasswordrequired
+remote_apply	t	t	t
+
+
+statement ok
+DROP SUBSCRIPTION opt_sub;
+
+
+# --- defaults: password_required=t, run_as_owner=f, failover=f, sync_commit=off ---
+statement ok
+CREATE SUBSCRIPTION opt_def CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false);
+
+
+query
+SELECT subpasswordrequired, subrunasowner, subfailover, subsynccommit FROM pg_subscription WHERE subname = 'opt_def';
+----
+subpasswordrequired	subrunasowner	subfailover	subsynccommit
+t	f	f	off
+
+
+statement ok
+DROP SUBSCRIPTION opt_def;
+
+
+# --- create_slot = false requires slot_name ---
+statement error
+CREATE SUBSCRIPTION opt_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, create_slot = false);
+----
+db error: ERROR: slot_name must be specified when create_slot = false
+
+
+# --- create_slot = false with an explicit slot_name is accepted ---
+statement ok
+CREATE SUBSCRIPTION opt_cs CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, create_slot = false, slot_name = 'existing_slot');
+
+
+statement ok
+DROP SUBSCRIPTION opt_cs;
+
+
+# --- a superuser may set password_required = false ---
+statement ok
+CREATE SUBSCRIPTION opt_pr CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, password_required = false);
+
+
+query
+SELECT subpasswordrequired FROM pg_subscription WHERE subname = 'opt_pr';
+----
+subpasswordrequired
+f
+
+
+statement ok
+DROP SUBSCRIPTION opt_pr;
+
+
+# --- ALTER SET (synchronous_commit / run_as_owner / failover) ---
+statement ok
+CREATE SUBSCRIPTION opt_alt CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false);
+
+
+statement ok
+ALTER SUBSCRIPTION opt_alt SET (synchronous_commit = 'on', run_as_owner = true, failover = true);
+
+
+query
+SELECT subsynccommit, subrunasowner, subfailover FROM pg_subscription WHERE subname = 'opt_alt';
+----
+subsynccommit	subrunasowner	subfailover
+on	t	t
+
+
+statement ok
+DROP SUBSCRIPTION opt_alt;

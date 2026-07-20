@@ -36,6 +36,7 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_rbac_function.h"
 #include "connector/duckdb_storage_extension.h"
+#include "connector/duckdb_subscription.h"
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
@@ -56,6 +57,7 @@
 #include "pg/system_catalog.h"
 #include "pg/system_table.h"
 #include "query/config.h"
+#include "replication/repl_source.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
@@ -249,6 +251,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterPgMathFunctions(db);
 
+  connector::RegisterSubscriptionPragma(db);
+
   connector::RegisterKeyEncodingFunctions(db);
 
   connector::RegisterPgSystemFunctions(db);
@@ -272,6 +276,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgBinaryCopyFunction(db);
 
   connector::RegisterPgTextCopyFunction(db);
+  replication::RegisterReplicationSourceFunction(db);
 
   connector::RegisterSearchFunctions(db);
 

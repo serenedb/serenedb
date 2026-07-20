@@ -76,6 +76,7 @@ AclMode ClassPrivs(ObjectType type) noexcept {
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
     case ObjectType::Virtual:
+    case ObjectType::Subscription:
       return AclMode::NoRights;
   }
   SDB_UNREACHABLE();
@@ -106,6 +107,7 @@ AclMode PublicDefaultPrivs(ObjectType type) noexcept {
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
     case ObjectType::Virtual:
+    case ObjectType::Subscription:
       return AclMode::NoRights;
   }
   SDB_UNREACHABLE();

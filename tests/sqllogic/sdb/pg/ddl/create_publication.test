@@ -6,11 +6,12 @@
 # error.
 
 # --- Bare form ---
+# The trailing "Did you mean ..." fuzzy suggestion depends on which pragmas are
+# registered (e.g. create_subscription), so ignore it and pin only the message.
 statement error
 CREATE PUBLICATION my_pub;
 ----
-db error: ERROR: Pragma Function with name create_publication does not exist!
-Did you mean "create_text_search_dictionary"?
+db error: ERROR: Pragma Function with name create_publication does not exist!<slt:ignore>
 
 
 # --- FOR ALL TABLES ---

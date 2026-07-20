@@ -21,6 +21,7 @@ target_sources(
         pg/startup_request.cpp
         pg/bind_decoder.cpp
         pg/scram_messages.cpp
+        pg/scram_client.cpp
         pg/hba.cpp
         credentials.cpp
         server.cpp

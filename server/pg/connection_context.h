@@ -31,6 +31,11 @@
 #include "pg/sql_error.h"
 #include "query/transaction.h"
 
+namespace sdb::replication {
+
+struct ReplBatch;
+
+}  // namespace sdb::replication
 namespace sdb::pg {
 
 class CopyInBridge;
@@ -113,6 +118,13 @@ class ConnectionContext final : public query::Transaction {
   auto* GetCopyInBridge() const { return _copy_in_bridge; }
   void SetCopyInBridge(pg::CopyInBridge* bridge) { _copy_in_bridge = bridge; }
 
+  // The current logical-replication apply batch: repl_src()'s scan reads it to
+  // pull the run of rows from the subscriber's stream and decode them into the
+  // output vectors (deserialization stays in the scan, like COPY FROM STDIN).
+  // Set for the duration of one apply execution; owned by the subscriber.
+  replication::ReplBatch* GetReplBatch() const { return _repl_batch; }
+  void SetReplBatch(replication::ReplBatch* batch) { _repl_batch = batch; }
+
   auto* GetResponseSink() const { return _response_sink; }
   void SetResponseSink(std::string* sink) { _response_sink = sink; }
 
@@ -164,6 +176,7 @@ class ConnectionContext final : public query::Transaction {
   ObjectId _session_role_id;
   ObjectId _effective_role_id;
   pg::CopyInBridge* _copy_in_bridge = nullptr;
+  replication::ReplBatch* _repl_batch = nullptr;
   std::string* _response_sink = nullptr;
   std::atomic<NoticeNode*> _notices{nullptr};
 };

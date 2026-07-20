@@ -77,7 +77,8 @@ void SubscriptionEngine::RequestStop() noexcept {
       sub.client->StopClient();
     }
     if (sub.retry) {
-      sub.retry->cancel();
+      auto timer = sub.retry;
+      asio_ns::post(timer->get_executor(), [timer] { timer->cancel(); });
     }
   }
 }
@@ -294,7 +295,7 @@ void SubscriptionEngine::StopSubscription(ObjectId subscription_id) {
     client->StopClient();
   }
   if (timer) {
-    timer->cancel();
+    asio_ns::post(timer->get_executor(), [timer] { timer->cancel(); });
   }
 }
 
@@ -322,7 +323,7 @@ void SubscriptionEngine::RestartSubscription(
     client->StopClient();
   }
   if (timer) {
-    timer->cancel();
+    asio_ns::post(timer->get_executor(), [timer] { timer->cancel(); });
   }
 }
 

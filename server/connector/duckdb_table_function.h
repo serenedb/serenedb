@@ -180,8 +180,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   struct TsDictRequest {
     irs::field_id field_id = irs::field_limits::invalid();
-    // Valid only for a bare nullable facet: the scan appends a NULL-term row
-    // per segment counting the column's null-marker field.
+    // Valid for a nullable facet: the scan appends a per-segment NULL-term
+    // row counting the null-marker field under the claimed document filter.
     irs::field_id null_field_id = irs::field_limits::invalid();
     std::shared_ptr<irs::Filter> having_filter;
     duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
@@ -247,6 +247,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   virtual duckdb::LogicalType ColumnTypeById(
     catalog::Column::Id col_id) const = 0;
+
+  std::string DisplayColumnName(catalog::Column::Id col_id) const;
 
   using ColumnVisitor =
     std::function<void(catalog::Column::Id, const duckdb::LogicalType&)>;

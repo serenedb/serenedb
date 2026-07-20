@@ -89,12 +89,7 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
     parent.add(std::move(regexp));
     return;
   }
-  auto negated = std::make_unique<irs::Not>(std::move(regexp));
-  if (parent.type() == irs::Type<irs::Or>::id()) {
-    AddFilter<irs::And>(parent).add(std::move(negated));
-  } else {
-    parent.add(std::move(negated));
-  }
+  AddNegated(parent, column_info, std::move(regexp));
 }
 
 }  // namespace sdb::connector

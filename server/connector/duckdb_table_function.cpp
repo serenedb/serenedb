@@ -39,6 +39,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/vector_radius_filter.hpp>
@@ -52,8 +53,6 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
-#include "functions/search.h"
-#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
@@ -112,25 +111,29 @@ uint64_t EstimateFilterMatchCount(const irs::Filter& filter,
 }
 
 duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
-  const SereneDBScanBindData& ss, uint64_t live) {
+  const SereneDBScanBindData& ss) {
   uint64_t estimate = 0;
   for (const auto& req : ss.ts_dicts) {
     const uint64_t rows = [&] -> uint64_t {
       if (req.term_uses == (TsDictTermUses::kMin | TsDictTermUses::kMax)) {
         return 2;
-      } else if (req.term_uses == TsDictTermUses::kMin ||
-                 req.term_uses == TsDictTermUses::kMax) {
-        return 1;
-      } else {
-        return live;
       }
+      if (req.term_uses == TsDictTermUses::kMin ||
+          req.term_uses == TsDictTermUses::kMax) {
+        return 1;
+      }
+      uint64_t terms = 0;
+      for (const auto& segment : ss.snapshot->reader) {
+        if (const auto* field =
+              segment.field(static_cast<irs::field_id>(req.field_id))) {
+          terms += field->size();
+        }
+      }
+      return std::max<uint64_t>(terms, 1);
     }();
     estimate += req.having_filter
                   ? EstimateFilterMatchCount(*req.having_filter, rows)
                   : rows;
-  }
-  if (ss.stored_filter) {
-    estimate = EstimateFilterMatchCount(*ss.stored_filter, estimate);
   }
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
 }
@@ -140,7 +143,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   const auto& ss = bind;
   const auto live = ss.snapshot->reader.live_docs_count();
   if (ss.TsDictMode()) {
-    return TsDictEstimation(ss, live);
+    return TsDictEstimation(ss);
   }
   const auto* filter = ss.stored_filter.get();
   const auto estimate = filter ? EstimateFilterMatchCount(*filter, live) : live;
@@ -340,6 +343,22 @@ bool WandEnabled(const catalog::InvertedIndex* index,
   return topk && topk == scorer;
 }
 
+std::string SereneDBScanBindData::DisplayColumnName(
+  catalog::Column::Id col_id) const {
+  auto name = ColumnNameById(col_id);
+  if (!name.empty()) {
+    return std::string{name};
+  }
+  if (inverted_index) {
+    const auto* expr =
+      inverted_index->ExpressionByFieldId(static_cast<irs::field_id>(col_id));
+    if (expr && !expr->pretty_printed.empty()) {
+      return expr->pretty_printed;
+    }
+  }
+  return absl::StrCat("col", col_id);
+}
+
 static std::string ColumnNameFor(const SereneDBScanBindData& bind,
                                  catalog::Column::Id col_id) {
   auto name = bind.ColumnNameById(col_id);
@@ -496,6 +515,19 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
 void SereneDBScanBindData::AppendSummary(
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {
   const auto& bind = *this;
+  // Indexed expressions have no catalog column name and their synthetic
+  // field ids come from a global allocator; display the pretty-printed
+  // expression so EXPLAIN output is meaningful and deterministic.
+  const auto display_field = [&](catalog::Column::Id id) -> std::string {
+    if (bind.inverted_index) {
+      if (const auto* expr = bind.inverted_index->ExpressionByFieldId(
+            static_cast<irs::field_id>(id));
+          expr && !expr->pretty_printed.empty()) {
+        return expr->pretty_printed;
+      }
+    }
+    return ColumnNameFor(bind, id);
+  };
   if (bind.inverted_index) {
     const auto name_of = MakeFieldNameResolver(bind, *bind.inverted_index);
     const auto kind_of = MakeFieldKindResolver(bind, *bind.inverted_index);
@@ -508,26 +540,20 @@ void SereneDBScanBindData::AppendSummary(
       out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
                                    *stored_filter, name_of, kind_of)));
     }
-  }
-  if (bind.inverted_index) {
     for (const auto& req : ts_dicts) {
       if (!req.having_filter) {
         continue;
       }
       // TODO(gnusi): Maybe different name? But what?
-      // TODO(gnusi): ColumnNameFor doesn't work for indexed expressions?
-      auto key = ts_dicts.size() == 1
-                   ? std::string{"Index Filter"}
-                   : absl::StrCat(
-                       "Index Filter(",
-                       ColumnNameFor(
-                         bind, static_cast<catalog::Column::Id>(req.field_id)),
-                       ")");
-      out.insert(
-        std::move(key),
-        duckdb::ExplainValue(irs::ToExplainNode(
-          *req.having_filter, MakeFieldNameResolver(bind, *bind.inverted_index),
-          MakeFieldKindResolver(bind, *bind.inverted_index))));
+      auto key =
+        ts_dicts.size() == 1
+          ? std::string{"Index Filter"}
+          : absl::StrCat(
+              "Index Filter(",
+              display_field(static_cast<catalog::Column::Id>(req.field_id)),
+              ")");
+      out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
+                                   *req.having_filter, name_of, kind_of)));
     }
   }
   if (text_scorer) {
@@ -545,18 +571,17 @@ void SereneDBScanBindData::AppendSummary(
   if (EmitOffsets()) {
     auto cols =
       absl::StrJoin(offsets | std::views::transform([&](const auto& off) {
-                      return ColumnNameFor(bind, off.column_id);
+                      return bind.DisplayColumnName(off.column_id);
                     }),
                     ", ");
     out.insert("Offsets", std::move(cols));
   }
   if (TsDictMode()) {
-    auto names = absl::StrJoin(
-      ts_dicts | std::views::transform([&](const auto& req) {
-        // TODO(gnusi): indexed expressions doesn't work?
-        return ColumnNameFor(bind, catalog::Column::Id{req.field_id});
-      }),
-      ", ");
+    auto names =
+      absl::StrJoin(ts_dicts | std::views::transform([&](const auto& req) {
+                      return display_field(catalog::Column::Id{req.field_id});
+                    }),
+                    ", ");
     out.insert("TsDict", std::move(names));
   }
 }

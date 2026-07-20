@@ -38,7 +38,6 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/containers/node_hash_map.h"
-#include "catalog/tokenizer.h"
 #include "connector/search_filter_builder.hpp"
 
 namespace sdb::catalog {
@@ -103,14 +102,56 @@ auto& AddFilter(Source& parent) {
   }
 }
 
-template<typename Filter, typename Source>
-Filter& Negate(Source& parent) {
-  return AddFilter<Filter>(AddFilter<irs::Not>(
-    parent.type() == irs::Type<irs::Or>::id() ? AddFilter<irs::And>(parent)
-                                              : parent));
+template<typename Source>
+irs::Not& AddNot(Source& parent) {
+  return AddFilter<irs::Not>(parent.type() == irs::Type<irs::Or>::id()
+                               ? AddFilter<irs::And>(parent)
+                               : parent);
 }
 
+template<typename Filter, typename Source>
+Filter& Negate(Source& parent) {
+  return AddFilter<Filter>(AddNot(parent));
+}
+
+irs::ByTerm& AddNullMarkerTerm(irs::BooleanFilter& parent,
+                               irs::field_id null_field_id);
+
+// SQL three-valued logic: a NULL row satisfies no comparison, but a bare
+// irs::Not runs against ALL live docs and would readmit rows without a
+// token in the negated column. Scoped negation excludes the column's
+// null-marker docs alongside the negated set; the and_null_exclusion
+// optimizer rule prunes the branch wherever a positive same-column
+// conjunct already rejects those rows.
+template<typename Filter, typename Source>
+Filter& NegateScoped(Source& parent, const SearchColumnInfo& info) {
+  if (!irs::field_limits::valid(info.null_field_id)) {
+    return Negate<Filter>(parent);
+  }
+  auto& group = Negate<irs::Or>(parent);
+  auto& target = AddFilter<Filter>(group);
+  AddNullMarkerTerm(group, info.null_field_id);
+  return target;
+}
+
+template<typename Filter, typename Source>
+Filter& AddMaybeNegated(Source& parent, const FilterContext& ctx,
+                        const SearchColumnInfo& info) {
+  return ctx.negated ? NegateScoped<Filter>(parent, info)
+                     : AddFilter<Filter>(parent);
+}
+
+void AddNegated(irs::BooleanFilter& parent, const SearchColumnInfo& info,
+                irs::Filter::ptr target);
+
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
+
+inline const duckdb::vector<duckdb::Value>& ListOrArrayChildren(
+  const duckdb::Value& value) {
+  return value.type().id() == duckdb::LogicalTypeId::ARRAY
+           ? duckdb::ArrayValue::GetChildren(value)
+           : duckdb::ListValue::GetChildren(value);
+}
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
@@ -240,8 +281,11 @@ enum class TSQueryOp {
   PhraseSeq,
   ToTSQuery,
   Compound,
-  IsNull,
-  IsNotNull,
 };
+
+TSQueryOp ClassifyTSQueryFunction(std::string_view name);
+
+std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type);
+std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type);
 
 }  // namespace sdb::connector

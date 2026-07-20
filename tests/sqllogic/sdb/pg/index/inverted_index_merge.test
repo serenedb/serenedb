@@ -39,10 +39,8 @@ CREATE TEXT SEARCH DICTIONARY en(
 )
 
 
-# `body` text-indexed (drives norms, drives ColumnExistenceQuery
-# coverage via the dual column below); `note` INCLUDE-only (drives
-# zero-pad norm-merge path because no posting list); `body_dual` is the
-# dual-purpose column for ts_is_null pushdown.
+# `body` text-indexed (drives norms); `note` INCLUDE-only (drives
+# zero-pad norm-merge path because no posting list).
 statement ok
 CREATE INDEX m_idx ON m
   USING inverted(pk, body en)
@@ -193,10 +191,10 @@ count
 3908
 
 
-# NULL distribution checks via ts_is_null on the dual case is gated on
-# indexed columns -- on INCLUDE-only `note` we exercise the residual
-# FILTER path (DuckDB-side) instead. Combined with a posting-list filter
-# so the rows actually flow through MergeInto's cs path.
+# NULL distribution checks: `tag` and `note` are INCLUDE-only (no
+# null-marker field), so IS NULL takes the residual FILTER path
+# (DuckDB-side). Combined with a posting-list filter so the rows
+# actually flow through MergeInto's cs path.
 query
 SELECT count(*) FROM m_idx
 WHERE body @@ ts_phrase('cat') AND tag IS NULL;

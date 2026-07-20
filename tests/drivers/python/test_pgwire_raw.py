@@ -1623,32 +1623,25 @@ def _assert_pivot_result(msgs):
     # RowDescription / DataRow (the CREATE ENUM emits neither).
     assert not errors(msgs), errors(msgs)
     names = [c[0] for c in (row_description(msgs) or [])]
-    assert names == ["q1", "q2", "q3"], names
+    # PIVOT column names come from the data values, not from written
+    # identifiers, so they keep the value's case (unlike unquoted aliases,
+    # which PG-lowercase) -- and case-distinct values must stay distinct.
+    assert names == ["Q1", "Q2", "Q3"], names
     vals = [f.decode() for f in all_fields(msgs)]
     assert vals == ["15", "20", "30"], vals
 
 
-@pytest.mark.xfail(
-    reason="PIVOT column names are not pg-lowercased (returns Q1, expected q1); "
-    "pre-existing serened bug, unrelated to this branch",
-    strict=False,
-)
 def test_pivot_simple_protocol(conn):
     _pivot_setup(conn, "pivot_raw_simple")
     conn.send("Q", _cstr("PIVOT pivot_raw_simple ON q USING sum(a)"))
     _assert_pivot_result(conn.drain_to_ready())
 
 
-@pytest.mark.xfail(
-    reason="PIVOT column names are not pg-lowercased (returns Q1, expected q1); "
-    "pre-existing serened bug, unrelated to this branch",
-    strict=False,
-)
 def test_pivot_extended_protocol(conn):
     _pivot_setup(conn, "pivot_raw_ext")
     # Full extended round-trip with a portal Describe: the temp enum is stripped
     # and run at Parse, so the PIVOT is a single prepared SELECT -- Describe must
-    # return the q1/q2/q3 RowDescription before Execute streams the row.
+    # return the Q1/Q2/Q3 RowDescription before Execute streams the row.
     conn.parse("", "PIVOT pivot_raw_ext ON q USING sum(a)")
     conn.bind("", "")
     conn.describe("P", "")

@@ -309,8 +309,8 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 ### Error Handling
 
 - PostgreSQL/frontend code: use `THROW_SQL_ERROR`
-- Common/backend code: both `Result<>` and `SDB_THROW` are acceptable
-- Consider performance: `Result` with a default message should not allocate
+- Common/backend code: both `absl::Status` and `throw` are acceptable
+- Consider performance: `absl::Status` with a only code is not allocate
 - `SDB_ASSERT` for debug-only checks
 - `SDB_ENSURE` for debug crash + release throw
 - `SDB_VERIFY` for crash in both debug and release

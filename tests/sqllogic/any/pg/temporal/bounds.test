@@ -1,0 +1,101 @@
+# Range edges shared by both databases: year 1 and 9999, the ±infinity
+# sentinels, and the 24:00:00 time boundary. Comparisons render as 1/0 through
+# CASE because raw boolean output formatting differs between the databases.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+query
+SELECT DATE '0001-01-01' AS dmin, DATE '9999-12-31' AS dmax;
+----
+dmin	dmax
+0001-01-01	9999-12-31
+
+query
+SELECT TIMESTAMP '0001-01-01 00:00:00' AS tsmin, TIMESTAMP '9999-12-31 23:59:59.999999' AS tsmax;
+----
+tsmin	tsmax
+0001-01-01 00:00:00	9999-12-31 23:59:59.999999
+
+query
+SELECT
+  extract(epoch FROM TIMESTAMP '0001-01-01 00:00:00')::BIGINT AS ep_min,
+  extract(epoch FROM TIMESTAMP '9999-12-31 23:59:59')::BIGINT AS ep_max;
+----
+ep_min	ep_max
+-62135596800	253402300799
+
+query
+SELECT 'infinity'::DATE AS inf_d, '-infinity'::DATE AS ninf_d;
+----
+inf_d	ninf_d
+infinity	-infinity
+
+query
+SELECT 'infinity'::TIMESTAMP AS inf_ts, '-infinity'::TIMESTAMP AS ninf_ts;
+----
+inf_ts	ninf_ts
+infinity	-infinity
+
+query
+SELECT 'infinity'::TIMESTAMPTZ AS inf_tz, '-infinity'::TIMESTAMPTZ AS ninf_tz;
+----
+inf_tz	ninf_tz
+infinity	-infinity
+
+query
+SELECT
+  CASE WHEN 'infinity'::TIMESTAMP > TIMESTAMP '9999-12-31 23:59:59.999999' THEN 1 ELSE 0 END AS gt_max,
+  CASE WHEN '-infinity'::TIMESTAMP < TIMESTAMP '0001-01-01 00:00:00' THEN 1 ELSE 0 END AS lt_min,
+  CASE WHEN 'infinity'::DATE > DATE '9999-12-31' THEN 1 ELSE 0 END AS d_gt_max,
+  CASE WHEN '-infinity'::DATE < DATE '0001-01-01' THEN 1 ELSE 0 END AS d_lt_min;
+----
+gt_max	lt_min	d_gt_max	d_lt_min
+1	1	1	1
+
+statement ok
+CREATE TABLE tbounds(id INTEGER PRIMARY KEY, ts TIMESTAMP);
+
+statement count 4
+INSERT INTO tbounds VALUES
+    (1, 'infinity'),
+    (2, '-infinity'),
+    (3, '2024-03-09 15:20:30'),
+    (4, '0001-01-01 00:00:00');
+
+query
+SELECT id, ts FROM tbounds ORDER BY ts, id;
+----
+id	ts
+2	-infinity
+4	0001-01-01 00:00:00
+3	2024-03-09 15:20:30
+1	infinity
+
+query
+SELECT count(*) AS n FROM tbounds WHERE ts > TIMESTAMP '9999-12-31 23:59:59.999999';
+----
+n
+1
+
+statement ok
+DROP TABLE tbounds;
+
+query
+SELECT TIME '00:00:00' AS tmin, TIME '23:59:59.999999' AS tmax, TIME '24:00:00' AS tday;
+----
+tmin	tmax	tday
+00:00:00	23:59:59.999999	24:00:00
+
+query
+SELECT (DATE '0001-01-01' + INTERVAL '1 day')::DATE AS next_day,
+       (DATE '9999-12-31' - INTERVAL '1 day')::DATE AS prev_day;
+----
+next_day	prev_day
+0001-01-02	9999-12-30
+
+query
+SELECT DATE '9999-12-31' - DATE '0001-01-01' AS span_days;
+----
+span_days
+3652058

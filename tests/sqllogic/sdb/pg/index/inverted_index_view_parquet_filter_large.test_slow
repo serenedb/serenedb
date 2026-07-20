@@ -1,0 +1,188 @@
+# Parquet-view lookups at 60k rows with ROW_GROUP_SIZE 8192: exercises the
+# resumable per-group cursor (consecutive batches continue an open row group),
+# the no-filter skip-to-vector (sparse ids jump whole vectors/groups), and
+# lookup filters pushed into the parquet reader (row-group pruning +
+# positional survivor math on compacted chunks), incl. zero-survivor groups.
+# The glob arm re-keys per-file survivors. Expected values are arithmetic.
+#
+# body: 'owl' when i % 4999 = 0 (13 sparse rows), else 'fox' when i % 13 = 0
+# (4615 rows), else 'pad'. val = i; tag = 't' || i % 5.
+
+hash-threshold 100
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pqf_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+COPY (
+  SELECT i::int4 AS id,
+         CASE WHEN i % 4999 = 0 THEN 'owl'
+              WHEN i % 13 = 0 THEN 'fox'
+              ELSE 'pad' END AS body,
+         i::int4 AS val,
+         't' || (i % 5)::VARCHAR AS tag
+  FROM range(0, 60000) t(i)
+) TO '${__TEST_DIR__}/pqf.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 8192);
+
+
+statement ok
+CREATE VIEW pqf_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/pqf.parquet');
+
+
+statement ok
+CREATE INDEX pqf_idx ON pqf_v USING inverted(id, body pqf_en);
+
+
+# --- no-filter lookups: cursor resume + skip-to-vector -----------------------
+
+# Dense-ish matches every 13 rows across all 8 row groups; batches cross
+# group boundaries mid-stream.
+query
+SELECT count(*) AS n, min(val) AS lo, max(val) AS hi FROM (
+  SELECT val FROM pqf_idx WHERE body @@ 'fox'
+) t;
+----
+n	lo	hi
+4615	13	59995
+
+
+# Sparse matches: one doc per ~2.4 row groups -> whole groups/vectors skipped.
+query
+SELECT val FROM pqf_idx WHERE body @@ 'owl' ORDER BY val;
+----
+val
+0
+4999
+9998
+14997
+19996
+24995
+29994
+34993
+39992
+44991
+49990
+54989
+59988
+
+
+# --- lookup filters pushed into the parquet reader ---------------------------
+
+# Range filter halves the id space; row groups 0..3 are pruned by their
+# zonemaps or yield zero survivors.
+query
+SELECT count(*) AS n, min(val) AS lo FROM (
+  SELECT val FROM pqf_idx WHERE body @@ 'fox' AND val >= 30000
+) t;
+----
+n	lo
+2308	30004
+
+
+# VARCHAR equality: i % 13 = 0 and i % 5 = 3 -> i = 13 + 65k.
+query
+SELECT count(*) AS n, min(val) AS lo, max(val) AS hi FROM (
+  SELECT val, tag FROM pqf_idx WHERE body @@ 'fox' AND tag = 't3'
+) t;
+----
+n	lo	hi
+923	13	59943
+
+
+# A filter window with exactly one survivor: middle groups produce empty
+# batches that must not terminate the lookup.
+query
+SELECT val, tag FROM pqf_idx WHERE body @@ 'fox' AND val BETWEEN 20000 AND 20012;
+----
+val	tag
+20007	t2
+
+
+# Conjunction of two lookup filters.
+query
+SELECT count(*) AS n FROM (
+  SELECT val FROM pqf_idx WHERE body @@ 'fox' AND val >= 30000 AND tag = 't0'
+) t;
+----
+n
+462
+
+
+statement ok
+DROP INDEX pqf_idx;
+
+statement ok
+DROP VIEW pqf_v;
+
+
+# --- glob arm: two files, per-file survivor re-keying ------------------------
+
+statement ok
+COPY (
+  SELECT i::int4 AS id,
+         CASE WHEN i % 4999 = 0 THEN 'owl'
+              WHEN i % 13 = 0 THEN 'fox'
+              ELSE 'pad' END AS body,
+         i::int4 AS val,
+         't' || (i % 5)::VARCHAR AS tag
+  FROM range(0, 30000) t(i)
+) TO '${__TEST_DIR__}/pqg_1.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 8192);
+
+
+statement ok
+COPY (
+  SELECT i::int4 AS id,
+         CASE WHEN i % 4999 = 0 THEN 'owl'
+              WHEN i % 13 = 0 THEN 'fox'
+              ELSE 'pad' END AS body,
+         i::int4 AS val,
+         't' || (i % 5)::VARCHAR AS tag
+  FROM range(30000, 60000) t(i)
+) TO '${__TEST_DIR__}/pqg_2.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 8192);
+
+
+statement ok
+CREATE VIEW pqg_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/pqg_*.parquet');
+
+
+statement ok
+CREATE INDEX pqg_idx ON pqg_v USING inverted(id, body pqf_en);
+
+
+query
+SELECT count(*) AS n, min(val) AS lo, max(val) AS hi FROM (
+  SELECT val FROM pqg_idx WHERE body @@ 'fox'
+) t;
+----
+n	lo	hi
+4615	13	59995
+
+
+# Filter survivors span both files in one batch (2048 pks per Materialize).
+query
+SELECT count(*) AS n, min(val) AS lo FROM (
+  SELECT val FROM pqg_idx WHERE body @@ 'fox' AND val BETWEEN 29900 AND 30100
+) t;
+----
+n	lo
+16	29900
+
+
+statement ok
+DROP INDEX pqg_idx;
+
+statement ok
+DROP VIEW pqg_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pqf_en;

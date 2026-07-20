@@ -1,0 +1,147 @@
+control substitution on
+
+# TIMETZ index terms encode dtime_tz_t::sort_key() (UTC instant first, offset
+# tiebreak) so every index range below must return exactly what the mirrored
+# plain-table predicate returns. Rows: UTC instants 12:00, 10:30, 11:00, 10:30
+# — pk 2 and pk 4 share an instant but differ in offset.
+
+statement ok
+SET TIME ZONE 'UTC';
+
+statement ok
+CREATE TABLE ttzu(pk INTEGER PRIMARY KEY, ttz TIMETZ);
+
+statement ok
+CREATE TABLE ttzu_plain(pk INTEGER PRIMARY KEY, ttz TIMETZ);
+
+statement ok
+CREATE INDEX ttzu_i ON ttzu USING inverted(pk, ttz) INCLUDE (ttz);
+
+statement ok
+INSERT INTO ttzu VALUES
+    (1, TIMETZ '12:00:00+00'),
+    (2, TIMETZ '12:30:00+02'),
+    (3, TIMETZ '09:00:00-02'),
+    (4, TIMETZ '10:30:00+00');
+
+statement ok
+INSERT INTO ttzu_plain VALUES
+    (1, TIMETZ '12:00:00+00'),
+    (2, TIMETZ '12:30:00+02'),
+    (3, TIMETZ '09:00:00-02'),
+    (4, TIMETZ '10:30:00+00');
+
+statement ok
+VACUUM (REFRESH_TABLE) ttzu;
+
+# Window [11:30, 13:00] UTC — only pk 1 (12:00 UTC) is inside.
+query
+SELECT pk FROM ttzu_i WHERE ttz @@ ts_between(TIMETZ '11:30:00+00', TIMETZ '13:00:00+00', true, true) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM ttzu_plain WHERE ttz BETWEEN TIMETZ '11:30:00+00' AND TIMETZ '13:00:00+00' ORDER BY pk;
+----
+pk
+1
+
+# Same UTC window with bounds spelled in +02.
+query
+SELECT pk FROM ttzu_i WHERE ttz @@ ts_between(TIMETZ '13:30:00+02', TIMETZ '15:00:00+02', true, true) ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM ttzu_plain WHERE ttz BETWEEN TIMETZ '13:30:00+02' AND TIMETZ '15:00:00+02' ORDER BY pk;
+----
+pk
+1
+
+# Half-ranges across the offset boundary.
+query
+SELECT pk FROM ttzu_i WHERE ttz @@ ts_lt(TIMETZ '11:30:00+00') ORDER BY pk;
+----
+pk
+2
+3
+4
+
+query
+SELECT pk FROM ttzu_plain WHERE ttz < TIMETZ '11:30:00+00' ORDER BY pk;
+----
+pk
+2
+3
+4
+
+query
+SELECT pk FROM ttzu_i WHERE ttz @@ ts_ge(TIMETZ '11:30:00+00') ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM ttzu_plain WHERE ttz >= TIMETZ '11:30:00+00' ORDER BY pk;
+----
+pk
+1
+
+# Point range: pk 2 and pk 4 share the UTC instant but differ in offset — the
+# offset is part of the value's identity, so only the exact pair matches.
+query
+SELECT pk FROM ttzu_i WHERE ttz @@ ts_between(TIMETZ '10:30:00+00', TIMETZ '10:30:00+00', true, true) ORDER BY pk;
+----
+pk
+4
+
+query
+SELECT pk FROM ttzu_plain WHERE ttz BETWEEN TIMETZ '10:30:00+00' AND TIMETZ '10:30:00+00' ORDER BY pk;
+----
+pk
+4
+
+# Stored (INCLUDE) values are the typed column values, untouched by the term
+# encoding.
+query
+SELECT pk, ttz FROM ttzu_i ORDER BY pk;
+----
+pk	ttz
+1	12:00:00+00
+2	12:30:00+02
+3	09:00:00-02
+4	10:30:00+00
+
+# TIMETZ list column: element-level range through the same encoder.
+statement ok
+CREATE TABLE ttzl(pk INTEGER PRIMARY KEY, ttzs TIMETZ[]);
+
+statement ok
+CREATE INDEX ttzl_i ON ttzl USING inverted(pk, ttzs);
+
+statement ok
+INSERT INTO ttzl VALUES
+    (1, [TIMETZ '12:00:00+00', TIMETZ '23:00:00+00']),
+    (2, [TIMETZ '12:30:00+02']);
+
+statement ok
+VACUUM (REFRESH_TABLE) ttzl;
+
+query
+SELECT pk FROM ttzl_i WHERE ttzs @@ ts_between(TIMETZ '11:30:00+00', TIMETZ '13:00:00+00', true, true) ORDER BY pk;
+----
+pk
+1
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE ttzu;
+
+statement ok
+DROP TABLE ttzu_plain;
+
+statement ok
+DROP TABLE ttzl;

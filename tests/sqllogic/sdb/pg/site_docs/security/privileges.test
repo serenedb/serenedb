@@ -1,0 +1,164 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP TABLE IF EXISTS doc_sec_ledger;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_reader;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_clerk;
+
+statement ok
+DROP ROLE IF EXISTS doc_sec_auditor;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE doc_sec_ledger (id int, amount int, note text);
+
+query
+SELECT has_table_privilege(current_user, 'doc_sec_ledger', 'SELECT') AS owner_reads,
+       has_table_privilege(current_user, 'doc_sec_ledger', 'DELETE') AS owner_deletes;
+----
+owner_reads	owner_deletes
+t	t
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_reader;
+
+statement ok
+GRANT SELECT ON doc_sec_ledger TO doc_sec_reader;
+
+query
+SELECT has_table_privilege('doc_sec_reader', 'doc_sec_ledger', 'SELECT') AS can_select,
+       has_table_privilege('doc_sec_reader', 'doc_sec_ledger', 'INSERT') AS can_insert;
+----
+can_select	can_insert
+t	f
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+SET ROLE doc_sec_reader;
+
+query
+SELECT count(*) AS row_count FROM doc_sec_ledger;
+----
+row_count
+0
+
+statement error db error: ERROR: permission denied for table doc_sec_ledger
+INSERT INTO doc_sec_ledger VALUES (1, 100, 'blocked');
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_auditor;
+
+statement ok
+GRANT SELECT (id, amount) ON doc_sec_ledger TO doc_sec_auditor;
+
+query
+SELECT has_column_privilege('doc_sec_auditor', 'doc_sec_ledger', 'amount', 'SELECT') AS amount_ok,
+       has_column_privilege('doc_sec_auditor', 'doc_sec_ledger', 'note', 'SELECT') AS note_ok;
+----
+amount_ok	note_ok
+t	f
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_clerk;
+
+statement ok
+GRANT SELECT ON doc_sec_ledger TO doc_sec_clerk WITH GRANT OPTION;
+
+statement ok
+SET ROLE doc_sec_clerk;
+
+statement ok
+GRANT SELECT ON doc_sec_ledger TO doc_sec_auditor;
+
+statement ok
+RESET ROLE;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT SELECT ON doc_sec_ledger TO PUBLIC;
+
+query
+SELECT has_table_privilege('doc_sec_auditor', 'doc_sec_ledger', 'SELECT') AS via_public;
+----
+via_public
+t
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+REVOKE SELECT ON doc_sec_ledger FROM doc_sec_reader;
+
+query
+SELECT has_table_privilege('doc_sec_reader', 'doc_sec_ledger', 'SELECT') AS still_via_public;
+----
+still_via_public
+t
+
+statement ok
+REVOKE SELECT ON doc_sec_ledger FROM PUBLIC;
+
+statement ok
+SET ROLE doc_sec_clerk;
+
+statement ok
+REVOKE SELECT ON doc_sec_ledger FROM doc_sec_auditor;
+
+statement ok
+RESET ROLE;
+
+query
+SELECT has_table_privilege('doc_sec_auditor', 'doc_sec_ledger', 'SELECT') AS after_revoke;
+----
+after_revoke
+f
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE doc_sec_ledger OWNER TO doc_sec_clerk;
+
+query
+SELECT has_table_privilege('doc_sec_clerk', 'doc_sec_ledger', 'DELETE') AS new_owner_all;
+----
+new_owner_all
+t
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP TABLE doc_sec_ledger;
+
+statement ok
+DROP ROLE doc_sec_reader, doc_sec_clerk, doc_sec_auditor;

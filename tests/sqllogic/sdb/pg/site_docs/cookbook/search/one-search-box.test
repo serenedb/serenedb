@@ -1,0 +1,83 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY osb_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE machines (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR,
+    brand VARCHAR,
+    owner VARCHAR,
+    notes VARCHAR,
+    all_text VARCHAR GENERATED ALWAYS AS
+        (concat_ws(' ', name, brand, owner, notes)) STORED
+);
+
+statement ok
+CREATE INDEX machines_idx ON machines
+    USING inverted (id, name osb_en, all_text osb_en);
+
+statement ok
+INSERT INTO machines (id, name, brand, owner, notes) VALUES
+  (1, '826 Vario', 'Fendt', 'Aerts Wouter', 'front loader fitted'),
+  (2, 'Axion 850', 'Claas', 'Desmeth', 'annual service due'),
+  (3, 'D254 SW', 'Giant', 'Wouter Thys', NULL),
+  (4, '714', 'Fendt', 'Beel', 'gearbox rebuilt');
+
+statement ok
+VACUUM (REFRESH_TABLE) machines;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, owner FROM machines_idx
+WHERE all_text @@ 'wouter fendt'
+ORDER BY BM25(machines_idx.tableoid) DESC, id;
+----
+id	name	owner
+1	826 Vario	Aerts Wouter
+3	D254 SW	Wouter Thys
+4	714	Beel
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name, owner FROM machines_idx
+WHERE name @@ ('vario'::tsquery ^ 2.0) OR all_text @@ 'vario'
+ORDER BY BM25(machines_idx.tableoid) DESC, id;
+----
+id	name	owner
+1	826 Vario	Aerts Wouter
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+UPDATE machines SET owner = 'Vandamme' WHERE id = 3;
+
+statement ok
+VACUUM (REFRESH_TABLE) machines;
+
+query
+SELECT id, name, owner FROM machines_idx
+WHERE all_text @@ 'wouter'
+ORDER BY BM25(machines_idx.tableoid) DESC, id;
+----
+id	name	owner
+1	826 Vario	Aerts Wouter

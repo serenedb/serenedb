@@ -1,0 +1,213 @@
+# Online inverted CREATE INDEX vs concurrent DML. The build runs async while
+# real DML executes against the same table; the published index must exactly
+# match the table (delete-log for scanned rowids, native removes for rows
+# inserted during the build, update = delete+insert with a fresh rowid).
+#
+# The pause_create_index_mid_build point parks the sink threads after their
+# first chunk, so every DML statement below is GUARANTEED to land mid-build.
+# Requires SDB_FAULT_INJECTION, like the rest of the recovery suite.
+
+
+# Defensive: fault points are process-global and survive a failed run (the
+# disarm statements never execute on error), so a leaked arm from a previous
+# engine pass would fail the first SET below with "already set".
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE oci_race(x bigint, label text);
+
+
+statement ok
+INSERT INTO oci_race SELECT g, repeat(md5(g::text), 4) FROM generate_series(1, 500000) g;
+
+
+statement ok
+SET sdb_faults = 'pause_create_index_mid_build';
+
+
+connection builder
+statement async ok
+CREATE INDEX oci_race_idx ON oci_race USING inverted(label);
+
+
+# Wait for the index stub to attach before the DML: a statement executing
+# between the CREATE INDEX snapshot and the stub attach has no index hook at
+# all -- its changes are invisible to the index while the scan still sees the
+# pre-DML rows (known window, tracked separately).
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM pg_class WHERE relname = 'oci_race_idx';
+----
+count
+1
+
+
+# Mid-build DML: bulk delete, bulk update, fresh inserts, delete of a fresh
+# row. Retries cover the bind/attach race: a statement bound before the stub
+# attached but executed after trips the executor's IndexIsUpdated assertion
+# on debug builds; the retry re-binds against the attached index.
+statement ok retry 20 backoff 500ms
+DELETE FROM oci_race WHERE x % 10 = 0;
+
+
+statement ok retry 20 backoff 500ms
+UPDATE oci_race SET label = 'updated_' || x WHERE x % 10 = 1;
+
+
+statement ok
+INSERT INTO oci_race VALUES (1000001, 'fresh_kept'), (1000002, 'fresh_deleted');
+
+
+statement ok
+DELETE FROM oci_race WHERE label = 'fresh_deleted';
+
+
+# Force the refresh that consumes the pending removes while the build is
+# still parked (in production the 1s background refresh loop does this).
+statement ok
+VACUUM (REFRESH_TABLE) oci_race;
+
+
+statement ok
+SET sdb_faults = '-pause_create_index_mid_build';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) oci_race;
+
+
+# 500000 - 50000 deleted (x % 10 = 0) + 1 surviving fresh row.
+query ok retry 20 backoff 500ms
+SELECT count(*) FROM oci_race_idx;
+----
+count
+450001
+
+
+# Deleted row must not resurrect.
+query
+SELECT count(*) FROM oci_race_idx WHERE label = repeat(md5('10'::text), 4);
+----
+count
+0
+
+
+# Updated row: only the final version matches.
+query
+SELECT count(*) FROM oci_race_idx WHERE label = repeat(md5('11'::text), 4);
+----
+count
+0
+
+
+query
+SELECT count(*) FROM oci_race_idx WHERE label = 'updated_11';
+----
+count
+1
+
+
+# Rows inserted during the build: kept one present, deleted one absent.
+query
+SELECT count(*) FROM oci_race_idx WHERE label = 'fresh_kept';
+----
+count
+1
+
+
+query
+SELECT count(*) FROM oci_race_idx WHERE label = 'fresh_deleted';
+----
+count
+0
+
+
+# Untouched row still matches.
+query
+SELECT count(*) FROM oci_race_idx WHERE label = repeat(md5('7'::text), 4);
+----
+count
+1
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP TABLE oci_race CASCADE;
+
+
+# TRUNCATE while the build is parked: the backfill copies of already-scanned
+# rows commit after the truncate and must not resurrect.
+
+
+statement ok
+CREATE TABLE oci_trunc(x bigint, label text);
+
+
+statement ok
+INSERT INTO oci_trunc SELECT g, repeat(md5(g::text), 4) FROM generate_series(1, 100000) g;
+
+
+statement ok
+SET sdb_faults = 'pause_create_index_mid_build';
+
+
+connection builder2
+statement async ok
+CREATE INDEX oci_trunc_idx ON oci_trunc USING inverted(label);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM pg_class WHERE relname = 'oci_trunc_idx';
+----
+count
+1
+
+
+statement ok retry 20 backoff 500ms
+TRUNCATE oci_trunc;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) oci_trunc;
+
+
+statement ok
+SET sdb_faults = '-pause_create_index_mid_build';
+
+
+wait
+
+
+statement ok
+VACUUM (REFRESH_TABLE) oci_trunc;
+
+
+query
+SELECT count(*) FROM oci_trunc;
+----
+count
+0
+
+
+query ok retry 20 backoff 500ms
+SELECT count(*) FROM oci_trunc_idx;
+----
+count
+0
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+DROP TABLE oci_trunc CASCADE;

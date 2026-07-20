@@ -127,24 +127,6 @@ void NumericTokenizer::reset(double_t value,
   _num.reset(value, step);
 }
 
-bytes_view NumericTokenizer::value(bstring& buf, int32_t value) {
-  return NumericTerm::value(buf, value);
-}
-
-bytes_view NumericTokenizer::value(bstring& buf, int64_t value) {
-  return NumericTerm::value(buf, value);
-}
-
-#ifndef FLOAT_T_IS_DOUBLE_T
-bytes_view NumericTokenizer::value(bstring& buf, float_t value) {
-  return NumericTerm::value(buf, value);
-}
-#endif
-
-bytes_view NumericTokenizer::value(bstring& buf, double_t value) {
-  return NumericTerm::value(buf, value);
-}
-
 bool NullTokenizer::next() noexcept {
   const bool valid = _valid;
   std::get<TermAttr>(_attrs).value = ViewCast<byte_type>(value_null());

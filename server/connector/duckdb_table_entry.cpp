@@ -47,6 +47,9 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "query/transaction.h"
+#include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
@@ -96,15 +99,10 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 
 duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
   duckdb::ClientContext& context) const {
-  auto store_name = catalog::StoreTableName(
-    ParentCatalog().GetName().GetIdentifierName(),
-    ParentSchema().name.GetIdentifierName(), name.GetIdentifierName());
-  return duckdb::Catalog::GetEntry(
-           context, duckdb::CatalogType::TABLE_ENTRY,
-           duckdb::QualifiedName(
-             duckdb::Identifier{catalog::kStoreDatabaseName},
-             duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
-    .Cast<duckdb::TableCatalogEntry>();
+  return *catalog::GetStoreTableEntry(
+    context, ParentCatalog().GetName().GetIdentifierName(),
+    ParentSchema().name.GetIdentifierName(), name.GetIdentifierName(),
+    duckdb::OnEntryNotFound::THROW_EXCEPTION);
 }
 
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
@@ -114,6 +112,10 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   // carries the user columns (the generated PK is not stored as a value) plus
   // the rowid (PK bytes) virtual that DELETE/UPDATE consume.
   if (_sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    auto& conn_ctx = GetSereneDBContext(context);
+    const auto& search = _sdb_table->GetData();
+    auto reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
+      _sdb_table->GetId(), [&] { return search->GetDirectoryReader(); });
     auto data = duckdb::make_uniq<TableScanBindData>();
     data->table = _sdb_table;
     for (const auto& col : _sdb_table->Columns()) {
@@ -124,9 +126,12 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
       data->column_types.push_back(col.type);
     }
     data->table_entry = this;
-    data->entry_kind = ScanEntryKind::BaseTable;
+    data->entry_kind = ScanEntryKind::SearchTable;
+    data->lookup_label = "search";
+    data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
+      irs::DirectoryReader{*reader});
     bind_data = std::move(data);
-    return CreateSearchTableScanFunction();
+    return CreateIResearchScanFunction();
   }
 
   auto function =

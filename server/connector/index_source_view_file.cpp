@@ -21,6 +21,8 @@
 #include "connector/index_source_view_file.h"
 
 #include <duckdb/common/multi_file/multi_file_states.hpp>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
@@ -31,7 +33,8 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters)
   : ViewIndexSourceBase{std::move(fast_path)} {
   _bind_data = BindFastPathSource(context, _fast_path);
   _lookup_func = MakeFastPathLookupFunction(_fast_path);
@@ -57,28 +60,55 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
       _column_indexes.emplace_back(file_col_idx);
       return multi_bd.types[file_col_idx];
     });
+  BuildPushedFilters(pushed_filters);
+}
+
+void ViewFileIndexSourceBase::BuildPushedFilters(
+  const duckdb::TableFilterSet* input_filters) {
+  if (!input_filters || !input_filters->HasFilters()) {
+    return;
+  }
+  // Source columns sit at output slot `_real_proj_slots[k]` and reader column
+  // `_column_indexes[k]` (its k-th projected column). The scan's pushed filters
+  // are keyed by output slot; re-key those hitting a source column to the
+  // reader's projected-column index. Non-source slots (e.g. the score) are
+  // skipped -- they have no reader column and would mismatch on type.
+  SDB_ASSERT(_real_proj_slots.size() == _column_indexes.size());
+  auto set = duckdb::make_uniq<duckdb::TableFilterSet>();
+  for (duckdb::idx_t k = 0; k < _real_proj_slots.size(); ++k) {
+    auto filter = input_filters->TryGetFilterByColumnIndex(
+      duckdb::ProjectionIndex(_real_proj_slots[k]));
+    if (!filter) {
+      continue;
+    }
+    const auto& expr_filter = duckdb::ExpressionFilter::GetExpressionFilter(
+      *filter, "ViewFileIndexSourceBase::BuildPushedFilters");
+    set->PushFilter(duckdb::ProjectionIndex(k), expr_filter.Copy());
+  }
+  if (set->HasFilters()) {
+    _pushed_filters = std::move(set);
+  }
 }
 
 ViewFileSingleFileIndexSource::ViewFileSingleFileIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
-                            projected_types, bind_column_ids) {
+                            projected_types, bind_column_ids, pushed_filters) {
   duckdb::TableFunctionInitInput init(_bind_data.get(), _column_indexes,
                                       /*projection_ids=*/{},
-                                      /*filters=*/nullptr);
+                                      _pushed_filters.get());
   _lookup_gstate = _lookup_func.init_global(context, init);
 }
 
-void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
-                                                PrimaryKeyBatch& batch,
-                                                duckdb::idx_t start,
-                                                duckdb::idx_t count,
-                                                duckdb::DataChunk& output) {
+duckdb::idx_t ViewFileSingleFileIndexSource::Materialize(
+  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
-    return;
+    return 0;
   }
   auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
@@ -86,32 +116,38 @@ void ViewFileSingleFileIndexSource::Materialize(duckdb::ClientContext& context,
   SortRows(pk, start, count);
 
   AliasOutput(output);
-  _tf_target.SetCardinality(count);
+  // Dense: the lookup TF applies the pushed filters natively and appends
+  // survivors from size 0, then reports the survivor count via the chunk's
+  // cardinality and the sorted-pk index of each via pk_survivors.
+  _tf_target.SetCardinality(0);
+  _survivor_idx.resize(count);
 
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _lookup_gstate.get());
   in.pk_lookups = _sorted_rows;
-  in.pk_output_positions = _output_positions;
+  in.pk_survivors = _survivor_idx;
   _lookup_func.function(context, in, _tf_target);
+  const auto rows = _tf_target.size();
 
-  RunCastPass(output, count);
+  RunCastPass(output, rows);
+  GatherNonLookupColumns(output, rows, _survivor_idx.data());
+  return rows;
 }
 
 ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
+  std::span<const catalog::Column::Id> bind_column_ids,
+  duckdb::TableFilterSet* pushed_filters)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
-                            projected_types, bind_column_ids) {}
+                            projected_types, bind_column_ids, pushed_filters) {}
 
-void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
-                                          PrimaryKeyBatch& batch,
-                                          duckdb::idx_t start,
-                                          duckdb::idx_t count,
-                                          duckdb::DataChunk& output) {
+duckdb::idx_t ViewFileGlobIndexSource::Materialize(
+  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
-    return;
+    return 0;
   }
   auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
@@ -127,8 +163,17 @@ void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
   }
 
   AliasOutput(output);
-  _tf_target.SetCardinality(count);
+  if (_file_target.ColumnCount() == 0) {
+    _file_target.Initialize(context, _scratch_types);
+  }
+  _survivor_idx.resize(count);
 
+  // Each per-file lookup writes its survivors compactly from row 0 into
+  // _file_target (the lookup TF's per-call contract: pk_survivors is sized to
+  // that call's pk_lookups and filled 0-based). Copy each file's survivors into
+  // _tf_target at the running offset so the batch accumulates across files
+  // instead of each file overwriting the last.
+  duckdb::idx_t total = 0;
   size_t i = 0;
   while (i < count) {
     size_t j = i;
@@ -149,25 +194,44 @@ void ViewFileGlobIndexSource::Materialize(duckdb::ClientContext& context,
         single_fp.catalog_ref.reset();
       }
       cached.bind_data = BindFastPathSource(context, single_fp);
-      duckdb::TableFunctionInitInput init(cached.bind_data.get(),
-                                          _column_indexes,
-                                          /*projection_ids=*/{},
-                                          /*filters=*/nullptr);
+      duckdb::TableFunctionInitInput init(
+        cached.bind_data.get(), _column_indexes,
+        /*projection_ids=*/{}, _pushed_filters.get());
       cached.gstate = _lookup_func.init_global(context, init);
     }
 
+    const auto file_count = j - i;
+    _file_survivor_idx.resize(file_count);
+    _file_target.Reset();
+    _file_target.SetCardinality(0);
+
     duckdb::TableFunctionInput in(cached.bind_data.get(),
                                   /*local_state=*/nullptr, cached.gstate.get());
-    const auto file_count = j - i;
     in.pk_lookups =
       std::span<const int64_t>{_sorted_rows.data() + i, file_count};
-    in.pk_output_positions =
-      std::span<const duckdb::idx_t>{_output_positions.data() + i, file_count};
-    _lookup_func.function(context, in, _tf_target);
+    in.pk_survivors = _file_survivor_idx;
+    _lookup_func.function(context, in, _file_target);
+
+    const auto file_rows = _file_target.size();
+    for (duckdb::idx_t c = 0; c < _real_proj_slots.size(); ++c) {
+      duckdb::VectorOperations::Copy(_file_target.data[c], _tf_target.data[c],
+                                     file_rows, /*source_offset=*/0,
+                                     /*target_offset=*/total);
+    }
+    // The reader wrote survivors as 0-based indices into this file's pk_lookups
+    // span (which starts at _sorted_rows[i]); shift to batch-global sorted-pk
+    // indices so GatherNonLookupColumns can reorder the doc-id-keyed columns.
+    for (duckdb::idx_t k = 0; k < file_rows; ++k) {
+      _survivor_idx[total + k] = i + _file_survivor_idx[k];
+    }
+    total += file_rows;
     i = j;
   }
+  _tf_target.SetCardinality(total);
 
-  RunCastPass(output, count);
+  RunCastPass(output, total);
+  GatherNonLookupColumns(output, total, _survivor_idx.data());
+  return total;
 }
 
 }  // namespace sdb::connector

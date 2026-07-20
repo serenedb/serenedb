@@ -38,110 +38,6 @@ constexpr std::string_view ctti() noexcept {
   return {IRS_FUNC_NAME};
 }
 
-template<typename... Types>
-struct template_traits_t;
-
-template<typename First, typename... Second>
-struct template_traits_t<First, Second...> {
-  static constexpr size_t count() noexcept {
-    return 1 + template_traits_t<Second...>::count();
-  }
-
-  static constexpr size_t size() noexcept {
-    return sizeof(First) + template_traits_t<Second...>::size();
-  }
-
-  static constexpr size_t size_aligned(size_t start = 0) noexcept {
-    return template_traits_t<Second...>::size_aligned(
-      template_traits_t<First>::size_max_aligned(start));
-  }
-
-  static constexpr size_t align_max(size_t max = 0) noexcept {
-    return template_traits_t<Second...>::align_max(
-      std::max(max, std::alignment_of_v<First>));
-  }
-
-  static constexpr size_t size_max(size_t max = 0) noexcept {
-    return template_traits_t<Second...>::size_max(std::max(max, sizeof(First)));
-  }
-
-  static constexpr size_t offset_aligned(size_t start = 0) noexcept {
-    constexpr auto kAlign = std::alignment_of_v<First>;
-    return start + ((kAlign - (start % kAlign)) % kAlign)  // padding
-           + sizeof(First);
-  }
-
-  static constexpr size_t size_max_aligned(size_t start = 0,
-                                           size_t max = 0) noexcept {
-    return template_traits_t<Second...>::size_max_aligned(
-      start, (std::max)(max, offset_aligned(start)));
-  }
-
-  template<typename T>
-  static constexpr bool is_convertible() noexcept {
-    return std::is_convertible_v<First, T> ||
-           template_traits_t<Second...>::template is_convertible<T>();
-  }
-
-  template<typename T>
-  static constexpr bool in_list() noexcept {
-    return std::is_same_v<First, T> ||
-           template_traits_t<Second...>::template in_list<T>();
-  }
-};
-
-template<>
-struct template_traits_t<> {
-  static constexpr size_t count() noexcept { return 0; }
-
-  static constexpr size_t size() noexcept { return 0; }
-
-  static constexpr size_t size_aligned(size_t start = 0) noexcept {
-    return start;
-  }
-
-  static constexpr size_t align_max(size_t max = 0) noexcept { return max; }
-
-  static constexpr size_t size_max(size_t max = 0) noexcept { return max; }
-
-  static constexpr size_t offset_aligned(size_t start = 0) noexcept {
-    return start;
-  }
-
-  static constexpr size_t size_max_aligned(size_t start = 0,
-                                           size_t max = 0) noexcept {
-    return max ? max : start;
-  }
-
-  template<typename T>
-  static constexpr bool is_convertible() noexcept {
-    return false;
-  }
-
-  template<typename T>
-  static constexpr bool in_list() noexcept {
-    return false;
-  }
-};
-
-///////////////////////////////////////////////////////////////////////////////
-/// @returns true if type 'T' is convertible to one of the specified 'Types',
-///          false otherwise
-///////////////////////////////////////////////////////////////////////////////
-template<typename T, typename... Types>
-constexpr bool IsConvertible() noexcept {
-  return template_traits_t<Types...>::template is_convertible<T>();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-/// @returns true if type 'T' is present in the specified list of 'Types',
-///          false otherwise
-///////////////////////////////////////////////////////////////////////////////
-template<typename T, typename... Types>
-constexpr bool InList() noexcept {
-  return template_traits_t<Types...>::template in_list<T>();
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 /// @returns if 'T' is 'std::shared_ptr<T>' provides the member constant value
 ///          equal to 'true', or 'false' otherwise
@@ -186,3 +82,39 @@ template<typename T>
 inline constexpr bool kIsVector = IsVector<T>::value;
 
 }  // namespace irs
+namespace sdb::type {
+
+template<typename T>
+struct Tag {
+  using type = T;
+};
+
+template<typename U, typename... T>
+inline constexpr bool kIsOneOf = (std::is_same_v<U, T> || ...);
+
+template<typename...>
+inline constexpr bool kIsUnique = true;
+
+template<typename H, typename... T>
+inline constexpr bool kIsUnique<H, T...> =
+  kIsUnique<T...> && !kIsOneOf<H, T...>;
+
+template<typename...>
+inline constexpr size_t kIndex = 0;
+
+template<typename U, typename H, typename... T>
+inline constexpr size_t kIndex<U, H, T...> =
+  std::is_same_v<U, H> ? 0 : 1 + kIndex<U, T...>;
+
+template<typename T, typename... List>
+inline constexpr bool kContains = (std::is_same_v<T, List> || ...);
+
+template<typename... T>
+inline constexpr bool kIsSimple = (std::is_same_v<T, std::decay_t<T>> && ...);
+
+template<typename... T, typename Visitor>
+constexpr void Visit(const Visitor& visitor) {
+  (visitor(Tag<T>{}), ...);
+}
+
+}  // namespace sdb::type

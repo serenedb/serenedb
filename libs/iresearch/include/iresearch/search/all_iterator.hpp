@@ -75,9 +75,10 @@ class AllIterator : public DocIterator {
     return count;
   }
 
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) noexcept final {
-    // Docs are the contiguous range [_doc, _max_doc]; fill in one iota pass.
-    auto doc = _doc;
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) noexcept final {
+    // Docs are the contiguous range [_doc, _max_doc]; skip below the window,
+    // then fill [min, max) in one iota pass.
+    auto doc = _doc < min ? min : _doc;
     const auto end = max <= _max_doc ? max : _max_doc + 1;
     uint32_t n = 0;
     while (doc < end) {

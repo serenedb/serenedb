@@ -45,6 +45,9 @@ sdb::pg::SerializationContext CloneProto(
   sdb::pg::SerializationContext context;
   context.extra_float_digits = proto.extra_float_digits;
   context.bytea_output = proto.bytea_output;
+  if (proto.time_zone) {
+    context.time_zone.reset(proto.time_zone->clone());
+  }
   context.snapshot = proto.snapshot;
   context.quote_seq = proto.quote_seq;
   context.backslash_count = proto.backslash_count;

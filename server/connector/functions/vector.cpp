@@ -341,10 +341,11 @@ void RegisterNorm(duckdb::ExtensionLoader& loader) {
   if constexpr (N == Norm::L1) {
     name = kL1Norm;
     metric = irs::VectorMetric::L1;
+    score_emit = ScoreEmit::Negate;
   } else if constexpr (N == Norm::L2) {
     name = kL2Norm;
     metric = irs::VectorMetric::L2Sqr;
-    score_emit = ScoreEmit::Sqrt;
+    score_emit = ScoreEmit::SqrtNeg;
   } else {
     SDB_UNREACHABLE();
   }
@@ -379,14 +380,16 @@ void RegisterDistance(duckdb::ExtensionLoader& loader) {
     name = kL1Distance;
     op_name = kL1DistanceOp;
     metric = irs::VectorMetric::L1;
+    score_emit = ScoreEmit::Negate;
   } else if constexpr (D == Distance::L2) {
     name = kL2Distance;
     op_name = kL2DistanceOp;
     metric = irs::VectorMetric::L2Sqr;
-    score_emit = ScoreEmit::Sqrt;
+    score_emit = ScoreEmit::SqrtNeg;
   } else if constexpr (D == Distance::L2Sqr) {
     name = kL2SqrDistance;
     metric = irs::VectorMetric::L2Sqr;
+    score_emit = ScoreEmit::Negate;
   } else if constexpr (D == Distance::Cosine) {
     name = kCosineDistance;
     op_name = kCosineDistanceOp;

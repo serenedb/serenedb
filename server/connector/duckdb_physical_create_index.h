@@ -97,6 +97,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
 
   // Returns the `_relation` cast to a Table when it is one; nullptr for views.
   catalog::Table* TableOrNull() const noexcept;
+  bool IsDuckDBTable() const noexcept;
 
   std::shared_ptr<catalog::Object> _relation;
   // Empty when `_relation` is a Table (use Columns()); populated when view.

@@ -54,11 +54,4 @@ char* dtoa_fast(Float d, char* buf) {  // NOLINT
 template char* dtoa_fast(float, char* buf);
 template char* dtoa_fast(double, char* buf);
 
-char* dtoa_vpack(double d, char* buf) {
-  if (auto* ptr = dtoa_literals<kVPackDtoaLiterals>(d, buf)) [[unlikely]] {
-    return ptr;
-  }
-  return dtoa_fast(d, buf);
-}
-
 }  // namespace sdb::basics

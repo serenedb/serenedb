@@ -23,6 +23,7 @@
 #include "minhash_tokenizer.hpp"
 
 #include <absl/strings/escaping.h>
+#include <simdutf.h>
 
 #include "basics/wyhash.h"
 #include "iresearch/analysis/tokenizer_config.hpp"
@@ -77,9 +78,9 @@ bool MinHashTokenizer::next() {
 
   const auto value = absl::little_endian::FromHost(*_begin);
 
-  [[maybe_unused]] const size_t length = absl::Base64EscapeInternal(
-    reinterpret_cast<const uint8_t*>(&value), sizeof value, _buf.data(),
-    _buf.size(), absl::kBase64Chars, false);
+  [[maybe_unused]] const size_t length = simdutf::binary_to_base64(
+    reinterpret_cast<const char*>(&value), sizeof value, _buf.data(),
+    simdutf::base64_default_no_padding);
   SDB_ASSERT(length == _buf.size());
 
   std::get<IncAttr>(_attrs).value = std::exchange(_next_inc.value, 0);

@@ -21,14 +21,18 @@
 #pragma once
 
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/planner/table_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
 #include <memory>
 #include <span>
 #include <vector>
 
-#include "connector/column_extract.h"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_extract.hpp"
+#include "iresearch/index/table_filter_iterator.hpp"
 
 namespace sdb::connector {
 
@@ -36,14 +40,28 @@ class FullScanner {
  public:
   FullScanner(const irs::ColReader& reader,
               std::span<const ColumnstoreProjection> projections,
-              duckdb::ClientContext* context);
+              std::span<const TableFilterDocIterator::FilterSpec> filters,
+              duckdb::ClientContext* context, ColFilterStateCache& states);
 
   FullScanner(const FullScanner&) = delete;
   FullScanner& operator=(const FullScanner&) = delete;
 
-  bool HasAny() const noexcept { return !_bound.empty(); }
+  bool HasAny() const noexcept { return !_bound.empty() || !_filters.Empty(); }
 
-  void Scan(uint64_t start_row, duckdb::idx_t count, duckdb::DataChunk& output);
+  // Zonemap skip for the bulk loop: no row before the returned end can pass
+  // the pushed filters (0 = no skip), so the caller jumps the scan cursor.
+  uint64_t DeadUntil(uint64_t row) {
+    return _filters.Empty() ? 0 : _filters.DeadUntil(row);
+  }
+
+  // Scans the contiguous rows [start_row, start_row+count)
+  // RowGroup::Scan-style: the pushed `.col` filters narrow the row selection
+  // in-scan (codec Filter + zonemap, decoded once into the projected output
+  // vector then Sliced), and the remaining projected columns materialize only
+  // the survivors. Returns the number of rows written to `output` (== count
+  // when there are no filters).
+  duckdb::idx_t Scan(uint64_t start_row, duckdb::idx_t count,
+                     duckdb::DataChunk& output);
 
  private:
   struct Binding {
@@ -56,6 +74,9 @@ class FullScanner {
 
   irs::ReadContext _ctx;
   std::vector<Binding> _bound;
+  ColFilterChain _filters;
+  duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
+  duckdb::SelectionVector _sel;
 };
 
 }  // namespace sdb::connector

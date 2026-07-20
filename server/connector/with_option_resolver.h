@@ -36,13 +36,26 @@ namespace sdb::connector {
 inline uint32_t ResolveUintWithOption(duckdb::ClientContext& context,
                                       std::string_view name,
                                       const duckdb::Value* with_value) {
-  if (with_value != nullptr) {
+  if (with_value) {
     return with_value->GetValue<uint32_t>();
   }
   duckdb::Value value;
   auto found = context.TryGetCurrentSetting(std::string{name}, value);
   SDB_ASSERT(found, "missing DB-level default for setting: ", name);
   return value.GetValue<uint32_t>();
+}
+
+// 64-bit twin of ResolveUintWithOption for byte-sized options.
+inline uint64_t ResolveUbigintWithOption(duckdb::ClientContext& context,
+                                         std::string_view name,
+                                         const duckdb::Value* with_value) {
+  if (with_value) {
+    return with_value->GetValue<uint64_t>();
+  }
+  duckdb::Value value;
+  auto found = context.TryGetCurrentSetting(std::string{name}, value);
+  SDB_ASSERT(found, "missing DB-level default for setting: ", name);
+  return value.GetValue<uint64_t>();
 }
 
 }  // namespace sdb::connector

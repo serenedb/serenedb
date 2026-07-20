@@ -41,7 +41,7 @@ EXPLAIN SELECT pk, body FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: src_inc_only_idx  │
-│ Filter:                  │
+│ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: notes(string) │ │
 │ │ Value: one           │ │
@@ -62,7 +62,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: src_inc_only_idx  │
 │ Lookup: table            │
-│ Filter:                  │
+│ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: notes(string) │ │
 │ │ Value: one           │ │
@@ -86,7 +86,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: src_inc_only_idx  │
 │ Lookup: table            │
-│ Filter:                  │
+│ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
 │ │ Field: notes(string) │ │
 │ │ Value: one           │ │
@@ -128,7 +128,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: src_ivf_only_idx                │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ─╮                       │
 │ │ Field: emb   │                       │
 │ │ Metric: l2   │                       │
@@ -155,7 +155,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: src_ivf_only_idx                │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ─╮                       │
 │ │ Field: emb   │                       │
 │ │ Metric: l2   │                       │
@@ -199,7 +199,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: src_ivf_mixed_idx               │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Vector KNN ─╮                       │
 │ │ Field: emb   │                       │
 │ │ Metric: l2   │                       │

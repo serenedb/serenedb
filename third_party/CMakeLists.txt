@@ -32,6 +32,34 @@ else()
     set(FOLLY_USE_JEMALLOC OFF)
 endif()
 
+###############################################################################
+## simdutf (SIMD UTF-8 validation + base64)
+################################################################################
+
+set(SIMDUTF_TESTS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_TOOLS OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_ICONV OFF CACHE BOOL "" FORCE)
+set(SIMDUTF_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "simdutf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(simdutf)
+
+################################################################################
+## fast_float
+################################################################################
+
+set(FASTFLOAT_INSTALL OFF CACHE BOOL "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "fast_float" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(fast_float)
+
+###############################################################################
+## simdjson
+################################################################################
+
+set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
+set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
+sdb_update_module(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(simdjson)
+
 ################################################################################
 ## geographiclib-c
 ################################################################################
@@ -200,6 +228,7 @@ sdb_update_module(${GIT_EXECUTABLE} "abseil-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 set(ABSL_PROPAGATE_CXX_STD OFF CACHE BOOL "" FORCE)
 set(ABSL_USE_SYSTEM_INCLUDES ON CACHE BOOL "" FORCE)
 add_subdirectory(abseil-cpp)
+target_link_libraries(absl_strings PUBLIC simdutf)
 
 ################################################################################
 ### re2 library
@@ -572,36 +601,13 @@ add_subdirectory(immer)
 set(LINK_DIRECTORIES "${LINK_DIRECTORIES}" PARENT_SCOPE)
 
 ###############################################################################
-## simdjson
-################################################################################
-
-set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
-set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-sdb_update_module(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(simdjson)
-
-###############################################################################
-## simdutf (SIMD UTF-8 validation + base64)
-################################################################################
-
-set(SIMDUTF_TESTS OFF CACHE BOOL "" FORCE)
-set(SIMDUTF_BENCHMARKS OFF CACHE BOOL "" FORCE)
-set(SIMDUTF_TOOLS OFF CACHE BOOL "" FORCE)
-set(SIMDUTF_ICONV OFF CACHE BOOL "" FORCE)
-set(SIMDUTF_FUZZERS OFF CACHE BOOL "" FORCE)
-sdb_update_module(${GIT_EXECUTABLE} "simdutf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(simdutf)
-
-###############################################################################
 ## ada (WHATWG URL parsing) -- comes after simdutf (ADA_USE_SIMDUTF can use it)
 ################################################################################
 
 set(ADA_TESTING OFF CACHE BOOL "" FORCE)
 set(ADA_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(ADA_TOOLS OFF CACHE BOOL "" FORCE)
-#[[ ADA_USE_SIMDUTF stays OFF for now: enabling it couples ada's CMake to the
-    simdutf target and only accelerates IDNA (a missed optimization, not a bug). ]]
-set(ADA_USE_SIMDUTF OFF CACHE BOOL "" FORCE)
+set(ADA_USE_SIMDUTF ON CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "ada" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(ada)
 
@@ -619,14 +625,6 @@ add_subdirectory(croaring)
 ################################################################################
 
 add_subdirectory(tests)
-
-################################################################################
-## fast_float
-################################################################################
-
-set(FASTFLOAT_INSTALL OFF CACHE BOOL "" FORCE)
-sdb_update_module(${GIT_EXECUTABLE} "fast_float" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(fast_float)
 
 ################################################################################
 ## fmt
@@ -728,6 +726,11 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
+# duckdb's in-tree extensions resolve their includes from directory scope (not from duckdb_static's
+# INTERFACE), so expose simdutf's header to the whole duckdb subtree here. The duckdb_static PUBLIC link
+# to simdutf (added below) is what pulls the compiled simdutf object code into the final binary.
+include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
+
 add_subdirectory(duckdb)
 
 target_compile_definitions(
@@ -758,6 +761,10 @@ target_link_libraries(
         autocomplete_extension
         icu_extension
         inet_extension
+        # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
+        # one PUBLIC edge propagates the simdutf include to duckdb core and to
+        # every static extension (they each link duckdb_static).
+        simdutf
 )
 
 # !!! KEEP THIS LAST !!!

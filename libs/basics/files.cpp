@@ -22,6 +22,7 @@
 #include "files.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/escaping.h>
 #include <fcntl.h>
 #include <openssl/evp.h>
 #include <unistd.h>
@@ -122,8 +123,8 @@ std::string Sha256Functor::Finalize() {
   if (EVP_DigestFinal_ex(context, hash, &length_of_hash) == 0) {
     SDB_ASSERT(false);
   }
-  return basics::string_utils::EncodeHex(
-    reinterpret_cast<const char*>(&hash[0]), length_of_hash);
+  return absl::BytesToHexString(
+    {reinterpret_cast<const char*>(&hash[0]), length_of_hash});
 }
 
 }  // namespace sdb

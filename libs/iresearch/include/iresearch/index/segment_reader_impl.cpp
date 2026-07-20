@@ -73,8 +73,8 @@ class AllIterator : public DocIterator {
     return count;
   }
 
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
-    return EmitDocsImpl(*this, out, max);
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
+    return EmitDocsImpl(*this, out, min, max);
   }
   uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
                           const ScoreFunction& scorer,
@@ -123,10 +123,10 @@ class MaskDocIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) final { return seek(target); }
 
-  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) final {
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
     // Delegate to the child (inherits its specialisation, e.g. posting bulk),
     // then compact out the sparse deleted ids in place.
-    const auto raw = _it->EmitDocs(out, max);
+    const auto raw = _it->EmitDocs(out, min, max);
     uint32_t n = 0;
     for (uint32_t i = 0; i < raw; ++i) {
       if (!_mask.contains(out[i])) {

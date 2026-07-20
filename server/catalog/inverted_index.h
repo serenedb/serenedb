@@ -250,6 +250,10 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
 
+  void ReplaceOptions(InvertedIndexOptions options) noexcept {
+    _options = std::move(options);
+  }
+
   // irs::IndexFieldOptions: the per-field encoding config the writer asks for
   // at flush/merge, resolved against this index's own entries (no catalog
   // lookup).

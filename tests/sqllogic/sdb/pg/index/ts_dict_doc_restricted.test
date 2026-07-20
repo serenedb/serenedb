@@ -107,13 +107,9 @@ QUERY PLAN
 │ Groups: #0                                │
 │ ~0 rows                                   │
 ╰─────────────────────┬─────────────────────╯
-╭─ PROJECTION ────────┴─────────────────────╮
-│ Projections: #0                           │
-│ ~1 row                                    │
-╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: dr_idx                             │
-│ Filter:                                   │
+│ Index Filter:                             │
 │ ╭─ Starts With ───────────╮               │
 │ │ Field: category(string) │               │
 │ │ Prefix: news            │               │

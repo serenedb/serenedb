@@ -40,12 +40,12 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/primary_key.hpp"
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
-#include "primary_key.hpp"
 #include "search/inverted_index_storage.h"
 #include "search_remove_filter.hpp"
 
@@ -143,7 +143,8 @@ class SearchSinkInsertBaseImpl {
                            std::vector<IndexedExpression>&& indexed_exprs = {},
                            PkPolicy pk_policy = {});
 
-  void InitImpl(size_t batch_size, const PkChunk& pk = {});
+  void InitImpl(size_t batch_size, const PkChunk& pk = {},
+                bool* commit_on_flush = nullptr);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
@@ -295,13 +296,6 @@ class SearchSinkDeleteBaseImpl {
  protected:
   irs::IndexWriter::Transaction& _trx;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
-};
-
-class SearchSinkBackfillTrxHolder {
- protected:
-  SearchSinkBackfillTrxHolder(irs::IndexWriter::Transaction trx)
-    : _trx_storage{std::move(trx)} {}
-  irs::IndexWriter::Transaction _trx_storage;
 };
 
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,

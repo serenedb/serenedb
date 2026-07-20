@@ -42,6 +42,24 @@ add_bench(duckdb_collector)
 add_bench(columnstore_vs_duckdb)
 add_bench(select_thresholds)
 add_bench(clustering)
+add_bench(simd_base64)
+add_bench(simd_json_validate)
+add_bench(simd_utf8_validate)
+
+# SIMD string-encoding benches: link the candidate libraries directly.
+target_link_libraries(serenedb-bench-micro-simd_base64 PRIVATE simdutf)
+target_link_libraries(serenedb-bench-micro-simd_json_validate PRIVATE simdjson)
+target_link_libraries(
+    serenedb-bench-micro-simd_utf8_validate
+    PRIVATE simdutf simdjson
+)
+# Utf8Proc baseline lives in duckdb's vendored utf8proc (not a target-interface
+# include), so add its header dir explicitly for the utf8 bench.
+target_include_directories(
+    serenedb-bench-micro-simd_utf8_validate
+    SYSTEM
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+)
 target_include_directories(
     serenedb-bench-micro-ci_hash
     SYSTEM

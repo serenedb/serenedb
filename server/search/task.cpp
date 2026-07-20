@@ -78,22 +78,21 @@ bool ShouldStop() noexcept {
   return lifecycle::IsStopping() || GetSearchEngine().IsStopping();
 }
 
-// Default background compaction policy (the TieredMergePolicy analog) -- this
-// is what fixes today's dead compaction: the coordinator owns the policy
-// instead of the never-assigned catalog setting that left the loop inert.
-// `Small` reduces the merge byte budget when the global slot gate is nearly
-// full so the pool keeps draining under occupancy backpressure. VACUUM keeps
-// CompactionCount{SIZE_MAX}.
-const irs::CompactionPolicy& TierPolicyNormal() {
-  static const irs::CompactionPolicy kPolicy =
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionTier{});
-  return kPolicy;
-}
-
-const irs::CompactionPolicy& TierPolicySmall() {
-  static const irs::CompactionPolicy kPolicy = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionTier{.max_segments_bytes = size_t{512} << 20});
-  return kPolicy;
+// Background compaction policy (the TieredMergePolicy analog), built per
+// target from its WITH-configured settings. `small` reduces the merge byte
+// budget when the global slot gate is nearly full so the pool keeps draining
+// under occupancy backpressure. VACUUM keeps CompactionCount{SIZE_MAX}.
+irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
+                                     bool small) {
+  irs::index_utils::CompactionTier tier;
+  tier.max_segments = settings.compaction_max_segments;
+  tier.max_segments_bytes = settings.compaction_max_segments_bytes;
+  tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
+  if (small) {
+    tier.max_segments_bytes =
+      std::min(tier.max_segments_bytes, size_t{512} << 20);
+  }
+  return irs::index_utils::MakePolicy(tier);
 }
 
 // Per-storage source of the merge's field options, pinned for the merge's
@@ -205,9 +204,8 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   const std::weak_ptr<Storage>& weak) noexcept {
   std::vector<yaclib::FutureOn<bool>> runs;
   while (engine.TryAcquireCompaction()) {
-    const auto& policy = engine.FreeCompactionSlots() == 0 ? TierPolicySmall()
-                                                           : TierPolicyNormal();
-    runs.push_back(s.Run([&, weak] {
+    const bool small = engine.FreeCompactionSlots() == 0;
+    runs.push_back(s.Run([&, weak, small] {
       absl::Cleanup release = [&] { engine.ReleaseCompaction(); };
       if (ShouldStop()) {
         return false;
@@ -217,6 +215,7 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
         return false;
       }
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+      const auto policy = MakeTierPolicy(idx->GetTasksSettings(), small);
       return DoCompaction(*idx, policy);
     }));
   }

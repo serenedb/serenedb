@@ -28,14 +28,6 @@
 
 namespace irs {
 
-struct Attributes {
-  static bool exists(std::string_view name, bool load_library = true);
-
-  static TypeInfo get(std::string_view name, bool load_library = true) noexcept;
-
-  Attributes() = delete;
-};
-
 class AttributeRegistrar {
  public:
   explicit AttributeRegistrar(const TypeInfo& type,

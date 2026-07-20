@@ -27,36 +27,35 @@
 
 // Postgres style error. The carrier variable has a collision-proof name so
 // expressions inside ERR_MSG(...) can safely reference a caller-side `error`.
-#define ERR_CODE(code) sdb_sql_error_data_.errcode = (code)
-#define CURSOR_POS(pos) sdb_sql_error_data_.cursorpos = (pos)
+#define ERR_CODE(code) sdb_sql_error_data.errcode = (code)
+#define CURSOR_POS(pos) sdb_sql_error_data.cursorpos = (pos)
 
-#define ERR_MSG(...) sdb_sql_error_data_.errmsg = absl::StrCat(__VA_ARGS__)
-#define ERR_HINT(...) sdb_sql_error_data_.errhint = absl::StrCat(__VA_ARGS__)
-#define ERR_DETAIL(...) \
-  sdb_sql_error_data_.errdetail = absl::StrCat(__VA_ARGS__)
-#define ERR_CONTEXT(...) sdb_sql_error_data_.context = absl::StrCat(__VA_ARGS__)
+#define ERR_MSG(...) sdb_sql_error_data.errmsg = absl::StrCat(__VA_ARGS__)
+#define ERR_HINT(...) sdb_sql_error_data.errhint = absl::StrCat(__VA_ARGS__)
+#define ERR_DETAIL(...) sdb_sql_error_data.errdetail = absl::StrCat(__VA_ARGS__)
+#define ERR_CONTEXT(...) sdb_sql_error_data.context = absl::StrCat(__VA_ARGS__)
 
-#define SQL_ERROR_DATA(...)                    \
-  [&] {                                        \
-    sdb::pg::SqlErrorData sdb_sql_error_data_; \
-    ERR_CODE(ERRCODE_INTERNAL_ERROR);          \
-    __VA_ARGS__;                               \
-    return sdb_sql_error_data_;                \
+#define SQL_ERROR_DATA(...)                   \
+  [&] {                                       \
+    sdb::pg::SqlErrorData sdb_sql_error_data; \
+    ERR_CODE(ERRCODE_INTERNAL_ERROR);         \
+    __VA_ARGS__;                              \
+    return sdb_sql_error_data;                \
   }()
 
 #define THROW_SQL_ERROR(...) \
   THROW_SQL_ERROR_FROM_DATA(SQL_ERROR_DATA(__VA_ARGS__))
 
-#define SDB_ENSURE(expr, ...)                                               \
-  if (!(expr)) [[unlikely]] {                                               \
-    SDB_ASSERT(false __VA_OPT__(, ) __VA_ARGS__);                           \
-    THROW_SQL_ERROR_FROM_DATA([&] {                                         \
-      sdb::pg::SqlErrorData sdb_sql_error_data_;                            \
-      sdb_sql_error_data_.errcode = ERRCODE_INTERNAL_ERROR;                 \
-      sdb_sql_error_data_.errmsg = absl::StrCat(__VA_ARGS__);               \
-      if (sdb_sql_error_data_.errmsg.empty()) {                             \
-        sdb_sql_error_data_.errmsg = "condition '" #expr "' not satisfied"; \
-      }                                                                     \
-      return sdb_sql_error_data_;                                           \
-    }());                                                                   \
+#define SDB_ENSURE(expr, ...)                                              \
+  if (!(expr)) [[unlikely]] {                                              \
+    SDB_ASSERT(false __VA_OPT__(, ) __VA_ARGS__);                          \
+    THROW_SQL_ERROR_FROM_DATA([&] {                                        \
+      sdb::pg::SqlErrorData sdb_sql_error_data;                            \
+      sdb_sql_error_data.errcode = ERRCODE_INTERNAL_ERROR;                 \
+      sdb_sql_error_data.errmsg = absl::StrCat(__VA_ARGS__);               \
+      if (sdb_sql_error_data.errmsg.empty()) {                             \
+        sdb_sql_error_data.errmsg = "condition '" #expr "' not satisfied"; \
+      }                                                                    \
+      return sdb_sql_error_data;                                           \
+    }());                                                                  \
   }

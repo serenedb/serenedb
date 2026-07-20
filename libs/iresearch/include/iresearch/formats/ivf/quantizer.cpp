@@ -252,13 +252,21 @@ class ScalarQuantizerReader final : public QuantizerReader {
     const byte_type* block = _codes_reader.Read(offset, count);
     _dc->codes = block;
     const size_t cs = _cb->Sq().code_size;
+    const bool is_l2 = _cb->Metric() == VectorMetric::L2Sqr;
     size_t i = 0;
     for (; i + 3 < count; i += 4) {
       _dc->distances_batch_4(i, i + 1, i + 2, i + 3, out[i], out[i + 1],
                              out[i + 2], out[i + 3]);
+      if (is_l2) {
+        out[i] = -out[i];
+        out[i + 1] = -out[i + 1];
+        out[i + 2] = -out[i + 2];
+        out[i + 3] = -out[i + 3];
+      }
     }
     for (; i < count; i++) {
-      out[i] = _dc->distance_to_code(block + i * cs);
+      const auto d = _dc->distance_to_code(block + i * cs);
+      out[i] = is_l2 ? -d : d;
     }
   }
 
@@ -518,7 +526,7 @@ class ProductQuantizerReader final : public QuantizerReader {
     const float inv_a = 1.f / a;
     for (size_t i = 0; i < _n; ++i) {
       const float dist = static_cast<float>(_accu[i]) * inv_a + b;
-      _scores[i] = is_l2 ? dist : dist + ip_offset;
+      _scores[i] = is_l2 ? -dist : dist + ip_offset;
     }
   }
 
@@ -535,7 +543,7 @@ class ProductQuantizerReader final : public QuantizerReader {
   std::vector<uint8_t> _lutq;
   faiss::AlignedTable<uint8_t> _packed_lut;
   std::vector<byte_type> _codes_buf;
-  std::vector<uint16_t> _accu;
+  faiss::AlignedTable<uint16_t> _accu;
   std::vector<score_t> _scores;
   size_t _n = 0;
 };
@@ -616,6 +624,7 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
       GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
       _rotated_query.resize(_rd);
       RotateInto(_signs.data(), query.data(), _rotated_query.data(), _d, _rd);
+      _metric = metric;
       _valid = true;
     }
   }
@@ -632,6 +641,7 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
   }
   uint32_t SrcDim() const noexcept { return _d; }
   uint32_t RotDim() const noexcept { return _rd; }
+  VectorMetric Metric() const noexcept { return _metric; }
 
  private:
   static RaBitQStatsHeader ReadHeader(
@@ -644,6 +654,7 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
   std::unique_ptr<faiss::RaBitQuantizer> _rabitq;
   std::vector<float> _signs;
   std::vector<float> _rotated_query;
+  VectorMetric _metric = VectorMetric::L2Sqr;
   bool _valid = false;
 };
 
@@ -676,8 +687,10 @@ class RaBitQuantizerReader final : public QuantizerReader {
     SDB_ASSERT(offset + count <= _n);
     const byte_type* block = _codes_reader.Read(offset, count);
     const size_t cs = _cb->Rabitq().code_size;
+    const bool is_l2 = _cb->Metric() == VectorMetric::L2Sqr;
     for (size_t i = 0; i < count; ++i) {
-      out[i] = _dc->distance_to_code(block + i * cs);
+      const auto d = _dc->distance_to_code(block + i * cs);
+      out[i] = is_l2 ? -d : d;
     }
   }
 

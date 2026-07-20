@@ -36,23 +36,6 @@ class AttributeRegister
 
 }  // namespace
 
-bool Attributes::exists(std::string_view name, bool load_library /*= true*/) {
-  return static_cast<bool>(
-    AttributeRegister::instance().get(name, load_library));
-}
-
-TypeInfo Attributes::get(std::string_view name,
-                         bool load_library /*= true*/) noexcept {
-  try {
-    return AttributeRegister::instance().get(name, load_library);
-  } catch (...) {
-    SDB_ERROR(IRESEARCH,
-              "Caught exception while getting an attribute instance");
-  }
-
-  return {};  // invalid type id
-}
-
 AttributeRegistrar::AttributeRegistrar(const TypeInfo& type,
                                        const char* source /*= nullptr*/) {
   const auto source_ref =

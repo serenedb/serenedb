@@ -27,7 +27,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
 │ │ Value: alpha        │ │
@@ -43,7 +43,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Starts With ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Prefix: alp         │ │
@@ -60,7 +60,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Automaton ─────────╮ │
 │ │ Field: name(string) │ │
 │ │ Pattern: a_pha      │ │
@@ -76,7 +76,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
 │ │ Value: alpha        │ │
@@ -92,7 +92,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Automaton ─────────╮ │
 │ │ Field: name(string) │ │
 │ │ Pattern: al.ha      │ │
@@ -108,7 +108,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
 │ │ Value: alpha        │ │
@@ -124,7 +124,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: name(string) │ │
 │ │ Value: alpha        │ │
@@ -140,7 +140,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Target: alpha       │ │
@@ -157,7 +157,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────╮
 │ Index: fo_low_idx                       │
 │ Lookup: table                           │
-│ Filter:                                 │
+│ Index Filter:                           │
 │ ╭─ Phrase ────────────────────────────╮ │
 │ │ Field: t(string)                    │ │
 │ │ Parts:                              │ │
@@ -174,7 +174,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: fo_low_idx                      │
 │ Lookup: table                          │
-│ Filter:                                │
+│ Index Filter:                          │
 │ ╭─ Phrase ───────────────────────────╮ │
 │ │ Field: t(string)                   │ │
 │ │ Parts:                             │ │
@@ -191,7 +191,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────╮
 │ Index: fo_low_idx    │
 │ Lookup: table        │
-│ Filter:              │
+│ Index Filter:        │
 │ ╭─ Term ───────────╮ │
 │ │ Field: t(string) │ │
 │ │ Value: alpha     │ │
@@ -213,7 +213,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Target: alpha       │ │
@@ -238,7 +238,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: fo_low_idx                                │
 │ Lookup: table                                    │
-│ Filter:                                          │
+│ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
 │            ├────────────────────────╮            │
@@ -265,7 +265,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Target: alpha       │ │
@@ -290,7 +290,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: fo_low_idx                                │
 │ Lookup: table                                    │
-│ Filter:                                          │
+│ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
 │            ├────────────────────────╮            │
@@ -311,7 +311,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────╮
 │ Index: fo_low_idx                                                         │
 │ Lookup: table                                                             │
-│ Filter:                                                                   │
+│ Index Filter:                                                             │
 │ ╭─ And ───────────────╮                                                   │
 │ ╰──────────┬──────────╯                                                   │
 │            ├────────────────────────┬────────────────────────╮            │
@@ -339,7 +339,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: fo_low_idx                                │
 │ Lookup: table                                    │
-│ Filter:                                          │
+│ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
 │            ├────────────────────────╮            │
@@ -367,7 +367,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: fo_low_idx                                │
 │ Lookup: table                                    │
-│ Filter:                                          │
+│ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
 │            ├────────────────────────╮            │
@@ -394,7 +394,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: fo_low_idx       │
 │ Lookup: table           │
-│ Filter:                 │
+│ Index Filter:           │
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Target: alpha       │ │
@@ -433,7 +433,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: fo_lev_mt_idx                       │
 │ Lookup: table                              │
-│ Filter:                                    │
+│ Index Filter:                              │
 │ ╭─ And ────────────╮                       │
 │ ╰─────────┬────────╯                       │
 │           ├─────────────────────╮          │
@@ -476,7 +476,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────╮
 │ Index: fo_lev_mix_idx                                            │
 │ Lookup: table                                                    │
-│ Filter:                                                          │
+│ Index Filter:                                                    │
 │ ╭─ And ────────────╮                                             │
 │ ╰─────────┬────────╯                                             │
 │           ├─────────────────────┬─────────────────────╮          │

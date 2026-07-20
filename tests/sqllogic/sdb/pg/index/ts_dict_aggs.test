@@ -59,10 +59,6 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~20,000 rows                                         │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~40,000 rows                                         │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
 │ TsDict: body                                         │
@@ -87,11 +83,6 @@ QUERY PLAN
 ╭─ UNGROUPED_AGGREGATE ──────────╮
 │ Aggregates: min(#0), max(#0)   │
 │ ~1 row                         │
-╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections:                   │
-│ sdb_inverted_index_term$body   │
-│ ~2 rows                        │
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
@@ -134,10 +125,6 @@ QUERY PLAN
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
 │ ~20,000 rows                                         │
-╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~40,000 rows                                         │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
@@ -182,13 +169,9 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Term ──────────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Value: apple        │                              │
@@ -217,14 +200,9 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)   │
 │ ~1 row                         │
 ╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections:                   │
-│ sdb_inverted_index_term$body   │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
 │ │ Value: apple        │        │
@@ -269,13 +247,9 @@ QUERY PLAN
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Term ──────────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Value: apple        │                              │
@@ -321,13 +295,9 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Starts With ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Prefix: a           │                              │
@@ -361,14 +331,9 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)   │
 │ ~1 row                         │
 ╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections:                   │
-│ sdb_inverted_index_term$body   │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Starts With ───────╮        │
 │ │ Field: body(string) │        │
 │ │ Prefix: a           │        │
@@ -414,13 +379,9 @@ QUERY PLAN
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Starts With ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Prefix: a           │                              │
@@ -467,13 +428,9 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ──────────╮                             │
 │ │ Field: body(string)  │                             │
 │ │ Pattern: [c..]&[..g] │                             │
@@ -508,14 +465,9 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)   │
 │ ~1 row                         │
 ╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections:                   │
-│ sdb_inverted_index_term$body   │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Automaton ──────────╮       │
 │ │ Field: body(string)  │       │
 │ │ Pattern: [c..]&[..g] │       │
@@ -560,13 +512,9 @@ QUERY PLAN
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ──────────╮                             │
 │ │ Field: body(string)  │                             │
 │ │ Pattern: [c..]&[..g] │                             │
@@ -612,13 +560,9 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Range ─────────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Range: >=mango      │                              │
@@ -650,14 +594,9 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)   │
 │ ~1 row                         │
 ╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections:                   │
-│ sdb_inverted_index_term$body   │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Range ─────────────╮        │
 │ │ Field: body(string) │        │
 │ │ Range: >=mango      │        │
@@ -702,13 +641,9 @@ QUERY PLAN
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Range ─────────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Range: >=mango      │                              │
@@ -754,13 +689,9 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: a%e        │                              │
@@ -790,14 +721,9 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)   │
 │ ~1 row                         │
 ╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections:                   │
-│ sdb_inverted_index_term$body   │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Automaton ─────────╮        │
 │ │ Field: body(string) │        │
 │ │ Pattern: a%e        │        │
@@ -842,13 +768,9 @@ QUERY PLAN
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: a%e        │                              │
@@ -894,13 +816,9 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: a.+o       │                              │
@@ -929,14 +847,9 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)   │
 │ ~1 row                         │
 ╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections:                   │
-│ sdb_inverted_index_term$body   │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Automaton ─────────╮        │
 │ │ Field: body(string) │        │
 │ │ Pattern: a.+o       │        │
@@ -981,13 +894,9 @@ QUERY PLAN
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Automaton ─────────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Pattern: a.+o       │                              │
@@ -1033,13 +942,9 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Levenshtein ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Target: apple       │                              │
@@ -1073,14 +978,9 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)   │
 │ ~1 row                         │
 ╰────────────────┬───────────────╯
-╭─ PROJECTION ───┴───────────────╮
-│ Projections:                   │
-│ sdb_inverted_index_term$body   │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: agg_idx                 │
-│ Filter:                        │
+│ Index Filter:                  │
 │ ╭─ Levenshtein ───────╮        │
 │ │ Field: body(string) │        │
 │ │ Target: apple       │        │
@@ -1126,13 +1026,9 @@ QUERY PLAN
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Levenshtein ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Target: apple       │                              │
@@ -1179,13 +1075,9 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Terms ───────────────────────────╮                │
 │ │ Field: body(string)               │                │
 │ │ Values:                           │                │
@@ -1219,14 +1111,9 @@ QUERY PLAN
 │ Aggregates: min(#0), max(#0)          │
 │ ~1 row                                │
 ╰───────────────────┬───────────────────╯
-╭─ PROJECTION ──────┴───────────────────╮
-│ Projections:                          │
-│ sdb_inverted_index_term$body          │
-│ ~1 row                                │
-╰───────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮
 │ Index: agg_idx                        │
-│ Filter:                               │
+│ Index Filter:                         │
 │ ╭─ Terms ───────────────────────────╮ │
 │ │ Field: body(string)               │ │
 │ │ Values:                           │ │
@@ -1273,13 +1160,9 @@ QUERY PLAN
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: agg_idx                                       │
-│ Filter:                                              │
+│ Index Filter:                                        │
 │ ╭─ Terms ───────────────────────────╮                │
 │ │ Field: body(string)               │                │
 │ │ Values:                           │                │
@@ -1327,10 +1210,6 @@ QUERY PLAN
 │ Aggregates: sum(#2), sum(#3), max(#4)                │
 │ ~4,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1, #2, #3, #4                      │
-│ ~8,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
 ╭─ FILTER ──────────────────┴──────────────────────────╮
 │ Expression:                                          │
 │ length(sdb_inverted_index_term$body) = 5             │
@@ -1367,11 +1246,6 @@ QUERY PLAN
 ╭─ UNGROUPED_AGGREGATE ────────────────────╮
 │ Aggregates: min(#0), max(#0)             │
 │ ~1 row                                   │
-╰─────────────────────┬────────────────────╯
-╭─ PROJECTION ────────┴────────────────────╮
-│ Projections:                             │
-│ sdb_inverted_index_term$body             │
-│ ~8,000 rows                              │
 ╰─────────────────────┬────────────────────╯
 ╭─ FILTER ────────────┴────────────────────╮
 │ Expression:                              │
@@ -1419,10 +1293,6 @@ QUERY PLAN
 │ Groups: #0                                           │
 │ Aggregates: sum(#1)                                  │
 │ ~4,000 rows                                          │
-╰───────────────────────────┬──────────────────────────╯
-╭─ PROJECTION ──────────────┴──────────────────────────╮
-│ Projections: #0, #1                                  │
-│ ~8,000 rows                                          │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ FILTER ──────────────────┴──────────────────────────╮
 │ Expression:                                          │

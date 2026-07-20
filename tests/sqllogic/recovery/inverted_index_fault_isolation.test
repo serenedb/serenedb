@@ -8,9 +8,9 @@ hash-threshold 100
 #
 # iresearch scans are eventually consistent (last-refresh), never
 # visibility-filtered: a covered projection is served entirely from the
-# index columnstore, the matched-row count is preserved across post-refresh
-# deletes, and non-INCLUDE columns of a deleted row surface as NULL while
-# the row is still emitted.
+# index columnstore and the matched-row count is preserved across
+# post-refresh deletes. A non-covered projection fetches by rowid at the
+# current snapshot, and a lookup miss drops the row (same as filtered-out).
 #
 # Each fault site `SDB_THROW(sdb::ERROR_DEBUG)` when armed -- queries that
 # don't exercise that path complete normally; queries that do trip surface
@@ -223,6 +223,32 @@ statement ok
 SET sdb_faults = '-SearchIncludeFetchFault'
 
 
+# --- statistics-eliminated filter leaves a dangling covered column ----
+# `tag >= 100` holds for every row (tag statistics: [100, 300], no NULLs), so
+# statistics propagation removes the pushed filter at plan time. But column
+# pruning ran BEFORE that pass: it kept tag in the scan's column list because
+# it fed a filter (excluded from the output), and nothing re-prunes after the
+# filter dies. The scan is therefore handed a column that neither the output
+# nor any filter needs -- and must not read it at all.
+
+statement ok
+SET sdb_faults = 'SearchIncludeFetchFault'
+
+
+query
+SELECT pk, ext_only FROM doc_idx
+  WHERE body @@ ts_phrase('alpha') AND tag >= 100
+  ORDER BY pk;
+----
+pk	ext_only
+1	x-one
+2	x-two
+
+
+statement ok
+SET sdb_faults = '-SearchIncludeFetchFault'
+
+
 # --- eventually-consistent COUNT and covered SELECT after a post-refresh
 # delete (no subsequent refresh) --------------------------------------
 # The matched set is frozen at the last refresh. Deleting matched rows in a
@@ -289,11 +315,11 @@ statement ok
 SET sdb_faults = '-SearchLookupFault'
 
 
-# --- null-on-miss: NON-covered projection over a deleted row ----------
+# --- drop-on-miss: NON-covered projection over a deleted row ----------
 # ext_only is not INCLUDE'd, so it is fetched by rowid at the current
-# snapshot. pk=2 was deleted after the last refresh: its row is STILL
-# returned (count preserved), ext_only reads NULL, and the INCLUDE column
-# (label) from the columnstore is still correct.
+# snapshot. pk=2 was deleted after the last refresh: the lookup misses and
+# the row is dropped from this projection (misses behave like filtered-out
+# rows), while covered projections and count(*) above still report it.
 
 query
 SELECT label, ext_only FROM doc_idx
@@ -302,7 +328,6 @@ SELECT label, ext_only FROM doc_idx
 ----
 label	ext_only
 a	x-one
-b	NULL
 
 
 statement ok

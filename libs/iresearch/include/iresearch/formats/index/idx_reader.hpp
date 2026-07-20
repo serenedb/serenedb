@@ -78,8 +78,6 @@ class IdxReader final {
   bool HasIvf(field_id id) const noexcept;
   const CentroidsTree* Ivf(field_id id) const noexcept;
 
-  const TermDictMeta* TermDict(field_id id) const noexcept;
-
   std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
 
   IndexInput::ptr ReopenIn() const;

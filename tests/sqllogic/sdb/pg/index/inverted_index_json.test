@@ -444,7 +444,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: num_str_split_idx                 │
 │ Lookup: table                            │
-│ Filter:                                  │
+│ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
 │ │ Field: ("content" -> 'val')(numeric) │ │
 │ │ Value: 42                            │ │
@@ -468,7 +468,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────╮
 │ Index: num_str_split_idx              │
 │ Lookup: table                         │
-│ Filter:                               │
+│ Index Filter:                         │
 │ ╭─ Term ────────────────────────────╮ │
 │ │ Field: ("content" -> 'val')(bool) │ │
 │ │ Value: true                       │ │

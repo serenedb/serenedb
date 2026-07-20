@@ -1,7 +1,7 @@
 services:
   serenedb:
     image: ${DOCKER_TEST_IMAGE}
-    command: serened
+    command: serened --auth_timeout=600s
     networks:
       - rta-network
 

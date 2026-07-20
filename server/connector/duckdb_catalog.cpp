@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_catalog.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -82,6 +83,7 @@
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/inverted_index_options_util.h"
 #include "connector/search_table_dispatch.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -804,13 +806,24 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) {
+  auto& table_entry = RequireBaseTable(op.table);
+  if (table_entry.GetSereneDBTable()->GetEngine() ==
+      catalog::TableEngine::Search) {
+    // MERGE INTO (and INSERT ... ON CONFLICT, which duckdb also lowers to
+    // MergeInto) delegates each action to the store mirror, which bypasses the
+    // iresearch index -- it silently corrupts the search index. Reject it with
+    // a clear error until search-backed MERGE is implemented.
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on "
+              "search-backed tables"));
+  }
   // DuckDB routes INSERT ON CONFLICT through MergeInto as well. Retarget the
   // constraints onto the store mirror and delegate; upstream
   // DuckCatalog::PlanMergeInto builds each action against the store
   // DuckTableEntry via TableCatalogEntry::GetStorageTableEntry.
-  auto& store_entry = RequireBaseTable(op.table)
-                        .ResolveStoreEntry(context)
-                        .Cast<duckdb::DuckTableEntry>();
+  auto& store_entry =
+    table_entry.ResolveStoreEntry(context).Cast<duckdb::DuckTableEntry>();
   op.bound_constraints =
     RetargetStoreConstraints(context, store_entry, op.bound_constraints);
   return store_entry.ParentCatalog().Cast<duckdb::DuckCatalog>().PlanMergeInto(
@@ -1003,6 +1016,16 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("access method \"", idx_type, "\" does not exist"));
+    }
+  }
+
+  if (create_index_info->index_type == "inverted") {
+    for (const auto& [option, value] : create_index_info->options) {
+      if (!absl::c_contains(kCreateInvertedOptions,
+                            absl::AsciiStrToLower(option))) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("unrecognized parameter \"", option, "\""));
+      }
     }
   }
 

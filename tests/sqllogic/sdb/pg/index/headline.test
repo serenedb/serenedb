@@ -69,6 +69,52 @@ ts_highlight
 The <b>quick</b> brown <b>fox</b> is here
 
 
+# --- Hit starting exactly on a sentence boundary ---
+# preceding(hit_start) alone lands in the previous sentence and produces a
+# passage ending where the hit begins, which used to loop forever. A hit as
+# the first word after '.', '!', '?' or a newline must select the sentence
+# containing it.
+
+query
+SELECT ts_highlight('a. Wouter', ARRAY[3::INTEGER, 9::INTEGER])
+----
+ts_highlight
+<b>Wouter</b>
+
+
+query
+SELECT ts_highlight('a! Wouter', ARRAY[3::INTEGER, 9::INTEGER])
+----
+ts_highlight
+<b>Wouter</b>
+
+
+# Colon is not an ICU sentence boundary: the whole string is one passage.
+
+query
+SELECT ts_highlight('a: Wouter', ARRAY[3::INTEGER, 9::INTEGER])
+----
+ts_highlight
+a: <b>Wouter</b>
+
+
+query
+SELECT ts_highlight('kraan' || chr(10) || 'Demonteren en herspuiten',
+                    ARRAY[6::INTEGER, 16::INTEGER])
+----
+ts_highlight
+<b>Demonteren</b> en herspuiten
+
+
+query
+SELECT ts_highlight(
+    'Sentence one. The quick brown fox is here. Sentence three.',
+    ARRAY[14::INTEGER, 17::INTEGER])
+----
+ts_highlight
+<b>The</b> quick brown fox is here
+
+
 # --- No hits: PG fallback to first MaxWords tokens ---
 
 query
@@ -667,7 +713,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──┴──────────────────╮
 │ Index: hl_docs_idx                   │
 │ Lookup: table                        │
-│ Filter:                              │
+│ Index Filter:                        │
 │ ╭─ Term ──────────────╮              │
 │ │ Field: body(string) │              │
 │ │ Value: fox          │              │
@@ -701,7 +747,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────┴─────────────────────────────╮
 │ Index: hl_docs_idx                                         │
 │ Lookup: table                                              │
-│ Filter:                                                    │
+│ Index Filter:                                              │
 │ ╭─ Term ──────────────╮                                    │
 │ │ Field: body(string) │                                    │
 │ │ Value: fox          │                                    │
@@ -789,7 +835,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: hl_multi_idx                               │
 │ Lookup: table                                     │
-│ Filter:                                           │
+│ Index Filter:                                     │
 │ ╭─ And ────────────────╮                          │
 │ ╰───────────┬──────────╯                          │
 │             ├────────────────────────╮            │

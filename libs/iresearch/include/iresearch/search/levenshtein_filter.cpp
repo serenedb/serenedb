@@ -199,11 +199,6 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
 
 }  // namespace
 
-field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions&) {
-  THROW_SQL_ERROR(
-    ERR_MSG("ByEditDistance must be lowered by the optimizer before visitor"));
-}
-
 QueryBuilder::ptr ByEditDistance::PrepareSegment(const SubReader&,
                                                  const PrepareContext&) const {
   THROW_SQL_ERROR(

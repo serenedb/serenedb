@@ -54,6 +54,12 @@ struct BlockWindow {
   duckdb::idx_t end = 0;
 };
 
+// A pushed filter that is a bare IS [NOT] NULL over the column: the validity
+// child alone answers it, so GatherFilter can skip the data decode -- except
+// on blocks whose codec self-describes nulls (NO_VALIDITY_REQUIRED, e.g.
+// dict_fsst), where the data segment is the only truth.
+enum class NullCheckKind : uint8_t { None, IsNull, IsNotNull };
+
 struct IotaRange {
   using contiguous_range_tag = void;
   uint64_t start;
@@ -187,6 +193,11 @@ class ColumnReader {
     return *_children[i];
   }
 
+  // Zonemap for row group `rg`, used by pushed table-filter pruning.
+  const duckdb::BaseStatistics& RowGroupStatistics(size_t rg) const noexcept {
+    SDB_ASSERT(rg < _segments.size());
+    return _segments[rg].statistics;
+  }
   bool IsValidityRgEmpty(size_t vrg) const noexcept {
     SDB_ASSERT(_validity && vrg < _validity->_segments.size());
     return _validity->_segments[vrg].codec->type ==
@@ -226,6 +237,25 @@ class ColumnReader {
                            const duckdb::SelectionVector& sel,
                            duckdb::idx_t hits, duckdb::idx_t span,
                            duckdb::Vector& out) const;
+
+  // Narrows `sel` (offsets within [0, span) of the requested rows, ascending)
+  // to the subset whose value in [anchor, anchor+span) passes `filter`, exactly
+  // like RowGroup::Scan's per-column filter step. Uses the compression codec's
+  // ColumnSegment::Filter (dict evaluates the predicate once per entry) when
+  // the codec self-describes nulls; a bare IS [NOT] NULL (`null_check`)
+  // evaluates on the validity child alone, skipping the data decode;
+  // otherwise decodes the span (data + validity) into `scratch` and narrows
+  // via ColumnSegment::FilterSelection. Positions the scan to `anchor` first
+  // (rows must ascend across calls). `scratch` is a caller-owned throwaway of
+  // this column's type. Returns the survivor count; on return
+  // `sel[0..survivors)` are the surviving span offsets.
+  duckdb::idx_t GatherFilter(ScanState& s, uint64_t anchor, duckdb::idx_t span,
+                             duckdb::SelectionVector& sel,
+                             duckdb::idx_t sel_count,
+                             const duckdb::TableFilter& filter,
+                             duckdb::TableFilterState& filter_state,
+                             NullCheckKind null_check,
+                             duckdb::Vector& scratch) const;
 
   class PointReader {
    public:
@@ -312,6 +342,10 @@ class ColumnReader {
   std::unique_ptr<duckdb::ColumnSegment> Open(const BlockWindow& w,
                                               ReadContext& ctx) const;
   bool NextSegment(BlockWindow& w) const noexcept;
+  // The span's validity block is the all-valid EMPTY codec (or there is no
+  // validity child): the data segment alone is validity-complete there.
+  bool ValiditySpanAllValid(ScanState& s, uint64_t anchor,
+                            duckdb::idx_t span) const;
   void BeginScanVector(ScanState& s) const;
   duckdb::ScanVectorType GetVectorScanType(ScanState& s, duckdb::idx_t count,
                                            duckdb::Vector& result) const;

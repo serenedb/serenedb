@@ -1,0 +1,111 @@
+# Pushed `.col` filters against per-block column structure. Codecs are picked
+# PER BLOCK, so one column can mix a dictionary block (codec filter path, nulls
+# in-band, empty validity) with a high-cardinality block that has real null
+# bits (decode path). The codec path must keep the validity child's cursor in
+# step with the data cursor, or block B's NULL mask is read from block A's
+# rows: NULL rows (stored as empty strings) would pass `tag <= 'azz'`.
+# WITH (row_group_size = 4096) keeps the blocks small enough to mix at 12k
+# rows. `row_group_size` is a columnstore-wide setting: the per-column
+# `included(row_group_size)` form is rejected (windows assume uniform block
+# boundaries across filter columns).
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mxb_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE mxb (id INT PRIMARY KEY, body VARCHAR, g INT, tag VARCHAR);
+
+
+# Rows 1..4096 (block A): alternating 'aaa'/'nnn', no NULLs -> dictionary
+# codec, empty validity. Rows 4097..12288 (blocks B): every 3rd row NULL,
+# every 10th row 'aaa', the rest unique 'u<i>...' strings -> non-dict codec,
+# real validity bits. (NULL wins where both apply.)
+statement ok
+INSERT INTO mxb
+SELECT i, 'fox', i,
+       CASE WHEN i <= 4096 THEN (CASE WHEN i % 2 = 0 THEN 'aaa' ELSE 'nnn' END)
+            WHEN i % 3 = 0 THEN NULL
+            WHEN i % 10 = 0 THEN 'aaa'
+            ELSE 'u' || i || ' unique filler payload string'
+       END
+FROM generate_series(1, 12288) t(i);
+
+
+statement ok
+CREATE INDEX mxb_idx ON mxb
+    USING inverted(id, body mxb_en)
+    INCLUDE (g, tag)
+    WITH (row_group_size = 4096);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mxb;
+
+
+# tag <= 'azz' matches the 'aaa' rows only; NULLs must fail the predicate.
+# Block A: even ids in 1..4096 -> 2048. Blocks B: i in 4097..12288 with
+# i % 10 = 0 and i % 3 <> 0 -> 819 - 273 = 546. Total 2594.
+query
+SELECT count(*) AS n FROM (
+  SELECT g FROM mxb_idx WHERE body @@ 'fox' AND tag <= 'azz'
+) t;
+----
+n
+2594
+
+
+# Same predicate with the filter column projected: values must all be 'aaa'.
+query
+SELECT DISTINCT tag FROM mxb_idx WHERE body @@ 'fox' AND tag <= 'azz';
+----
+tag
+aaa
+
+
+# NULL count is fixed by construction: multiples of 3 in 4097..12288.
+query
+SELECT count(*) AS n FROM mxb_idx WHERE body @@ 'fox' AND tag IS NULL;
+----
+n
+2731
+
+
+# Bulk match-all arm over the same mixed-codec column.
+query
+SELECT count(*) AS n FROM (
+  SELECT g FROM mxb_idx WHERE tag <= 'azz'
+) t;
+----
+n
+2594
+
+
+# Per-column row_group_size is not a thing: block boundaries must be uniform
+# across the columnstore (norm columns keep their own norm_row_group_size).
+statement error
+CREATE INDEX mxb_bad_idx ON mxb
+    USING inverted(id, body mxb_en)
+    INCLUDE (g included (row_group_size = 1000), tag);
+----
+db error: ERROR: Column 'g': unknown included option 'row_group_size'. Accepted options: compression (string, default 'auto'), hyperloglog (bool, default false)
+
+
+statement ok
+DROP INDEX mxb_idx;
+
+statement ok
+DROP TABLE mxb;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY mxb_en;

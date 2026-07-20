@@ -68,7 +68,6 @@ struct IdxReader::Impl {
   std::vector<std::pair<field_id, CentroidsTree>> ivf_entries;
   sdb::containers::FlatHashMap<field_id, size_t> ivf_by_id;
   std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
-  sdb::containers::FlatHashMap<field_id, size_t> term_dict_by_id;
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
@@ -137,9 +136,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         meta.has_wand = obj.ReadProperty<bool>(6, "has_wand");
         meta.body_offset = obj.ReadProperty<uint64_t>(7, "body_offset");
         meta.norm = obj.ReadProperty<uint64_t>(8, "norm");
-        const size_t idx = _impl->term_dicts.size();
         _impl->term_dicts.emplace_back(id, std::move(meta));
-        _impl->term_dict_by_id.emplace(id, idx);
       });
     });
   deserializer.ReadList(
@@ -184,13 +181,6 @@ const CentroidsTree* IdxReader::Ivf(field_id id) const noexcept {
   auto it = _impl->ivf_by_id.find(id);
   return it == _impl->ivf_by_id.end() ? nullptr
                                       : &_impl->ivf_entries[it->second].second;
-}
-
-const TermDictMeta* IdxReader::TermDict(field_id id) const noexcept {
-  auto it = _impl->term_dict_by_id.find(id);
-  return it == _impl->term_dict_by_id.end()
-           ? nullptr
-           : &_impl->term_dicts[it->second].second;
 }
 
 std::span<const std::pair<field_id, TermDictMeta>> IdxReader::TermDicts()

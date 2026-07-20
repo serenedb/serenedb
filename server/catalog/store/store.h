@@ -83,6 +83,11 @@ std::string DroppedStoreTableName(ObjectId table_id);
 // metadata-only.
 std::string StoreIndexName(ObjectId index_id);
 
+duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
+  duckdb::ClientContext& context, std::string_view database,
+  std::string_view schema, std::string_view table,
+  duckdb::OnEntryNotFound if_not_found);
+
 struct StoreIndexDef {
   enum class Kind : uint8_t {
     // Native ART index on the store table (btree/secondary in PG terms).

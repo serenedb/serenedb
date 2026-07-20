@@ -10,10 +10,10 @@ CREATE TABLE pa(a INTEGER, b TEXT, c INTEGER);
 query
 SELECT attname, attnum, attisdropped FROM pg_attribute WHERE attrelid = 'pa'::regclass AND attnum > 0 ORDER BY attnum;
 ----
-attname attnum attisdropped
-a 1 f
-b 2 f
-c 3 f
+attname	attnum	attisdropped
+a	1	f
+b	2	f
+c	3	f
 
 
 statement ok
@@ -23,9 +23,9 @@ ALTER TABLE pa DROP COLUMN b;
 query
 SELECT attname, attnum, attisdropped FROM pg_attribute WHERE attrelid = 'pa'::regclass AND attnum > 0 ORDER BY attnum;
 ----
-attname attnum attisdropped
-a 1 f
-c 2 f
+attname	attnum	attisdropped
+a	1	f
+c	2	f
 
 
 statement ok
@@ -35,10 +35,10 @@ ALTER TABLE pa ADD COLUMN d TEXT;
 query
 SELECT attname, attnum FROM pg_attribute WHERE attrelid = 'pa'::regclass AND attnum > 0 ORDER BY attnum;
 ----
-attname attnum
-a 1
-c 2
-d 3
+attname	attnum
+a	1
+c	2
+d	3
 
 
 statement ok
@@ -48,10 +48,10 @@ ALTER TABLE pa RENAME COLUMN c TO c2;
 query
 SELECT attname, attnum FROM pg_attribute WHERE attrelid = 'pa'::regclass AND attnum > 0 ORDER BY attnum;
 ----
-attname attnum
-a 1
-c2 2
-d 3
+attname	attnum
+a	1
+c2	2
+d	3
 
 
 statement ok

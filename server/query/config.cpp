@@ -89,6 +89,13 @@ ByteaOutput Config::GetByteaOutput() const {
   return GetEnumValue<ByteaOutput>(*value);
 }
 
+std::string Config::GetTimeZone() const {
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("TimeZone", value);
+  SDB_ASSERT(ok && !value.IsNull());
+  return value.ToString();
+}
+
 IsolationLevel Config::GetIsolationLevel() const {
   return _client_ctx.transaction.GetIsolationLevel();
 }
@@ -170,12 +177,6 @@ void Config::SetSettingChecked(std::string_view key, std::string value,
 
 bool Config::IsExplicitTransaction() const {
   return !_client_ctx.transaction.IsAutoCommit();
-}
-
-bool Config::IsTransactionInvalidated() const {
-  auto& txn = _client_ctx.transaction;
-  return txn.HasActiveTransaction() &&
-         duckdb::ValidChecker::IsInvalidated(txn.ActiveTransaction());
 }
 
 void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {

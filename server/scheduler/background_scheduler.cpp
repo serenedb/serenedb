@@ -77,13 +77,41 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
   }
   auto& ctx = pool->Next().Context();
   auto timer = std::make_shared<asio_ns::steady_timer>(ctx, d);
+  // Arm and register under one lock so a concurrent CancelDelays() either sees
+  // the not-yet-armed timer (and this call completes immediately) or an armed,
+  // registered one it can cancel -- an unregistered armed timer would sleep out
+  // its full duration.
+  absl::MutexLock lock{&_delays_mutex};
+  if (_delays_cancelled) {
+    std::move(p).Set();
+    return std::move(f);
+  }
   timer->async_wait(
-    [timer, p = std::move(p)](const asio_ns::error_code&) mutable {
+    [this, timer, p = std::move(p)](const asio_ns::error_code&) mutable {
+      {
+        absl::MutexLock lock{&_delays_mutex};
+        _delays.erase(timer);
+      }
       // Runs on an io thread: trivial promise-set only, no background work
       // here.
       std::move(p).Set();
     });
+  _delays.insert(std::move(timer));
   return std::move(f);
+}
+
+void BackgroundScheduler::CancelDelays() {
+  absl::flat_hash_set<std::shared_ptr<asio_ns::steady_timer>> delays;
+  {
+    absl::MutexLock lock{&_delays_mutex};
+    _delays_cancelled = true;
+    delays.swap(_delays);
+  }
+  for (const auto& timer : delays) {
+    // cancel() must be serialized with the timer's completion handler: post it
+    // onto the io thread that owns the timer.
+    asio_ns::post(timer->get_executor(), [timer] { timer->cancel(); });
+  }
 }
 
 }  // namespace sdb

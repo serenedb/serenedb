@@ -42,6 +42,14 @@ float CosineSimilarity(const byte_type* l, const byte_type* r, uint16_t d) {
   return denom == 0.f ? 0.f : lr / denom;
 }
 
+float NegL2SqrDistance(const byte_type* l, const byte_type* r, uint16_t d) {
+  return -vector::L2Space<float, float, float>::Dist(l, r, d);
+}
+
+float NegL1Distance(const byte_type* l, const byte_type* r, uint16_t d) {
+  return -vector::L1Space<float, float, float>::Dist(l, r, d);
+}
+
 }  // namespace
 
 VectorDistanceFn ResolveVectorDistance(VectorMetric metric) {
@@ -90,12 +98,6 @@ void IvfVectorReader::ReadInto(uint64_t start, uint64_t count) {
     done += n;
     _pos += n;
   }
-}
-
-const float* IvfVectorReader::ReadDoc(doc_id_t doc) {
-  const uint64_t row = static_cast<uint64_t>(doc) - doc_limits::min();
-  ReadInto(row * _d, _d);
-  return duckdb::FlatVector::GetData<float>(_buf);
 }
 
 const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {

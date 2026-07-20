@@ -122,15 +122,6 @@ class NumericTokenizer final : public BasicTokenizer,
   static constexpr uint32_t kPrecisionStepDef = 16;
   static constexpr uint32_t kPrecisionStep32 = 8;
 
-  static bytes_view value(bstring& buf, int32_t value);
-  static bytes_view value(bstring& buf, int64_t value);
-
-#ifndef FLOAT_T_IS_DOUBLE_T
-  static bytes_view value(bstring& buf, float_t value);
-#endif
-
-  static bytes_view value(bstring& buf, double_t value);
-
   static constexpr std::string_view type_name() noexcept {
     return "numeric_token_stream";
   }
@@ -159,44 +150,6 @@ class NumericTokenizer final : public BasicTokenizer,
   //////////////////////////////////////////////////////////////////////////////
   class NumericTerm final {
    public:
-    static bytes_view value(bstring& buf, int32_t value) {
-      decltype(_val) val;
-
-      val.i32 = value;
-      buf.resize(numeric_utils::numeric_traits<decltype(value)>::size());
-
-      return NumericTerm::value(buf.data(), kNtInt, val, 0);
-    }
-
-    static bytes_view value(bstring& buf, int64_t value) {
-      decltype(_val) val;
-
-      val.i64 = value;
-      buf.resize(numeric_utils::numeric_traits<decltype(value)>::size());
-
-      return NumericTerm::value(buf.data(), kNtLong, val, 0);
-    }
-
-#ifndef FLOAT_T_IS_DOUBLE_T
-    static bytes_view value(bstring& buf, float_t value) {
-      decltype(_val) val;
-
-      val.i32 = numeric_utils::numeric_traits<float_t>::integral(value);
-      buf.resize(numeric_utils::numeric_traits<decltype(value)>::size());
-
-      return NumericTerm::value(buf.data(), kNtFloat, val, 0);
-    }
-#endif
-
-    static bytes_view value(bstring& buf, double_t value) {
-      decltype(_val) val;
-
-      val.i64 = numeric_utils::numeric_traits<double_t>::integral(value);
-      buf.resize(numeric_utils::numeric_traits<decltype(value)>::size());
-
-      return NumericTerm::value(buf.data(), kNtDbl, val, 0);
-    }
-
     bool next(IncAttr& inc, bytes_view& out);
 
     void reset(int32_t value, uint32_t step) {

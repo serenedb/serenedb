@@ -1,0 +1,250 @@
+hash-threshold 100
+
+# ---------------------------------------------------------------------------
+# WAND top-k combined with a `.col` table filter.
+#
+# When a top-k scored query (single ORDER BY key) also carries a pushed-down
+# INCLUDE-column filter, the scan stays in WAND top-k mode (`Top: k, optimized`)
+# and wraps the WAND iterator in a TableFilterDocIterator. The collector then
+# drives the WAND iterator through EmitScoredDocs over the filtered survivors:
+#   * single Term  -> SingleWandIterator::EmitScoredDocs
+#   * ByTerms      -> MaxScoreIterator::EmitScoredDocs (disjunction / WAND)
+# Both must self-position from a fresh iterator (no external advance() prime).
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_wtf(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE wtf (id INTEGER PRIMARY KEY, n INTEGER, body VARCHAR);
+
+
+# doc length grows with id, so bm25('term') is strictly higher for shorter
+# docs; 'rare' (df=2) dominates the disjunction ranking.
+statement ok
+INSERT INTO wtf VALUES
+  (1, 10, 'term'),
+  (2, 20, 'term fill'),
+  (3, 30, 'term fill fill'),
+  (4, 40, 'term fill fill fill rare'),
+  (5, 50, 'term fill fill fill fill rare');
+
+
+statement ok
+CREATE INDEX wtf_idx ON wtf USING inverted(body en_wtf) INCLUDE (n)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) wtf;
+
+
+# --- Case 1: single Term (SingleWandIterator) + `.col` filter + top-k --------
+
+query
+EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 DESC                      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: wtf_idx                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: term         │                │
+│ ╰─────────────────────╯                │
+│ Column Filter: n > 20                  │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 2, optimized                      │
+│ Projections: n,                        │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
+----
+n
+30
+40
+
+
+# --- Case 2: ByTerms disjunction (MaxScoreIterator) + `.col` filter + top-k --
+
+query
+EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_any(['term', 'rare']) AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 DESC                      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: wtf_idx                         │
+│ Index Filter:                          │
+│ ╭─ Terms ────────────────╮             │
+│ │ Field: body(string)    │             │
+│ │ Values: 'rare', 'term' │             │
+│ │ Min Match: 1           │             │
+│ ╰────────────────────────╯             │
+│ Column Filter: n > 20                  │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 2, optimized                      │
+│ Projections: n,                        │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT n FROM wtf_idx WHERE body @@ ts_any(['term', 'rare']) AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
+----
+n
+40
+50
+
+
+# --- Case 3: static score floor (Lucene min_score) -------------------------
+# A constant lower bound on the score records a floor. Streaming keeps the
+# filter pushed (per-row enforcement; the floor only seeds the WAND threshold,
+# which skips blocks). Top-k strips it -- with the dynamic TOP_N boundary --
+# from the plan entirely: the collector starts at the floor and enforces it,
+# so no Column Filter remains. Results must be identical with the
+# optimization disabled.
+
+query
+EXPLAIN SELECT id FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > 2.5 ORDER BY id;
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────────╮
+│ Order By: wtf_idx.id ASC       │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: wtf_idx                 │
+│ Lookup: table                  │
+│ Index Filter:                  │
+│ ╭─ Term ──────────────╮        │
+│ │ Field: body(string) │        │
+│ │ Value: term         │        │
+│ ╰─────────────────────╯        │
+│ Column Filter:                 │
+│ sdb_inverted_index_score > 2.5 │
+│ Score: bm25(k1=1.2, b=0.75)    │
+│ Min Score: 2.5                 │
+│ Projections: id                │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > 2.5 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 DESC                      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: wtf_idx                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: term         │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 2, optimized                      │
+│ Min Score: 2.5                         │
+│ Projections: n,                        │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT id FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > -1 ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+
+query
+SELECT id FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > 1000000 ORDER BY id;
+----
+id
+
+
+query
+SELECT id FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > -1 AND n > 20 ORDER BY id;
+----
+id
+3
+4
+5
+
+
+query
+SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > -1 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
+----
+n
+10
+20
+
+
+query
+SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > 1000000 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
+----
+n
+
+
+statement ok
+SET sdb_disable_top_k_optimization = true;
+
+
+query
+SELECT id FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > -1 ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+
+
+query
+SELECT id FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > -1 AND n > 20 ORDER BY id;
+----
+id
+3
+4
+5
+
+
+statement ok
+RESET sdb_disable_top_k_optimization;
+
+
+statement ok
+DROP TABLE wtf;

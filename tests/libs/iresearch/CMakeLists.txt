@@ -26,7 +26,6 @@ set(iresearch-tests_sources
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
-    ./formats/formats_tests.cpp
     ./formats/formats_test_case_base.cpp
     ./formats/skip_list_test.cpp
     ./store/directory_test_case.cpp
@@ -103,7 +102,6 @@ set(iresearch-tests_sources
     ./utils/object_pool_tests.cpp
     ./utils/numeric_utils_test.cpp
     ./utils/simd_utils_test.cpp
-    ./utils/attributes_tests.cpp
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
@@ -119,7 +117,6 @@ set(iresearch-tests_sources
     ./utils/misc_test.cpp
     ./utils/std_test.cpp
     ./utils/thread_pool_test.cpp
-    ./utils/type_utils_tests.cpp
     ./utils/utf8_utils_test.cpp
     ./utils/utf8_path_tests.cpp
     ./utils/fst_builder_test.cpp

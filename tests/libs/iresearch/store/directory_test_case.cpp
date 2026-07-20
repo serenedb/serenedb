@@ -28,14 +28,10 @@
 #include <string>
 #include <vector>
 
-#include "basics/misc.hpp"
-
-#ifdef IRESEARCH_URING
-#include "iresearch/store/async_directory.hpp"
-#endif
 #include "basics/async_utils.hpp"
 #include "basics/crc.hpp"
 #include "basics/file_utils_ext.hpp"
+#include "basics/misc.hpp"
 #include "basics/network_utils.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/mmap_directory.hpp"
@@ -4576,30 +4572,6 @@ TEST_F(FsDirectoryTest, orphaned_lock) {
     ASSERT_FALSE(!lock);
     ASSERT_FALSE(lock->lock());  // still have different hostname
   }
-}
-
-TEST(memory_directory_test, rewrite) {
-  const std::string_view str0{"quick brown fowx jumps over the lazy dog"};
-  const std::string_view str1{"hund"};
-  const std::string_view expected{"quick brown fowx jumps over the lazy hund"};
-  const bytes_view payload0{ViewCast<byte_type>(str0)};
-  const bytes_view payload1{ViewCast<byte_type>(str1)};
-
-  MemoryOutput out{IResourceManager::gNoop};
-  out.stream.WriteData(payload0.data(), payload0.size());
-  ASSERT_EQ(payload0.size(), out.stream.Position());
-  out.stream.Truncate(out.stream.Position() - 3);
-  ASSERT_EQ(payload0.size() - 3, out.stream.Position());
-  out.stream.WriteData(payload1.data(), payload1.size());
-  ASSERT_EQ(payload0.size() - 3 + payload1.size(), out.stream.Position());
-  out.stream.Flush();
-
-  MemoryIndexInput in{out.file};
-  ASSERT_EQ(payload0.size() - 3 + payload1.size(), in.Length());
-
-  std::string value(expected.size(), 0);
-  in.ReadData(reinterpret_cast<irs::byte_type*>(value.data()), value.size());
-  ASSERT_EQ(expected, value);
 }
 
 }  // namespace

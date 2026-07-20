@@ -43,10 +43,12 @@ SELECT CAST(i AS VARCHAR) AS id,
 FROM generate_series(1, 5000) t(i);
 
 # Pin the codec so the test keeps exercising dict_fsst even if the auto-selection
-# heuristic changes.
+# heuristic changes. Pinning is per included column; an index-level
+# WITH (compression = ...) never existed (it used to be silently ignored and
+# is rejected as unrecognized now).
 statement ok
 CREATE INDEX uaf_idx ON uaf_src USING inverted(id, body uaf_words)
-  INCLUDE (id, body) WITH (compression = 'dict_fsst');
+  INCLUDE (id, body included (compression = 'dict_fsst'));
 
 # Whole corpus is indexed.
 query

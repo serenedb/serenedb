@@ -29,9 +29,11 @@
 #include <filesystem>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 #include "catalog/inverted_index.h"
 #include "catalog/types.h"
@@ -119,6 +121,34 @@ class InvertedIndexStorage final
     return _writer->GetBatch();
   }
 
+  // Delete-log for online CREATE INDEX: open while the build runs, drained
+  // once at publish by TakeDeleteLog, then latched forever. It holds removes
+  // for rowids in [begin, end) -- rows whose backfill copy may still be
+  // uncommitted, where a native remove could get lost. Outside the window
+  // removes go native: below begin the copy is already committed, at/above
+  // end the row came through the live writer during the build.
+  //   begin: rises as backfill segments commit (stale read = over-log, safe).
+  //   end:   the rowid allocator at build start, fixed.
+  // AppendDeleteLog returns false once latched; the caller then removes
+  // natively (a delete racing publish is an ordinary post-publish remove).
+  bool IsDeleteLogOpen() const noexcept {
+    return _delete_log_open.load(std::memory_order_relaxed);
+  }
+  bool AppendDeleteLog(std::vector<int64_t>&& rows);
+  std::vector<int64_t> TakeDeleteLog();
+  void SetDeleteLogRowidEnd(int64_t end) noexcept {
+    _delete_log_rowid_end.store(end, std::memory_order_relaxed);
+  }
+  int64_t DeleteLogRowidEnd() const noexcept {
+    return _delete_log_rowid_end.load(std::memory_order_relaxed);
+  }
+  void SetDeleteLogRowidBegin(int64_t begin) noexcept {
+    _delete_log_rowid_begin.store(begin, std::memory_order_release);
+  }
+  int64_t DeleteLogRowidBegin() const noexcept {
+    return _delete_log_rowid_begin.load(std::memory_order_acquire);
+  }
+
   // `field_options` (nullable) is the per-merge per-column encoding config: the
   // compaction task hands the InvertedIndex from its own DDL snapshot so the
   // merge encodes against that view, never the live catalog. It pins for the
@@ -185,6 +215,8 @@ class InvertedIndexStorage final
   void StartTasks();
 
   void FinishCreation();
+
+  void ApplyOptions(const catalog::InvertedIndexOptions& options);
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
@@ -302,6 +334,12 @@ class InvertedIndexStorage final
   duckdb::mutex _flush_cursors_mutex;
   std::map<Tick, WalCursor> _flush_cursors;
   std::atomic<bool> _out_of_sync{false};
+  duckdb::mutex _delete_log_mutex;
+  std::atomic<bool> _delete_log_open{false};
+  std::atomic<int64_t> _delete_log_rowid_end{
+    std::numeric_limits<int64_t>::max()};
+  std::atomic<int64_t> _delete_log_rowid_begin{0};
+  std::vector<std::vector<int64_t>> _delete_log;
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
   std::atomic<uint64_t> _num_failed_commits{0};

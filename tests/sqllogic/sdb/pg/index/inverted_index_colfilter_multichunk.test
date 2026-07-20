@@ -1,0 +1,91 @@
+# Regression: `.col` table filters run inside the HitBatcher (streaming), so a
+# window whose rows are all dropped by the filter must not be mistaken for "scan
+# drained" -- otherwise later survivors are skipped. The text term matches every
+# even id across the whole range, but the INCLUDE-only `.col` filter g>=4000
+# keeps only the tail, so the leading windows are fully filtered.
+
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY cf_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE cf (id INT PRIMARY KEY, body VARCHAR, g INT, payload VARCHAR);
+
+
+statement ok
+INSERT INTO cf
+SELECT i, CASE WHEN i % 2 = 0 THEN 'alpha' ELSE 'gamma' END, i, 'p' || i
+FROM generate_series(1, 5000) t(i);
+
+
+# `body @@ 'alpha'` matches even ids; g and payload are INCLUDE-only (no posting
+# list), so a filter on g is a `.col` Column Filter, not an index term.
+statement ok
+CREATE INDEX cf_idx ON cf USING inverted(id, body cf_en) INCLUDE (g, payload);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cf;
+
+
+# Streaming (a `@@` term query is not match-all): the projected filter column g
+# (decoded once, then Sliced), payload (INCLUDE) and id (lookup) all track the
+# survivors even though the leading windows are fully dropped by g>=4000.
+query
+SELECT count(*) AS n FROM cf_idx WHERE body @@ 'alpha' AND g >= 4000;
+----
+n
+501
+
+
+# An isolated survivor after fully-filtered leading windows.
+query
+SELECT id, g, payload FROM cf_idx WHERE body @@ 'alpha' AND g = 4000;
+----
+id	g	payload
+4000	4000	p4000
+
+
+# Tail survivors, projecting the filter column alongside a non-filter column.
+query
+SELECT id, g, payload FROM cf_idx WHERE body @@ 'alpha' AND g >= 4998 ORDER BY id;
+----
+id	g	payload
+4998	4998	p4998
+5000	5000	p5000
+
+
+# The whole column is excluded: no survivors, no crash.
+query
+SELECT count(*) AS n FROM cf_idx WHERE body @@ 'alpha' AND g >= 100000;
+----
+n
+0
+
+
+# The count path (still filtered via the DocIterator) agrees with streaming.
+query
+SELECT count(*) AS n FROM cf_idx WHERE body @@ 'alpha' AND g >= 4000;
+----
+n
+501
+
+
+statement ok
+DROP INDEX cf_idx;
+
+statement ok
+DROP TABLE cf;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cf_en;

@@ -32,12 +32,6 @@
 
 namespace sdb::basics::file_utils {
 
-// removes trailing path separators from path, path will be modified in-place
-std::string_view RemoveTrailingSeparator(std::string_view name);
-
-// normalizes path, path will be modified in-place
-void NormalizePath(std::string& name);
-
 // creates a filename
 std::string BuildFilename(std::string_view path, std::string_view name);
 
@@ -64,9 +58,5 @@ inline void Spit(const std::string& filename, std::string_view content,
 // creates a new directory
 
 // checks if path is a directory
-bool IsDirectory(const char* path);
-inline bool IsDirectory(const std::string& path) {
-  return IsDirectory(path.c_str());
-}
 
 }  // namespace sdb::basics::file_utils

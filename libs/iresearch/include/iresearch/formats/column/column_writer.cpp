@@ -595,14 +595,6 @@ void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
   AppendDense(vec, count);
 }
 
-void ColumnWriter::Append(uint64_t start_row, const duckdb::Vector& vec,
-                          const duckdb::SelectionVector& sel,
-                          duckdb::idx_t count) {
-  PadNullsTo(start_row);
-  duckdb::Vector selected{vec, sel, count};
-  AppendDense(selected, count);
-}
-
 void ColumnWriter::PadNestedNulls(uint64_t count) {
   duckdb::idx_t off = 0;
   while (off < count) {

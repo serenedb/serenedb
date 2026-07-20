@@ -38,12 +38,21 @@ enum class PkColumnKind : uint8_t {
   Unable,
 };
 
+// The initializers ARE the built-in defaults: options always hold concrete
+// values (CREATE resolves WITH/session settings over them, ALTER RESET
+// restores the session value). segment_docs_max is the one field where 0 is
+// a real value -- iresearch defines 0 == unlimited.
 struct InvertedIndexOptions {
-  uint32_t row_group_size = 0;
-  uint32_t norm_row_group_size = 0;
-  uint32_t refresh_interval_ms = 0;
-  uint32_t compaction_interval_ms = 0;
-  uint32_t cleanup_interval_step = 0;
+  uint32_t row_group_size = 122880;
+  uint32_t norm_row_group_size = 122880;
+  uint32_t refresh_interval_ms = 1000;
+  uint32_t compaction_interval_ms = 1000;
+  uint32_t cleanup_interval_step = 1;
+  uint64_t segment_memory_max = uint64_t{256} << 20;
+  uint32_t segment_docs_max = 0;
+  uint32_t compaction_max_segments = 10;
+  uint64_t compaction_max_segments_bytes = uint64_t{5} << 30;
+  uint64_t compaction_floor_segment_bytes = uint64_t{2} << 20;
   bool pk_term = true;
   PkColumnKind pk_column = PkColumnKind::I64;
   std::optional<ScorerOptions> topk_scorer;

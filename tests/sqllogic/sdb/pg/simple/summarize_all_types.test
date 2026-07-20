@@ -1,0 +1,108 @@
+# SUMMARIZE must bind and run over every creatable column type (the binder
+# rewrite picks per-type aggregates; types without avg/quantile support get
+# NULL there instead of an unbindable call). Full-output pinning is done by
+# inverted_index_summarize.test on a small set; here the point is breadth.
+
+statement ok
+CREATE TABLE sm(
+  b BOOLEAN, i1 TINYINT, i2 SMALLINT, i4 INTEGER, i8 BIGINT, h HUGEINT,
+  u1 UTINYINT, u2 USMALLINT, u4 UINTEGER, u8 UBIGINT, uh UHUGEINT,
+  f FLOAT, d DOUBLE, dec DECIMAL(18,3), v VARCHAR, bl BLOB, uu UUID,
+  dt DATE, t TIME, ttz TIMETZ, tns TIME_NS,
+  ts TIMESTAMP, ts_s TIMESTAMP_S, ts_ms TIMESTAMP_MS, ts_ns TIMESTAMP_NS,
+  tstz TIMESTAMPTZ, tstz_ns TIMESTAMPTZ_NS, iv INTERVAL,
+  arr INTEGER[], farr INTEGER[3], st STRUCT(a INTEGER, s VARCHAR),
+  mp MAP(INTEGER, VARCHAR), vr VARIANT,
+  nested STRUCT(l INTEGER[], s STRUCT(x DOUBLE))
+);
+
+statement count 2
+INSERT INTO sm VALUES
+    (true, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1.5, 2.5, 3.125, 'hello',
+     '\x01'::BLOB, '123e4567-e89b-12d3-a456-426614174000',
+     DATE '2024-01-01', TIME '12:00:00', TIMETZ '12:00:00+05:30',
+     TIME_NS '12:00:00.000000001',
+     TIMESTAMP '2024-01-01 12:00:00', TIMESTAMP_S '2024-01-01 12:00:00',
+     TIMESTAMP_MS '2024-01-01 12:00:00.123',
+     TIMESTAMP_NS '2024-01-01 12:00:00.123456789',
+     TIMESTAMPTZ '2024-01-01 12:00:00+00',
+     TIMESTAMPTZ_NS '2024-01-01 12:00:00.123456789+00',
+     INTERVAL '1 year 2 days', [1,2,3], [1,2,3], ROW(1, 'x'),
+     MAP([1,2],['a','b']), 42::VARIANT, ROW([1,2], ROW(3.5))),
+    (false, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'str'::VARIANT, NULL);
+
+query
+SUMMARIZE sm;
+----
+<slt:ignore>
+
+query
+SELECT count(*) AS cols FROM (SUMMARIZE sm) s;
+----
+cols
+34
+
+query
+SELECT count(*) AS all_rows_counted FROM (SUMMARIZE sm) s
+WHERE s."count" = 2 AND s.null_percentage IN (0.00, 50.00);
+----
+all_rows_counted
+34
+
+# ---------------------------------------------------------------------------
+# Same over an inverted-index virtual table: aggregates run over the
+# INCLUDE-column scan for every term_dict-supported type incl. lists.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE smi(
+  pk INTEGER PRIMARY KEY, b BOOLEAN, i4 INTEGER, i8 BIGINT, f FLOAT, d DOUBLE,
+  v VARCHAR, dt DATE, t TIME, ts TIMESTAMP, tstz TIMESTAMPTZ, ttz TIMETZ,
+  tns TIME_NS, ts_ns TIMESTAMP_NS, tstz_ns TIMESTAMPTZ_NS,
+  arr INTEGER[], darr DATE[]
+);
+
+statement ok
+CREATE INDEX smi_idx ON smi
+  USING inverted(pk, b, i4, i8, f, d, v, dt, t, ts, tstz, ttz, tns, ts_ns, tstz_ns, arr, darr)
+  INCLUDE (b, i4, i8, f, d, v, dt, t, ts, tstz, ttz, tns, ts_ns, tstz_ns, arr, darr);
+
+statement count 2
+INSERT INTO smi VALUES
+    (1, true, 1, 2, 1.5, 2.5, 'x', DATE '2024-01-01', TIME '12:00:00',
+     TIMESTAMP '2024-01-01 12:00:00', TIMESTAMPTZ '2024-01-01 12:00:00+00',
+     TIMETZ '12:00:00+02', TIME_NS '12:00:00.000000001',
+     TIMESTAMP_NS '2024-01-01 12:00:00.123456789',
+     TIMESTAMPTZ_NS '2024-01-01 12:00:00.123456789+00',
+     [1,2], [DATE '2024-01-01']),
+    (2, false, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+     NULL, NULL, NULL, NULL, NULL);
+
+statement ok
+VACUUM (REFRESH_TABLE) smi;
+
+query
+SUMMARIZE smi_idx;
+----
+<slt:ignore>
+
+query
+SELECT count(*) AS cols FROM (SUMMARIZE smi_idx) s;
+----
+cols
+17
+
+query
+SELECT count(*) AS all_rows_counted FROM (SUMMARIZE smi_idx) s
+WHERE s."count" = 2 AND s.null_percentage IN (0.00, 50.00);
+----
+all_rows_counted
+17
+
+statement ok
+DROP TABLE sm;
+
+statement ok
+DROP TABLE smi;

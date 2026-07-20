@@ -34,8 +34,12 @@
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/lambda_expression.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/storage_lock.hpp>
+#include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -102,6 +106,11 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::shared_ptr<search::InvertedIndexStorage> index_storage;
   std::shared_ptr<const catalog::Snapshot> snapshot_for_providers;
   std::shared_ptr<catalog::Index> index_for_providers;
+
+  // The backfill's own store transaction (snapshot pinned at publication,
+  // routed to the child scan via the meta-transaction override).
+  duckdb::AttachedDatabase* store_db = nullptr;
+  duckdb::optional_ptr<duckdb::DuckTransaction> backfill_txn;
 
   pg::ProgressMetrics* progress = nullptr;
 
@@ -287,6 +296,22 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   bool if_not_exists =
     _info->on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
+  // Online-build publication must be atomic with the backfill snapshot:
+  // under the store table's exclusive checkpoint lock (no commit can be in
+  // flight or land), the index is injected and a fresh store transaction is
+  // pinned for the pipeline. Every commit is then either before both (in the
+  // backfill scan) or after both (feeds the injected index) -- no hole, no
+  // overlap. The bind-time store transaction's older snapshot is shadowed by
+  // the override below.
+  duckdb::unique_ptr<duckdb::StorageLockKey> publish_lock;
+  duckdb::optional_ptr<duckdb::TableCatalogEntry> store_entry;
+  if (state->index_type == catalog::ObjectType::InvertedIndex &&
+      IsDuckDBTable()) {
+    store_entry = catalog::GetStoreTableEntry(
+      context, _relation->GetId(), duckdb::OnEntryNotFound::THROW_EXCEPTION);
+    publish_lock = store_entry->GetStorage().GetCheckpointLock();
+  }
+
   // CREATE INDEX requires ownership of the target relation; the mutation
   // enforces it and throws "must be owner of table <name>" on a non-owner.
   bool created = false;
@@ -425,8 +450,14 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         kSereneDBClientStateKey)) {
     SDB_ASSERT(!sdb_state->transaction_abort_cleanup);
     sdb_state->transaction_abort_cleanup =
-      [database_id = _database_id,
-       index_id = state->index_id](duckdb::MetaTransaction&) {
+      [database_id = _database_id, index_id = state->index_id,
+       gstate = state.get()](duckdb::MetaTransaction& meta) {
+        if (gstate->store_db && gstate->backfill_txn) {
+          meta.PopTransactionOverride(*gstate->store_db);
+          gstate->store_db->GetTransactionManager().RollbackTransaction(
+            *gstate->backfill_txn);
+          gstate->backfill_txn = nullptr;
+        }
         catalog::GetCatalog().DropIndexById(database_id, index_id, true);
       };
   }
@@ -446,11 +477,24 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     storage->StartTasks();
 
     if (IsDuckDBTable()) {
-      auto store_entry = catalog::GetStoreTableEntry(
-        context, _relation->GetId(), duckdb::OnEntryNotFound::THROW_EXCEPTION);
+      SDB_ASSERT(store_entry && publish_lock);
       storage->SetDeleteLogRowidEnd(store_entry->GetStorage().GetNextRowId());
       state->uncommitted_min_rowids = std::vector<std::atomic<int64_t>>(
         duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
+
+      // The backfill's snapshot, pinned while the lock still excludes
+      // commits: a fresh store transaction routed to this pipeline's scan
+      // (the CTAS second-transaction pattern). Read-only; Finalize (or the
+      // abort hook) pops and rolls it back.
+      auto& store_db = store_entry->ParentCatalog().GetAttached();
+      auto& meta = duckdb::MetaTransaction::Get(context);
+      auto& backfill_txn = store_db.GetTransactionManager()
+                             .StartTransaction(context)
+                             .Cast<duckdb::DuckTransaction>();
+      backfill_txn.active_query = meta.GetActiveQuery();
+      meta.PushTransactionOverride(store_db, backfill_txn);
+      state->store_db = &store_db;
+      state->backfill_txn = &backfill_txn;
     }
   }
 
@@ -699,6 +743,15 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
   if (!gstate.created) {
     return duckdb::SinkFinalizeType::READY;
+  }
+
+  // The source is drained; retire the backfill's pinned snapshot.
+  if (gstate.store_db && gstate.backfill_txn) {
+    duckdb::MetaTransaction::Get(context).PopTransactionOverride(
+      *gstate.store_db);
+    gstate.store_db->GetTransactionManager().RollbackTransaction(
+      *gstate.backfill_txn);
+    gstate.backfill_txn = nullptr;
   }
 
   if (gstate.index_type == catalog::ObjectType::InvertedIndex &&

@@ -281,6 +281,14 @@ absl::Status DataStore::ExecuteEntry(const CatalogStore::Entry& entry) {
         }
         SDB_ASSERT(entry.table_obj && entry.index_obj);
         auto& storage = table_entry->Cast<duckdb::DuckTableEntry>().GetStorage();
+        // Injection is not a store transaction, so a concurrent commit's
+        // index-feed pass could otherwise straddle it (rows flushed before
+        // the list gains the index but committed after the backfill snapshot
+        // are lost). The exclusive checkpoint lock excludes in-flight commit
+        // appends -- the same serialization duckdb's own CREATE INDEX build
+        // relies on -- making every commit either fully before (visible to
+        // the backfill scan) or fully after (feeds the index).
+        auto lock = storage.GetCheckpointLock();
         storage.GetDataTableInfo()->GetIndexes().AddIndex(
           connector::MakeInjectedInvertedIndex(
             storage, *entry.table_obj,

@@ -84,6 +84,7 @@ class Table final : public Object {
              ? _columns.size()
              : static_cast<size_t>(it->second - _columns.data());
   }
+  bool IsColumnNotNull(Column::Id col_id) const;
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
   TableEngine GetEngine() const noexcept { return _engine; }
   const auto& UniqueConstraints() const noexcept { return _unique_constraints; }

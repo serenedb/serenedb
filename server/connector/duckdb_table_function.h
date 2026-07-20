@@ -254,6 +254,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     std::function<void(catalog::Column::Id, const duckdb::LogicalType&)>;
   virtual void IterateColumns(const ColumnVisitor& cb) const = 0;
 
+  bool IsColumnNotNull(catalog::Column::Id col_id) const;
+
  protected:
   explicit SereneDBScanBindData(Kind k) : _kind{k} {}
 

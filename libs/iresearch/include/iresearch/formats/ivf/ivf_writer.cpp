@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
+#include <random>
 #include <span>
 #include <utility>
 
@@ -46,7 +47,9 @@ namespace irs {
 namespace {
 
 constexpr uint32_t kDefaultClusterIters = 25;
-constexpr uint64_t kMinPqTrainSample = 256;
+constexpr uint64_t kMinCentroidTrainSample = 256;
+constexpr size_t kPqTrainResiduals = 65536;
+constexpr uint32_t kPqTrainSeed = 0x51ED270Bu;
 
 }  // namespace
 
@@ -67,38 +70,33 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool sq_train =
     qw != nullptr && (_info.quant.kind == VectorQuantization::SQ8 ||
                       _info.quant.kind == VectorQuantization::SQ4);
-
-  auto centroids = CentroidsBuilder::Create(
-    vector_column, ctx, rows, _info.metric, d, pq ? kMinPqTrainSample : 0);
-  centroids.Finish();
-  const auto leaf = centroids.LeafCentroids();
-  const uint32_t n_leaf = static_cast<uint32_t>(leaf.size() / d);
-  if (n_leaf == 0) {
-    return result;
-  }
-
-  if (pq && qw != nullptr) {
-    const auto sample = centroids.TrainingSample();
-    const size_t n_sample = sample.size() / d;
-    auto ids = centroids.AssignCentroids(sample, d);
-    SDB_ASSERT(ids.size() == n_sample);
-    std::vector<float> residuals(sample.size());
-    for (size_t i = 0; i < n_sample; ++i) {
-      const float* v = sample.data() + i * d;
-      const float* c = leaf.data() + static_cast<size_t>(ids[i]) * d;
-      float* r = residuals.data() + i * d;
-      for (uint32_t j = 0; j < d; ++j) {
-        r[j] = v[j] - c[j];
-      }
-    }
-    qw->Train(residuals.data(), n_sample);
-  }
+  const bool needs_centroid = _info.quant.kind == VectorQuantization::PQ ||
+                              _info.quant.kind == VectorQuantization::RaBitQ;
 
   const auto valid = ReadValidity(vector_column, rows, ctx);
   uint64_t valid_count = 0;
   for (uint64_t r = 0; r < rows; ++r) {
     valid_count += valid[r] ? 1 : 0;
   }
+  if (valid_count == 0) {
+    return result;
+  }
+
+  auto centroids = CentroidsBuilder::Create(
+    vector_column, ctx, rows, _info.metric, d,
+    CentroidsBuildParams{
+      .posting_size = _info.posting_size,
+      .sample_factor = _info.sample_factor,
+      .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
+      .keep_sample = pq && qw != nullptr,
+    });
+  const size_t n_clusters = centroids.NumClusters();
+
+  std::vector<float> pq_train_res;
+  size_t pq_res_seen = 0;
+  const size_t pq_res_cap =
+    pq && qw != nullptr ? std::min<size_t>(valid_count, kPqTrainResiduals) : 0;
+  std::mt19937 pq_rng{kPqTrainSeed};
 
   std::vector<uint32_t> doc_cluster;
   doc_cluster.reserve(valid_count);
@@ -106,14 +104,44 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   {
     std::vector<float> gather;
     gather.reserve(STANDARD_VECTOR_SIZE * d);
+    std::vector<std::span<const float>> cents(
+      needs_centroid ? STANDARD_VECTOR_SIZE : 0);
     size_t gathered = 0;
     const auto flush = [&]() {
       if (gathered == 0) {
         return;
       }
-      auto ids = centroids.AssignCentroids({gather.data(), gathered * d}, d);
-      SDB_ASSERT(ids.size() == gathered);
-      doc_cluster.insert(doc_cluster.end(), ids.begin(), ids.end());
+      auto assigned = centroids.AssignCentroids(
+        {gather.data(), gathered * d}, d,
+        needs_centroid ? std::span{cents.data(), gathered}
+                       : std::span<std::span<const float>>{});
+      SDB_ASSERT(assigned.ids.size() == gathered);
+      const size_t base = doc_cluster.size();
+      doc_cluster.resize(base + gathered);
+      for (size_t j = 0; j < gathered; ++j) {
+        const auto cluster = static_cast<uint32_t>(assigned.ids[j]);
+        doc_cluster[base + assigned.perm[j]] = cluster;
+        if (needs_centroid && !cents[j].empty()) {
+          result.cluster_centroids.try_emplace(cluster, cents[j]);
+        }
+        if (pq && !cents[j].empty()) {
+          const float* v = gather.data() + j * d;
+          const auto c = cents[j];
+          size_t slot = pq_res_seen;
+          if (pq_res_seen >= pq_res_cap) {
+            slot = pq_rng() % (pq_res_seen + 1);
+          } else {
+            pq_train_res.insert(pq_train_res.end(), d, 0.f);
+          }
+          if (slot < pq_res_cap) {
+            float* dst = pq_train_res.data() + slot * d;
+            for (uint32_t t = 0; t < d; ++t) {
+              dst[t] = v[t] - c[t];
+            }
+          }
+          ++pq_res_seen;
+        }
+      }
       if (sq_train) {
         qw->Train(gather.data(), gathered);
       }
@@ -137,17 +165,22 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     SDB_ASSERT(doc_cluster.size() == valid_count);
   }
 
-  result.cluster_offsets.assign(n_leaf + 1, 0);
+  if (pq && qw != nullptr) {
+    SDB_ASSERT(!pq_train_res.empty());
+    qw->Train(pq_train_res.data(), pq_train_res.size() / d);
+  }
+
+  result.cluster_offsets.assign(n_clusters + 1, 0);
   for (const uint32_t c : doc_cluster) {
     ++result.cluster_offsets[c + 1];
   }
-  for (uint32_t c = 0; c < n_leaf; ++c) {
+  for (size_t c = 0; c < n_clusters; ++c) {
     result.cluster_offsets[c + 1] += result.cluster_offsets[c];
   }
   result.cluster_docs.resize(valid_count);
   {
     std::vector<uint64_t> cursor(result.cluster_offsets.begin(),
-                                 result.cluster_offsets.begin() + n_leaf);
+                                 result.cluster_offsets.begin() + n_clusters);
     size_t seen = 0;
     for (uint64_t r = 0; r < rows; ++r) {
       if (!valid[r]) {
@@ -261,19 +294,19 @@ class IvfTermIterator final : public TermIterator {
   mutable DocIter _doc_itr;
 };
 
-IvfTermReader::IvfTermReader(field_id postings_id,
-                             std::span<const doc_id_t> cluster_docs,
-                             std::span<const uint64_t> cluster_offsets,
-                             QuantizerWriter* qw, const ColumnReader* vectors,
-                             ReadContext* ctx, uint32_t d,
-                             std::span<const float> fine_centroids)
+IvfTermReader::IvfTermReader(
+  field_id postings_id, std::span<const doc_id_t> cluster_docs,
+  std::span<const uint64_t> cluster_offsets, QuantizerWriter* qw,
+  const ColumnReader* vectors, ReadContext* ctx, uint32_t d,
+  const sdb::containers::FlatHashMap<uint32_t, std::span<const float>>*
+    cluster_centroids)
   : _cluster_docs{cluster_docs},
     _cluster_offsets{cluster_offsets},
     _qw{qw},
     _vectors{vectors},
     _ctx{ctx},
     _d{d},
-    _fine_centroids{fine_centroids},
+    _cluster_centroids{cluster_centroids},
     _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
     _meta{postings_id,
           qw != nullptr ? IndexFeatures::Pay : IndexFeatures::None} {
@@ -307,8 +340,12 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
                                      std::span<const doc_id_t> docs) {
   SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
   const size_t cluster = _term_idx++;
-  if (cluster < _count && (cluster + 1) * _d <= _fine_centroids.size()) {
-    _qw->SetClusterCentroid(_fine_centroids.data() + cluster * _d);
+  if (_cluster_centroids != nullptr) {
+    const auto it = _cluster_centroids->find(static_cast<uint32_t>(cluster));
+    if (it != _cluster_centroids->end()) {
+      SDB_ASSERT(it->second.size() == _d);
+      _qw->SetClusterCentroid(it->second.data());
+    }
   }
   const size_t n = docs.size();
   if (n == 0) {
@@ -395,7 +432,7 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
       _result.postings_id, _result.data.cluster_docs,
       _result.data.cluster_offsets, _result.qw.get(),
       col_reader.Column(_result.postings_id), &ctx, _result.data.d,
-      _result.data.centroids.LeafCentroids());
+      &_result.data.cluster_centroids);
   }
   return _reader.get();
 }

@@ -109,6 +109,10 @@ struct IvfInfo {
 
   uint32_t cluster_iters = 0;
 
+  float sample_factor = 0;
+
+  uint32_t posting_size = 0;
+
   friend bool operator==(const IvfInfo&, const IvfInfo&) = default;
 };
 

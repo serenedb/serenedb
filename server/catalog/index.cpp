@@ -59,6 +59,7 @@ constexpr std::string_view kNlistFactorField = "nlist_factor";
 constexpr std::string_view kQuantField = "quant";
 constexpr std::string_view kPqMField = "pq_m";
 constexpr std::string_view kRaBitQBitsField = "rabitq_bits";
+constexpr std::string_view kIvfCompressionField = "compression";
 
 constexpr std::string_view kL2Metric = "l2";
 constexpr std::string_view kL1Metric = "l1";
@@ -291,7 +292,9 @@ std::string DescribeIVFOptions() {
                       kPQQuant, "' only, default auto ~d/2), ",
                       "rabitq_bits (int ", irs::kRaBitQMinBits, "-",
                       irs::kRaBitQMaxBits, ", quant='", kRaBitQQuant,
-                      "' only, default ", irs::kRaBitQMinBits, ")");
+                      "' only, default ", irs::kRaBitQMinBits, "), ",
+                      "compression (bool, default true; false stores the index "
+                      "vectors uncompressed)");
 }
 
 irs::VectorMetric ParseIVFMetric(std::string_view column_name,
@@ -360,6 +363,8 @@ void ApplyIVFOptions(std::string_view column_name,
     } else if (key == kRaBitQBitsField) {
       cfg.rabitq_bits =
         ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
+    } else if (key == kIvfCompressionField) {
+      cfg.compression = GetIndexBoolOption(kIVFKind, column_name, key, raw_val);
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -572,8 +577,31 @@ void ApplyIncludedOpclass(
   }
 }
 
+float ReadIVFSampleFactor(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting("sdb_ivf_sample_factor", v) && !v.IsNull()) {
+    const auto f = v.GetValue<double>();
+    if (f > 0.0 && f <= 1.0) {
+      return static_cast<float>(f);
+    }
+  }
+  return 0.f;
+}
+
+uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting("sdb_ivf_posting_size", v) && !v.IsNull()) {
+    const auto n = v.GetValue<int32_t>();
+    if (n >= 1) {
+      return static_cast<uint32_t>(n);
+    }
+  }
+  return 0;
+}
+
 void ApplyIVFOpclass(
-  std::string_view owner_label, const duckdb::LogicalType& value_type,
+  duckdb::ClientContext& context, std::string_view owner_label,
+  const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   InvertedIndexEntryInfo& entry) {
   SDB_ASSERT(opts);
@@ -584,8 +612,12 @@ void ApplyIVFOpclass(
     .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
   };
   ApplyIVFOptions(owner_label, *opts, cfg);
+  cfg.sample_factor = ReadIVFSampleFactor(context);
+  cfg.posting_size = ReadIVFPostingSize(context);
   entry.ivf_config = cfg;
-  entry.compression = duckdb::CompressionType::COMPRESSION_AUTO;
+  entry.compression = cfg.compression
+                        ? duckdb::CompressionType::COMPRESSION_AUTO
+                        : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
   entry.row_group_size = 0;
   entry.store_values = true;
 }
@@ -685,7 +717,7 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
     return;
   }
   if (c.IsBuiltin(kIVFKind)) {
-    ApplyIVFOpclass(owner_label, value_type, c.opclass_options, entry);
+    ApplyIVFOpclass(context, owner_label, value_type, c.opclass_options, entry);
     return;
   }
   if (c.IsBuiltin(kIncludedKind)) {

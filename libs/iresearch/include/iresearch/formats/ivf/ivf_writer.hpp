@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "basics/containers/flat_hash_map.h"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
@@ -55,6 +56,8 @@ struct BuiltIvf {
   uint32_t d = 0;
   std::vector<doc_id_t> cluster_docs;
   std::vector<uint64_t> cluster_offsets;
+  sdb::containers::FlatHashMap<uint32_t, std::span<const float>>
+    cluster_centroids;
   CentroidsBuilder centroids;
 };
 
@@ -73,10 +76,12 @@ class IvfBuilder {
 
 class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
  public:
-  IvfTermReader(field_id postings_id, std::span<const doc_id_t> cluster_docs,
-                std::span<const uint64_t> cluster_offsets, QuantizerWriter* qw,
-                const ColumnReader* vectors, ReadContext* ctx, uint32_t d,
-                std::span<const float> fine_centroids);
+  IvfTermReader(
+    field_id postings_id, std::span<const doc_id_t> cluster_docs,
+    std::span<const uint64_t> cluster_offsets, QuantizerWriter* qw,
+    const ColumnReader* vectors, ReadContext* ctx, uint32_t d,
+    const sdb::containers::FlatHashMap<uint32_t, std::span<const float>>*
+      cluster_centroids);
   ~IvfTermReader() final;
 
   TermIterator::ptr iterator() const final;
@@ -100,7 +105,8 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   const ColumnReader* _vectors;
   ReadContext* _ctx;
   uint32_t _d;
-  std::span<const float> _fine_centroids;
+  const sdb::containers::FlatHashMap<uint32_t, std::span<const float>>*
+    _cluster_centroids;
   size_t _count;
   size_t _term_idx = 0;
   FieldMeta _meta;

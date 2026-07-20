@@ -1,0 +1,69 @@
+control substitution on
+
+# ============================================================================
+# Small-dataset IVF: no centroids tree, single all-docs cluster.
+#
+# When a column's whole valid dataset is smaller than the IVF leaf cap (the
+# default posting_size, 4096 vectors), the training sample rounds to empty, so
+# the builder skips clustering and puts every doc into a single cluster (id 0),
+# and there is no coarse tree to descend. Search then scans that one posting list
+# via the normal postings + reranker path -- exhaustive over the segment, hence
+# exact -- even at nprobe = 1. Points lie on a line so every query has a unique
+# exact nearest.
+# ============================================================================
+
+statement ok
+SET sdb_nprobe = 1;
+
+statement ok
+CREATE TABLE small_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX small_l2_idx ON small_l2 USING inverted(pk, emb ivf (metric = 'l2'));
+
+statement ok
+INSERT INTO small_l2 SELECT i,
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(300) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) small_l2;
+
+query
+SELECT pk FROM small_l2_idx
+  ORDER BY emb <-> [0, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+0
+
+query
+SELECT pk FROM small_l2_idx
+  ORDER BY emb <-> [137, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+137
+
+query
+SELECT pk FROM small_l2_idx
+  ORDER BY emb <-> [299, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+299
+298
+297
+
+query
+SELECT count(*) FROM small_l2_idx;
+----
+count
+300
+
+query
+SELECT pk FROM small_l2_idx
+  WHERE pk >= 150
+  ORDER BY emb <-> [100, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+150
+
+statement ok
+RESET sdb_nprobe;

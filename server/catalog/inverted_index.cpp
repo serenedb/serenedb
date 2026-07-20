@@ -421,6 +421,8 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .nlist_factor = cfg.nlist_factor,
     .train_sample = cfg.train_sample,
     .cluster_iters = cfg.cluster_iters,
+    .sample_factor = cfg.sample_factor,
+    .posting_size = cfg.posting_size,
   };
 }
 

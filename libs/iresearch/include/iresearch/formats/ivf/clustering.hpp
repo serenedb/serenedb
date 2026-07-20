@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
@@ -34,17 +35,45 @@ class ReadContext;
 
 void NormalizeRows(float* data, size_t n, uint32_t d);
 
+enum class ClusteringAlgo { Auto, Lloyd, FlatSuperKMeans, Hskm };
+
+struct HskmHierarchy {
+  std::vector<float> meso;
+  std::vector<std::vector<float>> fine;
+};
+
+HskmHierarchy RunHskmHierarchical(const float* data, size_t n, uint32_t k,
+                                  uint32_t d, uint32_t seed);
+
+bool HskmQualifies(VectorMetric metric, uint32_t k, uint32_t d);
+
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
-                                  uint32_t seed, uint32_t niter = 25,
-                                  uint32_t nredo = 1);
+                                  uint32_t seed, uint32_t niter = 8,
+                                  uint32_t nredo = 1,
+                                  ClusteringAlgo algo = ClusteringAlgo::Auto);
+
+template<VectorMetric Metric>
+uint32_t NearestCentroidT(const float* v, const float* centroids, uint32_t k,
+                          uint32_t d) noexcept;
+
+template<VectorMetric Metric>
+void AssignNearestT(const float* data, size_t n, const float* centroids,
+                    uint32_t k, uint32_t d, std::vector<uint32_t>& out,
+                    std::span<std::span<const float>> nearest_centroids = {});
 
 uint32_t NearestCentroid(VectorMetric metric, const float* v,
                          const float* centroids, uint32_t k, uint32_t d);
 
 void AssignNearest(VectorMetric metric, const float* data, size_t n,
                    const float* centroids, uint32_t k, uint32_t d,
-                   std::vector<uint32_t>& out);
+                   std::vector<uint32_t>& out,
+                   std::span<std::span<const float>> nearest_centroids = {});
+
+void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
+                          size_t d, std::span<float> data,
+                          std::span<size_t> ids, std::span<size_t> perm = {},
+                          std::span<std::span<const float>> gathered = {});
 
 std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
                                ReadContext& ctx);

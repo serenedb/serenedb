@@ -46,73 +46,64 @@ struct IVFHeader {
   void Serialize(IndexOutput& out) const;
 };
 
+struct CentroidsNodeView {
+  std::span<const float> centroids;
+  std::span<const size_t> child_offsets;
+  size_t base;
+  size_t size;
+};
+
+struct LayerBuffers {
+  std::vector<std::vector<float>> centroids;
+  std::vector<std::vector<size_t>> child_offsets;
+};
+
 struct CentroidsNode {
   std::vector<float> centroids;
-  std::vector<size_t> counts;  // level > 0: child count of each centroid
+  std::vector<size_t> child_offsets;
   size_t size;
   size_t level;
   size_t d;
 
   CentroidsNode(size_t level, size_t d) : level{level}, d{d} {}
 
+  struct Candidate {
+    float dist;
+    size_t id;
+    std::vector<float> centroid;
+  };
+
   static std::vector<CentroidsNode> Deserialize(IndexInput& in, size_t level,
                                                 size_t d,
                                                 std::span<const size_t> starts,
                                                 std::span<const size_t> sizes);
-  void Serialize(IndexOutput& out, std::span<const size_t> clusters) const;
+  void Serialize(IndexOutput& out) const;
+
+  static std::vector<CentroidsNodeView> ReadLayer(
+    IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
+    std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total);
+
+  template<VectorMetric Metric>
+  static bool Closer(float l, float r) noexcept {
+    if constexpr (VectorMetricNearestIsLargest(Metric)) {
+      return l > r;
+    } else {
+      return l < r;
+    }
+  }
 
   template<VectorMetric Metric>
   static void Search(std::span<const float> query, IndexInput& in,
-                     uint32_t nprobe, std::vector<uint32_t>& out_ids,
-                     std::vector<float>* out_centroids,
-                     std::span<const CentroidsNode> nodes,
-                     std::span<const size_t> bases) {
+                     uint32_t beam, bool want_centroids, size_t level,
+                     std::span<const CentroidsNodeView> nodes,
+                     size_t layer_base, size_t layer_total,
+                     std::vector<Candidate>& leaves) {
     SDB_ASSERT(!nodes.empty());
-    const size_t level = nodes[0].level;
     const uint16_t d = query.size();
     const auto* q = reinterpret_cast<const byte_type*>(query.data());
-    constexpr bool kOrder = VectorMetricNearestIsLargest(Metric);
     const auto by_dist = [](const auto& l, const auto& r) noexcept {
-      if constexpr (kOrder) {
-        return l.dist > r.dist;
-      } else {
-        return l.dist < r.dist;
-      }
+      return Closer<Metric>(l.dist, r.dist);
     };
-
-    if (level == 0) {
-      struct Scored {
-        float dist;
-        size_t id;
-        std::span<const float> centroid;
-      };
-      std::vector<Scored> scored;
-      for (size_t node_index = 0; node_index < nodes.size(); ++node_index) {
-        const auto& node = nodes[node_index];
-        scored.reserve(scored.size() + node.size);
-        for (size_t i = 0; i < node.size; ++i) {
-          const byte_type* c =
-            reinterpret_cast<const byte_type*>(node.centroids.data() + d * i);
-          scored.push_back({ComputeDistance<Metric>(q, c, d),
-                            bases[node_index] + i,
-                            std::span{node.centroids}.subspan(i * d, d)});
-        }
-      }
-      const auto k = std::min<size_t>(nprobe * nodes.size(), scored.size());
-      const auto mid = scored.begin() + k;
-      std::partial_sort(scored.begin(), mid, scored.end(), by_dist);
-      out_ids.reserve(out_ids.size() + k);
-      if (out_centroids) {
-        out_centroids->reserve(out_centroids->size() + k * d);
-      }
-      for (auto it = scored.begin(); it != mid; ++it) {
-        out_ids.emplace_back(static_cast<uint32_t>(it->id));
-        if (out_centroids) {
-          out_centroids->append_range(it->centroid);
-        }
-      }
-      return;
-    }
 
     struct Scored {
       float dist;
@@ -120,22 +111,29 @@ struct CentroidsNode {
       size_t count;
     };
     std::vector<Scored> scored;
-    for (size_t node_index = 0; node_index < nodes.size(); ++node_index) {
-      const auto& node = nodes[node_index];
-      scored.reserve(scored.size() + node.size);
-      size_t start = bases[node_index];
+    for (const auto& node : nodes) {
       for (size_t i = 0; i < node.size; ++i) {
         const byte_type* c =
           reinterpret_cast<const byte_type*>(node.centroids.data() + d * i);
-        scored.push_back(
-          {ComputeDistance<Metric>(q, c, d), start, node.counts[i]});
-        start += node.counts[i];
+        const float dist = ComputeDistance<Metric>(q, c, d);
+        const bool is_leaf =
+          level == 0 || node.child_offsets[i + 1] == node.child_offsets[i];
+        if (is_leaf) {
+          auto& cand = leaves.emplace_back(dist, layer_base + node.base + i);
+          if (want_centroids) {
+            const auto centroid = node.centroids.subspan(i * d, d);
+            cand.centroid.assign(centroid.begin(), centroid.end());
+          }
+        } else {
+          scored.push_back({dist, node.child_offsets[i],
+                            node.child_offsets[i + 1] - node.child_offsets[i]});
+        }
       }
     }
-    if (scored.empty()) {
+    if (level == 0 || scored.empty()) {
       return;
     }
-    const auto k = std::min<size_t>(nprobe * nodes.size(), scored.size());
+    const auto k = std::min<size_t>(beam, scored.size());
     const auto mid = scored.begin() + k;
     std::partial_sort(scored.begin(), mid, scored.end(), by_dist);
     std::vector<size_t> starts, sizes;
@@ -145,10 +143,12 @@ struct CentroidsNode {
       starts.emplace_back(it->start);
       sizes.emplace_back(it->count);
     }
-    auto next_nodes =
-      CentroidsNode::Deserialize(in, level - 1, d, starts, sizes);
-    Search<Metric>(query, in, nprobe, out_ids, out_centroids, next_nodes,
-                   starts);
+    LayerBuffers bufs;
+    size_t n_total = 0;
+    auto next =
+      CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes, bufs, n_total);
+    Search<Metric>(query, in, beam, want_centroids, level - 1, next,
+                   layer_base + layer_total, n_total, leaves);
   }
 };
 
@@ -194,34 +194,69 @@ struct CentroidsSpan {
   size_t byte_size = 0;
 };
 
+struct AssignedCentroids {
+  std::vector<size_t> ids;
+  std::vector<size_t> perm;
+};
+
+struct CentroidsBuildParams {
+  size_t posting_size = 0;
+  size_t min_centroids = 0;
+  size_t max_centroids = 0;
+  double sample_factor = 0;
+  uint64_t min_train_sample = 0;
+  bool keep_sample = false;
+};
+
+struct CentroidsLayer {
+  std::vector<CentroidsNode> nodes;
+  size_t level;
+};
+
 class CentroidsBuilder {
  public:
+  struct Node {
+    std::vector<float> centroids;
+    std::vector<size_t> children;
+    size_t leafs = 0;
+  };
+
   CentroidsBuilder() = default;
 
   static CentroidsBuilder Create(const ColumnReader& vector_column,
                                  ReadContext& ctx, size_t rows,
                                  VectorMetric metric, uint32_t d,
-                                 uint64_t min_train_sample = 0);
+                                 const CentroidsBuildParams& params = {});
 
-  void Finish();
+  static CentroidsBuilder CreateFromSample(
+    std::vector<float> sample, uint32_t d, VectorMetric metric,
+    const CentroidsBuildParams& params = {});
 
   CentroidsSpan Serialize(IndexOutput& out) const;
 
-  std::span<const float> LeafCentroids() const noexcept {
-    return _nodes.back().centroids;
-  }
+  AssignedCentroids AssignCentroids(
+    std::span<float> data, size_t d,
+    std::span<std::span<const float>> centroids_out = {}) const;
+
+  size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
 
   std::span<const float> TrainingSample() const noexcept { return _sample; }
 
-  std::vector<uint32_t> AssignCentroids(std::span<const float> data,
-                                        size_t d) const;
-
  private:
-  std::vector<CentroidsNode> _nodes;
+  void BuildTree(std::vector<float> sample, size_t leaf_size,
+                 size_t min_centroids, size_t max_centroids, bool keep_sample);
+
+  void AssignCentroidsImpl(
+    size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,
+    std::span<size_t> perm,
+    std::span<std::span<const float>> centroids_out) const;
+
+  std::vector<Node> _nodes;
+  std::vector<size_t> _row_bases;
   std::vector<float> _sample;
   VectorMetric _metric = VectorMetric::L2Sqr;
   uint32_t _d = 0;
-  size_t _n_clusters;
+  size_t _n_rows = 0;
 };
 
 }  // namespace irs

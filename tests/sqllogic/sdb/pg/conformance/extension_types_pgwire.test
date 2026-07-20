@@ -202,10 +202,13 @@ b
 0101
 
 # ---------------------------------------------------------------------------
-# tsquery -- full-text query type. PostgreSQL has a native tsquery, but its
-# canonical text form quotes each lexeme ('cat' & 'dog'); SereneDB returns the
-# unquoted source form. (tsvector, PG's companion type, does not exist in
-# SereneDB at all.) Encoded identically over both SereneDB protocols.
+# tsquery -- full-text query type, backed by a STRUCT(text, tokenizer, boost)
+# value. The wire form is the canonical text rendering: the query text
+# verbatim, plus `^boost` / `::tokenize(...)` suffixes only when the fields
+# are non-default. PostgreSQL's canonical form quotes each lexeme
+# ('cat' & 'dog'); SereneDB returns the unquoted source form. (tsvector, PG's
+# companion type, does not exist in SereneDB at all.) Encoded identically
+# over both SereneDB protocols.
 # ---------------------------------------------------------------------------
 
 query

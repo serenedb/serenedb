@@ -1,6 +1,12 @@
 hash-threshold 100
 
 statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY wd_kw(template = 'keyword')
 
 statement ok
@@ -65,7 +71,7 @@ FROM wdk_idx WHERE cat = 'lime'
 QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────────────────────╮
 │ Groups: #0                               │
-│ ~0 rows                                  │
+│ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
@@ -76,7 +82,7 @@ QUERY PLAN
 │ ╰────────────────────╯                   │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~1 row                                   │
+│ ~2 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query TI
@@ -126,7 +132,7 @@ FROM wdk_idx WHERE cat IN ('fig', 'lime', 'zebra')
 QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────────────────────╮
 │ Groups: #0                               │
-│ ~0 rows                                  │
+│ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
@@ -138,7 +144,7 @@ QUERY PLAN
 │ ╰────────────────────────────────╯       │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~1 row                                   │
+│ ~2 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query T
@@ -163,7 +169,7 @@ FROM wdk_idx WHERE cat LIKE 'p%'
 QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────────────────────╮
 │ Groups: #0                               │
-│ ~0 rows                                  │
+│ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
@@ -175,7 +181,7 @@ QUERY PLAN
 │ ╰────────────────────╯                   │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~1 row                                   │
+│ ~2 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query I
@@ -207,7 +213,7 @@ FROM wdk_idx WHERE cat BETWEEN 'a' AND 'm'
 QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────────────────────╮
 │ Groups: #0                               │
-│ ~0 rows                                  │
+│ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
@@ -219,7 +225,7 @@ QUERY PLAN
 │ ╰────────────────────╯                   │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~1 row                                   │
+│ ~2 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query TI
@@ -258,18 +264,18 @@ FROM wdk_idx WHERE length(cat) = 4
 QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────────────────────╮
 │ Groups: #0                               │
-│ ~0 rows                                  │
+│ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ FILTER ────────────┴────────────────────╮
 │ Expression:                              │
 │ length(sdb_inverted_index_term$cat) = 4  │
-│ ~1 row                                   │
+│ ~2 rows                                  │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~6 rows                                  │
+│ ~11 rows                                 │
 ╰──────────────────────────────────────────╯
 
 statement ok
@@ -327,7 +333,7 @@ FROM wdk_idx WHERE cat LIKE 'p%' AND cat <> 'pear'
 QUERY PLAN
 ╭─ HASH_GROUP_BY ────────────────────────────────╮
 │ Groups: #0                                     │
-│ ~0 rows                                        │
+│ ~1 row                                         │
 ╰────────────────────────┬───────────────────────╯
 ╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
 │ Index: wdk_idx                                 │
@@ -342,7 +348,7 @@ QUERY PLAN
 │ ╰────────────────────╯                         │
 │ TsDict: cat                                    │
 │ Projections: sdb_inverted_index_term$cat       │
-│ ~1 row                                         │
+│ ~2 rows                                        │
 ╰────────────────────────────────────────────────╯
 
 query T
@@ -361,18 +367,18 @@ FROM wdk_idx WHERE cat = 'lime' OR length(cat) = 4
 QUERY PLAN
 ╭─ HASH_GROUP_BY ─────────────────────────────────────────────────────────────────────╮
 │ Groups: #0                                                                          │
-│ ~0 rows                                                                             │
+│ ~1 row                                                                              │
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ FILTER ─────────────────────────────────┴──────────────────────────────────────────╮
 │ Expression:                                                                         │
 │ (sdb_inverted_index_term$cat = 'lime') OR (length(sdb_inverted_index_term$cat) = 4) │
-│ ~1 row                                                                              │
+│ ~2 rows                                                                             │
 ╰──────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────────────────┴──────────────────────────────────────────╮
 │ Index: wdk_idx                                                                      │
 │ TsDict: cat                                                                         │
 │ Projections: sdb_inverted_index_term$cat                                            │
-│ ~4 rows                                                                             │
+│ ~11 rows                                                                            │
 ╰─────────────────────────────────────────────────────────────────────────────────────╯
 
 query T
@@ -390,7 +396,7 @@ FROM wdk_idx WHERE cat >= 'lime' AND cat < 'pine'
 QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────────────────────╮
 │ Groups: #0                               │
-│ ~0 rows                                  │
+│ ~1 row                                   │
 ╰─────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: wdk_idx                           │
@@ -402,7 +408,7 @@ QUERY PLAN
 │ ╰──────────────────────╯                 │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~1 row                                   │
+│ ~2 rows                                  │
 ╰──────────────────────────────────────────╯
 
 
@@ -477,7 +483,7 @@ FROM wdt_idx WHERE body @@ ts_levenshtein('apple', 1)
 QUERY PLAN
 ╭─ HASH_GROUP_BY ────────────────╮
 │ Groups: #0                     │
-│ ~0 rows                        │
+│ ~3 rows                        │
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: wdt_idx                 │
@@ -490,7 +496,7 @@ QUERY PLAN
 │ TsDict: body                   │
 │ Projections:                   │
 │ sdb_inverted_index_term$body   │
-│ ~1 row                         │
+│ ~7 rows                        │
 ╰────────────────────────────────╯
 
 query T
@@ -537,6 +543,68 @@ cherry
 
 statement ok
 DROP TABLE wdt
+
+# Multi-field WHERE with a keyword-source conjunct is row-level: it prunes
+# its own enumeration AND restricts the other field's documents; a
+# tautological extra conjunct changes nothing.
+query TT
+SELECT list_sort(ts_dict_agg(cat)) AS c, list_sort(ts_dict_agg(tag)) AS t FROM wdk_idx
+WHERE cat = 'lime'
+----
+c	t
+{lime}	{x}
+
+query TT
+SELECT list_sort(ts_dict_agg(cat)) AS c, list_sort(ts_dict_agg(tag)) AS t FROM wdk_idx
+WHERE cat = 'lime' AND cat @@ 'lime'
+----
+c	t
+{lime}	{x}
+
+query
+EXPLAIN SELECT list_sort(ts_dict_agg(cat)) AS c, list_sort(ts_dict_agg(tag)) AS t FROM wdk_idx
+WHERE cat = 'lime'
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: c, t                         │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────────────────────╮
+│ Aggregates:                               │
+│ list(#0) FILTER (WHERE #1) Filter: #1,    │
+│ list(#2) FILTER (WHERE #3) Filter: #3     │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ PROJECTION ────────┴─────────────────────╮
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term$cat IS NOT NULL,  │
+│ sdb_inverted_index_term$tag,              │
+│ sdb_inverted_index_term$tag IS NOT NULL   │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0, #1                            │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: wdk_idx                            │
+│ Index Filter:                             │
+│ ╭─ Term ─────────────╮                    │
+│ │ Field: cat(string) │                    │
+│ │ Value: lime        │                    │
+│ ╰────────────────────╯                    │
+│ Index Filter(cat):                        │
+│ ╭─ Term ─────────────╮                    │
+│ │ Field: cat(string) │                    │
+│ │ Value: lime        │                    │
+│ ╰────────────────────╯                    │
+│ TsDict: cat, tag                          │
+│ Projections: sdb_inverted_index_term$cat, │
+│              sdb_inverted_index_term$tag  │
+│ ~3 rows                                   │
+╰───────────────────────────────────────────╯
 
 statement ok
 DROP TABLE wdk

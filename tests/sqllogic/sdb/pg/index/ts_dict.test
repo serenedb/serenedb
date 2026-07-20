@@ -1,6 +1,12 @@
 hash-threshold 100
 
 statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY td_simple(
     template = 'text',
     locale = 'en_US.UTF-8',
@@ -174,14 +180,14 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) FROM td_idx
 QUERY PLAN
 ╭─ HASH_GROUP_BY ────────────────╮
 │ Groups: #0                     │
-│ ~2 rows                        │
+│ ~3 rows                        │
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: td_idx                  │
 │ TsDict: body                   │
 │ Projections:                   │
 │ sdb_inverted_index_term$body   │
-│ ~5 rows                        │
+│ ~7 rows                        │
 ╰────────────────────────────────╯
 
 
@@ -194,12 +200,12 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS
 QUERY PLAN
 ╭─ ORDER_BY ──────────────────────────╮
 │ Order By: td_idx.body)) ASC         │
-│ ~2 rows                             │
+│ ~3 rows                             │
 ╰──────────────────┬──────────────────╯
 ╭─ HASH_GROUP_BY ──┴──────────────────╮
 │ Groups: #0                          │
 │ Aggregates: max(#1)                 │
-│ ~2 rows                             │
+│ ~3 rows                             │
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: td_idx                       │
@@ -207,7 +213,7 @@ QUERY PLAN
 │ Projections:                        │
 │ sdb_inverted_index_term$body,       │
 │ sdb_inverted_index_term_score$body  │
-│ ~5 rows                             │
+│ ~7 rows                             │
 ╰─────────────────────────────────────╯
 
 

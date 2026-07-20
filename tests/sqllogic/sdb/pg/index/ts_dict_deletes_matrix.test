@@ -1,5 +1,11 @@
 hash-threshold 100
 
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
 # Explicit ts_dict_* aggregate family crossed with the segment lifecycle on a
 # keyword field and a text field (frequency = true). refresh_interval = 0 and
 # compaction_interval = 0 disable background maintenance, so deletion masks
@@ -78,19 +84,19 @@ FROM ddm_idx ORDER BY term
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────────────────────╮
 │ Order By: ddm_idx.body)) ASC                         │
-│ ~2 rows                                              │
+│ ~3 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ PROJECTION ──────────────┴──────────────────────────╮
 │ Projections:                                         │
 │ sdb_inverted_index_term$body,                        │
 │ CAST(sdb_inverted_index_term_count$body AS INTEGER), │
 │ CAST(sdb_inverted_index_term_freq$body AS BIGINT)    │
-│ ~2 rows                                              │
+│ ~3 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
 │ Groups: #0                                           │
 │ Aggregates: sum(#1), sum(#2)                         │
-│ ~2 rows                                              │
+│ ~3 rows                                              │
 ╰───────────────────────────┬──────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
 │ Index: ddm_idx                                       │
@@ -99,7 +105,7 @@ QUERY PLAN
 │ sdb_inverted_index_term$body,                        │
 │ sdb_inverted_index_term_count$body,                  │
 │ sdb_inverted_index_term_freq$body                    │
-│ ~5 rows                                              │
+│ ~6 rows                                              │
 ╰──────────────────────────────────────────────────────╯
 
 query TT

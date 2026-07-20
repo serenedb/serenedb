@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,30 +20,16 @@
 
 #pragma once
 
-namespace sdb::catalog {
+namespace duckdb {
 
-struct Snapshot;
+class ExtensionLoader;
 
-class Object;
-class PgSqlFunction;
-class Table;
-class Column;
-class Role;
-class PgSqlView;
-class Sequence;
-class Index;
-class InvertedIndex;
-class Schema;
-class Database;
-struct FunctionSignature;
-struct CreateTableOptions;
-class VirtualTable;
-class VirtualTableSnapshot;
+}  // namespace duckdb
+namespace sdb::connector {
 
-}  // namespace sdb::catalog
-namespace sdb {
+// Registers everything TSQUERY: the value type and modifier types
+// (tokenize/boost), casts, constructors, parser functions, operators,
+// predicate stubs and the constant-folding optimizer pass.
+void RegisterTSQueryFunctions(duckdb::ExtensionLoader& loader);
 
-class KeyGenerator;
-class ObjectId;
-
-}  // namespace sdb
+}  // namespace sdb::connector

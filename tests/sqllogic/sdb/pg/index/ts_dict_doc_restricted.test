@@ -1,5 +1,11 @@
 hash-threshold 100
 
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
 # Doc-restricted term enumeration (facets / significant-terms): a WHERE on
 # any indexed field filters DOCUMENTS; terms are counted against the matched
 # doc set per segment (postings intersection, delete-aware).
@@ -101,11 +107,11 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$body,             │
 │ sdb_inverted_index_term$body IS NOT NULL  │
-│ ~0 rows                                   │
+│ ~4 rows                                   │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
-│ ~0 rows                                   │
+│ ~4 rows                                   │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: dr_idx                             │
@@ -118,7 +124,7 @@ QUERY PLAN
 │ TsDict: body                              │
 │ Projections:                              │
 │ sdb_inverted_index_term$body              │
-│ ~1 row                                    │
+│ ~8 rows                                   │
 ╰───────────────────────────────────────────╯
 
 # Document-level negation: NOT over a tokenized-field or cross-field @@
@@ -167,3 +173,81 @@ DROP TABLE dr_docs
 
 statement ok
 DROP TEXT SEARCH DICTIONARY dr
+
+# Term-level negations on a multi-term field must stay having-only: fused into
+# the document filter they turn into "no term matches" and drop documents that
+# hold an accepted term next to the rejected one. Counts must not change when
+# an unrelated document conjunct joins the WHERE.
+statement ok
+CREATE TEXT SEARCH DICTIONARY drtx(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY drkw(template = 'keyword')
+
+statement ok
+CREATE TABLE drf(id INTEGER PRIMARY KEY, body VARCHAR NOT NULL, scope VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX drf_idx ON drf USING inverted(body drtx, scope drkw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO drf VALUES
+  (1, 'red blue', 'a'),
+  (2, 'blue',     'a'),
+  (3, 'red',      'b')
+
+statement ok
+VACUUM (REFRESH_TABLE) drf;
+
+query TI
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS c
+FROM drf_idx WHERE body != 'red'
+----
+term	c
+blue	2
+
+query TI
+SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS c
+FROM drf_idx WHERE body != 'red' AND scope = 'a'
+----
+term	c
+blue	2
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_count(body)) AS c
+FROM drf_idx WHERE body != 'red' AND scope = 'a'
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────╮
+│ Projections:                                         │
+│ sdb_inverted_index_term$body,                        │
+│ CAST(sdb_inverted_index_term_count$body AS INTEGER)  │
+│ ~0 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
+│ Groups: #0                                           │
+│ Aggregates: sum(#1)                                  │
+│ ~0 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ Index: drf_idx                                       │
+│ Index Filter:                                        │
+│ ╭─ Term ───────────────╮                             │
+│ │ Field: scope(string) │                             │
+│ │ Value: a             │                             │
+│ ╰──────────────────────╯                             │
+│ TsDict: body                                         │
+│ Projections:                                         │
+│ sdb_inverted_index_term$body,                        │
+│ sdb_inverted_index_term_count$body                   │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯

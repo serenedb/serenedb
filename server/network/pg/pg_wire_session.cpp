@@ -2208,33 +2208,7 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
     return;
   }
-  const auto* types = &prepared.GetTypes();
-  const auto* names = &prepared.GetNames();
-  ClosingPending pending;
-  duckdb::vector<duckdb::Identifier> pending_names;
-  if (!prepared.named_param_map.empty() &&
-      std::ranges::any_of(*types, [](const duckdb::LogicalType& type) {
-        return type.id() == duckdb::LogicalTypeId::UNKNOWN ||
-               type.id() == duckdb::LogicalTypeId::INVALID;
-      })) {
-    duckdb::vector<duckdb::Value> dummy;
-    dummy.reserve(param_count);
-    for (size_t i = 0; i < param_count; ++i) {
-      auto type = ResolveExpectedType(prepared.data->value_map, i);
-      duckdb::Value value{"1"};
-      if (!value.DefaultTryCastAs(type)) {
-        value = duckdb::Value{type};
-      }
-      dummy.emplace_back(std::move(value));
-    }
-    pending = PendingQueryEnsured(prepared, dummy, nullptr);
-    if (!pending->HasError()) {
-      types = &pending->types;
-      pending_names = duckdb::StringsToIdentifiers(pending->names);
-      names = &pending_names;
-    }
-  }
-  WriteRowDescription(this->_send, *types, *names, {});
+  WriteResolvedRowDescription(prepared, nullptr, {});
 }
 
 template<SocketKind Kind>
@@ -2254,8 +2228,49 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
   if (_txn_state->StatusByte() == 'E') {
     ThrowAbortedTransaction();
   }
+  WriteResolvedRowDescription(prepared, &portal.bind_info.param_values,
+                              portal.bind_info.output_formats);
+}
+
+// A parameterized template may carry unresolved output types (duckdb defers
+// full binding until the parameter types are known); probe-plan to describe
+// the real columns, falling back to the template. `params` are the portal's
+// bound values, or null for a statement-level Describe -- the probe then
+// synthesizes type-derived placeholders.
+template<SocketKind Kind>
+void PgWireSession<Kind>::WriteResolvedRowDescription(
+  duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>* params,
+  std::span<const sdb::pg::VarFormat> formats) {
+  const auto unresolved = [](const duckdb::LogicalType& type) {
+    return type.id() == duckdb::LogicalTypeId::UNKNOWN ||
+           type.id() == duckdb::LogicalTypeId::INVALID;
+  };
+  if (!prepared.named_param_map.empty() &&
+      std::ranges::any_of(prepared.GetTypes(), unresolved)) {
+    duckdb::vector<duckdb::Value> placeholders;
+    if (!params) {
+      const auto param_count = prepared.named_param_map.size();
+      placeholders.reserve(param_count);
+      for (size_t i = 0; i < param_count; ++i) {
+        auto type = ResolveExpectedType(prepared.data->value_map, i);
+        duckdb::Value value{"1"};
+        if (!value.DefaultTryCastAs(type)) {
+          value = duckdb::Value{type};
+        }
+        placeholders.emplace_back(std::move(value));
+      }
+      params = &placeholders;
+    }
+    ClosingPending pending = PendingQueryEnsured(prepared, *params, nullptr);
+    if (!pending->HasError()) {
+      WriteRowDescription(this->_send, pending->types,
+                          duckdb::StringsToIdentifiers(pending->names),
+                          formats);
+      return;
+    }
+  }
   WriteRowDescription(this->_send, prepared.GetTypes(), prepared.GetNames(),
-                      portal.bind_info.output_formats);
+                      formats);
 }
 
 template<SocketKind Kind>

@@ -4,19 +4,18 @@ control substitution on
 # Multi-level IVF centroid trees via sdb_ivf_posting_size.
 #
 # sdb_ivf_posting_size is the leaf cap t (target posting-list size, in vectors),
-# captured at CREATE INDEX. A tiny t makes the tree branch all the way down: with
-# the default min fan-out (256) a node splits into ~256 children, so once N is a
-# few thousand the children are themselves interior nodes and the tree reaches 3
-# levels -- exercising the deep-descent read path (the >=3-level path that used
-# the wrong child offset before the fix). Points lie on a line so every query has
-# a unique exact-match nearest; a large nprobe makes the scan effectively
-# exhaustive over leaves, so the asserted neighbor is exact.
+# captured at CREATE INDEX. A tiny t drives the leaf count L = N/t above the
+# per-node fan-out cap (4096); the top-down build then square-roots L down to the
+# cap over multiple layers, so the tree becomes multi-level and the deep-descent
+# read path is exercised. Points lie on a line so every query has a unique
+# exact-match nearest; a large nprobe makes the scan effectively exhaustive over
+# leaves, so the asserted neighbor is exact.
 # ============================================================================
 
 statement ok
 SET sdb_nprobe = 100000;
 
-# ---- 3-level tree: posting_size=2, 2000 points (root ~256 -> ~8 -> leaf) -----
+# ---- multi-level tree: posting_size=2, 10000 points (L=5000 > cap 4096) ------
 statement ok
 SET sdb_ivf_posting_size = 2;
 
@@ -27,7 +26,7 @@ statement ok
 CREATE INDEX lvl3_idx ON lvl3 USING inverted(pk, emb ivf (metric = 'l2'));
 
 statement ok
-INSERT INTO lvl3 SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(2000) t(i);
+INSERT INTO lvl3 SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
 
 statement ok
 VACUUM (REFRESH_TABLE) lvl3;
@@ -54,7 +53,7 @@ query
 SELECT count(*) FROM lvl3_idx;
 ----
 count
-2000
+10000
 
 query
 SELECT pk FROM lvl3_idx

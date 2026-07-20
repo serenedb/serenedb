@@ -165,6 +165,8 @@ class CentroidsTree {
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }
   bool Empty() const noexcept { return _head.d == 0; }
+  size_t Levels() const noexcept { return _root.level + 1; }
+  size_t RootSize() const noexcept { return _root.size; }
 
   void SetQuantStats(bstring stats) noexcept {
     _quant_stats = std::move(stats);
@@ -190,8 +192,7 @@ struct AssignedCentroids {
 
 struct CentroidsBuildParams {
   size_t posting_size = 0;
-  size_t min_centroids = 0;
-  size_t max_centroids = 0;
+  size_t max_fanout = 0;
   double sample_factor = 0;
   uint64_t min_train_sample = 0;
 };
@@ -225,7 +226,7 @@ class CentroidsBuilder {
 
  private:
   void BuildTree(std::vector<float> sample, size_t leaf_size,
-                 size_t min_centroids, size_t max_centroids);
+                 size_t max_fanout);
 
   void AssignCentroidsImpl(
     size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,

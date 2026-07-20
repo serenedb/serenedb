@@ -40,10 +40,8 @@ namespace irs {
 namespace {
 
 constexpr uint32_t kSuperKMeansMinD = 32;
+constexpr uint32_t kSuperKMeansMinK = 512;
 constexpr uint32_t kSuperKMeansSphericalMinK = 4096;
-constexpr uint32_t kHskmMinK = 1024;
-constexpr uint32_t kMesoIters = 3;
-constexpr uint32_t kFineIters = 5;
 
 void ConfigureClusteringParams(faiss::ClusteringParameters& cp, uint32_t niter,
                                uint32_t nredo, uint32_t seed, size_t n,
@@ -78,27 +76,6 @@ std::vector<float> RunLloyd(const float* data, size_t n, uint32_t k, uint32_t d,
   return std::move(clus.centroids);
 }
 
-std::vector<float> RunFlatKMeans(const float* data, size_t n, uint32_t k,
-                                 uint32_t d, uint32_t seed, uint32_t niter,
-                                 uint32_t nredo,
-                                 const float* rotation = nullptr) {
-  if (d >= kSuperKMeansMinD) {
-    return RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
-  }
-  return RunLloyd(data, n, k, d, seed, niter, nredo);
-}
-
-std::vector<float> RunHskm(const float* data, size_t n, uint32_t k, uint32_t d,
-                           uint32_t seed, const float* rotation = nullptr) {
-  auto h = RunHskmHierarchical(data, n, k, d, seed, rotation);
-  std::vector<float> out;
-  out.reserve(static_cast<size_t>(k) * d);
-  for (const auto& block : h.fine) {
-    out.insert(out.end(), block.begin(), block.end());
-  }
-  return out;
-}
-
 }  // namespace
 
 std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
@@ -106,134 +83,6 @@ std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
                                        static_cast<int>(d));
   rotation.init(static_cast<int>(seed));
   return std::move(rotation.A);
-}
-
-HskmHierarchy RunHskmHierarchical(const float* data, size_t n, uint32_t k,
-                                  uint32_t d, uint32_t seed,
-                                  const float* rotation) {
-  HskmHierarchy out;
-  if (k <= 1 || n < 2) {
-    auto flat = RunFlatKMeans(data, n, k, d, seed, kMesoIters, 1, rotation);
-    out.meso = flat;
-    out.fine.emplace_back(std::move(flat));
-    return out;
-  }
-  const uint32_t k_meso = static_cast<uint32_t>(std::clamp<size_t>(
-    static_cast<size_t>(std::lround(std::sqrt(static_cast<double>(k)))),
-    size_t{2}, static_cast<size_t>(k)));
-
-  const auto sub = [&](const float* sd, size_t sn, uint32_t sk, uint32_t it) {
-    return RunLloyd(sd, sn, sk, d, seed, it, 1);
-  };
-
-  auto meso = sub(data, n, k_meso, kMesoIters);
-
-  std::vector<int64_t> labels(n);
-  std::vector<float> label_dist(n);
-  faiss::knn_L2sqr(data, meso.data(), d, n, k_meso, 1, label_dist.data(),
-                   labels.data());
-
-  std::vector<size_t> counts(k_meso, 0);
-  for (size_t i = 0; i < n; ++i) {
-    counts[static_cast<size_t>(labels[i])]++;
-  }
-  std::vector<size_t> offset(k_meso + 1, 0);
-  for (uint32_t g = 0; g < k_meso; ++g) {
-    offset[g + 1] = offset[g] + counts[g];
-  }
-  std::vector<float> grouped(static_cast<size_t>(n) * d);
-  std::vector<size_t> cursor(offset.begin(), offset.end() - 1);
-  for (size_t i = 0; i < n; ++i) {
-    const size_t pos = cursor[static_cast<size_t>(labels[i])]++;
-    std::memcpy(grouped.data() + pos * d, data + i * d, sizeof(float) * d);
-  }
-
-  std::vector<uint32_t> k_alloc(k_meso, 0);
-  uint32_t assigned = 0;
-  for (uint32_t g = 0; g < k_meso; ++g) {
-    if (counts[g] == 0) {
-      continue;
-    }
-    const double want = static_cast<double>(k) *
-                        static_cast<double>(counts[g]) / static_cast<double>(n);
-    uint32_t base = static_cast<uint32_t>(std::floor(want));
-    base = std::clamp<uint32_t>(base, 1u, static_cast<uint32_t>(counts[g]));
-    k_alloc[g] = base;
-    assigned += base;
-  }
-  while (assigned < k) {
-    int best = -1;
-    size_t best_spare = 0;
-    for (uint32_t g = 0; g < k_meso; ++g) {
-      const size_t spare = counts[g] - k_alloc[g];
-      if (spare > best_spare) {
-        best_spare = spare;
-        best = static_cast<int>(g);
-      }
-    }
-    if (best < 0) {
-      break;
-    }
-    ++k_alloc[static_cast<size_t>(best)];
-    ++assigned;
-  }
-  while (assigned > k) {
-    int best = -1;
-    uint32_t best_val = 1;
-    for (uint32_t g = 0; g < k_meso; ++g) {
-      if (k_alloc[g] > best_val) {
-        best_val = k_alloc[g];
-        best = static_cast<int>(g);
-      }
-    }
-    if (best < 0) {
-      break;
-    }
-    --k_alloc[static_cast<size_t>(best)];
-    --assigned;
-  }
-
-  out.meso.reserve(static_cast<size_t>(k_meso) * d);
-  out.fine.reserve(k_meso);
-  for (uint32_t g = 0; g < k_meso; ++g) {
-    const size_t ni = counts[g];
-    const uint32_t ki = k_alloc[g];
-    if (ki == 0) {
-      continue;
-    }
-    const float* mp = meso.data() + static_cast<size_t>(g) * d;
-    out.meso.insert(out.meso.end(), mp, mp + d);
-
-    const float* gp = grouped.data() + offset[g] * d;
-    std::vector<float> block(static_cast<size_t>(ki) * d);
-    if (ki == 1) {
-      std::fill(block.begin(), block.end(), 0.f);
-      for (size_t i = 0; i < ni; ++i) {
-        const float* row = gp + i * d;
-        for (uint32_t j = 0; j < d; ++j) {
-          block[j] += row[j];
-        }
-      }
-      const float inv = 1.f / static_cast<float>(ni);
-      for (uint32_t j = 0; j < d; ++j) {
-        block[j] *= inv;
-      }
-    } else {
-      block = sub(gp, ni, ki, kFineIters);
-    }
-    out.fine.emplace_back(std::move(block));
-  }
-  return out;
-}
-
-bool HskmQualifies(VectorMetric metric, uint32_t k, uint32_t d) {
-  if (d < kSuperKMeansMinD) {
-    return false;
-  }
-  if (VectorMetricIsAngular(metric)) {
-    return metric == VectorMetric::Cosine && k >= kSuperKMeansSphericalMinK;
-  }
-  return k >= kHskmMinK;
 }
 
 void NormalizeRows(float* data, size_t n, uint32_t d) {
@@ -264,16 +113,12 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
 
   if (VectorMetricIsAngular(metric)) {
     const bool use_skm =
-      algo == ClusteringAlgo::Hskm || algo == ClusteringAlgo::FlatSuperKMeans ||
+      algo == ClusteringAlgo::FlatSuperKMeans ||
       (algo == ClusteringAlgo::Auto && metric == VectorMetric::Cosine &&
        d >= kSuperKMeansMinD && k >= kSuperKMeansSphericalMinK);
     if (use_skm) {
-      const bool use_hskm =
-        algo == ClusteringAlgo::Hskm ||
-        (algo != ClusteringAlgo::FlatSuperKMeans && k >= kHskmMinK);
       auto centroids =
-        use_hskm ? RunHskm(data, n, k, d, seed, rotation)
-                 : RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
+        RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
       NormalizeRows(centroids.data(), centroids.size() / d, d);
       return centroids;
     }
@@ -288,22 +133,12 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
 
   ClusteringAlgo eff = algo;
   if (eff == ClusteringAlgo::Auto) {
-    if (d < kSuperKMeansMinD) {
-      eff = ClusteringAlgo::Lloyd;
-    } else if (k >= kHskmMinK) {
-      eff = ClusteringAlgo::Hskm;
-    } else {
-      eff = ClusteringAlgo::FlatSuperKMeans;
-    }
+    eff = d >= kSuperKMeansMinD && k >= kSuperKMeansMinK
+            ? ClusteringAlgo::FlatSuperKMeans
+            : ClusteringAlgo::Lloyd;
   }
-  switch (eff) {
-    case ClusteringAlgo::Hskm:
-      return RunHskm(data, n, k, d, seed, rotation);
-    case ClusteringAlgo::FlatSuperKMeans:
-      return RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
-    case ClusteringAlgo::Lloyd:
-    case ClusteringAlgo::Auto:
-      break;
+  if (eff == ClusteringAlgo::FlatSuperKMeans) {
+    return RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
   }
   return RunLloyd(data, n, k, d, seed, niter, nredo);
 }

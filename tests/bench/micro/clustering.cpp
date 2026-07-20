@@ -96,10 +96,10 @@ class ClusteringFixture : public benchmark::Fixture {
     if (data.empty()) {
       data = MakeMixture(kN, kDim, kSeed);
     }
-    auto warm = irs::TrainCentroids(irs::VectorMetric::L2Sqr, data.data(),
-                                    std::min<size_t>(kN, 4096),
-                                    /*k=*/64, kDim, kSeed, /*niter=*/3,
-                                    /*nredo=*/1, irs::ClusteringAlgo::Hskm);
+    auto warm = irs::TrainCentroids(
+      irs::VectorMetric::L2Sqr, data.data(), std::min<size_t>(kN, 4096),
+      /*k=*/64, kDim, kSeed, /*niter=*/3,
+      /*nredo=*/1, irs::ClusteringAlgo::FlatSuperKMeans);
     benchmark::DoNotOptimize(warm.data());
   }
 
@@ -127,10 +127,6 @@ BENCHMARK_DEFINE_F(ClusteringFixture,
                    FlatSuperKMeans)(benchmark::State& state) {
   RunVariant(state, irs::ClusteringAlgo::FlatSuperKMeans, data);
 }
-BENCHMARK_DEFINE_F(ClusteringFixture, Hskm)(benchmark::State& state) {
-  RunVariant(state, irs::ClusteringAlgo::Hskm, data);
-}
-
 #define CLUSTERING_REGISTER(Method)               \
   BENCHMARK_REGISTER_F(ClusteringFixture, Method) \
     ->Arg(256)                                    \
@@ -141,7 +137,6 @@ BENCHMARK_DEFINE_F(ClusteringFixture, Hskm)(benchmark::State& state) {
 
 CLUSTERING_REGISTER(Lloyd);
 CLUSTERING_REGISTER(FlatSuperKMeans);
-CLUSTERING_REGISTER(Hskm);
 
 }  // namespace
 

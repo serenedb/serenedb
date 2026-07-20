@@ -95,7 +95,7 @@ std::vector<float> MakeDirClusters(uint32_t d, size_t n_clusters,
 }
 
 CentroidsBuildParams DeepParams() {
-  return {.posting_size = 4, .min_centroids = 2, .max_centroids = 8};
+  return {.posting_size = 4, .max_fanout = 4};
 }
 
 // Build a genuine multi-level tree from an in-memory sample, then assert that
@@ -416,9 +416,9 @@ TEST(clustering_test, cosine_centroids_are_unit_norm) {
   train(/*n=*/16384, /*k=*/4096);  // SuperKMeans path (k >= threshold)
 }
 
-// Regression: a genuine >=3-layer tree (binary splits over 8 separated points
-// -> root -> mid -> leaf-parent layers) must route every vector to the same
-// leaf id on the deserialized tree as the build-side AssignCentroids. Exercises
+// Regression: a genuine >=3-layer tree must route every vector to the same leaf
+// id on the deserialized tree as the build-side AssignCentroids. A small
+// max_fanout square-roots the leaf count down over several layers, exercising
 // the descent leaf-id numbering across >=3 layers (the 2-layer case is covered
 // by multilevel_build_search_id_consistency).
 TEST(centroids_builder_test, three_level_build_search_id_consistency) {
@@ -426,8 +426,7 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
   const size_t n = data.size() / d;
 
-  const CentroidsBuildParams params{
-    .posting_size = 1, .min_centroids = 2, .max_centroids = 4};
+  const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
   const size_t n_clusters = builder.NumClusters();
@@ -456,6 +455,8 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   MemoryIndexInput in{file};
   in.Seek(offset);
   auto tree = CentroidsTree::Deserialize(in, byte_size);
+  EXPECT_GE(tree.Levels(), 3u);
+  EXPECT_LE(tree.RootSize(), 4u);
 
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
@@ -474,14 +475,13 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
 // on >=3-layer trees) keeps recall exact here.
 TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   constexpr uint32_t d = 8;
-  // posting_size=1 with max_centroids=4 forces a deep (>=4-layer) tree whose
-  // widest internal layer (64 nodes) is below the query nprobe, so a correct
-  // beam visits every node and Search is exact.
+  // posting_size=1 with a small max_fanout forces a deep tree whose every
+  // internal layer stays below the query nprobe, so a correct beam visits every
+  // node and Search is exact.
   const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
   const size_t n = data.size() / d;
 
-  const CentroidsBuildParams params{
-    .posting_size = 1, .min_centroids = 2, .max_centroids = 4};
+  const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
 
@@ -615,35 +615,35 @@ double KMeansObjective(const float* data, size_t n, const float* c, uint32_t k,
   return total;
 }
 
-TEST(clustering_test, hskm_matches_kmeans_quality_and_is_deterministic) {
+TEST(clustering_test, superkmeans_matches_kmeans_quality_and_is_deterministic) {
   const uint32_t d = 64;
   const size_t nclusters = 64, per = 20;
   auto data = MakeClusters(d, nclusters, per);
   const size_t n = nclusters * per;
   const uint32_t k = 64;
 
-  auto hskm = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d,
-                             /*seed=*/1234, /*niter=*/8, /*nredo=*/1,
-                             ClusteringAlgo::Hskm);
+  auto skm = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d,
+                            /*seed=*/1234, /*niter=*/8, /*nredo=*/1,
+                            ClusteringAlgo::FlatSuperKMeans);
   auto lloyd = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d,
                               /*seed=*/1234, /*niter=*/8, /*nredo=*/1,
                               ClusteringAlgo::Lloyd);
 
-  ASSERT_EQ(hskm.size(), static_cast<size_t>(k) * d);
-  for (float x : hskm) {
+  ASSERT_EQ(skm.size(), static_cast<size_t>(k) * d);
+  for (float x : skm) {
     ASSERT_TRUE(std::isfinite(x));
   }
 
-  const double obj_hskm = KMeansObjective(data.data(), n, hskm.data(), k, d);
+  const double obj_skm = KMeansObjective(data.data(), n, skm.data(), k, d);
   const double obj_lloyd = KMeansObjective(data.data(), n, lloyd.data(), k, d);
-  EXPECT_LE(obj_hskm, 1.5 * obj_lloyd)
-    << "hskm=" << obj_hskm << " lloyd=" << obj_lloyd;
+  EXPECT_LE(obj_skm, 1.5 * obj_lloyd)
+    << "skm=" << obj_skm << " lloyd=" << obj_lloyd;
 
-  auto hskm2 = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, 1234,
-                              8, 1, ClusteringAlgo::Hskm);
-  ASSERT_EQ(hskm.size(), hskm2.size());
-  EXPECT_EQ(
-    0, std::memcmp(hskm.data(), hskm2.data(), hskm.size() * sizeof(float)));
+  auto skm2 = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, 1234, 8,
+                             1, ClusteringAlgo::FlatSuperKMeans);
+  ASSERT_EQ(skm.size(), skm2.size());
+  EXPECT_EQ(0,
+            std::memcmp(skm.data(), skm2.data(), skm.size() * sizeof(float)));
 }
 
 TEST(clustering_test, superkmeans_injected_rotation_matches_self_init) {
@@ -671,59 +671,23 @@ TEST(clustering_test, superkmeans_injected_rotation_matches_self_init) {
                            injected.size() * sizeof(float)));
 }
 
-TEST(clustering_test, hskm_hierarchical_structure_and_determinism) {
-  const uint32_t d = 32;
-  auto data = MakeClusters(d, /*n_clusters=*/1024, /*per_cluster=*/4);
-  const size_t n = 1024 * 4;
-  const uint32_t k = 1024;
-
-  auto h = RunHskmHierarchical(data.data(), n, k, d, /*seed=*/99);
-
-  size_t fine_total = 0;
-  for (const auto& block : h.fine) {
-    ASSERT_EQ(block.size() % d, 0u);
-    fine_total += block.size() / d;
-    for (float x : block) {
-      ASSERT_TRUE(std::isfinite(x));
-    }
-  }
-  EXPECT_EQ(fine_total, k);
-  EXPECT_EQ(h.meso.size() / d, h.fine.size());
-  EXPECT_GE(h.fine.size(), 1u);
-  for (float x : h.meso) {
-    ASSERT_TRUE(std::isfinite(x));
-  }
-
-  auto h2 = RunHskmHierarchical(data.data(), n, k, d, /*seed=*/99);
-  ASSERT_EQ(h.meso.size(), h2.meso.size());
-  EXPECT_EQ(0, std::memcmp(h.meso.data(), h2.meso.data(),
-                           h.meso.size() * sizeof(float)));
-  ASSERT_EQ(h.fine.size(), h2.fine.size());
-  for (size_t g = 0; g < h.fine.size(); ++g) {
-    ASSERT_EQ(h.fine[g].size(), h2.fine[g].size());
-    EXPECT_EQ(0, std::memcmp(h.fine[g].data(), h2.fine[g].data(),
-                             h.fine[g].size() * sizeof(float)));
-  }
-}
-
-// A build large enough to trip the meso-reuse gate (d>=32, target leaves>=1024)
-// yields a 2-level tree (meso coarse layer + fine leaves) whose deserialized
-// Search routes every training vector to the same leaf id as build-side
-// AssignCentroids. Well-separated blobs make greedy descent and beam search
-// agree.
-TEST(centroids_builder_test, meso_reuse_two_level_build_search_id_consistency) {
+// A d>=32 build (SuperKMeans path) with a max_fanout below the leaf count
+// yields a genuine multi-level tree whose deserialized Search routes every
+// training vector to the same leaf id as build-side AssignCentroids.
+// Well-separated blobs make greedy descent and beam search agree.
+TEST(centroids_builder_test,
+     superkmeans_multilevel_build_search_id_consistency) {
   constexpr uint32_t d = 32;
   const auto data = MakeClusters(d, /*n_clusters=*/1024, /*per_cluster=*/4);
   const size_t n = data.size() / d;
   const size_t target_leaves = 1024;  // ceil(n / posting_size)
 
-  const CentroidsBuildParams params{
-    .posting_size = 4, .min_centroids = 2, .max_centroids = 4096};
+  const CentroidsBuildParams params{.posting_size = 4, .max_fanout = 32};
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
   const size_t n_clusters = builder.NumClusters();
   // A flat build would have exactly `target_leaves` centroids; the extra rows
-  // are the meso coarse layer, so this confirms meso-reuse actually fired.
+  // are the interior layers, so this confirms the tree really went multi-level.
   EXPECT_GT(n_clusters, target_leaves);
 
   auto reordered = data;
@@ -761,20 +725,20 @@ TEST(centroids_builder_test, meso_reuse_two_level_build_search_id_consistency) {
     matches += (ids[0] == build_id[i]);
   }
   // Greedy build-descent and beam Search agree for all but a few near-boundary
-  // points (meso cells don't align exactly with fine cells). A leaf-numbering
-  // or child-offset bug would instead break nearly every row.
+  // points (interior cells don't align exactly with leaf cells). A leaf-
+  // numbering or child-offset bug would instead break nearly every row.
   EXPECT_GE(matches, static_cast<size_t>(0.99 * static_cast<double>(n)));
 }
 
-TEST(clustering_test, hskm_angular_centroids_unit_norm) {
+TEST(clustering_test, superkmeans_angular_centroids_unit_norm) {
   const uint32_t d = 64;
   auto data = MakeClusters(d, 40, 20);
   const size_t n = 40 * 20;
   NormalizeRows(data.data(), n, d);
   const uint32_t k = 32;
-  auto c =
-    TrainCentroids(VectorMetric::Cosine, data.data(), n, k, d,
-                   /*seed=*/7, /*niter=*/8, /*nredo=*/1, ClusteringAlgo::Hskm);
+  auto c = TrainCentroids(VectorMetric::Cosine, data.data(), n, k, d,
+                          /*seed=*/7, /*niter=*/8, /*nredo=*/1,
+                          ClusteringAlgo::FlatSuperKMeans);
   ASSERT_EQ(c.size(), static_cast<size_t>(k) * d);
   for (uint32_t j = 0; j < k; ++j) {
     double s = 0.0;
@@ -784,6 +748,46 @@ TEST(clustering_test, hskm_angular_centroids_unit_norm) {
     }
     EXPECT_NEAR(std::sqrt(s), 1.0, 1e-3) << "centroid " << j;
   }
+}
+
+// No node ever fans out past max_fanout, so the root is bounded by it: a large
+// cap lets the root fan wide toward the leaf count (shallow), a small cap
+// square-roots the leaf count down over extra layers (deep).
+TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
+  constexpr uint32_t d = 8;
+  const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/4);
+
+  const auto build = [&](size_t max_fanout) {
+    const CentroidsBuildParams params{.posting_size = 4,
+                                      .max_fanout = max_fanout};
+    auto builder =
+      CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+    SimpleMemoryAccounter memory;
+    MemoryFile file{memory};
+    uint64_t offset;
+    uint64_t byte_size;
+    {
+      MemoryIndexOutput out{file};
+      const auto span = builder.Serialize(out);
+      offset = span.offset;
+      byte_size = span.byte_size;
+      out.Flush();
+    }
+    MemoryIndexInput in{file};
+    in.Seek(offset);
+    auto tree = CentroidsTree::Deserialize(in, byte_size);
+    return std::pair{tree.Levels(), tree.RootSize()};
+  };
+
+  // 256 leaves <= cap -> root fans wide in one shot.
+  const auto [levels_hi, root_hi] = build(/*max_fanout=*/4096);
+  EXPECT_LE(root_hi, 4096u);
+  EXPECT_GT(root_hi, 8u);
+  // 256 leaves > cap -> root bounded by the cap, tree goes multi-level.
+  const auto [levels_lo, root_lo] = build(/*max_fanout=*/8);
+  EXPECT_LE(root_lo, 8u);
+  EXPECT_GE(levels_lo, 2u);
+  EXPECT_GE(levels_lo, levels_hi);
 }
 
 }  // namespace

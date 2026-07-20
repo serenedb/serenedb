@@ -35,20 +35,9 @@ class ReadContext;
 
 void NormalizeRows(float* data, size_t n, uint32_t d);
 
-enum class ClusteringAlgo { Auto, Lloyd, FlatSuperKMeans, Hskm };
-
-struct HskmHierarchy {
-  std::vector<float> meso;
-  std::vector<std::vector<float>> fine;
-};
+enum class ClusteringAlgo { Auto, Lloyd, FlatSuperKMeans };
 
 std::vector<float> MakeRotation(uint32_t d, uint32_t seed);
-
-HskmHierarchy RunHskmHierarchical(const float* data, size_t n, uint32_t k,
-                                  uint32_t d, uint32_t seed,
-                                  const float* rotation = nullptr);
-
-bool HskmQualifies(VectorMetric metric, uint32_t k, uint32_t d);
 
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,

@@ -45,8 +45,7 @@ constexpr double kBeamOverprobe = 3.0;
 constexpr size_t kTrainSeed = 42;
 constexpr uint64_t kSampleSegmentOversample = 4;
 constexpr size_t kPostingSizeDefault = 1024;
-constexpr size_t kMinCentroids = 64;
-constexpr size_t kMaxCentroids = 4096;
+constexpr size_t kMaxFanout = 128;
 constexpr size_t kTrainPointsPerLeaf = 64;
 constexpr size_t kMaxTrainSample = 4ull * 1024 * 1024;
 constexpr size_t kClusterIters = 15;
@@ -133,7 +132,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& child,
       ranges.emplace_back(r_lo, r_hi - r_lo);
       valid_selected += vc;
     }
-    std::sort(ranges.begin(), ranges.end());
+    absl::c_sort(ranges);
     StreamSelectedRanges(child,
                          std::span<const std::pair<uint64_t, uint64_t>>{ranges},
                          d, ctx, reservoir_sink);
@@ -144,8 +143,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& child,
 
 struct BuildSettings {
   size_t posting_size;
-  size_t max_centroids;
-  size_t min_centroids;
+  size_t max_fanout;
   VectorMetric metric;
   size_t niter;
 
@@ -153,20 +151,12 @@ struct BuildSettings {
     return sample_size <= posting_size;
   }
 
-  size_t ClusterSize(size_t sample_size) const noexcept {
-    const double n = static_cast<double>(sample_size);
-    const double tau = static_cast<double>(posting_size);
-    size_t b;
-    if (sample_size <= max_centroids * posting_size) {
-      // cap-split: children land at ~tau (design NEW_CENTROIDS.md §3.2).
-      b = std::clamp<size_t>(static_cast<size_t>(std::ceil(n / tau)), size_t{2},
-                             max_centroids);
-    } else {
-      // sqrt-split (SKM): keep fan-out brute-forceable.
-      b = std::clamp<size_t>(static_cast<size_t>(std::ceil(std::sqrt(n / tau))),
-                             min_centroids, max_centroids);
+  size_t Fanout(size_t sample_size) const noexcept {
+    size_t f = (sample_size + posting_size - 1) / posting_size;
+    while (f > max_fanout) {
+      f = static_cast<size_t>(std::ceil(std::sqrt(static_cast<double>(f))));
     }
-    return b;
+    return std::max<size_t>(2, f);
   }
 };
 
@@ -179,38 +169,6 @@ auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
     ClusteringAlgo::Auto, rotation);
   AssignNearestGrouped(metric, centroids, d, data, ids);
   return centroids;
-}
-
-void BuildMesoReuse(std::vector<CentroidsBuilder::Node>& nodes,
-                    std::span<const float> sample, size_t d,
-                    size_t target_leaves, const BuildSettings& settings,
-                    const float* rotation) {
-  const size_t n = sample.size() / d;
-  auto h =
-    RunHskmHierarchical(sample.data(), n, static_cast<uint32_t>(target_leaves),
-                        static_cast<uint32_t>(d), kTrainSeed, rotation);
-  const size_t m = h.fine.size();
-  if (settings.metric == VectorMetric::Cosine) {
-    NormalizeRows(h.meso.data(), m, static_cast<uint32_t>(d));
-    for (auto& block : h.fine) {
-      NormalizeRows(block.data(), block.size() / d, static_cast<uint32_t>(d));
-    }
-  }
-  const size_t meso_index = nodes.size();
-  std::vector<size_t> meso_children;
-  meso_children.reserve(m);
-  for (size_t g = 0; g < m; ++g) {
-    meso_children.emplace_back(meso_index + 1 + g);
-  }
-  nodes.emplace_back(CentroidsBuilder::Node{
-    .centroids = std::move(h.meso), .children = std::move(meso_children)});
-  for (size_t g = 0; g < m; ++g) {
-    const size_t ki = h.fine[g].size() / d;
-    nodes.emplace_back(
-      CentroidsBuilder::Node{.centroids = std::move(h.fine[g]),
-                             .children = std::vector<size_t>(ki, 0),
-                             .leafs = ki});
-  }
 }
 
 void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
@@ -248,16 +206,7 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
       // centroid from parent will route to this posting
       continue;
     }
-    if (entry.parent == std::numeric_limits<size_t>::max()) {
-      const size_t target_leaves =
-        (sample_size + settings.posting_size - 1) / settings.posting_size;
-      if (HskmQualifies(settings.metric, static_cast<uint32_t>(target_leaves),
-                        static_cast<uint32_t>(d))) {
-        BuildMesoReuse(nodes, entry.sample, d, target_leaves, settings, rot);
-        continue;
-      }
-    }
-    size_t n_clusters = settings.ClusterSize(sample_size);
+    const size_t n_clusters = settings.Fanout(sample_size);
     auto centroids = BuildAndSplit(entry.sample, d, entry.ids, n_clusters,
                                    settings.metric, settings.niter, rot);
     const size_t n_built = centroids.size() / d;
@@ -451,11 +400,10 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
 }
 
 void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
-                                 size_t min_centroids, size_t max_centroids) {
+                                 size_t max_fanout) {
   BuildSettings settings{
     .posting_size = std::max<size_t>(1, leaf_size),
-    .max_centroids = max_centroids,
-    .min_centroids = min_centroids,
+    .max_fanout = max_fanout,
     .metric = _metric,
     .niter = kClusterIters,
   };
@@ -481,10 +429,8 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
   builder._d = d;
   const size_t t =
     params.posting_size != 0 ? params.posting_size : kPostingSizeDefault;
-  const size_t min_c =
-    params.min_centroids != 0 ? params.min_centroids : kMinCentroids;
-  const size_t max_c =
-    params.max_centroids != 0 ? params.max_centroids : kMaxCentroids;
+  const size_t max_fanout =
+    params.max_fanout != 0 ? params.max_fanout : kMaxFanout;
 
   const auto* child = vector_column.Child();
   SDB_ASSERT(child);
@@ -510,7 +456,7 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
                                              valid_count * t));
   auto sample = GatherTrainingSample(*child, rows, d, ctx, valid, valid_count,
                                      sample_size, kTrainSeed);
-  builder.BuildTree(std::move(sample), tau, min_c, max_c);
+  builder.BuildTree(std::move(sample), tau, max_fanout);
   return builder;
 }
 
@@ -522,11 +468,9 @@ CentroidsBuilder CentroidsBuilder::CreateFromSample(
   builder._d = d;
   const size_t t =
     params.posting_size != 0 ? params.posting_size : kPostingSizeDefault;
-  const size_t min_c =
-    params.min_centroids != 0 ? params.min_centroids : kMinCentroids;
-  const size_t max_c =
-    params.max_centroids != 0 ? params.max_centroids : kMaxCentroids;
-  builder.BuildTree(std::move(sample), t, min_c, max_c);
+  const size_t max_fanout =
+    params.max_fanout != 0 ? params.max_fanout : kMaxFanout;
+  builder.BuildTree(std::move(sample), t, max_fanout);
   return builder;
 }
 

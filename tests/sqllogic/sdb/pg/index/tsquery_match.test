@@ -518,10 +518,17 @@ SELECT a FROM tsq_idx WHERE a @@ ts_between(false, 1, true, true);
 statement error
 SELECT a FROM tsq_idx WHERE b @@ ts_between('a', true, true, true);
 
-# INTEGER vs BIGINT -- different LogicalType ids count as mismatched
-# even though both are integral. Cast both to the same type to fix.
-statement error
-SELECT a FROM tsq_idx WHERE a @@ ts_between(1::INTEGER, 100::BIGINT, true, true);
+# INTEGER vs BIGINT: constant folding renders both bounds back to plain
+# integer literals, so mixed literal WIDTHS normalize instead of tripping
+# the strict type-identity rule; genuine class mixes above still error.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(1::INTEGER, 100::BIGINT, true, true) ORDER BY a;
+----
+a
+1
+2
+3
+4
 
 # Bound vs column type mismatch: VARCHAR bounds on INTEGER column.
 statement error
@@ -2666,3 +2673,73 @@ SELECT 2 ^ 3;
 ----
 ?column?
 8
+
+
+# A boosted part cannot silently lose its boost inside `##`: the fold
+# renders it as a `^` subexpression and the part walker rejects it.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ (('fox'::TSQUERY ^ 2.0) ## 'dog');
+----
+db error: ERROR: ## part type not supported yet: ^
+HINT: Supported phrase parts: bare 'word', ts_starts_with, ts_like, ts_levenshtein, ts_phrase, ts_any, ts_between.
+
+
+# ----------------------------------------------------------------------
+# Structured value text: a string whose text is a whitelisted constructor
+# expression compiles structurally at @@.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'ts_phrase(''quick brown'')'::tsquery ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'ts_like(''qui%'')'::tsquery ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'ts_any([''turtle'', ''red''])'::tsquery ORDER BY a;
+----
+a
+2
+3
+
+# Rendering a composed expression and casting the text back matches the
+# same rows: the canonical text is a faithful serialization.
+query
+SELECT a FROM tsq_idx WHERE b @@ ((ts_phrase('turtle') || ts_phrase('red'))::text)::tsquery ORDER BY a;
+----
+a
+2
+3
+
+# Non-whitelisted names stay leaf text (tokenized terms), never compile:
+# no value-function substitution, no arbitrary calls.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'current_date'::tsquery ORDER BY a;
+----
+a
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'my_fn(1)'::tsquery ORDER BY a;
+----
+a
+
+# Over the structured-text size cap the value falls back to leaf tokens.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('ts_like(''qui%'')' || repeat(' ', 70000))::tsquery ORDER BY a;
+----
+a
+
+# Redundant parentheses are collapsed by the parser before the depth cap.
+query
+SELECT a FROM tsq_idx WHERE b @@ (repeat('(', 80) || 'ts_like(''qui%'')' || repeat(')', 80))::tsquery ORDER BY a;
+----
+a
+1
+2

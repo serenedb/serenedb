@@ -32,6 +32,7 @@ class Role;
 class PgSqlView;
 class Sequence;
 class Index;
+class InvertedIndex;
 class Schema;
 class Database;
 struct FunctionSignature;

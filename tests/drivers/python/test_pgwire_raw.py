@@ -495,6 +495,30 @@ def test_char_oid18_param_roundtrip(conn):
     assert first_field(m) == b"A"
 
 
+def test_describe_resolves_deferred_param_output(conn):
+    # A bare projected parameter carries no type until it is known, so duckdb
+    # leaves the prepared statement's output type UNKNOWN. Describe must
+    # probe-plan to fill it in: statement Describe ('S') synthesizes a
+    # placeholder value, portal Describe ('P') reuses the bound one. Both must
+    # report the resolved type (text, OID 25) and the projected alias, not the
+    # UNKNOWN template. Regression: WriteResolvedRowDescription.
+    conn.parse("deferred", "select $1 as label")
+    conn.describe("S", "deferred")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert row_description(m) == [("label", 25, -1)], row_description(m)
+
+    conn.bind("", "deferred", params=(b"hello",))
+    conn.describe("P", "")
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert row_description(m) == [("label", 25, -1)], row_description(m)
+    assert first_field(m) == b"hello", rows(m)
+
+
 def test_timestamp_date_infinity_wire(conn):
     # PG sends +/-infinity timestamps/dates as the raw INT*_MAX/MIN sentinels.
     # Regression: serenedb applied the epoch-gap shift unconditionally (a finite
@@ -1599,7 +1623,10 @@ def _assert_pivot_result(msgs):
     # RowDescription / DataRow (the CREATE ENUM emits neither).
     assert not errors(msgs), errors(msgs)
     names = [c[0] for c in (row_description(msgs) or [])]
-    assert names == ["q1", "q2", "q3"], names
+    # PIVOT column names come from the data values, not from written
+    # identifiers, so they keep the value's case (unlike unquoted aliases,
+    # which PG-lowercase) -- and case-distinct values must stay distinct.
+    assert names == ["Q1", "Q2", "Q3"], names
     vals = [f.decode() for f in all_fields(msgs)]
     assert vals == ["15", "20", "30"], vals
 
@@ -1614,7 +1641,7 @@ def test_pivot_extended_protocol(conn):
     _pivot_setup(conn, "pivot_raw_ext")
     # Full extended round-trip with a portal Describe: the temp enum is stripped
     # and run at Parse, so the PIVOT is a single prepared SELECT -- Describe must
-    # return the q1/q2/q3 RowDescription before Execute streams the row.
+    # return the Q1/Q2/Q3 RowDescription before Execute streams the row.
     conn.parse("", "PIVOT pivot_raw_ext ON q USING sum(a)")
     conn.bind("", "")
     conn.describe("P", "")

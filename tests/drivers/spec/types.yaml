@@ -1455,16 +1455,6 @@
   skip:
     all: ["TODO: triage Tsvector"]
 
-- oid: 3615
-  name: tsquery
-  pg_typname: tsquery
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage Tsquery"]
-
 - oid: 3642
   name: gtsvector
   pg_typname: gtsvector
@@ -1494,16 +1484,6 @@
   samples: []
   skip:
     all: ["TODO: triage GtsvectorArray"]
-
-- oid: 3645
-  name: tsquery_array
-  pg_typname: tsquery_array
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage TsqueryArray"]
 
 - oid: 3734
   name: regconfig

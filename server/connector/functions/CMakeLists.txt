@@ -24,6 +24,8 @@ target_sources(
         ts_offsets.cpp
         ts_phrase.cpp
         ts_prefix.cpp
+        ts_query.cpp
+        ts_query_codec.cpp
         ts_regexp.cpp
         ts_term.cpp
         ts_to_tsquery.cpp

@@ -325,6 +325,9 @@ class PgWireSession final
   void HandleClose(std::string_view payload);
   void DescribeStatement(Statement& stmt);
   void DescribePortal(Portal& portal);
+  void WriteResolvedRowDescription(duckdb::PreparedStatement& prepared,
+                                   duckdb::vector<duckdb::Value>* params,
+                                   std::span<const sdb::pg::VarFormat> formats);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
                          std::string_view statement_name);
 

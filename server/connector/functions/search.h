@@ -30,10 +30,8 @@ namespace sdb::connector {
 
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
 inline constexpr std::string_view kTokenizerTypeName = "tokenize";
-inline constexpr std::string_view kTokenizedTSQueryTypeName =
-  "TOKENIZED_TSQUERY";
 inline constexpr std::string_view kBoostTypeName = "boost";
-inline constexpr std::string_view kBoostedTSQueryTypeName = "BOOSTED_TSQUERY";
+inline constexpr std::string_view kModifierTSQueryTypeName = "TSQUERY_MODIFIER";
 
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.
@@ -51,15 +49,6 @@ inline constexpr std::string_view kTSQRegexp = "ts_regexp";
 // [, min_should_match]). Each of the first three args is TSQUERY,
 // TSQUERY[], or NULL.
 inline constexpr std::string_view kTSQCompound = "ts_compound";
-
-// Existence predicates: `col @@ ts_is_not_null()` matches rows that have
-// a value for `col` in the cs; `col @@ ts_is_null()` matches the
-// complement. Both emit `irs::ByColumnExistence` (negated for IS NULL).
-// Useful pushdown shape for INCLUDE-only columns -- the implicit SQL
-// `IS NULL` / `IS NOT NULL` operator goes through `ByTerm` against a
-// null-mangled posting list, which only exists for indexed columns.
-inline constexpr std::string_view kTSQIsNull = "ts_is_null";
-inline constexpr std::string_view kTSQIsNotNull = "ts_is_not_null";
 
 // Single-bound range constructors. Each takes one value (VARCHAR /
 // numeric / BOOLEAN) and emits irs::ByRange (VARCHAR / BOOLEAN
@@ -131,6 +120,11 @@ inline constexpr std::string_view kGeoIntersects = "ST_Intersects";
 inline constexpr std::string_view kGeoContains = "ST_Contains";
 
 duckdb::LogicalType MakeTSQueryType();
+
+// Stub body shared by optimizer-claimed search functions across TUs:
+// throws if a claimed function is ever executed as a plain scalar.
+void SearchStubFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                  duckdb::Vector& result);
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);

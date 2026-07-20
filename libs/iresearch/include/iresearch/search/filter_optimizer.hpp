@@ -38,6 +38,12 @@ struct OptimizeContext {
   bool fuse_seekable_acceptors = false;
   bool fuse_acceptor_intersections = false;
   sdb::containers::FlatHashSet<irs::field_id> analyzed_fields;
+  // Embedder-registered semantics: maps a null-marker field to the column
+  // field whose NULL rows it indexes. Rules consuming it transform on the
+  // embedder's contract (marker postings == exactly the rows where the
+  // column holds no value); absent map keeps those rules inert.
+  const sdb::containers::FlatHashMap<irs::field_id, irs::field_id>*
+    null_markers = nullptr;
 
   bool HasAnalyzer(irs::field_id field) const noexcept {
     return analyzed_fields.contains(field);

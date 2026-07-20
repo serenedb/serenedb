@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <iterator>
 #include <span>
 #include <vector>
 
@@ -178,6 +180,16 @@ class Exclusion : public FilterWithType<Exclusion> {
   Filter::ptr& mutable_include() noexcept { return _filters[0]; }
   std::span<Filter::ptr> mutable_excludes() noexcept {
     return GetChildren().subspan(1);
+  }
+
+  template<typename Pred>
+  bool EraseExcludesIf(Pred&& pred) {
+    SDB_ASSERT(!_filters.empty());
+    const auto tail = std::remove_if(std::next(_filters.begin()),
+                                     _filters.end(), std::forward<Pred>(pred));
+    const bool erased = tail != _filters.end();
+    _filters.erase(tail, _filters.end());
+    return erased;
   }
 
   std::span<const Filter::ptr> GetExcludes() const {

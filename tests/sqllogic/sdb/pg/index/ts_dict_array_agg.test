@@ -1,5 +1,11 @@
 hash-threshold 100
 
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
 # ----------------------------------------------------------------------------
 # array_agg(DISTINCT col) over a keyword-analyzed inverted-index column is
 # served from the term dictionary: a keyword analyzer emits the whole value as
@@ -68,7 +74,7 @@ QUERY PLAN
 │ Index: aa_idx                            │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~7 rows                                  │
+│ ~6 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query
@@ -109,7 +115,7 @@ QUERY PLAN
 │ TsDict: plain                              │
 │ Projections:                               │
 │ sdb_inverted_index_term$plain              │
-│ ~7 rows                                    │
+│ ~6 rows                                    │
 ╰────────────────────────────────────────────╯
 
 query
@@ -285,11 +291,11 @@ QUERY PLAN
 │ sdb_inverted_index_term$cat IS NOT NULL,   │
 │ sdb_inverted_index_term$plain,             │
 │ sdb_inverted_index_term$plain IS NOT NULL  │
-│ ~7 rows                                    │
+│ ~6 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ──────┴─────────────────────╮
 │ Groups: #0, #1                             │
-│ ~7 rows                                    │
+│ ~6 rows                                    │
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: aa_idx                              │
@@ -297,7 +303,7 @@ QUERY PLAN
 │ Projections:                               │
 │ sdb_inverted_index_term$cat,               │
 │ sdb_inverted_index_term$plain              │
-│ ~14 rows                                   │
+│ ~12 rows                                   │
 ╰────────────────────────────────────────────╯
 
 query
@@ -339,7 +345,7 @@ QUERY PLAN
 │ Index: aa_idx                            │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~7 rows                                  │
+│ ~6 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query
@@ -367,7 +373,7 @@ QUERY PLAN
 │ Index: aa_idx                            │
 │ TsDict: cat                              │
 │ Projections: sdb_inverted_index_term$cat │
-│ ~7 rows                                  │
+│ ~6 rows                                  │
 ╰──────────────────────────────────────────╯
 
 query

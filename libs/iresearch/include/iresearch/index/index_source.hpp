@@ -75,8 +75,9 @@ class IndexSource {
 
   virtual PrimaryKeyBatch::Kind PkKind() const = 0;
 
-  // Materializes source columns for `count` pks from `start`; returns the rows
-  // produced (< count when compacted to survivors).
+  // Materializes the source columns for `count` pks starting at `start` and
+  // returns the number of output rows produced -- equal to `count` unless a
+  // pushed lookup-column filter compacted the batch to survivors.
   virtual duckdb::idx_t Materialize(duckdb::ClientContext& context,
                                     PrimaryKeyBatch& batch, duckdb::idx_t start,
                                     duckdb::idx_t count,

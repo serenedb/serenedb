@@ -42,6 +42,6 @@ std::unique_ptr<IndexSource> MakeIndexSource(
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
-  const duckdb::TableFilterSet* pushed_filters = nullptr);
+  duckdb::TableFilterSet* pushed_filters = nullptr);
 
 }  // namespace sdb::connector

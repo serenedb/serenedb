@@ -36,11 +36,20 @@ class ViewFileIndexSourceBase : public ViewIndexSourceBase {
                           std::span<const duckdb::idx_t> projected_columns,
                           std::span<const duckdb::LogicalType> projected_types,
                           std::span<const catalog::Column::Id> bind_column_ids,
-                          const duckdb::TableFilterSet* pushed_filters);
+                          duckdb::TableFilterSet* pushed_filters);
+
+  // Re-keys the scan's output-slot-keyed filters onto this reader's projected
+  // columns, dropping non-lookup slots (e.g. the score) that have no source
+  // column -- forwarding those to the reader mismatches column types.
+  void BuildPushedFilters(const duckdb::TableFilterSet* input_filters);
 
   duckdb::TableFunction _lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> _bind_data;
   duckdb::vector<duckdb::ColumnIndex> _column_indexes;
+  // Lookup-column filters forwarded to the underlying reader (parquet row-group
+  // pruning + native FilterSelection); the lookup scan compacts to survivors.
+  // Null when none.
+  duckdb::unique_ptr<duckdb::TableFilterSet> _pushed_filters;
 };
 
 class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
@@ -50,7 +59,7 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
     std::span<const catalog::Column::Id> bind_column_ids,
-    const duckdb::TableFilterSet* pushed_filters = nullptr);
+    duckdb::TableFilterSet* pushed_filters = nullptr);
 
   PrimaryKeyBatch::Kind PkKind() const final {
     return PrimaryKeyBatch::Kind::I64;
@@ -71,7 +80,7 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
                           std::span<const duckdb::idx_t> projected_columns,
                           std::span<const duckdb::LogicalType> projected_types,
                           std::span<const catalog::Column::Id> bind_column_ids,
-                          const duckdb::TableFilterSet* pushed_filters = nullptr);
+                          duckdb::TableFilterSet* pushed_filters = nullptr);
 
   PrimaryKeyBatch::Kind PkKind() const final {
     return PrimaryKeyBatch::Kind::I64I64;
@@ -89,8 +98,10 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
   };
   std::vector<CachedFileLookup> _file_cache;
 
-  // Per-file lookup target: survivors land at row 0 per call and are appended
-  // into _tf_target at the running batch offset.
+  // Each per-file lookup writes its survivors compactly from row 0 (the lookup
+  // TF's per-call contract). We run each file into `_file_target` and append
+  // its survivors into `_tf_target` at the running offset, so the batch
+  // accumulates across files instead of each file overwriting the last.
   duckdb::DataChunk _file_target;
   std::vector<duckdb::idx_t> _file_survivor_idx;
 };

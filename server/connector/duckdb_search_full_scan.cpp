@@ -27,9 +27,7 @@
 #include <cmath>
 #include <duckdb/common/projection_index.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
-#include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
@@ -83,6 +81,7 @@
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
 #include "iresearch/index/hit_batcher.hpp"
+#include "iresearch/index/pk_batch_helpers.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -2141,41 +2140,6 @@ void RunCountScan(IResearchScanGlobalState& g, CountScanLocalState& l,
   l.local_emitted += batch;
 }
 
-// Feed the batch's stored-PK read into the PrimaryKeyBatch per key shape;
-// a struct key is borrowed, not copied.
-void AppendPrimaryKeysFromVector(PrimaryKeyBatch& pk, duckdb::Vector& vec,
-                                 size_t count) {
-  const auto type_id = vec.GetType().id();
-  if (pk.kind == PrimaryKeyBatch::Kind::Struct &&
-      type_id == duckdb::LogicalTypeId::STRUCT) {
-    pk.column = &vec;
-    pk.column_count = count;
-    return;
-  }
-  if (pk.kind == PrimaryKeyBatch::Kind::I64 &&
-      type_id == duckdb::LogicalTypeId::BIGINT) {
-    const auto* data = duckdb::FlatVector::GetData<int64_t>(vec);
-    for (size_t k = 0; k < count; ++k) {
-      pk.Append(data[k]);
-    }
-    return;
-  }
-  if (pk.kind == PrimaryKeyBatch::Kind::I64I64 &&
-      type_id == duckdb::LogicalTypeId::STRUCT) {
-    const auto& entries = duckdb::StructVector::GetEntries(vec);
-    SDB_ASSERT(entries.size() == 2);
-    const auto* hi = duckdb::FlatVector::GetData<int64_t>(entries[0]);
-    const auto* lo = duckdb::FlatVector::GetData<int64_t>(entries[1]);
-    for (size_t k = 0; k < count; ++k) {
-      pk.Append(hi[k], lo[k]);
-    }
-    return;
-  }
-  THROW_SQL_ERROR(
-    ERR_MSG("stored PK column type ", vec.GetType().ToString(),
-            " does not match the index source's expected key shape"));
-}
-
 duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                              IResearchScanGlobalState& g,
                              SegDocBufferedScanLocalState& l,
@@ -2190,7 +2154,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
       l.index_source =
         MakeIndexSource(ctx, *g.scan, g.lookup_projected_columns,
                         g.projected_types, g.scan->column_ids,
-                        g.pushed_filters);
+                        const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
     }
     if (l.pk_batch.kind == PrimaryKeyBatch::Kind::None) {
       l.pk_batch.kind = l.index_source->PkKind();
@@ -2320,8 +2284,10 @@ void RunStreamingScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
     const auto added = l.EmitChunk(ctx, g, output);
     SDB_ASSERT(added <= STANDARD_VECTOR_SIZE);
     if (added != 0) {
-      // The lookup fetches source columns for the pks and applies pushed
-      // lookup-column filters natively, returning the survivor count.
+      // The lookup fetches the source columns for the materialized pks and
+      // applies any pushed lookup-column filters natively (FilterSelection +
+      // late materialization), returning the survivor count (== added when no
+      // lookup filter applies).
       const auto kept = FinalizeBatch(ctx, g, l, output, added);
       if (kept != 0) {
         output.SetChildCardinality(kept);

@@ -72,8 +72,10 @@ struct RegistryEntry {
   catalog::PkSpec single_pk_spec;
   catalog::PkSpec glob_pk_spec;
   duckdb::TableFunction (*make_lookup)();
-  // csv/json/text lookups fetch by offset and ignore pushed filters, so
-  // filters on their lookup columns must NOT be pushed (silently dropped).
+  // Whether the reader's lookup applies pushed table filters. csv/json/text
+  // only fetch rows by offset and ignore filters, so filters on their lookup
+  // columns must NOT be pushed (they'd be silently dropped) -- see
+  // supports_pushdown.
   bool supports_filters = false;
 };
 

@@ -295,24 +295,48 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
     // constant text instead of the full per-batch key list.
     const std::string schema_inner = absl::StrCat(head, " WHERE 0");
     absl::StrAppend(&head, " WHERE ");
+    std::vector<std::string> pieces;
     if (_num_key_cols == 1) {
       absl::StrAppend(&head, bq(_fast_path.key_columns[0].name), " IN [");
+      pieces = {std::move(head), "]"};
     } else {
+      // Composite: keys travel as one flat array per column (2 arrays parse
+      // ~2x faster than 2048 tuple literals) zipped positionally by a
+      // parallel ARRAY JOIN; PK granule pruning is identical to the tuple-IN.
       std::string tuple;
       for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
         absl::StrAppend(&tuple, k ? ", " : "",
                         bq(_fast_path.key_columns[k].name));
       }
-      absl::StrAppend(&head, "(", tuple, ") IN [");
+      absl::StrAppend(&head, "(", tuple, ") IN (SELECT ");
+      for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+        absl::StrAppend(&head, k ? ", " : "", "__sdb_a", k);
+      }
+      absl::StrAppend(&head, " FROM (SELECT [");
+      pieces.push_back(std::move(head));
+      for (duckdb::idx_t k = 1; k < _num_key_cols; ++k) {
+        pieces.push_back(
+          absl::StrCat("] AS __sdb_x", k - 1, ", ["));
+      }
+      std::string tail =
+        absl::StrCat("] AS __sdb_x", _num_key_cols - 1, ") ARRAY JOIN ");
+      for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+        absl::StrAppend(&tail, k ? ", " : "", "__sdb_x", k, " AS __sdb_a", k);
+      }
+      tail += ")";
+      pieces.push_back(std::move(tail));
     }
-    _sql_parts.resize(2);
+    _sql_parts.resize(pieces.size());
     _sql_parts[0] = absl::StrCat(
       "SELECT * FROM clickhouse_query(",
       duckdb::KeywordHelper::WriteQuoted(ref.catalog, '\''), ", '",
-      Embed(head));
-    _sql_parts[1] =
-      absl::StrCat("]', schema_query := '", Embed(schema_inner), "')");
-    _key_texts.resize(1);
+      Embed(pieces[0]));
+    for (size_t j = 1; j < pieces.size(); ++j) {
+      _sql_parts[j] = Embed(pieces[j]);
+    }
+    _sql_parts.back() = absl::StrCat(
+      _sql_parts.back(), "', schema_query := '", Embed(schema_inner), "')");
+    _key_texts.resize(pieces.size() - 1);
   }
 
   _struct_slot.reserve(STANDARD_VECTOR_SIZE);
@@ -349,30 +373,17 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
       }
       absl::StrAppend(&out, "\"(", children[0].GetValue<int64_t>(), ",",
                       children[1].GetValue<int64_t>(), ")\"");
-    } else if (_dialect == Dialect::Postgres) {
+    } else {
       for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
         auto& out = _key_texts[k];
         if (i) {
           out += ',';
         }
-        AppendPgArrayElem(out, children[k]);
-      }
-    } else {
-      auto& out = _key_texts[0];
-      if (i) {
-        out += ',';
-      }
-      if (num_key_cols > 1) {
-        out += '(';
-        for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-          if (k) {
-            out += ',';
-          }
+        if (_dialect == Dialect::Postgres) {
+          AppendPgArrayElem(out, children[k]);
+        } else {
           AppendChElem(out, children[k]);
         }
-        out += ')';
-      } else {
-        AppendChElem(out, children[0]);
       }
     }
     _struct_slot.try_emplace(std::move(key), i);

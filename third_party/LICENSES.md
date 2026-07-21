@@ -45,7 +45,6 @@
 * [YACLib](https://github.com/YACLib/YACLib)
 * [magic_enum](https://github.com/Neargye/magic_enum)
 * [sse2neon](https://github.com/DLTcollab/sse2neon)
-* [geographiclib-c](https://github.com/geographiclib/geographiclib-c)
 * [liburing](https://github.com/axboe/liburing)
 * [DuckDB](https://github.com/duckdb/duckdb)
 * [duckdb-httpfs](https://github.com/duckdb/duckdb-httpfs)

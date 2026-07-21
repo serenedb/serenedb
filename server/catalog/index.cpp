@@ -524,24 +524,20 @@ void ApplyIncludedOpclass(
 
 float ReadIVFSampleFactor(duckdb::ClientContext& context) {
   duckdb::Value v;
-  if (context.TryGetCurrentSetting("sdb_ivf_sample_factor", v) && !v.IsNull()) {
-    const auto f = v.GetValue<double>();
-    if (f > 0.0 && f <= 1.0) {
-      return static_cast<float>(f);
-    }
-  }
-  return 0.f;
+  context.TryGetCurrentSetting("sdb_ivf_sample_factor", v);
+  SDB_ASSERT(!v.IsNull());
+  const auto f = v.GetValue<double>();
+  SDB_ASSERT(f > 0.0 && f <= 1.0);
+  return static_cast<float>(f);
 }
 
 uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
   duckdb::Value v;
-  if (context.TryGetCurrentSetting("sdb_ivf_posting_size", v) && !v.IsNull()) {
-    const auto n = v.GetValue<int32_t>();
-    if (n >= 1) {
-      return static_cast<uint32_t>(n);
-    }
-  }
-  return 0;
+  context.TryGetCurrentSetting("sdb_ivf_posting_size", v);
+  SDB_ASSERT(!v.IsNull());
+  const auto n = v.GetValue<int32_t>();
+  SDB_ASSERT(n >= 1);
+  return static_cast<uint32_t>(n);
 }
 
 void ApplyIVFOpclass(

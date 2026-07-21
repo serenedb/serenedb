@@ -353,8 +353,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Fraction of rows used to train the IVF centroid tree "
         "(sample_size = sample_factor * N), captured into the index config at "
         "CREATE INDEX. 0 (default) uses an automatic heuristic; any value in "
-        "(0, 1] overrides it.",
-        [] { return duckdb::Value::DOUBLE(0.0); },
+        "(0, 1] overrides it. Default 0.2.",
+        [] { return duckdb::Value::DOUBLE(0.2); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto f = value.GetValue<double>();
           if (f <= 0.0 || f > 1.0) {

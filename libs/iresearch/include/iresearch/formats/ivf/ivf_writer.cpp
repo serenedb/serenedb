@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 
+#include <absl/random/random.h>
+
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
@@ -95,7 +97,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   size_t pq_res_seen = 0;
   const size_t pq_res_cap =
     pq && qw != nullptr ? std::min<size_t>(rows, kPqTrainResiduals) : 0;
-  std::mt19937 pq_rng{kPqTrainSeed};
+  absl::InsecureBitGen pq_rng(std::seed_seq{kPqTrainSeed});
 
   std::vector<uint32_t> doc_cluster;
   doc_cluster.reserve(rows);
@@ -130,7 +132,8 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
           const auto c = cents[j];
           size_t slot = pq_res_seen;
           if (pq_res_seen >= pq_res_cap) {
-            slot = pq_rng() % (pq_res_seen + 1);
+            slot =
+              std::uniform_int_distribution<size_t>{0, pq_res_seen}(pq_rng);
           } else {
             pq_train_res.insert(pq_train_res.end(), d, 0.f);
           }

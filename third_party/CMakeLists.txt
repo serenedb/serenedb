@@ -405,6 +405,7 @@ if(ARCH_AMD64)
     set(FAISS_OPT_LEVEL "avx2")
     set(FAISS_LIB faiss_avx2)
 elseif(ARCH_AARCH64)
+    # TODO(mbkkt) is it ok?
     set(FAISS_OPT_LEVEL "sve")
     set(FAISS_LIB faiss_sve)
 endif()

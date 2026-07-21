@@ -110,6 +110,10 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // only reports row counts (count(*) shapes).
   bool has_real_column = false;
   bool has_output_column = false;
+  // A real (non-virtual) column that is actually emitted, not merely scanned
+  // for a pushed filter. ts_dict scans tolerate filter-only real columns (a
+  // WHERE on an INCLUDE'd column -> col_filter) but cannot emit real columns.
+  bool has_real_output_column = false;
 
   // The score column is scanned, so scores must be computed.
   bool ScanScore() const noexcept {

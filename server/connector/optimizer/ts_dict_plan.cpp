@@ -30,6 +30,7 @@
 #include <duckdb/planner/expression/bound_aggregate_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_unnest_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -616,6 +617,82 @@ void CollectEnumFieldRefs(
     expr, [&](const duckdb::Expression& child) {
       CollectEnumFieldRefs(child, key_by_field, bind_data, get, refs);
     });
+}
+
+// Every column reference under `expr` resolves to ONE covered (stored `.col`)
+// index column, joined only by scalar nodes (functions, casts, constants).
+// Non-scalar nodes (subquery/aggregate/window/lambda/positional ref) never
+// push as table filters and are rejected.
+bool ScalarOverSingleCoveredColumn(
+  const duckdb::Expression& expr,
+  const connector::SereneDBScanBindData& bind_data,
+  const duckdb::LogicalGet& get, const catalog::InvertedIndex& index,
+  std::optional<catalog::Column::Id>& col) {
+  using C = duckdb::ExpressionClass;
+  const auto cls = expr.GetExpressionClass();
+  if (cls == C::BOUND_COLUMN_REF) {
+    const auto& ref = expr.Cast<duckdb::BoundColumnRefExpression>();
+    const auto id = ResolveColumnId(ref.Binding(), bind_data, get);
+    if (id == catalog::Column::kInvalidId ||
+        id == catalog::Column::kInvertedIndexTermId) {
+      return false;
+    }
+    const auto* info = index.FindColumnInfo(id);
+    if (!info || !info->IsStored()) {
+      return false;
+    }
+    if (col && *col != id) {
+      return false;
+    }
+    col = id;
+    return true;
+  }
+  switch (cls) {
+    case C::BOUND_SUBQUERY:
+    case C::BOUND_AGGREGATE:
+    case C::BOUND_WINDOW:
+    case C::BOUND_LAMBDA:
+    case C::BOUND_LAMBDA_REF:
+    case C::BOUND_REF:
+    case C::BOUND_UNNEST:
+    case C::BOUND_PARAMETER:
+      return false;
+    default:
+      break;
+  }
+  bool ok = true;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      ok = ok &&
+           ScalarOverSingleCoveredColumn(child, bind_data, get, index, col);
+    });
+  return ok;
+}
+
+// A conjunct duckdb pushes as an EXACT per-column table filter over one covered
+// (stored `.col`) index column: a single comparison (`col-expr CMP const`,
+// including function/cast forms like `lower(svc) = 'x'`) or a bare IS [NOT]
+// NULL over that column. The scan's columnstore filter (`col_filters`) applies
+// it during term counting, so the facet need not claim it into the term index.
+// IN-lists / disjunctions are excluded: duckdb pushes those as *optional*
+// zonemap filters and keeps an exact residual FILTER above the scan, which
+// would force the column into the scan output -- a term-dict scan emits only
+// term/count columns, so it cannot serve a real output column.
+bool IsCoveredColumnResidual(
+  const duckdb::Expression& expr,
+  const connector::SereneDBScanBindData& bind_data,
+  const duckdb::LogicalGet& get, const catalog::InvertedIndex& index,
+  std::optional<catalog::Column::Id>& col) {
+  using T = duckdb::ExpressionType;
+  const bool shape =
+    duckdb::BoundComparisonExpression::IsComparison(expr) ||
+    (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_OPERATOR &&
+     (expr.GetExpressionType() == T::OPERATOR_IS_NULL ||
+      expr.GetExpressionType() == T::OPERATOR_IS_NOT_NULL));
+  if (!shape) {
+    return false;
+  }
+  return ScalarOverSingleCoveredColumn(expr, bind_data, get, index, col);
 }
 
 struct TsDictFacetKey {
@@ -1554,6 +1631,14 @@ bool TsDictFacetPushdown::WhereOk() {
         if (!refs.any_ref) {
           return false;
         }
+        if (!refs.matched_key && !refs.term_virtual && !refs.multi_enum) {
+          std::optional<catalog::Column::Id> residual_col;
+          if (IsCoveredColumnResidual(*expr, *_found.bind_data, *_found.get,
+                                      *_index, residual_col) &&
+              residual_col) {
+            continue;
+          }
+        }
         bool need_acceptor = false;
         auto acceptor_field = _keys.front().field_id;
         if (_keys.size() > 1) {
@@ -1808,6 +1893,12 @@ class TsDictFilterClaim {
     }
     for (size_t i = 0; i < _filters.size(); ++i) {
       if (_routes[i] != TsDictRoute::Rejected || _filters[i]->HasParameter()) {
+        continue;
+      }
+      std::optional<catalog::Column::Id> residual_col;
+      if (IsCoveredColumnResidual(*_filters[i], _bind_data, _get, _index,
+                                  residual_col) &&
+          residual_col) {
         continue;
       }
       EnumFieldRefs refs;

@@ -1,0 +1,483 @@
+hash-threshold 100
+
+# ts_dict facet pushdown with a residual filter on a covered (INCLUDE'd)
+# column. The GROUP BY key is an indexed keyword field; the WHERE mixes an
+# indexed @@ document predicate (claimed into the index) with a comparison
+# over a stored `.col` column that is NOT a term field. duckdb pushes the
+# comparison as an exact columnstore filter, and the term-dict scan applies it
+# per document while counting -- so the facet still reads counts from the
+# dictionary instead of falling back to a document scan. IN-lists / disjunctions
+# are pushed as optional zonemap filters with an exact residual FILTER above the
+# scan, which would need the column in the scan output; those decline to a doc
+# scan. Every result is checked against the same query over the base table (the
+# oracle). Both a table-backed and a view-backed index are covered. Background
+# maintenance is off so the plan estimates are stable.
+
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rkw(template = 'keyword', frequency = true)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rtx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+# sev is a NOT NULL keyword facet key; tier is a nullable keyword facet key
+# (rows 3/5/6 have no tier, so a NULL group is synthesized); svc is a NOT NULL
+# covered column, region a nullable covered column (row 6 is NULL); body feeds a
+# tokenized field.
+statement ok
+CREATE TABLE rbase(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
+                   svc VARCHAR NOT NULL, region VARCHAR, tier VARCHAR,
+                   body VARCHAR NOT NULL)
+
+statement ok
+INSERT INTO rbase VALUES
+  (1, 'ERROR', 'frontend', 'us',  'gold',   'disk failed'),
+  (2, 'INFO',  'frontend', 'us',  'gold',   'all ok'),
+  (3, 'ERROR', 'backend',  'eu',  NULL,     'net failed'),
+  (4, 'WARN',  'frontend', 'eu',  'silver', 'failed retry'),
+  (5, 'INFO',  'backend',  'us',  NULL,     'failed once'),
+  (6, 'ERROR', 'frontend', NULL,  NULL,     'failed hard'),
+  (7, 'WARN',  'backend',  'us',  'silver', 'disk failed slow'),
+  (8, 'ERROR', 'frontend', 'us',  'gold',   'failed again')
+
+statement ok
+CREATE INDEX rtab_idx ON rbase USING inverted(sev rkw, tier rkw, body rtx)
+    INCLUDE (svc, region) WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+CREATE VIEW rlog AS
+SELECT id, sev AS Sev, svc AS Svc, region AS Region, tier AS Tier, body AS Body
+FROM rbase
+
+statement ok
+CREATE INDEX rlog_idx ON rlog USING inverted(Sev rkw, Tier rkw, Body rtx)
+    INCLUDE (Svc, Region) WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) rbase;
+
+# ===========================================================================
+# Table-backed index
+# ===========================================================================
+
+# --- Equality residual on a covered column: facet still reads from the
+# --- dictionary, with the comparison applied as a columnstore Column Filter.
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE svc = 'frontend' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query
+EXPLAIN SELECT sev, count(*) FROM rtab_idx WHERE svc = 'frontend' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: rtab_idx                           │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: svc = 'frontend'           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE svc = 'frontend' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- Equality residual AND an indexed @@ predicate: the @@ claims into the
+# --- index (Index Filter), the covered comparison stays a Column Filter.
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE svc = 'frontend' AND body @@ 'failed' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+WARN	1
+
+query
+EXPLAIN SELECT sev, count(*) FROM rtab_idx
+WHERE svc = 'frontend' AND body @@ 'failed' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: rtab_idx                           │
+│ Index Filter:                             │
+│ ╭─ Term ──────────────╮                   │
+│ │ Field: body(string) │                   │
+│ │ Value: failed       │                   │
+│ ╰─────────────────────╯                   │
+│ Column Filter: svc = 'frontend'           │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE svc = 'frontend' AND body LIKE '%failed%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+WARN	1
+
+# --- Equality residual on a nullable covered column (the filter excludes the
+# --- NULL rows).
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE region = 'us' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	2
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE region = 'us' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	2
+WARN	1
+
+# --- Expression residual over a covered column (lower(svc)): a single-column
+# --- scalar expression pushes as an exact Column Filter.
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE lower(svc) = 'backend' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+INFO	1
+WARN	1
+
+query
+EXPLAIN SELECT sev, count(*) FROM rtab_idx WHERE lower(svc) = 'backend' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: rtab_idx                           │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: lower(svc) = 'backend'     │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE lower(svc) = 'backend' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+INFO	1
+WARN	1
+
+# --- IS NULL residual over a covered column.
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE region IS NULL GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE region IS NULL GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+
+# --- IS NOT NULL residual over a covered column.
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE region IS NOT NULL GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	2
+WARN	2
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE region IS NOT NULL GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	2
+WARN	2
+
+# --- Two independent covered-column residuals: each becomes its own Column
+# --- Filter.
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE svc = 'frontend' AND region = 'us' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE svc = 'frontend' AND region = 'us' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+
+# --- Nullable facet key (tier) with a residual: the synthesized NULL group is
+# --- itself restricted by the Column Filter.
+query TI
+SELECT tier, count(*) AS n FROM rtab_idx
+WHERE svc = 'frontend' GROUP BY tier ORDER BY n DESC, tier
+----
+tier	n
+gold	3
+silver	1
+NULL	1
+
+query TI
+SELECT tier, count(*) AS n FROM rbase
+WHERE svc = 'frontend' GROUP BY tier ORDER BY n DESC, tier
+----
+tier	n
+gold	3
+silver	1
+NULL	1
+
+# --- GROUPING SETS with a residual.
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE svc = 'frontend' GROUP BY GROUPING SETS ((sev)) ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE svc = 'frontend' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- IN-list over a covered column: duckdb keeps an exact residual FILTER that
+# --- needs the column in the output, so the facet declines to a document scan
+# --- (Lookup: table). Result is still correct.
+query TI
+SELECT sev, count(*) AS n FROM rtab_idx
+WHERE svc IN ('frontend', 'backend') GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4
+INFO	2
+WARN	2
+
+query
+EXPLAIN SELECT sev, count(*) FROM rtab_idx
+WHERE svc IN ('frontend', 'backend') GROUP BY sev
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────────────────╮
+│ Groups: #0                                 │
+│ Aggregates: count_star()                   │
+│ ~0 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections: #1                            │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ FILTER ─────────────┴─────────────────────╮
+│ Expression:                                │
+│ (svc = 'frontend') OR (svc = 'backend')    │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: rtab_idx                            │
+│ Lookup: table                              │
+│ Projections: svc (i), sev (l)              │
+│ Column Filter:                             │
+│ optional: (svc IN ('frontend', 'backend')) │
+│ ~8 rows                                    │
+╰────────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE svc IN ('frontend', 'backend') GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4
+INFO	2
+WARN	2
+
+# ===========================================================================
+# View-backed index (behaves identically; the covered residual is applied the
+# same way over the view's columnstore).
+# ===========================================================================
+
+query TI
+SELECT Sev, count(*) AS n FROM rlog_idx
+WHERE Svc = 'frontend' GROUP BY Sev ORDER BY n DESC, Sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query
+EXPLAIN SELECT Sev, count(*) FROM rlog_idx WHERE Svc = 'frontend' GROUP BY Sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: rlog_idx                           │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: svc = 'frontend'           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE svc = 'frontend' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- View: residual AND indexed @@ predicate.
+query TI
+SELECT Sev, count(*) AS n FROM rlog_idx
+WHERE Svc = 'backend' AND Body @@ 'failed' GROUP BY Sev ORDER BY n DESC, Sev
+----
+sev	n
+ERROR	1
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE svc = 'backend' AND body LIKE '%failed%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+INFO	1
+WARN	1
+
+# --- View: expression residual.
+query TI
+SELECT Sev, count(*) AS n FROM rlog_idx
+WHERE lower(Svc) = 'frontend' GROUP BY Sev ORDER BY n DESC, Sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE lower(svc) = 'frontend' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- View: nullable facet key + residual (NULL group restricted by the filter).
+query TI
+SELECT Tier, count(*) AS n FROM rlog_idx
+WHERE Svc = 'frontend' GROUP BY Tier ORDER BY n DESC, Tier
+----
+tier	n
+gold	3
+silver	1
+NULL	1
+
+query TI
+SELECT tier, count(*) AS n FROM rbase
+WHERE svc = 'frontend' GROUP BY tier ORDER BY n DESC, tier
+----
+tier	n
+gold	3
+silver	1
+NULL	1
+
+# --- View: IS NULL residual over a nullable covered column.
+query TI
+SELECT Sev, count(*) AS n FROM rlog_idx
+WHERE Region IS NULL GROUP BY Sev ORDER BY n DESC, Sev
+----
+sev	n
+ERROR	1
+
+query TI
+SELECT sev, count(*) AS n FROM rbase
+WHERE region IS NULL GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1

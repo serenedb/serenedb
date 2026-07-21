@@ -139,4 +139,38 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
                             std::string_view grantee, bool revoke,
                             const DefaultPrivilegesOptions& opts);
 
+
+// Row-Level Security DDL. `cmd` is one of ALL/SELECT/INSERT/UPDATE/DELETE;
+// `roles` may include CURRENT_USER/SESSION_USER/PUBLIC. Empty roles -> PUBLIC.
+struct CreatePolicyOptions {
+  bool permissive = true;
+  std::string cmd = "ALL";
+  std::vector<std::string> roles;
+  bool has_using = false;
+  std::string using_text;
+  bool has_check = false;
+  std::string check_text;
+};
+void CreatePolicy(ConnectionContext& ctx, std::string_view name,
+                  std::string_view table, const CreatePolicyOptions& opts);
+
+struct AlterPolicyOptions {
+  bool is_rename = false;
+  std::string new_name;
+  bool has_roles = false;
+  std::vector<std::string> roles;
+  bool has_using = false;
+  std::string using_text;
+  bool has_check = false;
+  std::string check_text;
+};
+void AlterPolicy(ConnectionContext& ctx, std::string_view name,
+                 std::string_view table, const AlterPolicyOptions& opts);
+
+void DropPolicy(ConnectionContext& ctx, std::string_view name,
+                std::string_view table, bool if_exists);
+
+// action is ENABLE / DISABLE / FORCE / NOFORCE.
+void SetTableRowSecurity(ConnectionContext& ctx, std::string_view table,
+                         std::string_view action);
 }  // namespace sdb::pg

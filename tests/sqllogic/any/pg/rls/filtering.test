@@ -1,0 +1,118 @@
+# Oracle-verified against PostgreSQL 18.3: core Row-Level Security row filtering.
+# Only PG-identical behaviors live here (no serened-specific error text). Roles
+# switch via `connection user=`; the PG oracle runs with trust auth.
+#
+# Lore: vedernikoff and mop each guard their own clickclack ledger rows.
+
+statement ok
+DROP TABLE IF EXISTS rf_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS rf_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS rf_mop;
+
+
+statement ok
+CREATE TABLE rf_ledger (owner text, amount int);
+
+
+statement ok
+INSERT INTO rf_ledger VALUES ('rf_vedernikoff', 100), ('rf_mop', 200), ('ghost', 300);
+
+
+statement ok
+CREATE ROLE rf_vedernikoff LOGIN PASSWORD 'vpw';
+
+
+statement ok
+CREATE ROLE rf_mop LOGIN PASSWORD 'mpw';
+
+
+statement ok
+GRANT SELECT ON rf_ledger TO rf_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON rf_ledger TO rf_mop;
+
+
+statement ok
+ALTER TABLE rf_ledger ENABLE ROW LEVEL SECURITY;
+
+
+# ---- Default-deny: RLS enabled, no policy -> no rows visible to a non-owner ----
+
+connection c_ved user=rf_vedernikoff password=vpw
+query I
+SELECT count(*) FROM rf_ledger;
+----
+count
+0
+
+
+# ---- A self policy: each role sees only its own row ----
+
+statement ok
+CREATE POLICY p_self ON rf_ledger FOR SELECT USING (owner = current_user);
+
+
+connection c_ved2 user=rf_vedernikoff password=vpw
+query TI
+SELECT owner, amount FROM rf_ledger ORDER BY owner;
+----
+owner	amount
+rf_vedernikoff	100
+
+
+connection c_mop user=rf_mop password=mpw
+query TI
+SELECT owner, amount FROM rf_ledger ORDER BY owner;
+----
+owner	amount
+rf_mop	200
+
+
+# ---- A second PERMISSIVE policy is OR'd: widens visibility ----
+
+statement ok
+CREATE POLICY p_ghost ON rf_ledger FOR SELECT USING (owner = 'ghost');
+
+
+connection c_ved3 user=rf_vedernikoff password=vpw
+query TI
+SELECT owner, amount FROM rf_ledger ORDER BY owner;
+----
+owner	amount
+ghost	300
+rf_vedernikoff	100
+
+
+# ---- A RESTRICTIVE policy is AND'd: narrows visibility ----
+
+statement ok
+CREATE POLICY p_small ON rf_ledger AS RESTRICTIVE FOR SELECT USING (amount < 300);
+
+
+# ghost(300) now fails the restrictive amount<300 -> only vedernikoff remains.
+connection c_ved4 user=rf_vedernikoff password=vpw
+query TI
+SELECT owner, amount FROM rf_ledger ORDER BY owner;
+----
+owner	amount
+rf_vedernikoff	100
+
+
+statement ok
+DROP TABLE rf_ledger;
+
+
+statement ok
+DROP ROLE rf_vedernikoff;
+
+
+statement ok
+DROP ROLE rf_mop;

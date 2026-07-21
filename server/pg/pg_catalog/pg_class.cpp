@@ -190,6 +190,9 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       row.reltuples =
         count_store_rows(*table, database->GetName(), schema->GetName());
       row.relacl = {table->GetAcl()};
+      const auto rls = catalog.GetRowSecurity(table->GetId());
+      row.relrowsecurity = rls.enabled;
+      row.relforcerowsecurity = rls.forced;
       values.push_back(std::move(row));
     }
 

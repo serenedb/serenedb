@@ -1,0 +1,86 @@
+# serenedb-only RLS: a policy with `TO <role>` applies only to members of that
+# role; a policy TO PUBLIC (or with no TO clause) applies to everyone. A role
+# the policy does not target gets no visibility from it.
+#
+# Lore: only the clickclack auditors may see every ledger row.
+
+statement ok
+DROP TABLE IF EXISTS ptr_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS ptr_auditor;
+
+
+statement ok
+DROP ROLE IF EXISTS ptr_clerk;
+
+
+statement ok
+CREATE TABLE ptr_ledger (owner text, amount int);
+
+
+statement ok
+INSERT INTO ptr_ledger VALUES ('ptr_clerk', 1), ('ptr_auditor', 2), ('ghost', 3);
+
+
+statement ok
+CREATE ROLE ptr_auditor LOGIN PASSWORD 'apw';
+
+
+statement ok
+CREATE ROLE ptr_clerk LOGIN PASSWORD 'cpw';
+
+
+statement ok
+GRANT SELECT ON ptr_ledger TO ptr_auditor;
+
+
+statement ok
+GRANT SELECT ON ptr_ledger TO ptr_clerk;
+
+
+statement ok
+ALTER TABLE ptr_ledger ENABLE ROW LEVEL SECURITY;
+
+
+# Everyone can see their own row (PUBLIC target).
+statement ok
+CREATE POLICY p_self ON ptr_ledger FOR SELECT USING (owner = current_user);
+
+
+# Only auditors can see all rows.
+statement ok
+CREATE POLICY p_audit ON ptr_ledger FOR SELECT TO ptr_auditor USING (true);
+
+
+# The clerk gets only the self policy -> just their own row.
+connection c_clerk user=ptr_clerk password=cpw
+query
+SELECT owner FROM ptr_ledger ORDER BY owner;
+----
+owner
+ptr_clerk
+
+
+# The auditor gets self OR all -> every row.
+connection c_aud user=ptr_auditor password=apw
+query
+SELECT owner FROM ptr_ledger ORDER BY owner;
+----
+owner
+ghost
+ptr_auditor
+ptr_clerk
+
+
+statement ok
+DROP TABLE ptr_ledger;
+
+
+statement ok
+DROP ROLE ptr_auditor;
+
+
+statement ok
+DROP ROLE ptr_clerk;

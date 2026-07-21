@@ -1,0 +1,82 @@
+# serenedb-only RLS: CREATE/ALTER/DROP POLICY lifecycle and error paths. ALTER
+# POLICY can rename and change roles/USING/WITH CHECK; FOR and PERMISSIVE are
+# fixed at create (PG: drop & recreate). Duplicate and missing policies error.
+#
+# Lore: mop reshapes the ledger's guard clauses over time.
+
+statement ok
+DROP TABLE IF EXISTS pd_t;
+
+
+statement ok
+CREATE TABLE pd_t (owner text, amount int);
+
+
+statement ok
+CREATE POLICY p1 ON pd_t USING (amount > 0);
+
+
+# Duplicate policy name on the same table -> error.
+statement error
+CREATE POLICY p1 ON pd_t USING (amount > 1);
+----
+db error: ERROR: policy "p1" for table "pd_t" already exists
+
+
+# ALTER a policy that does not exist -> error.
+statement error
+ALTER POLICY nope ON pd_t USING (amount > 0);
+----
+db error: ERROR: policy "nope" for table "pd_t" does not exist
+
+
+# DROP a policy that does not exist -> error.
+statement error
+DROP POLICY nope ON pd_t;
+----
+db error: ERROR: policy "nope" for table "pd_t" does not exist
+
+
+# DROP POLICY IF EXISTS on a missing policy is a no-op.
+statement ok
+DROP POLICY IF EXISTS nope ON pd_t;
+
+
+# ALTER POLICY ... RENAME.
+statement ok
+ALTER POLICY p1 ON pd_t RENAME TO p1_renamed;
+
+
+query
+SELECT policyname FROM pg_catalog.pg_policies WHERE tablename = 'pd_t';
+----
+policyname
+p1_renamed
+
+
+# ALTER POLICY change the USING expression.
+statement ok
+ALTER POLICY p1_renamed ON pd_t USING (amount > 100);
+
+
+query ?
+SELECT qual FROM pg_catalog.pg_policies WHERE policyname = 'p1_renamed';
+----
+qual
+NULL
+
+
+# DROP the policy.
+statement ok
+DROP POLICY p1_renamed ON pd_t;
+
+
+query ?
+SELECT count(*) FROM pg_catalog.pg_policies WHERE tablename = 'pd_t';
+----
+count
+0
+
+
+statement ok
+DROP TABLE pd_t;

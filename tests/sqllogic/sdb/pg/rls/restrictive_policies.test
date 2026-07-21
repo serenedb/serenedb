@@ -1,0 +1,76 @@
+# serenedb-only RLS: RESTRICTIVE policies AND with the permissive set. A row is
+# visible only if (some PERMISSIVE policy allows it) AND (every RESTRICTIVE
+# policy allows it). Uses per-role password auth, so it cannot run on stock PG.
+#
+# Lore: vedernikoff may see clickclack rows, but only the non-archived ones.
+
+statement ok
+DROP TABLE IF EXISTS rp_docs;
+
+
+statement ok
+DROP ROLE IF EXISTS rp_ved;
+
+
+statement ok
+CREATE TABLE rp_docs (owner text, archived bool, title text);
+
+
+statement ok
+INSERT INTO rp_docs VALUES
+  ('rp_ved', false, 'live-one'),
+  ('rp_ved', true,  'archived-one'),
+  ('other',  false, 'not-mine');
+
+
+statement ok
+CREATE ROLE rp_ved LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON rp_docs TO rp_ved;
+
+
+statement ok
+ALTER TABLE rp_docs ENABLE ROW LEVEL SECURITY;
+
+
+# Permissive: your own rows. Restrictive: not archived.
+statement ok
+CREATE POLICY p_own ON rp_docs AS PERMISSIVE FOR SELECT USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY p_live ON rp_docs AS RESTRICTIVE FOR SELECT USING (archived = false);
+
+
+# vedernikoff sees only the row that is BOTH his AND live.
+connection c_ved user=rp_ved password=pw
+query
+SELECT title FROM rp_docs ORDER BY title;
+----
+title
+live-one
+
+
+# ---- A restrictive policy with no permissive policy -> nothing visible ----
+# (default-deny: restrictive alone never grants visibility).
+
+statement ok
+DROP POLICY p_own ON rp_docs;
+
+
+connection c_ved2 user=rp_ved password=pw
+query
+SELECT count(*) FROM rp_docs;
+----
+count
+0
+
+
+statement ok
+DROP TABLE rp_docs;
+
+
+statement ok
+DROP ROLE rp_ved;

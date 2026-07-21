@@ -1,0 +1,71 @@
+# serenedb-only RLS: aggregates and count(*) run over the RLS-filtered row set,
+# so a role's SUM/COUNT reflect only its visible rows -- never the hidden ones.
+# This is the aggregate face of the leak defense.
+#
+# Lore: vedernikoff's totals never betray the mop's balance.
+
+statement ok
+DROP TABLE IF EXISTS ra_t;
+
+
+statement ok
+DROP ROLE IF EXISTS ra_r;
+
+
+statement ok
+CREATE TABLE ra_t (owner text, amount int);
+
+
+statement ok
+INSERT INTO ra_t VALUES ('ra_r', 10), ('ra_r', 20), ('other', 1000);
+
+
+statement ok
+CREATE ROLE ra_r LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON ra_t TO ra_r;
+
+
+statement ok
+ALTER TABLE ra_t ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p1 ON ra_t FOR SELECT USING (owner = current_user);
+
+
+# count(*) counts only visible rows (2, not 3).
+connection c1 user=ra_r password=pw
+query
+SELECT count(*) FROM ra_t;
+----
+count
+2
+
+
+# SUM excludes the hidden 1000.
+connection c2 user=ra_r password=pw
+query
+SELECT sum(amount) FROM ra_t;
+----
+sum
+30
+
+
+# MAX cannot reveal the hidden row's larger value.
+connection c3 user=ra_r password=pw
+query
+SELECT max(amount) FROM ra_t;
+----
+max
+20
+
+
+statement ok
+DROP TABLE ra_t;
+
+
+statement ok
+DROP ROLE ra_r;

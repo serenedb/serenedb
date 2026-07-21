@@ -19,6 +19,7 @@ target_sources(
         user_type.cpp
         secondary_index.cpp
         inverted_index.cpp
+        policy.cpp
         scorer_options.cpp
         store/store.cpp
         tokenizer.cpp

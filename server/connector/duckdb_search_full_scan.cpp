@@ -208,6 +208,12 @@ struct CountScanLocalState : public IResearchScanLocalState {
   uint64_t local_emitted = 0;
 };
 
+struct ColFilterCtx {
+  std::span<const TableFilterDocIterator::FilterSpec> active;
+  IResearchScanGlobalState* g = nullptr;
+  ColFilterStateCache* states = nullptr;
+};
+
 struct TsDictLocalState : public IResearchScanLocalState {
   // Per enumerated field: its output column slots.
   struct FieldState {
@@ -247,7 +253,7 @@ struct TsDictLocalState : public IResearchScanLocalState {
                               const FieldState& field, duckdb::idx_t row);
 
   const irs::SubReader* _seg = nullptr;
-  IResearchScanGlobalState* _g = nullptr;
+  ColFilterCtx _cf;
   bool _null_pending = false;
   const FieldState* _field = nullptr;
   const FieldState* _next_field = nullptr;
@@ -1385,12 +1391,6 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
   }
 }
 
-struct ColFilterCtx {
-  std::span<const TableFilterDocIterator::FilterSpec> active;
-  IResearchScanGlobalState* g = nullptr;
-  ColFilterStateCache* states = nullptr;
-};
-
 uint32_t CountDocs(irs::DocIterator::ptr docs, const irs::SubReader& seg,
                    bool count_all, const ColFilterCtx& cf) {
   docs = MaybeWrapColFilter(std::move(docs), seg, cf.active, *cf.g, *cf.states);
@@ -2402,8 +2402,8 @@ void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
                                     const irs::SubReader& seg, uint32_t seg_idx,
                                     IResearchScanGlobalState& g) {
   _seg = &seg;
-  _g = &g;
   ClassifySegmentColFilters(seg, g, filter_states, seg_cls);
+  _cf = {seg_cls.active, &g, &filter_states};
   if (seg_cls.segment_dead) {
     _next_field = nullptr;
     return;
@@ -2454,8 +2454,7 @@ irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
       auto it = reader.iterator(irs::SeekMode::RandomOnly);
       const auto pin = [&](irs::bytes_view term) {
         if (!it->seek(term) ||
-            WhereLiveDocs(*it, *_seg, *where_query, false,
-                          {seg_cls.active, _g, &filter_states}) == 0) {
+            WhereLiveDocs(*it, *_seg, *where_query, false, _cf) == 0) {
           return false;
         }
         terms[count++] = term;
@@ -2620,7 +2619,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
       .seg = _seg,
       .count_mode = _cursor_mode,
       .where_query = where_query,
-      .cf = {seg_cls.active, _g, &filter_states},
+      .cf = _cf,
       .row = output_start,
       .end_row = output_start + field_capacity}};
     while (emitter.ctx.row < emitter.ctx.end_row) {
@@ -2667,9 +2666,8 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
 duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
                                               const FieldState& field,
                                               duckdb::idx_t row) {
-  const auto nulls =
-    NullFieldLiveCount(*_seg, field.null_field_id, count_mode, where_query,
-                       {seg_cls.active, _g, &filter_states});
+  const auto nulls = NullFieldLiveCount(*_seg, field.null_field_id, count_mode,
+                                        where_query, _cf);
   if (nulls == 0) {
     return 0;
   }

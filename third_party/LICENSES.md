@@ -92,7 +92,6 @@
 * [zlib-ng](https://github.com/zlib-ng/zlib-ng/blob/develop/LICENSE.md)
 * [minizip-ng](https://github.com/zlib-ng/minizip-ng/blob/develop/LICENSE)
 * [PostgreSQL](https://github.com/postgres/postgres), [PostgreSQL License](https://www.postgresql.org/about/licence/) (libpq, statically linked by the postgres_scanner extension)
-* [sdt](https://sourceware.org/git/?p=systemtap.git;a=blob;f=includes/sys/sdt.h), CC0 / public domain (USDT probe header)
 * [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/basics/wyhash.h`)
 
 ## Programs

@@ -66,9 +66,6 @@ add_subdirectory(simdjson)
 
 # TODO(mbkkt) make it submodule
 add_subdirectory(geographiclib-c)
-if(USE_DTRACE)
-    set(SDT_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sdt PARENT_SCOPE)
-endif()
 
 ################################################################################
 ## YACLib

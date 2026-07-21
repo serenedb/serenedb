@@ -257,15 +257,15 @@ table of section 3, where the seq-scan cliff bakes into the cached plan.
 |---|---|---|---|
 | Int64 | `IN (v,v,..)` literals | 3.832 ms | |
 | Int64 | `IN [array]` [ship] | 3.139 ms | **4.90 ms** |
-| Int64 | `IN {ks:Array(Int64)}` | ~3 ms | |
+| Int64 | `IN {ks:Array(Int64)}` | **2.20 ms** (200 reps, us-precise) | |
 | Int64 | zip subquery | 3.224 ms | |
 | String | `IN (..)` literals | 3.972 ms | |
 | String | `IN [array]` [ship] | 3.209 ms | **5.31 ms** |
-| String | `IN {param}` | ~4 ms | |
+| String | `IN {param}` | **2.39 ms** (200 reps, us-precise) | |
 | String | zip subquery | 3.602 ms | |
 | DateTime | `IN (..)` literals | 4.059 ms | |
 | DateTime | `IN [array]` [ship] | 3.391 ms | **4.98 ms** |
-| DateTime | `IN {param}` | ~3 ms | |
+| DateTime | `IN {param}` | ~3 ms (20x --time only) | |
 | DateTime | zip subquery | 4.241 ms | |
 | composite (String,Int64) | `IN [(v,v),..]` tuples | 12.419 ms | |
 | composite | parallel ARRAY JOIN zip [ship] | 5.765 ms | **4.00 ms** |
@@ -281,9 +281,13 @@ Grid takeaways:
   same (~4.2-4.4 ms) on every form: collation-aware btree comparison
   dominates, transport shape is irrelevant.
 - CH: `IN [array]` beats element-wise literals by ~0.6-0.8 ms on every type;
-  `{param}` ties it (values arrive pre-parsed) and is the natural next step
-  if clickhouse_query grows param support; composite zip is ~2.2x the tuple
-  literals, and the arrayZip spelling sits between.
+  `{param}` BEATS the array literal by a further ~0.8 ms (~27%) — re-measured
+  at 200 reps with us-precise server-side timing (query_log
+  query_start_time_microseconds -> event_time_microseconds): int 2.20 vs
+  3.02 ms avg, str 2.39 vs 3.06 — the param value bypasses SQL grammar
+  parsing entirely. Strongest single argument for adding `params :=` to
+  clickhouse_query (also makes the per-batch query text constant). Composite
+  zip is ~2.2x the tuple literals; the arrayZip spelling sits between.
 - Our-code per batch sits 3.6-5.3 ms across ALL kinds while bare spans
   0.25-5.8 ms — per-batch transport overhead flattens everything, which is
   why batch accumulation (section 8) dominates every remaining

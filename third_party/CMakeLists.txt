@@ -146,12 +146,13 @@ set(WITH_RUNTIME_CPU_DETECTION ON CACHE BOOL "" FORCE)
 set(WITH_INFLATE_STRICT OFF CACHE BOOL "" FORCE)
 set(WITH_INFLATE_ALLOW_INVALID_DIST OFF CACHE BOOL "" FORCE)
 set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+set(WITH_SANITIZER "OFF" CACHE STRING "" FORCE)
 
 sdb_update_module(${GIT_EXECUTABLE} "zlib-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(zlib-ng)
 
 # Create ZLIB::ZLIB alias for velox compatibility
-add_library(ZLIB::ZLIB ALIAS zlib)
+add_library(ZLIB::ZLIB ALIAS zlib-ng)
 
 ################################################################################
 ## MINIZIP-NG
@@ -170,11 +171,12 @@ set(MZ_WZAES OFF CACHE BOOL "" FORCE)
 set(MZ_OPENSSL OFF CACHE BOOL "" FORCE)
 set(MZ_LIBBSD OFF CACHE BOOL "" FORCE)
 set(MZ_ICONV OFF CACHE BOOL "" FORCE)
+set(MZ_SANITIZER "OFF" CACHE STRING "" FORCE)
 
 sdb_update_module(${GIT_EXECUTABLE} "minizip-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(minizip-ng)
 
-target_link_libraries(minizip PUBLIC zlib)
+target_link_libraries(minizip PUBLIC zlib-ng)
 
 ################################################################################
 ## BOOST

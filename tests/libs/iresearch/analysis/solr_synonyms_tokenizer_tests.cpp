@@ -19,9 +19,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
+#include "pg/sql_exception_macro.h"
+#include "token_sink_utils.hpp"
 
 using SolrSynonymsTokenizer = irs::analysis::SolrSynonymsTokenizer;
 
@@ -49,25 +52,19 @@ TEST(solr_synonyms_tests, test_masking) {
     SolrSynonymsTokenizer stream(StateFromMap(std::move(mask)));
     ASSERT_EQ(irs::Type<SolrSynonymsTokenizer>::id(), stream.type());
 
-    auto* offset = irs::get<irs::OffsAttr>(stream);
-    auto* term = irs::get<irs::TermAttr>(stream);
-    auto* inc = irs::get<irs::IncAttr>(stream);
+    {
+      const auto tokens = tests::Analyze(stream, data0);
+      ASSERT_TRUE(tokens.has_value());
+      ASSERT_EQ(1, tokens->size());
+      ASSERT_EQ((tests::AnalyzerToken{"abc", 1, 0, 3}), (*tokens)[0]);
+    }
 
-    ASSERT_TRUE(stream.reset(data0));
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ(1, inc->value);
-    ASSERT_EQ("abc", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream.next());
-
-    ASSERT_TRUE(stream.reset(data1));
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ(1, inc->value);
-    ASSERT_EQ("ghi", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream.next());
+    {
+      const auto tokens = tests::Analyze(stream, data1);
+      ASSERT_TRUE(tokens.has_value());
+      ASSERT_EQ(1, tokens->size());
+      ASSERT_EQ((tests::AnalyzerToken{"ghi", 1, 0, 3}), (*tokens)[0]);
+    }
   }
 
   // test with synonyms
@@ -83,60 +80,36 @@ TEST(solr_synonyms_tests, test_masking) {
     };
     SolrSynonymsTokenizer stream(StateFromMap(std::move(mask)));
 
-    auto* offset = irs::get<irs::OffsAttr>(stream);
-    auto* term = irs::get<irs::TermAttr>(stream);
-    auto* inc = irs::get<irs::IncAttr>(stream);
+    {
+      const auto tokens = tests::Analyze(stream, data0);
+      ASSERT_TRUE(tokens.has_value());
+      ASSERT_EQ(2, tokens->size());
+      ASSERT_EQ((tests::AnalyzerToken{"foo", 1, 0, 3}), (*tokens)[0]);
+      ASSERT_EQ((tests::AnalyzerToken{"bar", 1, 0, 3}), (*tokens)[1]);
+    }
 
-    ASSERT_TRUE(stream.reset(data0));
+    {
+      const auto tokens = tests::Analyze(stream, data1);
+      ASSERT_TRUE(tokens.has_value());
+      ASSERT_EQ(2, tokens->size());
+      ASSERT_EQ((tests::AnalyzerToken{"foo", 1, 0, 3}), (*tokens)[0]);
+      ASSERT_EQ((tests::AnalyzerToken{"bar", 1, 0, 3}), (*tokens)[1]);
+    }
 
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("foo", irs::ViewCast<char>(term->value));
-    ASSERT_EQ(1, inc->value);
-
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("bar", irs::ViewCast<char>(term->value));
-    ASSERT_EQ(0, inc->value);
-
-    ASSERT_FALSE(stream.next());
-
-    ASSERT_TRUE(stream.reset(data1));
-
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("foo", irs::ViewCast<char>(term->value));
-    ASSERT_EQ(1, inc->value);
-
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("bar", irs::ViewCast<char>(term->value));
-    ASSERT_EQ(0, inc->value);
-
-    ASSERT_FALSE(stream.next());
-
-    ASSERT_TRUE(stream.reset(data2));
-
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("xyz", irs::ViewCast<char>(term->value));
-    ASSERT_EQ(1, inc->value);
-
-    ASSERT_FALSE(stream.next());
+    {
+      const auto tokens = tests::Analyze(stream, data2);
+      ASSERT_TRUE(tokens.has_value());
+      ASSERT_EQ(1, tokens->size());
+      ASSERT_EQ((tests::AnalyzerToken{"xyz", 1, 0, 3}), (*tokens)[0]);
+    }
   }
 }
 
 TEST(solr_synonyms_tests, parsing) {
   {
     std::string_view data0("foo,bar\n");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       SolrSynonymsTokenizer::SynonymsLines expected{
         SolrSynonymsTokenizer::SynonymsLine{{}, {"bar", "foo"}}};
@@ -145,21 +118,19 @@ TEST(solr_synonyms_tests, parsing) {
 
     {
       const auto actual = SolrSynonymsTokenizer::Parse(synonyms_lines);
-      ASSERT_TRUE(actual);
 
       SolrSynonymsTokenizer::SynonymsMap expected = {
         {"foo", &synonyms_lines.back().out},
         {"bar", &synonyms_lines.back().out},
       };
-      ASSERT_EQ(expected, *actual);
+      ASSERT_EQ(expected, actual);
     }
   }
 
   {
     std::string_view data0("foo,bar=>foo");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       SolrSynonymsTokenizer::SynonymsLines expected{
         SolrSynonymsTokenizer::SynonymsLine{{"bar", "foo"}, {"foo"}},
@@ -168,21 +139,19 @@ TEST(solr_synonyms_tests, parsing) {
     }
     {
       const auto actual = SolrSynonymsTokenizer::Parse(synonyms_lines);
-      ASSERT_TRUE(actual);
 
       SolrSynonymsTokenizer::SynonymsMap expected = {
         {"foo", &synonyms_lines.back().out},
         {"bar", &synonyms_lines.back().out},
       };
-      ASSERT_EQ(expected, *actual);
+      ASSERT_EQ(expected, actual);
     }
   }
 
   {
     std::string_view data0("foo,bar=>foo,bar\n");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       SolrSynonymsTokenizer::SynonymsLines expected{
         SolrSynonymsTokenizer::SynonymsLine{{"bar", "foo"}, {"bar", "foo"}}};
@@ -191,21 +160,19 @@ TEST(solr_synonyms_tests, parsing) {
 
     {
       const auto actual = SolrSynonymsTokenizer::Parse(synonyms_lines);
-      ASSERT_TRUE(actual);
 
       SolrSynonymsTokenizer::SynonymsMap expected = {
         {"foo", &synonyms_lines.back().out},
         {"bar", &synonyms_lines.back().out},
       };
-      ASSERT_EQ(expected, *actual);
+      ASSERT_EQ(expected, actual);
     }
   }
 
   {
     std::string_view data0("foo,bar\n\n#some comment\naaa, bbb, cc");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       SolrSynonymsTokenizer::SynonymsLines expected{
         SolrSynonymsTokenizer::SynonymsLine{{}, {"bar", "foo"}},
@@ -215,23 +182,21 @@ TEST(solr_synonyms_tests, parsing) {
 
     {
       const auto actual = SolrSynonymsTokenizer::Parse(synonyms_lines);
-      ASSERT_TRUE(actual);
 
       SolrSynonymsTokenizer::SynonymsMap expected = {
         {"foo", &synonyms_lines[0].out}, {"bar", &synonyms_lines[0].out},
         {"aaa", &synonyms_lines[1].out}, {"bbb", &synonyms_lines[1].out},
         {"cc", &synonyms_lines[1].out},
       };
-      ASSERT_EQ(expected, *actual);
+      ASSERT_EQ(expected, actual);
     }
   }
 
   {
     std::string_view data0(
       "foo,bar=>foo,bar\n\n#some comment\naaa, bbb, cc => aaa, bbb, cc");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       SolrSynonymsTokenizer::SynonymsLines expected{
         SolrSynonymsTokenizer::SynonymsLine{{"bar", "foo"}, {"bar", "foo"}},
@@ -242,7 +207,6 @@ TEST(solr_synonyms_tests, parsing) {
 
     {
       const auto actual = SolrSynonymsTokenizer::Parse(synonyms_lines);
-      ASSERT_TRUE(actual);
 
       SolrSynonymsTokenizer::SynonymsMap expected = {
         {"foo", &synonyms_lines[0].out}, {"bar", &synonyms_lines[0].out},
@@ -250,72 +214,93 @@ TEST(solr_synonyms_tests, parsing) {
         {"cc", &synonyms_lines[1].out},
       };
 
-      ASSERT_EQ(expected, *actual);
+      ASSERT_EQ(expected, actual);
     }
   }
 
   {
     std::string_view data0("");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       const auto actual = SolrSynonymsTokenizer::Parse(synonyms_lines);
-      ASSERT_TRUE(actual);
 
       SolrSynonymsTokenizer::SynonymsMap expected = {};
 
-      ASSERT_EQ(expected, *actual);
+      ASSERT_EQ(expected, actual);
     }
   }
 
   {
     std::string_view data0("aaa, bbb, cc => => aaa, bbb, cc");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-    ASSERT_EQ(result.error().errorMessage(),
-              "More than one explicit mapping specified on the line 1");
+    try {
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
+      EXPECT_EQ(e.message(),
+                "solr_synonyms: failed to parse synonyms: More than one "
+                "explicit mapping specified on the line 1");
+    }
   }
 
   {
     std::string_view data0("aaa,");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+    try {
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
+      EXPECT_EQ(e.message(),
+                "solr_synonyms: failed to parse synonyms: Failed parse line 1");
+    }
   }
 
   {
     std::string_view data0("aaa=>");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+    try {
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
+      EXPECT_EQ(e.message(),
+                "solr_synonyms: failed to parse synonyms: Failed parse line 1");
+    }
   }
 
   {
     std::string_view data0("aaa,=>aaa");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+    try {
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
+      EXPECT_EQ(e.message(),
+                "solr_synonyms: failed to parse synonyms: Failed parse line 1");
+    }
   }
 
   {
     std::string_view data0("aaa,bbb=>aaa,");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+    try {
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
+      EXPECT_EQ(e.message(),
+                "solr_synonyms: failed to parse synonyms: Failed parse line 1");
+    }
   }
   {
     std::string_view data0("\n#aa\naaa,,bbb=>aaa,bbb");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 3");
+    try {
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
+      FAIL() << "expected sdb::SqlException";
+    } catch (const sdb::SqlException& e) {
+      EXPECT_EQ(e.message(),
+                "solr_synonyms: failed to parse synonyms: Failed parse line 3");
+    }
   }
 
   {
     std::string_view data0("foo,bar,foo");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       SolrSynonymsTokenizer::SynonymsLines expected{
         SolrSynonymsTokenizer::SynonymsLine{{}, {"bar", "foo"}},
@@ -326,9 +311,8 @@ TEST(solr_synonyms_tests, parsing) {
 
   {
     std::string_view data0("foo,bar,foo=>foo,bar");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       SolrSynonymsTokenizer::SynonymsLines expected{
         SolrSynonymsTokenizer::SynonymsLine{{"bar", "foo"}, {"bar", "foo"}},
@@ -339,9 +323,8 @@ TEST(solr_synonyms_tests, parsing) {
 
   {
     std::string_view data0("foo,bar,foo=>foo,bar");
-    auto result = SolrSynonymsTokenizer::ParseSynonymsLines(data0);
-    ASSERT_TRUE(result);
-    const auto synonyms_lines = *result;
+    const auto synonyms_lines =
+      SolrSynonymsTokenizer::ParseSynonymsLines(data0);
     {
       SolrSynonymsTokenizer::SynonymsLines expected{
         SolrSynonymsTokenizer::SynonymsLine{{"bar", "foo"}, {"bar", "foo"}},
@@ -354,42 +337,44 @@ TEST(solr_synonyms_tests, parsing) {
 TEST(solr_synonyms_tests, make_state_owning_storage) {
   auto state =
     SolrSynonymsTokenizer::MakeState("ipod, i-pod, i pod\nfoo => bar");
-  ASSERT_TRUE(state);
-  SolrSynonymsTokenizer stream{std::move(*state)};
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  auto* inc = irs::get<irs::IncAttr>(stream);
+  ASSERT_NE(nullptr, state);
+  SolrSynonymsTokenizer stream{std::move(state)};
 
   // Bidirectional line: "ipod" expands to all three variants.
-  ASSERT_TRUE(stream.reset("ipod"));
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ(1, inc->value);
-  std::vector<std::string> emitted;
-  emitted.emplace_back(irs::ViewCast<char>(term->value));
-  while (stream.next()) {
-    ASSERT_EQ(0, inc->value);
-    emitted.emplace_back(irs::ViewCast<char>(term->value));
+  {
+    const auto tokens = tests::Analyze(stream, "ipod");
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_FALSE(tokens->empty());
+    std::vector<std::string> emitted;
+    for (const auto& t : *tokens) {
+      ASSERT_EQ(1, t.pos);
+      emitted.push_back(t.term);
+    }
+    std::sort(emitted.begin(), emitted.end());
+    ASSERT_EQ((std::vector<std::string>{"i pod", "i-pod", "ipod"}), emitted);
   }
-  std::sort(emitted.begin(), emitted.end());
-  ASSERT_EQ((std::vector<std::string>{"i pod", "i-pod", "ipod"}), emitted);
 
   // One-way mapping: "foo" -> "bar".
-  ASSERT_TRUE(stream.reset("foo"));
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("bar", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream.next());
+  {
+    const auto terms = tests::AnalyzeTerms(stream, "foo");
+    ASSERT_TRUE(terms.has_value());
+    ASSERT_EQ((std::vector<std::string>{"bar"}), *terms);
+  }
 
   // Unknown input passes through unchanged.
-  ASSERT_TRUE(stream.reset("baz"));
-  ASSERT_TRUE(stream.next());
-  ASSERT_EQ("baz", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(stream.next());
+  {
+    const auto terms = tests::AnalyzeTerms(stream, "baz");
+    ASSERT_TRUE(terms.has_value());
+    ASSERT_EQ((std::vector<std::string>{"baz"}), *terms);
+  }
 }
 
 TEST(solr_synonyms_tests, make_state_invalid_input) {
-  auto state = SolrSynonymsTokenizer::MakeState("foo,bar=>=>baz");
-  ASSERT_FALSE(state);
-  ASSERT_TRUE(state.error().is(sdb::ERROR_BAD_PARAMETER));
+  try {
+    SolrSynonymsTokenizer::MakeState("foo,bar=>=>baz");
+    FAIL() << "expected sdb::SqlException";
+  } catch (const sdb::SqlException& e) {
+  }
 }
 
 TEST(solr_synonyms_tests, factory_make_json) {
@@ -398,14 +383,10 @@ TEST(solr_synonyms_tests, factory_make_json) {
   });
   ASSERT_NE(nullptr, analyzer);
 
-  auto* term = irs::get<irs::TermAttr>(*analyzer);
-  ASSERT_TRUE(analyzer->reset("ipod"));
-  std::vector<std::string> emitted;
-  while (analyzer->next()) {
-    emitted.emplace_back(irs::ViewCast<char>(term->value));
-  }
-  std::sort(emitted.begin(), emitted.end());
-  ASSERT_EQ((std::vector<std::string>{"i pod", "i-pod", "ipod"}), emitted);
+  auto terms = tests::AnalyzeTerms(*analyzer, "ipod");
+  ASSERT_TRUE(terms.has_value());
+  std::sort(terms->begin(), terms->end());
+  ASSERT_EQ((std::vector<std::string>{"i pod", "i-pod", "ipod"}), *terms);
 }
 
 TEST(solr_synonyms_tests, factory_make_default_options) {
@@ -417,9 +398,60 @@ TEST(solr_synonyms_tests, factory_make_default_options) {
   auto analyzer = SolrSynonymsTokenizer::Make(SolrSynonymsTokenizer::Options{});
   ASSERT_NE(nullptr, analyzer);
 
-  auto* term = irs::get<irs::TermAttr>(*analyzer);
-  ASSERT_TRUE(analyzer->reset("anything"));
-  ASSERT_TRUE(analyzer->next());
-  ASSERT_EQ("anything", irs::ViewCast<char>(term->value));
-  ASSERT_FALSE(analyzer->next());
+  const auto terms = tests::AnalyzeTerms(*analyzer, "anything");
+  ASSERT_TRUE(terms.has_value());
+  ASSERT_EQ((std::vector<std::string>{"anything"}), *terms);
+}
+
+TEST(solr_synonyms_tokenizer_tests, native_fills_match_pull) {
+  irs::analysis::SolrSynonymsTokenizer::Options opts;
+  opts.synonyms_text =
+    "i-pod, i pod, ipod\n"
+    "sea biscuit, sea biscit => seabiscuit\n"
+    "gb => gib, gigabyte\n";
+  auto value_stream = irs::analysis::SolrSynonymsTokenizer::Make(
+    irs::analysis::SolrSynonymsTokenizer::Options{opts});
+  auto column_stream = irs::analysis::SolrSynonymsTokenizer::Make(
+    irs::analysis::SolrSynonymsTokenizer::Options{opts});
+
+  const std::vector<std::string> values = {"i-pod", "ipod", "gb",
+                                           "unknown-word", ""};
+
+  std::vector<std::vector<tests::AnalyzerToken>> expected;
+  for (const auto& v : values) {
+    SCOPED_TRACE(v);
+    auto tokens = tests::Analyze(*value_stream, v);
+    ASSERT_TRUE(tokens.has_value());
+    expected.push_back(std::move(*tokens));
+  }
+
+  std::vector<duckdb::string_t> vals;
+  std::vector<irs::doc_id_t> docs;
+  for (size_t i = 0; i < values.size(); ++i) {
+    vals.emplace_back(values[i].data(),
+                      static_cast<uint32_t>(values[i].size()));
+    docs.push_back(static_cast<irs::doc_id_t>(i + 1));
+  }
+
+  tests::OneBatchSink sink{irs::TokenLayout::TermsPos};
+  column_stream->Fill(vals, docs, sink.writer, sink.layout);
+  ASSERT_FALSE(sink.flushed());
+  auto& batch = sink.writer.buf;
+  const auto runs = sink.writer.Runs();
+  ASSERT_FALSE(batch.dense_pos);
+
+  ASSERT_EQ(values.size(), runs.size());
+  uint32_t token_idx = 0;
+  for (size_t v = 0; v < values.size(); ++v) {
+    SCOPED_TRACE(values[v]);
+    ASSERT_EQ(docs[v], runs[v].doc);
+    ASSERT_EQ(expected[v].size(), runs[v].ntokens);
+    for (const auto& e : expected[v]) {
+      const auto& t = batch.terms[token_idx];
+      ASSERT_EQ(e.term, (std::string{t.GetData(), t.GetSize()}));
+      ASSERT_EQ(e.pos, batch.pos[token_idx]);
+      ++token_idx;
+    }
+  }
+  ASSERT_EQ(batch.count, token_idx);
 }

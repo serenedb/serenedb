@@ -26,16 +26,15 @@
 #include <string>
 #include <string_view>
 
-#include "basics/result.h"
-#include "basics/result_or.h"
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/utils/first_len_filter.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
 class WordnetSynonymsTokenizer final
-  : public TypedAnalyzer<WordnetSynonymsTokenizer>,
+  : public TypedTokenizer<WordnetSynonymsTokenizer>,
     private util::Noncopyable {
  public:
   using SynonymsGroups = std::vector<std::string_view>;
@@ -47,6 +46,7 @@ class WordnetSynonymsTokenizer final
   struct State {
     std::string text;
     SynonymsMap mapping;
+    FirstLenFilter prefilter;
   };
 
   struct Options {
@@ -54,35 +54,40 @@ class WordnetSynonymsTokenizer final
     // Inline synonyms file content (Wordnet `s(...)` lines).
     std::string synonyms_text;
   };
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept {
     return "wordnet_synonyms";
   }
 
-  static sdb::ResultOr<SynonymsMap> Parse(std::string_view input);
-  static sdb::ResultOr<std::shared_ptr<const State>> MakeState(
-    std::string text);
+  static SynonymsMap Parse(std::string_view input);
+  static std::shared_ptr<const State> MakeState(std::string text);
 
   explicit WordnetSynonymsTokenizer(
     std::shared_ptr<const State> state) noexcept;
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
+
+  const SynonymsGroups* Lookup(std::string_view value) const noexcept {
+    if (!_state->prefilter.MayContain(value)) [[likely]] {
+      return nullptr;
+    }
+    const auto it = _state->mapping.find(value);
+    return it == _state->mapping.end() ? nullptr : &it->second;
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
 
  private:
+  bool Bind(std::string_view value);
+
   std::shared_ptr<const State> _state;
 
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-  attributes _attrs;
-
-  const std::string_view* _begin{};
   const std::string_view* _curr{};
   const std::string_view* _end{};
+  uint32_t _input_size = 0;
   bool _term_exists = false;
 };
+
+extern template class TypedTokenizer<WordnetSynonymsTokenizer>;
 
 }  // namespace irs::analysis

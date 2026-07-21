@@ -28,6 +28,8 @@
 #include <iresearch/analysis/split_by_non_alpha.hpp>
 #include <string>
 
+#include "bench_token_sink.hpp"
+
 namespace {
 
 using namespace irs::analysis;
@@ -96,11 +98,10 @@ void RunPattern(benchmark::State& state, const std::string& data) {
   opts.pattern = "[^A-Za-z0-9]+";
   opts.group = -1;
   auto stream = PatternTokenizer::Make(std::move(opts));
+  bench::DrainSink sink;
   for (auto _ : state) {
-    stream->reset(data);
-    while (bool has_next = stream->next()) {
-      benchmark::DoNotOptimize(has_next);
-    }
+    stream->Fill(data, sink);
+    benchmark::DoNotOptimize(sink.Consume());
   }
   SetBytes(state, data);
 }
@@ -111,11 +112,10 @@ void RunSegmentation(benchmark::State& state, const std::string& data) {
   opts.accept = SegmentationTokenizer::Options::Accept::AlphaNumeric;
   opts.convert = SegmentationTokenizer::Options::Convert::Lower;
   auto stream = SegmentationTokenizer::Make(std::move(opts));
+  bench::DrainSink sink;
   for (auto _ : state) {
-    stream->reset(data);
-    while (bool has_next = stream->next()) {
-      benchmark::DoNotOptimize(has_next);
-    }
+    stream->Fill(data, sink);
+    benchmark::DoNotOptimize(sink.Consume());
   }
   SetBytes(state, data);
 }

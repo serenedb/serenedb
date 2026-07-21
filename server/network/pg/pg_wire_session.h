@@ -24,7 +24,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -256,8 +255,9 @@ class PgWireSession
   void AfterTxnStatement();
 
   yaclib::Task<bool> Authenticate();
-  yaclib::Task<bool> AuthenticateCleartext(const std::string& expected);
-  yaclib::Task<bool> AuthenticateMd5(const std::string& expected);
+  void CapturePeerAddress();
+  yaclib::Task<bool> AuthenticateCleartext(const Credential& credential);
+  yaclib::Task<bool> AuthenticateMd5(std::string stored_md5);
   yaclib::Task<bool> AuthenticateScram(const ScramVerifier& verifier);
 
   // The duck-side half of the session: an endless coroutine hosted by _task
@@ -282,8 +282,8 @@ class PgWireSession
   // to the socket during the drive and is fully drained before Execute.
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveToResult(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
-    duckdb::unique_ptr<duckdb::PendingQueryResult>& pending,
-    std::shared_ptr<WireSinkContext> wire);
+    ClosingPending& pending, std::shared_ptr<WireSinkContext> wire,
+    std::shared_ptr<const catalog::Snapshot> bound_snapshot = nullptr);
   yaclib::Task<> RunSimpleQuery(std::string_view query);
   yaclib::Task<> RunCopyFromStdin(
     duckdb::unique_ptr<duckdb::SQLStatement> statement);
@@ -321,6 +321,20 @@ class PgWireSession
   duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
     std::shared_ptr<WireSinkContext> wire);
+  // Single-lifecycle variant for the simple protocol: bind and execution share
+  // one duckdb query (and one transaction), so plan-held catalog references
+  // stay valid end-to-end. RowDescription is written by the collector hook
+  // (wire->announce_rowdesc), the only post-bind point that precedes task
+  // start.
+  duckdb::unique_ptr<duckdb::PendingQueryResult> PendingStatementEnsured(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement,
+    const std::shared_ptr<WireSinkContext>& wire);
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveStatementToResult(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement, ClosingPending& pending,
+    std::shared_ptr<WireSinkContext> wire);
+  // Rejects (sdb_strict_ddl) or notices catalog DDL inside an explicit
+  // transaction block. Statement type is a parse-time property.
+  void NoticeDdlInTransaction(duckdb::StatementType type);
   // Builds an armed per-execution wire-sink contract (see wire_collector.h).
   std::shared_ptr<WireSinkContext> MakeWireContext(
     std::span<const sdb::pg::VarFormat> formats);
@@ -344,6 +358,9 @@ class PgWireSession
   void WriteCommandTag(const duckdb::PreparedStatement& prepared,
                        duckdb::QueryResult& result,
                        duckdb::StatementReturnType return_type);
+  void WriteCommandTag(const sdb::pg::CommandTag& tag,
+                       duckdb::QueryResult& result,
+                       duckdb::StatementReturnType return_type);
 
   asio_ns::io_context& _io;
   asio_ns::steady_timer _deadline;
@@ -359,6 +376,12 @@ class PgWireSession
   uint32_t _max_conn = 0;
   std::chrono::milliseconds _auth_timeout{0};
   ProxyMode _proxy = ProxyMode::Off;
+  // Client peer IP, captured once from the socket before auth. Unspecified
+  // (the default) for a unix socket or a capture failure -- both no-IP, so the
+  // gate falls back to is_local / fails closed. Normalized so a v4-mapped-v6
+  // loopback reads as IPv4. Feeds HBA CIDR matching and the passwordless-trust
+  // gate (via asio's address::is_loopback()).
+  asio_ns::ip::address _peer_addr;
   FrameReader _frames;
   // The current command frame's pending _recv consume. Normally the command
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so

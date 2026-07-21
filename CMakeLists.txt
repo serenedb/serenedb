@@ -671,10 +671,10 @@ if(NOT "${SDB_SANITIZE}" STREQUAL "")
     endif()
 endif()
 
-include(Runtime)
-
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdinc++>)
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-nostdlib++>)
+
+include(Runtime)
 
 if(NOT "${SDB_SANITIZE}" STREQUAL "")
     # if will be some strange link error just enable this
@@ -810,44 +810,6 @@ include(SereneDBInstall)
 
 # If "make clean" removes these files, afterwards neither "make" nor "cmake" work any more.
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
-
-set(ERROR_FILES libs/basics/errors.h libs/basics/error-registry.h)
-set(ERROR_FILES_GEN)
-set(ERRORS_DAT libs/basics/errors.dat)
-
-foreach(m IN LISTS ERROR_FILES)
-    get_filename_component(GEN_BASENAME "${m}" NAME)
-    if(GEN_BASENAME STREQUAL "errors.js")
-        # generated errors.js is copied into the source dir
-        set(TARGET_FILENAME ${CMAKE_SOURCE_DIR}/${m})
-    else()
-        # generated C++ header files are copied into the build dir
-        set(TARGET_FILENAME ${CMAKE_BINARY_DIR}/${m})
-    endif()
-    add_custom_command(
-        OUTPUT ${CMAKE_BINARY_DIR}/${m}
-        COMMAND
-            ${PYTHON_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/scripts/generate_error_file.py
-            ${CMAKE_SOURCE_DIR}/${ERRORS_DAT}
-            ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp
-        COMMAND
-            ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp ${TARGET_FILENAME}
-        COMMAND
-            ${CMAKE_COMMAND} -E remove ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp
-        DEPENDS
-            ${CMAKE_SOURCE_DIR}/${ERRORS_DAT}
-            ${CMAKE_SOURCE_DIR}/scripts/generate_error_file.py
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-        COMMENT "Building errors file ${m}"
-        VERBATIM
-    )
-
-    list(APPEND ERROR_FILES_GEN ${CMAKE_BINARY_DIR}/${m})
-endforeach()
-
-add_custom_target(errorfiles ALL DEPENDS ${ERROR_FILES_GEN})
 
 set(EXIT_CODE_FILES libs/basics/exitcodes.h js/common/bootstrap/exitcodes.js)
 

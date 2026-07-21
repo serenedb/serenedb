@@ -1,0 +1,331 @@
+# Combinatorial privilege grants, BUILD-UP and TEARDOWN: trace a single role's
+# bitset as privileges are added one combination at a time, and trace another
+# role from GRANT ALL down through selective multi-priv REVOKEs until it lands
+# on a target pair. Every step asserted across all seven bits via the
+# byte-identical has_table_privilege oracle.
+#
+# Column order in every block: SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES
+# TRIGGER.
+#
+# All objects are prefixed combo_ (vedernikoff/clickclack/kostya lore). Roles
+# are cluster-global, so the combo_ tag keeps names unique across files. The
+# file is idempotent (DROP ... IF EXISTS up front) and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS combo_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_climb;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_descend;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_listrevoke;
+
+
+statement ok
+DROP ROLE IF EXISTS combo_idempotent;
+
+
+statement ok
+CREATE TABLE combo_kostya (id int, babsky text);
+
+
+# ============================================================================
+# BUILD-UP: start empty, add a pair, then a single, then another pair, until
+# the role holds six of seven. Each GRANT adds exactly the bits in its list.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_climb;
+
+
+# Step 0 -- nothing granted: all seven f.
+query
+SELECT has_table_privilege('combo_climb','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_climb','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_climb','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_climb','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_climb','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_climb','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_climb','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+# Step 1 -- add the pair SELECT,INSERT.
+statement ok
+GRANT SELECT, INSERT ON combo_kostya TO combo_climb;
+
+
+query
+SELECT has_table_privilege('combo_climb','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_climb','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_climb','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_climb','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_climb','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_climb','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_climb','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	f	f	f	f
+
+
+# Step 2 -- add the single UPDATE.
+statement ok
+GRANT UPDATE ON combo_kostya TO combo_climb;
+
+
+query
+SELECT has_table_privilege('combo_climb','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_climb','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_climb','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_climb','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_climb','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_climb','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_climb','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	f	f	f	f
+
+
+# Step 3 -- add the pair DELETE,TRUNCATE.
+statement ok
+GRANT DELETE, TRUNCATE ON combo_kostya TO combo_climb;
+
+
+query
+SELECT has_table_privilege('combo_climb','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_climb','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_climb','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_climb','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_climb','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_climb','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_climb','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	f	f
+
+
+# Step 4 -- add the single REFERENCES; only TRIGGER remains f (six of seven).
+statement ok
+GRANT REFERENCES ON combo_kostya TO combo_climb;
+
+
+query
+SELECT has_table_privilege('combo_climb','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_climb','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_climb','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_climb','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_climb','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_climb','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_climb','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	f
+
+
+# Re-granting an already-held pair is idempotent: the bitset does not change.
+statement ok
+GRANT SELECT, UPDATE ON combo_kostya TO combo_climb;
+
+
+query
+SELECT has_table_privilege('combo_climb','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_climb','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_climb','combo_kostya','TRIGGER')    AS trig;
+----
+sel	refs	trig
+t	t	f
+
+
+# ============================================================================
+# TEARDOWN: start from GRANT ALL (all seven t) and peel bits off one
+# combination at a time with selective REVOKEs, ending on a single pair.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_descend;
+
+
+statement ok
+GRANT ALL ON combo_kostya TO combo_descend;
+
+
+# All seven held.
+query
+SELECT has_table_privilege('combo_descend','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_descend','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_descend','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_descend','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_descend','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_descend','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_descend','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# Revoke the heavy pair REFERENCES,TRIGGER.
+statement ok
+REVOKE REFERENCES, TRIGGER ON combo_kostya FROM combo_descend;
+
+
+query
+SELECT has_table_privilege('combo_descend','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_descend','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_descend','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_descend','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_descend','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_descend','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_descend','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	f	f
+
+
+# Revoke the single TRUNCATE.
+statement ok
+REVOKE TRUNCATE ON combo_kostya FROM combo_descend;
+
+
+query
+SELECT has_table_privilege('combo_descend','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_descend','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_descend','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_descend','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_descend','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_descend','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_descend','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	f	f	f
+
+
+# Revoke the pair UPDATE,DELETE -- landing on the SELECT,INSERT pair.
+statement ok
+REVOKE UPDATE, DELETE ON combo_kostya FROM combo_descend;
+
+
+query
+SELECT has_table_privilege('combo_descend','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_descend','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_descend','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_descend','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_descend','combo_kostya','TRUNCATE')   AS trunc,
+       has_table_privilege('combo_descend','combo_kostya','REFERENCES') AS refs,
+       has_table_privilege('combo_descend','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	f	f	f	f	f
+
+
+# ============================================================================
+# REVOKE of a multi-priv list that includes bits the role never held: only the
+# held bits in the list drop, the unheld ones are a silent no-op. combo_listrevoke
+# holds SELECT,INSERT,UPDATE; we revoke INSERT,DELETE,TRIGGER -- only INSERT goes.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_listrevoke;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON combo_kostya TO combo_listrevoke;
+
+
+query
+SELECT has_table_privilege('combo_listrevoke','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_listrevoke','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_listrevoke','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_listrevoke','combo_kostya','DELETE')     AS del;
+----
+sel	ins	upd	del
+t	t	t	f
+
+
+statement ok
+REVOKE INSERT, DELETE, TRIGGER ON combo_kostya FROM combo_listrevoke;
+
+
+# INSERT (held) is gone; DELETE/TRIGGER were never held so nothing else changes.
+query
+SELECT has_table_privilege('combo_listrevoke','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_listrevoke','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_listrevoke','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_listrevoke','combo_kostya','DELETE')     AS del,
+       has_table_privilege('combo_listrevoke','combo_kostya','TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trig
+t	f	t	f	f
+
+
+# ============================================================================
+# Idempotent REVOKE of a pair already absent: revoking SELECT,UPDATE twice in
+# a row leaves the same bitset both times.
+# ============================================================================
+
+statement ok
+CREATE ROLE combo_idempotent;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON combo_kostya TO combo_idempotent;
+
+
+statement ok
+REVOKE SELECT, UPDATE ON combo_kostya FROM combo_idempotent;
+
+
+query
+SELECT has_table_privilege('combo_idempotent','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_idempotent','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_idempotent','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_idempotent','combo_kostya','DELETE')     AS del;
+----
+sel	ins	upd	del
+f	t	f	t
+
+
+# Revoke the same pair again -- already absent, so the bitset is unchanged.
+statement ok
+REVOKE SELECT, UPDATE ON combo_kostya FROM combo_idempotent;
+
+
+query
+SELECT has_table_privilege('combo_idempotent','combo_kostya','SELECT')     AS sel,
+       has_table_privilege('combo_idempotent','combo_kostya','INSERT')     AS ins,
+       has_table_privilege('combo_idempotent','combo_kostya','UPDATE')     AS upd,
+       has_table_privilege('combo_idempotent','combo_kostya','DELETE')     AS del;
+----
+sel	ins	upd	del
+f	t	f	t
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE combo_kostya;
+
+
+statement ok
+DROP ROLE combo_climb;
+
+
+statement ok
+DROP ROLE combo_descend;
+
+
+statement ok
+DROP ROLE combo_listrevoke;
+
+
+statement ok
+DROP ROLE combo_idempotent;

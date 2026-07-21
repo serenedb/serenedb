@@ -1,0 +1,171 @@
+# pg_roles, the read side of the role catalog. Every role -- login or not,
+# super or not -- is listed once by name. We assert only the columns that come
+# out byte-identical on PostgreSQL 19beta1 and serenedb: rolname, rolcanlogin,
+# rolsuper, rolinherit, rolconnlimit. Raw oids differ between engines and are
+# never touched; all comparisons are by name / boolean / count.
+#
+# Objects are prefixed catm_ under the Vedernikoff lore. The file drops every
+# role up front (idempotent) and again at the end (self-cleaning).
+
+statement ok
+DROP ROLE IF EXISTS catm_vedernikoff_login;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_vedernikoff_nologin;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_kostya_super;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_babsky_plain;
+
+
+statement ok
+DROP ROLE IF EXISTS catm_pudge_absent;
+
+
+# ----------------------------------------------------------------------
+# A role that does not exist has zero rows in pg_roles. Establishing the
+# baseline before any CREATE: the name is simply not there.
+# ----------------------------------------------------------------------
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'catm_pudge_absent';
+----
+count
+0
+
+
+# ----------------------------------------------------------------------
+# LOGIN vs NOLOGIN: rolcanlogin is the only flag that differs between them.
+# Both are non-super, both inherit by default.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE catm_vedernikoff_login LOGIN;
+
+
+statement ok
+CREATE ROLE catm_vedernikoff_nologin NOLOGIN;
+
+
+# Both roles appear in pg_roles exactly once, sorted by name.
+query
+SELECT rolname, rolcanlogin, rolsuper, rolinherit FROM pg_roles
+WHERE rolname IN ('catm_vedernikoff_login', 'catm_vedernikoff_nologin')
+ORDER BY rolname;
+----
+rolname	rolcanlogin	rolsuper	rolinherit
+catm_vedernikoff_login	t	f	t
+catm_vedernikoff_nologin	f	f	t
+
+
+# Exactly one row per created name -- no duplicates, no phantoms.
+query
+SELECT count(*) FROM pg_roles
+WHERE rolname IN ('catm_vedernikoff_login', 'catm_vedernikoff_nologin');
+----
+count
+2
+
+
+# rolconnlimit defaults to -1 (unlimited) on a freshly created role.
+query
+SELECT rolname, rolconnlimit FROM pg_roles WHERE rolname = 'catm_vedernikoff_login';
+----
+rolname	rolconnlimit
+catm_vedernikoff_login	-1
+
+
+# ----------------------------------------------------------------------
+# SUPERUSER: rolsuper is t, and a superuser created with LOGIN also has
+# rolcanlogin t. A plain role (no options) is neither super nor login.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE ROLE catm_kostya_super SUPERUSER LOGIN;
+
+
+statement ok
+CREATE ROLE catm_babsky_plain;
+
+
+query
+SELECT rolname, rolsuper, rolcanlogin FROM pg_roles
+WHERE rolname IN ('catm_kostya_super', 'catm_babsky_plain')
+ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin
+catm_babsky_plain	f	f
+catm_kostya_super	t	t
+
+
+# The superuser bit is held by exactly one of this file's roles.
+query
+SELECT count(*) FROM pg_roles
+WHERE rolname IN ('catm_vedernikoff_login', 'catm_vedernikoff_nologin', 'catm_kostya_super', 'catm_babsky_plain')
+  AND rolsuper;
+----
+count
+1
+
+
+# ----------------------------------------------------------------------
+# NOSUPERUSER spelled out is identical to the default: rolsuper f.
+# ----------------------------------------------------------------------
+
+# PASSWORD is accepted and stored (never exposed). The role's visible attribute
+# columns are unaffected.
+statement ok
+ALTER ROLE catm_kostya_super PASSWORD 'mopclickclack';
+
+
+# ALTER ROLE ... PASSWORD does not change the visible attribute columns: the
+# role is still super and still a login role.
+query
+SELECT rolname, rolsuper, rolcanlogin FROM pg_roles WHERE rolname = 'catm_kostya_super';
+----
+rolname	rolsuper	rolcanlogin
+catm_kostya_super	t	t
+
+
+# ----------------------------------------------------------------------
+# DROP removes the role from pg_roles: the count for that name goes to 0,
+# while the siblings are untouched.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE catm_babsky_plain;
+
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'catm_babsky_plain';
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'catm_vedernikoff_login';
+----
+count
+1
+
+
+# ----------------------------------------------------------------------
+# Cleanup.
+# ----------------------------------------------------------------------
+
+statement ok
+DROP ROLE catm_vedernikoff_login;
+
+
+statement ok
+DROP ROLE catm_vedernikoff_nologin;
+
+
+statement ok
+DROP ROLE catm_kostya_super;

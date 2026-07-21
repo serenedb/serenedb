@@ -1,0 +1,156 @@
+# Cross-membership: a 3-hop chain where the TOP edge (closest to the leaf grant)
+# is the one set non-inheriting. Compared with breaking a middle edge, breaking
+# the top edge severs the privilege for EVERY role below it, since the leaf grant
+# can no longer be reached by anyone above the leaf's own group.
+#
+# Chain (-> reads "is a member of"):
+#   xmb_cte_mop -> xmb_cte_kostya -> xmb_cte_deadinside -> xmb_cte_iceberg
+# Leaf xmb_cte_iceberg holds SELECT. The TOP edge deadinside -> iceberg is set
+# WITH INHERIT FALSE: now only xmb_cte_iceberg holds SELECT; everyone above loses it.
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_cte_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cte_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cte_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cte_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_cte_makak;
+
+
+statement ok
+CREATE TABLE xmb_cte_makak (id int);
+
+
+statement ok
+CREATE ROLE xmb_cte_mop LOGIN PASSWORD 'xmb_cte_mop_pw';
+
+
+statement ok
+CREATE ROLE xmb_cte_kostya;
+
+
+statement ok
+CREATE ROLE xmb_cte_deadinside;
+
+
+statement ok
+CREATE ROLE xmb_cte_iceberg;
+
+
+statement ok
+GRANT xmb_cte_kostya TO xmb_cte_mop;
+
+
+statement ok
+GRANT xmb_cte_deadinside TO xmb_cte_kostya;
+
+
+statement ok
+GRANT xmb_cte_iceberg TO xmb_cte_deadinside;
+
+
+statement ok
+GRANT SELECT ON xmb_cte_makak TO xmb_cte_iceberg;
+
+
+# All inheriting: SELECT reaches the whole chain.
+query
+SELECT has_table_privilege('xmb_cte_mop', 'xmb_cte_makak', 'SELECT') AS a,
+       has_table_privilege('xmb_cte_kostya', 'xmb_cte_makak', 'SELECT') AS b,
+       has_table_privilege('xmb_cte_deadinside', 'xmb_cte_makak', 'SELECT') AS c,
+       has_table_privilege('xmb_cte_iceberg', 'xmb_cte_makak', 'SELECT') AS d;
+----
+a	b	c	d
+t	t	t	t
+
+
+# ---- Break the TOP edge: deadinside -> iceberg WITH INHERIT FALSE ----
+# Only iceberg keeps SELECT; deadinside (and everyone above) loses it because
+# the path to the leaf grant is severed at the very top.
+
+statement ok
+GRANT xmb_cte_iceberg TO xmb_cte_deadinside WITH INHERIT FALSE;
+
+
+query
+SELECT has_table_privilege('xmb_cte_mop', 'xmb_cte_makak', 'SELECT') AS a,
+       has_table_privilege('xmb_cte_kostya', 'xmb_cte_makak', 'SELECT') AS b,
+       has_table_privilege('xmb_cte_deadinside', 'xmb_cte_makak', 'SELECT') AS c,
+       has_table_privilege('xmb_cte_iceberg', 'xmb_cte_makak', 'SELECT') AS d;
+----
+a	b	c	d
+f	f	f	t
+
+
+# MEMBER reachability up the whole chain is untouched by the INHERIT bit.
+query
+SELECT pg_has_role('xmb_cte_mop', 'xmb_cte_iceberg', 'MEMBER') AS member_leaf,
+       pg_has_role('xmb_cte_mop', 'xmb_cte_iceberg', 'USAGE') AS usage_leaf,
+       pg_has_role('xmb_cte_deadinside', 'xmb_cte_iceberg', 'USAGE') AS dead_usage_leaf;
+----
+member_leaf	usage_leaf	dead_usage_leaf
+t	f	f
+
+
+connection c_mop user=xmb_cte_mop password=xmb_cte_mop_pw
+statement error
+SELECT * FROM xmb_cte_makak;
+----
+db error: ERROR: permission denied for table xmb_cte_makak<slt:ignore>
+
+
+# ---- Restore the top edge: full chain flows again ----
+
+statement ok
+GRANT xmb_cte_iceberg TO xmb_cte_deadinside WITH INHERIT TRUE;
+
+
+query
+SELECT has_table_privilege('xmb_cte_mop', 'xmb_cte_makak', 'SELECT') AS a,
+       has_table_privilege('xmb_cte_kostya', 'xmb_cte_makak', 'SELECT') AS b;
+----
+a	b
+t	t
+
+
+connection c_mop2 user=xmb_cte_mop password=xmb_cte_mop_pw
+query
+SELECT count(*) FROM xmb_cte_makak;
+----
+count
+0
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_cte_makak;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cte_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cte_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cte_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cte_iceberg;

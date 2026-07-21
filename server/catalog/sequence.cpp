@@ -24,14 +24,14 @@
 #include <duckdb/common/serializer/serializer.hpp>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "basics/serializer.h"
 #include "catalog/store/store.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 
 Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
-  : Object{schema_id, id, opts.name, ObjectType::Sequence},
+  : Object{opts.perm, schema_id, id, opts.name, ObjectType::Sequence},
     _options{std::move(opts)} {
   auto seed = _options.Seed();
   _cnt.store(seed, std::memory_order_release);
@@ -40,7 +40,9 @@ Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
 }
 
 void Sequence::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, _options);
+  auto opts = _options;
+  opts.perm = GetPermissions();
+  basics::WriteTuple(sink, opts);
 }
 
 std::shared_ptr<Sequence> Sequence::Deserialize(duckdb::Deserializer& src,
@@ -56,7 +58,9 @@ std::shared_ptr<Sequence> Sequence::Deserialize(duckdb::Deserializer& src,
 }
 
 std::shared_ptr<Object> Sequence::Clone() const {
-  return std::make_shared<Sequence>(GetParentId(), GetId(), _options);
+  auto opts = _options;
+  opts.perm = GetPermissions();
+  return std::make_shared<Sequence>(GetParentId(), GetId(), std::move(opts));
 }
 
 uint64_t Sequence::LoadFromDb() const {
@@ -65,16 +69,12 @@ uint64_t Sequence::LoadFromDb() const {
   if (store.TryGetBootSequenceValue(GetId(), value)) {
     return value;
   }
-  if (auto r = store.GetSequenceValue(GetId(), value); !r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  store.GetSequenceValue(GetId(), value);
   return value;
 }
 
 void Sequence::Persist(uint64_t value) {
-  if (auto r = GetCatalogStore().PutSequenceValue(GetId(), value); !r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  GetCatalogStore().PutSequenceValue(GetId(), value);
 }
 
 uint64_t Sequence::ReserveCached(uint64_t count) {

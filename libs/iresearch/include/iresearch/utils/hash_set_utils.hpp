@@ -24,6 +24,8 @@
 
 #include <absl/container/flat_hash_set.h>
 
+#include <concepts>
+
 #include "hash_utils.hpp"
 
 namespace irs {
@@ -44,8 +46,13 @@ struct ValueRefHash {
     return value.hash;
   }
 
-  template<typename Char>
-  size_t operator()(const HashedBasicStringView<Char>& value) const noexcept {
+  // Any transparent lookup key carrying its own precomputed hash
+  // (HashedBasicStringView, the term dictionary probe key, ...).
+  template<typename T>
+    requires requires(const T& t) {
+      { t.Hash() } -> std::convertible_to<size_t>;
+    }
+  size_t operator()(const T& value) const noexcept {
     return value.Hash();
   }
 };

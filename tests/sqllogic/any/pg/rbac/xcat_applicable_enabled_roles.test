@@ -1,0 +1,170 @@
+# Cross-catalog: the membership views information_schema.applicable_roles and
+# enabled_roles over a chain c -> b -> a (c is a member of b, b is a member of
+# a). Two distinct semantics, both byte-identical on PostgreSQL 19beta1 and
+# serenedb:
+#   * applicable_roles lists DIRECT membership edges only (one row per grant),
+#     never the transitive closure. is_grantable is NO unless WITH ADMIN OPTION.
+#   * enabled_roles, read inside a session, is the FULL transitive closure of
+#     roles whose privileges are active for the current user (with inherit).
+# applicable_roles is asserted as superuser (which sees all edges) filtered to
+# our roles + ORDER BY; enabled_roles is asserted from the member's own session.
+#
+# Vedernikoff lore: a chain of cast roles. Idempotent + self-cleaning.
+
+statement ok
+DROP ROLE IF EXISTS xcat_ar_top;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ar_mid;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ar_leaf;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_ar_admin;
+
+
+statement ok
+CREATE ROLE xcat_ar_top;
+
+
+statement ok
+CREATE ROLE xcat_ar_mid;
+
+
+statement ok
+CREATE ROLE xcat_ar_leaf LOGIN PASSWORD 'xcat_ar_leaf_pw';
+
+
+statement ok
+CREATE ROLE xcat_ar_admin;
+
+
+# Build the chain: leaf is a member of mid, mid is a member of top.
+statement ok
+GRANT xcat_ar_top TO xcat_ar_mid;
+
+
+statement ok
+GRANT xcat_ar_mid TO xcat_ar_leaf;
+
+
+# applicable_roles lists only the DIRECT edge for each grantee. leaf -> mid and
+# mid -> top each surface as a single row; leaf does NOT directly show top.
+query
+SELECT grantee, role_name, is_grantable
+FROM information_schema.applicable_roles
+WHERE grantee IN ('xcat_ar_leaf', 'xcat_ar_mid')
+ORDER BY grantee, role_name;
+----
+grantee	role_name	is_grantable
+xcat_ar_leaf	xcat_ar_mid	NO
+xcat_ar_mid	xcat_ar_top	NO
+
+
+# leaf has exactly one applicable (direct) role: mid. top is reachable only
+# transitively, so it is absent from leaf's applicable_roles rows.
+query
+SELECT count(*) AS leaf_direct_roles
+FROM information_schema.applicable_roles
+WHERE grantee = 'xcat_ar_leaf';
+----
+leaf_direct_roles
+1
+
+
+query
+SELECT count(*) AS leaf_sees_top
+FROM information_schema.applicable_roles
+WHERE grantee = 'xcat_ar_leaf' AND role_name = 'xcat_ar_top';
+----
+leaf_sees_top
+0
+
+
+# WITH ADMIN OPTION flips is_grantable to YES on that direct edge: grant top to
+# the admin role with admin option.
+statement ok
+GRANT xcat_ar_top TO xcat_ar_admin WITH ADMIN OPTION;
+
+
+query
+SELECT grantee, role_name, is_grantable
+FROM information_schema.applicable_roles
+WHERE grantee = 'xcat_ar_admin' AND role_name = 'xcat_ar_top';
+----
+grantee	role_name	is_grantable
+xcat_ar_admin	xcat_ar_top	YES
+
+
+# enabled_roles, evaluated inside the leaf's own session, is the FULL transitive
+# closure: leaf itself, mid (direct), and top (reached through mid). All three
+# appear because the default inherit option carries privileges up the chain.
+connection c_leaf user=xcat_ar_leaf password=xcat_ar_leaf_pw
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name IN ('xcat_ar_leaf', 'xcat_ar_mid', 'xcat_ar_top')
+ORDER BY role_name;
+----
+role_name
+xcat_ar_leaf
+xcat_ar_mid
+xcat_ar_top
+
+
+# applicable_roles from the leaf's own session still shows only the direct edges
+# it can see (its own membership in mid, and mid's membership in top, since leaf
+# inherits the right to see mid's edges): the closure of edges, but each row is
+# still a single direct grant, never a synthesized leaf->top edge.
+connection c_leaf user=xcat_ar_leaf password=xcat_ar_leaf_pw
+query
+SELECT count(*) AS leaf_self_to_top
+FROM information_schema.applicable_roles
+WHERE grantee = 'xcat_ar_leaf' AND role_name = 'xcat_ar_top';
+----
+leaf_self_to_top
+0
+
+
+# Breaking the chain (revoke mid from leaf) drops leaf's direct edge; mid -> top
+# survives. enabled_roles in a fresh leaf session now contains only leaf.
+statement ok
+REVOKE xcat_ar_mid FROM xcat_ar_leaf;
+
+
+query
+SELECT count(*) AS leaf_direct_roles
+FROM information_schema.applicable_roles
+WHERE grantee = 'xcat_ar_leaf';
+----
+leaf_direct_roles
+0
+
+
+connection c_leaf2 user=xcat_ar_leaf password=xcat_ar_leaf_pw
+query
+SELECT role_name FROM information_schema.enabled_roles
+WHERE role_name IN ('xcat_ar_leaf', 'xcat_ar_mid', 'xcat_ar_top')
+ORDER BY role_name;
+----
+role_name
+xcat_ar_leaf
+
+
+statement ok
+DROP ROLE xcat_ar_admin;
+
+
+statement ok
+DROP ROLE xcat_ar_leaf;
+
+
+statement ok
+DROP ROLE xcat_ar_mid;
+
+
+statement ok
+DROP ROLE xcat_ar_top;

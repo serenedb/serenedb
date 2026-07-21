@@ -1,0 +1,166 @@
+# Cross-catalog: SQL-standard privilege views derived from pg_class.relacl --
+# information_schema.table_privileges and role_table_grants. Both expose one row
+# per (grantor, grantee, privilege) tuple; is_grantable tracks the grant option;
+# a PUBLIC grant surfaces with the literal grantee 'PUBLIC'. role_table_grants
+# is the subset visible to the current role -- as superuser it equals
+# table_privileges for these objects. Every assertion filters by table_name and
+# grantee and ORDER BYs, so the owner row and row order never leak in. The view
+# rows are byte-identical on PostgreSQL 19beta1 and serenedb (they read relacl,
+# which serenedb fully implements).
+#
+# Vedernikoff lore: clickclack tables, grantees from the cast.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS xcat_is_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_is_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_is_writer;
+
+
+statement ok
+CREATE TABLE xcat_is_clickclack (id int, mop text);
+
+
+statement ok
+CREATE ROLE xcat_is_reader;
+
+
+statement ok
+CREATE ROLE xcat_is_writer;
+
+
+# A plain SELECT grant: one table_privileges row, is_grantable NO.
+statement ok
+GRANT SELECT ON xcat_is_clickclack TO xcat_is_reader;
+
+
+query
+SELECT grantor, grantee, table_name, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'xcat_is_clickclack' AND grantee = 'xcat_is_reader'
+ORDER BY privilege_type;
+----
+grantor	grantee	table_name	privilege_type	is_grantable
+postgres	xcat_is_reader	xcat_is_clickclack	SELECT	NO
+
+
+# A grant WITH GRANT OPTION sets is_grantable YES on every privilege granted.
+statement ok
+GRANT SELECT, INSERT ON xcat_is_clickclack TO xcat_is_writer WITH GRANT OPTION;
+
+
+query
+SELECT grantor, grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'xcat_is_clickclack' AND grantee = 'xcat_is_writer'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type	is_grantable
+postgres	xcat_is_writer	INSERT	YES
+postgres	xcat_is_writer	SELECT	YES
+
+
+# role_table_grants shows the same rows for the same grantee (as superuser the
+# current role sees every grant); grantor/grantee/is_grantable agree.
+query
+SELECT grantor, grantee, privilege_type, is_grantable
+FROM information_schema.role_table_grants
+WHERE table_name = 'xcat_is_clickclack' AND grantee = 'xcat_is_writer'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type	is_grantable
+postgres	xcat_is_writer	INSERT	YES
+postgres	xcat_is_writer	SELECT	YES
+
+
+# A PUBLIC grant surfaces in table_privileges with grantee 'PUBLIC', grantor
+# postgres, is_grantable NO.
+statement ok
+GRANT DELETE ON xcat_is_clickclack TO PUBLIC;
+
+
+query
+SELECT grantor, grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'xcat_is_clickclack' AND grantee = 'PUBLIC'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type	is_grantable
+postgres	PUBLIC	DELETE	NO
+
+
+# The PUBLIC row also appears in role_table_grants (PUBLIC grants are visible to
+# every role).
+query
+SELECT grantee, privilege_type FROM information_schema.role_table_grants
+WHERE table_name = 'xcat_is_clickclack' AND grantee = 'PUBLIC'
+ORDER BY privilege_type;
+----
+grantee	privilege_type
+PUBLIC	DELETE
+
+
+# All three named grantees + PUBLIC together, ordered. The owner row is excluded
+# by the IN-list filter on grantee.
+query
+SELECT grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'xcat_is_clickclack'
+  AND grantee IN ('xcat_is_reader', 'xcat_is_writer', 'PUBLIC')
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type	is_grantable
+PUBLIC	DELETE	NO
+xcat_is_reader	SELECT	NO
+xcat_is_writer	INSERT	YES
+xcat_is_writer	SELECT	YES
+
+
+# A plain REVOKE INSERT drops the INSERT row entirely; the SELECT row (still
+# WITH GRANT OPTION) survives with is_grantable YES. (REVOKE GRANT OPTION FOR
+# ... -- which would keep the row and only flip is_grantable to NO -- is NOT
+# exercised: serenedb's parser rejects the "GRANT OPTION FOR" clause on table
+# privileges, a cross-engine divergence.)
+statement ok
+REVOKE INSERT ON xcat_is_clickclack FROM xcat_is_writer;
+
+
+query
+SELECT privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'xcat_is_clickclack' AND grantee = 'xcat_is_writer'
+ORDER BY privilege_type;
+----
+privilege_type	is_grantable
+SELECT	YES
+
+
+# REVOKE PUBLIC removes the PUBLIC row entirely.
+statement ok
+REVOKE DELETE ON xcat_is_clickclack FROM PUBLIC;
+
+
+query
+SELECT count(*) AS public_rows FROM information_schema.table_privileges
+WHERE table_name = 'xcat_is_clickclack' AND grantee = 'PUBLIC';
+----
+public_rows
+0
+
+
+statement ok
+DROP TABLE xcat_is_clickclack;
+
+
+statement ok
+DROP ROLE xcat_is_reader;
+
+
+statement ok
+DROP ROLE xcat_is_writer;

@@ -28,6 +28,7 @@
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 
+#include "basics/debugging.h"
 #include "connector/duckdb_client_state.h"
 #include "network/connection.h"
 #include "network/pg/wire_frames.h"
@@ -44,6 +45,9 @@ sdb::pg::SerializationContext CloneProto(
   sdb::pg::SerializationContext context;
   context.extra_float_digits = proto.extra_float_digits;
   context.bytea_output = proto.bytea_output;
+  if (proto.time_zone) {
+    context.time_zone.reset(proto.time_zone->clone());
+  }
   context.snapshot = proto.snapshot;
   context.quote_seq = proto.quote_seq;
   context.backslash_count = proto.backslash_count;
@@ -69,6 +73,10 @@ class PgWireCollectorLocalState : public duckdb::LocalSinkState {
   // Committed-bytes watermark at the last Seal; the gap to the buffer's
   // TotalCommitted() drives the next seal. Direct mode reads ctx.send instead.
   size_t sealed_total = 0;
+  // Armed by the session only for COPY ... TO STDOUT (binary/text); the
+  // collector then feeds pg_stat_progress_copy per chunk. Null on every other
+  // statement.
+  sdb::pg::ProgressMetrics* progress = nullptr;
   bool initialized = false;
 };
 
@@ -90,6 +98,13 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
       for (size_t column = 0; column < types.size(); ++column) {
         lstate.serializers.push_back(sdb::pg::GetSerialization(
           types[column], FormatFor(ctx.formats, column), lstate.sctx));
+      }
+      if (ctx.row_encoding != RowEncoding::DataRow) {
+        if (auto state = context.client.registered_state
+                           ->Get<connector::SereneDBClientState>(
+                             connector::kSereneDBClientStateKey)) {
+          lstate.progress = &state->Progress();
+        }
       }
       lstate.initialized = true;
     }
@@ -143,6 +158,14 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
         break;
     }
     ctx.rows.fetch_add(chunk.size(), std::memory_order_relaxed);
+    if (lstate.progress) {
+      sdb::pg::ProgressMetrics::Add(lstate.progress->tuples_processed,
+                                    static_cast<int64_t>(chunk.size()));
+      sdb::pg::ProgressMetrics::Add(
+        lstate.progress->bytes_processed,
+        static_cast<int64_t>(chunk.GetAllocationSize()));
+      SDB_WAIT_ON_FAILURE("pause_copy_to_mid_stream");
+    }
 
     if (ctx.mode == WireSinkContext::Mode::Direct) {
       // Publish progress for the session's backpressure/unblock checks; the
@@ -182,13 +205,11 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
   // object for the standard fetch/cleanup path.
   duckdb::unique_ptr<duckdb::QueryResult> GetResult(
     duckdb::GlobalSinkState& state) const override {
-    auto& gstate = state.Cast<PgWireCollectorGlobalState>();
-    auto cc = gstate.ctx->context.lock();
     auto collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(
       duckdb::Allocator::DefaultAllocator(), types);
     return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-      statement_type, properties, names, std::move(collection),
-      cc->GetClientProperties());
+      statement_type, properties, duckdb::IdentifiersToStrings(names),
+      std::move(collection), duckdb::ClientProperties{});
   }
 
   bool ParallelSink() const override {
@@ -257,6 +278,10 @@ duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
     return duckdb::PhysicalResultCollector::GetResultCollector(context, data);
   }
   ctx->context = context.shared_from_this();
+  ctx->engaged = true;
+  if (ctx->announce_rowdesc) {
+    WriteRowDescription(*ctx->send, data.types, data.names, ctx->formats);
+  }
   auto& physical_plan = *data.physical_plan;
   auto& root = physical_plan.Root();
   // Parallel (workers encode into a completion-order queue the session splices)

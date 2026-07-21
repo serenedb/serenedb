@@ -1,0 +1,71 @@
+# Schema CREATE is enforced like PostgreSQL: a non-owner role cannot CREATE an
+# object in a schema it does not own and was never granted CREATE on -- not in a
+# foreign user schema, and (since PG15) not in public either. The superuser
+# succeeds. has_schema_privilege reflects the same: f for the ordinary role on a
+# foreign schema and on public. Identical on both engines.
+#
+# Lore: clickclack owns schema mop (here owned by the bootstrap superuser, since
+# serenedb has no non-superuser schema ownership); vedernikoff is an ordinary
+# role with no rights on mop or public.
+
+statement ok
+DROP SCHEMA IF EXISTS enf_sc_mop CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS public.enf_sc_vedernikoff_pub;
+
+
+statement ok
+DROP ROLE IF EXISTS enf_sc_vedernikoff;
+
+
+statement ok
+CREATE ROLE enf_sc_vedernikoff LOGIN PASSWORD 'enf_sc_vedernikoff_pw';
+
+
+statement ok
+CREATE SCHEMA enf_sc_mop;
+
+
+# The ordinary role has no CREATE on the foreign schema nor on public.
+query
+SELECT
+  has_schema_privilege('enf_sc_vedernikoff','enf_sc_mop','CREATE') AS create_mop,
+  has_schema_privilege('enf_sc_vedernikoff','public','CREATE')     AS create_public;
+----
+create_mop	create_public
+f	f
+
+
+# Non-owner CREATE in a foreign schema is refused.
+connection c_sc user=enf_sc_vedernikoff password=enf_sc_vedernikoff_pw
+statement error
+CREATE TABLE enf_sc_mop.intruder (x int);
+----
+db error: ERROR: permission denied for schema enf_sc_mop<slt:ignore>
+
+
+# Non-owner CREATE in public is refused (PG >= 15 does not grant CREATE on
+# public to PUBLIC).
+connection c_sc user=enf_sc_vedernikoff password=enf_sc_vedernikoff_pw
+statement error
+CREATE TABLE public.enf_sc_vedernikoff_pub (x int);
+----
+db error: ERROR: permission denied for schema public<slt:ignore>
+
+
+# The superuser can CREATE in the schema regardless of grants.
+connection default
+statement ok
+CREATE TABLE enf_sc_mop.su_table (y int);
+
+
+# ---- cleanup ----
+
+statement ok
+DROP SCHEMA enf_sc_mop CASCADE;
+
+
+statement ok
+DROP ROLE enf_sc_vedernikoff;

@@ -47,7 +47,7 @@
 #include "basics/log.h"
 #include "basics/network_utils.hpp"
 #include "index/doc_generator.hpp"
-#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
 #include "iresearch/utils/attributes.hpp"

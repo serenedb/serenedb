@@ -22,16 +22,13 @@
 
 #pragma once
 
-#include "analyzer.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
-#include "token_attributes.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
 
-class SegmentationTokenizer : public TypedAnalyzer<SegmentationTokenizer>,
-                              private util::Noncopyable {
+class SegmentationTokenizer : private util::Noncopyable {
  public:
   static constexpr size_t kMaxStringSizeToOptimizeAccept = 64;
 
@@ -89,18 +86,16 @@ class SegmentationTokenizer : public TypedAnalyzer<SegmentationTokenizer>,
     Convert convert = Convert::Lower;
   };
 
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts);
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
+  virtual ~SegmentationTokenizer() = default;
+
+  void ForceUnicodePath(bool force) noexcept { _force_unicode = force; }
 
  protected:
-  using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  Attributes _attrs;
   // buffer for value if value cannot be referenced directly
   std::string _term_buf;
+  bool _force_unicode = false;
 };
 
 }  // namespace irs::analysis

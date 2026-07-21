@@ -22,14 +22,11 @@
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/string.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
-
-#include "basics/object_pool.hpp"
-#include "basics/result.h"
 
 namespace sdb::search {
 
@@ -51,7 +48,7 @@ class Features final {
 
   // Validate that features are supported by serened an ensure that
   // their dependencies are met.
-  Result Validate(std::string_view type = {}) const;
+  void Validate(std::string_view type = {}) const;
 
   bool HasFeatures(irs::IndexFeatures features) const noexcept {
     return (_index_features & features) == features;
@@ -74,26 +71,5 @@ class Features final {
 };
 
 bool IsGeoAnalyzer(std::string_view type) noexcept;
-
-class AnalyzerImpl final {
- public:
-  // type tags for primitive token streams
-  struct StringStreamTag {};
-  struct NumberStreamTag {};
-  struct BoolStreamTag {};
-  struct NullStreamTag {};
-
-  struct Builder {
-    using ptr = irs::analysis::Analyzer::ptr;
-
-    static ptr make(StringStreamTag);
-    static ptr make(NumberStreamTag);
-    static ptr make(BoolStreamTag);
-    static ptr make(NullStreamTag);
-    static ptr make(std::string_view bytes);
-  };
-
-  using CacheType = irs::UnboundedObjectPool<Builder>;
-};
 
 }  // namespace sdb::search

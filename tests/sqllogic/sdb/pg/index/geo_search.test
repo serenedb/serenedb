@@ -329,19 +329,19 @@ id
 # --- Error cases ---
 
 # Valid JSON but unrecognized GeoJSON type -- the filter builder rejects the
-# shape parse, leaving the predicate on the LogicalFilter for the runtime stub
-# to reject with the "outside inverted index context" message.
+# shape parse at bind time with the precise reason (geo functions have no
+# non-index execution, so there is nothing to fall back to).
 
 statement error
 SELECT id FROM geo_idx WHERE ST_Intersects(geo, '{"type":"Unknown","coordinates":[]}')
 ----
-db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
+db error: ERROR: Geo argument is not valid GeoJSON
 
 
 statement error
 SELECT id FROM geo_idx WHERE ST_Contains(geo, '{"type":"Unknown","coordinates":[]}')
 ----
-db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
+db error: ERROR: Geo argument is not valid GeoJSON
 
 
 # ST_Intersects / ST_Contains on a column indexed with a non-geo (text) analyzer.
@@ -368,13 +368,13 @@ VACUUM (REFRESH_TABLE) geo_plain
 statement error
 SELECT id FROM geo_plain_idx WHERE ST_Intersects(geo, '{"type":"Point","coordinates":[0,0]}')
 ----
-db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
+db error: ERROR: Tokenizer for field is not a geo analyzer
 
 
 statement error
 SELECT id FROM geo_plain_idx WHERE ST_Contains(geo, '{"type":"Point","coordinates":[0,0]}')
 ----
-db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
+db error: ERROR: Tokenizer for field is not a geo analyzer
 
 
 # --- GEOMETRY column ---
@@ -579,35 +579,34 @@ db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with diff
 # --- Error: GEOMETRY constant with Z / M dimensions ---
 # Our WKB parser is 2D only (CRS84 is lng/lat in degrees, no height/measure):
 # ParseShapeWKB rejects values whose WKB type word has the Z or M flag bit
-# set. The filter builder fails to claim the predicate, falling back to the
-# runtime stub.
+# set; the filter builder reports it at bind time.
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Intersects(geo, 'POINT Z (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
 ----
-db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
+db error: ERROR: GEOMETRY constant is not valid WKB
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Intersects(geo, 'POINT M (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
 ----
-db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
+db error: ERROR: GEOMETRY constant is not valid WKB
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Intersects(geo, 'POINT ZM (37.615 55.706 0 0)'::GEOMETRY('OGC:CRS84'))
 ----
-db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
+db error: ERROR: GEOMETRY constant is not valid WKB
 
 
 statement error
 SELECT id FROM geo_data_g_idx
 WHERE ST_Contains(geo, 'POINT Z (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
 ----
-db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
+db error: ERROR: GEOMETRY constant is not valid WKB
 
 
 # --- JSON field + GEOMETRY (WKT) shape ---
@@ -708,7 +707,7 @@ CREATE TABLE geo_data_g_bad (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
 statement error
 CREATE INDEX geo_data_g_bad_idx ON geo_data_g_bad USING inverted(id, geo geojson_latlng)
 ----
-db error: ERROR: Failed to create index: Column 'geo' is GEOMETRY but the geo analyzer uses a LatLng coding;<slt:ignore>
+db error: ERROR: Column 'geo' is GEOMETRY but the geo analyzer uses a LatLng coding;<slt:ignore>
 
 
 # --- CREATE INDEX rejection: GEOMETRY column with geopoint analyzer ---
@@ -726,7 +725,7 @@ CREATE TEXT SEARCH DICTIONARY geopoint_dict(
 statement error
 CREATE INDEX geo_data_g_pt_idx ON geo_data_g_bad USING inverted(id, geo geopoint_dict)
 ----
-db error: ERROR: Failed to create index: Column 'geo' is GEOMETRY but the analyzer is geopoint;<slt:ignore>
+db error: ERROR: Column 'geo' is GEOMETRY but the analyzer is geopoint;<slt:ignore>
 
 
 # --- CREATE INDEX rejection: GEOMETRY column without CRS ---
@@ -739,7 +738,7 @@ CREATE TABLE geo_data_g_no_crs (id INTEGER PRIMARY KEY, geo GEOMETRY)
 statement error
 CREATE INDEX geo_data_g_no_crs_idx ON geo_data_g_no_crs USING inverted(id, geo geojson_s2point)
 ----
-db error: ERROR: Failed to create index: Column 'geo': GEOMETRY type has no CRS attached;<slt:ignore>
+db error: ERROR: Column 'geo': GEOMETRY type has no CRS attached;<slt:ignore>
 
 
 # --- CREATE INDEX rejection: plain VARCHAR column ---
@@ -753,7 +752,7 @@ CREATE TABLE geo_data_v (id INTEGER PRIMARY KEY, geo VARCHAR)
 statement error
 CREATE INDEX geo_data_v_idx ON geo_data_v USING inverted(id, geo geojson_shape)
 ----
-db error: ERROR: Failed to create index: Column 'geo' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY<slt:ignore>
+db error: ERROR: Column 'geo' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY<slt:ignore>
 
 
 # --- Combined geo + text + scoring with boost ---
@@ -1101,49 +1100,30 @@ WHERE body @@ 'cafe'
 ORDER BY id;
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                   ORDER_BY                  │
-│    ──────────────────────────────────────   │
-│              places_idx.id ASC              │
-│                                             │
-│                    ~1 row                   │
-└──────────────────────┬──────────────────────┘
-┌──────────────────────┴──────────────────────┐
-│                  PROJECTION                 │
-│    ──────────────────────────────────────   │
-│                      id                     │
-│                  has_score                  │
-│                                             │
-│                    ~1 row                   │
-└──────────────────────┬──────────────────────┘
-┌──────────────────────┴──────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│              Index: places_idx              │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││        AND        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││        Term       ││        GEO        │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││body(string) = cafe││   geo(string) op  │││
-│ ││                   ││ =Intersects shape │││
-│ ││                   ││     =S2Polygon    │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│         Score: bm25(k1=1.2, b=0.75)         │
-│                                             │
-│                 Projections:                │
-│                      id                     │
-│           sdb_inverted_index_score          │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ ORDER_BY ──────────────────────────────────────╮
+│ Order By: places_idx.id ASC                     │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ PROJECTION ───────────┴────────────────────────╮
+│ Projections: id, has_score                      │
+│ ~1 row                                          │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: places_idx                               │
+│ Lookup: table                                   │
+│ Filter:                                         │
+│ ╭─ And ───────────────╮                         │
+│ ╰──────────┬──────────╯                         │
+│            ├────────────────────────╮           │
+│ ╭─ Term ───┴──────────╮  ╭─ Geo ────┴─────────╮ │
+│ │ Field: body(string) │  │ Field: geo(string) │ │
+│ │ Value: cafe         │  │ Op: Intersects     │ │
+│ ╰─────────────────────╯  │ Shape: S2Polygon   │ │
+│                          ╰────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                     │
+│ Projections: id, sdb_inverted_index_score       │
+│ ~1 row                                          │
+╰─────────────────────────────────────────────────╯
 
 
 # --- EXPLAIN: `<->` + boosted text composes inside IRESEARCH_SCAN ---
@@ -1162,43 +1142,26 @@ WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
 ORDER BY BM25(places_idx.tableoid) DESC, id;
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                   ORDER_BY                  │
-│    ──────────────────────────────────────   │
-│                   #1 DESC                   │
-│              places_idx.id ASC              │
-│                                             │
-│                    ~1 row                   │
-└──────────────────────┬──────────────────────┘
-┌──────────────────────┴──────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│              Index: places_idx              │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││        AND        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││       TERMS       ││    GEO_DISTANCE   │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││  body(string) {[  ││geo(string) *, <500│││
-│ ││  'blue', 1000],[  ││                   │││
-│ ││    'red', 1],}    ││                   │││
-│ ││     min_match=1   ││                   │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│         Score: bm25(k1=1.2, b=0.75)         │
-│                                             │
-│                 Projections:                │
-│                      id                     │
-│           sdb_inverted_index_score          │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ ORDER_BY ──────────────────────────────────────────────╮
+│ Order By: #1 DESC, places_idx.id ASC                    │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: places_idx                                       │
+│ Lookup: table                                           │
+│ Filter:                                                 │
+│ ╭─ And ───────────────────────╮                         │
+│ ╰──────────────┬──────────────╯                         │
+│                ├────────────────────────────╮           │
+│ ╭─ Terms ──────┴──────────────╮  ╭─ Geo Distance ─────╮ │
+│ │ Field: body(string)         │  │ Field: geo(string) │ │
+│ │ Values: 'blue'(1000), 'red' │  │ Range: *, <500     │ │
+│ │ Min Match: 1                │  ╰────────────────────╯ │
+│ ╰─────────────────────────────╯                         │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: id, sdb_inverted_index_score               │
+│ ~1 row                                                  │
+╰─────────────────────────────────────────────────────────╯
 
 
 # --- GEOMETRY column + source coding ---

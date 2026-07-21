@@ -25,18 +25,19 @@
 #include <s2/s2latlng.h>
 #include <s2/s2point_region.h>
 
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
 #include "basics/down_cast.h"
-#include "basics/exceptions.h"
 #include "basics/log.h"
-#include "basics/result.h"
 #include "basics/serializer.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
 #include "geo/wkb.h"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/search/geo_filter.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace magic_enum {
 
@@ -85,7 +86,7 @@ struct S2AnalyzerData {
 };
 
 // Source coding force-includes the indexed source column and re-parses it at
-// query time, so the analyzer writes no derived StoreAttr blob.
+// query time, so the analyzer writes no derived store blob.
 struct SourceAnalyzerData {};
 
 template<typename Data>
@@ -133,7 +134,7 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
       _shape = {};
       const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
                                    wkb.size()};
-      if (auto r = sdb::geo::ParseShapeWKB(bytes, _shape); r.fail()) {
+      if (!sdb::geo::ParseShapeWKB(bytes, _shape)) {
         return false;
       }
       if (_type == Type::Point &&
@@ -157,7 +158,7 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
       _shape = {};
       const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
                                    wkb.size()};
-      if (auto r = sdb::geo::ParseShapeWKB(bytes, _shape); r.fail()) {
+      if (!sdb::geo::ParseShapeWKB(bytes, _shape)) {
         return false;
       }
       if (_type == Type::Point &&
@@ -201,14 +202,12 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
 GeoAnalyzer::GeoAnalyzer(const S2RegionTermIndexer::Options& options)
   : _indexer{options} {}
 
-bool GeoAnalyzer::next() noexcept {
-  if (_begin >= _end) {
-    return false;
+GeoAnalyzer& GeoAnalyzer::Cast(Tokenizer& tokens) noexcept {
+  if (tokens.type() == irs::Type<GeoPointAnalyzer>::id()) {
+    return sdb::basics::downCast<GeoPointAnalyzer>(tokens);
   }
-  auto& value = *_begin++;
-  std::get<irs::TermAttr>(_attrs).value = {
-    reinterpret_cast<const irs::byte_type*>(value.data()), value.size()};
-  return true;
+  SDB_ASSERT(tokens.type() == irs::Type<GeoJsonAnalyzer>::id());
+  return sdb::basics::downCast<GeoJsonAnalyzer>(tokens);
 }
 
 void GeoAnalyzer::reset(std::vector<std::string>&& terms) noexcept {
@@ -217,30 +216,62 @@ void GeoAnalyzer::reset(std::vector<std::string>&& terms) noexcept {
   _end = _begin + _terms.size();
 }
 
-bool GeoAnalyzer::reset(std::string_view value) {
-  _json_buffer.assign(value);
-  _json_buffer.append(simdjson::SIMDJSON_PADDING, '\0');
-  simdjson::padded_string_view padded_view{_json_buffer.data(), value.size(),
-                                           _json_buffer.size()};
-  simdjson::ondemand::document doc;
-  if (_json_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
-    return false;
+template<TokenLayout Layout>
+void GeoAnalyzer::EmitTerms(TokenEmitter& sink) {
+  auto& buf = sink.buf;
+  uint32_t pos = 0;
+  while (_begin != _end) {
+    const size_t remaining = static_cast<size_t>(_end - _begin);
+    const auto slots = sink.Next(remaining);
+    const auto first = static_cast<uint32_t>(slots.data() - buf.terms);
+    for (size_t j = 0; j < slots.size(); ++j) {
+      const auto& value = *_begin++;
+      slots[j] = sink.Intern(bytes_view{
+        reinterpret_cast<const byte_type*>(value.data()), value.size()});
+      if constexpr (Layout != TokenLayout::Terms) {
+        buf.pos[first + j] = ++pos;
+      }
+    }
   }
-  simdjson::ondemand::value json;
-  if (doc.get_value().get(json) != simdjson::SUCCESS) {
-    return false;
-  }
-  return reset(json);
 }
 
-irs::analysis::Analyzer::ptr GeoPointAnalyzer::Make(Options opts) {
-  if (!opts.options.Validate().ok()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "geo_point: invalid geo options");
+template<TokenLayout Layout>
+bool GeoAnalyzer::DoFill(std::string_view value, TokenEmitter& sink) {
+  if (_wkb_input) {
+    if (!resetWKB(ViewCast<byte_type>(value))) {
+      return false;
+    }
+  } else {
+    _json_buffer.assign(value);
+    _json_buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::padded_string_view padded_view{_json_buffer.data(), value.size(),
+                                             _json_buffer.size()};
+    simdjson::ondemand::document doc;
+    if (_json_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
+      return false;
+    }
+    simdjson::ondemand::value json;
+    if (doc.get_value().get(json) != simdjson::SUCCESS) {
+      return false;
+    }
+    if (!reset(json)) {
+      return false;
+    }
   }
+  EmitTerms<Layout>(sink);
+  sink.Store(_store_value);
+  return true;
+}
+
+template class TypedTokenizer<GeoPointAnalyzer>;
+template class TypedTokenizer<GeoJsonAnalyzer>;
+
+irs::analysis::Tokenizer::ptr GeoPointAnalyzer::Make(Options opts) {
+  opts.options.Validate("geo_point");
   if (opts.latitude.empty() != opts.longitude.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "geo_point: latitude and longitude must both be set or both "
-              "empty");
+    THROW_SQL_ERROR(
+      ERR_MSG("geo_point: latitude and longitude must both be set or both "
+              "empty"));
   }
   return std::make_unique<GeoPointAnalyzer>(opts);
 }
@@ -266,7 +297,7 @@ bool GeoPointAnalyzer::resetWKB(bytes_view wkb) {
   sdb::geo::ShapeContainer shape;
   const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
                                wkb.size()};
-  if (auto r = sdb::geo::ParseShapeWKB(bytes, shape); r.fail()) {
+  if (!sdb::geo::ParseShapeWKB(bytes, shape)) {
     return false;
   }
   if (shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
@@ -355,10 +386,8 @@ bool GeoPointAnalyzer::ParsePoint(simdjson::ondemand::value json,
   return true;
 }
 
-irs::analysis::Analyzer::ptr GeoJsonAnalyzer::Make(Options opts) {
-  if (!opts.options.Validate().ok()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "geo_json: invalid geo options");
-  }
+irs::analysis::Tokenizer::ptr GeoJsonAnalyzer::Make(Options opts) {
+  opts.options.Validate("geo_json");
   if (opts.coding == Coding::Source) {
     return std::make_unique<GeoJsonAnalyzerImpl<SourceAnalyzerData>>(opts);
   }
@@ -435,9 +464,7 @@ void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl() {
     // For points we do not need type
     data = data.substr(1);
   }
-  auto* store = irs::GetMutable<StoreAttr>(this);
-  SDB_ASSERT(store);
-  store->value = data;
+  _store_value = data;
 }
 
 }  // namespace irs::analysis

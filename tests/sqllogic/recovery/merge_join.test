@@ -21,28 +21,19 @@ query
 EXPLAIN SELECT * FROM t1 NATURAL JOIN t2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         HASH_JOIN         │
-│    ────────────────────   │
-│      Join Type: INNER     │
-│    Conditions: id = id    ├──────────────┐
-│                           │              │
-│          ~3 rows          │              │
-└─────────────┬─────────────┘              │
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│          SEQ_SCAN         ││          SEQ_SCAN         │
-│    ────────────────────   ││    ────────────────────   │
-│         Table: t1         ││         Table: t2         │
-│   Type: Sequential Scan   ││   Type: Sequential Scan   │
-│                           ││                           │
-│        Projections:       ││        Projections:       │
-│             id            ││             id            │
-│             v1            ││             v2            │
-│                           ││                           │
-│                           ││     Filters: (id <= 3)    │
-│                           ││                           │
-│          ~3 rows          ││          ~3 rows          │
-└───────────────────────────┘└───────────────────────────┘
+╭─ HASH_JOIN ───────────╮
+│ Join Type: INNER      │
+│ Conditions: id = id   │
+│ ~3 rows               │
+╰───────────┬───────────╯
+            ├──────────────────────────╮
+╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ┴───────────╮
+│ Table: t1             │  │ Table: t2             │
+│ Type: Sequential Scan │  │ Type: Sequential Scan │
+│ Projections: id, v1   │  │ Projections: id, v2   │
+│ ~3 rows               │  │ Filters: id <= 3      │
+╰───────────────────────╯  │ ~3 rows               │
+                           ╰───────────────────────╯
 
 
 query ??? rowsort

@@ -38,8 +38,15 @@ target_link_libraries(
         zstd::zstd # search-table WAL chunk-file compression (search_db_wal.cpp)
 )
 
-target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)
+target_include_directories(
+    sereneserver
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/server
+        # ICU extension helpers for session-zone TIMESTAMPTZ text I/O.
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/include
+)
 
+add_subdirectory(auth)
 add_subdirectory(catalog)
 add_subdirectory(connector)
 add_subdirectory(database)

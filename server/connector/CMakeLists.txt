@@ -11,7 +11,6 @@ add_library(
     search_filter_builder.cpp
     geo_filter_builder.cpp
     search_filter_printer.cpp
-    duckdb_ann_filter.cpp
     duckdb_client_state.cpp
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
@@ -24,8 +23,9 @@ add_library(
     duckdb_scan_base.cpp
     duckdb_search_full_scan.cpp
     duckdb_search_table_scan.cpp
-    duckdb_search_ann_scan.cpp
-    columnstore_materializer.cpp
+    column_extract.cpp
+    full_scanner.cpp
+    hit_batcher.cpp
     index_source_factory.cpp
     index_source_view.cpp
     inverted_store_index.cpp
@@ -37,11 +37,10 @@ add_library(
     duckdb_pg_binary_copy.cpp
     duckdb_pg_text_copy.cpp
     duckdb_physical_ctas.cpp
-    duckdb_physical_progress.cpp
     duckdb_tokenizer_function.cpp
+    duckdb_rbac_function.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp
-    duckdb_search_sink_writer.cpp
     duckdb_vacuum_function.cpp
     duckdb_physical_search_truncate.cpp
     duckdb_physical_search_delete.cpp

@@ -1,0 +1,109 @@
+# ALTER TABLE ... OWNER TO transfers ownership: the OLD owner loses its implicit
+# all-privilege bundle (it keeps only privileges explicitly granted to it), the
+# NEW owner gains implicit ALL, and the grantor of rows the old owner granted is
+# rewritten to point at the new owner. PostgreSQL and serenedb agree on all three.
+# (The complementary new-owner-gains-ALL half is also in
+# any/pg/rbac/xog_j_alter_owner_new_owner_all.test.)
+#
+# Lore: xog_ro_iceberg is the table; ownership passes from mop to babsky; kostya
+# is a SELECT grantee whose row mop created.
+
+statement ok
+DROP TABLE IF EXISTS xog_ro_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_ro_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_ro_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xog_ro_kostya;
+
+
+statement ok
+CREATE ROLE xog_ro_mop LOGIN PASSWORD 'xog_ro_mop_pw';
+
+
+statement ok
+CREATE ROLE xog_ro_babsky LOGIN;
+
+
+statement ok
+CREATE ROLE xog_ro_kostya LOGIN;
+
+
+statement ok
+CREATE TABLE xog_ro_iceberg (id int);
+
+
+statement ok
+ALTER TABLE xog_ro_iceberg OWNER TO xog_ro_mop;
+
+
+# mop, as owner, grants SELECT to kostya. The ACL row records mop as grantor.
+connection c_mop user=xog_ro_mop password=xog_ro_mop_pw
+statement ok
+GRANT SELECT ON xog_ro_iceberg TO xog_ro_kostya;
+
+
+connection default
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_ro_iceberg'
+) g WHERE e LIKE 'xog_ro_kostya=%';
+----
+e
+xog_ro_kostya=r/xog_ro_mop
+
+
+# ---- Reown to babsky. ----
+statement ok
+ALTER TABLE xog_ro_iceberg OWNER TO xog_ro_babsky;
+
+
+# The old owner mop lost its implicit privileges the instant ownership moved.
+query
+SELECT has_table_privilege('xog_ro_mop','xog_ro_iceberg','SELECT') AS old_owner_sel,
+       has_table_privilege('xog_ro_mop','xog_ro_iceberg','INSERT') AS old_owner_ins;
+----
+old_owner_sel	old_owner_ins
+f	f
+
+
+# The new owner babsky gained the implicit all-privilege bundle.
+query
+SELECT has_table_privilege('xog_ro_babsky','xog_ro_iceberg','SELECT') AS new_owner_sel,
+       has_table_privilege('xog_ro_babsky','xog_ro_iceberg','DELETE') AS new_owner_del;
+----
+new_owner_sel	new_owner_del
+t	t
+
+
+# The grantor of kostya's surviving row is rewritten old->new owner.
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_ro_iceberg'
+) g WHERE e LIKE 'xog_ro_kostya=%';
+----
+e
+xog_ro_kostya=r/xog_ro_babsky
+
+
+statement ok
+DROP TABLE xog_ro_iceberg;
+
+
+statement ok
+DROP ROLE xog_ro_mop;
+
+
+statement ok
+DROP ROLE xog_ro_babsky;
+
+
+statement ok
+DROP ROLE xog_ro_kostya;

@@ -27,7 +27,6 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
-#include "basics/result.h"
 #include "catalog/catalog.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
@@ -61,19 +60,24 @@ class Transaction : public Config {
   void PreRollback() noexcept;
 
   // Commit the search-index leg synchronously with the store table changes:
-  // called inside the engine commit, after store durability but before the
-  // in-commit checkpoint, so the checkpoint's force-refresh never waits on an
-  // un-committed in-flight batch. Idempotent -- a no-op once the staged
+  // called by the engine from its TransactionPreCheckpoint hook, on the
+  // committing thread while it still holds the transaction lock and the WAL
+  // append ordering, right after this commit's WAL flush marker is written --
+  // so across connections ticks are handed out strictly in WAL-append order
+  // over complete batches and recovery cursors stay monotonic with WAL offsets,
+  // even though the group fsyncs (and thus the durable acknowledgements)
+  // complete afterwards and out of order. Everything here is memory-only; the
+  // background refresh gates its durable cursor on the WAL becoming durable, so
+  // a batch is never persisted before its store bytes are. The cursor is this
+  // commit's exact store-WAL position; std::nullopt on the fallback path where
+  // the transaction did not commit the store database, in which case no
+  // recovery cursor is recorded. Idempotent -- a no-op once the staged
   // transactions have been committed (or when there were none).
-  void CommitSearch() noexcept;
+  void CommitSearch(std::optional<search::WalCursor> cursor) noexcept;
 
-  Result Commit();
+  void Commit();
 
-  Result Rollback();
-
-  void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
-    _table_rows_deltas[table_id] += delta;
-  }
+  void Rollback();
 
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
@@ -133,7 +137,7 @@ class Transaction : public Config {
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
-    auto snapshot = EnsureCatalogSnapshot();
+    auto snapshot = CatalogSnapshot();
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);
 
@@ -187,8 +191,6 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, SearchTransaction> _search_transactions;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
-  containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
-  void ApplyTableStatsDiffs() noexcept;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
   // stay here -- they commit on the store-table tick, not the engine WAL tick.

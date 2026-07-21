@@ -25,6 +25,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "insert_field.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -237,7 +238,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc1->indexed.begin(), doc1->indexed.end()));
         StoreName()(d, *doc1);
       }
       ctx.Commit();
@@ -246,7 +248,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc2->indexed.begin(), doc2->indexed.end()));
         StoreName()(d, *doc2);
       }
       ctx.Commit();
@@ -255,7 +258,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc3->indexed.begin(), doc3->indexed.end()));
         StoreName()(d, *doc3);
       }
       ctx.Commit();
@@ -270,7 +274,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc4->indexed.begin(), doc4->indexed.end()));
         StoreName()(d, *doc4);
       }
       ctx.Commit();
@@ -279,7 +284,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc5->indexed.begin(), doc5->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc5->indexed.begin(), doc5->indexed.end()));
         StoreName()(d, *doc5);
       }
       ctx.Commit();
@@ -288,7 +294,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc6->indexed.begin(), doc6->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc6->indexed.begin(), doc6->indexed.end()));
         StoreName()(d, *doc6);
       }
       ctx.Commit();
@@ -297,7 +304,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc7->indexed.begin(), doc7->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc7->indexed.begin(), doc7->indexed.end()));
         StoreName()(d, *doc7);
       }
       ctx.Commit();
@@ -312,7 +320,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc8->indexed.begin(), doc8->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc8->indexed.begin(), doc8->indexed.end()));
         StoreName()(d, *doc8);
       }
       ctx.Commit();
@@ -321,7 +330,8 @@ TEST(directory_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc9->indexed.begin(), doc9->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc9->indexed.begin(), doc9->indexed.end()));
         StoreName()(d, *doc9);
       }
       ctx.Commit();
@@ -546,7 +556,8 @@ TEST(segment_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc1->indexed.begin(), doc1->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc1->indexed.begin(), doc1->indexed.end()));
         StoreName()(d, *doc1);
       }
       ctx.Commit();
@@ -555,7 +566,8 @@ TEST(segment_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc2->indexed.begin(), doc2->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc2->indexed.begin(), doc2->indexed.end()));
         StoreName()(d, *doc2);
       }
       ctx.Commit();
@@ -564,7 +576,8 @@ TEST(segment_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc3->indexed.begin(), doc3->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc3->indexed.begin(), doc3->indexed.end()));
         StoreName()(d, *doc3);
       }
       ctx.Commit();
@@ -573,7 +586,8 @@ TEST(segment_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc4->indexed.begin(), doc4->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc4->indexed.begin(), doc4->indexed.end()));
         StoreName()(d, *doc4);
       }
       ctx.Commit();
@@ -582,7 +596,8 @@ TEST(segment_reader_test, open) {
       auto ctx = writer->GetBatch();
       {
         auto d = ctx.Insert();
-        ASSERT_TRUE(d.Insert(doc5->indexed.begin(), doc5->indexed.end()));
+        ASSERT_TRUE(
+          tests::InsertFields(d, doc5->indexed.begin(), doc5->indexed.end()));
         StoreName()(d, *doc5);
       }
       ctx.Commit();
@@ -641,18 +656,18 @@ TEST(segment_reader_test, open) {
     // check live docs
     {
       auto it = rdr->docs_iterator();
-      ASSERT_TRUE(it->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
       ASSERT_EQ(1, it->value());
-      ASSERT_TRUE(it->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
       ASSERT_EQ(2, it->value());
-      ASSERT_TRUE(it->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
       ASSERT_EQ(3, it->value());
-      ASSERT_TRUE(it->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
       ASSERT_EQ(4, it->value());
-      ASSERT_TRUE(it->next());
+      ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
       ASSERT_EQ(5, it->value());
-      ASSERT_FALSE(it->next());
-      ASSERT_FALSE(it->next());
+      ASSERT_FALSE(!irs::doc_limits::eof(it->advance()));
+      ASSERT_FALSE(!irs::doc_limits::eof(it->advance()));
     }
 
     // check field metadata
@@ -689,9 +704,9 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(1, docs->value());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -704,10 +719,10 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(2, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -720,10 +735,10 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(3, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -736,10 +751,10 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(4, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -752,10 +767,10 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(5, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -800,18 +815,18 @@ TEST(segment_reader_test, open) {
           /* check docs */
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(1, docs->value());
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(2, docs->value());
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(3, docs->value());
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(4, docs->value());
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(5, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -845,12 +860,12 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(1, docs->value());
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(5, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -863,12 +878,12 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(2, docs->value());
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(3, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -902,10 +917,10 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(1, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 
@@ -918,10 +933,10 @@ TEST(segment_reader_test, open) {
           // check docs
           {
             auto docs = term->postings(irs::IndexFeatures::None);
-            ASSERT_TRUE(docs->next());
+            ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
             ASSERT_EQ(4, docs->value());
-            ASSERT_FALSE(docs->next());
-            ASSERT_FALSE(docs->next());
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
+            ASSERT_FALSE(!irs::doc_limits::eof(docs->advance()));
           }
         }
 

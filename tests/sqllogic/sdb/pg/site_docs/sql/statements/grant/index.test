@@ -1,0 +1,136 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP TABLE IF EXISTS doc_ledger;
+
+statement ok
+DROP ROLE IF EXISTS doc_reader;
+
+statement ok
+DROP ROLE IF EXISTS doc_writer;
+
+statement ok
+DROP ROLE IF EXISTS doc_staff;
+
+statement ok
+DROP ROLE IF EXISTS doc_clerk;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE doc_ledger (id int, amount int, note text);
+
+statement ok
+CREATE ROLE doc_reader;
+
+statement ok
+CREATE ROLE doc_writer;
+
+statement ok
+CREATE ROLE doc_staff;
+
+statement ok
+CREATE ROLE doc_clerk;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT SELECT ON doc_ledger TO doc_reader;
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT INSERT, UPDATE, DELETE ON doc_ledger TO doc_writer;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT ALL PRIVILEGES ON doc_ledger TO doc_staff;
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT SELECT (id, amount) ON doc_ledger TO doc_clerk;
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT SELECT ON doc_ledger TO doc_reader WITH GRANT OPTION;
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query T
+SELECT has_table_privilege('doc_reader', 'doc_ledger', 'SELECT');
+----
+has_table_privilege
+t
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query T
+SELECT has_column_privilege('doc_clerk', 'doc_ledger', 'amount', 'SELECT');
+----
+has_column_privilege
+t
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT doc_reader TO doc_staff;
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query T
+SELECT pg_has_role('doc_staff', 'doc_reader', 'MEMBER');
+----
+pg_has_role
+t
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+statement ok
+GRANT SELECT (note) ON doc_ledger TO PUBLIC;
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: role "doc_nobody" does not exist
+GRANT SELECT ON doc_ledger TO doc_nobody;
+
+# DOCS_TEST: example_013
+
+statement ok
+DROP TABLE doc_ledger;
+
+statement ok
+DROP ROLE doc_reader;
+
+statement ok
+DROP ROLE doc_writer;
+
+statement ok
+DROP ROLE doc_staff;
+
+statement ok
+DROP ROLE doc_clerk;

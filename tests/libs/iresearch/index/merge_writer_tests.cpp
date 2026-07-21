@@ -27,6 +27,7 @@
 #include "basics/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
+#include "insert_field.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/comparer.hpp"
@@ -41,6 +42,18 @@
 #include "utils/write_helpers.hpp"
 
 namespace {
+
+irs::bstring FirstNumericTerm(auto value) {
+  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+  return irs::bstring{irs::numeric_utils::EncodeNumericTerm(buf, value)};
+}
+
+irs::bstring LastNumericTerm(auto value) {
+  irs::bstring term;
+  irs::numeric_utils::ForEachNumericTerm(
+    value, [&](irs::bytes_view t) { term.assign(t.data(), t.size()); });
+  return term;
+}
 
 // Stable per-name field ids, sourced from `tests::FieldIdFor` so the
 // shared JSON factories and these tests agree on which id a name maps to.
@@ -100,7 +113,7 @@ void ValidateTerms(
     ASSERT_NE(expected_terms.end(), itr);
 
     for (auto docs_itr = segment.mask(term_itr->postings(index_features));
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1, itr->second.erase(docs_itr->value()));
 
       if (frequency) {
@@ -164,7 +177,7 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed(bool primary_sort) {
       auto doc = ctx.Insert();
       tests::StringField foo{"foo", "bar"};
       foo.id = kFooId;
-      doc.Insert(foo);
+      tests::InsertField(doc, foo);
       tests::StringField seq{"seq", std::to_string(seed)};
       seq.id = kSeqId;
       irs::tests::StoreFieldAt(*doc.GetColWriter(), kSeqId, doc.DocId(), seq);
@@ -308,7 +321,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
     const irs::SegmentWriterOptions options{
-      .scorers_features = {},
       .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(reader.begin(), reader.end());
@@ -368,7 +380,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress;
     const irs::SegmentWriterOptions options{
-      .scorers_features = {},
       .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
@@ -394,7 +405,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
     const irs::SegmentWriterOptions options{
-      .scorers_features = {},
       .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
@@ -422,7 +432,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       return true;
     };
     const irs::SegmentWriterOptions options{
-      .scorers_features = {},
       .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
@@ -455,7 +464,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       return --call_count;
     };
     const irs::SegmentWriterOptions options{
-      .scorers_features = {},
       .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
 
@@ -538,7 +546,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     };
 
     const irs::SegmentWriterOptions options{
-      .scorers_features = {},
       .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(segments.begin(), segments.end());
@@ -557,7 +564,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     };
 
     const irs::SegmentWriterOptions options{
-      .scorers_features = {},
       .db = &::sdb::DuckDBEngine::Instance().instance()};
     irs::MergeWriter writer(dir, options);
     writer.Reset(segments.begin(), segments.end());
@@ -909,40 +915,26 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
-      irs::NumericTokenizer max;
-      max.reset((double_t)(2.718281828 * 2));
-      irs::NumericTokenizer min;
-      min.reset((double_t)(2.718281828 * 1));
+      const auto max_term = LastNumericTerm((double_t)(2.718281828 * 2));
+      const auto min_term = FirstNumericTerm((double_t)(2.718281828 * 1));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((double_t)(2.718281828 * 1));
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(1))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (double_t)(2.718281828 * 1), [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(1);
+        });
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((double_t)(2.718281828 * 2));
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(2))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (double_t)(2.718281828 * 2), [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(2);
+        });
 
       ASSERT_EQ(2, docs_count(segment, kDocDoubleId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ASSERT_TRUE(max.next() && max.next() && max.next() &&
-                  max.next());  // skip to last value
-      ASSERT_TRUE(min.next());  // skip to first value
-      ValidateTerms(segment, *terms, 2, irs::get<irs::TermAttr>(min)->value,
-                    irs::get<irs::TermAttr>(max)->value, 8, features,
+      ValidateTerms(segment, *terms, 2, min_term, max_term, 8, features,
                     expected_terms);
     }
 
@@ -952,39 +944,26 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
-      irs::NumericTokenizer max;
-      max.reset((float_t)(3.1415926535 * 2));
-      irs::NumericTokenizer min;
-      min.reset((float_t)(3.1415926535 * 1));
+      const auto max_term = LastNumericTerm((float_t)(3.1415926535 * 2));
+      const auto min_term = FirstNumericTerm((float_t)(3.1415926535 * 1));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((float_t)(3.1415926535 * 1));
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(1))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (float_t)(3.1415926535 * 1), [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(1);
+        });
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((float_t)(3.1415926535 * 2));
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(2))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (float_t)(3.1415926535 * 2), [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(2);
+        });
 
       ASSERT_EQ(2, docs_count(segment, kDocFloatId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ASSERT_TRUE(max.next() && max.next());  // skip to last value
-      ASSERT_TRUE(min.next());                // skip to first value
-      ValidateTerms(segment, *terms, 2, irs::get<irs::TermAttr>(min)->value,
-                    irs::get<irs::TermAttr>(max)->value, 4, features,
+      ValidateTerms(segment, *terms, 2, min_term, max_term, 4, features,
                     expected_terms);
     }
 
@@ -994,39 +973,24 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::IntField().GetIndexFeatures();
-      irs::NumericTokenizer max;
-      max.reset(42 * 2);
-      irs::NumericTokenizer min;
-      min.reset(42 * 1);
+      const auto max_term = LastNumericTerm(42 * 2);
+      const auto min_term = FirstNumericTerm(42 * 1);
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset(42 * 1);
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(1))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(42 * 1, [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(1);
+      });
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset(42 * 2);
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(2))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(42 * 2, [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(2);
+      });
 
       ASSERT_EQ(2, docs_count(segment, kDocIntId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ASSERT_TRUE(max.next() && max.next());  // skip to last value
-      ASSERT_TRUE(min.next());                // skip to first value
-      ValidateTerms(segment, *terms, 2, irs::get<irs::TermAttr>(min)->value,
-                    irs::get<irs::TermAttr>(max)->value, 3, features,
+      ValidateTerms(segment, *terms, 2, min_term, max_term, 3, features,
                     expected_terms);
     }
 
@@ -1036,40 +1000,26 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::LongField().GetIndexFeatures();
-      irs::NumericTokenizer max;
-      max.reset((int64_t)12345 * 2);
-      irs::NumericTokenizer min;
-      min.reset((int64_t)12345 * 1);
+      const auto max_term = LastNumericTerm((int64_t)12345 * 2);
+      const auto min_term = FirstNumericTerm((int64_t)12345 * 1);
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((int64_t)12345 * 1);
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(1))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (int64_t)12345 * 1, [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(1);
+        });
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((int64_t)12345 * 2);
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(2))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (int64_t)12345 * 2, [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(2);
+        });
 
       ASSERT_EQ(2, docs_count(segment, kDocLongId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ASSERT_TRUE(max.next() && max.next() && max.next() &&
-                  max.next());  // skip to last value
-      ASSERT_TRUE(min.next());  // skip to first value
-      ValidateTerms(segment, *terms, 2, irs::get<irs::TermAttr>(min)->value,
-                    irs::get<irs::TermAttr>(max)->value, 5, features,
+      ValidateTerms(segment, *terms, 2, min_term, max_term, 5, features,
                     expected_terms);
     }
 
@@ -1180,31 +1130,21 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
-      irs::NumericTokenizer max;
-      max.reset((double_t)(2.718281828 * 3));
-      irs::NumericTokenizer min;
-      min.reset((double_t)(2.718281828 * 3));
+      const auto max_term = LastNumericTerm((double_t)(2.718281828 * 3));
+      const auto min_term = FirstNumericTerm((double_t)(2.718281828 * 3));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((double_t)(2.718281828 * 3));
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(1))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (double_t)(2.718281828 * 3), [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(1);
+        });
 
       ASSERT_EQ(1, docs_count(segment, kDocDoubleId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ASSERT_TRUE(max.next() && max.next() && max.next() &&
-                  max.next());  // skip to last value
-      ASSERT_TRUE(min.next());  // skip to first value
-      ValidateTerms(segment, *terms, 1, irs::get<irs::TermAttr>(min)->value,
-                    irs::get<irs::TermAttr>(max)->value, 4, features,
+      ValidateTerms(segment, *terms, 1, min_term, max_term, 4, features,
                     expected_terms);
     }
 
@@ -1214,30 +1154,21 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
-      irs::NumericTokenizer max;
-      max.reset((float_t)(3.1415926535 * 3));
-      irs::NumericTokenizer min;
-      min.reset((float_t)(3.1415926535 * 3));
+      const auto max_term = LastNumericTerm((float_t)(3.1415926535 * 3));
+      const auto min_term = FirstNumericTerm((float_t)(3.1415926535 * 3));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((float_t)(3.1415926535 * 3));
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(1))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (float_t)(3.1415926535 * 3), [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(1);
+        });
 
       ASSERT_EQ(1, docs_count(segment, kDocFloatId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ASSERT_TRUE(max.next() && max.next());  // skip to last value
-      ASSERT_TRUE(min.next());                // skip to first value
-      ValidateTerms(segment, *terms, 1, irs::get<irs::TermAttr>(min)->value,
-                    irs::get<irs::TermAttr>(max)->value, 2, features,
+      ValidateTerms(segment, *terms, 1, min_term, max_term, 2, features,
                     expected_terms);
     }
 
@@ -1247,30 +1178,20 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::IntField().GetIndexFeatures();
-      irs::NumericTokenizer max;
-      max.reset(42 * 3);
-      irs::NumericTokenizer min;
-      min.reset(42 * 3);
+      const auto max_term = LastNumericTerm(42 * 3);
+      const auto min_term = FirstNumericTerm(42 * 3);
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset(42 * 3);
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(1))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(42 * 3, [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(1);
+      });
 
       ASSERT_EQ(1, docs_count(segment, kDocIntId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ASSERT_TRUE(max.next() && max.next());  // skip to last value
-      ASSERT_TRUE(min.next());                // skip to first value
-      ValidateTerms(segment, *terms, 1, irs::get<irs::TermAttr>(min)->value,
-                    irs::get<irs::TermAttr>(max)->value, 2, features,
+      ValidateTerms(segment, *terms, 1, min_term, max_term, 2, features,
                     expected_terms);
     }
 
@@ -1280,31 +1201,21 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::LongField().GetIndexFeatures();
-      irs::NumericTokenizer max;
-      max.reset((int64_t)12345 * 3);
-      irs::NumericTokenizer min;
-      min.reset((int64_t)12345 * 3);
+      const auto max_term = LastNumericTerm((int64_t)12345 * 3);
+      const auto min_term = FirstNumericTerm((int64_t)12345 * 3);
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      {
-        irs::NumericTokenizer itr;
-        itr.reset((int64_t)12345 * 3);
-        for (; itr.next();
-             expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-               .emplace(1))
-          ;
-      }
+      irs::numeric_utils::ForEachNumericTerm(
+        (int64_t)12345 * 3, [&](irs::bytes_view term) {
+          expected_terms[irs::bstring{term}].emplace(1);
+        });
 
       ASSERT_EQ(1, docs_count(segment, kDocLongId));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ASSERT_TRUE(max.next() && max.next() && max.next() &&
-                  max.next());  // skip to last value
-      ASSERT_TRUE(min.next());  // skip to first value
-      ValidateTerms(segment, *terms, 1, irs::get<irs::TermAttr>(min)->value,
-                    irs::get<irs::TermAttr>(max)->value, 4, features,
+      ValidateTerms(segment, *terms, 1, min_term, max_term, 4, features,
                     expected_terms);
     }
 
@@ -1367,7 +1278,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   const irs::FunctionFieldOptions field_options{
     nullptr, irs::tests::MakeNormColumnOptionsProvider()};
   const irs::SegmentWriterOptions options{
-    .scorers_features = {},
     .db = &::sdb::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,
   };
@@ -1443,49 +1353,31 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::DoubleField().GetIndexFeatures();
-    irs::NumericTokenizer max;
-    max.reset((double_t)(2.718281828 * 3));
-    irs::NumericTokenizer min;
-    min.reset((double_t)(2.718281828 * 1));
+    const auto max_term = LastNumericTerm((double_t)(2.718281828 * 3));
+    const auto min_term = FirstNumericTerm((double_t)(2.718281828 * 1));
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((double_t)(2.718281828 * 1));
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(1))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (double_t)(2.718281828 * 1), [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(1);
+      });
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((double_t)(2.718281828 * 2));
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(2))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (double_t)(2.718281828 * 2), [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(2);
+      });
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((double_t)(2.718281828 * 3));
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(3))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (double_t)(2.718281828 * 3), [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(3);
+      });
 
     ASSERT_EQ(3, docs_count(*segment, kDocDoubleId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
-    ASSERT_TRUE(max.next() && max.next() && max.next() &&
-                max.next());  // skip to last value
-    ASSERT_TRUE(min.next());  // skip to first value
-    ValidateTerms(*segment, *terms, 3, irs::get<irs::TermAttr>(min)->value,
-                  irs::get<irs::TermAttr>(max)->value, 12, features,
+    ValidateTerms(*segment, *terms, 3, min_term, max_term, 12, features,
                   expected_terms);
   }
 
@@ -1495,48 +1387,31 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::FloatField().GetIndexFeatures();
-    irs::NumericTokenizer max;
-    max.reset((float_t)(3.1415926535 * 3));
-    irs::NumericTokenizer min;
-    min.reset((float_t)(3.1415926535 * 1));
+    const auto max_term = LastNumericTerm((float_t)(3.1415926535 * 3));
+    const auto min_term = FirstNumericTerm((float_t)(3.1415926535 * 1));
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((float_t)(3.1415926535 * 1));
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(1))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (float_t)(3.1415926535 * 1), [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(1);
+      });
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((float_t)(3.1415926535 * 2));
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(2))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (float_t)(3.1415926535 * 2), [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(2);
+      });
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((float_t)(3.1415926535 * 3));
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(3))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (float_t)(3.1415926535 * 3), [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(3);
+      });
 
     ASSERT_EQ(3, docs_count(*segment, kDocFloatId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
-    ASSERT_TRUE(max.next() && max.next());  // skip to last value
-    ASSERT_TRUE(min.next());                // skip to first value
-    ValidateTerms(*segment, *terms, 3, irs::get<irs::TermAttr>(min)->value,
-                  irs::get<irs::TermAttr>(max)->value, 6, features,
+    ValidateTerms(*segment, *terms, 3, min_term, max_term, 6, features,
                   expected_terms);
   }
 
@@ -1546,48 +1421,28 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::IntField().GetIndexFeatures();
-    irs::NumericTokenizer max;
-    max.reset(42 * 3);
-    irs::NumericTokenizer min;
-    min.reset(42 * 1);
+    const auto max_term = LastNumericTerm(42 * 3);
+    const auto min_term = FirstNumericTerm(42 * 1);
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset(42 * 1);
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(1))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(42 * 1, [&](irs::bytes_view term) {
+      expected_terms[irs::bstring{term}].emplace(1);
+    });
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset(42 * 2);
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(2))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(42 * 2, [&](irs::bytes_view term) {
+      expected_terms[irs::bstring{term}].emplace(2);
+    });
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset(42 * 3);
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(3))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(42 * 3, [&](irs::bytes_view term) {
+      expected_terms[irs::bstring{term}].emplace(3);
+    });
 
     ASSERT_EQ(3, docs_count(*segment, kDocIntId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
-    ASSERT_TRUE(max.next() && max.next());  // skip to last value
-    ASSERT_TRUE(min.next());                // skip to first value
-    ValidateTerms(*segment, *terms, 3, irs::get<irs::TermAttr>(min)->value,
-                  irs::get<irs::TermAttr>(max)->value, 4, features,
+    ValidateTerms(*segment, *terms, 3, min_term, max_term, 4, features,
                   expected_terms);
   }
 
@@ -1597,49 +1452,31 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::LongField().GetIndexFeatures();
-    irs::NumericTokenizer max;
-    max.reset((int64_t)12345 * 3);
-    irs::NumericTokenizer min;
-    min.reset((int64_t)12345 * 1);
+    const auto max_term = LastNumericTerm((int64_t)12345 * 3);
+    const auto min_term = FirstNumericTerm((int64_t)12345 * 1);
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((int64_t)12345 * 1);
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(1))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (int64_t)12345 * 1, [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(1);
+      });
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((int64_t)12345 * 2);
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(2))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (int64_t)12345 * 2, [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(2);
+      });
 
-    {
-      irs::NumericTokenizer itr;
-      itr.reset((int64_t)12345 * 3);
-      for (; itr.next();
-           expected_terms[irs::bstring(irs::get<irs::TermAttr>(itr)->value)]
-             .emplace(3))
-        ;
-    }
+    irs::numeric_utils::ForEachNumericTerm(
+      (int64_t)12345 * 3, [&](irs::bytes_view term) {
+        expected_terms[irs::bstring{term}].emplace(3);
+      });
 
     ASSERT_EQ(3, docs_count(*segment, kDocLongId));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
-    ASSERT_TRUE(max.next() && max.next() && max.next() &&
-                max.next());  // skip to last value
-    ASSERT_TRUE(min.next());  // skip to first value
-    ValidateTerms(*segment, *terms, 3, irs::get<irs::TermAttr>(min)->value,
-                  irs::get<irs::TermAttr>(max)->value, 6, features,
+    ValidateTerms(*segment, *terms, 3, min_term, max_term, 6, features,
                   expected_terms);
   }
 
@@ -1748,16 +1585,16 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
         auto doc = seg.Insert();
         tests::StringField s{"doc_string", std::string{kStrings[i]}};
         s.id = kStringId;
-        doc.Insert(s);
+        tests::InsertField(doc, s);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
                                  s);
         tests::IntField n{"doc_int", kInts[i]};
         n.id = kIntId;
-        doc.Insert(n);
+        tests::InsertField(doc, n);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kIntId, doc.DocId(), n);
         tests::StringField t{"doc_text", kTexts[i]};
         t.id = kTextId;
-        doc.Insert(t);
+        tests::InsertField(doc, t);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kTextId, doc.DocId(), t);
       }
       seg.Commit();
@@ -1769,16 +1606,16 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
         auto doc = seg.Insert();
         tests::StringField s{"doc_string", std::string{kStrings[i]}};
         s.id = kStringId;
-        doc.Insert(s);
+        tests::InsertField(doc, s);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
                                  s);
         tests::IntField n{"doc_int", kInts[i]};
         n.id = kIntId;
-        doc.Insert(n);
+        tests::InsertField(doc, n);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kIntId, doc.DocId(), n);
         tests::StringField t{"doc_text", kTexts[i]};
         t.id = kTextId;
-        doc.Insert(t);
+        tests::InsertField(doc, t);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kTextId, doc.DocId(), t);
       }
       seg.Commit();
@@ -2057,12 +1894,12 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
         auto doc = seg.Insert();
         tests::StringField s{"doc_string", std::string{kStrings[i]}};
         s.id = kStringId;
-        doc.Insert(s);
+        tests::InsertField(doc, s);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
                                  s);
         tests::IntField n{"doc_int", kInts[i]};
         n.id = kIntId;
-        doc.Insert(n);
+        tests::InsertField(doc, n);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kIntId, doc.DocId(), n);
       }
       seg.Commit();
@@ -2075,24 +1912,24 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
         auto doc = seg.Insert();
         tests::StringField s{"doc_string", std::string{kStrings[1]}};
         s.id = kStringId;
-        doc.Insert(s);
+        tests::InsertField(doc, s);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
                                  s);
         tests::IntField n{"doc_int", kInts[1]};
         n.id = kIntId;
-        doc.Insert(n);
+        tests::InsertField(doc, n);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kIntId, doc.DocId(), n);
       }
       {
         auto doc = seg.Insert();
         tests::StringField s{"doc_string", std::string{kStrings[3]}};
         s.id = kStringId;
-        doc.Insert(s);
+        tests::InsertField(doc, s);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kStringId, doc.DocId(),
                                  s);
         tests::StringField a{"another_column", "another_value"};
         a.id = kAnotherId;
-        doc.Insert(a);
+        tests::InsertField(doc, a);
         irs::tests::StoreFieldAt(*doc.GetColWriter(), kAnotherId, doc.DocId(),
                                  a);
       }
@@ -2170,7 +2007,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
       // doc4's columns are still on disk; the live-docs mask hides it.
       // Use docs_iterator() to confirm only one local doc id is live.
       std::vector<irs::doc_id_t> live;
-      for (auto it = segment.docs_iterator(); it->next();) {
+      for (auto it = segment.docs_iterator();
+           !irs::doc_limits::eof(it->advance());) {
         live.push_back(it->value());
       }
       ASSERT_EQ(1u, live.size());
@@ -2325,16 +2163,16 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
           auto d = seg.Insert();
           tests::StringField s{"doc_string", std::string{kStrings[i]}};
           s.id = kStringId;
-          d.Insert(s);
+          tests::InsertField(d, s);
           irs::tests::StoreFieldAt(*d.GetColWriter(), kStringId, d.DocId(), s);
           tests::IntField n{"doc_int", kInts[i]};
           n.id = kIntId;
-          d.Insert(n);
+          tests::InsertField(d, n);
           irs::tests::StoreFieldAt(*d.GetColWriter(), kIntId, d.DocId(), n);
           tests::StringField a{"another_column",
                                "shared_value_" + std::to_string(i)};
           a.id = kAnotherId;
-          d.Insert(a);
+          tests::InsertField(d, a);
           irs::tests::StoreFieldAt(*d.GetColWriter(), kAnotherId, d.DocId(), a);
         }
         seg.Commit();
@@ -2347,16 +2185,16 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
           auto d = seg.Insert();
           tests::StringField s{"doc_string", std::string{kStrings[i]}};
           s.id = kStringId;
-          d.Insert(s);
+          tests::InsertField(d, s);
           irs::tests::StoreFieldAt(*d.GetColWriter(), kStringId, d.DocId(), s);
           tests::IntField n{"doc_int", i == 3 ? 4 * 42 : kInts[i]};
           n.id = kIntId;
-          d.Insert(n);
+          tests::InsertField(d, n);
           irs::tests::StoreFieldAt(*d.GetColWriter(), kIntId, d.DocId(), n);
           tests::StringField a{"another_column",
                                "shared_value_" + std::to_string(i)};
           a.id = kAnotherId;
-          d.Insert(a);
+          tests::InsertField(d, a);
           irs::tests::StoreFieldAt(*d.GetColWriter(), kAnotherId, d.DocId(), a);
         }
         seg.Commit();

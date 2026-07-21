@@ -322,26 +322,17 @@ query
 EXPLAIN SELECT id FROM mix_idx WHERE a || b = 'foobar';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: mix_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ (a || b)(string) =││  │
-│  ││       foobar      ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: mix_idx              │
+│ Lookup: table               │
+│ Filter:                     │
+│ ╭─ Term ──────────────────╮ │
+│ │ Field: (a || b)(string) │ │
+│ │ Value: foobar           │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 query
 SELECT id FROM mix_idx WHERE a || b = 'helloworld';
@@ -359,29 +350,20 @@ query
 EXPLAIN SELECT id FROM mix_idx WHERE a = 'foo' AND a || b = 'foobaz';
 ----
 QUERY PLAN
-┌─────────────────────────────────────────────┐
-│                IRESEARCH_SCAN               │
-│    ──────────────────────────────────────   │
-│                Index: mix_idx               │
-│                Lookup: table                │
-│                                             │
-│                   Filter:                   │
-│ ┌──────────────────────────────────────────┐│
-│ │┌───────────────────┐                     ││
-│ ││        AND        ├──────────┐          ││
-│ │└─────────┬─────────┘          │          ││
-│ │┌─────────┴─────────┐┌─────────┴─────────┐││
-│ ││        Term       ││        Term       │││
-│ ││    ────────────   ││    ────────────   │││
-│ ││  a(string) = foo  ││ (a || b)(string) =│││
-│ ││                   ││       foobaz      │││
-│ │└───────────────────┘└───────────────────┘││
-│ └──────────────────────────────────────────┘│
-│                                             │
-│               Projections: id               │
-│                                             │
-│                    ~1 row                   │
-└─────────────────────────────────────────────┘
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: mix_idx                                    │
+│ Lookup: table                                     │
+│ Filter:                                           │
+│ ╭─ And ────────────╮                              │
+│ ╰─────────┬────────╯                              │
+│           ├────────────────────────╮              │
+│ ╭─ Term ──┴────────╮  ╭─ Term ─────┴────────────╮ │
+│ │ Field: a(string) │  │ Field: (a || b)(string) │ │
+│ │ Value: foo       │  │ Value: foobaz           │ │
+│ ╰──────────────────╯  ╰─────────────────────────╯ │
+│ Projections: id                                   │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
 
 
 # --- DML re-indexes the expression -----------------------------------------
@@ -763,25 +745,25 @@ CREATE TABLE bad_types(id INTEGER PRIMARY KEY, a INTEGER, s VARCHAR, k VARCHAR, 
 statement error
 CREATE INDEX bad_struct ON bad_types USING inverted(id, ({'x': a, 'y': s}));
 ----
-db error: ERROR: Failed to create index: Column 'main.struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
+db error: ERROR: Column 'struct_pack(x := a, y := s)' has unsupported type STRUCT(x INTEGER, y VARCHAR) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_map ON bad_types USING inverted(id, (map([k], [v])));
 ----
-db error: ERROR: Failed to create index: Column '"map"(main.list_value(k), main.list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
+db error: ERROR: Column '"map"(list_value(k), list_value(v))' has unsupported type MAP(VARCHAR, VARCHAR) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_list_struct ON bad_types USING inverted(id, ([{'x': a}]));
 ----
-db error: ERROR: Failed to create index: Column 'main.list_value(main.struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
+db error: ERROR: Column 'list_value(struct_pack(x := a))' has unsupported type STRUCT(x INTEGER)[] and can not be indexed
 
 
 statement error
 CREATE INDEX bad_list_map ON bad_types USING inverted(id, ([map([k], [v])]));
 ----
-db error: ERROR: Failed to create index: Column 'main.list_value("map"(main.list_value(k), main.list_value(v)))' has unsupported type MAP(VARCHAR, VARCHAR)[] and can not be indexed
+db error: ERROR: Column 'list_value("map"(list_value(k), list_value(v)))' has unsupported type MAP(VARCHAR, VARCHAR)[] and can not be indexed
 
 
 statement ok
@@ -799,38 +781,38 @@ CREATE TABLE bad_scalars(
 statement error
 CREATE INDEX bad_decimal ON bad_scalars USING inverted(id, (dc + 1));
 ----
-db error: ERROR: Failed to create index: Column '(dc + 1)' has unsupported type DECIMAL(13,2) and can not be indexed
+db error: ERROR: Column '(dc + 1)' has unsupported type DECIMAL(13,2) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_hugeint ON bad_scalars USING inverted(id, (hi + 1));
 ----
-db error: ERROR: Failed to create index: Column '(hi + 1)' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column '(hi + 1)' has unsupported type HUGEINT and can not be indexed
 
 
 statement error
 CREATE INDEX bad_interval ON bad_scalars USING inverted(id, (iv));
 ----
-db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexed
 
 
 statement error
 CREATE INDEX bad_uuid ON bad_scalars USING inverted(id, (uu));
 ----
-db error: ERROR: Failed to create index: Column 'uu' has unsupported type UUID and can not be indexed
+db error: ERROR: Column 'uu' has unsupported type UUID and can not be indexed
 
 
 statement error
 CREATE INDEX bad_union ON bad_scalars
 USING inverted(id, (union_value(num := a)));
 ----
-db error: ERROR: Failed to create index: Column 'union_value(num := a)' has unsupported type UNION(num INTEGER) and can not be indexed
+db error: ERROR: Column 'union_value(num := a)' has unsupported type UNION(num INTEGER) and can not be indexed
 
 
 statement error
 CREATE INDEX bad_list_list ON bad_scalars USING inverted(id, ([[a]]));
 ----
-db error: ERROR: Failed to create index: Column 'main.list_value(main.list_value(a))' has unsupported type INTEGER[][] and can not be indexed
+db error: ERROR: Column 'list_value(list_value(a))' has unsupported type INTEGER[][] and can not be indexed
 
 
 # --- @@ on indexed expressions (forces filter pushdown) -------------------
@@ -997,76 +979,49 @@ query
 EXPLAIN SELECT id FROM tx_n_idx WHERE a + b = 30;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: tx_n_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ (a + b)(numeric) =││  │
-│  ││  \\x0\\x80\\x0\\x0\\x1e││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: tx_n_idx             │
+│ Lookup: table               │
+│ Filter:                     │
+│ ╭─ Term ──────────────────╮ │
+│ │ Field: (a + b)(numeric) │ │
+│ │ Value: 30               │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM tx_v_idx WHERE (s1 || s2) @@ 'foobar'::tsquery;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: tx_v_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ (s1 || s2)(string)││  │
-│  ││      = foobar     ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: tx_v_idx               │
+│ Lookup: table                 │
+│ Filter:                       │
+│ ╭─ Term ────────────────────╮ │
+│ │ Field: (s1 || s2)(string) │ │
+│ │ Value: foobar             │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM tx_b_idx WHERE (a > b) = true;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: tx_b_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  (a > b)(bool) =  ││  │
-│  ││        \\xff       ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: tx_b_idx          │
+│ Lookup: table            │
+│ Filter:                  │
+│ ╭─ Term ───────────────╮ │
+│ │ Field: (a > b)(bool) │ │
+│ │ Value: true          │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 
 # Strange cases: outer CAST inside the indexed expression. `(a + b)::json`
@@ -1319,7 +1274,7 @@ statement error
 CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
     id, (a + b) included (compression='zstd'));
 ----
-db error: ERROR: Failed to create index: Column '(a + b)': compression 'ZSTD' is not supported for type INTEGER
+db error: ERROR: Column '(a + b)': compression 'ZSTD' is not supported for type INTEGER
 
 
 statement ok
@@ -1348,118 +1303,113 @@ statement error
 CREATE INDEX inc_e_bad ON inc_e_num USING inverted(
     id, (a + b) included (bogus='value'));
 ----
-db error: ERROR: Failed to create index: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), row_group_size (int >= 1), hyperloglog (bool, default false)
+db error: ERROR: Column '(a + b)': unknown included option 'bogus'. Accepted options: compression (string, default 'auto'), row_group_size (int >= 1), hyperloglog (bool, default false)
 
 
 statement error
 CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, hnsw)
+db error: ERROR: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf)
 
 
-# --- HNSW on an indexed expression: `(expr) hnsw(metric='l2', m=..., ef_construction=...)` builds an ANN graph over the expression's value.
-
-statement ok
-CREATE TABLE hnsw_e(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+# --- IVF on an indexed expression: `(expr) ivf(metric='l2')` builds an ANN graph over the expression's value.
 
 statement ok
-CREATE INDEX hnsw_e_idx ON hnsw_e USING inverted(
+CREATE TABLE ivf_e(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+
+statement ok
+CREATE INDEX ivf_e_idx ON ivf_e USING inverted(
     id,
-    (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+    (array_value(x, y, z)) ivf(metric='l2'));
 
 statement ok
-INSERT INTO hnsw_e VALUES
+INSERT INTO ivf_e VALUES
     (1, 1, 2, 3),
     (2, 10, 10, 10),
     (3, 5, 5, 5),
     (4, 0, 0, 0);
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_e;
+VACUUM (REFRESH_TABLE) ivf_e;
 
 query
-SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
+SELECT id FROM ivf_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
 ----
 id
 1
 4
 
 query
-EXPLAIN SELECT id FROM hnsw_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
+EXPLAIN SELECT id FROM ivf_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 2          │
-│      Order By: #1 ASC     │
-│                           │
-│          ~2 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      hnsw_e_idx (ANN)     │
-│                           │
-│       Lookup: table       │
-│           Top: 2          │
-│          Dims: 3          │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: ivf_e_idx                       │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ────────────────╮        │
+│ │ Field: array_value(x, y, z) │        │
+│ │ Metric: l2                  │        │
+│ │ Dims: 3                     │        │
+│ ╰─────────────────────────────╯        │
+│ Top: 2                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
 
 
 # Wrong dimensionality of the query vector should disqualify the ANN scan
 # (validator inside TryAnnTopk). The query still returns correct results.
 
 statement ok
-CREATE TABLE hnsw_e2(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
+CREATE TABLE ivf_e2(id INT PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT);
 
 statement ok
-CREATE INDEX hnsw_e2_idx ON hnsw_e2 USING inverted(
-    id, (array_value(x, y, z)) hnsw(metric='l2', m=8, ef_construction=16));
+CREATE INDEX ivf_e2_idx ON ivf_e2 USING inverted(
+    id, (array_value(x, y, z)) ivf(metric='l2'));
 
 statement ok
-INSERT INTO hnsw_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
+INSERT INTO ivf_e2 VALUES (1, 1, 0, 0), (2, 0, 1, 0), (3, 0, 0, 1);
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_e2;
+VACUUM (REFRESH_TABLE) ivf_e2;
 
-# `hnsw` requires options.
+# `ivf` requires options.
 
 statement error
-CREATE INDEX hnsw_e_no_opts ON hnsw_e USING inverted(
-    id, (array_value(x, y, z)) hnsw);
+CREATE INDEX ivf_e_no_opts ON ivf_e USING inverted(
+    id, (array_value(x, y, z)) ivf);
 ----
-db error: ERROR: Unknown opclass 'hnsw' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
-HINT: 'hnsw' is a built-in opclass; use the options form 'hnsw (...)'
+db error: ERROR: Unknown opclass 'ivf' on column 'array_value(x, y, z)': no text dictionary by that name in schema 'public'
+HINT: 'ivf' is a built-in opclass; use the options form 'ivf (...)'
 
 
 # ARRAY of non-FLOAT child type is rejected.
 
 statement ok
-CREATE TABLE hnsw_e3(id INT PRIMARY KEY, a INT, b INT, c INT);
+CREATE TABLE ivf_e3(id INT PRIMARY KEY, a INT, b INT, c INT);
 
 statement error
-CREATE INDEX hnsw_e3_idx ON hnsw_e3 USING inverted(
-    id, (array_value(a, b, c)) hnsw(metric='l2', m=8, ef_construction=16));
+CREATE INDEX ivf_e3_idx ON ivf_e3 USING inverted(
+    id, (array_value(a, b, c)) ivf(metric='l2'));
 ----
-db error: ERROR: Failed to create index: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Column 'array_value(a, b, c)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
-# Non-ARRAY return type rejected when hnsw is requested.
+# Non-ARRAY return type rejected when ivf is requested.
 
 statement error
-CREATE INDEX hnsw_e_scalar ON hnsw_e USING inverted(
-    id, (x + y + z) hnsw(metric='l2', m=8, ef_construction=16));
+CREATE INDEX ivf_e_scalar ON ivf_e USING inverted(
+    id, (x + y + z) ivf(metric='l2'));
 ----
-db error: ERROR: Failed to create index: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+db error: ERROR: Column '((x + y) + z)' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
 # --- INCLUDE columns alongside an indexed expression ---------------------
@@ -1624,7 +1574,7 @@ statement error
 CREATE INDEX geo_expr_bad_idx ON geo_expr_bad USING inverted(
     id, (LOWER(s)) geo_expr_dict);
 ----
-db error: ERROR: Failed to create index: Column 'lower(s)' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'lower(s)' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 # Positive case: a JSON-typed expression is accepted.

@@ -366,6 +366,8 @@ class BlockDisjunction : public DocIterator {
     return _doc = target;
   }
 
+  IRS_DOC_ITERATOR_EMIT_DEFAULTS
+
   uint32_t count() final {
     uint32_t count = 0;
 

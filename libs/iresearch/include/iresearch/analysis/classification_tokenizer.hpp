@@ -23,8 +23,7 @@
 
 #pragma once
 
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace fasttext {
@@ -35,7 +34,7 @@ class FastText;
 namespace irs::analysis {
 
 class ClassificationTokenizer final
-  : public TypedAnalyzer<ClassificationTokenizer>,
+  : public TypedTokenizer<ClassificationTokenizer>,
     private util::Noncopyable {
  public:
   using model_ptr = std::shared_ptr<const fasttext::FastText>;
@@ -60,22 +59,22 @@ class ClassificationTokenizer final
   explicit ClassificationTokenizer(const Options& options,
                                    model_ptr mode) noexcept;
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
+  TokenTraits Traits() const noexcept final { return {.dense_pos = false}; }
 
-  bool next() final;
-  bool reset(std::string_view data) final;
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
 
  private:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  bool Bind(std::string_view value);
 
-  attributes _attrs;
   model_ptr _model;
   std::vector<std::pair<float, std::string>> _predictions;
   std::vector<std::pair<float, std::string>>::iterator _predictions_it;
   double _threshold;
   int32_t _top_k;
+  uint32_t _input_size = 0;
 };
+
+extern template class TypedTokenizer<ClassificationTokenizer>;
 
 }  // namespace irs::analysis

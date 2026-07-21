@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/utils/string.hpp>
@@ -41,23 +41,16 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
                     ERR_MSG("ts_ngram field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
-  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
+  SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
 
   std::string target;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_ngram text", target);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
+  GetVarcharArg(*func.GetChildren()[0], target, {"ts_ngram text", kSyntaxHint});
 
   float threshold = 0.7f;
-  if (func.children.size() == 2) {
+  if (func.GetChildren().size() == 2) {
     double thr;
-    if (auto r = GetDoubleArg(*func.children[1], "ts_ngram threshold", thr);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetDoubleArg(*func.GetChildren()[1], thr,
+                 {"ts_ngram threshold", kSyntaxHint});
     threshold = static_cast<float>(thr);
   }
   if (threshold < 0.f || threshold > 1.f) {
@@ -85,11 +78,9 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   ngram.mutable_options()->threshold = threshold;
   auto& analyzer = ctx.tokenizer;
-  analyzer.reset(std::string_view{target});
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
-  while (analyzer.next()) {
-    ngram.mutable_options()->ngrams.emplace_back(token->value);
-  }
+  irs::TermVectorSink sink{ngram.mutable_options()->ngrams};
+  analyzer.Fill(std::string_view{target}, sink.writer, irs::TokenLayout::Terms);
+  sink.writer.Finish();
 }
 
 }  // namespace sdb::connector

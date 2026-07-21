@@ -20,11 +20,41 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstdint>
 #include <string_view>
 
+#include "network/credentials.h"
 #include "network/pg/scram_messages.h"
 
 using namespace sdb::network::pg;
+
+// --- md5 password verifier crypto ------------------------------------------
+
+TEST(NetworkPgMd5, VerifierRecognitionAndBuild) {
+  // md5<hex> = "md5" + md5(password + username); stored form for user eph_md5,
+  // password 'md5pw'.
+  const std::string want = "md5d8e52850c67d91f23e0f978386689553";
+  EXPECT_TRUE(sdb::network::IsMd5Verifier(want));
+  EXPECT_EQ(sdb::network::BuildMd5Verifier("eph_md5", "md5pw"), want);
+
+  EXPECT_FALSE(sdb::network::IsMd5Verifier("plaintext"));
+  EXPECT_FALSE(sdb::network::IsMd5Verifier("md5short"));
+  EXPECT_FALSE(sdb::network::IsMd5Verifier(
+    "md5zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"));  // non-hex
+  EXPECT_FALSE(sdb::network::IsMd5Verifier(
+    "SCRAM-SHA-256$4096:AAA$BBB:CCC"));  // a scram verifier is not md5
+}
+
+TEST(NetworkPgMd5, VerifyCleartext) {
+  const std::string stored = sdb::network::BuildMd5Verifier("eph_md5", "md5pw");
+  EXPECT_TRUE(
+    sdb::network::VerifyCleartextAgainstMd5(stored, "eph_md5", "md5pw"));
+  EXPECT_FALSE(
+    sdb::network::VerifyCleartextAgainstMd5(stored, "eph_md5", "wrong"));
+  EXPECT_FALSE(  // right password, wrong user -> different hash
+    sdb::network::VerifyCleartextAgainstMd5(stored, "other", "md5pw"));
+}
 
 TEST(NetworkPgScram, ClientFirstNoBinding) {
   const auto p = ParseScramClientFirst("n,,n=,r=clientnonce");

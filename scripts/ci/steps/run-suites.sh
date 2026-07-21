@@ -66,6 +66,7 @@ start_iresearch_load_bg() {
 # in the background via start_iresearch_load_bg.
 run_test_suites() {
 	run bash "${STEPS}/043-ci-in-docker-run-serenedb-tests.bash"
+	run bash "${STEPS}/049-ci-in-docker-run-network-tests.bash"
 	if [[ "${RUN_IRESEARCH:-false}" == "true" ]]; then
 		run bash "${STEPS}/042-ci-in-docker-run-iresearch-tests.bash"
 	fi

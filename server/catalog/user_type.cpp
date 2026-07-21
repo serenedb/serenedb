@@ -22,6 +22,7 @@
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/extra_type_info.hpp>
+#include <ranges>
 
 #include "basics/serializer.h"
 #include "catalog/create_info_serde.h"
@@ -29,10 +30,12 @@
 
 namespace sdb::catalog {
 
-PgSqlType::PgSqlType(ObjectId schema_id, ObjectId id, std::string_view name,
+PgSqlType::PgSqlType(Permissions perm, ObjectId schema_id, ObjectId id,
+                     std::string_view name,
                      duckdb::unique_ptr<duckdb::CreateTypeInfo> info)
-  : Object{schema_id, id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id,
-           name, ObjectType::PgSqlType},
+  : Object{std::move(perm), schema_id,
+           id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id, name,
+           ObjectType::PgSqlType},
     _info{std::move(info)} {
   auto type_info = _info->type.AuxInfo()
                      ? _info->type.AuxInfo()->DeepCopy()
@@ -49,21 +52,22 @@ std::shared_ptr<PgSqlType> PgSqlType::Deserialize(duckdb::Deserializer& src,
                                                   ReadContext ctx) {
   CreateInfoReadData<duckdb::CreateTypeInfo> data;
   basics::ReadTuple(src, data);
-  return std::make_shared<PgSqlType>(ctx.schema_id, ctx.id, data.name,
+  return std::make_shared<PgSqlType>(std::move(data.perm), ctx.schema_id,
+                                     ctx.id, data.name,
                                      std::move(data.info.info));
 }
 
 void PgSqlType::Serialize(duckdb::Serializer& sink) const {
   basics::WriteTuple(sink, CreateInfoWriteData<duckdb::CreateTypeInfo>{
-                             GetName(), {_info.get()}});
+                             GetName(), {_info.get()}, GetPermissions()});
 }
 
 std::shared_ptr<Object> PgSqlType::Clone() const {
   auto cloned_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
       _info->Copy());
-  return std::make_shared<PgSqlType>(GetParentId(), GetId(), GetName(),
-                                     std::move(cloned_info));
+  return std::make_shared<PgSqlType>(GetPermissions(), GetParentId(), GetId(),
+                                     GetName(), std::move(cloned_info));
 }
 
 }  // namespace sdb::catalog

@@ -42,82 +42,82 @@ CREATE TABLE m_reject(pk INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX m_reject_kw_i ON m_reject USING inverted(pk, i kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+db error: ERROR: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
 
 
 statement error
 CREATE INDEX m_reject_kw_bi ON m_reject USING inverted(pk, bi kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT)
+db error: ERROR: Column 'bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT)
 
 
 statement error
 CREATE INDEX m_reject_kw_db ON m_reject USING inverted(pk, db kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'db' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE)
+db error: ERROR: Column 'db' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE)
 
 
 statement error
 CREATE INDEX m_reject_kw_bo ON m_reject USING inverted(pk, bo kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'bo' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BOOLEAN)
+db error: ERROR: Column 'bo' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BOOLEAN)
 
 
 statement error
 CREATE INDEX m_reject_kw_dt ON m_reject USING inverted(pk, dt kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'dt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DATE)
+db error: ERROR: Column 'dt' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DATE)
 
 
 statement error
 CREATE INDEX m_reject_kw_ts ON m_reject USING inverted(pk, ts kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'ts' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP)
+db error: ERROR: Column 'ts' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got TIMESTAMP)
 
 
 statement error
 CREATE INDEX m_reject_kw_u ON m_reject USING inverted(pk, u kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'u' has unsupported type UUID and can not be indexed
+db error: ERROR: Column 'u' has unsupported type UUID and can not be indexed
 
 
 statement error
 CREATE INDEX m_reject_kw_iv ON m_reject USING inverted(pk, iv kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexed
 
 
 # Text tokenizer ng_dict on non-string scalar: rejected.
 statement error
 CREATE INDEX m_reject_ng_i ON m_reject USING inverted(pk, i ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+db error: ERROR: Column 'i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
 
 
 # Text tokenizer on non-string LIST / ARRAY: rejected.
 statement error
 CREATE INDEX m_reject_kw_il ON m_reject USING inverted(pk, il kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'il' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+db error: ERROR: Column 'il' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
 
 
 statement error
 CREATE INDEX m_reject_ng_bl ON m_reject USING inverted(pk, bl ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'bl' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BOOLEAN[])
+db error: ERROR: Column 'bl' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BOOLEAN[])
 
 
 # Text tokenizer on GEOMETRY scalar: rejected.
 statement error
 CREATE INDEX m_reject_kw_g ON m_reject USING inverted(pk, g kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
 
 
 statement error
 CREATE INDEX m_reject_ng_g ON m_reject USING inverted(pk, g ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
 
 
 # Geo tokenizer on non-JSON VARCHAR / BLOB / numerics: rejected.
@@ -125,31 +125,31 @@ db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VA
 statement error
 CREATE INDEX m_reject_s2_vs ON m_reject USING inverted(pk, vs geo_s2_dict);
 ----
-db error: ERROR: Failed to create index: Column 'vs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'vs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX m_reject_src_vs ON m_reject USING inverted(pk, vs geo_src_dict);
 ----
-db error: ERROR: Failed to create index: Column 'vs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'vs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX m_reject_s2_bs ON m_reject USING inverted(pk, bs geo_s2_dict);
 ----
-db error: ERROR: Failed to create index: Column 'bs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'bs' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX m_reject_s2_i ON m_reject USING inverted(pk, i geo_s2_dict);
 ----
-db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX m_reject_src_i ON m_reject USING inverted(pk, i geo_src_dict);
 ----
-db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 # Sanity: the accepted scalar paths still work on this same table.
@@ -169,11 +169,11 @@ CREATE INDEX m_reject_imp ON m_reject USING inverted(pk, i, bi, bo, dt, ts);
 # rules that aren't covered elsewhere in the matrix. Each rejection uses the
 # inventory regex so the exact error message stays observable.
 #   (a) GEOMETRY without OGC:CRS84 + geo_s2_dict       -> CRS84 validator
-#   (b) hnsw on scalar FLOAT                            -> hnsw validator
-#   (c) hnsw on LIST<FLOAT>                             -> hnsw validator
-#   (d) hnsw on ARRAY<DOUBLE,3>                         -> hnsw validator
-#   (e) hnsw on ARRAY<INTEGER,3>                        -> hnsw validator
-#   (f) hnsw on scalar VARCHAR                          -> hnsw validator
+#   (b) ivf on scalar FLOAT                            -> ivf validator
+#   (c) ivf on LIST<FLOAT>                             -> ivf validator
+#   (d) ivf on ARRAY<DOUBLE,3>                         -> ivf validator
+#   (e) ivf on ARRAY<INTEGER,3>                        -> ivf validator
+#   (f) ivf on scalar VARCHAR                          -> ivf validator
 #   (g) implicit (no opclass) on UUID                   -> term_dict Unsupported
 #   (h) implicit (no opclass) on DECIMAL(10,2)          -> term_dict Unsupported
 #   (i) implicit (no opclass) on INTERVAL               -> term_dict Unsupported
@@ -197,70 +197,70 @@ CREATE TABLE g5_reject(pk INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX g5_reject_s2_nocrs ON g5_reject USING inverted(pk, g_nocrs geo_s2_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+db error: ERROR: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
 
 
-# (b) hnsw on scalar FLOAT: must be ARRAY(FLOAT, N).
+# (b) ivf on scalar FLOAT: must be ARRAY(FLOAT, N).
 statement error
-CREATE INDEX g5_reject_hnsw_f ON g5_reject USING inverted(pk, f hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_f ON g5_reject USING inverted(pk, f ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'f' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT
+db error: ERROR: Column 'f' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT
 
 
-# (c) hnsw on LIST<FLOAT>: must be ARRAY(FLOAT, N), not a variable-length list.
+# (c) ivf on LIST<FLOAT>: must be ARRAY(FLOAT, N), not a variable-length list.
 statement error
-CREATE INDEX g5_reject_hnsw_fl ON g5_reject USING inverted(pk, fl hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_fl ON g5_reject USING inverted(pk, fl ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'fl' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not FLOAT[]
+db error: ERROR: Column 'fl' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not FLOAT[]
 
 
-# (d) hnsw on ARRAY<DOUBLE,3>: element type must be FLOAT, not DOUBLE.
+# (d) ivf on ARRAY<DOUBLE,3>: element type must be FLOAT, not DOUBLE.
 statement error
-CREATE INDEX g5_reject_hnsw_da ON g5_reject USING inverted(pk, da hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_da ON g5_reject USING inverted(pk, da ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'da' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not DOUBLE[3]
+db error: ERROR: Column 'da' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not DOUBLE[3]
 
 
-# (e) hnsw on ARRAY<INTEGER,3>: element type must be FLOAT, not INTEGER.
+# (e) ivf on ARRAY<INTEGER,3>: element type must be FLOAT, not INTEGER.
 statement error
-CREATE INDEX g5_reject_hnsw_ia ON g5_reject USING inverted(pk, ia hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_ia ON g5_reject USING inverted(pk, ia ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'ia' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not INTEGER[3]
+db error: ERROR: Column 'ia' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not INTEGER[3]
 
 
-# (f) hnsw on scalar VARCHAR: not ARRAY at all.
+# (f) ivf on scalar VARCHAR: not ARRAY at all.
 statement error
-CREATE INDEX g5_reject_hnsw_v ON g5_reject USING inverted(pk, v hnsw (metric = 'l2'));
+CREATE INDEX g5_reject_ivf_v ON g5_reject USING inverted(pk, v ivf (metric = 'l2'));
 ----
-db error: ERROR: Failed to create index: Column 'v' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass, not VARCHAR
+db error: ERROR: Column 'v' must be ARRAY(FLOAT, N) to use the 'ivf' opclass, not VARCHAR
 
 
 # (g) implicit (no opclass) on UUID: term_dict has no codec for UUID.
 statement error
 CREATE INDEX g5_reject_imp_u ON g5_reject USING inverted(pk, u);
 ----
-db error: ERROR: Failed to create index: Column 'u' has unsupported type UUID and can not be indexed
+db error: ERROR: Column 'u' has unsupported type UUID and can not be indexed
 
 
 # (h) implicit (no opclass) on DECIMAL(10,2): term_dict has no codec for DECIMAL.
 statement error
 CREATE INDEX g5_reject_imp_d ON g5_reject USING inverted(pk, d);
 ----
-db error: ERROR: Failed to create index: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+db error: ERROR: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
 
 
 # (i) implicit (no opclass) on INTERVAL: term_dict has no codec for INTERVAL.
 statement error
 CREATE INDEX g5_reject_imp_iv ON g5_reject USING inverted(pk, iv);
 ----
-db error: ERROR: Failed to create index: Column 'iv' has unsupported type INTERVAL and can not be indexed
+db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexed
 
 
 # (j) implicit (no opclass) on HUGEINT: term_dict has no codec for HUGEINT.
 statement error
 CREATE INDEX g5_reject_imp_h ON g5_reject USING inverted(pk, h);
 ----
-db error: ERROR: Failed to create index: Column 'h' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column 'h' has unsupported type HUGEINT and can not be indexed
 
 
 statement ok

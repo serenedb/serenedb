@@ -20,11 +20,10 @@
 
 #include "catalog/search_analyzer_impl.h"
 
-#include <absl/container/flat_hash_set.h>
-
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
+#include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
@@ -32,8 +31,11 @@
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
 
+#include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
 #include "catalog/object.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::search {
 
@@ -52,26 +54,29 @@ bool Features::Add(std::string_view feature_name) {
   return true;
 }
 
-Result Features::Validate(std::string_view type) const {
+void Features::Validate(std::string_view type) const {
   if (HasFeatures(irs::IndexFeatures::Offs) &&
       !HasFeatures(irs::IndexFeatures::Pos)) {
-    return {
-      ERROR_BAD_PARAMETER,
-      "missing feature 'position' required when 'offset' feature is specified"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("missing feature 'position' required when 'offset' feature is "
+              "specified"));
   }
 
   if (HasFeatures(irs::IndexFeatures::Pos) &&
       !HasFeatures(irs::IndexFeatures::Freq)) {
-    return {ERROR_BAD_PARAMETER,
-            "missing feature 'frequency' required when 'position' feature is "
-            "specified"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("missing feature 'frequency' required when 'position' feature is "
+              "specified"));
   }
 
   if (HasFeatures(irs::IndexFeatures::Norm) &&
       !HasFeatures(irs::IndexFeatures::Freq)) {
-    return {
-      ERROR_BAD_PARAMETER,
-      "missing feature 'frequency' required when 'norm' feature is specified"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("missing feature 'frequency' required when 'norm' feature is "
+              "specified"));
   }
 
   const auto supported_features = [&] {
@@ -91,55 +96,28 @@ Result Features::Validate(std::string_view type) const {
     if (type == irs::analysis::SparseNGramTokenizer::type_name()) {
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
     }
+    if (type == irs::analysis::MinHashTokenizer::type_name()) {
+      // Signatures carry no meaningful offsets.
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+             irs::IndexFeatures::Norm;
+    }
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
            irs::IndexFeatures::Norm | irs::IndexFeatures::Offs;
   }();
 
   if (!irs::IsSubsetOf(_index_features, supported_features)) {
-    return {ERROR_BAD_PARAMETER, "Unsupported index features are specified: ",
-            std::to_underlying(_index_features)};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("Unsupported index features are specified: ",
+                            std::to_underlying(_index_features)));
   }
-
-  return {};
 }
 
 bool IsGeoAnalyzer(std::string_view type) noexcept {
-  static const absl::flat_hash_set<std::string_view> kGeoAnalyzers = {
+  static const containers::FlatHashSet<std::string_view> kGeoAnalyzers = {
     irs::analysis::GeoJsonAnalyzer::type_name(),
     irs::analysis::GeoPointAnalyzer::type_name(),
   };
   return kGeoAnalyzers.contains(type);
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(StringStreamTag) {
-  return std::make_unique<irs::StringTokenizer>();
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(NumberStreamTag) {
-  return std::make_unique<irs::NumericTokenizer>();
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(BoolStreamTag) {
-  return std::make_unique<irs::BooleanTokenizer>();
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(NullStreamTag) {
-  return std::make_unique<irs::NullTokenizer>();
-}
-
-AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(std::string_view bytes) {
-  if (bytes.empty()) {
-    return {};
-  }
-  try {
-    auto stream = catalog::ReadStream(bytes);
-    duckdb::BinaryDeserializer src{stream};
-    irs::analysis::TokenizerConfig cfg;
-    basics::ReadTuple(src, cfg);
-    return irs::analysis::CreateAnalyzer(std::move(cfg));
-  } catch (...) {
-    return {};
-  }
 }
 
 }  // namespace sdb::search

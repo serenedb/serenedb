@@ -83,6 +83,11 @@ BASELINE_DIR="${PERF_BASELINE_DIR:-${RESULTS_DIR}/baselines}"
 # Cores to pin the external (docker) engines to, so they race on the same CPUs as
 # serened. run_bench_isolated.sh exports the reserved set here; empty = all cores.
 ENG_CPUSET="${PERF_BENCH_CORES:-}"
+# Dedicated core for the single-threaded drain/copy clients (exported by
+# run_bench_isolated.sh). Unpinned they race the server workers for the same
+# cores and the ser/copy cells go bimodal (~4 vs ~9 GB/s on scheduling luck).
+CLIENT_PIN=()
+[[ -n "${PERF_CLIENT_CORES:-}" ]] && CLIENT_PIN=(taskset -c "${PERF_CLIENT_CORES}")
 # Serened-in-docker (the default): the external engines all run as containers, so a
 # bare-host serened would skip the container bridge-networking + cgroup cost they
 # all pay. Run serened the same way -- same --cpuset-cpus pinning, same bridge +
@@ -426,6 +431,7 @@ COPYIN="${PERF_COPYIN:-1}"
 COPYIN_ROWS="${PERF_COPYIN_ROWS:-200000}"
 COPYIN_FRAME="${PERF_COPYIN_FRAME:-262144}"
 COPYIN_REPS="${PERF_COPYIN_REPS:-5}"
+SER_REPS="${PERF_SER_REPS:-3}"
 COPYIN_FMTS=(binary text csv)
 
 # All serialize setup connects as the engine's trust user/db and is
@@ -491,8 +497,41 @@ copyin_setup() {
 # results.tsv shape with tps=MB/s and lat=median seconds so the summary's
 # ratio machinery applies untouched; a failed cell (e.g. a type without
 # binary serialization) records 0 and the error lands in serialize_<srv>.log.
-# ser_measure <log> <port> <label> <drain-mode> <query>: drain one type x format,
-# record MB/s (failures -> 0, never abort).
+# Interleaved-rep accounting shared by the serialize and copy-in matrices: the
+# timing pass runs the whole matrix REPS times, ONE rep per cell per pass, and
+# takes the per-cell median at the end. Sequential per-cell reps let slow drift
+# on the box bias whole cells (the matrices were bimodal run-to-run); with
+# interleaving the drift lands on every cell equally and the median cancels it.
+# cell_record <label> <one-rep-output> <log>: accumulate one pass of one cell.
+cell_record() {
+	local lbl="$1" out="$2" log="$3"
+	local label med mb mbps status
+	IFS=$'\t' read -r label med mb mbps status <<<"${out}"
+	echo "${out}" >>"${log}"
+	if [[ -z "${CELL_SEEN[${lbl}]:-}" ]]; then
+		CELL_SEEN["${lbl}"]=1
+		CELL_ORDER+=("${lbl}")
+	fi
+	CELL_TIMES["${lbl}"]+=" ${med}"
+	CELL_MB["${lbl}"]="${mb}"
+	CELL_STATUS["${lbl}"]="${status}"
+}
+
+# cell_emit <printf-width>: per cell, median of the recorded times -> one
+# results.tsv row + one pretty line, in first-seen (matrix) order.
+cell_emit() {
+	local width="$1" lbl med mbps
+	for lbl in "${CELL_ORDER[@]}"; do
+		med=$(printf '%s\n' ${CELL_TIMES[${lbl}]} | sort -g | awk '{a[NR] = $1} END {print a[int((NR + 1) / 2)]}')
+		mbps=$(awk -v mb="${CELL_MB[${lbl}]}" -v med="${med}" 'BEGIN {if (med > 0) printf "%d", mb / med; else printf "0"}')
+		printf '%s\t%s\t%s\t%s\t0\t0\n' "${lbl}" "${mbps}" "${med}" "${CELL_MB[${lbl}]}" >>"${OUT_DIR}/results.tsv"
+		printf "  %-${width}s %8s MB/s  (%ss, %s MB) %s\n" "${lbl}" "${mbps}" "${med}" "${CELL_MB[${lbl}]}" \
+			"${CELL_STATUS[${lbl}]}"
+	done
+}
+
+# ser_measure <log> <port> <label> <drain-mode> <query>: ONE rep of one
+# type x format cell into the cell accumulator (failures -> 0, never abort).
 ser_measure() {
 	local log="$1" port="$2" lbl="$3" mode="$4" query="$5" out
 	# Profiling pass (PROFILE_DRAIN_PID armed): record the server pid into a
@@ -501,18 +540,14 @@ ser_measure() {
 	# measurement pass already recorded it).
 	if [[ -n "${PROFILE_DRAIN_PID:-}" ]]; then
 		perf record -g -o "${OUT_DIR}/perf_${lbl}.data" -p "${PROFILE_DRAIN_PID}" -- \
-			python3 "${ROOT}/scripts/perf/wire_serialize_drain.py" "${port}" "${mode}" 3 \
+			"${CLIENT_PIN[@]}" python3 "${ROOT}/scripts/perf/wire_serialize_drain.py" "${port}" "${mode}" 3 \
 			"${SER_SETUP}" "${query}" "${lbl}" >/dev/null 2>&1 || true
 		return
 	fi
-	out=$(python3 "${ROOT}/scripts/perf/wire_serialize_drain.py" "${port}" "${mode}" 3 \
+	out=$("${CLIENT_PIN[@]}" python3 "${ROOT}/scripts/perf/wire_serialize_drain.py" "${port}" "${mode}" 1 \
 		"${SER_SETUP}" "${query}" "${lbl}" 2>>"${log}") ||
 		out="${lbl}	0	0	0	ERROR: client failed"
-	local label med mb mbps status
-	IFS=$'\t' read -r label med mb mbps status <<<"${out}"
-	printf '%s\t%s\t%s\t%s\t0\t0\n' "${label}" "${mbps}" "${med}" "${mb}" >>"${OUT_DIR}/results.tsv"
-	printf '  %-30s %8s MB/s  (%ss, %s MB) %s\n' "${label}" "${mbps}" "${med}" "${mb}" "${status}"
-	echo "${out}" >>"${log}"
+	cell_record "${lbl}" "${out}" "${log}"
 }
 
 # run_serialize_matrix <variant> <port> <setup>: one row per type x format under
@@ -520,24 +555,30 @@ ser_measure() {
 run_serialize_matrix() {
 	local srv="$1" port="$2" SER_SETUP="$3"
 	local log="${OUT_DIR}/serialize_${srv%%_*}.log"
-	local typ fmt lbl
-	for typ in "${SER_TYPES[@]}"; do
-		for fmt in text binary copy_text copy_binary; do
-			case "${fmt}" in
-			copy_*) lbl="${srv}_copy_${typ}_${fmt#copy_}" ;;
-			*) lbl="${srv}_ser_${typ}_${fmt}" ;;
-			esac
-			ser_measure "${log}" "${port}" "${lbl}" "${fmt}" "SELECT * FROM t_${typ}"
+	local typ fmt lbl pass reps="${SER_REPS}"
+	local -A CELL_TIMES=() CELL_MB=() CELL_STATUS=() CELL_SEEN=()
+	local -a CELL_ORDER=()
+	[[ -n "${PROFILE_DRAIN_PID:-}" ]] && reps=1
+	for ((pass = 1; pass <= reps; pass++)); do
+		for typ in "${SER_TYPES[@]}"; do
+			for fmt in text binary copy_text copy_binary; do
+				case "${fmt}" in
+				copy_*) lbl="${srv}_copy_${typ}_${fmt#copy_}" ;;
+				*) lbl="${srv}_ser_${typ}_${fmt}" ;;
+				esac
+				ser_measure "${log}" "${port}" "${lbl}" "${fmt}" "SELECT * FROM t_${typ}"
+			done
+		done
+		# Escaping workloads (text formats only): copy_text vs ser_text on data with
+		# tab/newline/backslash/quote -- exercises the run-batch escape path.
+		for typ in "${SER_ESC_TYPES[@]}"; do
+			ser_measure "${log}" "${port}" "${srv}_ser_${typ}_esc_text" text \
+				"SELECT * FROM t_${typ}_esc"
+			ser_measure "${log}" "${port}" "${srv}_copy_${typ}_esc_text" copy_text \
+				"SELECT * FROM t_${typ}_esc"
 		done
 	done
-	# Escaping workloads (text formats only): copy_text vs ser_text on data with
-	# tab/newline/backslash/quote -- exercises the run-batch escape path.
-	for typ in "${SER_ESC_TYPES[@]}"; do
-		ser_measure "${log}" "${port}" "${srv}_ser_${typ}_esc_text" text \
-			"SELECT * FROM t_${typ}_esc"
-		ser_measure "${log}" "${port}" "${srv}_copy_${typ}_esc_text" copy_text \
-			"SELECT * FROM t_${typ}_esc"
-	done
+	[[ -z "${PROFILE_DRAIN_PID:-}" ]] && cell_emit 30
 }
 
 run_serialize() {
@@ -586,30 +627,32 @@ copyin_measure() {
 	local log="$1" port="$2" lbl="$3" src="$4" fmt="$5" out
 	if [[ -n "${PROFILE_DRAIN_PID:-}" ]]; then
 		perf record -g -o "${OUT_DIR}/perf_${lbl}.data" -p "${PROFILE_DRAIN_PID}" -- \
-			python3 "${ROOT}/scripts/perf/wire_copy_in.py" "${port}" "${src}" "${fmt}" \
+			"${CLIENT_PIN[@]}" python3 "${ROOT}/scripts/perf/wire_copy_in.py" "${port}" "${src}" "${fmt}" \
 			"${COPYIN_REPS}" "${COPYIN_FRAME}" "${lbl}" >/dev/null 2>&1 || true
 		return
 	fi
-	out=$(python3 "${ROOT}/scripts/perf/wire_copy_in.py" "${port}" "${src}" "${fmt}" \
-		"${COPYIN_REPS}" "${COPYIN_FRAME}" "${lbl}" 2>>"${log}") ||
+	out=$("${CLIENT_PIN[@]}" python3 "${ROOT}/scripts/perf/wire_copy_in.py" "${port}" "${src}" "${fmt}" \
+		1 "${COPYIN_FRAME}" "${lbl}" 2>>"${log}") ||
 		out="${lbl}	0	0	0	ERROR: client failed"
-	local label med mb mbps status
-	IFS=$'\t' read -r label med mb mbps status <<<"${out}"
-	printf '%s\t%s\t%s\t%s\t0\t0\n' "${label}" "${mbps}" "${med}" "${mb}" >>"${OUT_DIR}/results.tsv"
-	printf '  %-34s %8s MB/s  (%ss, %s MB) %s\n' "${label}" "${mbps}" "${med}" "${mb}" "${status}"
-	echo "${out}" >>"${log}"
+	cell_record "${lbl}" "${out}" "${log}"
 }
 
 run_copyin() {
 	local srv="$1" port="$2"
 	local log="${OUT_DIR}/copyin_${srv}.log"
 	[[ -z "${PROFILE_DRAIN_PID:-}" ]] && copyin_setup "${port}" >>"${log}" 2>&1
-	local typ fmt
-	for typ in "${SER_TYPES[@]}"; do
-		for fmt in "${COPYIN_FMTS[@]}"; do
-			copyin_measure "${log}" "${port}" "${srv}_copyin_${typ}_${fmt}" "t_${typ}_cin" "${fmt}"
+	local typ fmt pass reps="${COPYIN_REPS}"
+	local -A CELL_TIMES=() CELL_MB=() CELL_STATUS=() CELL_SEEN=()
+	local -a CELL_ORDER=()
+	[[ -n "${PROFILE_DRAIN_PID:-}" ]] && reps=1
+	for ((pass = 1; pass <= reps; pass++)); do
+		for typ in "${SER_TYPES[@]}"; do
+			for fmt in "${COPYIN_FMTS[@]}"; do
+				copyin_measure "${log}" "${port}" "${srv}_copyin_${typ}_${fmt}" "t_${typ}_cin" "${fmt}"
+			done
 		done
 	done
+	[[ -z "${PROFILE_DRAIN_PID:-}" ]] && cell_emit 34
 }
 
 # run_one <label> <port> <pid> <sqlfile> <pgbench-mode> [extra pgbench args]

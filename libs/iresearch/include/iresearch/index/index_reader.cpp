@@ -22,8 +22,8 @@
 
 #include "index_reader.hpp"
 
+#include "basics/misc.hpp"
 #include "basics/resource_manager.hpp"
-#include "iresearch/formats/hnsw/hnsw_reader.hpp"
 
 namespace irs {
 namespace {
@@ -44,49 +44,6 @@ struct EmptySubReader final : SubReader {
 const EmptySubReader kEmpty;
 
 }  // namespace
-
-void SubReader::Search(field_id field, HNSWSearchInfo info,
-                       HNSWAnnSearchBuffer& buffer, uint32_t segment_id,
-                       ReadContext& read_ctx) const {
-  const auto* hnsw_reader = HNSW(field);
-  if (!hnsw_reader) {
-    return;
-  }
-  HNSWResultHandler handler{
-    1,
-    buffer.dis.data(),
-    buffer.ids.data(),
-    info.top_k,
-  };
-  auto& cache = hnsw_reader->PrepareCache(buffer.cache, read_ctx);
-  HNSWSearchContext context{
-    info, segment_id, buffer.vt, handler, cache, docs_mask(),
-  };
-  hnsw_reader->Search(context);
-}
-
-void SubReader::RangeSearch(field_id field, HNSWRangeSearchInfo info,
-                            HNSWRangeSearchBuffer& buffer, uint32_t segment_id,
-                            ReadContext& read_ctx) const {
-  const auto* hnsw_reader = HNSW(field);
-  if (!hnsw_reader) {
-    return;
-  }
-  faiss::RangeSearchResult seg_result{1};
-  HNSWRangeResultHandler handler{&seg_result, info.radius};
-  auto& cache = hnsw_reader->PrepareCache(buffer.cache, read_ctx);
-  HNSWRangeSearchContext context{
-    info, segment_id, buffer.vt, handler, cache, docs_mask(),
-  };
-  hnsw_reader->RangeSearch(context);
-  size_t sz = seg_result.lims[1] - seg_result.lims[0];
-  buffer.dis.reserve(buffer.dis.size() + sz);
-  buffer.ids.reserve(buffer.ids.size() + sz);
-  for (size_t i = seg_result.lims[0]; i < seg_result.lims[1]; ++i) {
-    buffer.dis.emplace_back(seg_result.distances[i]);
-    buffer.ids.emplace_back(seg_result.labels[i]);
-  }
-}
 
 const SubReader& SubReader::empty() noexcept { return kEmpty; }
 

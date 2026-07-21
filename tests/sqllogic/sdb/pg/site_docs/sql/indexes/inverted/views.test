@@ -70,7 +70,7 @@ CREATE VIEW u_docs AS
     UNION ALL SELECT 2, 'lazy dog sleeps';
 
 statement ok
-CREATE INDEX u_docs_idx ON u_docs USING inverted (id, body view_en) WITH (pk = 'id');
+CREATE INDEX u_docs_idx ON u_docs USING inverted (id, body view_en);
 
 # DOCS_TEST_BODY
 

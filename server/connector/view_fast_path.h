@@ -33,13 +33,11 @@
 namespace duckdb {
 
 class ClientContext;
-class LogicalGet;
 
 }  // namespace duckdb
 namespace sdb::catalog {
 
 class PgSqlView;
-class Table;
 
 }  // namespace sdb::catalog
 namespace sdb::connector {

@@ -1,0 +1,150 @@
+# Cross-catalog EDGE CASE: PUBLIC grant semantics and their interplay with
+# explicit role grants. A grant to PUBLIC stores ONE element with an empty
+# grantee ("=privs/grantor") and applies to EVERY role -- including roles
+# created AFTER the grant. An explicit grant to a named role accumulates
+# independently of PUBLIC, so a role can hold MORE than PUBLIC gives it.
+# Revoking the explicit grant leaves the PUBLIC privilege intact, and vice
+# versa. All byte-identical on PostgreSQL 19beta1 and serenedb.
+#
+# Vedernikoff lore: the clickclack table; iceberg the pre-existing role,
+# latejoiner the role created after the PUBLIC grant. Idempotent + clean.
+
+statement ok
+DROP TABLE IF EXISTS xcat_pub_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_pub_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_pub_latejoiner;
+
+
+statement ok
+CREATE TABLE xcat_pub_clickclack (id int, payload text);
+
+
+statement ok
+CREATE ROLE xcat_pub_iceberg;
+
+
+# Grant SELECT to PUBLIC: relacl gets exactly one empty-grantee element.
+statement ok
+GRANT SELECT ON xcat_pub_clickclack TO PUBLIC;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_pub_clickclack'
+) g WHERE e LIKE '=%';
+----
+e
+=r/postgres
+
+
+# The pre-existing role gets SELECT THROUGH PUBLIC even though it never received
+# a direct grant.
+query
+SELECT has_table_privilege('xcat_pub_iceberg', 'xcat_pub_clickclack', 'SELECT') AS sel_via_public,
+       has_table_privilege('xcat_pub_iceberg', 'xcat_pub_clickclack', 'INSERT') AS ins;
+----
+sel_via_public	ins
+t	f
+
+
+# A role created AFTER the PUBLIC grant ALSO sees it -- PUBLIC is evaluated at
+# check time against all roles, not snapshotted at grant time.
+statement ok
+CREATE ROLE xcat_pub_latejoiner;
+
+
+query
+SELECT has_table_privilege('xcat_pub_latejoiner', 'xcat_pub_clickclack', 'SELECT') AS late_sees_public;
+----
+late_sees_public
+t
+
+
+# An explicit grant to iceberg accumulates ON TOP of PUBLIC: iceberg now has
+# SELECT (from either source) and INSERT (only explicit). relacl has both the
+# empty-grantee element and the iceberg element.
+statement ok
+GRANT INSERT ON xcat_pub_clickclack TO xcat_pub_iceberg;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_pub_clickclack'
+) g WHERE e LIKE '=%' OR e LIKE 'xcat_pub_iceberg=%'
+ORDER BY e;
+----
+e
+=r/postgres
+xcat_pub_iceberg=a/postgres
+
+
+query
+SELECT has_table_privilege('xcat_pub_iceberg', 'xcat_pub_clickclack', 'SELECT') AS sel,
+       has_table_privilege('xcat_pub_iceberg', 'xcat_pub_clickclack', 'INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+# Revoking iceberg's EXPLICIT grant removes only the iceberg element; the PUBLIC
+# element survives, so iceberg KEEPS SELECT through PUBLIC but loses INSERT.
+statement ok
+REVOKE INSERT ON xcat_pub_clickclack FROM xcat_pub_iceberg;
+
+
+query
+SELECT count(*) AS iceberg_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_pub_clickclack'
+) g WHERE e LIKE 'xcat_pub_iceberg=%';
+----
+iceberg_rows
+0
+
+
+query
+SELECT has_table_privilege('xcat_pub_iceberg', 'xcat_pub_clickclack', 'SELECT') AS still_sel,
+       has_table_privilege('xcat_pub_iceberg', 'xcat_pub_clickclack', 'INSERT') AS ins_gone;
+----
+still_sel	ins_gone
+t	f
+
+
+# Revoking PUBLIC removes the empty-grantee element; now NO role (neither the
+# pre-existing nor the late one) gets SELECT through PUBLIC any longer.
+statement ok
+REVOKE SELECT ON xcat_pub_clickclack FROM PUBLIC;
+
+
+query
+SELECT count(*) AS public_rows FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_pub_clickclack'
+) g WHERE e LIKE '=%';
+----
+public_rows
+0
+
+
+query
+SELECT has_table_privilege('xcat_pub_iceberg', 'xcat_pub_clickclack', 'SELECT') AS iceberg_sel,
+       has_table_privilege('xcat_pub_latejoiner', 'xcat_pub_clickclack', 'SELECT') AS late_sel;
+----
+iceberg_sel	late_sel
+f	f
+
+
+statement ok
+DROP TABLE xcat_pub_clickclack;
+
+
+statement ok
+DROP ROLE xcat_pub_iceberg;
+
+
+statement ok
+DROP ROLE xcat_pub_latejoiner;

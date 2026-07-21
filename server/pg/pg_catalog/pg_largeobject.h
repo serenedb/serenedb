@@ -29,6 +29,7 @@ namespace sdb::pg {
 struct PgLargeobject {
   static constexpr uint64_t kId = 129;
   static constexpr std::string_view kName = "pg_largeobject";
+  static constexpr bool kSuperuserOnly = true;
   Oid loid;
   int32_t pageno;
   Bytea data;

@@ -73,6 +73,30 @@ class MaxScoreIterator : public DocIterator {
     return _doc;
   }
   doc_id_t seek(doc_id_t target) final { return advance(); }
+
+  // WAND/topk iterator: driven only through Collect; these are never reached.
+  uint32_t count() final {
+    SDB_ASSERT(false);
+    return 0;
+  }
+  uint32_t EmitDocs(doc_id_t* /*out*/, doc_id_t /*max*/) final {
+    SDB_ASSERT(false);
+    return 0;
+  }
+  uint32_t EmitScoredDocs(doc_id_t* /*out*/, score_t* /*scores*/,
+                          doc_id_t /*max*/, const ScoreFunction& /*scorer*/,
+                          ColumnArgsFetcher* /*fetcher*/,
+                          doc_id_t /*min*/) final {
+    SDB_ASSERT(false);
+    return 0;
+  }
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t /*min*/, doc_id_t /*max*/,
+                                      uint64_t* /*mask*/,
+                                      FillBlockScoreContext /*score*/,
+                                      FillBlockMatchContext /*match*/) final {
+    SDB_ASSERT(false);
+    return {doc_limits::eof(), true};
+  }
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }

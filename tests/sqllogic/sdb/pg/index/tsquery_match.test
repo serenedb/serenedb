@@ -887,31 +887,19 @@ query
 EXPLAIN SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(tsquery_phrase(tsquery_phrase(ts_phrase('quick'), ts_phrase('fox'), 2), ts_phrase('jumps'), 1), tsquery_phrase(tsquery_phrase(ts_phrase('over'), ts_phrase('lazy'), 1), ts_phrase('dog'), 1), 1);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│       Index: tsq_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       PHRASE      ││  │
-│  ││    ────────────   ││  │
-│  ││ b(string) = <Term ││  │
-│  ││ :quick(0, 0); Term││  │
-│  ││  :fox(2, 2); Term ││  │
-│  ││ :jumps(1, 1); Term││  │
-│  ││ :over(1, 1); Term ││  │
-│  ││ :lazy(1, 1); Term ││  │
-│  ││   :dog(1, 1); >   ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│       Projections: a      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: tsq_idx                                                                                             │
+│ Lookup: table                                                                                              │
+│ Filter:                                                                                                    │
+│ ╭─ Phrase ───────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: b(string)                                                                                       │ │
+│ │ Parts:                                                                                                 │ │
+│ │ Term:quick(0, 0); Term:fox(2, 2); Term:jumps(1, 1); Term:over(1, 1); Term:lazy(1, 1); Term:dog(1, 1);  │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: a                                                                                             │
+│ ~1 row                                                                                                     │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
 
 # Reject distance < 1 (PG's `<0>` is invalid, `<1>` is adjacent).
 statement error
@@ -1199,6 +1187,31 @@ SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') ^ 2.0) ^ 3.0 ORDER BY a;
 a
 1
 2
+
+# Multi-token bare-string cast under a boost keeps OR semantics.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick turtle'::tsquery ^ 3.0) ORDER BY a;
+----
+a
+1
+2
+3
+
+# ts_any under a boost -- same match set as unboosted.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_any(['quick', 'turtle']) ^ 2.0) ORDER BY a;
+----
+a
+1
+2
+3
+
+# ts_starts_with under a boost.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_starts_with('turt') ^ 2.0) ORDER BY a;
+----
+a
+3
 
 # ----------------------------------------------------------------------
 # NOT / AND combinations.

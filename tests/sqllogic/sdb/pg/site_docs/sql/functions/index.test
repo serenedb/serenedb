@@ -108,5 +108,6 @@ bit_count	scalar	TINYINT	{TINYINT}
 bit_length	scalar	BIGINT	{VARCHAR}
 bit_position	scalar	INTEGER	{BIT,BIT}
 bitstring	scalar	BIT	{VARCHAR,INTEGER}
+bitstring_byte_comparable	scalar	BLOB	{BIT}
 bm25	scalar	FLOAT	{BIGINT}
 broadcast	scalar	INET	{INET}

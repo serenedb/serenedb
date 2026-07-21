@@ -25,7 +25,9 @@
 #include <initializer_list>
 #include <iresearch/utils/string.hpp>
 #include <span>
+#include <string>
 #include <type_traits>
+#include <vector>
 
 namespace sdb::pg {
 
@@ -60,7 +62,10 @@ struct Empty {};
 using PgNodeTree = Empty;
 struct Aclitem {};
 using Anyarray = Empty;
-using Timestamptz = Empty;
+struct Timestamptz {
+  int64_t micros = 0;
+  bool is_null = true;
+};
 using PgNdDistinct = Empty;
 using PgDependencies = Empty;
 using PgMcvList = Empty;
@@ -74,13 +79,29 @@ template<typename T>
 using Array = std::span<const T>;
 
 template<typename T>
-using Vector = Array<T>;
-
-template<typename T>
 struct IsArray : std::false_type {};
 
 template<typename T>
 struct IsArray<Array<T>> : std::true_type {};
+
+}  // namespace sdb::pg
+namespace sdb::catalog {
+
+struct AclItem;
+struct Snapshot;
+
+}  // namespace sdb::catalog
+namespace sdb::pg {
+
+struct AclColumn {
+  std::span<const catalog::AclItem> items;
+};
+
+template<typename T>
+struct IsAclColumn : std::false_type {};
+
+template<>
+struct IsAclColumn<AclColumn> : std::true_type {};
 
 constexpr uint64_t MaskFromNulls(std::span<const size_t> indicies) {
   uint64_t mask = 0;
@@ -92,15 +113,6 @@ constexpr uint64_t MaskFromNulls(std::span<const size_t> indicies) {
 
 constexpr uint64_t MaskFromNonNulls(std::span<const size_t> indicies) {
   return ~MaskFromNulls(indicies);
-}
-
-// Synthetic OID for the backing index of a primary key constraint.
-// PG allocates a separate pg_class entry for every PK index; SereneDB does
-// not, so derive a deterministic distinct OID from the table's OID using the
-// top bit. Real catalog OIDs never set this bit.
-constexpr uint64_t kSyntheticPkIndexBit = uint64_t{1} << 62;
-constexpr uint64_t PkIndexOid(uint64_t table_oid) {
-  return table_oid | kSyntheticPkIndexBit;
 }
 
 template<typename ClassType, typename MemberType>

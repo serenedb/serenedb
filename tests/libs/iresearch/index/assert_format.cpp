@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <unordered_set>
 
 #include "basics/bit_utils.hpp"
@@ -56,19 +57,36 @@ void AssertTerm(size_t segment_index, size_t field_index, size_t term_index,
                 const irs::TermIterator& actual_term,
                 irs::IndexFeatures requested_features);
 
-void Posting::insert(uint32_t pos, uint32_t offs_start,
-                     const irs::AttributeProvider& attrs) {
-  auto* offs = irs::get<irs::OffsAttr>(attrs);
-  auto* pay = irs::get<irs::PayAttr>(attrs);
+namespace {
 
+bool MemcmpLess(const irs::byte_type* lhs, size_t lhs_size,
+                const irs::byte_type* rhs, size_t rhs_size) noexcept {
+  SDB_ASSERT(lhs && rhs);
+  const size_t size = std::min(lhs_size, rhs_size);
+  const auto res = ::memcmp(lhs, rhs, size);
+  if (0 == res) {
+    return lhs_size < rhs_size;
+  }
+  return res < 0;
+}
+
+}  // namespace
+
+void Posting::insert(uint32_t pos) {
+  _positions.emplace(pos, std::numeric_limits<uint32_t>::max(),
+                     std::numeric_limits<uint32_t>::max(), irs::bytes_view{});
+}
+
+void Posting::insert(uint32_t pos, uint32_t offs_start, bool has_offs,
+                     uint32_t tok_offs_start, uint32_t tok_offs_end) {
   uint32_t start = std::numeric_limits<uint32_t>::max();
   uint32_t end = std::numeric_limits<uint32_t>::max();
-  if (offs) {
-    start = offs_start + offs->start;
-    end = offs_start + offs->end;
+  if (has_offs) {
+    start = offs_start + tok_offs_start;
+    end = offs_start + tok_offs_end;
   }
 
-  _positions.emplace(pos, start, end, pay ? pay->value : irs::bytes_view{});
+  _positions.emplace(pos, start, end, irs::bytes_view{});
 }
 
 Posting& Term::insert(irs::doc_id_t id) {
@@ -78,8 +96,8 @@ Posting& Term::insert(irs::doc_id_t id) {
 Term::Term(irs::bytes_view data) : value(data) {}
 
 bool Term::operator<(const Term& rhs) const {
-  return irs::MemcmpLess(value.c_str(), value.size(), rhs.value.c_str(),
-                         rhs.value.size());
+  return MemcmpLess(value.c_str(), value.size(), rhs.value.c_str(),
+                    rhs.value.size());
 }
 
 void Term::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
@@ -228,24 +246,50 @@ void IndexSegment::insert_indexed(const Ifield& f) {
 
   _doc_fields.insert(&field);
 
-  auto& stream = f.GetTokens();
+  if (const auto block_terms = f.BlockTerms(); block_terms.has_value()) {
+    const auto doc_id = doc();
+    uint32_t inc_value = 1;
+    for (const auto& block_term : *block_terms) {
+      tests::Term& trm = field.insert(block_term);
+      if (trm.postings.empty() ||
+          std::prev(std::end(trm.postings))->id() != doc_id) {
+        ++field.stats.num_unique;
+      }
+      tests::Posting& pst = trm.insert(doc_id);
+      field.stats.pos += inc_value;
+      field.stats.num_overlap += static_cast<uint32_t>(0 == inc_value);
+      ++field.stats.len;
+      pst.insert(field.stats.pos);
+      field.stats.max_term_freq =
+        std::max(field.stats.max_term_freq,
+                 static_cast<decltype(field.stats.max_term_freq)>(
+                   pst.positions().size()));
+      inc_value = 0;
+    }
+    if (!block_terms->empty()) {
+      field.docs.emplace(doc_id);
+    }
+    return;
+  }
 
-  auto* term = irs::get<irs::TermAttr>(stream);
-  SDB_ASSERT(term);
-  auto* inc = irs::get<irs::IncAttr>(stream);
-  SDB_ASSERT(inc);
-  auto* offs = irs::get<irs::OffsAttr>(stream);
+  auto& analyzer = f.GetTokens();
+
+  const bool has_offs = analyzer.Traits().offsets;
   if (irs::IndexFeatures::Offs ==
         (requested_features & irs::IndexFeatures::Offs) &&
-      offs) {
+      has_offs) {
     field.index_features |= irs::IndexFeatures::Offs;
   }
 
-  bool empty = true;
   const auto doc_id = doc();
 
-  while (stream.next()) {
-    tests::Term& trm = field.insert(term->value);
+  irs::TokenCollector collector{irs::TokenLayout::TermsPosOffs};
+  irs::AnalyzeValue(analyzer, f.Value(), collector);
+
+  uint32_t prev_pos = 0;
+  uint32_t last_offs_end = 0;
+  for (const auto& tok : collector.tokens) {
+    tests::Term& trm = field.insert(irs::bytes_view{tok.term});
 
     if (trm.postings.empty() ||
         std::prev(std::end(trm.postings))->id() != doc_id) {
@@ -253,23 +297,26 @@ void IndexSegment::insert_indexed(const Ifield& f) {
     }
 
     tests::Posting& pst = trm.insert(doc_id);
-    field.stats.pos += inc->value;
-    field.stats.num_overlap += static_cast<uint32_t>(0 == inc->value);
+    const uint32_t inc = tok.pos - prev_pos;
+    prev_pos = tok.pos;
+    field.stats.pos += inc;
+    field.stats.num_overlap += static_cast<uint32_t>(0 == inc);
     ++field.stats.len;
-    pst.insert(field.stats.pos, field.stats.offs, stream);
+    pst.insert(field.stats.pos, field.stats.offs, has_offs, tok.offs_start,
+               tok.offs_end);
     field.stats.max_term_freq = std::max(
       field.stats.max_term_freq,
       static_cast<decltype(field.stats.max_term_freq)>(pst.positions().size()));
 
-    empty = false;
+    last_offs_end = tok.offs_end;
   }
 
-  if (!empty) {
+  if (!collector.tokens.empty()) {
     field.docs.emplace(doc_id);
   }
 
-  if (offs) {
-    field.stats.offs += offs->end;
+  if (has_offs) {
+    field.stats.offs += last_offs_end;
   }
 }
 
@@ -344,6 +391,8 @@ class DocIteratorImpl : public irs::DocIterator {
 
     return _doc;
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   class PosIterator final : public irs::PosAttr {
@@ -530,11 +579,11 @@ void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
   ASSERT_TRUE(!irs::doc_limits::valid(seek_docs->value()));
 
   size_t doc_index = 0;
-  while (expected_docs->next()) {
+  while (!irs::doc_limits::eof(expected_docs->advance())) {
     SCOPED_TRACE(absl::StrCat("doc_index=", doc_index++));
     const auto expected_doc = expected_docs->value();
 
-    ASSERT_TRUE(seq_docs->next());
+    ASSERT_TRUE(!irs::doc_limits::eof(seq_docs->advance()));
     ASSERT_EQ(expected_doc, seq_docs->value());
 
     ASSERT_EQ(expected_doc, seek_docs->seek(expected_doc));
@@ -611,9 +660,9 @@ void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
   }
 
   ASSERT_TRUE(irs::doc_limits::eof(expected_docs->value()));
-  ASSERT_FALSE(seq_docs->next());
+  ASSERT_FALSE(!irs::doc_limits::eof(seq_docs->advance()));
   ASSERT_TRUE(irs::doc_limits::eof(seq_docs->value()));
-  ASSERT_FALSE(seek_docs->next());
+  ASSERT_FALSE(!irs::doc_limits::eof(seek_docs->advance()));
   ASSERT_TRUE(irs::doc_limits::eof(seek_docs->value()));
 }
 

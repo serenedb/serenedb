@@ -156,7 +156,7 @@ comedy	1	2000	2000
 
 # DOCS_TEST_BODY
 
-query ?
+query
 -- The query "Biggest Blockbuster" becomes tokens: {biggest, blockbuster}
 SELECT ts_lexize('basic_dict', 'Biggest Blockbuster');
 ----

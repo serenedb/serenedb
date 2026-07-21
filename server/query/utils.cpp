@@ -26,13 +26,4 @@ std::string_view ToAlias(std::string_view name) {
   return name.substr(0, name.find_last_of(kColumnSeparator));
 }
 
-std::vector<std::string> ToAliases(std::span<const std::string> names) {
-  std::vector<std::string> aliases;
-  aliases.reserve(names.size());
-  for (const auto& name : names) {
-    aliases.emplace_back(ToAlias(name));
-  }
-  return aliases;
-}
-
 }  // namespace sdb::query

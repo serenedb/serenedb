@@ -24,8 +24,6 @@
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <expected>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
@@ -33,11 +31,10 @@
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/serializer.h"
 #include "catalog/persistence/tokenizer.h"
 #include "catalog/search_analyzer_impl.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 namespace {
@@ -46,17 +43,10 @@ using persistence::TokenizerData;
 
 }  // namespace
 
-ResultOr<Tokenizer::TokenizerWrapper> Tokenizer::GetTokenizer() {
+Tokenizer::TokenizerWrapper Tokenizer::GetTokenizer() {
   absl::MutexLock lock{&_m};
   if (_pool.empty()) {
-    irs::analysis::Analyzer::ptr analyzer;
-    if (auto r = basics::SafeCall([&] -> Result {
-          analyzer = CreateAnalyzer();
-          return {};
-        });
-        !r.ok()) {
-      return std::unexpected<Result>{std::move(r)};
-    }
+    auto analyzer = CreateTokenizer();
     return TokenizerWrapper{analyzer.release(), Deleter{this}};
   }
   auto analyzer = std::move(_pool.back());
@@ -65,20 +55,21 @@ ResultOr<Tokenizer::TokenizerWrapper> Tokenizer::GetTokenizer() {
   return TokenizerWrapper{analyzer.release(), Deleter{this}};
 }
 
-void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
+void Tokenizer::PushTokenizer(irs::analysis::Tokenizer::ptr analyzer) noexcept {
   SDB_ASSERT(analyzer);
   absl::MutexLock lock{&_m};
   _pool.push_back(std::move(analyzer));
 }
 
-irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
-  return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
+irs::analysis::Tokenizer::ptr Tokenizer::CreateTokenizer() const {
+  return irs::analysis::CreateTokenizer(irs::analysis::Clone(_config));
 }
 
-Tokenizer::Tokenizer(ObjectId schema_id, ObjectId id, std::string_view name,
-                     search::Features features, uint32_t norm_row_group_size,
+Tokenizer::Tokenizer(Permissions perm, ObjectId schema_id, ObjectId id,
+                     std::string_view name, search::Features features,
+                     uint32_t norm_row_group_size,
                      irs::analysis::TokenizerConfig config)
-  : Object{schema_id, id, name, ObjectType::Tokenizer},
+  : Object{std::move(perm), schema_id, id, name, ObjectType::Tokenizer},
     _config{std::move(config)},
     _features{features},
     _norm_row_group_size{norm_row_group_size} {}
@@ -88,9 +79,9 @@ std::shared_ptr<Tokenizer> Tokenizer::Deserialize(duckdb::Deserializer& src,
   TokenizerData data;
   basics::ReadTuple(src, data);
 
-  return std::make_shared<Tokenizer>(ctx.schema_id, ctx.id, data.name,
-                                     data.features, data.norm_row_group_size,
-                                     std::move(data.config));
+  return std::make_shared<Tokenizer>(
+    std::move(data.perm), ctx.schema_id, ctx.id, data.name, data.features,
+    data.norm_row_group_size, std::move(data.config));
 }
 
 void Tokenizer::Serialize(duckdb::Serializer& sink) const {
@@ -99,6 +90,7 @@ void Tokenizer::Serialize(duckdb::Serializer& sink) const {
     .config = irs::analysis::Clone(_config),
     .features = _features,
     .norm_row_group_size = _norm_row_group_size,
+    .perm = GetPermissions(),
   };
   basics::WriteTuple(sink, data);
 }

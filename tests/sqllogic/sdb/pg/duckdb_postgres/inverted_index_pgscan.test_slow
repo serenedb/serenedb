@@ -64,8 +64,7 @@ statement ok
 CREATE INDEX pg_articles_v_idx_${__DATABASE__}
   ON pg_articles_v_${__DATABASE__}
   USING inverted(id, body pg_en_${__DATABASE__})
-  INCLUDE (tag, views)
-  WITH (pk = 'id');
+  INCLUDE (tag, views);
 
 
 # count(*) over the view-backed index -- flows from iresearch, no source touch.
@@ -117,8 +116,10 @@ sum
 # Selecting real (non-indexed, non-INCLUDE'd) source columns fails because
 # postgres_scan isn't a fast-path source. Pin the documented error so
 # flipping the behaviour requires touching this assertion.
-statement error materialising real columns from this view-backed inverted index is not yet supported
+statement error
 SELECT id, body FROM pg_articles_v_idx_${__DATABASE__} WHERE body @@ ts_phrase('pudge');
+----
+db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
 
 
 statement ok

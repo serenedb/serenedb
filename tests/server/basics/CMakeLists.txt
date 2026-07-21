@@ -11,9 +11,7 @@ add_executable(
     build_id_test.cpp
     metrics_test.cpp
     number_of_cores_test.cpp
-    encoding_utils_test.cpp
     random_test.cpp
-    string_utils_test.cpp
     serializer_test.cpp
     serializer_binary_test.cpp
     json_serde_test.cpp
@@ -33,6 +31,7 @@ add_executable(
     network_pg_scram_test.cpp
     network_pg_implicit_txn_test.cpp
     network_pg_protocol_state_test.cpp
+    network_pg_hba_test.cpp
     network_duck_executor_test.cpp
     network_duck_pump_test.cpp
     network_pg_frames_test.cpp

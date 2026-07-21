@@ -25,12 +25,12 @@
 
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/search_range.hpp"
+#include "iresearch/utils/numeric_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
 class ByGranularRange;
-class NumericTokenizer;
 struct FilterVisitor;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -75,10 +75,15 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary, T&& value) {
 
 //////////////////////////////////////////////////////////////////////////////
 /// @brief convenient helper for setting granular term at a specified range
-///        boundary
+///        boundary: one term per precision-step level, shift 0 first
+///        (sequential 'granularity_level' value)
 //////////////////////////////////////////////////////////////////////////////
-void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
-                     NumericTokenizer& term);
+template<typename T>
+void SetGranularNumericTerm(ByGranularRangeOptions::terms& boundary, T value) {
+  boundary.clear();
+  numeric_utils::ForEachNumericTerm(
+    value, [&](bytes_view term) { boundary.emplace_back(term); });
+}
 
 //////////////////////////////////////////////////////////////////////////////
 /// @class by_granular_range
@@ -93,9 +98,6 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
 //////////////////////////////////////////////////////////////////////////////
 class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
  public:
-  static void visit(const SubReader& segment, const TermReader& reader,
-                    const options_type& options, FilterVisitor& visitor);
-
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,

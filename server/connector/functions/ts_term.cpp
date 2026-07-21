@@ -18,8 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/status/status.h>
+
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
@@ -29,8 +31,9 @@
 
 namespace sdb::connector {
 
-Result SetupTermFilter(irs::ByTerm& filter, const SearchColumnInfo& column_info,
-                       const duckdb::Value& value);
+absl::Status SetupTermFilter(irs::ByTerm& filter,
+                             const SearchColumnInfo& column_info,
+                             const duckdb::Value& value);
 
 void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
@@ -39,12 +42,15 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
     AddFilter<irs::Empty>(parent);
     return;
   }
+
   auto& term =
     ctx.negated ? Negate<irs::ByTerm>(parent) : AddFilter<irs::ByTerm>(parent);
   term.boost(ctx.boost);
-  if (auto r = SetupTermFilter(term, column_info, value); !r.ok()) {
+  // SetupTermFilter declines for unsupported column types (it is shared with
+  // the speculative comparison path); under ts_* syntax that is a user error.
+  if (auto s = SetupTermFilter(term, column_info, value); !s.ok()) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(r.errorMessage()),
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(s.message()),
       ERR_HINT("The value's type must match the column's indexed type."));
   }
 }
@@ -59,15 +65,13 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   auto& analyzer = ctx.tokenizer;
   std::vector<irs::bstring> tokens;
-  if (!analyzer.reset(text)) {
+  irs::TermVectorSink sink{tokens};
+  if (!analyzer.Fill(text, sink.writer, irs::TokenLayout::Terms)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  const auto* tok_attr = irs::get<irs::TermAttr>(analyzer);
-  while (analyzer.next()) {
-    tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
-  }
+  sink.writer.Finish();
 
   if (tokens.empty()) {
     AddFilter<irs::Empty>(parent);
@@ -97,18 +101,15 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
 void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
               const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() != 1) {
+  if (func.GetChildren().size() != 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("bare-string term expects 1 argument (text), got ",
-                            func.children.size()),
+                            func.GetChildren().size()),
                     ERR_HINT("Example: 'word' (bare-string literal)."));
   }
   std::string text;
-  if (auto r = GetVarcharArg(*func.children[0], "term text", text); !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()),
-                    ERR_HINT("Example: 'word' (bare-string literal)."));
-  }
+  GetVarcharArg(*func.GetChildren()[0], text,
+                {"term text", "Example: 'word' (bare-string literal)."});
   BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
 }
 

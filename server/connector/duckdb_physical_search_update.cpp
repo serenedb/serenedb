@@ -47,17 +47,13 @@ struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
 
-  // Insert half (the new-row image, in catalog order).
   std::vector<catalog::Column::Id> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::vector<duckdb_primary_key::PKColumn> new_pk_columns;
-  // catalog slot p <- input chunk slot new_row_src[p]; re-orders the projected
-  // new-row block (op.columns order) into catalog (insert) order.
   std::vector<duckdb::idx_t> new_row_src;
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
   std::unique_ptr<SearchSinkInsertBaseImpl> insert_sink;
 
-  // Delete half (the old rows, by their old PK / rowid in the virtuals).
   std::vector<duckdb_primary_key::PKColumn> old_pk_columns;
 
   std::shared_lock<std::shared_mutex> table_lock;
@@ -86,7 +82,7 @@ duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchUpdateGlobalState>();
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
 
   state->table_id = _table->GetId();
 
@@ -96,7 +92,6 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   const auto& columns = _table->Columns();
   const auto& pk_col_ids = _table->PKColumns();
 
-  // Insert (catalog) order: every column except the synthetic generated PK.
   containers::FlatHashMap<catalog::Column::Id, size_t> pos_of;
   for (const auto& col : columns) {
     if (col.GetId() == catalog::Column::kGeneratedPKId) {
@@ -107,8 +102,6 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->chunk_types.push_back(col.type);
   }
 
-  // BindUpdateConstraints projected every physical column, so the new-row block
-  // has one slot per non-generated-PK column.
   const auto p = state->column_ids.size();
   state->new_row_src.assign(p, 0);
   SDB_ASSERT(_update_columns.size() == p,
@@ -170,8 +163,6 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   wal_pks.reserve(num_rows);
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    // Bare old-PK term, encoded as the insert wrote it (Create matches the
-    // insert-side WriteChunkToSearchSink encoding).
     pk.clear();
     duckdb_primary_key::Create(old_pk_formats, gstate.old_pk_columns, row, pk);
     remover.DeleteRowImpl(pk);
@@ -188,7 +179,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   new_row.SetCardinality(num_rows);
 
   if (!gstate.insert_sink) {
-    gstate.insert_sink = MakeSearchTableInsertSink(trx, gstate.column_ids);
+    gstate.insert_sink = MakeSearchTableInsertSink(trx);
   }
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =

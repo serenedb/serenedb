@@ -32,7 +32,7 @@ struct PgLargeobjectMetadata {
 
   Oid oid;
   Oid lomowner;
-  Array<Aclitem> lomacl;
+  AclColumn lomacl;
 };
 // NOLINTEND
 

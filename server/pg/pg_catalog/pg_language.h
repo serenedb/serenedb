@@ -38,7 +38,7 @@ struct PgLanguage {
   Oid lanplcallfoid;
   Oid laninline;
   Oid lanvalidator;
-  Array<Aclitem> lanacl;
+  AclColumn lanacl;
 };
 // NOLINTEND
 

@@ -29,7 +29,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/utils/string.hpp>
 #include <variant>
 
@@ -41,6 +41,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {
@@ -49,7 +50,8 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
   const catalog::Snapshot& snapshot, sdb::ObjectId db_id,
   std::string_view current_schema, std::string_view dict_name) {
   auto name = pg::ParseObjectName(dict_name, current_schema);
-  auto dict = snapshot.GetTokenizer(db_id, name.schema, name.relation);
+  auto dict = snapshot.GetTokenizer(catalog::NoAccessCheck(), db_id,
+                                    name.schema, name.relation);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -60,13 +62,7 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   catalog::Tokenizer& dict) {
-  auto result = dict.GetTokenizer();
-  if (!result) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("failed to get tokenizer: ", result.error().errorMessage()));
-  }
-  return std::move(*result);
+  return dict.GetTokenizer();
 }
 
 struct DynamicCtx {
@@ -109,34 +105,26 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
 class ListTokenSink {
  public:
   explicit ListTokenSink(duckdb::Vector& result_list)
-    : _result_list(result_list),
-      _result_child(duckdb::ListVector::GetEntry(result_list)) {}
+    : _result_list(result_list), _sink(result_list, 0) {}
   ~ListTokenSink() { Finalize(); }
 
   duckdb::idx_t Offset() const noexcept { return _offset; }
 
-  void Push(std::string_view token) {
-    if (_offset >= duckdb::ListVector::GetListCapacity(_result_list)) {
-      duckdb::ListVector::SetListSize(_result_list, _offset);
-      duckdb::ListVector::Reserve(
-        _result_list, duckdb::ListVector::GetListCapacity(_result_list) * 2);
-    }
-    auto* data =
-      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(_result_child);
-    data[_offset] = duckdb::StringVector::AddStringOrBlob(
-      _result_child, token.data(), token.size());
-    ++_offset;
-  }
+  void Bind(irs::analysis::Tokenizer& tokenizer) { _stream = &tokenizer; }
 
-  void Push(irs::analysis::Analyzer& tokenizer, std::string_view text) {
-    if (!tokenizer.reset(text)) {
+  void Tokenize(std::string_view text) {
+    SDB_ASSERT(_stream);
+    if (!_stream->Fill(text, _sink.writer, irs::TokenLayout::Terms)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("error while preparing tokenizer"));
     }
-    auto* term = irs::get<irs::TermAttr>(tokenizer);
-    while (tokenizer.next()) {
-      Push(irs::ViewCast<char>(term->value));
-    }
+    _sink.writer.Finish();
+    _offset = _sink.offset();
+  }
+
+  void Tokenize(irs::analysis::Tokenizer& tokenizer, std::string_view text) {
+    Bind(tokenizer);
+    Tokenize(text);
   }
 
  private:
@@ -145,13 +133,15 @@ class ListTokenSink {
   }
 
   duckdb::Vector& _result_list;
-  duckdb::Vector& _result_child;
   duckdb::idx_t _offset = 0;
+  irs::analysis::Tokenizer* _stream = nullptr;
+  irs::ListVectorSink _sink;
 };
 
 const TsLexizeBindData& GetBindData(duckdb::ExpressionState& state) {
   return state.expr.Cast<duckdb::BoundFunctionExpression>()
-    .bind_info->Cast<TsLexizeBindData>();
+    .BindInfo()
+    ->Cast<TsLexizeBindData>();
 }
 
 void TsLexizeFunctionConstant(duckdb::DataChunk& args,
@@ -173,6 +163,7 @@ void TsLexizeFunctionConstant(duckdb::DataChunk& args,
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
   ListTokenSink sink{result};
+  sink.Bind(tokenizer);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto text_idx = text_format.sel->get_index(i);
@@ -182,7 +173,7 @@ void TsLexizeFunctionConstant(duckdb::DataChunk& args,
       continue;
     }
     const auto row_offset = sink.Offset();
-    sink.Push(tokenizer, AsView(text_data[text_idx]));
+    sink.Tokenize(AsView(text_data[text_idx]));
     list_entries[i] = {row_offset, sink.Offset() - row_offset};
   }
 }
@@ -213,6 +204,7 @@ void TsLexizeArrayFunctionConstant(duckdb::DataChunk& args,
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
   ListTokenSink sink{result};
+  sink.Bind(tokenizer);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto list_idx = list_format.sel->get_index(i);
@@ -228,7 +220,7 @@ void TsLexizeArrayFunctionConstant(duckdb::DataChunk& args,
       if (!child_format.validity.RowIsValid(child_idx)) {
         continue;
       }
-      sink.Push(tokenizer, AsView(child_data[child_idx]));
+      sink.Tokenize(AsView(child_data[child_idx]));
     }
     list_entries_out[i] = {row_offset, sink.Offset() - row_offset};
   }
@@ -269,7 +261,7 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
                           AsView(dict_data[dict_idx]));
     auto tokenizer = AcquireTokenizer(*dict);
     const auto row_offset = sink.Offset();
-    sink.Push(*tokenizer, AsView(text_data[text_idx]));
+    sink.Tokenize(*tokenizer, AsView(text_data[text_idx]));
     list_entries[i] = {row_offset, sink.Offset() - row_offset};
   }
 }
@@ -322,7 +314,7 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
       if (!child_format.validity.RowIsValid(child_idx)) {
         continue;
       }
-      sink.Push(*tokenizer, AsView(child_data[child_idx]));
+      sink.Tokenize(*tokenizer, AsView(child_data[child_idx]));
     }
     list_entries_out[i] = {row_offset, sink.Offset() - row_offset};
   }
@@ -337,7 +329,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
   auto& context = input.GetClientContext();
   auto& conn_ctx = GetSereneDBContext(context);
   DynamicCtx ctx{
-    .snapshot = conn_ctx.EnsureCatalogSnapshot(),
+    .snapshot = conn_ctx.CatalogSnapshot(),
     .db_id = conn_ctx.GetDatabaseId(),
     .current_schema = conn_ctx.GetCurrentSchema(),
   };

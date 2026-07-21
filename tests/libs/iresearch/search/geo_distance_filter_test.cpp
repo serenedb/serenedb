@@ -22,6 +22,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo_test_helpers.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_writer.hpp"
@@ -386,8 +387,8 @@ TEST(GeoDistanceFilterTest, query) {
           name_field.value = doc_entry.name;
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
-          ASSERT_TRUE(doc.Insert(name_field));
-          ASSERT_TRUE(doc.Insert(geo_field));
+          ASSERT_TRUE(::tests::InsertField(doc, name_field));
+          ASSERT_TRUE(::tests::InsertField(doc, geo_field));
           irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                    name_field);
           irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
@@ -455,7 +456,7 @@ TEST(GeoDistanceFilterTest, query) {
       }
 
       EXPECT_FALSE(irs::doc_limits::valid(it->value()));
-      while (it->next()) {
+      while (!irs::doc_limits::eof(it->advance())) {
         auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
@@ -471,7 +472,7 @@ TEST(GeoDistanceFilterTest, query) {
         auto it = prepared->Execute(i);
         EXPECT_NE(nullptr, it);
 
-        while (it->next()) {
+        while (!irs::doc_limits::eof(it->advance())) {
           const auto doc_id = it->value();
           auto seek_it = prepared->Execute(i);
           EXPECT_NE(nullptr, seek_it);
@@ -483,7 +484,7 @@ TEST(GeoDistanceFilterTest, query) {
                 actual_results.find(irs::tests::ReadStoredStr<std::string>(
                   values, seek_it->value())));
             }
-          } while (seek_it->next());
+          } while (!irs::doc_limits::eof(seek_it->advance()));
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->value()));
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->value()));
@@ -902,8 +903,8 @@ TEST(GeoDistanceFilterTest, checkScorer) {
           name_field.value = doc_entry.name;
 
           auto doc = (i++ % 2 ? segment0 : segment1).Insert();
-          ASSERT_TRUE(doc.Insert(name_field));
-          ASSERT_TRUE(doc.Insert(geo_field));
+          ASSERT_TRUE(::tests::InsertField(doc, name_field));
+          ASSERT_TRUE(::tests::InsertField(doc, geo_field));
           irs::tests::StoreFieldAt(*doc.GetColWriter(), kName, doc.DocId(),
                                    name_field);
           irs::tests::StoreFieldAt(*doc.GetColWriter(), kGeo, doc.DocId(),
@@ -957,7 +958,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       EXPECT_FALSE(irs::doc_limits::valid(it->value()));
 
       cur_it = it.get();
-      while (it->next()) {
+      while (!irs::doc_limits::eof(it->advance())) {
         const auto doc_id = it->value();
         EXPECT_EQ(doc_id, seek_it->seek(doc_id));
         EXPECT_FALSE(values.IsNull(doc_id));
@@ -980,7 +981,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
         auto it = prepared.Execute(i);
         EXPECT_NE(nullptr, it);
 
-        while (it->next()) {
+        while (!irs::doc_limits::eof(it->advance())) {
           const auto doc_id = it->value();
           auto seek_it = prepared.Execute(i);
           EXPECT_NE(nullptr, seek_it);
@@ -992,7 +993,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
                 actual_results.find(irs::tests::ReadStoredStr<std::string>(
                   values, seek_it->value())));
             }
-          } while (seek_it->next());
+          } while (!irs::doc_limits::eof(seek_it->advance()));
           EXPECT_TRUE(irs::doc_limits::eof(seek_it->value()));
         }
         EXPECT_TRUE(irs::doc_limits::eof(it->value()));

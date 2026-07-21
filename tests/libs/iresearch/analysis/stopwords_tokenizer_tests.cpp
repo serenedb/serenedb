@@ -22,12 +22,36 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "gtest/gtest.h"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
+#include "token_sink_utils.hpp"
 
 TEST(token_stopwords_stream_tests, consts) {
   static_assert("stopwords" ==
                 irs::Type<irs::analysis::StopwordsTokenizer>::name());
 }
+
+namespace {
+
+void AssertStopwordsBlock(irs::analysis::StopwordsTokenizer& stream,
+                          std::string_view data, bool expect_pass) {
+  tests::OneBatchSink sink{irs::TokenLayout::TermsPosOffs};
+  ASSERT_TRUE(stream.Fill(data, sink.writer, sink.layout));
+  ASSERT_FALSE(sink.flushed());
+  auto& batch = sink.writer.buf;
+  ASSERT_TRUE(batch.dense_pos);
+  if (!expect_pass) {
+    ASSERT_EQ(0, batch.count);
+    return;
+  }
+  ASSERT_EQ(1, batch.count);
+  const auto& t = batch.terms[0];
+  ASSERT_EQ(data, std::string_view(t.GetData(), t.GetSize()));
+  ASSERT_EQ(0, batch.offs_start[0]);
+  ASSERT_EQ(data.size(), batch.offs_end[0]);
+}
+
+}  // namespace
 
 TEST(token_stopwords_stream_tests, test_masking) {
   // test mask nothing
@@ -39,22 +63,8 @@ TEST(token_stopwords_stream_tests, test_masking) {
     ASSERT_EQ(irs::Type<irs::analysis::StopwordsTokenizer>::id(),
               stream.type());
 
-    auto* offset = irs::get<irs::OffsAttr>(stream);
-    auto* term = irs::get<irs::TermAttr>(stream);
-
-    ASSERT_TRUE(stream.reset(data0));
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("abc", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream.next());
-
-    ASSERT_TRUE(stream.reset(data1));
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("ghi", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream.next());
+    AssertStopwordsBlock(stream, data0, true);
+    AssertStopwordsBlock(stream, data1, true);
   }
 
   // test mask something
@@ -64,18 +74,8 @@ TEST(token_stopwords_stream_tests, test_masking) {
     irs::analysis::StopwordsTokenizer::stopwords_set mask = {"abc"};
     irs::analysis::StopwordsTokenizer stream(std::move(mask));
 
-    auto* offset = irs::get<irs::OffsAttr>(stream);
-    auto* term = irs::get<irs::TermAttr>(stream);
-
-    ASSERT_TRUE(stream.reset(data0));
-    ASSERT_FALSE(stream.next());
-
-    ASSERT_TRUE(stream.reset(data1));
-    ASSERT_TRUE(stream.next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("ghi", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream.next());
+    AssertStopwordsBlock(stream, data0, false);
+    AssertStopwordsBlock(stream, data1, true);
   }
 }
 
@@ -85,20 +85,16 @@ TEST(token_stopwords_stream_tests, test_load) {
 
   auto test_func = [](const std::string_view& data0,
                       const std::string_view& data1,
-                      irs::analysis::Analyzer* stream) {
+                      irs::analysis::Tokenizer* stream) {
     ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data0));
-    ASSERT_FALSE(stream->next());
-    ASSERT_TRUE(stream->reset(data1));
+    auto masked = tests::Analyze(*stream, data0);
+    ASSERT_TRUE(masked.has_value());
+    ASSERT_TRUE(masked->empty());
 
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(3, offset->end);
-    ASSERT_EQ("ghi", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
+    auto kept = tests::Analyze(*stream, data1);
+    ASSERT_TRUE(kept.has_value());
+    const std::vector<tests::AnalyzerToken> expected = {{"ghi", 1, 0, 3}};
+    ASSERT_EQ(expected, *kept);
   };
 
   {
@@ -123,20 +119,16 @@ TEST(token_stopwords_stream_tests, test_load) {
     std::string_view data_kept("646566");
     auto test_hex = [](const std::string_view& masked,
                        const std::string_view& kept,
-                       irs::analysis::Analyzer* stream) {
+                       irs::analysis::Tokenizer* stream) {
       ASSERT_NE(nullptr, stream);
-      ASSERT_TRUE(stream->reset(masked));
-      ASSERT_FALSE(stream->next());
-      ASSERT_TRUE(stream->reset(kept));
+      auto masked_tokens = tests::Analyze(*stream, masked);
+      ASSERT_TRUE(masked_tokens.has_value());
+      ASSERT_TRUE(masked_tokens->empty());
 
-      auto* offset = irs::get<irs::OffsAttr>(*stream);
-      auto* term = irs::get<irs::TermAttr>(*stream);
-
-      ASSERT_TRUE(stream->next());
-      ASSERT_EQ(0, offset->start);
-      ASSERT_EQ(6, offset->end);
-      ASSERT_EQ("646566", irs::ViewCast<char>(term->value));
-      ASSERT_FALSE(stream->next());
+      auto kept_tokens = tests::Analyze(*stream, kept);
+      ASSERT_TRUE(kept_tokens.has_value());
+      const std::vector<tests::AnalyzerToken> expected = {{"646566", 1, 0, 6}};
+      ASSERT_EQ(expected, *kept_tokens);
     };
     irs::analysis::StopwordsTokenizer::Options opts;
     opts.mask = {"abc", "mnO"};  // pre-decoded equivalents of 616263 / 6D6e6F
@@ -155,8 +147,70 @@ TEST(token_stopwords_stream_tests, test_load) {
     irs::analysis::StopwordsTokenizer::Options opts;
     auto stream = irs::analysis::StopwordsTokenizer::Make(std::move(opts));
     ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data0));
-    ASSERT_TRUE(stream->next());  // nothing is masked
-    ASSERT_FALSE(stream->next());
+    auto tokens = tests::Analyze(*stream, data0);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(1, tokens->size());  // nothing is masked
+  }
+}
+
+TEST(token_stopwords_stream_tests, column_fill_filters) {
+  irs::analysis::StopwordsTokenizer::stopwords_set mask = {"the", "and"};
+  irs::analysis::StopwordsTokenizer stream(std::move(mask));
+
+  constexpr size_t kCap = irs::TokenBatch::kCapacity;
+  std::vector<std::string> values;
+  std::vector<bool> pass;
+  for (size_t i = 0; i < kCap + 200; ++i) {
+    switch (i % 3) {
+      case 0:
+        values.push_back("the");
+        pass.push_back(false);
+        break;
+      case 1:
+        values.push_back("word" + std::to_string(i));
+        pass.push_back(true);
+        break;
+      default:
+        values.push_back("and");
+        pass.push_back(false);
+        break;
+    }
+  }
+
+  std::vector<duckdb::string_t> vals;
+  std::vector<irs::doc_id_t> docs;
+  for (size_t i = 0; i < values.size(); ++i) {
+    vals.emplace_back(values[i].data(),
+                      static_cast<uint32_t>(values[i].size()));
+    docs.push_back(static_cast<irs::doc_id_t>(i + 1));
+  }
+
+  std::vector<std::vector<irs::bstring>> got(values.size());
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    uint32_t tok = 0;
+    for (const auto& run : runs) {
+      ASSERT_NE(irs::DocRun::kOpenValue, run.doc);
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        const auto& t = batch.terms[tok];
+        got[run.doc - 1].emplace_back(
+          reinterpret_cast<const irs::byte_type*>(t.GetData()), t.GetSize());
+      }
+    }
+    ASSERT_EQ(batch.count, tok);
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::Terms, collect};
+  stream.Fill(vals, docs, sink.writer, sink.layout);
+  sink.writer.Finish();
+
+  for (size_t v = 0; v < values.size(); ++v) {
+    SCOPED_TRACE(testing::Message() << "doc=" << v + 1);
+    if (pass[v]) {
+      ASSERT_EQ(1, got[v].size());
+      ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{values[v]}),
+                got[v][0]);
+    } else {
+      ASSERT_TRUE(got[v].empty());
+    }
   }
 }

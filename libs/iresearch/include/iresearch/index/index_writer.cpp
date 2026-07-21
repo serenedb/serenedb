@@ -31,8 +31,6 @@
 #include <type_traits>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/resource_manager.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -49,6 +47,7 @@
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -211,7 +210,7 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
   }
 
   const auto* docs_mask = reader.docs_mask();
-  while (itr->next()) {
+  while (!doc_limits::eof(itr->advance())) {
     const auto doc_id = itr->value();
 
     // if the indexed doc_id was already masked then it should be skipped
@@ -245,7 +244,7 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
   }
 
   bool modified = false;
-  while (itr->next()) {
+  while (!doc_limits::eof(itr->advance())) {
     const auto doc_id = itr->value();
 
     // if the indexed doc_id was already masked then it should be skipped
@@ -288,7 +287,7 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
   }
 
   auto* flushed_docs = segment.flushed_docs.data() + flushed.GetDocsBegin();
-  while (itr->next()) {
+  while (!doc_limits::eof(itr->advance())) {
     const auto new_doc = itr->value();
     const auto old_doc = New2Old(new_doc);
 
@@ -427,8 +426,8 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       // passed to the merge_writer
 
       // no more docs in merged reader
-      if (!merged_itr->next()) {
-        if (current_itr->next()) {
+      if (doc_limits::eof(merged_itr->advance())) {
+        if (!doc_limits::eof(current_itr->advance())) {
           SDB_WARN(IRESEARCH, "Failed to map removals for compacted segment '",
                    old_meta.name, "' version '", old_meta.version,
                    "' from current segment '", new_meta.name, "' version '",
@@ -443,11 +442,11 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
       }
 
       // mask all remaining doc_ids
-      if (!current_itr->next()) {
+      if (doc_limits::eof(current_itr->advance())) {
         do {
           SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
           docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
-        } while (merged_itr->next());
+        } while (!doc_limits::eof(merged_itr->advance()));
 
         continue;  // continue wih next mapping
       }
@@ -459,7 +458,7 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
           SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
           docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
 
-          if (!merged_itr->next()) {
+          if (doc_limits::eof(merged_itr->advance())) {
             SDB_WARN(
               IRESEARCH, "Failed to map removals for compacted segment '",
               old_meta.name, "' version '", old_meta.version,
@@ -483,8 +482,8 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         }
 
         // no more docs in merged reader
-        if (!merged_itr->next()) {
-          if (current_itr->next()) {
+        if (doc_limits::eof(merged_itr->advance())) {
+          if (!doc_limits::eof(current_itr->advance())) {
             SDB_WARN(
               IRESEARCH, "Failed to map removals for compacted segment '",
               old_meta.name, "' version '", old_meta.version,
@@ -499,11 +498,11 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
         }
 
         // mask all remaining doc_ids
-        if (!current_itr->next()) {
+        if (doc_limits::eof(current_itr->advance())) {
           do {
             SDB_ASSERT(!merge_ctx.remap.IsMasked(merged_itr->value()));
             docs_mask.insert(merge_ctx.remap.Remap(merged_itr->value()));
-          } while (merged_itr->next());
+          } while (!doc_limits::eof(merged_itr->advance()));
 
           break;  // continue wih next mapping
         }
@@ -788,7 +787,7 @@ void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
     return;
   }
 
-  std::lock_guard lock{pending.Mutex()};
+  std::lock_guard lock{pending_mutex};
   auto* node = [&] {
     if (is_null) {
       return &pending_segments.emplace_back(std::move(active._segment),
@@ -804,7 +803,7 @@ void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
 }
 
 void IndexWriter::FlushContext::AddToPending(ActiveSegmentContext& active) {
-  std::lock_guard lock{pending.Mutex()};
+  std::lock_guard lock{pending_mutex};
   const auto size_before = pending_segments.size();
   SDB_ASSERT(active._segment != nullptr);
   pending_segments.emplace_back(active._segment, size_before);
@@ -898,7 +897,7 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
   }
 
   if (to_next_pending_segments != 0) {
-    std::lock_guard lock{next->pending.Mutex()};
+    std::lock_guard lock{next->pending_mutex};
     for (auto& entry : pending_segments) {
       if (auto& segment = entry.segment; segment != nullptr) {
         SDB_ASSERT(tick < segment->first_tick);
@@ -959,8 +958,7 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
   flushed.emplace_back(std::move(writer_meta), std::move(old2new),
-                       std::move(docs_mask), flushed_docs.size(),
-                       writer->TakeBuiltHnswGraphs());
+                       std::move(docs_mask), flushed_docs.size());
   try {
     flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
                         docs_context.end());
@@ -1127,9 +1125,6 @@ IndexWriter::IndexWriter(
   SDB_ASSERT(_codec);
 
   _topk_scorer = _committed_reader->Options().scorer;
-  if (_topk_scorer) {
-    _wand_features |= _topk_scorer->GetIndexFeatures();
-  }
 
   _flush_context.store(_flush_contexts.data());
 
@@ -1161,7 +1156,9 @@ void IndexWriter::Clear(uint64_t tick) {
 
   auto ctx = SwitchFlushContext();
   // Ensure there are no active struct update operations
+  ctx->pending.Done();
   ctx->pending.Wait();
+  ctx->pending.Reset(1);
   // TODO(mbkkt) Move some pending to the next flush ctx?
   //  It's not super trivial for spliting segments
   //  It's not important now, because truncate running in exclusive mode
@@ -1189,7 +1186,7 @@ void IndexWriter::Clear(uint64_t tick) {
 IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
                                    OpenMode mode,
                                    const IndexWriterOptions& options) {
-  SDB_ENSURE(options.db != nullptr, sdb::ERROR_BAD_PARAMETER,
+  SDB_ENSURE(options.db != nullptr,
              "IndexWriterOptions::db must be set; iresearch indexes require a "
              "duckdb::DatabaseInstance");
 
@@ -1281,7 +1278,7 @@ uint64_t IndexWriter::BufferedDocs() const {
   auto ctx = GetFlushContext();
   // 'pending_used_segment_contexts_'/'pending_free_segment_contexts_'
   // may be modified
-  std::lock_guard lock{ctx->pending.Mutex()};
+  std::lock_guard lock{ctx->pending_mutex};
 
   for (const auto& entry : ctx->pending_segments) {
     SDB_ASSERT(entry.segment != nullptr);
@@ -1410,7 +1407,6 @@ CompactionResult IndexWriter::Compact(
   }
 
   auto opts = committed_reader->Options();
-  opts.hnsw_graphs = merger.TakeBuiltHnswGraphs();
   auto pending_reader =
     SegmentReaderImpl::Open(_dir, compaction_segment.meta, opts);
   SDB_ASSERT(pending_reader);
@@ -1448,7 +1444,7 @@ CompactionResult IndexWriter::Compact(
     }
     auto refs = dir.GetRefs();
     // Prevent concurrent imports modification
-    std::lock_guard ctx_lock{ctx->pending.Mutex()};
+    std::lock_guard ctx_lock{ctx->pending_mutex};
     // register compaction for the next transaction
     ctx->imports.emplace_back(
       std::move(compaction_segment), writer_limits::kMaxTick,
@@ -1508,7 +1504,7 @@ CompactionResult IndexWriter::Compact(
   }
 
   auto refs = dir.GetRefs();
-  std::lock_guard ctx_lock{ctx->pending.Mutex()};
+  std::lock_guard ctx_lock{ctx->pending_mutex};
   auto& segment_mask = ctx->segment_mask;
   segment_mask.reserve(segment_mask.size() + mappings.size() +
                        candidates.size());
@@ -1570,7 +1566,6 @@ bool IndexWriter::Import(const IndexReader& reader,
 
   index_utils::FlushIndexSegment(dir, segment);
 
-  options.hnsw_graphs = merger.TakeBuiltHnswGraphs();
   auto imported_reader = SegmentReaderImpl::Open(_dir, segment.meta, options);
   SDB_ASSERT(imported_reader);
 
@@ -1578,7 +1573,7 @@ bool IndexWriter::Import(const IndexReader& reader,
   auto flush = GetFlushContext();
 
   // lock due to context modification
-  std::lock_guard lock{flush->pending.Mutex()};
+  std::lock_guard lock{flush->pending_mutex};
 
   // IMPORTANT NOTE!
   // Will be committed in the upcoming Commit
@@ -1690,7 +1685,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // The merge passes its own view; a segment write installs its owning override
   // later via SetFieldOptions, so non-owning here.
   return {
-    .scorers_features = _wand_features,
     .scorer = _topk_scorer,
     .comparator = _comparator,
     .resource_manager = compaction ? *_dir.ResourceManager().compactions
@@ -1709,7 +1703,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // noexcept block: I'm not sure is it really necessary or not
   auto ctx = SwitchFlushContext();
   // ensure there are no active struct update operations
+  ctx->pending.Done();
   ctx->pending.Wait();
+  ctx->pending.Reset(1);
   // Stage 0
   // wait for any outstanding segments to settle to ensure that any rollbacks
   // are properly tracked in 'modification_queries_'
@@ -2057,7 +2053,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
             // reuse existing reader with initial meta and docs_mask
             return it->second->UpdateMeta(dir, flushed.meta);
           } else {
-            reader_options.hnsw_graphs = std::move(flushed.hnsw_graphs);
             return SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
           }
         }();

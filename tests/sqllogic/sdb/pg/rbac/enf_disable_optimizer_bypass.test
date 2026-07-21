@@ -1,0 +1,86 @@
+# serenedb-only: RBAC enforcement must not be defeatable by turning the
+# optimizer off. Enforcement runs as a mandatory pre-execution access check,
+# independent of the optimizer, so `PRAGMA disable_optimizer` /
+# `SET disable_optimizer` / `SET debug_disable_optimizer` cannot skip it. PG has
+# no user-facing optimizer switch, so this scenario is serenedb-specific.
+#
+# Lore: vedernikoff tries to sneak past the guard by flipping the optimizer off.
+
+statement ok
+DROP TABLE IF EXISTS edo_mop_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS edo_vedernikoff;
+
+
+statement ok
+CREATE TABLE edo_mop_vault (id int, secret text);
+
+
+statement ok
+INSERT INTO edo_mop_vault VALUES (1, 'clickclack');
+
+
+statement ok
+CREATE ROLE edo_vedernikoff LOGIN PASSWORD 'ved_pw';
+
+
+# The intern has no privilege on the vault: a plain read is denied.
+connection c_ved user=edo_vedernikoff password=ved_pw
+statement error
+SELECT * FROM edo_mop_vault;
+----
+db error: ERROR: permission denied for table edo_mop_vault<slt:ignore>
+
+
+# Turning the optimizer off via PRAGMA must NOT bypass the access check.
+connection c_ved user=edo_vedernikoff password=ved_pw
+statement ok
+PRAGMA disable_optimizer;
+
+
+connection c_ved user=edo_vedernikoff password=ved_pw
+statement error
+SELECT * FROM edo_mop_vault;
+----
+db error: ERROR: permission denied for table edo_mop_vault<slt:ignore>
+
+
+# ... and neither via SET debug_disable_optimizer (the session-scoped knob the
+# optimizer also honors; `disable_optimizer` itself is pragma-only in serened).
+connection c_ved3 user=edo_vedernikoff password=ved_pw
+statement ok
+SET debug_disable_optimizer = true;
+
+
+connection c_ved3 user=edo_vedernikoff password=ved_pw
+statement error
+SELECT * FROM edo_mop_vault;
+----
+db error: ERROR: permission denied for table edo_mop_vault<slt:ignore>
+
+
+# A granted read still works with the optimizer off (enforcement passes, it does
+# not blanket-deny).
+connection default
+statement ok
+GRANT SELECT ON edo_mop_vault TO edo_vedernikoff;
+
+
+connection c_ved user=edo_vedernikoff password=ved_pw
+query
+SELECT id, secret FROM edo_mop_vault;
+----
+id	secret
+1	clickclack
+
+
+# cleanup
+connection default
+statement ok
+DROP TABLE edo_mop_vault;
+
+
+statement ok
+DROP ROLE edo_vedernikoff;

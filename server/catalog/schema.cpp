@@ -22,29 +22,32 @@
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+#include <ranges>
 
 #include "basics/serializer.h"
 
 namespace sdb::catalog {
 
-Schema::Schema(ObjectId database_id, SchemaOptions options)
-  : Object{database_id, options.id, std::move(options.name),
-           ObjectType::Schema} {}
+Schema::Schema(Permissions perm, ObjectId database_id, ObjectId id,
+               std::string_view name)
+  : Object{std::move(perm), database_id, id, name, ObjectType::Schema} {}
 
 std::shared_ptr<Schema> Schema::Deserialize(duckdb::Deserializer& src,
                                             ReadContext ctx) {
-  SchemaOptions options;
-  basics::ReadTuple(src, options);
-  return std::make_shared<Schema>(ctx.database_id, std::move(options));
+  SchemaOptions data;
+  basics::ReadTuple(src, data);
+  return std::make_shared<Schema>(std::move(data.perm), ctx.database_id,
+                                  data.id, data.name);
 }
 
 void Schema::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, SchemaOptions{.id = GetId(), .name = _name});
+  basics::WriteTuple(
+    sink,
+    SchemaOptions{.id = GetId(), .name = _name, .perm = GetPermissions()});
 }
 
 std::shared_ptr<Object> Schema::Clone() const {
-  return std::make_shared<Schema>(GetParentId(),
-                                  SchemaOptions{.id = GetId(), .name = _name});
+  return std::make_shared<Schema>(*this);
 }
 
 }  // namespace sdb::catalog

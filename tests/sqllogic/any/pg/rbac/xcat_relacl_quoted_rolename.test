@@ -1,0 +1,80 @@
+# relacl text quotes a grantee role name that contains characters outside
+# [A-Za-z0-9_], matching PostgreSQL's putid(): a name with a space renders as
+# "Mop Babsky"=r/postgres, and an embedded double quote is doubled, so a role
+# named a"b renders as "a""b"=r/postgres. The privilege resolves correctly
+# through the oracle regardless of the text form. Byte-identical on both
+# engines, so it lives in the any/ tree.
+#
+# Lore: the cast as roles. Idempotent + self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS xcat_q_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS "Mop Babsky";
+
+
+statement ok
+DROP ROLE IF EXISTS "a""b";
+
+
+statement ok
+CREATE TABLE xcat_q_clickclack (id int);
+
+
+statement ok
+CREATE ROLE "Mop Babsky";
+
+
+statement ok
+CREATE ROLE "a""b";
+
+
+# A role name with a space is double-quoted in relacl text.
+statement ok
+GRANT SELECT ON xcat_q_clickclack TO "Mop Babsky";
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_q_clickclack'
+) g WHERE e LIKE '%Mop Babsky%';
+----
+e
+"Mop Babsky"=r/postgres
+
+
+# An embedded double quote in the role name is doubled inside the quotes.
+statement ok
+GRANT INSERT ON xcat_q_clickclack TO "a""b";
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_q_clickclack'
+) g WHERE e LIKE '%a%b%' AND e NOT LIKE '%Mop%';
+----
+e
+"a""b"=a/postgres
+
+
+# Both privileges resolve through the oracle despite the quoted text form.
+query
+SELECT has_table_privilege('Mop Babsky', 'xcat_q_clickclack', 'SELECT') AS space_sel,
+       has_table_privilege('a"b', 'xcat_q_clickclack', 'INSERT') AS quote_ins;
+----
+space_sel	quote_ins
+t	t
+
+
+statement ok
+DROP TABLE xcat_q_clickclack;
+
+
+statement ok
+DROP ROLE "Mop Babsky";
+
+
+statement ok
+DROP ROLE "a""b";

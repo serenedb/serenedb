@@ -75,6 +75,24 @@ class AllIterator : public DocIterator {
     return count;
   }
 
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t max) noexcept final {
+    // Docs are the contiguous range [_doc, _max_doc]; fill in one iota pass.
+    auto doc = _doc;
+    const auto end = max <= _max_doc ? max : _max_doc + 1;
+    uint32_t n = 0;
+    while (doc < end) {
+      out[n++] = doc++;
+    }
+    _doc = doc <= _max_doc ? doc : doc_limits::eof();
+    return n;
+  }
+
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    return EmitScoredDocsImpl(*this, out, scores, max, scorer, fetcher, min);
+  }
+
  private:
   using Attributes = std::tuple<CostAttr>;
 

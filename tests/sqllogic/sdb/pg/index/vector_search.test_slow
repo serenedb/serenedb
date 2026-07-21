@@ -37,7 +37,7 @@ INSERT INTO correct_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <
 
 
 statement ok
-CREATE INDEX vecs_hnsw ON vecs USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+CREATE INDEX vecs_idx ON vecs USING inverted(emb ivf (metric = 'l2'));
 
 
 statement ok
@@ -45,41 +45,36 @@ VACUUM (REFRESH_TABLE) vecs;
 
 
 query
-EXPLAIN SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+EXPLAIN SELECT id FROM vecs_idx ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│          Top: 10          │
-│      Order By: #1 ASC     │
-│                           │
-│          ~10 rows         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      vecs_hnsw (ANN)      │
-│                           │
-│       Lookup: table       │
-│          Top: 10          │
-│          Dims: 8          │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│        ~50,000 rows       │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 10                                │
+│ Order By: #1 ASC                       │
+│ ~10 rows                               │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: vecs_idx                        │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 8      │                       │
+│ ╰──────────────╯                       │
+│ Top: 10                                │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~50,000 rows                           │
+╰────────────────────────────────────────╯
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;
 
 query
 WITH
-  result AS (SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_idx ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -88,48 +83,40 @@ t
 
 
 query
-EXPLAIN SELECT id FROM vecs_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+EXPLAIN SELECT id FROM vecs_idx WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│          Top: 10          │
-│      Order By: #1 ASC     │
-│                           │
-│          ~10 rows         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│        (id > 25000)       │
-│                           │
-│        ~10,000 rows       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      vecs_hnsw (ANN)      │
-│                           │
-│       Lookup: table       │
-│          Dims: 8          │
-│                           │
-│        Projections:       │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│        ~50,000 rows       │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 10                                │
+│ Order By: #1 ASC                       │
+│ ~10 rows                               │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: id > 25000                 │
+│ ~10,000 rows                           │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: vecs_idx                        │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 8      │                       │
+│ ╰──────────────╯                       │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~50,000 rows                           │
+╰────────────────────────────────────────╯
 
 
 # Since filter demands larger efSearch
 statement ok
-SET sdb_ef_search TO 2048;
+SET sdb_nprobe TO 2048;
 
 query
 WITH
-  result AS (SELECT id FROM vecs_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_idx WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_filtered WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -137,7 +124,7 @@ t
 
 
 statement ok
-SET sdb_ef_search TO 512;
+SET sdb_nprobe TO 512;
 
 # L1 recall
 
@@ -150,7 +137,7 @@ INSERT INTO correct_l1 SELECT id FROM vecs ORDER BY emb <+> [0.0, 1.0, 0.0, 1.0,
 
 
 statement ok
-CREATE INDEX vecs_hnsw_l1 ON vecs USING inverted(id, emb hnsw (metric = 'l1', m = 64, ef_construction = 256));
+CREATE INDEX vecs_idx_l1 ON vecs USING inverted(id, emb ivf (metric = 'l1'));
 
 
 statement ok
@@ -159,7 +146,7 @@ VACUUM (REFRESH_TABLE) vecs;
 
 query
 WITH
-  result AS (SELECT id FROM vecs_hnsw_l1 ORDER BY emb <+> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_idx_l1 ORDER BY emb <+> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_l1 WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -185,7 +172,7 @@ INSERT INTO correct_cos2 SELECT id FROM vecs ORDER BY cosine_similarity(emb, [0.
 
 
 statement ok
-CREATE INDEX vecs_hnsw_cos ON vecs USING inverted(id, emb hnsw (metric = 'cosine', m = 64, ef_construction = 256));
+CREATE INDEX vecs_idx_cos ON vecs USING inverted(id, emb ivf (metric = 'cosine'));
 
 
 statement ok
@@ -194,7 +181,7 @@ VACUUM (REFRESH_TABLE) vecs;
 
 query
 WITH
-  result AS (SELECT id FROM vecs_hnsw_cos ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_idx_cos ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_cos WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -203,7 +190,7 @@ t
 
 query
 WITH
-  result AS (SELECT id FROM vecs_hnsw_cos ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_idx_cos ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_cos2 WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -221,7 +208,7 @@ INSERT INTO correct_ip SELECT id FROM vecs ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0,
 
 
 statement ok
-CREATE INDEX vecs_hnsw_ip ON vecs USING inverted(id, emb hnsw (metric = 'ip', m = 64, ef_construction = 256));
+CREATE INDEX vecs_idx_ip ON vecs USING inverted(id, emb ivf (metric = 'ip'));
 
 
 statement ok
@@ -230,7 +217,7 @@ VACUUM (REFRESH_TABLE) vecs;
 
 query
 WITH
-  result AS (SELECT id FROM vecs_hnsw_ip ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_idx_ip ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_ip WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -321,7 +308,7 @@ INSERT INTO correct_text_hybrid2 SELECT id FROM vecs_text WHERE body = 'red fox'
 
 
 statement ok
-CREATE INDEX vecs_text_idx ON vecs_text USING inverted(id, body en, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+CREATE INDEX vecs_text_idx ON vecs_text USING inverted(id, body en, emb ivf (metric = 'l2'));
 
 
 statement ok
@@ -330,7 +317,7 @@ VACUUM (REFRESH_TABLE) vecs_text;
 
 # Filtered ANN needs higher efSearch to maintain recall
 statement ok
-SET sdb_ef_search TO 4096;
+SET sdb_nprobe TO 4096;
 
 
 # Text filter (ts_phrase) + ANN

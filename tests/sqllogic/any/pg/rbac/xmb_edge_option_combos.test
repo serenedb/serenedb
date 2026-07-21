@@ -1,0 +1,119 @@
+# Cross-membership: the INHERIT x SET option pairs on one direct edge, re-granted
+# in place. has_table_privilege and pg_has_role USAGE track the INHERIT bit and
+# are independent of the SET bit; pg_has_role MEMBER is true throughout. (Only
+# SET=TRUE is probed here -- serenedb does not honor SET=FALSE through
+# pg_has_role, so that case lives in the serenedb-only companion.)
+#
+# Member xmb_eoc_mop, group xmb_eoc_iceberg holding SELECT on xmb_eoc_clickclack.
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_eoc_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_eoc_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_eoc_clickclack;
+
+
+statement ok
+CREATE TABLE xmb_eoc_clickclack (id int);
+
+
+statement ok
+CREATE ROLE xmb_eoc_iceberg;
+
+
+statement ok
+GRANT SELECT ON xmb_eoc_clickclack TO xmb_eoc_iceberg;
+
+
+statement ok
+CREATE ROLE xmb_eoc_mop LOGIN PASSWORD 'xmb_eoc_mop_pw';
+
+
+# ---- INHERIT TRUE, SET TRUE: wields privileges and can SET ----
+
+statement ok
+GRANT xmb_eoc_iceberg TO xmb_eoc_mop WITH INHERIT TRUE, SET TRUE;
+
+
+query
+SELECT pg_has_role('xmb_eoc_mop', 'xmb_eoc_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_eoc_mop', 'xmb_eoc_iceberg', 'USAGE') AS usage,
+       pg_has_role('xmb_eoc_mop', 'xmb_eoc_iceberg', 'SET') AS setrole,
+       has_table_privilege('xmb_eoc_mop', 'xmb_eoc_clickclack', 'SELECT') AS sel;
+----
+member	usage	setrole	sel
+t	t	t	t
+
+
+connection c1 user=xmb_eoc_mop password=xmb_eoc_mop_pw
+query
+SELECT count(*) FROM xmb_eoc_clickclack;
+----
+count
+0
+
+
+# ---- INHERIT FALSE, SET TRUE: member can SET but wields nothing ----
+
+statement ok
+GRANT xmb_eoc_iceberg TO xmb_eoc_mop WITH INHERIT FALSE, SET TRUE;
+
+
+query
+SELECT pg_has_role('xmb_eoc_mop', 'xmb_eoc_iceberg', 'MEMBER') AS member,
+       pg_has_role('xmb_eoc_mop', 'xmb_eoc_iceberg', 'USAGE') AS usage,
+       pg_has_role('xmb_eoc_mop', 'xmb_eoc_iceberg', 'SET') AS setrole,
+       has_table_privilege('xmb_eoc_mop', 'xmb_eoc_clickclack', 'SELECT') AS sel;
+----
+member	usage	setrole	sel
+t	f	t	f
+
+
+connection c2 user=xmb_eoc_mop password=xmb_eoc_mop_pw
+statement error
+SELECT * FROM xmb_eoc_clickclack;
+----
+db error: ERROR: permission denied for table xmb_eoc_clickclack<slt:ignore>
+
+
+# ---- INHERIT TRUE again: privilege flow restored, SET still true ----
+
+statement ok
+GRANT xmb_eoc_iceberg TO xmb_eoc_mop WITH INHERIT TRUE, SET TRUE;
+
+
+query
+SELECT pg_has_role('xmb_eoc_mop', 'xmb_eoc_iceberg', 'USAGE') AS usage,
+       has_table_privilege('xmb_eoc_mop', 'xmb_eoc_clickclack', 'SELECT') AS sel;
+----
+usage	sel
+t	t
+
+
+connection c3 user=xmb_eoc_mop password=xmb_eoc_mop_pw
+query
+SELECT count(*) FROM xmb_eoc_clickclack;
+----
+count
+0
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_eoc_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_eoc_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_eoc_iceberg;

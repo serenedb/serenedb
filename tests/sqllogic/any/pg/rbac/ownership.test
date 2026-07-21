@@ -1,0 +1,148 @@
+# Object ownership semantics, asserted on the byte-identical surface shared by
+# PostgreSQL and serenedb: has_table_privilege (the real RBAC oracle) plus real
+# DML on a second connection. A table created by the bootstrap superuser
+# (postgres) is owned by postgres; ownership confers every privilege implicitly,
+# independent of the table ACL.
+#
+# Vedernikoff audits the clickclack iceberg kostya: the kostya is owned by
+# postgres, and mop_negaimorit is an ordinary non-owner role.
+
+statement ok
+DROP ROLE IF EXISTS own_mop_negaimorit;
+
+
+statement ok
+DROP TABLE IF EXISTS own_iceberg_kostya;
+
+
+statement ok
+CREATE TABLE own_iceberg_kostya (id int, payload text);
+
+
+statement ok
+CREATE ROLE own_mop_negaimorit;
+
+
+# pg_class exposes the owner; it resolves to the postgres role's oid.
+query
+SELECT (c.relowner = a.oid) AS owned_by_postgres
+FROM pg_class c, pg_authid a
+WHERE c.relname = 'own_iceberg_kostya' AND a.rolname = 'postgres';
+----
+owned_by_postgres
+t
+
+
+# The owner holds every one of the seven table privileges with no explicit
+# grant -- ownership is not represented as an ACL entry, it is implicit.
+query
+SELECT
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'SELECT')     AS sel,
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'INSERT')     AS ins,
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'UPDATE')     AS upd,
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'DELETE')     AS del,
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'TRUNCATE')   AS trunc,
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'REFERENCES') AS refs,
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# A fresh non-owner, non-superuser role holds none of the seven privileges
+# until something is granted to it.
+query
+SELECT
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'SELECT')     AS sel,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'INSERT')     AS ins,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'UPDATE')     AS upd,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'DELETE')     AS del,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'TRUNCATE')   AS trunc,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'REFERENCES') AS refs,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+f	f	f	f	f	f	f
+
+
+# The owner can grant a single privilege; the grantee then holds exactly that
+# privilege and nothing more.
+statement ok
+GRANT SELECT ON own_iceberg_kostya TO own_mop_negaimorit;
+
+
+query
+SELECT
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'SELECT') AS sel,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'INSERT') AS ins,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	f	f
+
+
+# Granting to a non-owner does not change the owner's implicit rights: the owner
+# still holds all seven.
+query
+SELECT
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'SELECT')   AS sel,
+  has_table_privilege('postgres', 'own_iceberg_kostya', 'TRUNCATE') AS trunc;
+----
+sel	trunc
+t	t
+
+
+# Revoking everything from the non-owner leaves the owner's implicit rights
+# untouched -- ownership is independent of the ACL.
+statement ok
+REVOKE SELECT ON own_iceberg_kostya FROM own_mop_negaimorit;
+
+
+query
+SELECT
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'SELECT') AS negaimorit_sel,
+  has_table_privilege('postgres',        'own_iceberg_kostya', 'SELECT') AS owner_sel,
+  has_table_privilege('postgres',        'own_iceberg_kostya', 'DELETE') AS owner_del;
+----
+negaimorit_sel	owner_sel	owner_del
+f	t	t
+
+
+# A full grant/revoke cycle of ALL privileges to the non-owner round-trips, and
+# the owner is unaffected throughout.
+statement ok
+GRANT ALL PRIVILEGES ON own_iceberg_kostya TO own_mop_negaimorit;
+
+
+query
+SELECT
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'SELECT')   AS sel,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'TRUNCATE') AS trunc,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'TRIGGER')  AS trig,
+  has_table_privilege('postgres',        'own_iceberg_kostya', 'TRUNCATE') AS owner_trunc;
+----
+sel	trunc	trig	owner_trunc
+t	t	t	t
+
+
+statement ok
+REVOKE ALL PRIVILEGES ON own_iceberg_kostya FROM own_mop_negaimorit;
+
+
+query
+SELECT
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'SELECT')   AS sel,
+  has_table_privilege('own_mop_negaimorit', 'own_iceberg_kostya', 'TRUNCATE') AS trunc,
+  has_table_privilege('postgres',        'own_iceberg_kostya', 'SELECT')   AS owner_sel,
+  has_table_privilege('postgres',        'own_iceberg_kostya', 'TRUNCATE') AS owner_trunc;
+----
+sel	trunc	owner_sel	owner_trunc
+f	f	t	t
+
+
+statement ok
+DROP TABLE own_iceberg_kostya;
+
+
+statement ok
+DROP ROLE own_mop_negaimorit;

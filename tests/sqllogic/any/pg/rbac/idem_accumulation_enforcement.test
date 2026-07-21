@@ -1,0 +1,221 @@
+# GRANT accumulation, enforcement half: prove the oracle's union/idempotency
+# answers match the REAL query path. A second connection authenticates as a
+# non-superuser role; accumulated privileges are exercised with real DML --
+# `statement ok` where the union grants access, a denial where it does not.
+#
+# Deny blocks carry a TRAILING <slt:ignore> on the message line because
+# serenedb appends a `DETAIL: ...` line PG omits; the marker swallows that tail
+# so the same block is green on both engines.
+#
+# A duplicate re-GRANT must not change behavior (idempotent), and revoking ONE
+# overlapping source must not break access still supplied by another.
+#
+# Objects prefixed idem_ under the vedernikoff/kostya lore; idempotent and
+# self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS idem_kostyatable;
+
+
+statement ok
+DROP ROLE IF EXISTS idem_gul;
+
+
+statement ok
+CREATE TABLE idem_kostyatable (id int, mop text);
+
+
+statement ok
+INSERT INTO idem_kostyatable VALUES (1, 'iceberg'), (2, 'vedernikoff');
+
+
+statement ok
+CREATE ROLE idem_gul LOGIN PASSWORD 'idem_gul_pw';
+
+
+# ---- Baseline: oracle says nothing held, and the real path denies both ----
+
+query
+SELECT has_table_privilege('idem_gul','idem_kostyatable','SELECT') AS sel,
+       has_table_privilege('idem_gul','idem_kostyatable','INSERT') AS ins;
+----
+sel	ins
+f	f
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+statement error
+SELECT * FROM idem_kostyatable;
+----
+db error: ERROR: permission denied for table idem_kostyatable<slt:ignore>
+
+
+# ---- Grant SELECT, then re-grant SELECT (idempotent): real read works after
+#      the first grant and is UNCHANGED by the duplicate. ----
+
+statement ok
+GRANT SELECT ON idem_kostyatable TO idem_gul;
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+query
+SELECT id, mop FROM idem_kostyatable ORDER BY id;
+----
+id	mop
+1	iceberg
+2	vedernikoff
+
+
+# Duplicate GRANT SELECT: no behavioral change -- still readable, still no write.
+statement ok
+GRANT SELECT ON idem_kostyatable TO idem_gul;
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+query
+SELECT count(*) AS n FROM idem_kostyatable;
+----
+n
+2
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+statement error
+INSERT INTO idem_kostyatable VALUES (3, 'pudge');
+----
+db error: ERROR: permission denied for table idem_kostyatable<slt:ignore>
+
+
+# ---- Accumulate INSERT via an overlapping list {SELECT, INSERT}: SELECT is
+#      idempotent, INSERT is new. The real insert now succeeds. ----
+
+statement ok
+GRANT SELECT, INSERT ON idem_kostyatable TO idem_gul;
+
+
+query
+SELECT has_table_privilege('idem_gul','idem_kostyatable','SELECT') AS sel,
+       has_table_privilege('idem_gul','idem_kostyatable','INSERT') AS ins,
+       has_table_privilege('idem_gul','idem_kostyatable','DELETE') AS del;
+----
+sel	ins	del
+t	t	f
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+statement ok
+INSERT INTO idem_kostyatable VALUES (3, 'clickclack');
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+query
+SELECT count(*) AS n FROM idem_kostyatable;
+----
+n
+3
+
+
+# DELETE was never granted: the real delete is denied even though SELECT and
+# INSERT accumulated.
+connection c_gul user=idem_gul password=idem_gul_pw
+statement error
+DELETE FROM idem_kostyatable WHERE id = 1;
+----
+db error: ERROR: permission denied for table idem_kostyatable<slt:ignore>
+
+
+# ---- Two sources for SELECT: also grant SELECT to PUBLIC. Revoking the DIRECT
+#      SELECT must NOT break reads -- PUBLIC still supplies it (accumulation
+#      keeps the privilege alive through the surviving source). ----
+
+statement ok
+GRANT SELECT ON idem_kostyatable TO PUBLIC;
+
+
+statement ok
+REVOKE SELECT ON idem_kostyatable FROM idem_gul;
+
+
+# Oracle: SELECT still t (via PUBLIC), INSERT still t (direct).
+query
+SELECT has_table_privilege('idem_gul','idem_kostyatable','SELECT') AS sel,
+       has_table_privilege('idem_gul','idem_kostyatable','INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+# Real read still works through the PUBLIC source.
+connection c_gul user=idem_gul password=idem_gul_pw
+query
+SELECT count(*) AS n FROM idem_kostyatable;
+----
+n
+3
+
+
+# ---- Remove the LAST SELECT source (PUBLIC): reads finally denied; INSERT,
+#      never sourced from PUBLIC, still works. ----
+
+statement ok
+REVOKE SELECT ON idem_kostyatable FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('idem_gul','idem_kostyatable','SELECT') AS sel,
+       has_table_privilege('idem_gul','idem_kostyatable','INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+statement error
+SELECT * FROM idem_kostyatable;
+----
+db error: ERROR: permission denied for table idem_kostyatable<slt:ignore>
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+statement ok
+INSERT INTO idem_kostyatable VALUES (4, 'babsky');
+
+
+# ---- GRANT ALL after the partial accumulation: every real operation now
+#      succeeds for idem_gul. ----
+
+statement ok
+GRANT ALL ON idem_kostyatable TO idem_gul;
+
+
+query
+SELECT has_table_privilege('idem_gul','idem_kostyatable','SELECT') AS sel,
+       has_table_privilege('idem_gul','idem_kostyatable','INSERT') AS ins,
+       has_table_privilege('idem_gul','idem_kostyatable','UPDATE') AS upd,
+       has_table_privilege('idem_gul','idem_kostyatable','DELETE') AS del;
+----
+sel	ins	upd	del
+t	t	t	t
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+statement ok
+DELETE FROM idem_kostyatable WHERE id = 4;
+
+
+connection c_gul user=idem_gul password=idem_gul_pw
+query
+SELECT count(*) AS n FROM idem_kostyatable;
+----
+n
+3
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE idem_kostyatable;
+
+
+statement ok
+DROP ROLE idem_gul;

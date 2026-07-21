@@ -36,10 +36,6 @@ class FormatRegister
 
 }  // namespace
 
-bool formats::Exists(std::string_view name, bool load_library /*= true*/) {
-  return nullptr != FormatRegister::instance().get(name, load_library);
-}
-
 Format::ptr formats::Get(std::string_view name,
                          bool load_library /*= true*/) noexcept {
   try {
@@ -51,11 +47,6 @@ Format::ptr formats::Get(std::string_view name,
   }
 
   return nullptr;
-}
-
-void formats::LoadAll(std::string_view path) {
-  (void)path;  // plugin loading via .so removed; SereneDB ships no out-of-tree
-               // iresearch plugins
 }
 
 bool formats::Visit(const std::function<bool(std::string_view)>& visitor) {

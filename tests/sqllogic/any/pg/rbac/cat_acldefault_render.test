@@ -1,0 +1,22 @@
+# acldefault() renders the default privilege list for an object class exactly
+# like PostgreSQL: the PUBLIC entry precedes the owner entry, and an
+# unresolvable grantor/grantee OID renders as the bare numeric OID (PG's
+# aclitemout), not a synthesized role-name string. No roles created; uses the
+# current database owner and a deliberately-bogus OID, so it is parallel-safe.
+
+# PUBLIC-first ordering for the live database owner's default acl. The ::text[]
+# cast keeps the result off the aclitem type, which PG has no binary output
+# function for (the extended-protocol runner requests binary results).
+query
+SELECT acldefault('d', (SELECT datdba FROM pg_database WHERE datname = current_database()))::text[] AS d;
+----
+d
+{=Tc/postgres,postgres=CTc/postgres}
+
+
+# A non-existent role OID renders as the bare numeric OID, PUBLIC still first.
+query
+SELECT acldefault('d', 999999999)::text[] AS d;
+----
+d
+{=Tc/999999999,999999999=CTc/999999999}

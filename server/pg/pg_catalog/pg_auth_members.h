@@ -40,4 +40,7 @@ struct PgAuthMembers {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData();
+
 }  // namespace sdb::pg

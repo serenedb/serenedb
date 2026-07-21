@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
@@ -41,7 +41,7 @@ bool IsTokenizeListCall(const duckdb::Expression& expr) {
     return false;
   }
   const auto& f = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (f.function.GetName() != kTSQTokenize) {
+  if (f.Function().GetName().GetIdentifierName() != kTSQTokenize) {
     return false;
   }
   return f.GetReturnType().id() == duckdb::LogicalTypeId::LIST &&
@@ -56,15 +56,11 @@ void FromTokenizeListInAnyAllOf(
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_any(ts_tokenize(['quick', 'brown'])). Tokenises each list "
     "element through the column analyzer.";
-  SDB_ASSERT(is_any || outer.children.size() == 1);
+  SDB_ASSERT(is_any || outer.GetChildren().size() == 1);
   std::optional<size_t> min_match;
-  if (is_any && outer.children.size() == 2) {
+  if (is_any && outer.GetChildren().size() == 2) {
     int64_t m;
-    if (auto r = GetIntArg(*outer.children[1], "ts_any min_match", m);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetIntArg(*outer.GetChildren()[1], m, {"ts_any min_match", kSyntaxHint});
     if (m < 1) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_any min_match must be >= 1, got ", m),
@@ -73,10 +69,10 @@ void FromTokenizeListInAnyAllOf(
     min_match = static_cast<size_t>(m);
   }
 
-  SDB_ASSERT(tokenize_call.children.size() >= 1 &&
-             tokenize_call.children.size() <= 2);
+  SDB_ASSERT(tokenize_call.GetChildren().size() >= 1 &&
+             tokenize_call.GetChildren().size() <= 2);
   // Inner list -- v1 requires a constant LIST(VARCHAR).
-  const auto* list_const = TryGetConstant(*tokenize_call.children[0]);
+  const auto* list_const = TryGetConstant(*tokenize_call.GetChildren()[0]);
   if (!list_const) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_tokenize array form requires a constant text "
@@ -107,14 +103,10 @@ void FromTokenizeListInAnyAllOf(
   // `analyzer` below) stays valid for the loop. Drops at function
   // return -> analyzer goes back to the catalog Tokenizer's pool.
   catalog::Tokenizer::TokenizerWrapper override_wrapper;
-  if (tokenize_call.children.size() == 2) {
+  if (tokenize_call.GetChildren().size() == 2) {
     std::string analyzer_name;
-    if (auto r = GetVarcharArg(*tokenize_call.children[1],
-                               "ts_tokenize analyzer name", analyzer_name);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetVarcharArg(*tokenize_call.GetChildren()[1], analyzer_name,
+                  {"ts_tokenize analyzer name", kSyntaxHint});
     if (analyzer_name == irs::StringTokenizer::type_name()) {
       use_identity = true;
     } else {
@@ -166,16 +158,14 @@ void FromTokenizeListInAnyAllOf(
       tokens.emplace_back(bytes.begin(), bytes.end());
       continue;
     }
-    if (!analyzer->reset(raw)) {
+    irs::TermVectorSink sink{tokens};
+    if (!analyzer->Fill(raw, sink.writer, irs::TokenLayout::Terms)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Failed to analyse '", raw, "'"),
         ERR_HINT("The selected analyzer rejected this list element."));
     }
-    const auto* tok_attr = irs::get<irs::TermAttr>(*analyzer);
-    while (analyzer->next()) {
-      tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
-    }
+    sink.writer.Finish();
   }
 
   if (tokens.empty()) {
@@ -229,15 +219,15 @@ void ExtractAnyAllOfArgs(
   std::optional<size_t>& min_match) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).";
-  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
-  SDB_ASSERT(is_any || func.children.size() == 1);
+  SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
+  SDB_ASSERT(is_any || func.GetChildren().size() == 1);
 
   // DuckDB constant-folds `['a', 'b']` into a BOUND_CONSTANT holding a
   // LIST/ARRAY Value rather than a `list_value`/`array_value` function
   // call. Support both shapes (and both LIST and fixed-length ARRAY):
   // synthesised BoundConstantExpression wrappers per child Value in the
   // folded case, raw child expression pointers otherwise.
-  const auto& list_expr = *func.children[0];
+  const auto& list_expr = *func.GetChildren()[0];
   const auto list_type_id = list_expr.GetReturnType().id();
   if (list_type_id != duckdb::LogicalTypeId::LIST &&
       list_type_id != duckdb::LogicalTypeId::ARRAY) {
@@ -248,7 +238,8 @@ void ExtractAnyAllOfArgs(
   }
   if (list_expr.GetExpressionClass() ==
       duckdb::ExpressionClass::BOUND_CONSTANT) {
-    const auto& val = list_expr.Cast<duckdb::BoundConstantExpression>().value;
+    const auto& val =
+      list_expr.Cast<duckdb::BoundConstantExpression>().GetValue();
     if (val.IsNull()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("list arg must not be NULL"),
@@ -265,14 +256,14 @@ void ExtractAnyAllOfArgs(
   } else if (list_expr.GetExpressionClass() ==
              duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& list_fn = list_expr.Cast<duckdb::BoundFunctionExpression>();
-    if (list_fn.function.GetName() != "list_value" &&
-        list_fn.function.GetName() != "array_value") {
+    const auto& list_fn_name = list_fn.Function().GetName().GetIdentifierName();
+    if (list_fn_name != "list_value" && list_fn_name != "array_value") {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("list arg must be a literal list or array (got: ",
-                              list_fn.function.GetName(), ")"),
+                              list_fn_name, ")"),
                       ERR_HINT(kSyntaxHint));
     }
-    for (const auto& e : list_fn.children) {
+    for (const auto& e : list_fn.GetChildren()) {
       args.push_back(e.get());
     }
   } else {
@@ -281,12 +272,9 @@ void ExtractAnyAllOfArgs(
                     ERR_HINT(kSyntaxHint));
   }
 
-  if (func.children.size() == 2) {
+  if (func.GetChildren().size() == 2) {
     int64_t m;
-    if (auto r = GetIntArg(*func.children[1], "ts_any min_match", m); !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+    GetIntArg(*func.GetChildren()[1], m, {"ts_any min_match", kSyntaxHint});
     if (m < 1) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_any min_match must be >= 1, got ", m),
@@ -317,10 +305,11 @@ void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
   // call. Tokenise every element, flatten into a single ByTerms with the
   // appropriate min_match. Bypasses the per-arg BuildTSQuery loop so we
   // can emit one aggregated filter rather than N individual leaves.
-  if (!func.children.empty() && IsTokenizeListCall(*func.children[0])) {
+  if (!func.GetChildren().empty() &&
+      IsTokenizeListCall(*func.GetChildren()[0])) {
     FromTokenizeListInAnyAllOf(
       parent, ctx, column_info, func,
-      func.children[0]->Cast<duckdb::BoundFunctionExpression>(), is_any);
+      func.GetChildren()[0]->Cast<duckdb::BoundFunctionExpression>(), is_any);
     return;
   }
   std::vector<const duckdb::Expression*> args;

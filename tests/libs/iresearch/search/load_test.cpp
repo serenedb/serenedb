@@ -38,6 +38,7 @@
 #include "executor.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_builder.h"
+#include "insert_field.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -85,6 +86,16 @@ void FillViaFillBlock(irs::DocIterator& iter, irs::doc_id_t window_min,
   DecodeMask(mask.data(), mask_words, window_min, docs);
 }
 
+// Test fill: delegate to the EmitDocs API (writes doc-ids directly).
+void FillViaEmitDocs(irs::DocIterator& iter, irs::doc_id_t window_min,
+                     irs::doc_id_t window_max,
+                     std::vector<irs::doc_id_t>& docs) {
+  docs.resize(window_max -
+              window_min);  // value() >= window_min, matches <= span
+  const auto n = iter.EmitDocs(docs.data(), window_max);
+  docs.resize(n);
+}
+
 // Operation applied to BOTH iterators before each window fill.
 using BeforeWindowFunc =
   std::function<void(irs::DocIterator& iter, irs::doc_id_t window_min)>;
@@ -125,10 +136,11 @@ BeforeWindowFunc Cycle(std::vector<BeforeWindowFunc> ops, size_t num_iters) {
 // Before each window, `before_window` runs on BOTH iterators.
 // Then reference fills via advance-loop, test fills via FillBlock.
 // Returns total number of documents seen.
-size_t CompareWindowByWindow(irs::DocIterator& reference_iter,
-                             irs::DocIterator& test_iter, irs::doc_id_t max_doc,
-                             irs::doc_id_t window_size,
-                             const BeforeWindowFunc& before_window = {}) {
+size_t CompareWindowByWindow(
+  irs::DocIterator& reference_iter, irs::DocIterator& test_iter,
+  irs::doc_id_t max_doc, irs::doc_id_t window_size,
+  const BeforeWindowFunc& before_window = {},
+  const FillWindowFunc& test_fill = FillViaFillBlock) {
   size_t total_docs = 0;
   std::vector<irs::doc_id_t> reference_docs;
   std::vector<irs::doc_id_t> test_docs;
@@ -145,7 +157,7 @@ size_t CompareWindowByWindow(irs::DocIterator& reference_iter,
     reference_docs.clear();
     test_docs.clear();
     FillViaAdvance(reference_iter, window_min, window_max, reference_docs);
-    FillViaFillBlock(test_iter, window_min, window_max, test_docs);
+    test_fill(test_iter, window_min, window_max, test_docs);
 
     if (test_docs != reference_docs) {
       std::vector<irs::doc_id_t> only_in_reference;
@@ -250,6 +262,28 @@ void TestAdvanceVsFillBlock(const irs::DirectoryReader& reader,
                        EXPECT_EQ(total, count_iter->count())
                          << "total docs vs count() mismatch";
                      });
+}
+
+void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
+                           const std::vector<IteratorFactory>& factories,
+                           std::span<const irs::doc_id_t> window_sizes) {
+  ForEachCombination(
+    reader, factories, window_sizes,
+    [](const auto& reader, const auto& segment, const auto& factory,
+       auto max_doc, auto window_size) {
+      auto reference_iter = factory.create(reader, segment);
+      auto test_iter = factory.create(reader, segment);
+      auto count_iter = factory.create(reader, segment);
+
+      reference_iter->advance();
+      test_iter->advance();
+
+      auto total = CompareWindowByWindow(*reference_iter, *test_iter, max_doc,
+                                         window_size, {}, FillViaEmitDocs);
+
+      EXPECT_GT(total, 0u) << "query should have matches";
+      EXPECT_EQ(total, count_iter->count()) << "total docs vs count() mismatch";
+    });
 }
 
 void TestSeekVsFillBlock(const irs::DirectoryReader& reader,
@@ -437,10 +471,10 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
     for (auto& line : buf) {
       doc.Fill(line);
       auto trx = ctx.Insert();
-      trx.Insert(doc.fields[0]);
+      ::tests::InsertField(trx, doc.fields[0]);
       irs::tests::StoreFieldAt(*trx.GetColWriter(), kIdId, trx.DocId(),
                                doc.fields[0]);
-      trx.Insert(doc.fields[1]);
+      ::tests::InsertField(trx, doc.fields[1]);
     }
   }
 };
@@ -914,6 +948,11 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 TEST_F(LoadTest, AdvanceVsFillBlock) {
   auto factories = MakeFactories(*gExecutor);
   TestAdvanceVsFillBlock(gExecutor->GetReader(), factories, kWindowSizes);
+}
+
+TEST_F(LoadTest, AdvanceVsEmitDocs) {
+  auto factories = MakeFactories(*gExecutor);
+  TestAdvanceVsEmitDocs(gExecutor->GetReader(), factories, kWindowSizes);
 }
 
 TEST_F(LoadTest, SeekVsFillBlock) {

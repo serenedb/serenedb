@@ -26,4 +26,9 @@ namespace sdb::search {
 // commits and resyncs num_rows.
 void RunSearchTableRecovery(bool skip_wal_recovery);
 
+// Starts background maintenance (commit/consolidation/GC) for every search
+// table. Must run AFTER RunSearchTableRecovery so no background commit
+// publishes a half-replayed index.
+void StartSearchTableMaintenance();
+
 }  // namespace sdb::search

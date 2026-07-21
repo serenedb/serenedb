@@ -37,7 +37,8 @@ inline constexpr std::string kPgSqlTypeOidProp = "sdb_oid";
 
 class PgSqlType final : public Object {
  public:
-  PgSqlType(ObjectId schema_id, ObjectId id, std::string_view name,
+  PgSqlType(Permissions perm, ObjectId schema_id, ObjectId id,
+            std::string_view name,
             duckdb::unique_ptr<duckdb::CreateTypeInfo> info);
 
   static std::shared_ptr<PgSqlType> Deserialize(duckdb::Deserializer& src,

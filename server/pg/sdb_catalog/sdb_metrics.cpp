@@ -89,7 +89,7 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
     masks.emplace_back(kPerProcessMask);
   }
 
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     SDB_ASSERT(schema);
     for (const auto& index_ptr :
@@ -113,7 +113,7 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
 
   auto result = CreateColumns<SdbMetrics>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], masks[row], row);
+    WriteData(result, values[row], masks[row], row, *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

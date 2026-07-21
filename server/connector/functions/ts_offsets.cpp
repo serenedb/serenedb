@@ -31,6 +31,8 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/analysis/batch/token_batch.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
@@ -43,10 +45,12 @@
 
 #include "catalog/catalog.h"
 #include "catalog/table_options.h"
+#include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/highlight/highlight_types.h"
 #include "connector/highlight/memory_index.h"
+#include "connector/inverter_sink.hpp"
 #include "connector/offsets_collector.hpp"
 #include "connector/offsets_writer.hpp"
 #include "connector/search_filter_builder.hpp"
@@ -74,54 +78,37 @@ constexpr irs::field_id kStandaloneFieldId =
 constexpr catalog::Column::Id kStandaloneSyntheticColumnId{kStandaloneFieldId};
 
 class SortingOffsetTokenizer final
-  : public irs::analysis::TypedAnalyzer<SortingOffsetTokenizer> {
+  : public irs::analysis::TypedTokenizer<SortingOffsetTokenizer> {
  public:
   static constexpr std::string_view type_name() noexcept {
     return "sorting_offset_tokenizer";
   }
 
-  explicit SortingOffsetTokenizer(
-    catalog::Tokenizer::TokenizerWrapper inner) noexcept
-    : _inner{std::move(inner)},
-      _term{irs::get<irs::TermAttr>(*_inner)},
-      _offs{irs::get<irs::OffsAttr>(*_inner)} {}
+  explicit SortingOffsetTokenizer(catalog::Tokenizer::TokenizerWrapper inner)
+    : _inner{std::move(inner)} {}
 
-  bool reset(std::string_view value) final {
-    _idx = 0;
+  template<irs::TokenLayout Layout>
+  bool DoFill(std::string_view value, irs::TokenEmitter& sink) {
     _buf.clear();
-    if (!_term || !_offs || !_inner->reset(value)) {
+    irs::TokenCollector collector{irs::TokenLayout::TermsPosOffs};
+    if (!irs::AnalyzeValue(*_inner, value, collector)) {
       return false;
     }
-    while (_inner->next()) {
-      _buf.emplace_back(_offs->start, _offs->end, irs::bstring{_term->value});
+    for (auto& tok : collector.tokens) {
+      _buf.emplace_back(tok.offs_start, tok.offs_end, std::move(tok.term));
     }
     absl::c_sort(_buf);
-    return true;
-  }
-
-  bool next() final {
-    if (_idx >= _buf.size()) {
-      return false;
+    for (const auto& [start, end, term] : _buf) {
+      sink.EmitInterned<Layout>(irs::bytes_view{term}, start, end);
     }
-    auto& offs = std::get<irs::OffsAttr>(_attrs);
-    auto& term = std::get<irs::TermAttr>(_attrs);
-    std::tie(offs.start, offs.end, term.value) = _buf[_idx++];
     return true;
-  }
-
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
   }
 
  private:
   using Gram = std::tuple<uint32_t, uint32_t, irs::bstring>;
 
   catalog::Tokenizer::TokenizerWrapper _inner;
-  const irs::TermAttr* _term;
-  const irs::OffsAttr* _offs;
-  std::tuple<irs::IncAttr, irs::TermAttr, irs::OffsAttr> _attrs;
   std::vector<Gram> _buf;
-  size_t _idx{0};
 };
 
 catalog::Tokenizer::TokenizerWrapper EnsureOffsets(
@@ -140,6 +127,9 @@ catalog::Tokenizer::TokenizerWrapper EnsureOffsets(
   return tokenizer;
 }
 
+constexpr auto kOffsetsFeatures =
+  irs::IndexFeatures::Freq | irs::IndexFeatures::Pos | irs::IndexFeatures::Offs;
+
 struct IndexField {
   void Reset(catalog::Column::Id column_id,
              catalog::Tokenizer::TokenizerWrapper analyzer) {
@@ -148,13 +138,6 @@ struct IndexField {
   }
 
   irs::field_id Id() const noexcept { return id; }
-  irs::IndexFeatures GetIndexFeatures() const noexcept {
-    return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-           irs::IndexFeatures::Offs;
-  }
-  irs::Tokenizer& GetTokens() const noexcept { return *tokens; }
-  bool Write(irs::DataOutput&) const noexcept { return false; }
-  void SetValue(std::string_view value) const { tokens->reset(value); }
 
   irs::field_id id{irs::field_limits::invalid()};
   catalog::Tokenizer::TokenizerWrapper tokens;
@@ -163,6 +146,7 @@ struct IndexField {
 struct OffsetsLocalState final : duckdb::FunctionLocalState {
   highlight::MemoryIndex memory_index;
   IndexField field;
+  InverterSink inverter_sink;
 };
 
 auto& EnsureField(duckdb::ClientContext& context,
@@ -174,11 +158,9 @@ auto& EnsureField(duckdb::ClientContext& context,
   auto column_id = kStandaloneSyntheticColumnId;
   catalog::Tokenizer::TokenizerWrapper wrapper;
   if (bind.IsStandalone()) {
-    auto wrapper_or = bind.dict_tokenizer->GetTokenizer();
-    SDB_ENSURE(wrapper_or.has_value(), ERROR_INTERNAL);
-    wrapper = std::move(*wrapper_or);
+    wrapper = bind.dict_tokenizer->GetTokenizer();
   } else {
-    auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
+    auto snapshot = GetSereneDBContext(context).CatalogSnapshot();
     auto column_tokenizer = bind.inverted_index->GetTokenizer(
       snapshot, static_cast<irs::field_id>(bind.column_id));
     wrapper = std::move(column_tokenizer.analyzer);
@@ -201,7 +183,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitOffsetsLocalState(
 void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& expr = state.expr.Cast<duckdb::BoundFunctionExpression>();
-  if (!expr.bind_info) {
+  if (!expr.BindInfo()) {
     // Reached when neither the iresearch_plan rule nor
     // OffsetsStandaloneBind populated bind data (literal first arg, no
     // surrounding SearchScan, unresolved dict name, etc.). Same shape
@@ -214,7 +196,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                "up, or use the standalone ts_offsets(dict, body, filter) "
                "form."));
   }
-  auto& bind = expr.bind_info->Cast<OffsetsBindData>();
+  auto& bind = expr.BindInfo()->Cast<OffsetsBindData>();
   auto& local_state = duckdb::ExecuteFunctionState::GetFunctionState(state)
                         ->Cast<OffsetsLocalState>();
   const auto count = args.size();
@@ -236,19 +218,28 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   body.ToUnifiedFormat(count, fmt);
 
   auto segment = local_state.memory_index.IndexChunk(count, [&](auto& doc) {
+    auto* slot = doc.Field(field.Id(), kOffsetsFeatures);
+    SDB_ASSERT(slot);
+    auto& inverter_sink = local_state.inverter_sink;
+    inverter_sink.Reset();
+
     const auto* data =
       duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-    for (duckdb::idx_t r = 0; r < count; ++r) {
+    auto& w = inverter_sink.Bind(doc, *slot);
+    irs::doc_id_t d = doc.DocId();
+    for (duckdb::idx_t r = 0; r < count; ++r, ++d) {
       const auto idx = fmt.sel->get_index(r);
-      if (fmt.validity.RowIsValid(idx)) {
-        const auto& s = data[idx];
-        if (s.GetSize() > 0) {
-          field.SetValue(std::string_view{s.GetData(), s.GetSize()});
-          doc.Insert(field);
-        }
+      if (!fmt.validity.RowIsValid(idx)) {
+        continue;
       }
-      doc.NextDocument();
+      const auto& s = data[idx];
+      if (s.GetSize() > 0) {
+        w.BeginValue(d);
+        field.tokens->Fill(AsView(s), w, irs::TokenLayout::TermsPosOffs);
+        w.EndValue();
+      }
     }
+    inverter_sink.Flush();
   });
 
   auto collector = bind.stored_filter->MakeCollector(nullptr);
@@ -317,7 +308,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 
   auto body_ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    "synthetic_body", duckdb::LogicalType::VARCHAR,
+    duckdb::Identifier{"synthetic_body"}, duckdb::LogicalType::VARCHAR,
     duckdb::ColumnBinding{duckdb::TableIndex{kSyntheticTableIdx},
                           duckdb::ProjectionIndex{kSyntheticColumnIdx}});
 
@@ -325,29 +316,25 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   at_at_children.push_back(std::move(body_ref));
   at_at_children.push_back(tsquery_expr.Copy());
 
-  duckdb::ScalarFunction at_at(std::string{kTSQueryMatch}, {},
+  duckdb::ScalarFunction at_at(duckdb::Identifier{kTSQueryMatch}, {},
                                duckdb::LogicalType::BOOLEAN, nullptr);
   duckdb::BoundScalarFunction bound_at_at(at_at);
-  bound_at_at.SetName(std::string{kTSQueryMatch});
+  bound_at_at.SetName(duckdb::Identifier{kTSQueryMatch});
   auto match_expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
     std::move(bound_at_at), std::move(at_at_children), nullptr);
 
   auto column_getter =
     [column_id, dict_tokenizer](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<SearchColumnInfo> {
-    if (ref.binding.table_index != duckdb::TableIndex{kSyntheticTableIdx} ||
-        ref.binding.column_index !=
+    if (ref.Binding().table_index != duckdb::TableIndex{kSyntheticTableIdx} ||
+        ref.Binding().column_index !=
           duckdb::ProjectionIndex{kSyntheticColumnIdx}) {
-      return std::nullopt;
-    }
-    auto wrapper_or = dict_tokenizer->GetTokenizer();
-    if (!wrapper_or.has_value()) {
       return std::nullopt;
     }
     SearchColumnInfo info;
     info.field_id = static_cast<irs::field_id>(column_id);
     info.logical_type = duckdb::LogicalType::VARCHAR;
-    info.tokenizer.analyzer = std::move(*wrapper_or);
+    info.tokenizer.analyzer = dict_tokenizer->GetTokenizer();
     info.tokenizer.features = irs::IndexFeatures::Freq |
                               irs::IndexFeatures::Pos |
                               irs::IndexFeatures::Offs;
@@ -358,11 +345,10 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::unique_ptr<duckdb::Expression> match_owner = std::move(match_expr);
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts{
     &match_owner, 1};
-  auto result = MakeSearchFilter(*root, conjuncts, column_getter, context);
-  if (!result.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("failed to build filter from tsquery: ", result.errorMessage()));
+  if (auto s = MakeSearchFilter(*root, conjuncts, column_getter, context);
+      !s.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(s.message()));
   }
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter);

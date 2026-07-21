@@ -26,8 +26,10 @@
 
 #include <sstream>
 
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "tests_shared.hpp"
+#include "token_sink_utils.hpp"
 
 namespace {
 
@@ -126,19 +128,6 @@ TEST(ngram_token_stream_test, construct) {
     ASSERT_EQ(2, impl->min_gram());
     ASSERT_EQ(2, impl->max_gram());
     ASSERT_EQ(true, impl->preserve_original());
-
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    ASSERT_TRUE(term);
-    ASSERT_TRUE(irs::IsNull(term->value));
-
-    auto* increment = irs::get<irs::IncAttr>(*stream);
-    ASSERT_TRUE(increment);
-    ASSERT_EQ(1, increment->value);
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    ASSERT_TRUE(offset);
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(0, offset->end);
   }
 
   // 0 == min_gram
@@ -157,19 +146,6 @@ TEST(ngram_token_stream_test, construct) {
     ASSERT_EQ(1, impl->min_gram());
     ASSERT_EQ(2, impl->max_gram());
     ASSERT_EQ(true, impl->preserve_original());
-
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    ASSERT_TRUE(term);
-    ASSERT_TRUE(irs::IsNull(term->value));
-
-    auto* increment = irs::get<irs::IncAttr>(*stream);
-    ASSERT_TRUE(increment);
-    ASSERT_EQ(1, increment->value);
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    ASSERT_TRUE(offset);
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(0, offset->end);
   }
 
   // min_gram > max_gram
@@ -189,19 +165,6 @@ TEST(ngram_token_stream_test, construct) {
     ASSERT_EQ(std::numeric_limits<size_t>::max(), impl->min_gram());
     ASSERT_EQ(std::numeric_limits<size_t>::max(), impl->max_gram());
     ASSERT_EQ(true, impl->preserve_original());
-
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    ASSERT_TRUE(term);
-    ASSERT_TRUE(irs::IsNull(term->value));
-
-    auto* increment = irs::get<irs::IncAttr>(*stream);
-    ASSERT_TRUE(increment);
-    ASSERT_EQ(1, increment->value);
-
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    ASSERT_TRUE(offset);
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(0, offset->end);
   }
 }
 
@@ -232,46 +195,52 @@ TEST(ngram_token_stream_test, next_utf8) {
     [](const std::vector<Utf8token>& expected, std::string_view data,
        irs::analysis::NGramTokenizer<
          irs::analysis::NGramTokenizerBase::InputType::UTF8>& stream) {
-      ASSERT_TRUE(stream.reset(data));
-
-      auto* value = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(value);
-
-      auto* offset = irs::get<irs::OffsAttr>(stream);
-      ASSERT_TRUE(offset);
-      auto* inc = irs::get<irs::IncAttr>(stream);
-      auto expected_token = expected.begin();
-      uint32_t pos = std::numeric_limits<uint32_t>::max();
-      while (stream.next()) {
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(expected_token->value),
-                  value->value);
-        ASSERT_EQ(expected_token->start, offset->start);
-        ASSERT_EQ(expected_token->end, offset->end);
-        pos += inc->value;
+      std::vector<irs::bstring> terms;
+      std::vector<uint32_t> poss;
+      std::vector<uint32_t> starts;
+      std::vector<uint32_t> ends;
+      const auto collect = [&](irs::TokenBatch& batch,
+                               std::span<const irs::DocRun> runs) {
+        ASSERT_FALSE(batch.dense_pos);
+        ASSERT_TRUE(runs.empty());
+        for (uint32_t i = 0; i < batch.count; ++i) {
+          const auto& t = batch.terms[i];
+          terms.emplace_back(
+            reinterpret_cast<const irs::byte_type*>(t.GetData()), t.GetSize());
+          poss.push_back(batch.pos[i]);
+          starts.push_back(batch.offs_start[i]);
+          ends.push_back(batch.offs_end[i]);
+        }
+      };
+      tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, collect};
+      ASSERT_TRUE(stream.Fill(data, sink.writer, sink.layout));
+      sink.writer.Finish();
+      ASSERT_EQ(expected.size(), terms.size());
+      for (size_t k = 0; k < expected.size(); ++k) {
+        const auto& e = expected[k];
+        ASSERT_EQ(irs::ViewCast<irs::byte_type>(e.value), terms[k]);
+        ASSERT_EQ(e.start, starts[k]);
+        ASSERT_EQ(e.end, ends[k]);
+        const uint32_t pos = poss[k] - 1;
         auto start = reinterpret_cast<const irs::byte_type*>(data.data());
         utf8::unchecked::advance(start, pos);
-        const auto size = value->value.size() -
-                          expected_token->start_marker.size() -
-                          expected_token->end_marker.size();
+        const auto size =
+          terms[k].size() - e.start_marker.size() - e.end_marker.size();
         ASSERT_GT(size, 0);
         irs::bstring bs;
-        if (!expected_token->start_marker.empty()) {
-          bs.append(reinterpret_cast<const irs::byte_type*>(
-                      expected_token->start_marker.data()),
-                    expected_token->start_marker.size());
+        if (!e.start_marker.empty()) {
+          bs.append(
+            reinterpret_cast<const irs::byte_type*>(e.start_marker.data()),
+            e.start_marker.size());
         }
         bs.append(start, size);
-        if (!expected_token->end_marker.empty()) {
-          bs.append(reinterpret_cast<const irs::byte_type*>(
-                      expected_token->end_marker.data()),
-                    expected_token->end_marker.size());
+        if (!e.end_marker.empty()) {
+          bs.append(
+            reinterpret_cast<const irs::byte_type*>(e.end_marker.data()),
+            e.end_marker.size());
         }
-
-        ASSERT_EQ(bs, value->value);
-        ++expected_token;
+        ASSERT_EQ(bs, terms[k]);
       }
-      ASSERT_EQ(expected_token, expected.end());
-      ASSERT_FALSE(stream.next());
     };
 
   auto locale = icu::Locale::createFromName("C.UTF-8");
@@ -468,8 +437,9 @@ TEST(ngram_token_stream_test, next_utf8) {
     const std::u8string_view utf8data = u8"\u00C0\u00C1\u00C2\u00C3\u00C4";
     const auto data = irs::ViewCast<char>(utf8data);
 
-    ASSERT_TRUE(stream.reset(data));
-    ASSERT_FALSE(stream.next());
+    auto tokens = tests::Analyze(stream, data);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_TRUE(tokens->empty());
   }
 
   {
@@ -910,20 +880,7 @@ TEST(ngram_token_stream_test, reset_too_big) {
     reinterpret_cast<const char*>(&stream),
     size_t(std::numeric_limits<uint32_t>::max()) + 1);
 
-  ASSERT_FALSE(stream.reset(input));
-
-  auto* term = irs::get<irs::TermAttr>(stream);
-  ASSERT_TRUE(term);
-  ASSERT_TRUE(irs::IsNull(term->value));
-
-  auto* increment = irs::get<irs::IncAttr>(stream);
-  ASSERT_TRUE(increment);
-  ASSERT_EQ(1, increment->value);
-
-  auto* offset = irs::get<irs::OffsAttr>(stream);
-  ASSERT_TRUE(offset);
-  ASSERT_EQ(0, offset->start);
-  ASSERT_EQ(0, offset->end);
+  ASSERT_FALSE(tests::Analyze(stream, input).has_value());
 }
 
 TEST(ngram_token_stream_test, next) {
@@ -955,44 +912,51 @@ TEST(ngram_token_stream_test, next) {
     [](const std::vector<Token>& expected, const std::string_view& data,
        irs::analysis::NGramTokenizer<
          irs::analysis::NGramTokenizerBase::InputType::Binary>& stream) {
-      ASSERT_TRUE(stream.reset(data));
-
-      auto* value = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(value);
-
-      auto* offset = irs::get<irs::OffsAttr>(stream);
-      ASSERT_TRUE(offset);
-      auto* inc = irs::get<irs::IncAttr>(stream);
-      auto expected_token = expected.begin();
-      uint32_t pos = std::numeric_limits<uint32_t>::max();
-      while (stream.next()) {
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(expected_token->value),
-                  value->value);
-        ASSERT_EQ(expected_token->start, offset->start);
-        ASSERT_EQ(expected_token->end, offset->end);
-        pos += inc->value;
-        const auto size = value->value.size() -
-                          expected_token->start_marker.size() -
-                          expected_token->end_marker.size();
+      std::vector<irs::bstring> terms;
+      std::vector<uint32_t> poss;
+      std::vector<uint32_t> starts;
+      std::vector<uint32_t> ends;
+      const auto collect = [&](irs::TokenBatch& batch,
+                               std::span<const irs::DocRun> runs) {
+        ASSERT_FALSE(batch.dense_pos);
+        ASSERT_TRUE(runs.empty());
+        for (uint32_t i = 0; i < batch.count; ++i) {
+          const auto& t = batch.terms[i];
+          terms.emplace_back(
+            reinterpret_cast<const irs::byte_type*>(t.GetData()), t.GetSize());
+          poss.push_back(batch.pos[i]);
+          starts.push_back(batch.offs_start[i]);
+          ends.push_back(batch.offs_end[i]);
+        }
+      };
+      tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, collect};
+      ASSERT_TRUE(stream.Fill(data, sink.writer, sink.layout));
+      sink.writer.Finish();
+      ASSERT_EQ(expected.size(), terms.size());
+      for (size_t k = 0; k < expected.size(); ++k) {
+        const auto& e = expected[k];
+        ASSERT_EQ(irs::ViewCast<irs::byte_type>(e.value), terms[k]);
+        ASSERT_EQ(e.start, starts[k]);
+        ASSERT_EQ(e.end, ends[k]);
+        const uint32_t pos = poss[k] - 1;
+        const auto size =
+          terms[k].size() - e.start_marker.size() - e.end_marker.size();
         ASSERT_GT(size, 0);
         irs::bstring bs;
-        if (!expected_token->start_marker.empty()) {
-          bs.append(reinterpret_cast<const irs::byte_type*>(
-                      expected_token->start_marker.data()),
-                    expected_token->start_marker.size());
+        if (!e.start_marker.empty()) {
+          bs.append(
+            reinterpret_cast<const irs::byte_type*>(e.start_marker.data()),
+            e.start_marker.size());
         }
         bs.append(reinterpret_cast<const irs::byte_type*>(data.data()) + pos,
                   size);
-        if (!expected_token->end_marker.empty()) {
-          bs.append(reinterpret_cast<const irs::byte_type*>(
-                      expected_token->end_marker.data()),
-                    expected_token->end_marker.size());
+        if (!e.end_marker.empty()) {
+          bs.append(
+            reinterpret_cast<const irs::byte_type*>(e.end_marker.data()),
+            e.end_marker.size());
         }
-        ASSERT_EQ(bs, value->value);
-        ++expected_token;
+        ASSERT_EQ(bs, terms[k]);
       }
-      ASSERT_EQ(expected_token, expected.end());
-      ASSERT_FALSE(stream.next());
     };
 
   {
@@ -1334,8 +1298,9 @@ TEST(ngram_token_stream_test, next) {
       irs::analysis::NGramTokenizerBase::InputType::Binary>
       stream(irs::analysis::NGramTokenizerBase::Options(6, 6, false));
 
-    ASSERT_TRUE(stream.reset("quick"));
-    ASSERT_FALSE(stream.next());
+    auto tokens = tests::Analyze(stream, "quick");
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_TRUE(tokens->empty());
   }
 
   {
@@ -1414,19 +1379,22 @@ TEST(ngram_token_stream_test, test_out_of_range_pos_issue) {
     irs::analysis::NGramTokenizerBase::Options{
       .min_gram = 2, .max_gram = 3, .preserve_original = true});
   ASSERT_NE(nullptr, stream);
-  auto* inc = irs::get<irs::IncAttr>(*stream);
   for (size_t i = 0; i < 10000; ++i) {
     std::basic_stringstream<char> ss;
     ss << "test_" << i;
-    ASSERT_TRUE(stream->reset(ss.str()));
-    uint32_t pos = std::numeric_limits<uint32_t>::max();
+    const std::string value = ss.str();
+    tests::OneBatchSink sink{irs::TokenLayout::TermsPos};
+    ASSERT_TRUE(stream->Fill(value, sink.writer, sink.layout));
+    ASSERT_FALSE(sink.flushed());
+    auto& batch = sink.writer.buf;
+    ASSERT_FALSE(batch.dense_pos);
     uint32_t last_pos = 0;
-    while (stream->next()) {
-      pos += inc->value;
-      ASSERT_GE(pos, last_pos);
-      ASSERT_LT(pos, irs::pos_limits::eof());
-      last_pos = pos;
+    for (uint32_t t = 0; t < batch.count; ++t) {
+      ASSERT_GE(batch.pos[t], last_pos);
+      ASSERT_LT(batch.pos[t], irs::pos_limits::eof());
+      last_pos = batch.pos[t];
     }
+    sink.writer.Discard();
   }
 }
 
@@ -1525,17 +1493,11 @@ TEST(ngram_token_stream_test, test_load) {
           irs::analysis::NGramTokenizerBase::InputType::Binary});
 
     ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(data));
 
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    auto* inc = irs::get<irs::IncAttr>(*stream);
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(5, offset->end);
-    ASSERT_EQ("quick", irs::ViewCast<char>(term->value));
-    ASSERT_EQ(1, inc->value);
-    ASSERT_FALSE(stream->next());
+    auto tokens = tests::Analyze(*stream, data);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(1, tokens->size());
+    EXPECT_EQ((tests::AnalyzerToken{"quick", 1, 0, 5}), tokens->front());
   }
 
   {
@@ -1551,17 +1513,382 @@ TEST(ngram_token_stream_test, test_load) {
           irs::analysis::NGramTokenizerBase::InputType::UTF8});
 
     ASSERT_NE(nullptr, stream);
-    ASSERT_TRUE(stream->reset(ref));
 
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    auto* inc = irs::get<irs::IncAttr>(*stream);
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(10, offset->end);
-    ASSERT_EQ("\xc3\x80\xc3\x81\xc3\x82\xc3\x83\xc3\x84",
-              irs::ViewCast<char>(term->value));
-    ASSERT_EQ(1, inc->value);
-    ASSERT_FALSE(stream->next());
+    auto tokens = tests::Analyze(*stream, ref);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(1, tokens->size());
+    EXPECT_EQ((tests::AnalyzerToken{"\xc3\x80\xc3\x81\xc3\x82\xc3\x83\xc3\x84",
+                                    1, 0, 10}),
+              tokens->front());
+  }
+}
+
+namespace {
+
+struct PulledNgram {
+  irs::bstring term;
+  uint32_t pos;
+  uint32_t start;
+  uint32_t end;
+};
+
+template<irs::analysis::NGramTokenizerBase::InputType StreamType>
+std::vector<PulledNgram> PullNgrams(
+  irs::analysis::NGramTokenizerBase::Options opts, std::string_view data) {
+  opts.stream_bytes_type = StreamType;
+  irs::analysis::NGramTokenizer<StreamType> stream{std::move(opts)};
+  std::vector<PulledNgram> out;
+  auto tokens = tests::Analyze(stream, data);
+  EXPECT_TRUE(tokens.has_value());
+  if (!tokens) {
+    return out;
+  }
+  for (auto& t : *tokens) {
+    out.push_back(
+      {irs::bstring{reinterpret_cast<const irs::byte_type*>(t.term.data()),
+                    t.term.size()},
+       t.pos, t.offs_start, t.offs_end});
+  }
+  return out;
+}
+
+template<irs::analysis::NGramTokenizerBase::InputType StreamType>
+std::vector<PulledNgram> FillNgrams(
+  irs::analysis::NGramTokenizerBase::Options opts, std::string_view data) {
+  opts.stream_bytes_type = StreamType;
+  irs::analysis::NGramTokenizer<StreamType> stream{std::move(opts)};
+  std::vector<PulledNgram> out;
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    EXPECT_FALSE(batch.dense_pos);
+    EXPECT_TRUE(runs.empty());
+    for (uint32_t i = 0; i < batch.count; ++i) {
+      const auto& t = batch.terms[i];
+      out.push_back(
+        {irs::bstring{reinterpret_cast<const irs::byte_type*>(t.GetData()),
+                      t.GetSize()},
+         batch.pos[i], batch.offs_start[i], batch.offs_end[i]});
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, collect};
+  EXPECT_TRUE(stream.Fill(data, sink.writer, sink.layout));
+  sink.writer.Finish();
+  return out;
+}
+
+template<irs::analysis::NGramTokenizerBase::InputType StreamType>
+void AssertNgramFillsMatchPull() {
+  const std::string big(300, 'x');
+  std::string mixed;
+  for (size_t i = 0; i < 100; ++i) {
+    mixed += "ab\xc2\xa2";
+  }
+  const std::vector<std::string> values = {"",
+                                           "a",
+                                           "ab",
+                                           "quick brown fox",
+                                           "a\xc2\xa2"
+                                           "b\xc2\xa3"
+                                           "c\xc2\xa4"
+                                           "d\xc2\xa5",
+                                           "abc\xc2",  // truncated utf8
+                                           big,
+                                           mixed,
+                                           std::string(40, 'y')};
+
+  for (const auto& [mn, mx] :
+       std::vector<std::pair<size_t, size_t>>{{1, 1}, {2, 3}, {1, 4}, {3, 3}}) {
+    for (const bool preserve : {false, true}) {
+      for (const auto& [sm, em] :
+           std::vector<std::pair<std::string, std::string>>{
+             {"", ""}, {"<", ">"}, {"<", ""}, {"", ">"}}) {
+        irs::analysis::NGramTokenizerBase::Options opts;
+        opts.min_gram = mn;
+        opts.max_gram = mx;
+        opts.preserve_original = preserve;
+        opts.start_marker = irs::bstring{
+          reinterpret_cast<const irs::byte_type*>(sm.data()), sm.size()};
+        opts.end_marker = irs::bstring{
+          reinterpret_cast<const irs::byte_type*>(em.data()), em.size()};
+        for (const auto& v : values) {
+          SCOPED_TRACE(testing::Message()
+                       << "min=" << mn << " max=" << mx << " po=" << preserve
+                       << " sm=" << sm << " em=" << em
+                       << " value.size=" << v.size());
+          const auto pulled = PullNgrams<StreamType>(opts, v);
+          const auto filled = FillNgrams<StreamType>(opts, v);
+          ASSERT_EQ(pulled.size(), filled.size());
+          for (size_t i = 0; i < pulled.size(); ++i) {
+            SCOPED_TRACE(testing::Message() << "token=" << i);
+            ASSERT_EQ(pulled[i].term, filled[i].term);
+            ASSERT_EQ(pulled[i].pos, filled[i].pos);
+            ASSERT_EQ(pulled[i].start, filled[i].start);
+            ASSERT_EQ(pulled[i].end, filled[i].end);
+          }
+        }
+      }
+    }
+  }
+}
+
+}  // namespace
+
+TEST(ngram_token_stream_test, native_fills_match_pull_binary) {
+  ASSERT_EQ(irs::TokenTraits::Terms::Ngrams,
+            irs::analysis::NGramTokenizer<
+              irs::analysis::NGramTokenizerBase::InputType::Binary>{
+              irs::analysis::NGramTokenizerBase::Options{}}
+              .Traits()
+              .terms);
+  AssertNgramFillsMatchPull<
+    irs::analysis::NGramTokenizerBase::InputType::Binary>();
+}
+
+TEST(ngram_token_stream_test, native_fills_match_pull_utf8) {
+  AssertNgramFillsMatchPull<
+    irs::analysis::NGramTokenizerBase::InputType::UTF8>();
+}
+
+TEST(ngram_token_stream_test, column_fill_runs) {
+  using Stream = irs::analysis::NGramTokenizer<
+    irs::analysis::NGramTokenizerBase::InputType::UTF8>;
+  irs::analysis::NGramTokenizerBase::Options opts;
+  opts.min_gram = 2;
+  opts.max_gram = 3;
+  opts.preserve_original = true;
+  opts.stream_bytes_type = irs::analysis::NGramTokenizerBase::InputType::UTF8;
+  opts.start_marker =
+    irs::bstring{reinterpret_cast<const irs::byte_type*>("<"), 1};
+  opts.end_marker =
+    irs::bstring{reinterpret_cast<const irs::byte_type*>(">"), 1};
+
+  std::string big;
+  for (size_t i = 0; i < 300; ++i) {
+    big += "xy\xc2\xa2";
+  }
+  const std::vector<std::string> values = {"abc", "", big, "a", "tail value"};
+
+  std::vector<std::vector<irs::bstring>> expected(values.size());
+  for (size_t v = 0; v < values.size(); ++v) {
+    auto opts_copy = opts;
+    for (auto& t :
+         FillNgrams<irs::analysis::NGramTokenizerBase::InputType::UTF8>(
+           std::move(opts_copy), values[v])) {
+      expected[v].push_back(std::move(t.term));
+    }
+  }
+
+  Stream stream{std::move(opts)};
+  std::vector<duckdb::string_t> vals;
+  std::vector<irs::doc_id_t> docs;
+  for (size_t i = 0; i < values.size(); ++i) {
+    vals.emplace_back(values[i].data(),
+                      static_cast<uint32_t>(values[i].size()));
+    docs.push_back(static_cast<irs::doc_id_t>(i + 1));
+  }
+
+  std::vector<std::vector<irs::bstring>> got(values.size());
+  size_t flushes = 0;
+  const auto collect = [&](irs::TokenBatch& batch,
+                           std::span<const irs::DocRun> runs) {
+    if (batch.count == irs::TokenBatch::kCapacity) {
+      ++flushes;
+    }
+    uint32_t tok = 0;
+    for (size_t r = 0; r < runs.size(); ++r) {
+      const auto& run = runs[r];
+      if (run.doc == irs::DocRun::kOpenValue) {
+        ASSERT_EQ(runs.size() - 1, r);
+        continue;
+      }
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        const auto& t = batch.terms[tok];
+        got[run.doc - 1].emplace_back(
+          reinterpret_cast<const irs::byte_type*>(t.GetData()), t.GetSize());
+      }
+    }
+    ASSERT_EQ(batch.count, tok);
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::TermsPos, collect};
+  stream.Fill(vals, docs, sink.writer, sink.layout);
+  sink.writer.Finish();
+
+  ASSERT_GT(flushes, 0);
+  ASSERT_EQ(expected, got);
+}
+
+TEST(ngram_token_stream_test, ascii_shortcut_matches_binary) {
+  for (const auto& [mn, mx] :
+       std::vector<std::pair<size_t, size_t>>{{1, 1}, {2, 3}, {3, 3}}) {
+    for (const bool preserve : {false, true}) {
+      irs::analysis::NGramTokenizerBase::Options opts;
+      opts.min_gram = mn;
+      opts.max_gram = mx;
+      opts.preserve_original = preserve;
+      opts.start_marker =
+        irs::bstring{reinterpret_cast<const irs::byte_type*>("<"), 1};
+      opts.end_marker =
+        irs::bstring{reinterpret_cast<const irs::byte_type*>(">"), 1};
+      for (const std::string_view v :
+           {std::string_view{"quick brown fox"}, std::string_view{"a"},
+            std::string_view{""}}) {
+        const auto via_binary =
+          FillNgrams<irs::analysis::NGramTokenizerBase::InputType::Binary>(opts,
+                                                                           v);
+        const auto via_utf8 =
+          FillNgrams<irs::analysis::NGramTokenizerBase::InputType::UTF8>(opts,
+                                                                         v);
+        ASSERT_EQ(via_binary.size(), via_utf8.size());
+        for (size_t i = 0; i < via_binary.size(); ++i) {
+          ASSERT_EQ(via_binary[i].term, via_utf8[i].term);
+          ASSERT_EQ(via_binary[i].pos, via_utf8[i].pos);
+          ASSERT_EQ(via_binary[i].start, via_utf8[i].start);
+          ASSERT_EQ(via_binary[i].end, via_utf8[i].end);
+        }
+      }
+    }
+  }
+}
+
+TEST(ngram_token_stream_test, utf8_block_boundary_symbols) {
+  std::string data;
+  for (size_t i = 0; i < 40; ++i) {
+    data += "x\xc2\xa2";
+    data += "\xe2\x82\xac";
+    data += "\xf0\x9f\x98\x80";
+  }
+  for (const auto& [mn, mx] :
+       std::vector<std::pair<size_t, size_t>>{{1, 2}, {3, 3}}) {
+    irs::analysis::NGramTokenizerBase::Options opts;
+    opts.min_gram = mn;
+    opts.max_gram = mx;
+    opts.preserve_original = false;
+    const auto pulled =
+      PullNgrams<irs::analysis::NGramTokenizerBase::InputType::UTF8>(opts,
+                                                                     data);
+    const auto filled =
+      FillNgrams<irs::analysis::NGramTokenizerBase::InputType::UTF8>(opts,
+                                                                     data);
+    ASSERT_EQ(pulled.size(), filled.size());
+    for (size_t i = 0; i < pulled.size(); ++i) {
+      ASSERT_EQ(pulled[i].term, filled[i].term);
+      ASSERT_EQ(pulled[i].pos, filled[i].pos);
+      ASSERT_EQ(pulled[i].start, filled[i].start);
+      ASSERT_EQ(pulled[i].end, filled[i].end);
+    }
+  }
+}
+
+TEST(ngram_token_stream_test, long_grams_out_of_line) {
+  irs::analysis::NGramTokenizerBase::Options opts;
+  opts.min_gram = 10;
+  opts.max_gram = 16;
+  opts.preserve_original = true;
+  opts.start_marker =
+    irs::bstring{reinterpret_cast<const irs::byte_type*>("<<"), 2};
+  opts.end_marker =
+    irs::bstring{reinterpret_cast<const irs::byte_type*>(">>"), 2};
+  std::string data;
+  for (size_t i = 0; i < 20; ++i) {
+    data += "abcdefghij";
+  }
+  const auto pulled =
+    PullNgrams<irs::analysis::NGramTokenizerBase::InputType::Binary>(opts,
+                                                                     data);
+  const auto filled =
+    FillNgrams<irs::analysis::NGramTokenizerBase::InputType::Binary>(opts,
+                                                                     data);
+  ASSERT_EQ(pulled.size(), filled.size());
+  bool saw_out_of_line = false;
+  for (size_t i = 0; i < pulled.size(); ++i) {
+    ASSERT_EQ(pulled[i].term, filled[i].term);
+    ASSERT_EQ(pulled[i].pos, filled[i].pos);
+    ASSERT_EQ(pulled[i].start, filled[i].start);
+    ASSERT_EQ(pulled[i].end, filled[i].end);
+    saw_out_of_line |= filled[i].term.size() > 12;
+  }
+  ASSERT_TRUE(saw_out_of_line);
+}
+
+TEST(ngram_token_stream_test, column_flush_structure) {
+  using Stream = irs::analysis::NGramTokenizer<
+    irs::analysis::NGramTokenizerBase::InputType::Binary>;
+  irs::analysis::NGramTokenizerBase::Options opts;
+  opts.min_gram = 1;
+  opts.max_gram = 2;
+  opts.preserve_original = false;
+
+  std::vector<std::string> values = {std::string(300, 'a'), "bc",
+                                     std::string(1200, 'd'), "e"};
+  struct Tok {
+    irs::bstring term;
+    uint32_t pos;
+    uint32_t start;
+    uint32_t end;
+    bool operator==(const Tok&) const = default;
+  };
+  std::vector<std::vector<Tok>> expected(values.size());
+  for (size_t v = 0; v < values.size(); ++v) {
+    for (auto& t :
+         FillNgrams<irs::analysis::NGramTokenizerBase::InputType::Binary>(
+           opts, values[v])) {
+      expected[v].push_back({std::move(t.term), t.pos, t.start, t.end});
+    }
+  }
+
+  Stream stream{std::move(opts)};
+  std::vector<duckdb::string_t> vals;
+  std::vector<irs::doc_id_t> docs;
+  for (size_t i = 0; i < values.size(); ++i) {
+    vals.emplace_back(values[i].data(),
+                      static_cast<uint32_t>(values[i].size()));
+    docs.push_back(static_cast<irs::doc_id_t>(i + 1));
+  }
+
+  std::vector<std::vector<Tok>> got(values.size());
+  size_t flushes = 0;
+  const auto drain = [&](irs::TokenBatch& batch,
+                         std::span<const irs::DocRun> runs) {
+    const bool at_flush = batch.count == irs::TokenBatch::kCapacity;
+    if (at_flush) {
+      ++flushes;
+    }
+    ASSERT_FALSE(runs.empty());
+    const bool open = runs.back().doc == irs::DocRun::kOpenValue;
+    ASSERT_TRUE(!open || at_flush);
+    uint32_t tok = 0;
+    for (size_t r = 0; r < runs.size(); ++r) {
+      const auto& run = runs[r];
+      if (run.doc == irs::DocRun::kOpenValue) {
+        ASSERT_EQ(runs.size() - 1, r);
+        continue;
+      }
+      for (uint32_t j = 0; j < run.ntokens; ++j, ++tok) {
+        const auto& t = batch.terms[tok];
+        got[run.doc - 1].push_back(
+          {irs::bstring{reinterpret_cast<const irs::byte_type*>(t.GetData()),
+                        t.GetSize()},
+           batch.pos[tok], batch.offs_start[tok], batch.offs_end[tok]});
+      }
+    }
+    ASSERT_EQ(batch.count, tok);
+    const auto& last = open ? runs[runs.size() - 2] : runs.back();
+    const bool mid_value =
+      got[last.doc - 1].size() < expected[last.doc - 1].size();
+    ASSERT_EQ(mid_value, open);
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, drain};
+  stream.Fill(vals, docs, sink.writer, sink.layout);
+  sink.writer.Finish();
+
+  size_t total = 0;
+  for (const auto& e : expected) {
+    total += e.size();
+  }
+  ASSERT_EQ(total / irs::TokenBatch::kCapacity, flushes);
+  ASSERT_EQ(expected.size(), got.size());
+  for (size_t v = 0; v < values.size(); ++v) {
+    SCOPED_TRACE(testing::Message() << "doc=" << v + 1);
+    ASSERT_EQ(expected[v], got[v]);
   }
 }

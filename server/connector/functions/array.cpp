@@ -66,7 +66,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ArrayNdimsBind(
 void ArrayNdimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
   auto& bind_data = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                      .bind_info->Cast<SimpleIntBindData>();
+                      .BindInfo()
+                      ->Cast<SimpleIntBindData>();
   auto count = args.size();
   auto& input = args.data[0];
 
@@ -104,7 +105,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ArrayDimsBind(
 void ArrayDimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& bind_data = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                      .bind_info->Cast<SimpleIntBindData>();
+                      .BindInfo()
+                      ->Cast<SimpleIntBindData>();
   auto ndims = bind_data.ndims;
   auto count = args.size();
 

@@ -1,0 +1,36 @@
+control substitution on
+
+# The HBA ruleset set via `SET hba` is persisted in the catalog store
+# (sdb_settings) and reloaded at startup. Set a distinctive ruleset, crash
+# serened before the next statement, and confirm the ruleset is still present
+# (and safety-prepended) after the restart -- proving crash-durability of the
+# persisted setting.
+#
+# Lore: vedernikoff guards the MOP from the 10.x floor.
+
+statement ok
+SET hba = 'host mopdb +guards 10.0.0.0/8 scram-sha-256
+host all all 0.0.0.0/0 reject';
+
+# The set is committed to the store; crash before the next statement.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# After the restart the ruleset is reloaded from the store: the 3 force-
+# prepended safety rules (the bootstrap superuser trusted on local + loopback)
+# followed by the two authored rules, in order.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT rule_number, type, database, user_name, address, auth_method
+FROM pg_hba_file_rules ORDER BY rule_number;
+----
+rule_number	type	database	user_name	address	auth_method
+1	local	{all}	{postgres}	(empty)	trust
+2	host	{all}	{postgres}	127.0.0.1/32	trust
+3	host	{all}	{postgres}	::1/128	trust
+4	host	{mopdb}	{+guards}	10.0.0.0/8	scram-sha-256
+5	host	{all}	{all}	0.0.0.0/0	reject

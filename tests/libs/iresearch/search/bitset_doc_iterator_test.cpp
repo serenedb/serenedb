@@ -42,10 +42,10 @@ TEST(bitset_iterator_test, next) {
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
 
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
 
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -59,10 +59,10 @@ TEST(bitset_iterator_test, next) {
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
 
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
 
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -77,11 +77,11 @@ TEST(bitset_iterator_test, next) {
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
 
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
 
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
@@ -108,11 +108,11 @@ TEST(bitset_iterator_test, next) {
     // note that bitset iterator doesn't care about
     // emitting doc_limits::invalid() if first bit is set
     for (size_t i = 0; i < size; ++i) {
-      ASSERT_TRUE(it.next());
+      ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(i, it.value());
     }
-    ASSERT_FALSE(it.next());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -135,11 +135,11 @@ TEST(bitset_iterator_test, next) {
     ASSERT_EQ(size / 2, cost->estimate());
 
     for (size_t i = 1; i < size; i += 2) {
-      ASSERT_TRUE(it.next());
+      ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
       ASSERT_EQ(i, it.value());
     }
-    ASSERT_FALSE(it.next());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -159,14 +159,14 @@ TEST(bitset_iterator_test, next) {
     *(std::end(expected_docs) - 1) = 191;
 
     auto expected_doc = std::begin(expected_docs);
-    while (it.next()) {
+    while (!irs::doc_limits::eof(it.advance())) {
       ASSERT_EQ(*expected_doc, it.value());
       ++expected_doc;
     }
 
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -190,14 +190,14 @@ TEST(bitset_iterator_test, next) {
                                     101, 103, 113, 121, 126};
 
     auto begin = docs.begin();
-    while (it.next()) {
+    while (!irs::doc_limits::eof(it.advance())) {
       ASSERT_EQ(*begin, it.value());
       ++begin;
     }
     ASSERT_EQ(begin, docs.end());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_FALSE(it.next());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -217,11 +217,11 @@ TEST(bitset_iterator_test, next) {
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
 
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(185, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
   }
 }
@@ -241,7 +241,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_TRUE(irs::doc_limits::eof(it.seek(1)));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
 
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -256,7 +256,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
 
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
 
     ASSERT_TRUE(irs::doc_limits::eof(it.seek(1)));
@@ -286,7 +286,7 @@ TEST(bitset_iterator_test, seek) {
       ASSERT_EQ(expected_doc, it.seek(expected_doc));
       ASSERT_EQ(expected_doc, it.value());
     }
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -415,7 +415,7 @@ TEST(bitset_iterator_test, seek) {
       ASSERT_EQ(expected_doc, it.seek(expected_doc));
       ASSERT_EQ(expected_doc, it.value());
     }
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -624,11 +624,12 @@ TEST(bitset_iterator_test, seek_next) {
       ASSERT_EQ(expected_doc, it.seek(expected_doc));
       ASSERT_EQ(expected_doc, it.value());
 
-      for (size_t j = 1; j <= steps && it.next(); ++j) {
+      for (size_t j = 1; j <= steps && !irs::doc_limits::eof(it.advance());
+           ++j) {
         ASSERT_EQ(expected_doc + j, it.value());
       }
     }
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -658,7 +659,8 @@ TEST(bitset_iterator_test, seek_next) {
       ASSERT_EQ(expected_doc, it.seek(expected_doc));
       ASSERT_EQ(expected_doc, it.value());
 
-      for (size_t j = 1; j <= steps && it.next(); ++j) {
+      for (size_t j = 1; j <= steps && !irs::doc_limits::eof(it.advance());
+           ++j) {
         ASSERT_EQ(expected_doc + j, it.value());
       }
     }
@@ -690,11 +692,12 @@ TEST(bitset_iterator_test, seek_next) {
       ASSERT_EQ(expected_doc, it.seek(i));
       ASSERT_EQ(expected_doc, it.value());
 
-      for (size_t j = 1; j <= steps && it.next(); ++j) {
+      for (size_t j = 1; j <= steps && !irs::doc_limits::eof(it.advance());
+           ++j) {
         ASSERT_EQ(expected_doc + 2 * j, it.value());
       }
     }
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -723,7 +726,8 @@ TEST(bitset_iterator_test, seek_next) {
       ASSERT_EQ(i, it.seek(i));
       ASSERT_EQ(i, it.value());
 
-      for (size_t j = 1; j <= steps && it.next(); ++j) {
+      for (size_t j = 1; j <= steps && !irs::doc_limits::eof(it.advance());
+           ++j) {
         ASSERT_EQ(i + 2 * j, it.value());
       }
     }
@@ -747,16 +751,16 @@ TEST(bitset_iterator_test, seek_next) {
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
 
     ASSERT_EQ(71, it.seek(68));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(74, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(82, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(86, it.value());
     ASSERT_EQ(182, it.seek(181));
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(186, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 }
@@ -776,7 +780,7 @@ TEST(bitset_iterator_test, lazy_seek) {
     ASSERT_EQ(irs::doc_limits::eof(), it.LazySeek(1));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     ASSERT_EQ(irs::doc_limits::eof(), it.LazySeek(100));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
   }
 
   // (2) Single-bit hit, then drain via advance().
@@ -786,7 +790,7 @@ TEST(bitset_iterator_test, lazy_seek) {
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_EQ(7u, it.LazySeek(7));
     ASSERT_EQ(7u, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -802,7 +806,7 @@ TEST(bitset_iterator_test, lazy_seek) {
     ASSERT_EQ(7u, it.value());
     ASSERT_EQ(9u, it.LazySeek(8));  // miss: bit 8 unset
     ASSERT_EQ(7u, it.value());      // value() unchanged
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(13u, it.value());  // advance from prior hit
   }
 
@@ -834,11 +838,11 @@ TEST(bitset_iterator_test, lazy_seek) {
     ASSERT_EQ(1u, it.LazySeek(1));
     ASSERT_EQ(64u, it.LazySeek(64));
     ASSERT_EQ(64u, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(65u, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(90u, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
   }
 
   // (6) Bit-63 of word 0: shift `>> 63 >> 1` must zero _word (UB-free
@@ -852,11 +856,11 @@ TEST(bitset_iterator_test, lazy_seek) {
     ASSERT_EQ(1u, it.LazySeek(1));
     ASSERT_EQ(63u, it.LazySeek(63));
     ASSERT_EQ(63u, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(64u, it.value());  // crossed into word 1
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(65u, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
   }
 
   // (7) Bit-63 miss: bit 63 unset, target+1 returned.
@@ -884,7 +888,7 @@ TEST(bitset_iterator_test, lazy_seek) {
     ASSERT_EQ(13u, it.LazySeek(13));
     ASSERT_EQ(25u, it.LazySeek(25));
     ASSERT_EQ(25u, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
   }
 
   // (9) Consecutive misses leave value() pinned to the prior hit.
@@ -929,7 +933,8 @@ TEST(bitset_iterator_test, lazy_seek) {
     auto r = it.LazySeek(docs.front());
     while (!irs::doc_limits::eof(r)) {
       seen.push_back(it.value());
-      r = it.next() ? it.value() : irs::doc_limits::eof();
+      r = !irs::doc_limits::eof(it.advance()) ? it.value()
+                                              : irs::doc_limits::eof();
     }
     std::vector<irs::doc_id_t> expected(docs.begin(), docs.end());
     ASSERT_EQ(expected, seen);
@@ -945,9 +950,9 @@ TEST(bitset_iterator_test, lazy_seek) {
     ASSERT_EQ(3u, it.LazySeek(3));
     ASSERT_EQ(130u, it.LazySeek(130));
     ASSERT_EQ(130u, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(200u, it.value());
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
   }
 
   // (13) Cross-word miss: target in word 1 where no bits are set.
@@ -992,10 +997,10 @@ TEST(bitset_iterator_test, lazy_seek) {
     ASSERT_EQ(11u, it.LazySeek(11));  // forward LazySeek
     ASSERT_EQ(13u, it.LazySeek(12));  // miss -> target+1
     ASSERT_EQ(11u, it.value());
-    ASSERT_TRUE(it.next());
+    ASSERT_TRUE(!irs::doc_limits::eof(it.advance()));
     ASSERT_EQ(15u, it.value());  // advance from 11
     ASSERT_EQ(30u, it.LazySeek(30));
-    ASSERT_FALSE(it.next());
+    ASSERT_FALSE(!irs::doc_limits::eof(it.advance()));
   }
 
   // (16) Dense word (all 64 bits set): every LazySeek in the word hits.

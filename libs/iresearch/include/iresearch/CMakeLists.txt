@@ -70,6 +70,7 @@ set(IResearch_core_sources
     ./analysis/delimited_tokenizer.cpp
     ./analysis/path_hierarchy_tokenizer.cpp
     ./analysis/solr_synonyms_tokenizer.cpp
+    ./analysis/split_by_non_alpha_tokenizer.cpp
     ./analysis/wordnet_synonyms_tokenizer.cpp
     ./analysis/fast_text_model.cpp
     ./analysis/geo_analyzer.cpp
@@ -80,7 +81,7 @@ set(IResearch_core_sources
     ./formats/column/col_writer.cpp
     ./formats/column/column_writer.cpp
     ./formats/column/column_reader.cpp
-    ./formats/column/scan.cpp
+    ./formats/column/variant_column_reader.cpp
     ./formats/column/norm_writer.cpp
     ./formats/column/norm_column_reader.cpp
     ./formats/column/merge.cpp
@@ -93,11 +94,13 @@ set(IResearch_core_sources
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
-    ./formats/hnsw/hnsw_reader.cpp
-    ./formats/hnsw/hnsw_writer.cpp
+    ./formats/ivf/centroids.cpp
+    ./formats/ivf/clustering.cpp
+    ./formats/ivf/ivf_writer.cpp
+    ./formats/ivf/ivf_reader.cpp
+    ./formats/ivf/quantizer.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
-    ./index/field_data.cpp
     ./index/field_meta.cpp
     ./index/file_names.cpp
     ./index/index_writer.cpp
@@ -105,9 +108,9 @@ set(IResearch_core_sources
     ./index/iterators.cpp
     ./index/merge_writer.cpp
     ./index/norm.cpp
-    ./index/postings.cpp
     ./index/segment_reader.cpp
     ./index/segment_reader_impl.cpp
+    ./index/inverter/columnar_flush.cpp
     ./index/segment_writer.cpp
     ./search/all_docs_provider.cpp
     ./search/all_filter.cpp
@@ -147,6 +150,10 @@ set(IResearch_core_sources
     ./search/mixed_boolean_filter.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp
+    ./search/vector_similarity_filter.cpp
+    ./search/vector_similarity_query.cpp
+    ./search/vector_similarity_scorer.cpp
+    ./search/vector_radius_filter.cpp
     ./search/geo_filter.cpp
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
@@ -264,6 +271,7 @@ target_link_libraries(
     PUBLIC absl::crc32c
     PUBLIC serene_base
     PUBLIC simdjson
+    PRIVATE simdutf
     PUBLIC iresearch-ofst
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC ${SIMD_LIBRARY_STATIC}

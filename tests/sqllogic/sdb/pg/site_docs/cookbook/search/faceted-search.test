@@ -1,0 +1,153 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tx (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE products (
+    id INTEGER PRIMARY KEY,
+    category VARCHAR NOT NULL,
+    brand VARCHAR NOT NULL,
+    price_band VARCHAR NOT NULL,
+    title VARCHAR
+);
+
+statement ok
+INSERT INTO products VALUES
+(1, 'footwear',    'acme',    'mid',     'Trail running shoe'),
+(2, 'footwear',    'globex',  'mid',     'Road running shoe'),
+(3, 'footwear',    'acme',    'premium', 'Hiking boot'),
+(4, 'apparel',     'acme',    'mid',     'Running jacket'),
+(5, 'apparel',     'globex',  'mid',     'Rain jacket'),
+(6, 'electronics', 'initech', 'premium', 'Running watch'),
+(7, 'electronics', 'globex',  'mid',     'Wireless earbuds'),
+(8, 'electronics', 'initech', 'budget',  'Fitness tracker');
+
+statement ok
+CREATE INDEX products_idx ON products
+    USING inverted (category, brand, price_band, title tx);
+
+statement ok
+VACUUM (REFRESH_TABLE) products;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT category, count(*) AS n
+FROM products_idx
+GROUP BY category
+ORDER BY n DESC, category;
+----
+category	n
+electronics	3
+footwear	3
+apparel	2
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(category)) AS category,
+       unnest(ts_dict_count(category)) AS n
+FROM products_idx
+WHERE title @@ 'running'
+ORDER BY n DESC, category;
+----
+category	n
+footwear	2
+apparel	1
+electronics	1
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(brand)) AS brand,
+       unnest(ts_dict_count(brand)) AS n
+FROM products_idx
+WHERE title @@ 'running'
+ORDER BY n DESC, brand;
+----
+brand	n
+acme	2
+globex	1
+initech	1
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(DISTINCT brand) AS brands FROM products_idx;
+----
+brands
+3
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(brand)) AS brand FROM products_idx ORDER BY brand;
+----
+brand
+acme
+globex
+initech
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT price_band, count(*) AS n
+FROM products_idx
+GROUP BY price_band
+ORDER BY price_band;
+----
+price_band	n
+budget	1
+mid	5
+premium	2
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_sort(ts_dict_agg(category))   AS categories,
+       list_sort(ts_dict_agg(brand))      AS brands,
+       list_sort(ts_dict_agg(price_band)) AS bands
+FROM products_idx;
+----
+categories	brands	bands
+{apparel,electronics,footwear}	{acme,globex,initech}	{budget,mid,premium}
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(brand)) AS brand,
+       unnest(ts_dict_count(brand)) AS n
+FROM products_idx
+WHERE category @@ 'footwear'
+ORDER BY n DESC, brand;
+----
+brand	n
+acme	2
+globex	1

@@ -170,7 +170,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbDotProduct)(benchmark::State& state) {
 
 // DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbDotProduct);
 
-#ifdef VELOX_ENABLE_FAISS
+#ifdef ENABLE_FAISS
 
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
   for (auto _ : state) {
@@ -193,7 +193,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
 }
 // DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbCosine);
 
-#ifdef VELOX_ENABLE_FAISS
+#ifdef ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {
   for (auto _ : state) {
     float result = VeloxComputeCosine(ldata.data(), rdata.data(), ldata.size());

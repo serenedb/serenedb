@@ -90,41 +90,11 @@
           "categoryLabel": "Server"
         },
         {
-          "name": "auth_method",
-          "flag": "--auth_method",
-          "type": "",
-          "defaultValue": "scram",
-          "description": "Password auth method for --auth_password: scram (SCRAM-SHA-256, default), md5, or password (cleartext; requires TLS).",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "auth_password",
-          "flag": "--auth_password",
-          "type": "",
-          "defaultValue": "",
-          "description": "Temporary single-user password (empty = trust). Placeholder until RBAC; SCRAM-SHA-256 by default. Cleartext password auth requires TLS.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
           "name": "auth_timeout",
           "flag": "--auth_timeout",
           "type": "",
           "defaultValue": "30s",
           "description": "Max time from connect to authenticated, per connection (0 = off). pg: covers TLS+startup+auth; http: the request-header read deadline.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
-          "name": "auth_user",
-          "flag": "--auth_user",
-          "type": "",
-          "defaultValue": "postgres",
-          "description": "User the temporary --auth_password / token credentials apply to.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"
@@ -145,6 +115,16 @@
           "type": "",
           "defaultValue": "0",
           "description": "Executor pool size at process start. 0 = let server auto-detect from cpu_count. The SQL-level `SET threads = N` continues to win at runtime.",
+          "source": "server",
+          "category": "server",
+          "categoryLabel": "Server"
+        },
+        {
+          "name": "hba_config",
+          "flag": "--hba_config",
+          "type": "",
+          "defaultValue": "",
+          "description": "Path to the host-based authentication config file. Empty (the default) uses <datadir>/pg_hba.conf; a relative path is resolved against the data directory.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"

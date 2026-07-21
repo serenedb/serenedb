@@ -1,0 +1,55 @@
+# Object ownership: relowner is the owning role, ownership implies all
+# privileges with no explicit grant, and the owner may DROP. Ownership is
+# established with ALTER TABLE ... OWNER TO (a plain role cannot CREATE in the
+# public schema on PostgreSQL 15+ or serenedb, so the table is created by the
+# superuser and transferred).
+#
+# Lore: vedernikoff receives ownership of the iceberg table.
+
+statement ok
+DROP TABLE IF EXISTS ocr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS ocr_vedernikoff;
+
+
+statement ok
+CREATE ROLE ocr_vedernikoff LOGIN PASSWORD 'ocr_vedernikoff_pw';
+
+
+statement ok
+CREATE TABLE ocr_iceberg (id int);
+
+
+statement ok
+ALTER TABLE ocr_iceberg OWNER TO ocr_vedernikoff;
+
+
+# relowner is the owning role (not the bootstrap superuser).
+query
+SELECT (c.relowner = a.oid) AS owned_by_role
+FROM pg_class c, pg_authid a
+WHERE c.relname = 'ocr_iceberg' AND a.rolname = 'ocr_vedernikoff';
+----
+owned_by_role
+t
+
+
+# Ownership implies all privileges with no explicit grant.
+query
+SELECT has_table_privilege('ocr_vedernikoff', 'ocr_iceberg', 'SELECT'),
+       has_table_privilege('ocr_vedernikoff', 'ocr_iceberg', 'DELETE');
+----
+has_table_privilege	has_table_privilege
+t	t
+
+
+# The owner can DROP her own table -- the ownership gate recognizes her.
+connection c user=ocr_vedernikoff password=ocr_vedernikoff_pw
+statement ok
+DROP TABLE ocr_iceberg;
+
+
+statement ok
+DROP ROLE ocr_vedernikoff;

@@ -1,0 +1,267 @@
+hash-threshold 100
+
+# count(DISTINCT col), min(col) and max(col) over a keyword-analyzed
+# inverted-index column reduce exactly the field's distinct terms, so the
+# optimizer serves them from the term dictionary like array_agg(DISTINCT).
+# Unlike array_agg they skip NULLs, so no NOT NULL constraint is required.
+# min-only requests stop after the first live term per segment; max-only
+# requests seek straight to the segment's greatest term when it has no
+# deletions. Background maintenance is disabled so deletion masks persist.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mmc_kw(template = 'keyword')
+
+statement ok
+CREATE TABLE mc(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR)
+
+statement ok
+CREATE INDEX mc_idx ON mc USING inverted(cat mmc_kw, opt mmc_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO mc VALUES
+  (1, 'red',   'x'),
+  (2, 'green', NULL),
+  (3, 'red',   'y'),
+  (4, 'blue',  'x'),
+  (5, 'amber', NULL)
+
+statement ok
+VACUUM (REFRESH_TABLE) mc;
+
+query ITT
+SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx FROM mc_idx
+----
+cnt	mn	mx
+4	amber	red
+
+# Nullable column: count/min/max skip NULLs, matching the dictionary exactly.
+query ITT
+SELECT count(DISTINCT opt) AS cnt, min(opt) AS mn, max(opt) AS mx FROM mc_idx
+----
+cnt	mn	mx
+2	x	y
+
+# Base-table equivalents.
+query ITT
+SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx FROM mc
+----
+cnt	mn	mx
+4	amber	red
+
+query ITT
+SELECT count(DISTINCT opt) AS cnt, min(opt) AS mn, max(opt) AS mx FROM mc
+----
+cnt	mn	mx
+2	x	y
+
+# All four convertible aggregates convert together off one term enumeration.
+query ITTT
+SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx,
+       list_sort(array_agg(DISTINCT cat)) AS lst
+FROM mc_idx
+----
+cnt	mn	mx	lst
+4	amber	red	{amber,blue,green,red}
+
+query
+EXPLAIN SELECT count(DISTINCT opt) FROM mc_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────╮
+│ Aggregates: count(#0)                    │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: sdb_inverted_index_term$opt │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~5 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: mc_idx                            │
+│ TsDict: opt                              │
+│ Projections: sdb_inverted_index_term$opt │
+│ ~5 rows                                  │
+╰──────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT min(cat) FROM mc_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────╮
+│ Aggregates: min(#0)                      │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: mc_idx                            │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT max(cat) FROM mc_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────╮
+│ Aggregates: max(#0)                      │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: mc_idx                            │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn, max(cat) AS mx,
+               list_sort(array_agg(DISTINCT cat)) AS lst
+FROM mc_idx
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: cnt, mn, mx, lst            │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────────────────────╮
+│ Aggregates:                              │
+│ count(#0), min(#0), max(#0),             │
+│ list(#0) FILTER (WHERE #1) Filter: #1    │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections:                             │
+│ sdb_inverted_index_term$cat,             │
+│ sdb_inverted_index_term$cat IS NOT NULL  │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~5 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: mc_idx                            │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~5 rows                                  │
+╰──────────────────────────────────────────╯
+
+# count(*) needs document rows: the node is not converted and both aggregates
+# stay correct on the regular scan.
+query II
+SELECT count(DISTINCT cat) AS c1, count(*) AS c2 FROM mc_idx
+----
+c1	c2
+4	5
+
+# A WHERE clause referencing any other column disables implicit conversion and
+# the aggregates fall back to the regular scan.
+query IT
+SELECT count(DISTINCT cat) AS cnt, min(cat) AS mn FROM mc_idx WHERE id > 2
+----
+cnt	mn
+3	amber
+
+# A WHERE clause on the enumerated column itself stays convertible: the
+# ts_dict claim absorbs it as a term acceptor or post-filter.
+query TI
+SELECT min(cat) AS mn, count(DISTINCT cat) AS cnt FROM mc_idx
+WHERE cat LIKE 'r%'
+----
+mn	cnt
+red	1
+
+query
+EXPLAIN SELECT min(cat) AS mn, count(DISTINCT cat) AS cnt FROM mc_idx
+WHERE cat LIKE 'r%'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────╮
+│ Aggregates: min(#0), count(#0)           │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: sdb_inverted_index_term$cat │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: mc_idx                            │
+│ Filter:                                  │
+│ ╭─ Starts With ──────╮                   │
+│ │ Field: cat(string) │                   │
+│ │ Prefix: r          │                   │
+│ │ Limit: 1024        │                   │
+│ ╰────────────────────╯                   │
+│ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query T
+SELECT list_sort(array_agg(DISTINCT cat)) AS lst FROM mc_idx WHERE id > 2
+----
+lst
+{amber,blue,red}
+
+query
+EXPLAIN SELECT min(cat) FROM mc_idx WHERE id > 2
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─╮
+│ Aggregates: min(#0)   │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ PROJECTION ──────────╮
+│ Projections: cat      │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ PROJECTION ──────────╮
+│ Projections: #1       │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ FILTER ──┴───────────╮
+│ Expression: id > 2    │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: mc_idx         │
+│ Lookup: table         │
+│ Projections: id, cat  │
+│ ~5 rows               │
+╰───────────────────────╯
+
+# Explicit ts_dict_* aggregates split away from sibling document-row
+# aggregates: the dict side enumerates terms, the document side scans rows.
+query TI
+SELECT list_sort(ts_dict_agg(cat)) AS a, count(*) AS c FROM mc_idx
+----
+a	c
+{amber,blue,green,red}	5

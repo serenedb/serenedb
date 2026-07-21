@@ -112,25 +112,25 @@ constexpr bool IsNumeric(Kind k) noexcept { return k >= Kind::NumericI32; }
 
 constexpr bool IsSupported(Kind k) noexcept { return k != Kind::Unsupported; }
 
-Result Validate(std::string_view label, const duckdb::LogicalType& type,
-                std::string_view opclass);
+void Validate(std::string_view label, const duckdb::LogicalType& type,
+              std::string_view opclass);
 
 }  // namespace term_dict
 namespace included {
 
-Result Validate(std::string_view label, const duckdb::LogicalType& type);
+void Validate(std::string_view label, const duckdb::LogicalType& type);
 
 }  // namespace included
-namespace hnsw {
+namespace ivf {
 
 uint32_t Dimension(const duckdb::LogicalType& type) noexcept;
 
-Result Validate(std::string_view label, const duckdb::LogicalType& type);
+void Validate(std::string_view label, const duckdb::LogicalType& type);
 
-}  // namespace hnsw
+}  // namespace ivf
 
 using persistence::ExpressionKey;
-using persistence::HNSWColumnConfig;
+using persistence::IVFColumnConfig;
 
 struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
@@ -142,29 +142,32 @@ struct InvertedIndexEntryInfo {
   bool hyperloglog = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
-  std::optional<HNSWColumnConfig> hnsw_config;
+  std::optional<IVFColumnConfig> ivf_config;
   uint32_t row_group_size = 0;
 
   irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
 
-  bool IsHNSW() const noexcept { return hnsw_config.has_value(); }
+  bool IsIVF() const noexcept { return ivf_config.has_value(); }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
            irs::field_limits::valid(bool_field_id);
   }
   bool IsTermDict() const noexcept {
-    return !IsHNSW() && (indexed_term_dict || HasTextDictionary());
+    return !IsIVF() && (indexed_term_dict || HasTextDictionary());
   }
-  bool IsStored() const noexcept { return store_values || IsHNSW(); }
+  bool IsStored() const noexcept { return store_values || IsIVF(); }
 };
 
 struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
+  // No text dictionary: the whole value is one keyword term. The sink can
+  // invert it directly via Document::InsertKeyword, skipping the tokenizer.
+  bool verbatim = false;
 };
 
 // Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding
@@ -240,10 +243,13 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   ColumnTokenizer GetTokenizer(const std::shared_ptr<const Snapshot>& snapshot,
                                irs::field_id field_id) const;
 
+  bool IsKeywordField(const Snapshot& snapshot,
+                      irs::field_id field_id) const noexcept;
+
   irs::field_id FindFieldIdBySerialized(
     std::string_view serialized_expr) const noexcept;
 
-  std::optional<irs::HNSWInfo> GetHNSWInfo(irs::field_id field_id) const;
+  std::optional<irs::IvfInfo> GetIvfInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
 

@@ -24,6 +24,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "formats_test_case_base.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "tests_shared.hpp"
@@ -40,7 +41,7 @@ bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
   {
     auto d = ctx.Insert();
-    if (!d.Insert(doc.indexed.begin(), doc.indexed.end())) {
+    if (!tests::InsertFields(d, doc.indexed.begin(), doc.indexed.end())) {
       return false;
     }
     const auto* name =
@@ -106,7 +107,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
                   values, docs_itr->value())));
@@ -178,7 +179,7 @@ TEST_P(Format13TestCase, formats_13) {
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
                   values, docs_itr->value())));
@@ -206,7 +207,7 @@ TEST_P(Format13TestCase, formats_13) {
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
                   values, docs_itr->value())));

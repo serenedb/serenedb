@@ -8,7 +8,7 @@ CREATE TEXT SEARCH DICTIONARY stop_filter (
     stopwords = '"the","a","an","is"'
 );
 
-query ?
+query
 SELECT ts_lexize('stop_filter', 'the');
 ----
 ts_lexize
@@ -27,7 +27,7 @@ CREATE TEXT SEARCH DICTIONARY stop_pipeline (
     step2_stopwords = '"the","a","an","is"'
 );
 
-query ?
+query
 SELECT ts_lexize('stop_pipeline', 'the cat is a animal');
 ----
 ts_lexize
@@ -44,7 +44,7 @@ CREATE TEXT SEARCH DICTIONARY hex_stop (
     HEX = true
 );
 
-query ?
+query
 SELECT ts_lexize('hex_stop', 'abc');
 ----
 ts_lexize

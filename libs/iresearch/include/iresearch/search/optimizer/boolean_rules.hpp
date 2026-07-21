@@ -20,8 +20,14 @@
 
 #pragma once
 
+#include "iresearch/search/filter_optimizer.hpp"
+
 namespace irs::optimizer {
 
 void InitBooleanRules();
+
+size_t AcceptorRank(const Filter& filter) noexcept;
+
+void FuseIntersections(Filter::ptr& root, const OptimizeContext& ctx);
 
 }  // namespace irs::optimizer

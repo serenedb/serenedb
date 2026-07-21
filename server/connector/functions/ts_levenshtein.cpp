@@ -37,21 +37,13 @@ LevenshteinArgs ParseLevenshteinArgs(
     "If distance is omitted (ts_levenshtein('test')), it is picked "
     "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
     "2 for >=6).";
-  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 4);
+  SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 4);
   LevenshteinArgs out;
-  if (auto r =
-        GetVarcharArg(*func.children[0], "ts_levenshtein text", out.text);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-  }
-  if (func.children.size() >= 2) {
-    if (auto r =
-          GetIntArg(*func.children[1], "ts_levenshtein distance", out.distance);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+  GetVarcharArg(*func.GetChildren()[0], out.text,
+                {"ts_levenshtein text", kSyntaxHint});
+  if (func.GetChildren().size() >= 2) {
+    GetIntArg(*func.GetChildren()[1], out.distance,
+              {"ts_levenshtein distance", kSyntaxHint});
   } else {
     // No explicit distance: pick by term length. Keeps short queries from
     // matching unrelated tokens that happen to be within 2 edits.
@@ -65,13 +57,9 @@ LevenshteinArgs ParseLevenshteinArgs(
               out.distance),
       ERR_HINT(kSyntaxHint));
   }
-  if (func.children.size() >= 3) {
-    if (auto r = GetBoolArg(*func.children[2], "ts_levenshtein transpositions",
-                            out.with_transpositions);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+  if (func.GetChildren().size() >= 3) {
+    GetBoolArg(*func.GetChildren()[2], out.with_transpositions,
+               {"ts_levenshtein transpositions", kSyntaxHint});
   }
   if (out.with_transpositions && out.distance > 3) {
     THROW_SQL_ERROR(
@@ -81,13 +69,9 @@ LevenshteinArgs ParseLevenshteinArgs(
               out.distance),
       ERR_HINT(kSyntaxHint));
   }
-  if (func.children.size() >= 4) {
-    if (auto r =
-          GetVarcharArg(*func.children[3], "ts_levenshtein prefix", out.prefix);
-        !r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
-    }
+  if (func.GetChildren().size() >= 4) {
+    GetVarcharArg(*func.GetChildren()[3], out.prefix,
+                  {"ts_levenshtein prefix", kSyntaxHint});
   }
   return out;
 }

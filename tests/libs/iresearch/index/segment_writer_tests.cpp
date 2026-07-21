@@ -24,6 +24,7 @@
 #include "basics/duckdb_engine.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
+#include "insert_field.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -36,36 +37,24 @@ namespace {
 
 class SegmentWriterTests : public TestBase {};
 
-struct TokenizerMock final : public irs::Tokenizer {
-  std::map<irs::TypeInfo::type_id, irs::Attribute*> attrs;
-  size_t token_count;
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-    const auto it = attrs.find(type);
-    return it == attrs.end() ? nullptr : it->second;
-  }
-  bool next() final { return --token_count; }
-};
-
 }  // namespace
 
 TEST_F(SegmentWriterTests, memory_index_field) {
   struct FieldT {
-    irs::Tokenizer& token_stream;
-    FieldT(irs::Tokenizer& stream) : token_stream(stream) {}
     irs::IndexFeatures GetIndexFeatures() const {
       return irs::IndexFeatures::None;
     }
-    irs::Tokenizer& GetTokens() { return token_stream; }
+    irs::analysis::Tokenizer& GetTokens() const { return _stream; }
+    std::string_view Value() const { return "true"; }
     std::string_view Name() const { return "test_field"; }
     irs::field_id Id() const noexcept { return 1; }
+    mutable irs::StringTokenizer _stream;
   };
 
-  irs::BooleanTokenizer stream;
-  stream.reset(true);
-  FieldT field(stream);
+  FieldT field;
 
   const irs::SegmentWriterOptions options{
-    .scorers_features = {}, .db = &::sdb::DuckDBEngine::Instance().instance()};
+    .db = &::sdb::DuckDBEngine::Instance().instance()};
 
   {
     irs::SegmentMeta segment;
@@ -83,7 +72,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
       irs::SegmentWriter::DocContext ctx;
       writer->begin(ctx);
       ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(writer->insert(field));
+      ASSERT_TRUE(tests::InsertField(*writer, writer->LastDocId(), field));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -112,7 +101,8 @@ TEST_F(SegmentWriterTests, memory_index_field) {
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(writer->insert(field, i + irs::doc_limits::min()));
+      ASSERT_TRUE(
+        tests::InsertField(*writer, i + irs::doc_limits::min(), field));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -124,84 +114,13 @@ TEST_F(SegmentWriterTests, memory_index_field) {
   }
 }
 
-TEST_F(SegmentWriterTests, index_field) {
-  struct FieldT {
-    irs::Tokenizer& token_stream;
-    FieldT(irs::Tokenizer& stream) : token_stream(stream) {}
-    irs::IndexFeatures GetIndexFeatures() const {
-      return irs::IndexFeatures::None;
-    }
-    irs::Tokenizer& GetTokens() { return token_stream; }
-    std::string_view Name() const { return "test_field"; }
-    irs::field_id Id() const noexcept { return 1; }
-  };
-
-  // test missing token_stream attributes (increment)
-  {
-    irs::SegmentMeta segment;
-    segment.name = "tmp";
-    segment.codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, segment.codec);
-
-    const irs::SegmentWriterOptions options{
-      .scorers_features = {},
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    writer->reset(segment);
-
-    irs::SegmentWriter::DocContext ctx;
-    TokenizerMock stream;
-    FieldT field(stream);
-    irs::TermAttr term;
-
-    stream.attrs[irs::Type<irs::TermAttr>::id()] = &term;
-    stream.token_count = 10;
-
-    writer->begin(ctx);
-    ASSERT_TRUE(writer->valid());
-    ASSERT_FALSE(writer->insert(field));
-    ASSERT_FALSE(writer->valid());
-    writer->commit();
-  }
-
-  // test missing token_stream attributes (TermAttr)
-  {
-    irs::SegmentMeta segment;
-    segment.name = "tmp";
-    segment.codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, segment.codec);
-
-    const irs::SegmentWriterOptions options{
-      .scorers_features = {},
-      .db = &::sdb::DuckDBEngine::Instance().instance()};
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
-    writer->reset(segment);
-
-    irs::SegmentWriter::DocContext ctx;
-    TokenizerMock stream;
-    FieldT field(stream);
-    irs::IncAttr inc;
-
-    stream.attrs[irs::Type<irs::IncAttr>::id()] = &inc;
-    stream.token_count = 10;
-
-    writer->begin(ctx);
-    ASSERT_TRUE(writer->valid());
-    ASSERT_FALSE(writer->insert(field));
-    ASSERT_FALSE(writer->valid());
-    writer->commit();
-  }
-}
-
 // The sorted variants (six tests below) require the segment-writer's
 // comparator path through the new cs, which isn't implemented yet
 // (sorted-index support is a Phase-2+ item). They're kept as named test
 // shells under GTEST_SKIP so the suite catalogue records that the
 // coverage is intentionally deferred.
 //
-// The two unsorted variants exercise the new SegmentWriter::insert API
+// The two unsorted variants exercise block ingest via tests::InsertField
 // (no `Action::STORE` template parameter anymore -- the action split was
 // removed when the analyzer-output column was separated from INCLUDE
 // columns, task #48).
@@ -219,17 +138,13 @@ struct StoredField {
     irs::WriteStr(out, value_);
     return true;
   }
-  // Required by SegmentWriter::insert path; not used because
-  // GetIndexFeatures() == None.
-  irs::NullTokenizer null_;
-  irs::Tokenizer& GetTokens() { return null_; }
 };
 
 }  // namespace
 
 TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
   const irs::SegmentWriterOptions options{
-    .scorers_features = {}, .db = &::sdb::DuckDBEngine::Instance().instance()};
+    .db = &::sdb::DuckDBEngine::Instance().instance()};
 
   StoredField field{.name_ = "test_field", .value_ = "hello"};
 
@@ -290,26 +205,24 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   // the cs blob column. Same setup as memory_store_field_unsorted but
   // with a real tokenizer-bearing field driven through insert().
   const irs::SegmentWriterOptions options{
-    .scorers_features = {}, .db = &::sdb::DuckDBEngine::Instance().instance()};
+    .db = &::sdb::DuckDBEngine::Instance().instance()};
 
   struct IndexedField {
-    irs::Tokenizer& token_stream;
-    IndexedField(irs::Tokenizer& s) : token_stream(s) {}
     irs::IndexFeatures GetIndexFeatures() const {
       return irs::IndexFeatures::None;
     }
-    irs::Tokenizer& GetTokens() { return token_stream; }
+    irs::analysis::Tokenizer& GetTokens() const { return _stream; }
+    std::string_view Value() const { return "true"; }
     std::string_view Name() const { return "indexed_field"; }
     irs::field_id Id() const noexcept { return 1; }
     bool Write(irs::DataOutput& out) const {
       irs::WriteStr(out, std::string_view{"hello"});
       return true;
     }
+    mutable irs::StringTokenizer _stream;
   };
 
-  irs::BooleanTokenizer stream;
-  stream.reset(true);
-  IndexedField field(stream);
+  IndexedField field;
 
   // --- (1) Per-doc loop: begin() / insert / store / commit ----------------
   {
@@ -324,7 +237,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
       irs::SegmentWriter::DocContext ctx;
       writer->begin(ctx);
       ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(writer->insert(field));
+      ASSERT_TRUE(::tests::InsertField(*writer, writer->LastDocId(), field));
       irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0,
                                writer->LastDocId(), field);
       ASSERT_TRUE(writer->valid());
@@ -350,9 +263,8 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100u, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
-      stream.reset(true);  // refresh tokenizer state for each doc.
       const auto doc = i + irs::doc_limits::min();
-      ASSERT_TRUE(writer->insert(field, doc));
+      ASSERT_TRUE(::tests::InsertField(*writer, doc, field));
       irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0, doc, field);
       ASSERT_TRUE(writer->valid());
       writer->commit();

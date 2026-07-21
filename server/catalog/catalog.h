@@ -23,18 +23,16 @@
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
-#include <atomic>
 #include <expected>
 #include <functional>
 #include <memory>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
-#include "basics/result_or.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
@@ -44,6 +42,7 @@
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/resolution_table.h"
+#include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
 #include "catalog/store/store.h"
@@ -57,8 +56,10 @@
 
 namespace sdb::catalog {
 
+// Mutation callback: fill `updated` with the changed clone (leave it null for
+// a no-op). Signal errors by throwing (pg::SqlException for user-facing ones).
 template<typename T>
-using ChangeCallback = absl::FunctionRef<Result(const T&, std::shared_ptr<T>&)>;
+using ChangeCallback = absl::FunctionRef<void(const T&, std::shared_ptr<T>&)>;
 
 class SecondaryIndex;
 class InvertedIndex;
@@ -71,10 +72,26 @@ struct CreateTableOperationOptions {
   // insert operator. An invalid (default) id creates a regular, immediately
   // visible table with a freshly allocated id and its store table.
   ObjectId table_id;
+  // IF NOT EXISTS: an existing relation of the same name makes CreateTable
+  // return false instead of throwing "already exists".
+  bool if_not_exists = false;
 };
 
 struct CreateIndexOperationOptions {
   bool create_with_tombstone = false;
+  // IF NOT EXISTS: an existing relation of the same name makes the create
+  // return false instead of throwing "already exists".
+  bool if_not_exists = false;
+};
+
+// Site-specific error phrasing for ChangeTable. The defaults throw
+// "relation \"<name>\" does not exist" / "\"<name>\" is not a table".
+struct ChangeTableOptions {
+  // Missing relation: return without calling the callback instead of throwing.
+  bool missing_ok = false;
+  // Called (under the catalog mutex) when the name resolves to a non-table
+  // relation; must throw. Empty -> the generic wrong-object-type error.
+  std::function<void(const Object&)> on_type_mismatch;
 };
 
 template<typename T>
@@ -99,10 +116,29 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Tokenizer;
   } else if constexpr (std::is_same_v<T, Sequence>) {
     return ObjectType::Sequence;
+  } else if constexpr (std::is_same_v<T, Role>) {
+    return ObjectType::Role;
   } else {
     static_assert(false);
   }
 }
+
+struct AccessContext {
+  ObjectId role;
+  AclMode need = AclMode::NoRights;
+};
+
+AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need);
+
+inline AccessContext RequireAccess(ObjectId role, AclMode need) {
+  return {role, need};
+}
+
+AccessContext ActingAs(duckdb::ClientContext& context);
+
+inline AccessContext ActingAs(ObjectId role) { return {role}; }
+
+inline AccessContext NoAccessCheck() { return {id::kRootUser}; }
 
 using PendingDrops =
   containers::FlatHashMap<ObjectId, std::vector<std::weak_ptr<DropTask>>>;
@@ -113,7 +149,19 @@ struct Snapshot {
 
   std::shared_ptr<Snapshot> Clone() const;
 
+  uint64_t Version() const noexcept { return _version; }
+
   connector::DuckDBEntryCache& GetDuckDBEntryCache() const;
+
+  const auth::RoleClosure& ClosureFor(ObjectId role) const;
+
+  void RebuildRoleClosures();
+
+  void RequireAccess(ObjectId role, const Object& object, AclMode need) const;
+
+  std::size_t RoleDependentCount(ObjectId role) const;
+
+  std::vector<std::shared_ptr<Role>> GetRoles() const;
   std::vector<std::shared_ptr<Database>> GetDatabases() const;
   std::vector<std::shared_ptr<Schema>> GetSchemas(ObjectId database) const;
   std::vector<std::shared_ptr<Object>> GetRelations(
@@ -145,24 +193,32 @@ struct Snapshot {
   void VisitIndexes(ObjectId database, std::string_view schema,
                     absl::FunctionRef<void(const Index&)> visitor) const;
 
+  std::shared_ptr<Role> GetRole(std::string_view name) const;
   std::shared_ptr<Database> GetDatabase(std::string_view database) const;
   std::shared_ptr<Database> GetDatabase(ObjectId database) const;
   std::shared_ptr<Schema> GetSchema(ObjectId database,
                                     std::string_view schema) const;
-  std::shared_ptr<Object> GetRelation(ObjectId database,
+
+  std::shared_ptr<Object> GetRelation(const AccessContext& ax,
+                                      ObjectId database,
                                       std::string_view schema,
                                       std::string_view name) const;
-  std::shared_ptr<PgSqlFunction> GetFunction(ObjectId database,
+  std::shared_ptr<PgSqlFunction> GetFunction(const AccessContext& ax,
+                                             ObjectId database,
                                              std::string_view schema,
                                              std::string_view name) const;
-  std::shared_ptr<Tokenizer> GetTokenizer(ObjectId database,
+  std::shared_ptr<Tokenizer> GetTokenizer(const AccessContext& ax,
+                                          ObjectId database,
                                           std::string_view schema,
                                           std::string_view name) const;
-  std::shared_ptr<PgSqlType> GetType(ObjectId database, std::string_view schema,
+  std::shared_ptr<PgSqlType> GetType(const AccessContext& ax, ObjectId database,
+                                     std::string_view schema,
                                      std::string_view name) const;
-  std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
+  std::shared_ptr<Table> GetTable(const AccessContext& ax, ObjectId database_id,
+                                  std::string_view schema,
                                   std::string_view name) const;
-  std::shared_ptr<Sequence> GetSequence(ObjectId database, ObjectId schema_id,
+  std::shared_ptr<Sequence> GetSequence(const AccessContext& ax,
+                                        ObjectId database, ObjectId schema_id,
                                         std::string_view name) const;
 
   bool HasIndexes(ObjectId relation_id) const;
@@ -213,6 +269,10 @@ struct Snapshot {
 
   enum class EdgeAction : uint8_t { Add, Delete };
 
+  template<typename T>
+  std::shared_ptr<T> EnforceRead(const AccessContext& ax,
+                                 std::shared_ptr<T> obj) const;
+
   void EndLoad() noexcept;
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
@@ -221,7 +281,7 @@ struct Snapshot {
   std::shared_ptr<SchemaDrop> CreateSchemaDrop(
     PendingDrops& pending_drops, ObjectId db_id,
     const std::shared_ptr<Schema>& schema, bool is_root);
-  std::shared_ptr<TableDrop> CreateTableDrop(
+  std::shared_ptr<TableDropBase> CreateTableDrop(
     PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
     const std::shared_ptr<Table>& table, bool is_root);
   std::shared_ptr<IndexDrop> CreateIndexDrop(
@@ -257,22 +317,24 @@ struct Snapshot {
                                   EdgeAction action);
   void ModifyInvertedIndexDependencies(const InvertedIndex& index,
                                        ObjectId index_id, EdgeAction action);
+  void ModifyRoleDependencies(const Object& obj, EdgeAction action);
 
+  // Throws the object-kind-specific "already exists" SqlException on a name
+  // collision.
   template<typename T>
-  Result RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
-                        bool replace);
+  void RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
+                      bool replace);
 
   template<typename T>
   void UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
                         bool maybe_not_found = false) noexcept;
 
   template<typename DependencyType = void>
-  Result AddObjectDefinition(ObjectId parent_id,
-                             std::shared_ptr<Object> object);
+  void AddObjectDefinition(ObjectId parent_id, std::shared_ptr<Object> object);
 
   template<ResolveType Type>
-  Result AddToResolution(ObjectId parent_id, ObjectId id, std::string_view name,
-                         bool replace);
+  void AddToResolution(ObjectId parent_id, ObjectId id, std::string_view name,
+                       bool replace);
 
   template<ResolveType Type>
   void RemoveFromResolution(ObjectId parent_id, std::string_view name,
@@ -282,9 +344,10 @@ struct Snapshot {
   std::optional<ObjectId> GetObjectId(ObjectId parent_id,
                                       std::string_view name) const;
 
+  // Throws the "already exists" SqlException when the new name is taken.
   template<ResolveType Type>
-  Result ReplaceObject(ObjectId parent_id, std::string_view old_name,
-                       std::shared_ptr<Object> new_object);
+  void ReplaceObject(ObjectId parent_id, std::string_view old_name,
+                     std::shared_ptr<Object> new_object);
 
   template<typename Dep, typename Member, typename Edge>
   void ModifyDependency(ObjectId target, Member Dep::* mem, const Edge& edge,
@@ -343,127 +406,182 @@ struct Snapshot {
   ObjectDependencies _deps;
   ObjectSetById<Object> _objects;
   mutable connector::DuckDBEntryCache _duckdb_cache;
+  auth::RoleClosureMap _role_closures;
   bool _in_load = true;
-};
+  uint64_t _version = 0;
 
-using IndexFactory =
-  absl::FunctionRef<ResultOr<std::shared_ptr<Index>>(const Object*)>;
+ public:
+  void StampVersion(uint64_t version) noexcept;
+};
 
 class Catalog final {
  public:
   explicit Catalog();
 
-  Result RegisterDatabase(std::shared_ptr<Database> database);
-  Result RegisterSchema(ObjectId database_id, std::shared_ptr<Schema> schema);
-  Result RegisterView(ObjectId schema_id, std::shared_ptr<PgSqlView> view);
-  Result RegisterSequence(ObjectId database_id, ObjectId schema_id,
-                          std::shared_ptr<Sequence> sequence);
-  Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
-                          std::shared_ptr<PgSqlFunction> function);
-  Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
-                           std::shared_ptr<Tokenizer> tokenizer);
-  Result RegisterType(ObjectId database_id, ObjectId schema_id,
-                      std::shared_ptr<PgSqlType> type);
-  Result RegisterTable(ObjectId database_id, ObjectId schema_id,
-                       std::shared_ptr<Table> table);
-  Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
-                       std::shared_ptr<Index> index);
-
-  Result CreateDatabase(std::shared_ptr<Database> database);
-  Result CreateView(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<PgSqlView> view, bool replace);
-  Result CreateSequence(ObjectId database_id, std::string_view schema,
-                        std::shared_ptr<Sequence> sequence, bool if_not_exists);
-  Result CreateSchema(ObjectId database_id, std::shared_ptr<Schema> schema);
-  Result CreateFunction(ObjectId database_id, std::string_view schema,
-                        std::shared_ptr<PgSqlFunction> function, bool replace);
-  Result CreateTable(ObjectId database_id, std::string_view schema,
-                     CreateTableOptions table,
-                     CreateTableOperationOptions operation_options);
-  Result CreateSecondaryIndex(ObjectId database_id, std::string_view schema,
-                              std::string_view relation, std::string name,
-                              std::vector<CreateIndexColumn>&& columns,
-                              bool unique,
-                              CreateIndexOperationOptions operation_options);
-  Result CreateInvertedIndex(duckdb::ClientContext& context,
-                             ObjectId database_id, std::string_view schema,
-                             std::string_view relation, std::string name,
-                             std::vector<CreateIndexColumn>&& columns,
-                             InvertedIndexOptions options,
-                             CreateIndexOperationOptions operation_options);
-  Result CreateTokenizer(ObjectId database_id, std::string_view schema,
-                         std::shared_ptr<Tokenizer> dict);
-  Result CreateType(ObjectId database_id, std::string_view schema,
+  // All mutators throw on failure: pg::SqlException with the PG-compatible
+  // errcode/message for user-facing errors, SqlException for internal
+  // (store/serialization) failures. Create* whose statement supports IF NOT
+  // EXISTS and Drop* with `missing_ok` return false instead of throwing when
+  // the object already exists / is absent.
+  void RegisterRole(std::shared_ptr<Role> role);
+  void RegisterDatabase(std::shared_ptr<Database> database);
+  void RegisterSchema(ObjectId database_id, std::shared_ptr<Schema> schema);
+  void RegisterView(ObjectId schema_id, std::shared_ptr<PgSqlView> view);
+  void RegisterSequence(ObjectId database_id, ObjectId schema_id,
+                        std::shared_ptr<Sequence> sequence);
+  void RegisterFunction(ObjectId database_id, ObjectId schema_id,
+                        std::shared_ptr<PgSqlFunction> function);
+  void RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
+                         std::shared_ptr<Tokenizer> tokenizer);
+  void RegisterType(ObjectId database_id, ObjectId schema_id,
                     std::shared_ptr<PgSqlType> type);
+  void RegisterTable(ObjectId database_id, ObjectId schema_id,
+                     std::shared_ptr<Table> table);
+  void RegisterIndex(ObjectId database_id, ObjectId schema_id,
+                     std::shared_ptr<Index> index);
 
-  Result RenameView(ObjectId database_id, std::string_view schema,
-                    std::string_view name, std::string_view new_name);
-  Result RenameTable(ObjectId database_id, std::string_view schema,
-                     std::string_view name, std::string_view new_name);
-  Result RenameIndex(ObjectId database_id, std::string_view schema,
-                     std::string_view name, std::string_view new_name);
-  Result RenameRelation(ObjectId database_id, std::string_view schema,
-                        std::string_view name, std::string_view new_name);
-  Result RenameFunction(ObjectId database_id, std::string_view schema,
-                        std::string_view name, std::string_view new_name);
+  bool CreateDatabase(const AccessContext& ax,
+                      std::shared_ptr<Database> database, bool if_not_exists);
+  void CreateRole(const AccessContext& ax, std::shared_ptr<Role> role);
+  bool CreateView(const AccessContext& ax, ObjectId database_id,
+                  std::string_view schema, std::shared_ptr<PgSqlView> view,
+                  bool replace, bool if_not_exists);
+  bool CreateSequence(const AccessContext& ax, ObjectId database_id,
+                      std::string_view schema,
+                      std::shared_ptr<Sequence> sequence, bool if_not_exists);
+  bool CreateSchema(const AccessContext& ax, ObjectId database_id,
+                    std::shared_ptr<Schema> schema, bool if_not_exists);
+  bool CreateFunction(const AccessContext& ax, ObjectId database_id,
+                      std::string_view schema,
+                      std::shared_ptr<PgSqlFunction> function, bool replace,
+                      bool if_not_exists);
+  bool CreateTable(const AccessContext& ax, ObjectId database_id,
+                   std::string_view schema, CreateTableOptions table,
+                   CreateTableOperationOptions operation_options);
+  bool CreateSecondaryIndex(const AccessContext& ax, ObjectId database_id,
+                            std::string_view schema, std::string_view relation,
+                            std::string name,
+                            std::vector<CreateIndexColumn>&& columns,
+                            bool unique,
+                            CreateIndexOperationOptions operation_options);
+  bool CreateInvertedIndex(const AccessContext& ax,
+                           duckdb::ClientContext& context, ObjectId database_id,
+                           std::string_view schema, std::string_view relation,
+                           std::string name,
+                           std::vector<CreateIndexColumn>&& columns,
+                           InvertedIndexOptions options,
+                           CreateIndexOperationOptions operation_options);
+  bool CreateTokenizer(const AccessContext& ax, ObjectId database_id,
+                       std::string_view schema, std::shared_ptr<Tokenizer> dict,
+                       bool if_not_exists);
+  bool CreateType(const AccessContext& ax, ObjectId database_id,
+                  std::string_view schema, std::shared_ptr<PgSqlType> type,
+                  bool if_not_exists);
 
-  Result ChangeView(ObjectId database_id, std::string_view schema,
-                    std::string_view name, ChangeCallback<PgSqlView> callback);
-  Result ChangeTable(ObjectId database_id, std::string_view schema,
-                     std::string_view name, ChangeCallback<Table> callback);
+  void RenameView(const AccessContext& ax, ObjectId database_id,
+                  std::string_view schema, std::string_view name,
+                  std::string_view new_name);
+  void RenameRelation(const AccessContext& ax, ObjectId database_id,
+                      std::string_view schema, std::string_view name,
+                      std::string_view new_name);
+  // Returns false when the function is absent and `missing_ok` is set.
+  bool RenameFunction(const AccessContext& ax, ObjectId database_id,
+                      std::string_view schema, std::string_view name,
+                      std::string_view new_name, bool missing_ok);
 
-  Result DropDatabase(std::string_view name,
-                      duckdb::shared_ptr<void> keep_alive);
-  Result DropSchema(std::string_view database, std::string_view name,
-                    bool cascade);
-  Result DropView(std::string_view database, std::string_view schema,
-                  std::string_view name, bool cascade);
-  Result DropSequence(std::string_view database, std::string_view schema,
-                      std::string_view name, bool if_exists, bool cascade);
-  Result DropType(std::string_view database, std::string_view schema,
-                  std::string_view name, bool cascade);
-  Result DropFunction(std::string_view database, std::string_view schema,
-                      std::string_view name, bool cascade);
-  Result DropTokenizer(std::string_view database, std::string_view schema,
-                       std::string_view name, bool cascade);
-  Result DropTable(std::string_view database, std::string_view schema,
-                   std::string_view name, bool cascade);
-  Result DropIndex(std::string_view database, std::string_view schema,
-                   std::string_view name, bool cascade);
+  using AclMutator =
+    absl::FunctionRef<void(const Snapshot&, ObjectId owner, catalog::Acl&)>;
+  void ChangeTable(const AccessContext& ax, ObjectId database_id,
+                   std::string_view schema, std::string_view name,
+                   ChangeCallback<Table> callback,
+                   const ChangeTableOptions& options = {});
+  void ChangeRole(const AccessContext& ax, std::string_view name,
+                  std::string_view verb, bool allow_self,
+                  ChangeCallback<Role> callback);
+  void ChangeDefaultAcl(const AccessContext& ax, std::string_view role_name,
+                        ObjectId schema, char objtype, ObjectType type,
+                        absl::FunctionRef<void(Acl&)> mutate);
+  void ChangeMembership(const AccessContext& ax, ObjectId role,
+                        std::string_view role_name, ObjectId member,
+                        std::string_view member_name, const Membership& edge,
+                        bool revoke, bool admin_option_only);
+  void ChangeOwner(const AccessContext& ax, ObjectId database_id,
+                   std::string_view schema, std::string_view name,
+                   ObjectType type, ObjectId new_owner,
+                   std::string_view new_owner_name);
+  void ChangeAcl(ObjectId database_id, std::string_view schema,
+                 std::string_view name, ObjectType type, AclMutator mutate);
+  void ChangeColumnAcl(ObjectId database_id, std::string_view schema,
+                       std::string_view table_name, std::string_view column,
+                       AclMutator mutate);
+  void ChangeColumnType(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema, std::string_view table,
+                        std::string_view column, duckdb::LogicalType new_type,
+                        std::string using_sql);
+
+  void DropDatabase(const AccessContext& ax, std::string_view name,
+                    duckdb::shared_ptr<void> keep_alive);
+  bool DropRole(const AccessContext& ax, std::string_view role,
+                bool missing_ok);
+  bool DropSchema(const AccessContext& ax, std::string_view database,
+                  std::string_view name, bool cascade, bool missing_ok);
+  bool DropView(const AccessContext& ax, std::string_view database,
+                std::string_view schema, std::string_view name, bool cascade,
+                bool missing_ok);
+  bool DropSequence(const AccessContext& ax, std::string_view database,
+                    std::string_view schema, std::string_view name,
+                    bool cascade, bool missing_ok);
+  bool DropType(const AccessContext& ax, std::string_view database,
+                std::string_view schema, std::string_view name, bool cascade,
+                bool missing_ok);
+  bool DropFunction(const AccessContext& ax, std::string_view database,
+                    std::string_view schema, std::string_view name,
+                    bool cascade, bool missing_ok);
+  bool DropTokenizer(std::string_view database, std::string_view schema,
+                     std::string_view name, bool cascade, bool missing_ok);
+  bool DropTable(const AccessContext& ax, std::string_view database,
+                 std::string_view schema, std::string_view name, bool cascade,
+                 bool missing_ok);
+  bool DropIndex(const AccessContext& ax, std::string_view database,
+                 std::string_view schema, std::string_view name, bool cascade,
+                 bool missing_ok);
   // Drop an index by its stable ObjectId rather than by name. Used by the
   // CREATE INDEX failure path, where a concurrent rename could otherwise make a
   // by-name lookup resolve to (and drop) the wrong index.
-  Result DropIndexById(ObjectId database_id, ObjectId index_id, bool cascade);
-  Result DropTableColumn(ObjectId database_id, std::string_view schema,
-                         std::string_view table, std::string_view column,
-                         bool if_exists);
-  Result ChangeColumnType(ObjectId database_id, std::string_view schema,
-                          std::string_view table, std::string_view column,
-                          duckdb::LogicalType new_type, std::string using_sql);
+  void DropIndexById(ObjectId database_id, ObjectId index_id, bool cascade);
+  void DropTableColumn(const AccessContext& ax, ObjectId database_id,
+                       std::string_view schema, std::string_view table,
+                       std::string_view column, bool if_exists);
 
-  Result RemoveTombstone(ObjectId database_id, std::string_view schema,
-                         std::string_view name);
+  void RemoveTombstone(ObjectId database_id, std::string_view schema,
+                       std::string_view name);
 
-  Result FinalizeLoad();
+  void FinalizeLoad();
 
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept;
 
  private:
-  Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
-                         CreateIndexOperationOptions operation_options);
+  void ChangeRoleImpl(
+    ObjectId actor_id, std::string_view name,
+    absl::FunctionRef<void(const Snapshot&, const Role&)> check,
+    ChangeCallback<Role> callback);
+
+  void CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
+                       CreateIndexOperationOptions operation_options);
 
   // Shared core of DropIndex / DropIndexById; assumes `_mutex` is held.
-  Result DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
-                             bool cascade);
+  void DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
+                           bool cascade);
 
   template<typename T>
-  Result RenameObjectImpl(ObjectId database_id, std::string_view schema,
-                          std::string_view name, std::string_view new_name);
+  void RenameObjectImpl(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema, std::string_view name,
+                        std::string_view new_name);
 
   template<typename T>
-  Result RenameObjectImpl(ObjectId schema_id, std::string_view database_name,
-                          std::string_view schema_name, std::string_view name,
-                          std::string_view new_name, std::shared_ptr<T> object);
+  void RenameObjectImpl(ObjectId schema_id, std::string_view database_name,
+                        std::string_view schema_name, std::string_view name,
+                        std::string_view new_name, std::shared_ptr<T> object);
 
   mutable absl::Mutex _mutex;
   // Accessed only via std::atomic_load/std::atomic_store (libc++ lacks
@@ -479,8 +597,10 @@ class Catalog final {
 void InitCatalog();
 void ShutdownCatalog();
 
-ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
-ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);
+std::shared_ptr<Database> GetDatabase(std::string_view name);
 Catalog& GetCatalog();
+// Null before InitCatalog and after ShutdownCatalog, for callers that can run
+// during startup-failure or shutdown teardown.
+Catalog* TryGetCatalog();
 
 }  // namespace sdb::catalog

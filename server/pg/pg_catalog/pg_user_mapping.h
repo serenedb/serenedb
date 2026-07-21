@@ -29,6 +29,7 @@ namespace sdb::pg {
 struct PgUserMapping {
   static constexpr uint64_t kId = 164;
   static constexpr std::string_view kName = "pg_user_mapping";
+  static constexpr bool kSuperuserOnly = true;
 
   Oid oid;
   Oid umuser;

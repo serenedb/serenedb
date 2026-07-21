@@ -26,8 +26,7 @@
 
 #include "basics/noncopyable.hpp"
 #include "basics/serializer.h"
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/minhash_utils.hpp"
 
@@ -35,7 +34,7 @@ namespace irs::analysis {
 
 struct TokenizerConfig;
 
-class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
+class MinHashTokenizer final : public TypedTokenizer<MinHashTokenizer>,
                                private util::Noncopyable {
  public:
   struct Options {
@@ -43,24 +42,20 @@ class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
     std::unique_ptr<TokenizerConfig> analyzer;
     uint32_t num_hashes{1};
   };
-  static analysis::Analyzer::ptr Make(Options opts);
+  static analysis::Tokenizer::ptr Make(Options opts);
 
   // Return analyzer type name.
   static constexpr std::string_view type_name() noexcept { return "minhash"; }
 
-  explicit MinHashTokenizer(analysis::Analyzer::ptr analyzer,
+  explicit MinHashTokenizer(analysis::Tokenizer::ptr analyzer,
                             uint32_t num_hashes);
 
-  // Advance stream to the next token.
-  bool next() final;
-
-  // Reset stream to a specified value.
-  bool reset(std::string_view data) final;
-
-  // Return a stream attribute denoted by `id`.
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return irs::GetMutable(_attrs, id);
+  TokenTraits Traits() const noexcept final {
+    return {.dense_pos = false, .offsets = false};
   }
+
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
 
   // Return number of MinHash hashes.
   uint32_t num_hashes() const noexcept { return _num_hashes; }
@@ -69,21 +64,18 @@ class MinHashTokenizer final : public TypedAnalyzer<MinHashTokenizer>,
   const MinHash& signature() const noexcept { return _minhash; }
 
  private:
-  using attributes = std::tuple<TermAttr, IncAttr, OffsAttr>;
-  using iterator = std::vector<uint64_t>::const_iterator;
+  template<TokenLayout Layout>
+  void EmitSignature(TokenEmitter& sink);
 
-  void ComputeSignature();
+  struct FillScratchT;
+  struct FillScratchDeleterT {
+    void operator()(FillScratchT* p) const noexcept;
+  };
 
-  analysis::Analyzer::ptr _analyzer;
+  analysis::Tokenizer::ptr _analyzer;
   uint32_t _num_hashes{1};
   MinHash _minhash;
-  attributes _attrs;
-  IncAttr _next_inc;
-  const TermAttr* _term{};
-  const OffsAttr* _offset{};
-  iterator _begin{};
-  iterator _end{};
-  std::array<char, 11> _buf{};
+  std::unique_ptr<FillScratchT, FillScratchDeleterT> _scratch;
 };
 
 template<typename Context>
@@ -97,5 +89,7 @@ void SerdeRead(Context ctx, MinHashTokenizer::Options& o) {
   auto refs = std::tie(o.analyzer, o.num_hashes);
   sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
 }
+
+extern template class TypedTokenizer<MinHashTokenizer>;
 
 }  // namespace irs::analysis

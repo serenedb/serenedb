@@ -25,10 +25,9 @@
 
 #include <unicode/locid.h>
 
-#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs {
 namespace analysis {
@@ -39,7 +38,7 @@ namespace analysis {
 ///        token, i.e. case conversion and accent removal
 /// @note expects UTF-8 encoded input
 ////////////////////////////////////////////////////////////////////////////////
-class NormalizingTokenizer final : public TypedAnalyzer<NormalizingTokenizer>,
+class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
                                    private util::Noncopyable {
  public:
   struct Options {
@@ -53,25 +52,36 @@ class NormalizingTokenizer final : public TypedAnalyzer<NormalizingTokenizer>,
   static constexpr std::string_view type_name() noexcept { return "norm"; }
 
   explicit NormalizingTokenizer(Options options);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+
+  void ForceUnicodePath(bool force) noexcept { _force_unicode = force; }
+
+  TokenTraits Traits() const noexcept final {
+    return {.terms = TokenTraits::Terms::Normalized};
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
+
+  bool AsciiFastEligible(std::string_view value) const noexcept;
+  bool AsciiRewrite(std::string_view value, std::string& out) const;
 
  private:
-  // token value with evaluated quotes
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  bool Normalize(std::string_view data);
+  template<TokenLayout Layout>
+  void AsciiEmit(TokenEmitter& sink, std::string_view value);
 
   struct StateT;
   struct StateDeleterT {
     void operator()(StateT*) const noexcept;
   };
 
-  attributes _attrs;
   std::unique_ptr<StateT, StateDeleterT> _state;
-  bool _term_eof;
+  uint32_t _input_size = 0;
+  bool _ascii_case_safe = false;
+  bool _force_unicode = false;
 };
+
+extern template class TypedTokenizer<NormalizingTokenizer>;
 
 }  // namespace analysis
 }  // namespace irs

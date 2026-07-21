@@ -22,6 +22,7 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/proxy_filter.hpp"
@@ -66,7 +67,7 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    while (_doc < target && next()) {
+    while (_doc < target && !doc_limits::eof(advance())) {
     }
     return _doc;
   }
@@ -76,6 +77,8 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
     _resetted = true;
     _doc = doc_limits::invalid();
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
  private:
   std::vector<doc_id_t>::const_iterator _begin;
@@ -151,7 +154,7 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
       for (size_t i = 0; i < GetParam(); ++i) {
         auto doc = ctx.Insert();
         auto field = std::make_shared<::tests::StringField>("foo", "bar");
-        doc.Insert(*field);
+        ::tests::InsertField(doc, *field);
       }
       ctx.Commit();
     }
@@ -192,11 +195,12 @@ class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
       EXPECT_TRUE(costs);
       EXPECT_EQ(costs->estimate(), expected.size());
       auto expected_doc = expected.begin();
-      while (docs->next() && expected_doc != expected.end()) {
+      while (!irs::doc_limits::eof(docs->advance()) &&
+             expected_doc != expected.end()) {
         EXPECT_EQ(docs->value(), *expected_doc);
         ++expected_doc;
       }
-      EXPECT_FALSE(docs->next());
+      EXPECT_FALSE(!irs::doc_limits::eof(docs->advance()));
       EXPECT_EQ(expected_doc, expected.end());
     }
     // Real filter should be exectued just once

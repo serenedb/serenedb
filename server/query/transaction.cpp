@@ -22,17 +22,22 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <chrono>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <random>
+#include <thread>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "search/tick_domain.h"
@@ -79,7 +84,7 @@ namespace sdb::query {
 // Views release eagerly -- per-statement views at statement end, the
 // transaction-held ones at commit/rollback -- so they never pin MVCC versions
 // or index segments against background cleanup, and re-acquire lazily on first
-// use (EnsureCatalogSnapshot / EnsureSearchSnapshot). The one per-statement
+// use (CatalogSnapshot / EnsureSearchSnapshot). The one per-statement
 // step that must run at statement *start* is advancing the native read view:
 // RefreshStartTime() captures "now", so to see everything committed before the
 // statement it has to run when the statement begins, not when the prior ended.
@@ -99,6 +104,9 @@ bool Transaction::IsStableSnapshot() const {
 }
 
 void Transaction::OnStatementBegin() {
+  // Statement-scoped views are acquired here, on the connection thread,
+  // before binding starts and before any executor task can read them.
+  AcquireCatalogSnapshot();
   if (IsStableSnapshot()) {
     return;
   }
@@ -165,7 +173,8 @@ void Transaction::PreCommit() noexcept {
 
 void Transaction::PreRollback() noexcept { RollbackVariables(); }
 
-void Transaction::CommitSearch() noexcept {
+void Transaction::CommitSearch(
+  std::optional<search::WalCursor> cursor) noexcept {
   if (_search_transactions.empty()) {
     return;
   }
@@ -190,26 +199,18 @@ void Transaction::CommitSearch() noexcept {
     max_queries =
       std::max<uint64_t>(max_queries, entry.transaction->GetQueries());
   }
+  SDB_IF_FAILURE("long_waited_advance") {
+    static std::atomic<uint32_t> gSeedCounter{0};
+    static thread_local std::mt19937 gRng{
+      gSeedCounter.fetch_add(1, std::memory_order_relaxed)};
+    std::this_thread::sleep_for(std::chrono::microseconds(
+      std::uniform_int_distribution<int>(0, 20000)(gRng)));
+  }
+
   const auto last_tick =
     search::TickDomain::Instance().Advance(max_queries + 1);
 
   std::move(rollback).Cancel();
-
-  // This commit's exact store-WAL end offset, with the checkpoint iteration as
-  // the generation. We run after the store WAL is durable (inside the engine
-  // commit, before the in-commit checkpoint), so GetWALSize() is this
-  // transaction's WAL end offset and is constant throughout CommitSearch; read
-  // it once. Commits serialize, so ticks and offsets arrive in the same order.
-  search::WalCursor cursor;
-  bool has_cursor = false;
-  if (auto store =
-        duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-          .GetDatabase(std::string{catalog::kStoreDatabaseName})) {
-    auto& sm = store->GetStorageManager();
-    cursor = search::WalCursor{sm.GetBlockManager().GetCheckpointIteration(),
-                               sm.GetWALSize()};
-    has_cursor = true;
-  }
 
   for (auto& [index_id, entry] : _search_transactions) {
     // Record this commit's WAL cursor into the index's own table BEFORE its
@@ -217,9 +218,12 @@ void Transaction::CommitSearch() noexcept {
     // context). A concurrent refresh can only flush this batch after Commit, by
     // which point the offset is already in the table, so the refresh's
     // CursorAtOrBelow(flushed_tick) can never under-claim and re-stream an
-    // already-durable insert after a crash.
-    if (entry.storage && has_cursor) {
-      entry.storage->RecordFlushCursor(last_tick, cursor);
+    // already-durable insert after a crash. The cursor is this commit's exact
+    // WAL position, captured under the WAL lock by the engine: commits overlap,
+    // so reading the WAL size here would include later transactions' bytes and
+    // over-claim (skipping their re-stream after a crash).
+    if (entry.storage && cursor) {
+      entry.storage->RecordFlushCursor(last_tick, *cursor);
     }
     if (entry.transaction->Commit(last_tick)) {
       continue;
@@ -239,7 +243,7 @@ void Transaction::CommitSearch() noexcept {
   _search_transactions.clear();
 }
 
-Result Transaction::Commit() {
+void Transaction::Commit() {
   // Search-table segments commit on the database WAL tick; register their flush
   // up-front -- before any commit point -- so a concurrent background
   // RefreshCommit waits for them. They commit in the WAL block below.
@@ -249,8 +253,8 @@ Result Transaction::Commit() {
 
   // Inverted-index trxs: normally already settled inside the engine commit
   // (TransactionPreCheckpoint); this is the fallback for transactions that did
-  // not commit the store database.
-  CommitSearch();
+  // not commit the store database, so there is no store-WAL cursor to record.
+  CommitSearch(std::nullopt);
 
   // Search-table (TableEngine::Search) commit point (WAL_DESIGN.md §9): the §9
   // crash boundaries + the single multi-shard WAL fsync that is the atomic
@@ -261,17 +265,14 @@ Result Transaction::Commit() {
     } catch (const std::exception& e) {
       _search_txn->Abort();
       Destroy();
-      return {ERROR_INTERNAL, "Failed to commit search-table WAL: ", e.what()};
+      THROW_SQL_ERROR(ERR_MSG("Failed to commit search-table WAL: ", e.what()));
     }
   }
 
-  ApplyTableStatsDiffs();
   Destroy();
-
-  return {};
 }
 
-Result Transaction::Rollback() {
+void Transaction::Rollback() {
   for (auto& search_transaction : _search_transactions) {
     search_transaction.second.transaction->Abort();
   }
@@ -280,15 +281,13 @@ Result Transaction::Rollback() {
   }
   RollbackVariables();
   Destroy();
-  return {};
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
-    auto index =
-      EnsureCatalogSnapshot()->GetObject<catalog::InvertedIndex>(index_id);
+    auto index = CatalogSnapshot()->GetObject<catalog::InvertedIndex>(index_id);
     SDB_ASSERT(index);
     auto storage = index->GetData();
     SDB_ASSERT(storage);
@@ -309,25 +308,6 @@ void Transaction::Destroy() noexcept {
   _had_dml = false;
   _statement_is_dml = false;
   _statement_is_ddl = false;
-}
-
-void Transaction::ApplyTableStatsDiffs() noexcept {
-  if (_table_rows_deltas.empty()) {
-    return;
-  }
-  auto snapshot = EnsureCatalogSnapshot();
-  for (const auto& [table_id, delta] : _table_rows_deltas) {
-    auto table = snapshot->GetObject<catalog::Table>(table_id);
-    if (!table) {
-      continue;  // table dropped mid-transaction
-    }
-    // Only Search tables track row counts here; Transactional store tables
-    // maintain their own statistics. GetData() asserts the store is bound.
-    if (table->GetEngine() == catalog::TableEngine::Search) {
-      table->GetData()->UpdateNumRows(delta);
-    }
-  }
-  _table_rows_deltas.clear();
 }
 
 }  // namespace sdb::query

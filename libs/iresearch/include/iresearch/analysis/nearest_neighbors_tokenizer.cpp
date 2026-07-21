@@ -27,9 +27,10 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/fasttext_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
@@ -39,14 +40,12 @@ std::atomic<NearestNeighborsTokenizer::model_provider_f> gModelProvider =
 
 }  // namespace
 
-Analyzer::ptr NearestNeighborsTokenizer::Make(Options opts) {
+Tokenizer::ptr NearestNeighborsTokenizer::Make(Options opts) {
   if (opts.model_location.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "nearest_neighbors: empty model location");
+    THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: empty model location"));
   }
   if (opts.top_k <= 0) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "nearest_neighbors: top_k must be positive");
+    THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: top_k must be positive"));
   }
   auto provider = gModelProvider.load(std::memory_order_relaxed);
 
@@ -60,22 +59,22 @@ Analyzer::ptr NearestNeighborsTokenizer::Make(Options opts) {
       model = new_model;
     }
   } catch (const std::exception& e) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
-                           "model from: ",
-                           opts.model_location, ", error: ", e.what()));
+    THROW_SQL_ERROR(
+      ERR_MSG("nearest_neighbors: failed to load fasttext kNN "
+              "model from: ",
+              opts.model_location, ", error: ", e.what()));
   } catch (...) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
-                           "model from: ",
-                           opts.model_location));
+    THROW_SQL_ERROR(
+      ERR_MSG("nearest_neighbors: failed to load fasttext kNN "
+              "model from: ",
+              opts.model_location));
   }
 
   if (!model) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              absl::StrCat("nearest_neighbors: failed to load fasttext kNN "
-                           "model from: ",
-                           opts.model_location));
+    THROW_SQL_ERROR(
+      ERR_MSG("nearest_neighbors: failed to load fasttext kNN "
+              "model from: ",
+              opts.model_location));
   }
 
   return std::make_unique<NearestNeighborsTokenizer>(opts, std::move(model));
@@ -98,36 +97,10 @@ NearestNeighborsTokenizer::NearestNeighborsTokenizer(const Options& options,
   SDB_ASSERT(_model_dict);
 }
 
-bool NearestNeighborsTokenizer::next() {
-  if (_neighbors_it == _neighbors.end()) {
-    if (_current_token_ind == _n_tokens) {
-      return false;
-    }
-    _neighbors = _model->getNN(
-      _model_dict->getWord(_line_token_ids[_current_token_ind]), _top_k);
-    _neighbors_it = _neighbors.begin();
-    ++_current_token_ind;
-  }
+bool NearestNeighborsTokenizer::Bind(std::string_view value) {
+  _input_size = static_cast<uint32_t>(value.size());
 
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = {
-    reinterpret_cast<const byte_type*>(_neighbors_it->second.c_str()),
-    _neighbors_it->second.size()};
-
-  auto& inc = std::get<IncAttr>(_attrs);
-  inc.value = static_cast<uint32_t>(_neighbors_it == _neighbors.begin());
-
-  ++_neighbors_it;
-
-  return true;
-}
-
-bool NearestNeighborsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = static_cast<uint32_t>(data.size());
-
-  BytesViewInput s_input{ViewCast<byte_type>(data)};
+  BytesViewInput s_input{ViewCast<byte_type>(value)};
   InputBuf buf{&s_input};
   std::istream ss{&buf};
 
@@ -140,5 +113,49 @@ bool NearestNeighborsTokenizer::reset(std::string_view data) {
 
   return true;
 }
+
+template<TokenLayout Layout>
+bool NearestNeighborsTokenizer::DoFill(std::string_view value,
+                                       TokenEmitter& sink) {
+  if (!Bind(value)) {
+    return false;
+  }
+  auto& buf = sink.buf;
+  const auto input_end = _input_size;
+  uint32_t pos = 0;
+
+  const auto emit = [&](const std::string& word, uint32_t inc) {
+    const auto i = sink.Next();
+    buf.terms[i] = sink.Intern(irs::bytes_view{
+      reinterpret_cast<const byte_type*>(word.data()), word.size()});
+    if constexpr (Layout != TokenLayout::Terms) {
+      pos += inc;
+      buf.pos[i] = pos;
+    }
+    if constexpr (Layout == TokenLayout::TermsPosOffs) {
+      buf.offs_start[i] = 0;
+      buf.offs_end[i] = input_end;
+    }
+  };
+
+  for (bool first = true; _neighbors_it != _neighbors.end(); ++_neighbors_it) {
+    emit(_neighbors_it->second, first && _neighbors_it == _neighbors.begin());
+    first = false;
+  }
+  while (_current_token_ind != _n_tokens) {
+    _neighbors = _model->getNN(
+      _model_dict->getWord(_line_token_ids[_current_token_ind]), _top_k);
+    ++_current_token_ind;
+    bool first = true;
+    for (_neighbors_it = _neighbors.begin(); _neighbors_it != _neighbors.end();
+         ++_neighbors_it) {
+      emit(_neighbors_it->second, first ? 1 : 0);
+      first = false;
+    }
+  }
+  return true;
+}
+
+template class TypedTokenizer<NearestNeighborsTokenizer>;
 
 }  // namespace irs::analysis

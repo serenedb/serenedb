@@ -23,13 +23,20 @@
 
 #include "normalizing_tokenizer.hpp"
 
+#include <absl/strings/ascii.h>
+#include <simdutf.h>
 #include <unicode/normalizer2.h>  // for icu::Normalizer2
 #include <unicode/translit.h>     // for icu::Transliterator
 
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
 #include <string_view>
 
-#include "basics/exceptions.h"
+#include "iresearch/analysis/batch/term_view.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
@@ -49,26 +56,81 @@ void NormalizingTokenizer::StateDeleterT::operator()(StateT* p) const noexcept {
 }
 
 NormalizingTokenizer::NormalizingTokenizer(Options options)
-  : _state{new StateT{std::move(options)}}, _term_eof{true} {}
+  : _state{new StateT{std::move(options)}} {
+  const std::string_view lang = _state->options.locale.getLanguage();
+  _ascii_case_safe = lang != "tr" && lang != "az" && lang != "lt";
+}
 
-Analyzer::ptr NormalizingTokenizer::Make(Options opts) {
+// ASCII values are NFC-invariant and carry no nonspacing marks, so
+// normalization and accent stripping are identity; case conversion stays
+// within ASCII except under the locale-tailored case mappings (tr/az dotted
+// I, lt accent preservation), which keep the unicode path.
+bool NormalizingTokenizer::AsciiFastEligible(
+  std::string_view value) const noexcept {
+  return _ascii_case_safe && !_force_unicode &&
+         simdutf::validate_ascii(value.data(), value.size());
+}
+
+bool NormalizingTokenizer::AsciiRewrite(std::string_view value,
+                                        std::string& out) const {
+  if (!AsciiFastEligible(value)) {
+    return false;
+  }
+  if (value.empty()) {
+    out.clear();
+    return true;
+  }
+  out.resize(value.size());
+  switch (_state->options.case_convert) {
+    case Case::Lower:
+      absl::ascii_internal::AsciiStrToLower(out.data(), value.data(),
+                                            value.size());
+      break;
+    case Case::Upper:
+      absl::ascii_internal::AsciiStrToUpper(out.data(), value.data(),
+                                            value.size());
+      break;
+    case Case::None:
+      std::memcpy(out.data(), value.data(), value.size());
+      break;
+  }
+  return true;
+}
+
+template<TokenLayout Layout>
+void NormalizingTokenizer::AsciiEmit(TokenEmitter& sink,
+                                     std::string_view value) {
+  auto& buf = sink.buf;
+  const auto size = static_cast<uint32_t>(value.size());
+  const auto i = sink.Next();
+  if (_state->options.case_convert == Case::None) {
+    buf.terms[i] = MakeTermView(value.data(), size);
+  } else {
+    char inline_buf[duckdb::string_t::INLINE_LENGTH];
+    char* out = size <= duckdb::string_t::INLINE_LENGTH
+                  ? inline_buf
+                  : reinterpret_cast<char*>(sink.Reserve(size));
+    if (_state->options.case_convert == Case::Lower) {
+      absl::ascii_internal::AsciiStrToLower(out, value.data(), size);
+    } else {
+      absl::ascii_internal::AsciiStrToUpper(out, value.data(), size);
+    }
+    buf.terms[i] = MakeTermView(out, size);
+  }
+  if constexpr (Layout == TokenLayout::TermsPosOffs) {
+    buf.offs_start[i] = 0;
+    buf.offs_end[i] = size;
+  }
+}
+
+Tokenizer::ptr NormalizingTokenizer::Make(Options opts) {
   if (opts.locale.isBogus()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "norm: invalid locale");
+    THROW_SQL_ERROR(ERR_MSG("norm: invalid locale"));
   }
   return std::make_unique<NormalizingTokenizer>(std::move(opts));
 }
 
-bool NormalizingTokenizer::next() {
-  if (_term_eof) {
-    return false;
-  }
-
-  _term_eof = true;
-
-  return true;
-}
-
-bool NormalizingTokenizer::reset(std::string_view data) {
+bool NormalizingTokenizer::Normalize(std::string_view data) {
   auto err =
     UErrorCode::U_ZERO_ERROR;  // a value that passes the U_SUCCESS() test
 
@@ -138,17 +200,26 @@ bool NormalizingTokenizer::reset(std::string_view data) {
 
   _state->term_buf.clear();
   _state->token.toUTF8String(_state->term_buf);
-
-  // use the normalized value
-  static_assert(sizeof(byte_type) == sizeof(char));
-  std::get<TermAttr>(_attrs).value =
-    ViewCast<byte_type>(std::string_view{_state->term_buf});
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = static_cast<uint32_t>(data.size());
-  _term_eof = false;
+  _input_size = static_cast<uint32_t>(data.size());
 
   return true;
 }
+
+template<TokenLayout Layout>
+bool NormalizingTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
+  if (AsciiFastEligible(value)) {
+    AsciiEmit<Layout>(sink, value);
+    return true;
+  }
+  if (!Normalize(value)) {
+    sink.buf.one_to_one = false;
+    return false;
+  }
+  sink.EmitInterned<Layout>(
+    ViewCast<byte_type>(std::string_view{_state->term_buf}), 0, _input_size);
+  return true;
+}
+
+template class TypedTokenizer<NormalizingTokenizer>;
 
 }  // namespace irs::analysis

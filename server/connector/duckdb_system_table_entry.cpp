@@ -122,7 +122,10 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
                                    duckdb::CreateTableInfo& info,
                                    const catalog::VirtualTable& virtual_table)
   : duckdb::TableCatalogEntry(catalog, schema, info),
-    _virtual_table(virtual_table) {}
+    _virtual_table(virtual_table),
+    _system_object{virtual_table.Id(), virtual_table.GetName(),
+                   catalog::Acl{virtual_table.GetAcl().begin(),
+                                virtual_table.GetAcl().end()}} {}
 
 duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableEntry::GetStatistics(
   duckdb::ClientContext&, duckdb::column_t) {
@@ -147,7 +150,7 @@ duckdb::TableFunction SystemTableEntry::GetScanFunction(
 
   auto row_type = _virtual_table.RowType();
   for (auto& [name, type] : duckdb::StructType::GetChildTypes(row_type)) {
-    data->column_names.push_back(name);
+    data->column_names.emplace_back(name.GetIdentifierName());
   }
 
   bind_data = std::move(data);

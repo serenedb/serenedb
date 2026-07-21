@@ -43,27 +43,18 @@ query
 EXPLAIN SELECT pk, payload.score FROM sp_t_idx WHERE t @@ ts_phrase('first');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: sp_t_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ t(string) = first ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│     payload.score (i)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: sp_t_idx                 │
+│ Lookup: table                   │
+│ Filter:                         │
+│ ╭─ Term ───────────╮            │
+│ │ Field: t(string) │            │
+│ │ Value: first     │            │
+│ ╰──────────────────╯            │
+│ Projections: pk (l),            │
+│              payload.score (i)  │
+│ ~1 row                          │
+╰─────────────────────────────────╯
 
 
 # Two fields: each is independently pushed down -- `payload.name (i)` and
@@ -72,28 +63,19 @@ query
 EXPLAIN SELECT pk, payload.name, payload.score FROM sp_t_idx WHERE t @@ ts_phrase('first');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: sp_t_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ t(string) = first ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│      payload.name (i)     │
-│     payload.score (i)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: sp_t_idx                 │
+│ Lookup: table                   │
+│ Filter:                         │
+│ ╭─ Term ───────────╮            │
+│ │ Field: t(string) │            │
+│ │ Value: first     │            │
+│ ╰──────────────────╯            │
+│ Projections: pk (l),            │
+│              payload.name (i),  │
+│              payload.score (i)  │
+│ ~1 row                          │
+╰─────────────────────────────────╯
 
 
 # An expression on top of an extract can't be pushed: the field is still served
@@ -102,35 +84,22 @@ query
 EXPLAIN SELECT pk, payload.score + 1 FROM sp_t_idx WHERE t @@ ts_phrase('first');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│       (payload + 1)       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│      Index: sp_t_idx      │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ t(string) = first ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│           pk (l)          │
-│     payload.score (i)     │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ────────────────────╮
+│ Projections: pk, payload + 1    │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: sp_t_idx                 │
+│ Lookup: table                   │
+│ Filter:                         │
+│ ╭─ Term ───────────╮            │
+│ │ Field: t(string) │            │
+│ │ Value: first     │            │
+│ ╰──────────────────╯            │
+│ Projections: pk (l),            │
+│              payload.score (i)  │
+│ ~1 row                          │
+╰─────────────────────────────────╯
 
 
 # Values round-trip through the pushed-down projections.

@@ -1,0 +1,242 @@
+# Column-level reach THROUGH a view, under definer vs invoker rights.
+#
+# A base table iceberg(id, av, secret). Two views expose ONLY (id, av):
+#   - evct_clickclack  : definer rights (default). Base checked vs the view
+#                        OWNER, so a reader granted the view reads (id, av).
+#   - evct_clackclick  : security_invoker. Base checked vs the CALLER, so the
+#                        reader needs a base privilege of his own; a column
+#                        GRANT SELECT(id, av) on the base suffices for the
+#                        exposed columns.
+#
+# RULE R (PG view security, oracle-verified PG 18.3): a base/view reference is
+# checked against an effective user set ONLY by the view that DIRECTLY encloses
+# it -- definer => the view OWNER, invoker => the SESSION CALLER, unenclosed =>
+# caller. SELECT on the view RELATION itself is ALSO enforced, under the same
+# effective user; an ungranted view denies with "permission denied for view"
+# before its base is ever reached.
+#
+# Key column facts asserted here:
+#   1. The exposed columns (id, av) read through either view, but only once the
+#      reader holds SELECT on the view relation.
+#   2. 'secret' is NOT a column of the view -> selecting it FROM the view is a
+#      BINDER error ("not found in FROM clause"), NOT an RBAC denial. The view
+#      simply does not project it; there is no column-leak to test there.
+#   3. A definer view does NOT let the reader bypass column grants on the base
+#      directly: with no base grant at all, reading the base (any column,
+#      including secret) is refused naming the base table.
+#
+# Lore: vedernikoff reads the clickclack/clackclick views; iceberg is the base,
+# secret the column the views never expose.
+
+statement ok
+DROP VIEW IF EXISTS evct_clackclick_s;
+
+
+statement ok
+DROP VIEW IF EXISTS evct_clickclack;
+
+
+statement ok
+DROP VIEW IF EXISTS evct_clackclick;
+
+
+statement ok
+DROP TABLE IF EXISTS evct_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS evct_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS evct_mop;
+
+
+statement ok
+CREATE TABLE evct_iceberg (id int, av int, secret int);
+
+
+statement ok
+INSERT INTO evct_iceberg VALUES (1, 10, 100), (2, 20, 200);
+
+
+# Definer view (default): exposes only (id, av), base checked vs owner.
+statement ok
+CREATE VIEW evct_clickclack AS SELECT id, av FROM evct_iceberg;
+
+
+# Invoker view: exposes only (id, av), base checked vs caller.
+statement ok
+CREATE VIEW evct_clackclick WITH (security_invoker=true) AS SELECT id, av FROM evct_iceberg;
+
+
+statement ok
+CREATE ROLE evct_vedernikoff LOGIN PASSWORD 'evct_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE evct_mop LOGIN PASSWORD 'evct_mop_pw';
+
+
+# === Definer view: the view's OWN SELECT privilege is enforced. ===
+# Before any grant, vedernikoff holds nothing on the view relation, so the read
+# is refused naming the VIEW (RULE R: the view relation is checked vs the caller
+# even though its base is checked vs the owner).
+connection c_def0 user=evct_vedernikoff password=evct_vedernikoff_pw
+statement error
+SELECT id, av FROM evct_clickclack ORDER BY id;
+----
+db error: ERROR: permission denied for view evct_clickclack<slt:ignore>
+
+
+# Granting SELECT on the definer view authorizes the read: the view relation is
+# now readable by the caller, and the base is read under the owner's rights.
+statement ok
+GRANT SELECT ON evct_clickclack TO evct_vedernikoff;
+
+
+connection c_def user=evct_vedernikoff password=evct_vedernikoff_pw
+query
+SELECT id, av FROM evct_clickclack ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# 'secret' is not a column of the view -> BINDER error, not an RBAC denial.
+# The view never projected it; this is a malformed query, not a column leak.
+skipif serenedb
+connection c_def2 user=evct_vedernikoff password=evct_vedernikoff_pw
+query error
+SELECT secret FROM evct_clickclack;
+----
+db error: ERROR: column "secret" does not exist<slt:ignore>
+
+
+onlyif serenedb
+connection c_def2 user=evct_vedernikoff password=evct_vedernikoff_pw
+query error
+SELECT secret FROM evct_clickclack;
+----
+db error: ERROR: Referenced column "secret" not found in FROM clause!<slt:ignore>
+
+
+# === Definer view does NOT let the reader bypass column grants on the base
+# directly. vedernikoff holds NOTHING on evct_iceberg, so a direct base read --
+# of any column, including the unexposed secret -- is refused naming the base. ===
+connection c_def3 user=evct_vedernikoff password=evct_vedernikoff_pw
+statement error
+SELECT id, av FROM evct_iceberg;
+----
+db error: ERROR: permission denied for table evct_iceberg<slt:ignore>
+
+
+connection c_def4 user=evct_vedernikoff password=evct_vedernikoff_pw
+statement error
+SELECT secret FROM evct_iceberg;
+----
+db error: ERROR: permission denied for table evct_iceberg<slt:ignore>
+
+
+# === Invoker view over a base where the caller has a COLUMN grant. ===
+# Grant the view, plus SELECT(id, av) -- but NOT secret -- on the base. The
+# invoker layer checks the base against vedernikoff; the exposed columns are
+# exactly the ones he holds, so the read is ALLOWED.
+statement ok
+GRANT SELECT ON evct_clackclick TO evct_vedernikoff;
+
+
+statement ok
+GRANT SELECT (id, av) ON evct_iceberg TO evct_vedernikoff;
+
+
+connection c_inv user=evct_vedernikoff password=evct_vedernikoff_pw
+query
+SELECT id, av FROM evct_clackclick ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# The base column grant is per-column: secret was never granted, so a direct
+# read of secret on the base is still refused.
+connection c_inv2 user=evct_vedernikoff password=evct_vedernikoff_pw
+statement error
+SELECT secret FROM evct_iceberg;
+----
+db error: ERROR: permission denied for table evct_iceberg<slt:ignore>
+
+
+# With the column grant, the granted base columns now read directly too.
+connection c_inv3 user=evct_vedernikoff password=evct_vedernikoff_pw
+query
+SELECT id, av FROM evct_iceberg ORDER BY id;
+----
+id	av
+1	10
+2	20
+
+
+# === Invoker per-column enforcement (DENY direction). ===
+# An invoker view whose query INTERNALLY references secret, even though the
+# caller selects only id, is checked against every base column the view
+# references. vedernikoff holds SELECT(id, av) but NOT secret on the base, so
+# reading through this view is refused naming the base -- proving the base check
+# is per-column and not satisfied by the granted columns alone. PG-faithful.
+statement ok
+CREATE VIEW evct_clackclick_s WITH (security_invoker=true) AS SELECT id, av, secret FROM evct_iceberg;
+
+
+statement ok
+GRANT SELECT ON evct_clackclick_s TO evct_vedernikoff;
+
+
+connection c_inv4 user=evct_vedernikoff password=evct_vedernikoff_pw
+statement error
+SELECT id FROM evct_clackclick_s;
+----
+db error: ERROR: permission denied for table evct_iceberg<slt:ignore>
+
+
+# === Control: a role (mop) with NO grant at all. ===
+# Both views enforce their OWN SELECT privilege against the caller (RULE R). mop
+# holds nothing on either view relation, so each read is refused naming the VIEW
+# it lacks -- before the base is ever reached. PG-faithful on both paths.
+connection c_mop user=evct_mop password=evct_mop_pw
+statement error
+SELECT id, av FROM evct_clickclack ORDER BY id;
+----
+db error: ERROR: permission denied for view evct_clickclack<slt:ignore>
+
+
+connection c_mop2 user=evct_mop password=evct_mop_pw
+statement error
+SELECT id, av FROM evct_clackclick ORDER BY id;
+----
+db error: ERROR: permission denied for view evct_clackclick<slt:ignore>
+
+
+statement ok
+DROP VIEW evct_clackclick_s;
+
+
+statement ok
+DROP VIEW evct_clickclack;
+
+
+statement ok
+DROP VIEW evct_clackclick;
+
+
+statement ok
+DROP TABLE evct_iceberg;
+
+
+statement ok
+DROP ROLE evct_vedernikoff;
+
+
+statement ok
+DROP ROLE evct_mop;

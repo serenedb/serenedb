@@ -1,0 +1,117 @@
+hash-threshold 100
+
+# The JSON `->` operator parses as a single-arrow lambda, so inside a macro
+# body the parameter substitution used to treat `attrs->key` as a lambda with
+# parameter `attrs`, leaving the macro parameter unreplaced and failing the
+# bind with "This scalar function does not support lambdas!". A single-arrow
+# expression whose LHS names a macro parameter substitutes as a JSON extract;
+# keyword lambdas (`lambda x: ...`) keep lambda semantics, including when the
+# lambda parameter shadows a macro parameter.
+
+statement ok
+CREATE MACRO mja_type(attrs, key) AS json_type(attrs->key)
+
+query T
+SELECT mja_type('{"k": [1]}'::JSON, 'k') AS t
+----
+t
+ARRAY
+
+query T
+SELECT mja_type('{"k": {"n": 1}}'::JSON, 'k') AS t
+----
+t
+OBJECT
+
+statement ok
+CREATE MACRO mja_text(attrs, key) AS attrs->>key
+
+query T
+SELECT mja_text('{"k": "v"}'::JSON, 'k') AS t
+----
+t
+v
+
+statement ok
+CREATE MACRO mja_inner(s) AS s || 'z'
+
+statement ok
+CREATE MACRO mja_fold(attrs, key) AS
+  CASE WHEN json_type(attrs->key) = 'ARRAY'
+       THEN array_to_string(list_transform(from_json(attrs->key, '["VARCHAR"]'),
+                                           lambda v: mja_inner(v)), ' ')
+       ELSE attrs->>key END
+
+query T
+SELECT mja_fold('{"k": ["a", "b"]}'::JSON, 'k') AS t
+----
+t
+az bz
+
+query T
+SELECT mja_fold('{"k": "plain"}'::JSON, 'k') AS t
+----
+t
+plain
+
+statement ok
+CREATE MACRO mja_shadow(v, l) AS list_transform(l, lambda v: v || 'q')
+
+query T
+SELECT mja_shadow('unused', ['p', 'r']) AS t
+----
+t
+{pq,rq}
+
+# Macro parameters referenced inside a keyword-lambda body still substitute;
+# the lambda's own parameter stays untouched.
+
+statement ok
+CREATE MACRO mja_add(l, num) AS list_transform(l, lambda x: x + num)
+
+query T
+SELECT mja_add([1, 2, 3], 10) AS t
+----
+t
+{11,12,13}
+
+statement ok
+CREATE MACRO mja_reduce(l, num) AS list_reduce(l, lambda x, y: x + y + num)
+
+query I
+SELECT mja_reduce([1, 2, 3], 10) AS t
+----
+t
+26
+
+# The deprecated single-arrow lambda syntax keeps working in macros when its
+# parameter does not collide with a macro parameter.
+
+statement ok
+SET lambda_syntax = 'ENABLE_SINGLE_ARROW'
+
+statement ok
+CREATE MACRO mja_arrow(l, num) AS list_transform(l, x -> x + num)
+
+query T
+SELECT mja_arrow([1, 2], 5) AS t
+----
+t
+{6,7}
+
+# Pinned behavior change: an arrow whose LHS names a macro parameter is a
+# JSON extract even under ENABLE_SINGLE_ARROW, so an arrow-lambda shadowing
+# a macro parameter no longer binds. Keyword lambdas remain the way to
+# shadow (mja_shadow above).
+
+statement ok
+CREATE MACRO mja_arrow_shadow(v, l) AS list_transform(l, v -> v || 'q')
+
+statement error
+SELECT mja_arrow_shadow('unused', ['p', 'r'])
+----
+db error: ERROR: Invalid lambda parameters<slt:ignore>! Parameters must be unqualified comma-separated names like x or (x, y).
+
+
+statement ok
+SET lambda_syntax = 'DEFAULT'

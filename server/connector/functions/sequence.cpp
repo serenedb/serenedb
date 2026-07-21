@@ -20,10 +20,8 @@
 
 #include "connector/functions/sequence.h"
 
-#include <duckdb/common/exception.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
 #include <duckdb/common/vector_operations/ternary_executor.hpp>
-#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -34,6 +32,7 @@
 
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/object.h"
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -45,20 +44,24 @@ namespace sdb::connector {
 namespace {
 
 std::shared_ptr<catalog::Sequence> ResolveSequence(
-  duckdb::ClientContext& context, std::string_view qualified) {
+  duckdb::ClientContext& context, std::string_view qualified,
+  catalog::AclMode need) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
-  std::string_view schema_name =
-    qname.schema.empty() ? StaticStrings::kPublic : qname.schema;
+  std::string_view schema_name = qname.Schema().empty()
+                                   ? StaticStrings::kPublic
+                                   : qname.Schema().GetIdentifierName();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
   auto database_id = conn_ctx.GetDatabaseId();
   auto schema = snapshot->GetSchema(database_id, schema_name);
   if (!schema) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  auto seq = snapshot->GetSequence(database_id, schema->GetId(), qname.name);
+  auto seq =
+    snapshot->GetSequence(catalog::RequireAccess(context, need), database_id,
+                          schema->GetId(), qname.Name().GetIdentifierName());
   if (!seq) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));
@@ -98,11 +101,15 @@ uint64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
 }
 
 uint64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
-  return Nextval(*ResolveSequence(context, qualified), qualified);
+  return Nextval(
+    *ResolveSequence(context, qualified,
+                     catalog::AclMode::Usage | catalog::AclMode::Update),
+    qualified);
 }
 
 uint64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
-  auto seq = ResolveSequence(context, qualified);
+  auto seq = ResolveSequence(
+    context, qualified, catalog::AclMode::Usage | catalog::AclMode::Select);
   uint64_t raw = seq->Read();
   if (raw == seq->Options().Seed()) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -114,7 +121,7 @@ uint64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
 
 uint64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
                 uint64_t value, bool is_called) {
-  auto seq = ResolveSequence(context, qualified);
+  auto seq = ResolveSequence(context, qualified, catalog::AclMode::Update);
   const auto& opts = seq->Options();
   if (value < opts.min_value || value > opts.max_value) {
     ThrowSetvalOutOfBounds(qualified);
@@ -143,7 +150,8 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     auto* name_data =
       duckdb::ConstantVector::GetData<duckdb::string_t>(args.data[0]);
     std::string_view qualified{name_data->GetData(), name_data->GetSize()};
-    auto seq = ResolveSequence(context, qualified);
+    auto seq = ResolveSequence(
+      context, qualified, catalog::AclMode::Usage | catalog::AclMode::Update);
     const auto& opts = seq->Options();
     uint64_t batch_span = static_cast<uint64_t>(num_rows) * opts.increment;
 
@@ -232,7 +240,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
   {
     duckdb::ScalarFunction func{
-      std::string{kNextval},
+      duckdb::Identifier{kNextval},
       {duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       NextvalFunction,
@@ -242,7 +250,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      std::string{kCurrval},
+      duckdb::Identifier{kCurrval},
       {duckdb::LogicalType::VARCHAR},
       duckdb::LogicalType::BIGINT,
       CurrvalFunction,
@@ -252,7 +260,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      std::string{kSetval},
+      duckdb::Identifier{kSetval},
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT},
       duckdb::LogicalType::BIGINT,
       Setval2Function,
@@ -262,7 +270,7 @@ void RegisterSequenceFunctions(duckdb::DatabaseInstance& db) {
   }
   {
     duckdb::ScalarFunction func{
-      std::string{kSetval},
+      duckdb::Identifier{kSetval},
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BIGINT,
        duckdb::LogicalType::BOOLEAN},
       duckdb::LogicalType::BIGINT,

@@ -28,6 +28,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 
+#include "iresearch/analysis/batch/token_sinks.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
@@ -99,6 +100,8 @@ class WildcardIterator : public DocIterator {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _approx->GetMutable(type);
   }
+
+  IRS_DOC_ITERATOR_DEFAULTS
 
   doc_id_t advance() final {
     while (!doc_limits::eof(_approx->advance())) {
@@ -286,8 +289,8 @@ QueryBuilder::ptr ByWildcardNgram::PrepareSegment(
       if (token.back() == 0xFF) {
         token = kEmptyStringView<byte_type>;
       }
-      return wrap(ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token,
-                                           kDefaultScoredTermsLimit));
+      return wrap(
+        ByPrefix::PrepareSegment(segment, sub_ctx, field_id(), token));
     }
     case WildcardNgramKind::kPhrase:
       return wrap(MakePhraseFilter(field_id(), opts.parts.front())
@@ -330,15 +333,15 @@ ByWildcardNgramOptions::ByWildcardNgramOptions(
   std::string_view pattern, analysis::WildcardAnalyzer& analyzer,
   bool has_positions) {
   auto& ngram = analyzer.ngram();
-  const auto* term = irs::get<TermAttr>(ngram);
+  TokenCollector collector{TokenLayout::Terms};
 
   auto make_parts_impl = [&](std::string_view v) {
-    if (!ngram.reset(v)) {
+    if (!AnalyzeValue(ngram, v, collector)) {
       return false;
     }
     ByPhraseOptions part;
-    while (ngram.next()) {
-      part.push_back<ByTermOptions>(ByTermOptions{bstring{term->value}});
+    for (auto& token : collector.tokens) {
+      part.push_back<ByTermOptions>(ByTermOptions{std::move(token.term)});
     }
     if (part.empty()) {
       return false;

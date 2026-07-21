@@ -81,22 +81,19 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
       field.Name(name);
       field.id = fid;
-      field.value(
-        irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+      field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
     } else if (data.is_bool() && data.b) {
       doc.insert(std::make_shared<tests::BinaryField>());
       auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
       field.Name(name);
       field.id = fid;
-      field.value(
-        irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+      field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
     } else if (data.is_bool() && !data.b) {
       doc.insert(std::make_shared<tests::BinaryField>());
       auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
       field.Name(name);
       field.id = fid;
-      field.value(
-        irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+      field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
     } else if (data.is_number()) {
       // 'value' can be interpreted as a double
       {
@@ -212,16 +209,12 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
     // range under same granularity value for topmost element, (i.e. last value
     // from numeric_token_stream)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT32_C(0));
-
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT32_C(1000));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  INT32_C(0));
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  INT32_C(1000));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -235,7 +228,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -246,16 +239,12 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
     // range under different granularity value for topmost element, (i.e. last
     // value from numeric_token_stream)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT32_C(-1000));
-
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT32_C(+1000));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  INT32_C(-1000));
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  INT32_C(+1000));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -269,7 +258,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -279,16 +268,12 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value = [-20000..+20000]
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(double_t(-20000));
-
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(double_t(+20000));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  double_t(-20000));
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  double_t(+20000));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -299,7 +284,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -309,12 +294,10 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value > 100
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(double_t(100));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  double_t(100));
       irs::SetGranularTerm(query.mutable_options()->range.max,
                            irs::numeric_utils::numeric_traits<double_t>::inf());
       query.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -327,7 +310,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -337,12 +320,10 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value => 100
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(double_t(100));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  double_t(100));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
 
       tests::PreparedFilter prepared{query, rdr};
@@ -352,7 +333,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -362,12 +343,10 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value => 20007 (largest value)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(double_t(20007));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  double_t(20007));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
 
       tests::PreparedFilter prepared{query, rdr};
@@ -377,7 +356,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -387,15 +366,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value < 10000.123
     {
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(double_t(10000.123));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
       irs::SetGranularTerm(
         query.mutable_options()->range.min,
         irs::numeric_utils::numeric_traits<double_t>::ninf());
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  double_t(10000.123));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
@@ -406,7 +383,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -416,12 +393,10 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value <= 10000.123
     {
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(double_t(10000.123));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  double_t(10000.123));
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
       tests::PreparedFilter prepared{query, rdr};
@@ -431,7 +406,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -452,7 +427,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -474,20 +449,18 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // long - seq = [7..7]
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT64_C(7));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT64_C(7));
 
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT64_C(7));
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT64_C(7));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -498,7 +471,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -508,20 +481,18 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // long - seq = [1..7]
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT64_C(1));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT64_C(1));
 
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT64_C(7));
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT64_C(7));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -532,7 +503,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -543,16 +514,12 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
     // long - value = [31 .. 32] with same-level granularity (last value in
     // segment)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT64_C(31));
-
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT64_C(32));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  INT64_C(31));
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  INT64_C(32));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -563,7 +530,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -573,14 +540,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // long - seq > 28
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT64_C(28));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT64_C(28));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
       irs::SetGranularTerm(
         query.mutable_options()->range.max,
         (irs::numeric_utils::numeric_traits<int64_t>::max)());
@@ -594,7 +560,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -604,14 +570,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // long - seq >= 31 (match largest value)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT64_C(31));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT64_C(31));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
       irs::SetGranularTerm(
         query.mutable_options()->range.max,
         (irs::numeric_utils::numeric_traits<int64_t>::max)());
@@ -625,7 +590,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -635,17 +600,16 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // long - seq <= 5
     {
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT64_C(5));
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT64_C(5));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
       irs::SetGranularTerm(
         query.mutable_options()->range.min,
         (irs::numeric_utils::numeric_traits<int64_t>::min)());
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -656,7 +620,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -666,20 +630,18 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // int - seq = [7..7]
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT32_C(7));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT32_C(7));
 
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT32_C(7));
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT32_C(7));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -690,7 +652,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -700,20 +662,18 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // int - seq = [1..7]
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT32_C(1));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT32_C(1));
 
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT32_C(7));
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT32_C(7));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -724,7 +684,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -735,16 +695,12 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
     // int - value = [31 .. 32] with same-level granularity (last value in
     // segment)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT32_C(31));
-
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT32_C(32));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  INT32_C(31));
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  INT32_C(32));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -755,7 +711,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -765,14 +721,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // int - seq > 28
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT32_C(28));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT32_C(28));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
       irs::SetGranularTerm(
         query.mutable_options()->range.max,
         (irs::numeric_utils::numeric_traits<int32_t>::max)());
@@ -786,7 +741,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -796,14 +751,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // int - seq >= 31 (match largest value)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(INT32_C(31));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT32_C(31));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
       irs::SetGranularTerm(
         query.mutable_options()->range.max,
         (irs::numeric_utils::numeric_traits<int32_t>::max)());
@@ -817,7 +771,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -827,17 +781,16 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // int - seq <= 5
     {
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(INT32_C(5));
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT32_C(5));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
       irs::SetGranularTerm(
         query.mutable_options()->range.min,
         (irs::numeric_utils::numeric_traits<int32_t>::min)());
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -848,7 +801,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -858,20 +811,18 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // float - value = [123..123]
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset((float_t)123.f);
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, (float_t)123.f);
 
-      irs::NumericTokenizer max_stream;
-      max_stream.reset((float_t)123.f);
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (float_t)123.f);
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -882,7 +833,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -892,20 +843,18 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // float - value = [91.524..123)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset((float_t)91.524f);
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, (float_t)91.524f);
 
-      irs::NumericTokenizer max_stream;
-      max_stream.reset((float_t)123.f);
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (float_t)123.f);
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
@@ -916,7 +865,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -927,16 +876,12 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
     // float - value = [31 .. 32] with same-level granularity (last value in
     // segment)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(float_t(31));
-
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(float_t(32));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  float_t(31));
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  float_t(32));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -947,7 +892,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -957,16 +902,15 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // float - value < 91.565
     {
-      irs::NumericTokenizer max_stream;
-      max_stream.reset((float_t)90.565f);
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (float_t)90.565f);
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
       irs::SetGranularTerm(query.mutable_options()->range.min,
                            irs::numeric_utils::numeric_traits<float_t>::ninf());
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
@@ -977,7 +921,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -987,14 +931,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // float - value > 91.565
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset((float_t)90.565f);
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, (float_t)90.565f);
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
       irs::SetGranularTerm(query.mutable_options()->range.max,
                            irs::numeric_utils::numeric_traits<float_t>::inf());
       query.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1007,7 +950,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1017,14 +960,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // float - value >= 31 (largest value)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(float_t(31));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, float_t(31));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
       irs::SetGranularTerm(query.mutable_options()->range.max,
                            irs::numeric_utils::numeric_traits<float_t>::inf());
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1037,7 +979,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1047,19 +989,17 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value = [123...123]
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset((double_t)123.);
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
-      irs::NumericTokenizer max_stream;
-      max_stream.reset((double_t)123.);
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, (double_t)123.);
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (double_t)123.);
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -1070,7 +1010,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1080,19 +1020,17 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value = (-40; 90.564]
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset((double_t)-40.);
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
-      irs::NumericTokenizer max_stream;
-      max_stream.reset((double_t)90.564);
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, (double_t)-40.);
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (double_t)90.564);
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Exclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -1103,7 +1041,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1114,16 +1052,12 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
     // double - value = [31 .. 32] with same-level granularity (last value in
     // segment)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(double_t(31));
-
-      irs::NumericTokenizer max_stream;
-      max_stream.reset(double_t(32));
-
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+      irs::SetGranularNumericTerm(query.mutable_options()->range.min,
+                                  double_t(31));
+      irs::SetGranularNumericTerm(query.mutable_options()->range.max,
+                                  double_t(32));
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
@@ -1134,7 +1068,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1144,17 +1078,16 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value < 5;
     {
-      irs::NumericTokenizer max_stream;
-      max_stream.reset((double_t)5.);
-      auto* max_term = irs::get<irs::TermAttr>(max_stream);
-      ASSERT_TRUE(max_stream.next());
+      irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto max_term =
+        irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (double_t)5.);
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
       irs::SetGranularTerm(
         query.mutable_options()->range.min,
         irs::numeric_utils::numeric_traits<double_t>::ninf());
-      irs::SetGranularTerm(query.mutable_options()->range.max, max_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.max, max_term);
       query.mutable_options()->range.min_type = irs::BoundType::Exclusive;
       query.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
@@ -1165,7 +1098,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1175,14 +1108,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value > 90.543;
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset((double_t)90.543);
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, (double_t)90.543);
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kValue;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
       irs::SetGranularTerm(query.mutable_options()->range.max,
                            irs::numeric_utils::numeric_traits<double_t>::inf());
       query.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1195,7 +1127,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1205,14 +1137,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     // double - value >= 31 (largest value)
     {
-      irs::NumericTokenizer min_stream;
-      min_stream.reset(double_t(31));
-      auto* min_term = irs::get<irs::TermAttr>(min_stream);
-      ASSERT_TRUE(min_stream.next());
+      irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto min_term =
+        irs::numeric_utils::EncodeNumericTerm(min_stream_buf, double_t(31));
 
       irs::ByGranularRange query;
       *query.mutable_field_id() = kSeq;
-      irs::SetGranularTerm(query.mutable_options()->range.min, min_term->value);
+      irs::SetGranularTerm(query.mutable_options()->range.min, min_term);
       irs::SetGranularTerm(query.mutable_options()->range.max,
                            irs::numeric_utils::numeric_traits<double_t>::inf());
       query.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1225,7 +1156,7 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
       for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
         auto docs = prepared.Execute(i);
-        for (; docs->next();) {
+        for (; !irs::doc_limits::eof(docs->advance());) {
           actual.push_back(docs->value());
         }
         ++i;
@@ -1929,11 +1860,9 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
   {
     Docs docs{4, 11, 12, 13, 14, 15, 16, 17};
     Costs costs{docs.size()};
-    irs::NumericTokenizer max_stream;
-    max_stream.reset((double_t)100.);
-    auto* max_term = irs::get<irs::TermAttr>(max_stream);
-
-    ASSERT_TRUE(max_stream.next());
+    irs::byte_type max_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+    const auto max_term =
+      irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (double_t)100.);
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
@@ -1942,7 +1871,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     *q.mutable_field_id() = kValue;
     irs::SetGranularTerm(q.mutable_options()->range.min,
                          irs::numeric_utils::numeric_traits<double_t>::ninf());
-    irs::SetGranularTerm(q.mutable_options()->range.max, max_term->value);
+    irs::SetGranularTerm(q.mutable_options()->range.max, max_term);
     q.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
@@ -1996,15 +1925,14 @@ TEST_P(GranularRangeFilterTestCase, by_range_order_multiple_sorts) {
     std::iota(docs.begin(), docs.end(),
               size_t(begin - seed + irs::doc_limits::min()));
     Costs costs{docs.size()};
-    irs::NumericTokenizer min_stream;
-    min_stream.reset((double_t)begin);
 
     std::array<irs::Scorer::ptr, 1> order{
       std::make_unique<tests::sort::FrequencySort>()};
 
     irs::ByGranularRange q;
     *q.mutable_field_id() = kSeq;
-    irs::SetGranularTerm(q.mutable_options()->range.min, min_stream);
+    irs::SetGranularNumericTerm(q.mutable_options()->range.min,
+                                (double_t)begin);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
 
     CheckQuery(*tests::Optimized(q), order, docs, rdr);
@@ -2027,22 +1955,19 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
         auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
         field.Name(name);
         field.id = fid;
-        field.value(
-          irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+        field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
       } else if (data.is_bool() && data.b) {
         doc.insert(std::make_shared<tests::BinaryField>());
         auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
         field.Name(name);
         field.id = fid;
-        field.value(
-          irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+        field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
       } else if (data.is_bool() && !data.b) {
         doc.insert(std::make_shared<tests::BinaryField>());
         auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
         field.Name(name);
         field.id = fid;
-        field.value(
-          irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+        field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
       } else if (data.is_number()) {
         // 'value' can be interpreted as a double
         const auto d_value = data.as_number<double_t>();
@@ -2094,14 +2019,11 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       }
     }
 
-    irs::NumericTokenizer max_stream;
-    max_stream.reset(30.);
-
     irs::ByGranularRange query;
     *query.mutable_field_id() = kA;
     irs::SetGranularTerm(query.mutable_options()->range.min,
                          irs::numeric_utils::numeric_traits<double_t>::ninf());
-    irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+    irs::SetGranularNumericTerm(query.mutable_options()->range.max, 30.);
     query.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     query.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
@@ -2114,7 +2036,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared.Execute(0);
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       const auto doc = docs->value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
@@ -2146,12 +2068,9 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       }
     }
 
-    irs::NumericTokenizer max_stream;
-    max_stream.reset(30.);
-
     irs::ByGranularRange query;
     *query.mutable_field_id() = kA;
-    irs::SetGranularTerm(query.mutable_options()->range.max, max_stream);
+    irs::SetGranularNumericTerm(query.mutable_options()->range.max, 30.);
     query.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
     tests::PreparedFilter prepared{query, reader};
@@ -2163,7 +2082,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared.Execute(0);
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       const auto doc = docs->value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
@@ -2195,12 +2114,9 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       }
     }
 
-    irs::NumericTokenizer min_stream;
-    min_stream.reset(30.);
-
     irs::ByGranularRange query;
     *query.mutable_field_id() = kA;
-    irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
+    irs::SetGranularNumericTerm(query.mutable_options()->range.min, 30.);
     irs::SetGranularTerm(query.mutable_options()->range.max,
                          irs::numeric_utils::numeric_traits<double_t>::inf());
     query.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -2215,7 +2131,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared.Execute(0);
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       const auto doc = docs->value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
@@ -2247,12 +2163,9 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
       }
     }
 
-    irs::NumericTokenizer min_stream;
-    min_stream.reset(30.);
-
     irs::ByGranularRange query;
     *query.mutable_field_id() = kA;
-    irs::SetGranularTerm(query.mutable_options()->range.min, min_stream);
+    irs::SetGranularNumericTerm(query.mutable_options()->range.min, 30.);
     query.mutable_options()->range.min_type = irs::BoundType::Exclusive;
 
     tests::PreparedFilter prepared{query, reader};
@@ -2264,7 +2177,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     std::set<std::string> actual;
 
     auto docs = prepared.Execute(0);
-    while (docs->next()) {
+    while (!irs::doc_limits::eof(docs->advance())) {
       const auto doc = docs->value();
       const auto bytes = values.Get(doc);
       irs::BytesViewInput in;
@@ -2273,44 +2186,6 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     }
     ASSERT_EQ(expected, actual);
   }
-}
-
-TEST_P(GranularRangeFilterTestCase, visit) {
-  // add segment
-  {
-    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                                &ByRangeJsonFieldFactory);
-
-    add_segment(gen, irs::kOmCreate);
-  }
-
-  tests::EmptyFilterVisitor visitor;
-  irs::ByGranularRange::options_type opts;
-  opts.is_granular = false;
-  auto& rng = opts.range;
-  rng.min = {static_cast<irs::bstring>(
-    irs::ViewCast<irs::byte_type>(std::string_view("abc")))};
-  rng.max = {static_cast<irs::bstring>(
-    irs::ViewCast<irs::byte_type>(std::string_view("abcd")))};
-  rng.min_type = irs::BoundType::Inclusive;
-  rng.max_type = irs::BoundType::Inclusive;
-
-  // read segment
-  auto index = open_reader();
-  ASSERT_EQ(1, index.size());
-  auto& segment = index[0];
-  // get term dictionary for field
-  const auto* reader = segment.field(kPrefix);
-  ASSERT_TRUE(reader != nullptr);
-
-  irs::ByGranularRange::visit(segment, *reader, opts, visitor);
-  ASSERT_EQ(2, visitor.prepare_calls_counter());
-  ASSERT_EQ(2, visitor.visit_calls_counter());
-  ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
-              {"abc", irs::kNoBoost}, {"abcd", irs::kNoBoost}}),
-            visitor.term_refs<char>());
-
-  visitor.reset();
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

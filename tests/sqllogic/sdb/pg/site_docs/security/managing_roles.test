@@ -1,0 +1,47 @@
+# DOCS_TEST: example_001
+
+statement ok
+DROP ROLE IF EXISTS doc_mr_admin;
+
+statement ok
+DROP ROLE IF EXISTS doc_mr_dupe;
+
+# DOCS_TEST_BODY
+
+query
+SELECT rolname, rolcanlogin, rolsuper
+FROM pg_roles WHERE rolname = 'postgres';
+----
+rolname	rolcanlogin	rolsuper
+postgres	t	t
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_mr_admin LOGIN PASSWORD 'doc_mr_admin_pw' CREATEROLE;
+
+query
+SELECT rolcreaterole, rolsuper, rolcreatedb FROM pg_roles
+WHERE rolname = 'doc_mr_admin';
+----
+rolcreaterole	rolsuper	rolcreatedb
+t	f	f
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_mr_dupe;
+
+statement error db error: ERROR: role "doc_mr_dupe" already exists
+CREATE ROLE doc_mr_dupe;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP ROLE doc_mr_admin, doc_mr_dupe;

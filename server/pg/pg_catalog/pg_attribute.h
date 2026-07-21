@@ -77,7 +77,7 @@ struct PgAttribute {
   int16_t attinhcount;
   Oid attcollation;
   int16_t attstattarget;
-  Array<Aclitem> attacl;
+  AclColumn attacl;
   Array<Text> attoptions;
   Array<Text> attfdwoptions;
   Anyarray attmissingval;

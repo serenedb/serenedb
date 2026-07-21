@@ -39,7 +39,6 @@
 #include "basics/common.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/debugging.h"
-#include "basics/result_or.h"
 #include "basics/shared.hpp"
 
 namespace sdb::basics {
@@ -98,135 +97,11 @@ inline std::optional<bool> ParseBool(std::string_view value) {
 namespace string_utils {
 
 // -----------------------------------------------------------------------------
-// STRING CONVERSION
-// -----------------------------------------------------------------------------
-
-/// escape unicode
-///
-/// This method escapes a unicode character string by replacing the unicode
-/// characters by a \\uXXXX sequence.
-std::string EscapeUnicode(std::string_view value, bool escape_slash = true);
-
-std::string_view Trim(std::string_view source_str,
-                      std::string_view trim_str = " \t\n\r");
-
-void TrimInPlace(std::string& str, std::string_view trim_str = " \t\n\r");
-
-std::string_view RTrim(std::string_view source_str,
-                       std::string_view trim_str = " \t\n\r");
-
-/// url decodes the path part of a string
-std::string UrlDecodePath(std::string_view str);
-
-/// url encodes the string
-std::string UrlEncode(const char* src, size_t len);
-inline std::string UrlEncode(std::string_view value) {
-  return UrlEncode(value.data(), value.size());
-}
-
-// -----------------------------------------------------------------------------
-// CONVERT TO STRING
-// -----------------------------------------------------------------------------
-
-/// converts integer to string
-std::string Itoa(int16_t i);
-
-/// converts unsigned integer to string
-std::string Itoa(uint16_t i);
-
-/// converts integer to string
-std::string Itoa(int64_t i);
-
-/// converts unsigned integer to string
-std::string Itoa(uint64_t i);
-
-/// converts unsigned integer to string
-size_t Itoa(uint64_t i, char* result);
-
-void Itoa(uint64_t i, std::string& result);
-
-/// converts integer to string
-std::string Itoa(int32_t i);
-
-/// converts unsigned integer to string
-std::string Itoa(uint32_t i);
-
-// -----------------------------------------------------------------------------
-// CONVERT FROM STRING
-// -----------------------------------------------------------------------------
-
-/// converts a single hex to integer
-inline int Hex2int(char ch, int error_value = 0) {
-  if ('0' <= ch && ch <= '9') {
-    return ch - '0';
-  } else if ('A' <= ch && ch <= 'F') {
-    return ch - 'A' + 10;
-  } else if ('a' <= ch && ch <= 'f') {
-    return ch - 'a' + 10;
-  }
-
-  return error_value;
-}
-
-/// parses a boolean
-bool Boolean(std::string_view str);
-
-/// parses an integer
-int64_t Int64(const char* value, size_t size) noexcept;
-inline int64_t Int64(std::string_view value) noexcept {
-  return Int64(value.data(), value.size());
-}
-
-/// parses an unsigned integer
-uint64_t Uint64(const char* value, size_t size) noexcept;
-inline uint64_t Uint64(std::string_view value) noexcept {
-  return Uint64(value.data(), value.size());
-}
-
-/// parses an unsigned integers, but returns any errors
-ResultOr<uint64_t> TryUint64(const char* value, size_t size) noexcept;
-ResultOr<uint64_t> TryUint64(std::string_view value) noexcept;
-
-/// parses an unsigned integer
-uint32_t Uint32(const char* value, size_t size) noexcept;
-inline uint32_t Uint32(std::string_view value) noexcept {
-  return Uint32(value.data(), value.size());
-}
-
-/// parses a decimal
-double DoubleDecimal(const char* value, size_t size);
-inline double DoubleDecimal(std::string_view value) {
-  return DoubleDecimal(value.data(), value.size());
-}
-
-// -----------------------------------------------------------------------------
 // ADDITIONAL STRING UTILITIES
 // -----------------------------------------------------------------------------
 
-std::string EncodeHex(const char* value, size_t length);
-inline std::string EncodeHex(std::string_view value) {
-  return EncodeHex(value.data(), value.size());
-}
-
-/// returns a human-readable size string, e.g.
-/// - 0 => "0 bytes"
-/// - 1 => "1 byte"
-/// - 255 => "255 bytes"
-/// - 2048 => "2.0 KB"
-/// - 1048576 => "1.0 MB"
-/// ...
-std::string FormatSize(uint64_t value);
-
-/// Translates a set of HTTP headers into a string, which is
-/// properly escaped to put it into a log file.
-std::string HeadersToString(
-  const containers::FlatHashMap<std::string, std::string>& headers);
-
 /// returns "an" for words starting with a vowel sound, "a" otherwise
 std::string_view GetArticle(std::string_view word) noexcept;
-
-// helper function to strip-non-numeric data from a string
-std::string RemoveWhitespaceAndComments(const std::string& value);
 
 // Returns the English plural form of a word
 // doesn't work for all the cases, cause applies basic rules:
@@ -234,23 +109,6 @@ std::string RemoveWhitespaceAndComments(const std::string& value);
 // consonant + y -> -y +ies;
 // otherwise -> +s.
 std::string GetPluralFormLowerCase(std::string_view word);
-
-struct EscapeJsonOptions {
-  // escape forward slashes when serializing VPack values into
-  // JSON with a Dumper (requires escapeControl = true)
-  bool escape_forward_slashes = false;
-
-  // with a Dumper (creates \uxxxx sequences or displays '\n', '\r' or \'t',
-  // when set to false, replaces the control characters with whitespaces)
-  bool escape_control = true;
-
-  // escape multi-byte Unicode characters when dumping them to JSON
-  // with a Dumper (creates \uxxxx sequences)
-  bool escape_unicode = false;
-};
-
-template<typename Sink>
-void EscapeJsonStr(std::string_view str, Sink* sink, EscapeJsonOptions options);
 
 }  // namespace string_utils
 }  // namespace sdb::basics

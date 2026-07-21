@@ -55,7 +55,7 @@ timestamp_s
 query
 SELECT TIMESTAMPTZ '1992-09-20 11:30:00.123456789';
 ----
-timestamp with time zone
+timestamptz
 1992-09-20 11:30:00.123456+00
 
 # DOCS_TEST: example_006
@@ -65,7 +65,7 @@ timestamp with time zone
 query
 SELECT TIMESTAMPTZ '1992-09-20 12:30:00.123456789+01:00';
 ----
-timestamp with time zone
+timestamptz
 1992-09-20 11:30:00.123456+00
 
 # DOCS_TEST: example_007
@@ -123,7 +123,7 @@ SET TimeZone = 'America/Los_Angeles';
 
 # DOCS_TEST_BODY
 
-query ???
+query
 SELECT
     name,
     abbrev,

@@ -29,6 +29,7 @@
 #include "basics/file_utils_ext.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
+#include "insert_field.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/store/fs_directory.hpp"
 #include "iresearch/store/memory_directory.hpp"
@@ -155,7 +156,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
           auto ctx = import_writer->GetBatch();
           {
             auto d = ctx.Insert();
-            EXPECT_TRUE(d.Insert(doc->indexed.begin(), doc->indexed.end()));
+            EXPECT_TRUE(
+              tests::InsertFields(d, doc->indexed.begin(), doc->indexed.end()));
             StoreNamed(d, doc->indexed, "same", kSameId);
           }
           TransactionTick(ctx);
@@ -220,8 +222,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
               auto ctx = writer->GetBatch();
               {
                 auto d = ctx.Insert();
-                EXPECT_TRUE(d.Insert(csv_doc_template.indexed.begin(),
-                                     csv_doc_template.indexed.end()));
+                EXPECT_TRUE(
+                  tests::InsertFields(d, csv_doc_template.indexed.begin(),
+                                      csv_doc_template.indexed.end()));
               }
               TransactionTick(ctx);
             }
@@ -365,8 +368,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                 auto ctx = writer->GetBatch();
                 {
                   auto d = ctx.Replace(std::move(filter));
-                  EXPECT_TRUE(d.Insert(csv_doc_template.indexed.begin(),
-                                       csv_doc_template.indexed.end()));
+                  EXPECT_TRUE(
+                    tests::InsertFields(d, csv_doc_template.indexed.begin(),
+                                        csv_doc_template.indexed.end()));
                   StoreNamed(d, csv_doc_template.indexed, "updated",
                              kUpdatedId);
                 }

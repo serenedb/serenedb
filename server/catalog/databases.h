@@ -21,13 +21,15 @@
 #pragma once
 
 #include <duckdb/main/database_manager.hpp>
-
-#include "basics/result.h"
+#include <string_view>
 
 namespace sdb::catalog {
 
-Result CreateDatabase(std::string_view name);
-Result DropDatabase(std::string_view db_name,
-                    duckdb::shared_ptr<void> keep_alive = {});
+struct AccessContext;
+
+bool CreateDatabase(const AccessContext& ax, std::string_view name,
+                    bool if_not_exists);
+void DropDatabase(const AccessContext& ax, std::string_view db_name,
+                  duckdb::shared_ptr<void> keep_alive = {});
 
 }  // namespace sdb::catalog

@@ -36,9 +36,6 @@
 #ifdef _WIN32
 #include <io.h>  // _close
 #include <tchar.h>
-#define file_blksize_t \
-  uint32_t  // DWORD (same as GetDriveGeometry(...)
-            // DISK_GEOMETRY::BytesPerSector)
 #define file_path_delimiter L'\\'
 #define file_stat_t struct _stat64
 #define mode_t unsigned short
@@ -61,7 +58,6 @@
 #else
 #include <sys/types.h>  // for blksize_t
 #include <unistd.h>     // close
-#define FILE_BLKSIZE_T blksize_t
 #define FILE_PATH_DELIMITER '/'
 #define FILE_STAT_T struct stat
 
@@ -124,9 +120,6 @@ typedef std::unique_ptr<void, LockFileDeleter> lock_handle_t;
 lock_handle_t CreateLockFile(const path_char_t* file);
 bool VerifyLockFile(const path_char_t* file);
 
-bool Absolute(bool& result, const path_char_t* path) noexcept;
-
-bool BlockSize(FILE_BLKSIZE_T& result, const path_char_t* file) noexcept;
 bool ByteSize(uint64_t& result, const path_char_t* file) noexcept;
 bool ByteSize(uint64_t& result, int fd) noexcept;
 bool ByteSize(uint64_t& result, void* fd) noexcept;

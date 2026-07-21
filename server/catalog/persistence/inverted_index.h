@@ -38,11 +38,16 @@
 
 namespace sdb::catalog::persistence {
 
-struct HNSWColumnConfig {
+struct IVFColumnConfig {
   int d = 0;
-  int m = 32;
-  int ef_construction = 40;
-  irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
+  irs::VectorMetric metric = irs::VectorMetric::L2Sqr;
+  irs::VectorQuantization quant = irs::VectorQuantization::None;
+  uint32_t nlist = 0;
+  uint32_t train_sample = 0;
+  uint32_t cluster_iters = 0;
+  uint32_t pq_m = 0;
+  uint32_t rabitq_bits = 0;
+  float nlist_factor = 0;
 };
 
 // Persisted per-field iresearch config, keyed by field_id in InvertedIndexData.
@@ -56,7 +61,7 @@ struct EntryConfigSerialized {
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   search::Features features;
-  std::optional<HNSWColumnConfig> hnsw_config;
+  std::optional<IVFColumnConfig> ivf_config;
   irs::field_id synthetic_column = irs::field_limits::invalid();
   uint32_t row_group_size = 0;
   uint32_t norm_row_group_size = 0;

@@ -26,15 +26,8 @@
 #include <yaclib/coro/future.hpp>
 
 #include "basics/assert.h"
-#include "basics/result.h"
 
 // For more safety
 template<>
 constexpr const std::__ignore_type& std::__ignore_type::operator=
   <yaclib::Future<>>(const yaclib::Future<>&) const noexcept = delete;
-
-// For more safety
-template<>
-constexpr const std::__ignore_type& std::__ignore_type::operator=
-  <yaclib::Future<sdb::Result>>(
-    const yaclib::Future<sdb::Result>&) const noexcept = delete;

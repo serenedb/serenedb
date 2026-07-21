@@ -27,8 +27,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
-#include "basics/result.h"
 #include "basics/system-compiler.h"
 #include "catalog/identifiers/object_id.h"
 
@@ -36,6 +34,7 @@ namespace sdb::catalog {
 
 enum class ResolveType {
   Database = 0,
+  Role,
   Schema,
   Function,
   Relation,
@@ -46,6 +45,7 @@ enum class ResolveType {
 class ResolutionTable {
  public:
   ResolutionTable() {
+    _roles = std::make_shared<MapByName<ObjectId>>();
     _databases = std::make_shared<MapByName<ObjectId>>();
     _schemas = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _relations = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
@@ -59,6 +59,9 @@ class ResolutionTable {
     if constexpr (Type == ResolveType::Database) {
       auto it = _databases->find(object_name);
       return it == _databases->end() ? std::nullopt : std::optional{it->second};
+    } else if constexpr (Type == ResolveType::Role) {
+      auto it = _roles->find(object_name);
+      return it == _roles->end() ? std::nullopt : std::optional{it->second};
     } else {
       auto resolve =
         [](const MapByIdPtr<MapByNamePtr<ObjectId>>& lookup_map,
@@ -90,22 +93,33 @@ class ResolutionTable {
   }
 
   template<ResolveType Type>
-  Result AddObject(ObjectId parent_id, std::string_view object_name,
-                   ObjectId object_id, bool replace) {
+  bool AddObject(ObjectId parent_id, std::string_view object_name,
+                 ObjectId object_id, bool replace) {
     if constexpr (Type == ResolveType::Database) {
       auto& databases = CloneData(_databases);
       if (!replace) {
         auto [_, inserted] = databases.try_emplace(object_name, object_id);
         if (!inserted) {
-          return {ERROR_SERVER_DUPLICATE_NAME};
+          return false;
+        }
+        auto [_, schemas] = CloneData(_schemas).try_emplace(
+          object_id, std::make_shared<MapByName<ObjectId>>());
+        SDB_ASSERT(schemas);
+      } else {
+        InsertOrRebind(databases, object_name, object_id);
+      }
+      return true;
+    } else if constexpr (Type == ResolveType::Role) {
+      auto& roles = CloneData(_roles);
+      if (!replace) {
+        auto [_, inserted] = roles.try_emplace(object_name, object_id);
+        if (!inserted) {
+          return false;
         }
       } else {
-        databases.insert_or_assign(object_name, object_id);
+        InsertOrRebind(roles, object_name, object_id);
       }
-      auto [_, inserted] = CloneData(_schemas).try_emplace(
-        object_id, std::make_shared<MapByName<ObjectId>>());
-      SDB_ASSERT(inserted);
-      return {};
+      return true;
     } else {
       auto insert = [replace](MapByIdPtr<MapByNamePtr<ObjectId>>& insert_map,
                               ObjectId parent_id, std::string_view object_name,
@@ -119,22 +133,17 @@ class ResolutionTable {
           auto [_, inserted] = inner.try_emplace(object_name, object_id);
           return inserted;
         }
-        auto [v, inserted] = inner.insert_or_assign(object_name, object_id);
-        if (!inserted) {
-          SDB_ASSERT(v != inner.end());
-          SDB_ASSERT(object_name == v->first);
-          const_cast<std::string_view&>(v->first) = object_name;
-        }
-
+        InsertOrRebind(inner, object_name, object_id);
         return true;
       };
       if constexpr (Type == ResolveType::Function) {
-        return insert(_functions, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_functions, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::Schema) {
         auto inserted = insert(_schemas, parent_id, object_name, object_id);
-        if (inserted) {
+        if (!inserted) {
+          return false;
+        }
+        if (!replace) {
           auto [_, insert_relation] =
             CloneData(_relations)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
@@ -150,21 +159,14 @@ class ResolutionTable {
           SDB_ASSERT(insert_function);
           SDB_ASSERT(insert_tokenizer);
           SDB_ASSERT(insert_type);
-          return {};
         }
-        return {ERROR_SERVER_DUPLICATE_NAME};
+        return true;
       } else if constexpr (Type == ResolveType::Relation) {
-        return insert(_relations, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_relations, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::Tokenizer) {
-        return insert(_tokenizers, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_tokenizers, parent_id, object_name, object_id);
       } else if constexpr (Type == ResolveType::Type) {
-        return insert(_types, parent_id, object_name, object_id)
-                 ? Result{}
-                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+        return insert(_types, parent_id, object_name, object_id);
       } else {
         SDB_UNREACHABLE();
       }
@@ -189,6 +191,14 @@ class ResolutionTable {
         CloneData(_tokenizers).erase(id);
         CloneData(_types).erase(id);
       }
+      return {id};
+    } else if constexpr (Type == ResolveType::Role) {
+      auto object = CloneData(_roles).extract(object_name);
+      if (object.empty()) {
+        return std::nullopt;
+      }
+      auto id = object.mapped();
+      SDB_ASSERT(id.isSet());
       return {id};
     } else {
       auto remove =
@@ -230,6 +240,8 @@ class ResolutionTable {
 
   auto GetDatabaseIds() const { return *_databases | std::views::values; }
 
+  auto GetRoleIds() const { return *_roles | std::views::values; }
+
   auto GetRelationIds(ObjectId schema_id) const {
     auto it = _relations->find(schema_id);
     SDB_ASSERT(it != _relations->end());
@@ -265,6 +277,16 @@ class ResolutionTable {
     return *clone;
   }
 
+  static void InsertOrRebind(MapByName<ObjectId>& map, std::string_view name,
+                             ObjectId id) {
+    auto [it, inserted] = map.insert_or_assign(name, id);
+    if (!inserted) {
+      const_cast<std::string_view&>(it->first) = name;
+    }
+  }
+
+  // role_name -> role_id
+  MapByNamePtr<ObjectId> _roles;
   // database_name -> database_id
   MapByNamePtr<ObjectId> _databases;
   // database_id -> (schema_name -> schema_id)

@@ -22,6 +22,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 
@@ -29,14 +30,14 @@ namespace sdb::pg {
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
-  auto catalog = _config.EnsureCatalogSnapshot();
+  auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgOpclass> values;
 
   values.push_back({
-    .oid = id::kPgOpclassHnsw.id(),
+    .oid = id::kPgOpclassIvf.id(),
     .opcmethod = id::kPgAmInverted.id(),
-    .opcname = "hnsw",
+    .opcname = catalog::kIVFKind,
     .opcnamespace = id::kPgCatalogSchema.id(),
     .opcowner = id::kRootUser.id(),
     .opcfamily = 0,
@@ -48,7 +49,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   values.push_back({
     .oid = id::kPgOpclassIncluded.id(),
     .opcmethod = id::kPgAmInverted.id(),
-    .opcname = "included",
+    .opcname = catalog::kIncludedKind,
     .opcnamespace = id::kPgCatalogSchema.id(),
     .opcowner = id::kRootUser.id(),
     .opcfamily = 0,
@@ -65,7 +66,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
         .opcmethod = id::kPgAmInverted.id(),
         .opcname = tokenizer->GetName(),
         .opcnamespace = tokenizer->GetParentId().id(),
-        .opcowner = id::kRootUser.id(),
+        .opcowner = tokenizer->GetOwner().id(),
         .opcfamily = 0,
         .opcintype = PgTypeOID::kText,
         .opcdefault = false,
@@ -77,7 +78,7 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
   static constexpr uint64_t kNullMask = 0;
   auto result = CreateColumns<PgOpclass>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row);
+    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

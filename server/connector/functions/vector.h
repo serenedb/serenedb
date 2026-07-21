@@ -33,22 +33,22 @@
 namespace sdb::connector {
 
 struct AnnFunctionInfo : public duckdb::ScalarFunctionInfo {
-  irs::HNSWMetric metric;
+  irs::VectorMetric metric;
   duckdb::OrderType order;
   bool is_norm;  // unary norm form (l2_norm/l1_norm) vs binary distance
   ScoreEmit score_emit;
 
-  AnnFunctionInfo(irs::HNSWMetric m, duckdb::OrderType o, bool n, ScoreEmit e)
+  AnnFunctionInfo(irs::VectorMetric m, duckdb::OrderType o, bool n, ScoreEmit e)
     : metric(m), order(o), is_norm(n), score_emit(e) {}
 };
 
 inline std::optional<AnnFunctionInfo> GetAnnFunctionInfo(
   const duckdb::BoundFunctionExpression& func) {
-  if (!func.function.HasExtraFunctionInfo()) {
+  if (!func.Function().HasExtraFunctionInfo()) {
     return std::nullopt;
   }
   if (const auto* info = dynamic_cast<const AnnFunctionInfo*>(
-        &func.function.GetExtraFunctionInfo())) {
+        &func.Function().GetExtraFunctionInfo())) {
     return *info;
   }
   return std::nullopt;

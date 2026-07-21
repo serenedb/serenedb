@@ -32,14 +32,10 @@ namespace sdb::connector {
 void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
-  SDB_ASSERT(func.children.size() == 1);
+  SDB_ASSERT(func.GetChildren().size() == 1);
   std::string prefix;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_starts_with text", prefix);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()),
-                    ERR_HINT("Example: ts_starts_with('pre')."));
-  }
+  GetVarcharArg(*func.GetChildren()[0], prefix,
+                {"ts_starts_with text", "Example: ts_starts_with('pre')."});
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

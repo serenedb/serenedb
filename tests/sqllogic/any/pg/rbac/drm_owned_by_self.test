@@ -1,0 +1,343 @@
+# DROP ROLE and the objects a role owns itself, plus the current-user guard, as
+# in PostgreSQL. A role that owns a table it created has a dependency: DROP ROLE
+# is refused (2BP01) until the ownership is removed -- by re-owning the table
+# (ALTER ... OWNER TO) or dropping the table. The current user can never be
+# dropped, whoever issues the command. DROP ROLE IF EXISTS on a missing role is a
+# notice, not an error. A non-privileged actor is refused by the role-admin check
+# before any dependency is even considered.
+#
+# Lore: vedernikoff/clickclack own the objects; babsky is a CREATEROLE admin;
+# kostya/mop are extra plain roles.
+#
+# serenedb only tracks TABLE ownership as a DROP ROLE dependency; schema /
+# sequence / view ownership, REASSIGN/DROP OWNED, and multi-role DROP lists are
+# not yet wired up (see report). Those PG behaviors are deliberately not asserted
+# here.
+
+statement ok
+DROP VIEW IF EXISTS obs_depview;
+
+
+statement ok
+DROP TABLE IF EXISTS obs_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS obs_t1;
+
+
+statement ok
+DROP TABLE IF EXISTS obs_t2;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_mop;
+
+
+# DROP ROLE IF EXISTS on a role that was never created is a notice, not an error.
+statement ok
+DROP ROLE IF EXISTS obs_never_existed;
+
+
+# Without IF EXISTS, dropping a missing role is an error.
+statement error
+DROP ROLE obs_never_existed;
+----
+db error: ERROR: role "obs_never_existed" does not exist
+
+
+# The current user (the default superuser) can never drop itself.
+statement error
+DROP ROLE postgres;
+----
+db error: ERROR: current user cannot be dropped
+
+
+# --- Role owns a table it created: ownership is a dependency ---
+
+statement ok
+CREATE ROLE obs_vedernikoff PASSWORD 'obs_vedernikoff_pw';
+
+
+statement ok
+CREATE TABLE obs_clickclack (id int);
+
+
+statement ok
+ALTER TABLE obs_clickclack OWNER TO obs_vedernikoff;
+
+
+# DROP ROLE is refused while the role owns the table (PG: 2BP01). The DETAIL
+# names the owned object in PG but only counts dependents in serenedb -> ignore.
+statement error
+DROP ROLE obs_vedernikoff;
+----
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Re-own the table to remove the dependency -> the drop now succeeds.
+statement ok
+ALTER TABLE obs_clickclack OWNER TO postgres;
+
+
+statement ok
+DROP ROLE obs_vedernikoff;
+
+
+# --- Same dependency, removed by dropping the owned table instead ---
+
+statement ok
+CREATE ROLE obs_vedernikoff PASSWORD 'obs_vedernikoff_pw';
+
+
+statement ok
+ALTER TABLE obs_clickclack OWNER TO obs_vedernikoff;
+
+
+statement error
+DROP ROLE obs_vedernikoff;
+----
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+statement ok
+DROP TABLE obs_clickclack;
+
+
+statement ok
+DROP ROLE obs_vedernikoff;
+
+
+# --- Owning several tables: each is a separate dependency ---
+
+statement ok
+CREATE ROLE obs_vedernikoff PASSWORD 'obs_vedernikoff_pw';
+
+
+statement ok
+CREATE TABLE obs_t1 (id int);
+
+
+statement ok
+CREATE TABLE obs_t2 (id int);
+
+
+statement ok
+ALTER TABLE obs_t1 OWNER TO obs_vedernikoff;
+
+
+statement ok
+ALTER TABLE obs_t2 OWNER TO obs_vedernikoff;
+
+
+# Owns two tables -> refused.
+statement error
+DROP ROLE obs_vedernikoff;
+----
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Re-own only the first: still refused, the second remains.
+statement ok
+ALTER TABLE obs_t1 OWNER TO postgres;
+
+
+statement error
+DROP ROLE obs_vedernikoff;
+----
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Re-own the second too: no dependency left -> drop succeeds.
+statement ok
+ALTER TABLE obs_t2 OWNER TO postgres;
+
+
+statement ok
+DROP ROLE obs_vedernikoff;
+
+
+statement ok
+DROP TABLE obs_t1;
+
+
+statement ok
+DROP TABLE obs_t2;
+
+
+# --- Owned table that has its own dependent (a view): CASCADE vs RESTRICT ---
+
+statement ok
+CREATE ROLE obs_vedernikoff PASSWORD 'obs_vedernikoff_pw';
+
+
+statement ok
+CREATE TABLE obs_clickclack (id int);
+
+
+statement ok
+CREATE VIEW obs_depview AS SELECT * FROM obs_clickclack;
+
+
+statement ok
+ALTER TABLE obs_clickclack OWNER TO obs_vedernikoff;
+
+
+# The role still owns the table -> DROP ROLE refused.
+statement error
+DROP ROLE obs_vedernikoff;
+----
+db error: ERROR: role "obs_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# A plain DROP TABLE (RESTRICT) is itself blocked: the view depends on it.
+statement error
+DROP TABLE obs_clickclack;
+----
+db error: ERROR: cannot drop table obs_clickclack because other objects depend on it<slt:ignore>
+
+
+# CASCADE drops the view along with the table, clearing the ownership dependency.
+statement ok
+DROP TABLE obs_clickclack CASCADE;
+
+
+statement ok
+DROP ROLE obs_vedernikoff;
+
+
+# --- Actor dimension: who may issue DROP ROLE ---
+
+statement ok
+CREATE ROLE obs_vedernikoff LOGIN PASSWORD 'obs_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE obs_mop LOGIN;
+
+
+# A plain (non-CREATEROLE) role cannot drop itself: the role-admin check fires
+# before the current-user check, with the generic DETAIL.
+connection c_ved user=obs_vedernikoff password=obs_vedernikoff_pw
+statement error
+DROP ROLE obs_vedernikoff;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
+
+
+# The same plain role cannot drop a different role either.
+connection c_ved2 user=obs_vedernikoff password=obs_vedernikoff_pw
+statement error
+DROP ROLE obs_mop;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
+
+
+connection default
+statement ok
+DROP ROLE obs_vedernikoff;
+
+
+statement ok
+DROP ROLE obs_mop;
+
+
+# A CREATEROLE admin gets ADMIN on every role it creates, so it passes the
+# role-admin check -- but the ownership dependency still blocks the drop.
+statement ok
+CREATE ROLE obs_babsky LOGIN PASSWORD 'obs_babsky_pw';
+
+
+statement ok
+ALTER ROLE obs_babsky CREATEROLE;
+
+
+connection c_bab user=obs_babsky password=obs_babsky_pw
+statement ok
+CREATE ROLE obs_clickclack;
+
+
+connection default
+statement ok
+CREATE TABLE obs_clickclack (id int);
+
+
+statement ok
+ALTER TABLE obs_clickclack OWNER TO obs_clickclack;
+
+
+# babsky may administer clickclack, so it gets past the permission check, but
+# clickclack owns the table -> blocked by the dependency, same as a superuser.
+connection c_bab2 user=obs_babsky password=obs_babsky_pw
+statement error
+DROP ROLE obs_clickclack;
+----
+db error: ERROR: role "obs_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Clear the dependency and let babsky drop the role it created.
+connection default
+statement ok
+ALTER TABLE obs_clickclack OWNER TO postgres;
+
+
+connection c_bab3 user=obs_babsky password=obs_babsky_pw
+statement ok
+DROP ROLE obs_clickclack;
+
+
+# --- cleanup ---
+
+connection default
+statement ok
+DROP VIEW IF EXISTS obs_depview;
+
+
+statement ok
+DROP TABLE IF EXISTS obs_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS obs_t1;
+
+
+statement ok
+DROP TABLE IF EXISTS obs_t2;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS obs_mop;

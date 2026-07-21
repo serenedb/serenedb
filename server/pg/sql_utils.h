@@ -52,6 +52,8 @@ constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
       return "index";
     case PgSqlFunction:
       return "function";
+    case Sequence:
+      return "sequence";
     case Schema:
       return "schema";
     case Database:
@@ -61,8 +63,37 @@ constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
     case PgSqlType:
       return "type";
     default:
+      // usually used for error messages, so we want to specify the type.
+      SDB_ASSERT(false);
       return "object";
   }
+}
+
+constexpr catalog::ObjectType FromPgObjectTypeName(
+  std::string_view word) noexcept {
+  using enum catalog::ObjectType;
+  if (word == "TABLE") {
+    return Table;
+  }
+  if (word == "VIEW") {
+    return PgSqlView;
+  }
+  if (word == "SEQUENCE") {
+    return Sequence;
+  }
+  if (word == "FUNCTION") {
+    return PgSqlFunction;
+  }
+  if (word == "DATABASE") {
+    return Database;
+  }
+  if (word == "SCHEMA") {
+    return Schema;
+  }
+  if (word == "TYPE") {
+    return PgSqlType;
+  }
+  return Invalid;
 }
 
 static constexpr size_t kSqlStateSize = 5;

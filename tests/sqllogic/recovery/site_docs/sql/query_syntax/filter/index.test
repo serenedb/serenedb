@@ -54,7 +54,7 @@ CREATE TEMP TABLE stacked_data AS
 
 # DOCS_TEST_BODY
 
-query ?????
+query
 SELECT
     count(i) FILTER (year = 2022) AS "2022",
     count(i) FILTER (year = 2023) AS "2023",
@@ -70,7 +70,7 @@ FROM stacked_data;
 
 # DOCS_TEST_BODY
 
-query ?????
+query
 SELECT
     count(CASE WHEN year = 2022 THEN i END) AS "2022",
     count(CASE WHEN year = 2023 THEN i END) AS "2023",
@@ -86,7 +86,7 @@ FROM stacked_data;
 
 # DOCS_TEST_BODY
 
-query ?????
+query
 SELECT
     first(i) FILTER (year = 2022) AS "2022",
     first(i) FILTER (year = 2023) AS "2023",
@@ -102,7 +102,7 @@ FROM stacked_data;
 
 # DOCS_TEST_BODY
 
-query ?????
+query
 SELECT
     first(CASE WHEN year = 2022 THEN i END) AS "2022",
     first(CASE WHEN year = 2023 THEN i END) AS "2023",

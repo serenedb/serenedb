@@ -28,7 +28,7 @@ CREATE TEXT SEARCH DICTIONARY tok_delim_comma (
     delimiter = ','
 );
 
-query ?
+query
 SELECT ts_lexize('tok_delim_comma', 'red,green,blue');
 ----
 ts_lexize
@@ -44,7 +44,7 @@ CREATE TEXT SEARCH DICTIONARY tok_delim_dot (
     delimiter = '.'
 );
 
-query ?
+query
 SELECT ts_lexize('tok_delim_dot', 'com.example.app');
 ----
 ts_lexize

@@ -39,6 +39,7 @@
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
+#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -532,6 +533,15 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
+  irs::analysis::SplitByNonAlphaTokenizer::Options BuildSplitByNonAlpha(
+    std::string_view prefix,
+    const irs::analysis::SplitByNonAlphaTokenizer::Options* parent) {
+    irs::analysis::SplitByNonAlphaTokenizer::Options opts;
+    opts.to_lower = Resolve<tokenizer_options::kToLower>(
+      prefix, parent ? &parent->to_lower : nullptr);
+    return opts;
+  }
+
   irs::analysis::ClassificationTokenizer::Options BuildClassification(
     std::string_view prefix,
     const irs::analysis::ClassificationTokenizer::Options* parent) {
@@ -827,6 +837,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == CollationTokenizer::type_name()) {
       out.config = BuildCollation(
         prefix, ParentOptions<CollationTokenizer::Options>(parent_cfg));
+    } else if (type == SplitByNonAlphaTokenizer::type_name()) {
+      out.config = BuildSplitByNonAlpha(
+        prefix, ParentOptions<SplitByNonAlphaTokenizer::Options>(parent_cfg));
     } else if (type == DelimitedTokenizer::type_name()) {
       out.config = BuildDelimiter(
         prefix, ParentOptions<DelimitedTokenizer::Options>(parent_cfg));
@@ -882,8 +895,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string from =
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
     auto name = ParseObjectName(from, _current_schema);
-    auto tokenizer =
-      _snapshot->GetTokenizer(_db_id, name.schema, name.relation);
+    auto tokenizer = _snapshot->GetTokenizer(catalog::NoAccessCheck(), _db_id,
+                                             name.schema, name.relation);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -914,11 +927,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
         static_cast<uint32_t>(OptionsParser::EraseOptionOrDefault<
                               tokenizer_options::kNormRowGroupSize>());
     }
-    auto r = _features.Validate(type);
-    if (!r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()));
-    }
+    _features.Validate(type);
   }
 
   irs::analysis::TokenizerConfig _config;
@@ -934,7 +943,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
 void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                      std::string_view schema, bool if_not_exists,
                      const duckdb::named_parameter_map_t& options) {
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto snapshot = conn_ctx.CatalogSnapshot();
   auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
 
@@ -943,27 +952,23 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
       CreateTSDictionaryOptions{snapshot, db_id, current_schema, options})
       .Result();
 
-  auto test_analyzer = irs::analysis::CreateAnalyzer(irs::analysis::Clone(cfg));
+  auto test_analyzer =
+    irs::analysis::CreateTokenizer(irs::analysis::Clone(cfg));
   SDB_ASSERT(test_analyzer);
 
   if (features.HasFeatures(irs::IndexFeatures::Offs) &&
-      !irs::get<irs::OffsAttr>(*test_analyzer)) {
+      !test_analyzer->Traits().offsets) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Unsupported index features are specified"));
   }
 
-  auto tokenizer =
-    std::make_shared<catalog::Tokenizer>(ObjectId{}, ObjectId{}, name, features,
-                                         norm_row_group_size, std::move(cfg));
+  auto tokenizer = std::make_shared<catalog::Tokenizer>(
+    conn_ctx.GetRoleId(), ObjectId{}, ObjectId{}, name, features,
+    norm_row_group_size, std::move(cfg));
 
   auto& catalog = catalog::GetCatalog();
-  auto r = catalog.CreateTokenizer(db_id, schema, std::move(tokenizer));
-
-  if (!r.ok() && !if_not_exists) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("text search dictionary \"", name, "\" already exists"));
-  }
+  catalog.CreateTokenizer(catalog::AccessContext{conn_ctx.GetRoleId()}, db_id,
+                          schema, std::move(tokenizer), if_not_exists);
 }
 
 }  // namespace sdb::pg

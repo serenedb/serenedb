@@ -1,0 +1,346 @@
+# VIEW definer/invoker enforcement over NON-TRIVIAL view bodies.
+#
+# A view body is not always a flat "SELECT ... FROM base". This file exercises
+# four richer body shapes -- CTE (WITH), set operation (UNION ALL), aggregate
+# (GROUP BY), and subquery-in-FROM -- and asserts that the binder records EVERY
+# base scan buried inside them for the privilege check, not just a top-level
+# FROM. For each shape:
+#   - the DEFINER variant (default) checks the base against the view OWNER ->
+#     ALLOWED for a reader who lacks the base; and
+#   - the INVOKER variant (security_invoker=true) checks the base against the
+#     CALLER -> DENIED for that same reader.
+#
+# The definer views are owned by a NON-SUPERUSER (klimov) who is explicitly
+# granted SELECT on the bases. This is deliberate: a superuser-owned definer
+# view would ALLOW merely because the owner bypasses all checks, which could
+# not distinguish real definer-owner authorization from a superuser bypass.
+# With a non-superuser owner the definer ALLOW proves the base scan is checked
+# against the owner's actual grants. The bases themselves stay owned by the
+# superuser and are NEVER granted to the reader (vedernikoff), so the invoker
+# views and the direct-base controls deny.
+#
+# Verified against PostgreSQL 17/19 definer/invoker semantics.
+#
+# Lore: vedernikoff reads only the clickclack views; klimov owns the views and
+# was granted the iceberg mop bases; vedernikoff never was.
+
+statement ok
+DROP VIEW IF EXISTS evcb_cte_def;
+
+
+statement ok
+DROP VIEW IF EXISTS evcb_cte_inv;
+
+
+statement ok
+DROP VIEW IF EXISTS evcb_union_def;
+
+
+statement ok
+DROP VIEW IF EXISTS evcb_union_inv;
+
+
+statement ok
+DROP VIEW IF EXISTS evcb_agg_def;
+
+
+statement ok
+DROP VIEW IF EXISTS evcb_agg_inv;
+
+
+statement ok
+DROP VIEW IF EXISTS evcb_subq_def;
+
+
+statement ok
+DROP VIEW IF EXISTS evcb_subq_inv;
+
+
+statement ok
+DROP TABLE IF EXISTS evcb_mop_a;
+
+
+statement ok
+DROP TABLE IF EXISTS evcb_mop_b;
+
+
+statement ok
+DROP ROLE IF EXISTS evcb_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS evcb_klimov;
+
+
+statement ok
+CREATE TABLE evcb_mop_a (id int, av int, secret int);
+
+
+statement ok
+CREATE TABLE evcb_mop_b (id int, av int, secret int);
+
+
+statement ok
+INSERT INTO evcb_mop_a VALUES (1, 10, 100), (2, 20, 200), (2, 25, 250);
+
+
+statement ok
+INSERT INTO evcb_mop_b VALUES (3, 30, 300), (4, 40, 400);
+
+
+statement ok
+CREATE ROLE evcb_klimov LOGIN PASSWORD 'evcb_klimov_pw';
+
+
+statement ok
+CREATE ROLE evcb_vedernikoff LOGIN PASSWORD 'evcb_vedernikoff_pw';
+
+
+# klimov (non-superuser) owns the views; grant him CREATE on the schema and
+# SELECT on both bases so the definer views he owns can read them.
+statement ok
+GRANT CREATE ON SCHEMA public TO evcb_klimov;
+
+
+statement ok
+GRANT SELECT ON evcb_mop_a TO evcb_klimov;
+
+
+statement ok
+GRANT SELECT ON evcb_mop_b TO evcb_klimov;
+
+
+# === Shape 1: CTE (WITH) referencing a base ===
+connection c_owner user=evcb_klimov password=evcb_klimov_pw
+statement ok
+CREATE VIEW evcb_cte_def AS WITH clack AS (SELECT id, av FROM evcb_mop_a) SELECT id, av FROM clack;
+
+
+statement ok
+CREATE VIEW evcb_cte_inv WITH (security_invoker=true) AS WITH clack AS (SELECT id, av FROM evcb_mop_a) SELECT id, av FROM clack;
+
+
+# === Shape 2: set operation (UNION ALL) of two bases ===
+statement ok
+CREATE VIEW evcb_union_def AS SELECT id, av FROM evcb_mop_a UNION ALL SELECT id, av FROM evcb_mop_b;
+
+
+statement ok
+CREATE VIEW evcb_union_inv WITH (security_invoker=true) AS SELECT id, av FROM evcb_mop_a UNION ALL SELECT id, av FROM evcb_mop_b;
+
+
+# === Shape 3: aggregate (GROUP BY) over a base ===
+statement ok
+CREATE VIEW evcb_agg_def AS SELECT id, sum(av) AS total FROM evcb_mop_a GROUP BY id;
+
+
+statement ok
+CREATE VIEW evcb_agg_inv WITH (security_invoker=true) AS SELECT id, sum(av) AS total FROM evcb_mop_a GROUP BY id;
+
+
+# === Shape 4: subquery-in-FROM ===
+statement ok
+CREATE VIEW evcb_subq_def AS SELECT id, av FROM (SELECT id, av FROM evcb_mop_a) clack;
+
+
+statement ok
+CREATE VIEW evcb_subq_inv WITH (security_invoker=true) AS SELECT id, av FROM (SELECT id, av FROM evcb_mop_a) clack;
+
+
+# Grant SELECT on every view to vedernikoff; NOTHING on either base table.
+statement ok
+GRANT SELECT ON evcb_cte_def TO evcb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evcb_cte_inv TO evcb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evcb_union_def TO evcb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evcb_union_inv TO evcb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evcb_agg_def TO evcb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evcb_agg_inv TO evcb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evcb_subq_def TO evcb_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON evcb_subq_inv TO evcb_vedernikoff;
+
+
+# Oracle: vedernikoff holds NO privilege on either base table (proves the
+# definer ALLOWs below are NOT a base grant leaking to the reader).
+query
+SELECT has_table_privilege('evcb_vedernikoff', 'evcb_mop_a', 'SELECT') AS a_sel, has_table_privilege('evcb_vedernikoff', 'evcb_mop_b', 'SELECT') AS b_sel;
+----
+a_sel	b_sel
+f	f
+
+
+# Oracle: vedernikoff is NOT a superuser (so the invoker DENIES below are real
+# denials, not a missing superuser-bypass).
+query
+SELECT rolsuper FROM pg_roles WHERE rolname = 'evcb_vedernikoff';
+----
+rolsuper
+f
+
+
+# === Shape 1: CTE -- definer ALLOWS (owner klimov holds the base), invoker DENIES ===
+connection c_cte_def user=evcb_vedernikoff password=evcb_vedernikoff_pw
+query
+SELECT id, av FROM evcb_cte_def ORDER BY id, av;
+----
+id	av
+1	10
+2	20
+2	25
+
+
+connection c_cte_inv user=evcb_vedernikoff password=evcb_vedernikoff_pw
+statement error
+SELECT id, av FROM evcb_cte_inv ORDER BY id, av;
+----
+db error: ERROR: permission denied for table evcb_mop_a<slt:ignore>
+
+
+# === Shape 2: UNION ALL of two bases -- definer ALLOWS (both scans run as
+# owner), invoker DENIES (a base scan is checked vs the caller). The engine
+# surfaces the denial on evcb_mop_b (the second branch reported first); either
+# base being refused is the correct invoker outcome, and a separate probe
+# confirms BOTH branches are checked (granting one base moves the denial to the
+# other). ===
+connection c_union_def user=evcb_vedernikoff password=evcb_vedernikoff_pw
+query
+SELECT id, av FROM evcb_union_def ORDER BY id, av;
+----
+id	av
+1	10
+2	20
+2	25
+3	30
+4	40
+
+
+# The invoker UNION view reads two bases the caller holds neither of; the
+# planner may name either in the denial, so the table name is wildcarded.
+connection c_union_inv user=evcb_vedernikoff password=evcb_vedernikoff_pw
+statement error
+SELECT id, av FROM evcb_union_inv ORDER BY id, av;
+----
+db error: ERROR: permission denied for table <slt:ignore>
+
+
+# === Shape 3: aggregate GROUP BY -- definer ALLOWS, invoker DENIES ===
+connection c_agg_def user=evcb_vedernikoff password=evcb_vedernikoff_pw
+query
+SELECT id, total FROM evcb_agg_def ORDER BY id;
+----
+id	total
+1	10
+2	45
+
+
+connection c_agg_inv user=evcb_vedernikoff password=evcb_vedernikoff_pw
+statement error
+SELECT id, total FROM evcb_agg_inv ORDER BY id;
+----
+db error: ERROR: permission denied for table evcb_mop_a<slt:ignore>
+
+
+# === Shape 4: subquery-in-FROM -- definer ALLOWS, invoker DENIES ===
+connection c_subq_def user=evcb_vedernikoff password=evcb_vedernikoff_pw
+query
+SELECT id, av FROM evcb_subq_def ORDER BY id, av;
+----
+id	av
+1	10
+2	20
+2	25
+
+
+connection c_subq_inv user=evcb_vedernikoff password=evcb_vedernikoff_pw
+statement error
+SELECT id, av FROM evcb_subq_inv ORDER BY id, av;
+----
+db error: ERROR: permission denied for table evcb_mop_a<slt:ignore>
+
+
+# Control: direct base reads are still refused for both bases (fresh
+# connections -- never reuse a connection that already read an ALLOWing view).
+connection c_base_a user=evcb_vedernikoff password=evcb_vedernikoff_pw
+statement error
+SELECT id FROM evcb_mop_a;
+----
+db error: ERROR: permission denied for table evcb_mop_a<slt:ignore>
+
+
+connection c_base_b user=evcb_vedernikoff password=evcb_vedernikoff_pw
+statement error
+SELECT id FROM evcb_mop_b;
+----
+db error: ERROR: permission denied for table evcb_mop_b<slt:ignore>
+
+
+statement ok
+DROP VIEW evcb_cte_def;
+
+
+statement ok
+DROP VIEW evcb_cte_inv;
+
+
+statement ok
+DROP VIEW evcb_union_def;
+
+
+statement ok
+DROP VIEW evcb_union_inv;
+
+
+statement ok
+DROP VIEW evcb_agg_def;
+
+
+statement ok
+DROP VIEW evcb_agg_inv;
+
+
+statement ok
+DROP VIEW evcb_subq_def;
+
+
+statement ok
+DROP VIEW evcb_subq_inv;
+
+
+statement ok
+DROP TABLE evcb_mop_a;
+
+
+statement ok
+DROP TABLE evcb_mop_b;
+
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM evcb_klimov;
+
+
+statement ok
+DROP ROLE evcb_vedernikoff;
+
+
+statement ok
+DROP ROLE evcb_klimov;

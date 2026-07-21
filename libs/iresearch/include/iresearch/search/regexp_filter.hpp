@@ -23,6 +23,7 @@
 #include <memory>
 
 #include "basics/shared.hpp"
+#include "basics/system-compiler.h"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
@@ -87,6 +88,8 @@ class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
 };
 
 }  // namespace irs

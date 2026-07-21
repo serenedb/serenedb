@@ -143,7 +143,8 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsHighlightLocalState(
 
 const TsHighlightBindData& GetBindData(duckdb::ExpressionState& state) {
   return state.expr.Cast<duckdb::BoundFunctionExpression>()
-    .bind_info->Cast<TsHighlightBindData>();
+    .BindInfo()
+    ->Cast<TsHighlightBindData>();
 }
 
 // Sliding-window pick of the max_words tokens with the most hits.
@@ -382,8 +383,7 @@ std::span<const highlight::Passage> GetPassages(
     highlight::Passage passage;
     const auto hit_start = view[cursor].first;
     const auto start =
-      hit_start == 0 ? sentence_iter.first()
-                     : sentence_iter.preceding(static_cast<int32_t>(hit_start));
+      sentence_iter.preceding(static_cast<int32_t>(hit_start + 1));
     passage.range.byte_start =
       start == icu::BreakIterator::DONE ? 0 : static_cast<uint32_t>(start);
     const auto end = sentence_iter.next();
@@ -397,6 +397,11 @@ std::span<const highlight::Passage> GetPassages(
         break;
       }
       sum += SloppyWeight(h.first - passage.range.byte_start);
+    }
+    SDB_ASSERT(cursor > passage.start);
+    if (cursor == passage.start) {
+      ++cursor;
+      continue;
     }
     passage.end = static_cast<uint32_t>(cursor);
     passage.score = sum * NormForPassage(passage.range.byte_start);
@@ -620,8 +625,9 @@ duckdb::unique_ptr<duckdb::Expression> RewriteToPostings(
       input.context, std::move(children[opts_idx]), list_type));
     duckdb::FunctionBinder binder(input.context);
     duckdb::ErrorData err;
-    auto bound = binder.BindScalarFunction(
-      DEFAULT_SCHEMA, std::string{kTsHighlight}, std::move(postings_args), err);
+    auto bound = binder.BindScalarFunction(duckdb::Identifier{DEFAULT_SCHEMA},
+                                           duckdb::Identifier{kTsHighlight},
+                                           std::move(postings_args), err);
     if (!bound) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -659,9 +665,9 @@ duckdb::unique_ptr<duckdb::Expression> RewriteToPostings(
 
   duckdb::FunctionBinder offsets_binder(input.context);
   duckdb::ErrorData offsets_err;
-  auto offsets_call =
-    offsets_binder.BindScalarFunction(DEFAULT_SCHEMA, std::string{kOffsets},
-                                      std::move(offsets_args), offsets_err);
+  auto offsets_call = offsets_binder.BindScalarFunction(
+    duckdb::Identifier{DEFAULT_SCHEMA}, duckdb::Identifier{kOffsets},
+    std::move(offsets_args), offsets_err);
   if (!offsets_call) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -679,8 +685,9 @@ duckdb::unique_ptr<duckdb::Expression> RewriteToPostings(
 
   duckdb::FunctionBinder binder(input.context);
   duckdb::ErrorData err;
-  auto bound = binder.BindScalarFunction(
-    DEFAULT_SCHEMA, std::string{kTsHighlight}, std::move(postings_args), err);
+  auto bound = binder.BindScalarFunction(duckdb::Identifier{DEFAULT_SCHEMA},
+                                         duckdb::Identifier{kTsHighlight},
+                                         std::move(postings_args), err);
   if (!bound) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_highlight(): failed to rewrite to POSTINGS "
@@ -701,7 +708,7 @@ duckdb::ScalarFunction MakeSugarFn(duckdb::vector<duckdb::LogicalType> args) {
 }  // namespace
 
 void RegisterTsHighlight(duckdb::ExtensionLoader& loader) {
-  duckdb::ScalarFunctionSet set{std::string{kTsHighlight}};
+  duckdb::ScalarFunctionSet set{duckdb::Identifier{kTsHighlight}};
   // POSTINGS: ts_highlight(doc, offsets[] [, opts]).
   set.AddFunction(
     MakeOffsetsFn({duckdb::LogicalType::VARCHAR,

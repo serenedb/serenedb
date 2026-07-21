@@ -11,7 +11,7 @@ CREATE TEXT SEARCH DICTIONARY ta_text (
     accent = false
 );
 
-query ?
+query
 SELECT ts_lexize('ta_text', 'Quick BROWN Fox');
 ----
 ts_lexize
@@ -24,7 +24,7 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY ta_keyword (template = 'keyword');
 
-query ?
+query
 SELECT ts_lexize('ta_keyword', 'Hello World');
 ----
 ts_lexize
@@ -41,7 +41,7 @@ CREATE TEXT SEARCH DICTIONARY ta_ngram (
     maxgram = 3
 );
 
-query ?
+query
 SELECT ts_lexize('ta_ngram', 'cat');
 ----
 ts_lexize
@@ -60,7 +60,7 @@ CREATE TEXT SEARCH DICTIONARY ta_stem (
     accent = false
 );
 
-query ?
+query
 SELECT ts_lexize('ta_stem', 'running runners ran');
 ----
 ts_lexize
@@ -80,7 +80,7 @@ CREATE TEXT SEARCH DICTIONARY ta_stopwords (
     stopwords = '"the", "of"'
 );
 
-query ?
+query
 SELECT ts_lexize('ta_stopwords', 'the speed of light');
 ----
 ts_lexize
@@ -99,7 +99,7 @@ CREATE TEXT SEARCH DICTIONARY ta_accent (
     accent = false
 );
 
-query ?
+query
 SELECT ts_lexize('ta_accent', 'Café');
 ----
 ts_lexize
@@ -119,7 +119,7 @@ CREATE TEXT SEARCH DICTIONARY ta_pipeline (
     step2_case = 'lower'
 );
 
-query ?
+query
 SELECT ts_lexize('ta_pipeline', 'RED,Green,BLUE');
 ----
 ts_lexize

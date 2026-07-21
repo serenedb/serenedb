@@ -50,6 +50,8 @@
 #include <utility>
 #include <vector>
 
+#include "insert_field.hpp"
+
 namespace bench_regexp {
 
 inline constexpr irs::field_id kFieldId = 1;
@@ -69,7 +71,8 @@ struct IField {
 
   virtual irs::field_id Id() const = 0;
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
-  virtual irs::Tokenizer& GetTokens() const = 0;
+  virtual irs::analysis::Tokenizer& GetTokens() const = 0;
+  virtual std::string_view Value() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
 
@@ -110,15 +113,14 @@ class TextField final : public FieldBase {
 
   void SetValue(std::string_view value) noexcept { _value = value; }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream->reset(_value);
-    return *_stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_stream; }
+
+  std::string_view Value() const final { return _value; }
 
   bool Write(irs::DataOutput&) const final { return false; }
 
  private:
-  irs::analysis::Analyzer::ptr _stream;
+  irs::analysis::Tokenizer::ptr _stream;
   std::string_view _value;
 };
 
@@ -361,7 +363,8 @@ Corpus BuildIndex() {
     auto trx = writer->GetBatch();
     {
       auto inserter = trx.Insert();
-      if (!inserter.Insert(doc->indexed.begin(), doc->indexed.end())) {
+      if (!tests::InsertFields(inserter, doc->indexed.begin(),
+                               doc->indexed.end())) {
         Die("Insert returned false");
       }
     }
@@ -489,7 +492,7 @@ void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
         continue;
       }
       auto docs = p->Execute({}, stats);
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         ++per_iter;
       }
     }

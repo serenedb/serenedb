@@ -47,43 +47,30 @@ auto MakeByTerm(irs::field_id id, std::string_view value) {
   return filter;
 }
 
-class Analyzer : public irs::analysis::TypedAnalyzer<Analyzer> {
+class Tokenizer : public irs::analysis::TypedTokenizer<Tokenizer> {
  public:
   static constexpr std::string_view type_name() noexcept {
     return "NormTestAnalyzer";
   }
 
-  explicit Analyzer(size_t count) : _count{count} {}
+  explicit Tokenizer(size_t count) : _count{count} {}
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    return irs::GetMutable(_attrs, id);
+  irs::TokenTraits Traits() const noexcept final {
+    return {.dense_pos = false};
   }
 
-  bool reset(std::string_view value) noexcept final {
-    _value = value;
-    _i = 0;
+  template<irs::TokenLayout Layout>
+  bool DoFill(std::string_view value, irs::TokenEmitter& sink) {
+    for (size_t n = 0; n < _count; ++n) {
+      sink.EmitInterned<Layout>(irs::ViewCast<irs::byte_type>(value),
+                                static_cast<uint32_t>(n + 1), 0,
+                                static_cast<uint32_t>(value.size()));
+    }
     return true;
   }
 
-  bool next() final {
-    if (_i < _count) {
-      std::get<irs::TermAttr>(_attrs).value =
-        irs::ViewCast<irs::byte_type>(_value);
-      auto& offset = std::get<irs::OffsAttr>(_attrs);
-      offset.start = 0;
-      offset.end = static_cast<uint32_t>(_value.size());
-      ++_i;
-      return true;
-    }
-
-    return false;
-  }
-
  private:
-  std::tuple<irs::OffsAttr, irs::IncAttr, irs::TermAttr> _attrs;
-  std::string_view _value;
   size_t _count;
-  size_t _i{};
 };
 
 class NormField final : public tests::Ifield {
@@ -98,10 +85,9 @@ class NormField final : public tests::Ifield {
 
   std::string_view Name() const final { return _name; }
 
-  irs::Tokenizer& GetTokens() const final {
-    _analyzer.reset(_value);
-    return _analyzer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return _analyzer; }
+
+  std::string_view Value() const final { return _value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
     return irs::kPosOffs | irs::IndexFeatures::Norm;
@@ -116,7 +102,7 @@ class NormField final : public tests::Ifield {
   std::string _name;
   irs::field_id _id;
   std::string _value;
-  mutable Analyzer _analyzer;
+  mutable Tokenizer _analyzer;
 };
 
 class NormTestCase : public tests::IndexTestBase {

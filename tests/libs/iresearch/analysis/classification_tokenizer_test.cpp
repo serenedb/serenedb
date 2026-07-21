@@ -21,8 +21,10 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/classification_tokenizer.hpp"
 #include "tests_shared.hpp"
+#include "token_sink_utils.hpp"
 
 namespace {
 
@@ -65,23 +67,11 @@ TEST(classification_tokenizer_test, test_load) {
       });
 
     ASSERT_NE(nullptr, stream);
-    ASSERT_FALSE(stream->next());
-    ASSERT_TRUE(stream->reset(data));
 
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    ASSERT_NE(nullptr, offset);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    ASSERT_NE(nullptr, term);
-    auto* inc = irs::get<irs::IncAttr>(*stream);
-    ASSERT_NE(nullptr, inc);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(1, inc->value);
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(6, offset->end);
-    ASSERT_EQ("__label__baking", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-    ASSERT_FALSE(stream->next());
+    const auto tokens = tests::Analyze(*stream, data);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(1, tokens->size());
+    ASSERT_EQ((tests::AnalyzerToken{"__label__baking", 1, 0, 6}), (*tokens)[0]);
   }
 
   // multi-word input
@@ -92,33 +82,23 @@ TEST(classification_tokenizer_test, test_load) {
       });
 
     ASSERT_NE(nullptr, stream);
-    ASSERT_FALSE(stream->next());
-    ASSERT_FALSE(stream->next());
-    ASSERT_TRUE(stream->reset("Why not put knives in the dishwasher?"));
 
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    ASSERT_NE(nullptr, offset);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    ASSERT_NE(nullptr, term);
-    auto* inc = irs::get<irs::IncAttr>(*stream);
-    ASSERT_NE(nullptr, inc);
+    {
+      const auto tokens =
+        tests::Analyze(*stream, "Why not put knives in the dishwasher?");
+      ASSERT_TRUE(tokens.has_value());
+      ASSERT_EQ(1, tokens->size());
+      ASSERT_EQ((tests::AnalyzerToken{"__label__knives", 1, 0, 37}),
+                (*tokens)[0]);
+    }
 
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(1, inc->value);
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(37, offset->end);
-    ASSERT_EQ("__label__knives", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-    ASSERT_FALSE(stream->next());
-
-    ASSERT_TRUE(stream->reset("pasta coca-cola"));
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(1, inc->value);
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(15, offset->end);
-    ASSERT_EQ("__label__pasta", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-    ASSERT_FALSE(stream->next());
+    {
+      const auto tokens = tests::Analyze(*stream, "pasta coca-cola");
+      ASSERT_TRUE(tokens.has_value());
+      ASSERT_EQ(1, tokens->size());
+      ASSERT_EQ((tests::AnalyzerToken{"__label__pasta", 1, 0, 15}),
+                (*tokens)[0]);
+    }
   }
 
   // Multi line input
@@ -132,23 +112,12 @@ TEST(classification_tokenizer_test, test_load) {
       });
 
     ASSERT_NE(nullptr, stream);
-    ASSERT_FALSE(stream->next());
-    ASSERT_TRUE(stream->reset(kData));
 
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    ASSERT_NE(nullptr, offset);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    ASSERT_NE(nullptr, term);
-    auto* inc = irs::get<irs::IncAttr>(*stream);
-    ASSERT_NE(nullptr, inc);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(1, inc->value);
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(50, offset->end);
-    ASSERT_EQ("__label__baking", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-    ASSERT_FALSE(stream->next());
+    const auto tokens = tests::Analyze(*stream, kData);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(1, tokens->size());
+    ASSERT_EQ((tests::AnalyzerToken{"__label__baking", 1, 0, 50}),
+              (*tokens)[0]);
   }
   // top 2 labels
   {
@@ -162,28 +131,14 @@ TEST(classification_tokenizer_test, test_load) {
       });
 
     ASSERT_NE(nullptr, stream);
-    ASSERT_FALSE(stream->next());
-    ASSERT_TRUE(stream->reset(kData));
 
-    auto* offset = irs::get<irs::OffsAttr>(*stream);
-    ASSERT_NE(nullptr, offset);
-    auto* term = irs::get<irs::TermAttr>(*stream);
-    ASSERT_NE(nullptr, term);
-    auto* inc = irs::get<irs::IncAttr>(*stream);
-    ASSERT_NE(nullptr, inc);
-
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(1, inc->value);
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(50, offset->end);
-    ASSERT_EQ("__label__baking", irs::ViewCast<char>(term->value));
-    ASSERT_TRUE(stream->next());
-    ASSERT_EQ(0, offset->start);
-    ASSERT_EQ(50, offset->end);
-    ASSERT_EQ(0, inc->value);
-    ASSERT_EQ("__label__bananas", irs::ViewCast<char>(term->value));
-    ASSERT_FALSE(stream->next());
-    ASSERT_FALSE(stream->next());
+    const auto tokens = tests::Analyze(*stream, kData);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(2, tokens->size());
+    ASSERT_EQ((tests::AnalyzerToken{"__label__baking", 1, 0, 50}),
+              (*tokens)[0]);
+    ASSERT_EQ((tests::AnalyzerToken{"__label__bananas", 1, 0, 50}),
+              (*tokens)[1]);
   }
 
   // invalid model location
@@ -254,4 +209,54 @@ TEST(classification_tokenizer_test, test_custom_provider) {
   ASSERT_EQ(
     &::ThrowingProvider,
     irs::analysis::ClassificationTokenizer::set_model_provider(nullptr));
+}
+
+TEST(classification_tokenizer_test, native_fills_match_pull) {
+  auto make = [] {
+    return irs::analysis::ClassificationTokenizer::Make(
+      irs::analysis::ClassificationTokenizer::Options{
+        .model_location = ModelLocation(), .top_k = 2});
+  };
+  auto value_stream = make();
+  auto column_stream = make();
+
+  const std::vector<std::string> values = {
+    "baking", "Why not put knives in the dishwasher?", ""};
+
+  std::vector<std::vector<tests::AnalyzerToken>> expected;
+  for (const auto& v : values) {
+    SCOPED_TRACE(v);
+    auto tokens = tests::Analyze(*value_stream, v);
+    ASSERT_TRUE(tokens.has_value());
+    expected.push_back(std::move(*tokens));
+  }
+
+  std::vector<duckdb::string_t> vals;
+  std::vector<irs::doc_id_t> docs;
+  for (size_t i = 0; i < values.size(); ++i) {
+    vals.emplace_back(values[i].data(),
+                      static_cast<uint32_t>(values[i].size()));
+    docs.push_back(static_cast<irs::doc_id_t>(i + 1));
+  }
+
+  tests::OneBatchSink sink{irs::TokenLayout::TermsPos};
+  column_stream->Fill(vals, docs, sink.writer, sink.layout);
+  ASSERT_FALSE(sink.flushed());
+  auto& batch = sink.writer.buf;
+  const auto runs = sink.writer.Runs();
+
+  ASSERT_EQ(values.size(), runs.size());
+  uint32_t token_idx = 0;
+  for (size_t v = 0; v < values.size(); ++v) {
+    SCOPED_TRACE(values[v]);
+    ASSERT_EQ(docs[v], runs[v].doc);
+    ASSERT_EQ(expected[v].size(), runs[v].ntokens);
+    for (const auto& e : expected[v]) {
+      const auto& t = batch.terms[token_idx];
+      ASSERT_EQ(e.term, (std::string{t.GetData(), t.GetSize()}));
+      ASSERT_EQ(e.pos, batch.pos[token_idx]);
+      ++token_idx;
+    }
+  }
+  ASSERT_EQ(batch.count, token_idx);
 }

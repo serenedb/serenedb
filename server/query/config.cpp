@@ -36,8 +36,8 @@
 #include <optional>
 
 #include "basics/assert.h"
-#include "basics/exceptions.h"
 #include "catalog/catalog.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb {
 namespace {
@@ -71,7 +71,7 @@ std::vector<std::string> Config::GetSearchPath() const {
   std::vector<std::string> result;
   result.reserve(entries.size());
   for (const auto& entry : entries) {
-    result.emplace_back(entry.schema);
+    result.emplace_back(entry.GetSchema().GetIdentifierName());
   }
   return result;
 }
@@ -87,6 +87,13 @@ ByteaOutput Config::GetByteaOutput() const {
   auto value = Get("bytea_output");
   SDB_ASSERT(value);
   return GetEnumValue<ByteaOutput>(*value);
+}
+
+std::string Config::GetTimeZone() const {
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("TimeZone", value);
+  SDB_ASSERT(ok && !value.IsNull());
+  return value.ToString();
 }
 
 IsolationLevel Config::GetIsolationLevel() const {
@@ -108,7 +115,7 @@ std::optional<std::string> Config::Get(std::string_view key) const {
   return std::nullopt;
 }
 
-std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
+std::shared_ptr<const catalog::Snapshot> Config::AcquireCatalogSnapshot() {
   if (_snapshot) {
     return _snapshot;
   }
@@ -172,12 +179,6 @@ bool Config::IsExplicitTransaction() const {
   return !_client_ctx.transaction.IsAutoCommit();
 }
 
-bool Config::IsTransactionInvalidated() const {
-  auto& txn = _client_ctx.transaction;
-  return txn.HasActiveTransaction() &&
-         duckdb::ValidChecker::IsInvalidated(txn.ActiveTransaction());
-}
-
 void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   // Called from pre-commit / pre-rollback hooks while the DuckDB transaction
   // is still active, so catalog lookups performed by custom-impl set_local
@@ -191,7 +192,7 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   const bool is_reset = value.IsNull();
 
   // Best-effort restore; swallow to keep noexcept contract.
-  std::ignore = basics::SafeCall([&] {
+  try {
     // Built-in options first.
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
     auto setting_index = db_config.TryGetSettingIndex(name_ref, option);
@@ -240,7 +241,8 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
       _client_ctx.config.user_settings.SetUserSetting(
         ext.setting_index.GetIndex(), std::move(typed));
     }
-  });
+  } catch (...) {
+  }
 }
 
 void Config::RollbackVariables() noexcept {

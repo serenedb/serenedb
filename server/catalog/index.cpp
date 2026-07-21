@@ -21,6 +21,8 @@
 #include "catalog/index.h"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 
 #include <array>
 #include <duckdb/common/enum_util.hpp>
@@ -37,7 +39,6 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
-#include "basics/errors.h"
 #include "basics/serializer.h"
 #include "catalog/catalog.h"
 #include "catalog/geo_validate.h"
@@ -53,95 +54,125 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kMetricField = "metric";
-constexpr std::string_view kMField = "m";
-constexpr std::string_view kEfConstructionField = "ef_construction";
+constexpr std::string_view kNlistField = "nlist";
+constexpr std::string_view kNlistFactorField = "nlist_factor";
+constexpr std::string_view kQuantField = "quant";
+constexpr std::string_view kPqMField = "pq_m";
+constexpr std::string_view kRaBitQBitsField = "rabitq_bits";
 
 constexpr std::string_view kL2Metric = "l2";
 constexpr std::string_view kL1Metric = "l1";
 constexpr std::string_view kCosineMetric = "cosine";
 constexpr std::string_view kIPMetric = "ip";
 
+constexpr std::string_view kSQ8Quant = "sq8";
+constexpr std::string_view kSQ4Quant = "sq4";
+constexpr std::string_view kPQQuant = "pq";
+constexpr std::string_view kRaBitQQuant = "rabitq";
+constexpr std::string_view kNoneQuant = "none";
+
 template<typename T>
-ResultOr<T> GetIndexOption(std::string_view index_kind,
-                           std::string_view column_name, std::string_view key,
-                           const duckdb::Value& v,
-                           duckdb::LogicalTypeId target_type,
-                           std::string_view type_name) {
+T GetIndexOption(std::string_view index_kind, std::string_view column_name,
+                 std::string_view key, const duckdb::Value& v,
+                 duckdb::LogicalTypeId target_type,
+                 std::string_view type_name) {
   auto value = v.Copy();
   if (value.DefaultTryCastAs(target_type)) {
     return value.GetValue<T>();
   }
-  return std::unexpected<Result>{
-    std::in_place, ERROR_BAD_PARAMETER, "Column '", column_name,  "': ",
-    index_kind,    " option '",         key,        "' must be ", type_name,
-    ", got '",     v.ToString(),        "'"};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+    ERR_MSG("Column '", column_name, "': ", index_kind, " option '", key,
+            "' must be ", type_name, ", got '", v.ToString(), "'"));
 }
 
-ResultOr<uint32_t> GetIndexIntOption(std::string_view index_kind,
-                                     std::string_view column_name,
-                                     std::string_view key,
-                                     const duckdb::Value& v) {
+uint32_t GetIndexIntOption(std::string_view index_kind,
+                           std::string_view column_name, std::string_view key,
+                           const duckdb::Value& v) {
   return GetIndexOption<uint32_t>(index_kind, column_name, key, v,
                                   duckdb::LogicalTypeId::UINTEGER,
                                   "an integer");
 }
 
-ResultOr<std::string> GetIndexStringOption(std::string_view index_kind,
-                                           std::string_view column_name,
-                                           std::string_view key,
-                                           const duckdb::Value& v) {
+std::string GetIndexStringOption(std::string_view index_kind,
+                                 std::string_view column_name,
+                                 std::string_view key, const duckdb::Value& v) {
   return GetIndexOption<std::string>(index_kind, column_name, key, v,
                                      duckdb::LogicalTypeId::VARCHAR,
                                      "a string");
 }
 
-ResultOr<bool> GetIndexBoolOption(std::string_view index_kind,
-                                  std::string_view column_name,
-                                  std::string_view key,
-                                  const duckdb::Value& v) {
+bool GetIndexBoolOption(std::string_view index_kind,
+                        std::string_view column_name, std::string_view key,
+                        const duckdb::Value& v) {
   return GetIndexOption<bool>(index_kind, column_name, key, v,
                               duckdb::LogicalTypeId::BOOLEAN, "a boolean");
 }
 
+double GetIndexDoubleOption(std::string_view index_kind,
+                            std::string_view column_name, std::string_view key,
+                            const duckdb::Value& v) {
+  return GetIndexOption<double>(index_kind, column_name, key, v,
+                                duckdb::LogicalTypeId::DOUBLE, "a number");
+}
+
 constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
   kIncludedKind,
-  kHNSWKind,
+  kIVFKind,
 };
 constexpr std::string_view kCompressionField = "compression";
 constexpr std::string_view kRowGroupSizeField = "row_group_size";
 constexpr std::string_view kHyperLogLogField = "hyperloglog";
 
-ResultOr<uint32_t> ParseRowGroupSize(std::string_view kind,
-                                     std::string_view column_name,
-                                     std::string_view key,
-                                     const duckdb::Value& v) {
+uint32_t ParseRowGroupSize(std::string_view kind, std::string_view column_name,
+                           std::string_view key, const duckdb::Value& v) {
   auto n = GetIndexIntOption(kind, column_name, key, v);
-  if (!n) {
-    return std::unexpected<Result>(std::move(n).error());
+  if (n == 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name, "': ", kind, " option '", key,
+              "' must be in [1, ", std::numeric_limits<uint32_t>::max(),
+              "], got ", n));
   }
-  if (*n == 0) {
-    return std::unexpected<Result>{std::in_place,
-                                   ERROR_BAD_PARAMETER,
-                                   "Column '",
-                                   column_name,
-                                   "': ",
-                                   kind,
-                                   " option '",
-                                   key,
-                                   "' must be in [1, ",
-                                   std::numeric_limits<uint32_t>::max(),
-                                   "], got ",
-                                   *n};
+  return n;
+}
+
+uint32_t ParsePositiveUintOption(std::string_view kind,
+                                 std::string_view column_name,
+                                 std::string_view key, const duckdb::Value& v) {
+  auto n = GetIndexIntOption(kind, column_name, key, v);
+  if (n == 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column '", column_name, "': ivf option '", key,
+                            "' must be positive, got ", n));
   }
-  return *n;
+  return n;
+}
+
+double ParsePositiveDoubleOption(std::string_view kind,
+                                 std::string_view column_name,
+                                 std::string_view key, const duckdb::Value& v) {
+  auto n = GetIndexDoubleOption(kind, column_name, key, v);
+  if (n <= 0.0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column '", column_name, "': ivf option '", key,
+                            "' must be positive, got ", n));
+  }
+  return n;
+}
+
+void EnsureId(irs::field_id& id) {
+  if (!irs::field_limits::valid(id)) {
+    id = static_cast<irs::field_id>(NextId());
+  }
 }
 
 // Parse a user-supplied compression name into a duckdb::CompressionType.
 // "auto" is the writer default (analyze tournament). Other names map
 // 1:1 to duckdb codecs; the writer throws at flush time if the named
 // codec doesn't accept the column's physical type.
-ResultOr<duckdb::CompressionType> ParseCompressionName(
-  std::string_view column_name, std::string_view name) {
+duckdb::CompressionType ParseCompressionName(std::string_view column_name,
+                                             std::string_view name) {
   std::string n{name};
   absl::AsciiStrToLower(&n);
   // Excluded on purpose:
@@ -174,15 +205,12 @@ ResultOr<duckdb::CompressionType> ParseCompressionName(
       return v;
     }
   }
-  return std::unexpected<Result>{std::in_place,
-                                 ERROR_BAD_PARAMETER,
-                                 "Column '",
-                                 column_name,
-                                 "': unknown compression '",
-                                 name,
-                                 "'. Accepted: auto, uncompressed, rle, "
-                                 "bitpacking, zstd, alp, alprd, roaring, "
-                                 "dict_fsst"};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("Column '", column_name, "': unknown compression '", name,
+            "'. Accepted: auto, uncompressed, rle, "
+            "bitpacking, zstd, alp, alprd, roaring, "
+            "dict_fsst"));
 }
 
 // The "data" physical type that a forced codec must support. Composite
@@ -204,26 +232,34 @@ duckdb::PhysicalType LeafDataPhysicalType(const duckdb::LogicalType& type) {
 // the column's leaf physical type. Without this check, the failure
 // surfaces only during the asynchronous segment commit (logged, not
 // returned), so CREATE INDEX would falsely report success.
-Result ValidateColumnCompression(duckdb::ClientContext& context,
-                                 std::string_view column_name,
-                                 duckdb::CompressionType compression,
-                                 const duckdb::LogicalType& column_type) {
+void ValidateColumnCompression(duckdb::ClientContext& context,
+                               std::string_view column_name,
+                               duckdb::CompressionType compression,
+                               const duckdb::LogicalType& column_type) {
   if (compression == duckdb::CompressionType::COMPRESSION_AUTO) {
-    return {};
+    return;
   }
   const auto& db_config = duckdb::DBConfig::GetConfig(context);
   const auto leaf = LeafDataPhysicalType(column_type);
   auto fn = db_config.TryGetCompressionFunction(compression, leaf);
   if (fn && fn->init_analyze) {
-    return {};
+    return;
   }
-  return {ERROR_BAD_PARAMETER,
-          "Column '",
-          column_name,
-          "': compression '",
-          duckdb::CompressionTypeToString(compression),
-          "' is not supported for type ",
-          column_type.ToString()};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+    ERR_MSG("Column '", column_name, "': compression '",
+            duckdb::CompressionTypeToString(compression),
+            "' is not supported for type ", column_type.ToString()));
+}
+
+duckdb::CompressionType ParseCompressionOption(
+  duckdb::ClientContext& context, std::string_view kind,
+  std::string_view owner_label, std::string_view key, const duckdb::Value& v,
+  const duckdb::LogicalType& value_type) {
+  auto str = GetIndexStringOption(kind, owner_label, key, v);
+  auto parsed = ParseCompressionName(owner_label, str);
+  ValidateColumnCompression(context, owner_label, parsed, value_type);
+  return parsed;
 }
 
 std::string DescribeKnownOpclassTypes() {
@@ -237,134 +273,179 @@ std::string DescribeKnownOpclassTypes() {
   return out;
 }
 
-std::string DescribeHNSWOptions() {
-  return "metric (string: l2|l1|cosine|ip, REQUIRED), "
-         "m (int >= 2, default 32), "
-         "ef_construction (int >= 1, default 40, must be >= m), "
-         "compression (string, default 'auto'), "
-         "row_group_size (int >= 1)";
+std::string DescribeIVFOptions() {
+  const std::string metrics = absl::StrJoin(
+    std::array{kL2Metric, kL1Metric, kCosineMetric, kIPMetric}, "|");
+  const std::string quants = absl::StrJoin(
+    std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant, kNoneQuant}, "|");
+  const std::string quants_need_metric = absl::StrJoin(
+    std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant}, "|");
+  return absl::StrCat("metric (string: ", metrics, ", REQUIRED), ",
+                      "nlist (int >= 1, default auto ~sqrt(rows)), ",
+                      "nlist_factor (number > 0, nlist = round(nlist_factor * "
+                      "sqrt(rows)), default "
+                      "2.0), ",
+                      "quant (string: ", quants, ", default ", kNoneQuant, "; ",
+                      quants_need_metric, " need ", kL2Metric, "|", kIPMetric,
+                      "), ", "pq_m (int >= 1, divides dimension, quant='",
+                      kPQQuant, "' only, default auto ~d/2), ",
+                      "rabitq_bits (int ", irs::kRaBitQMinBits, "-",
+                      irs::kRaBitQMaxBits, ", quant='", kRaBitQQuant,
+                      "' only, default ", irs::kRaBitQMinBits, ")");
 }
 
-Result ApplyHNSWOptions(
-  std::string_view column_name,
-  const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
-  HNSWColumnConfig& cfg, duckdb::CompressionType& compression,
-  uint32_t& row_group_size) {
+irs::VectorMetric ParseIVFMetric(std::string_view column_name,
+                                 std::string_view name) {
+  std::string n{name};
+  absl::AsciiStrToLower(&n);
+  static constexpr std::pair<std::string_view, irs::VectorMetric> kMap[] = {
+    {kL2Metric, irs::VectorMetric::L2Sqr},
+    {kL1Metric, irs::VectorMetric::L1},
+    {kCosineMetric, irs::VectorMetric::Cosine},
+    {kIPMetric, irs::VectorMetric::InnerProduct},
+  };
+  for (const auto& [k, v] : kMap) {
+    if (n == k) {
+      return v;
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("Column '", column_name, "': unknown ivf metric '", n,
+                          "'. Expected one of: ", kL2Metric, " ", kL1Metric,
+                          " ", kCosineMetric, " ", kIPMetric));
+}
+
+irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
+                                      std::string_view name) {
+  std::string n{name};
+  absl::AsciiStrToLower(&n);
+  static constexpr std::pair<std::string_view, irs::VectorQuantization> kMap[] =
+    {
+      {kSQ8Quant, irs::VectorQuantization::SQ8},
+      {kSQ4Quant, irs::VectorQuantization::SQ4},
+      {kPQQuant, irs::VectorQuantization::PQ},
+      {kRaBitQQuant, irs::VectorQuantization::RaBitQ},
+      {kNoneQuant, irs::VectorQuantization::None},
+    };
+  for (const auto& [k, v] : kMap) {
+    if (n == k) {
+      return v;
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("Column '", column_name, "': unknown ivf quant '", n,
+                          "'. Expected one of: ", kSQ8Quant, " ", kSQ4Quant,
+                          " ", kPQQuant, " ", kRaBitQQuant, " ", kNoneQuant));
+}
+
+void ApplyIVFOptions(std::string_view column_name,
+                     const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
+                     IVFColumnConfig& cfg) {
   bool metric_set = false;
   for (const auto& [key, raw_val] : opts) {
     if (key == kMetricField) {
-      auto str = GetIndexStringOption(kHNSWKind, column_name, key, raw_val);
-      if (!str) {
-        return std::move(str).error();
-      }
-      std::string v = std::move(*str);
-      absl::AsciiStrToLower(&v);
-      if (v == kL2Metric) {
-        cfg.metric = irs::HNSWMetric::L2Sqr;
-      } else if (v == kL1Metric) {
-        cfg.metric = irs::HNSWMetric::L1;
-      } else if (v == kCosineMetric) {
-        cfg.metric = irs::HNSWMetric::Cosine;
-      } else if (v == kIPMetric) {
-        cfg.metric = irs::HNSWMetric::NegativeIP;
-      } else {
-        return {ERROR_BAD_PARAMETER,
-                "Column '",
-                column_name,
-                "': unknown hnsw metric '",
-                v,
-                "'. Expected one of: ",
-                kL2Metric,
-                " ",
-                kL1Metric,
-                " ",
-                kCosineMetric,
-                " ",
-                kIPMetric};
-      }
+      auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
+      cfg.metric = ParseIVFMetric(column_name, str);
       metric_set = true;
-    } else if (key == kMField) {
-      auto n = GetIndexIntOption(kHNSWKind, column_name, key, raw_val);
-      if (!n) {
-        return std::move(n).error();
-      }
-      if (*n < 2) {
-        return {ERROR_BAD_PARAMETER,
-                "Column '",
-                column_name,
-                "': hnsw option '",
-                kMField,
-                "' must be at least 2, got ",
-                *n};
-      }
-      cfg.m = static_cast<int>(*n);
-    } else if (key == kEfConstructionField) {
-      auto n = GetIndexIntOption(kHNSWKind, column_name, key, raw_val);
-      if (!n) {
-        return std::move(n).error();
-      }
-      if (*n < 1) {
-        return {ERROR_BAD_PARAMETER,
-                "Column '",
-                column_name,
-                "': hnsw option '",
-                kEfConstructionField,
-                "' must be positive, got ",
-                *n};
-      }
-      cfg.ef_construction = static_cast<int>(*n);
-    } else if (key == kCompressionField) {
-      auto str = GetIndexStringOption(kHNSWKind, column_name, key, raw_val);
-      if (!str) {
-        return std::move(str).error();
-      }
-      auto parsed = ParseCompressionName(column_name, *str);
-      if (!parsed) {
-        return std::move(parsed).error();
-      }
-      compression = *parsed;
-    } else if (key == kRowGroupSizeField) {
-      auto parsed = ParseRowGroupSize(kHNSWKind, column_name, key, raw_val);
-      if (!parsed) {
-        return std::move(parsed).error();
-      }
-      row_group_size = *parsed;
+    } else if (key == kNlistField) {
+      cfg.nlist = ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
+    } else if (key == kNlistFactorField) {
+      cfg.nlist_factor = static_cast<float>(
+        ParsePositiveDoubleOption(kIVFKind, column_name, key, raw_val));
+    } else if (key == kQuantField) {
+      auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
+      cfg.quant = ParseIVFQuant(column_name, str);
+    } else if (key == kPqMField) {
+      cfg.pq_m = ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
+    } else if (key == kRaBitQBitsField) {
+      cfg.rabitq_bits =
+        ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
     } else {
-      return {ERROR_BAD_PARAMETER,        "Column '", column_name,
-              "': unknown hnsw option '", key,        "'. Accepted options: ",
-              DescribeHNSWOptions()};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Column '", column_name, "': unknown ivf option '", key,
+                "'. Accepted options: ", DescribeIVFOptions()));
     }
   }
   if (!metric_set) {
-    return {ERROR_BAD_PARAMETER, "Column '",
-            column_name,         "': hnsw opclass requires the '",
-            kMetricField,        "' option (one of: ",
-            kL2Metric,           ", ",
-            kL1Metric,           ", ",
-            kCosineMetric,       ", ",
-            kIPMetric,           "). Example: hnsw (metric = 'l2')"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name, "': ivf opclass requires the '",
+              kMetricField, "' option (one of: ", kL2Metric, ", ", kL1Metric,
+              ", ", kCosineMetric, ", ", kIPMetric,
+              "). Example: ivf (metric = 'l2')"));
   }
-  if (cfg.ef_construction < cfg.m) {
-    return {ERROR_BAD_PARAMETER,
-            "Column '",
-            column_name,
-            "': hnsw option 'ef_construction' (",
-            cfg.ef_construction,
-            ") must be >= 'm' (",
-            cfg.m,
-            ")"};
+  if (cfg.nlist != 0 && cfg.nlist_factor != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name, "': ivf options '", kNlistField,
+              "' and '", kNlistFactorField, "' are mutually exclusive"));
   }
-  return {};
+  if (cfg.quant != irs::VectorQuantization::None &&
+      cfg.metric != irs::VectorMetric::L2Sqr &&
+      cfg.metric != irs::VectorMetric::InnerProduct) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column '", column_name,
+                            "': ivf quantization supports only metric '",
+                            kL2Metric, "' or '", kIPMetric, "'"));
+  }
+  if (cfg.quant == irs::VectorQuantization::PQ) {
+    if (cfg.pq_m == 0) {
+      constexpr int kTargetDsub = 2;
+      uint32_t best = 1;
+      int best_diff = cfg.d;
+      for (int m = 1; m <= cfg.d; ++m) {
+        if (cfg.d % m != 0) {
+          continue;
+        }
+        const int dsub = cfg.d / m;
+        const int diff =
+          dsub > kTargetDsub ? dsub - kTargetDsub : kTargetDsub - dsub;
+        if (diff < best_diff) {
+          best_diff = diff;
+          best = static_cast<uint32_t>(m);
+        }
+      }
+      cfg.pq_m = best;
+    }
+    if (cfg.d <= 0 || cfg.d % static_cast<int>(cfg.pq_m) != 0) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Column '", column_name, "': ivf option '", kPqMField, "' (",
+                cfg.pq_m, ") must divide the vector dimension ", cfg.d));
+    }
+  } else if (cfg.pq_m != 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column '", column_name, "': ivf option '",
+                            kPqMField, "' is only valid with quant 'pq'"));
+  }
+  if (cfg.quant == irs::VectorQuantization::RaBitQ) {
+    if (cfg.rabitq_bits == 0) {
+      cfg.rabitq_bits = irs::kRaBitQMinBits;
+    }
+    if (cfg.rabitq_bits > irs::kRaBitQMaxBits) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Column '", column_name, "': ivf option '", kRaBitQBitsField,
+                "' (", cfg.rabitq_bits, ") must be between ",
+                irs::kRaBitQMinBits, " and ", irs::kRaBitQMaxBits));
+    }
+  } else if (cfg.rabitq_bits != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name, "': ivf option '", kRaBitQBitsField,
+              "' is only valid with quant 'rabitq'"));
+  }
 }
 
 bool IsTokenizerOpclass(const CreateIndexColumn& c) {
-  if (c.IsBuiltin(kHNSWKind) || c.IsBuiltin(kIncludedKind)) {
+  if (c.IsBuiltin(kIVFKind) || c.IsBuiltin(kIncludedKind)) {
     return false;
   }
   return true;
 }
 
-Result ValidateInvertedIndexColumns(
+void ValidateInvertedIndexColumns(
   std::span<const CreateIndexColumn> indexed_columns) {
   for (const auto& c : indexed_columns) {
     const auto& type = c.IsIndexedExpression()
@@ -372,41 +453,30 @@ Result ValidateInvertedIndexColumns(
                          : c.GetCatalogColumn().type;
     const auto label = c.name;
 
-    if (c.IsBuiltin(kHNSWKind)) {
-      if (auto r = hnsw::Validate(label, type); !r.ok()) {
-        return r;
-      }
+    if (c.IsBuiltin(kIVFKind)) {
+      ivf::Validate(label, type);
       continue;
     }
 
     if (c.IsBuiltin(kIncludedKind)) {
-      if (auto r = included::Validate(label, type); !r.ok()) {
-        return r;
-      }
+      included::Validate(label, type);
       continue;
     }
 
     if (c.HasParentheses()) {
-      return {ERROR_BAD_PARAMETER,
-              "Unknown built-in opclass '",
-              c.opclass,
-              "' on '",
-              label,
-              "' (known: ",
-              DescribeKnownOpclassTypes(),
-              ")"};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("Unknown built-in opclass '", c.opclass, "' on '", label,
+                "' (known: ", DescribeKnownOpclassTypes(), ")"));
     }
 
-    if (auto r = term_dict::Validate(label, type, c.opclass); !r.ok()) {
-      return r;
-    }
+    term_dict::Validate(label, type, c.opclass);
   }
-  return {};
 }
 
-Result ValidateTokenizerVsColumn(std::string_view column_name,
-                                 const duckdb::LogicalType& col_type,
-                                 const irs::analysis::Analyzer& analyzer) {
+void ValidateTokenizerVsColumn(std::string_view column_name,
+                               const duckdb::LogicalType& col_type,
+                               const irs::analysis::Tokenizer& analyzer) {
   const auto type_id = analyzer.type();
   const bool is_geojson =
     type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
@@ -416,15 +486,15 @@ Result ValidateTokenizerVsColumn(std::string_view column_name,
 
   if (is_geojson || is_geopoint) {
     if (col_id == duckdb::LogicalTypeId::GEOMETRY) {
-      if (auto r = ValidateGeometryCRS84(col_type); r.fail()) {
-        return {ERROR_BAD_PARAMETER, "Column '", column_name,
-                "': ", r.errorMessage()};
-      }
+      ValidateGeometryCRS84(col_type,
+                            absl::StrCat("Column '", column_name, "'"));
       if (is_geopoint) {
-        return {ERROR_BAD_PARAMETER, "Column '", column_name,
-                "' is GEOMETRY but the analyzer is geopoint; geopoint's "
-                "latitude/longitude paths are JSON-only -- use a geojson "
-                "analyzer for GEOMETRY columns"};
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+          ERR_MSG("Column '", column_name,
+                  "' is GEOMETRY but the analyzer is geopoint; geopoint's "
+                  "latitude/longitude paths are JSON-only -- use a geojson "
+                  "analyzer for GEOMETRY columns"));
       }
       if (is_geojson) {
         const auto& geojson =
@@ -432,17 +502,21 @@ Result ValidateTokenizerVsColumn(std::string_view column_name,
         using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
         const auto coding = geojson.coding();
         if (coding != Coding::Source && coding != Coding::S2Point) {
-          return {ERROR_BAD_PARAMETER, "Column '", column_name,
-                  "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
-                  "not yet supported for GEOMETRY columns -- use S2Point or "
-                  "source coding"};
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("Column '", column_name,
+                    "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
+                    "not yet supported for GEOMETRY columns -- use S2Point or "
+                    "source coding"));
         }
       }
     } else if (!col_type.IsJSONType()) {
-      return {ERROR_BAD_PARAMETER, "Column '", column_name,
-              "' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY"};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+        ERR_MSG("Column '", column_name,
+                "' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY"));
     }
-    return {};
+    return;
   }
 
   const auto is_string_leaf = [](duckdb::LogicalTypeId id) {
@@ -450,7 +524,7 @@ Result ValidateTokenizerVsColumn(std::string_view column_name,
            id == duckdb::LogicalTypeId::BLOB;
   };
   if (is_string_leaf(col_id)) {
-    return {};
+    return;
   }
   if (col_id == duckdb::LogicalTypeId::LIST ||
       col_id == duckdb::LogicalTypeId::ARRAY) {
@@ -458,98 +532,62 @@ Result ValidateTokenizerVsColumn(std::string_view column_name,
                                ? duckdb::ListType::GetChildType(col_type)
                                : duckdb::ArrayType::GetChildType(col_type);
     if (is_string_leaf(child_type.id()) && !child_type.IsJSONType()) {
-      return {};
+      return;
     }
   }
-  return {ERROR_BAD_PARAMETER,
-          "Column '",
-          column_name,
-          "' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of "
-          "VARCHAR/BLOB (got ",
-          col_type.ToString(),
-          ")"};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+    ERR_MSG("Column '", column_name,
+            "' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of "
+            "VARCHAR/BLOB (got ",
+            col_type.ToString(), ")"));
 }
 
-Result ApplyIncludedOpclass(
+void ApplyIncludedOpclass(
   duckdb::ClientContext& context, std::string_view owner_label,
   const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   InvertedIndexEntryInfo& entry) {
   if (!opts) {
-    return {};
+    return;
   }
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
-      auto str = GetIndexStringOption(kIncludedKind, owner_label, key, raw_val);
-      if (!str) {
-        return std::move(str).error();
-      }
-      auto parsed = ParseCompressionName(owner_label, *str);
-      if (!parsed) {
-        return std::move(parsed).error();
-      }
-      if (auto r = ValidateColumnCompression(context, owner_label, *parsed,
-                                             value_type);
-          r.fail()) {
-        return r;
-      }
-      entry.compression = *parsed;
+      entry.compression = ParseCompressionOption(
+        context, kIncludedKind, owner_label, key, raw_val, value_type);
     } else if (key == kRowGroupSizeField) {
-      auto parsed = ParseRowGroupSize(kIncludedKind, owner_label, key, raw_val);
-      if (!parsed) {
-        return std::move(parsed).error();
-      }
-      entry.row_group_size = *parsed;
+      entry.row_group_size =
+        ParseRowGroupSize(kIncludedKind, owner_label, key, raw_val);
     } else if (key == kHyperLogLogField) {
-      auto parsed =
+      entry.hyperloglog =
         GetIndexBoolOption(kIncludedKind, owner_label, key, raw_val);
-      if (!parsed) {
-        return std::move(parsed).error();
-      }
-      entry.hyperloglog = *parsed;
     } else {
-      return {ERROR_BAD_PARAMETER,
-              "Column '",
-              owner_label,
-              "': unknown included option '",
-              key,
-              "'. Accepted options: compression (string, default 'auto'), "
-              "row_group_size (int >= 1), hyperloglog (bool, default "
-              "false)"};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Column '", owner_label, "': unknown included option '", key,
+                "'. Accepted options: compression (string, default 'auto'), "
+                "row_group_size (int >= 1), hyperloglog (bool, default "
+                "false)"));
     }
   }
-  return {};
 }
 
-Result ApplyHNSWOpclass(
-  duckdb::ClientContext& context, std::string_view owner_label,
-  const duckdb::LogicalType& value_type,
+void ApplyIVFOpclass(
+  std::string_view owner_label, const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   InvertedIndexEntryInfo& entry) {
   SDB_ASSERT(opts);
   SDB_ASSERT(value_type.id() == duckdb::LogicalTypeId::ARRAY);
   SDB_ASSERT(duckdb::ArrayType::GetChildType(value_type).id() ==
              duckdb::LogicalTypeId::FLOAT);
-  HNSWColumnConfig cfg{
+  IVFColumnConfig cfg{
     .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
   };
-  auto compression = duckdb::CompressionType::COMPRESSION_AUTO;
-  uint32_t row_group_size = 0;
-  if (auto r =
-        ApplyHNSWOptions(owner_label, *opts, cfg, compression, row_group_size);
-      r.fail()) {
-    return r;
-  }
-  if (auto r = ValidateColumnCompression(context, owner_label, compression,
-                                         value_type);
-      r.fail()) {
-    return r;
-  }
-  entry.hnsw_config = cfg;
-  entry.compression = compression;
-  entry.row_group_size = row_group_size;
+  ApplyIVFOptions(owner_label, *opts, cfg);
+  entry.ivf_config = cfg;
+  entry.compression = duckdb::CompressionType::COMPRESSION_AUTO;
+  entry.row_group_size = 0;
   entry.store_values = true;
-  return {};
 }
 
 std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
@@ -563,7 +601,7 @@ std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
   if (object_name.schema != schema_name) {
     return nullptr;
   }
-  return snapshot.GetTokenizer(database_id, object_name.schema,
+  return snapshot.GetTokenizer(NoAccessCheck(), database_id, object_name.schema,
                                object_name.relation);
 }
 
@@ -578,39 +616,24 @@ std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
              opclass, " (...)'"));
 }
 
-Result MakeUnknownOpclassError(std::string_view opclass,
-                               std::string_view owner_label,
-                               std::string_view schema_name) {
+[[noreturn]] void ThrowUnknownOpclassError(std::string_view opclass,
+                                           std::string_view owner_label,
+                                           std::string_view schema_name) {
   auto object_name = pg::ParseObjectName(opclass, schema_name);
   if (object_name.schema != schema_name) {
-    return {ERROR_BAD_PARAMETER,
-            "Accessing text dictionary from different schema is not supported"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(
+        "Accessing text dictionary from different schema is not supported"));
   }
-  return {ERROR_BAD_PARAMETER,
-          "Unknown opclass '",
-          opclass,
-          "' on column '",
-          owner_label,
-          "': no text dictionary by that name in schema '",
-          schema_name,
-          "'"};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+    ERR_MSG("Unknown opclass '", opclass, "' on column '", owner_label,
+            "': no text dictionary by that name in schema '", schema_name,
+            "'"));
 }
 
-ResultOr<Tokenizer::TokenizerWrapper> InstantiateAnalyzer(
-  std::string_view opclass, Tokenizer& dict) {
-  auto tokenizer = dict.GetTokenizer();
-  if (!tokenizer) {
-    return std::unexpected<Result>{std::in_place,
-                                   ERROR_BAD_PARAMETER,
-                                   "Text search dictionary '",
-                                   opclass,
-                                   "' failed to instantiate: ",
-                                   tokenizer.error().errorMessage()};
-  }
-  return std::move(*tokenizer);
-}
-
-bool IsGeoSourceAnalyzer(const irs::analysis::Analyzer& analyzer) {
+bool IsGeoSourceAnalyzer(const irs::analysis::Tokenizer& analyzer) {
   const auto type_id = analyzer.type();
   if (type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
     return true;
@@ -622,20 +645,29 @@ bool IsGeoSourceAnalyzer(const irs::analysis::Analyzer& analyzer) {
   return false;
 }
 
-bool IsGeoAnalyzer(const irs::analysis::Analyzer& analyzer) {
+bool IsGeoAnalyzer(const irs::analysis::Tokenizer& analyzer) {
   const auto type_id = analyzer.type();
   return type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id() ||
          type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
 }
 
 void FillEntryFromTokenizer(const Tokenizer& dict,
-                            const irs::analysis::Analyzer& analyzer,
+                            const irs::analysis::Tokenizer& analyzer,
                             const duckdb::LogicalType& value_type,
                             InvertedIndexEntryInfo& entry) {
   entry.text_dictionary = dict.GetId();
   entry.features = dict.GetFeatures();
-  const bool wants_store = irs::get<irs::StoreAttr>(analyzer) != nullptr &&
-                           !IsGeoSourceAnalyzer(analyzer);
+  if (entry.features.HasFeatures(irs::IndexFeatures::Offs) &&
+      !analyzer.Traits().offsets) {
+    // Per-type capability is validated at analyzer creation; this catches
+    // instance-level configuration (e.g. a pipeline whose children cannot
+    // track offsets).
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("'offset' feature requires an analyzer that produces offsets"));
+  }
+  const bool wants_store =
+    analyzer.Traits().store && !IsGeoSourceAnalyzer(analyzer);
   const bool wants_norm = entry.features.HasFeatures(irs::IndexFeatures::Norm);
   SDB_ASSERT(!(wants_store && wants_norm),
              "tokenizer-store and norm should be mutually exclusive");
@@ -646,70 +678,52 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
     entry.norm_row_group_size = dict.GetNormRowGroupSize();
   }
   if (value_type.IsJSONType() && !IsGeoAnalyzer(analyzer)) {
-    if (!irs::field_limits::valid(entry.bool_field_id)) {
-      entry.bool_field_id = static_cast<irs::field_id>(NextId());
-    }
-    if (!irs::field_limits::valid(entry.numeric_field_id)) {
-      entry.numeric_field_id = static_cast<irs::field_id>(NextId());
-    }
+    EnsureId(entry.bool_field_id);
+    EnsureId(entry.numeric_field_id);
   }
 }
 
-Result ApplyOpclassToEntry(duckdb::ClientContext& context,
-                           const CreateIndexColumn& c,
-                           std::string_view owner_label,
-                           const duckdb::LogicalType& value_type,
-                           const Snapshot& snapshot, ObjectId database_id,
-                           std::string_view schema_name,
-                           InvertedIndexEntryInfo& entry) {
+void ApplyOpclassToEntry(duckdb::ClientContext& context,
+                         const CreateIndexColumn& c,
+                         std::string_view owner_label,
+                         const duckdb::LogicalType& value_type,
+                         const Snapshot& snapshot, ObjectId database_id,
+                         std::string_view schema_name,
+                         InvertedIndexEntryInfo& entry) {
   if (c.opclass.empty()) {
-    return {};
+    return;
   }
-  if (c.IsBuiltin(kHNSWKind)) {
-    return ApplyHNSWOpclass(context, owner_label, value_type, c.opclass_options,
-                            entry);
+  if (c.IsBuiltin(kIVFKind)) {
+    ApplyIVFOpclass(owner_label, value_type, c.opclass_options, entry);
+    return;
   }
   if (c.IsBuiltin(kIncludedKind)) {
-    if (auto r = ApplyIncludedOpclass(context, owner_label, value_type,
-                                      c.opclass_options, entry);
-        r.fail()) {
-      return r;
-    }
+    ApplyIncludedOpclass(context, owner_label, value_type, c.opclass_options,
+                         entry);
     entry.store_values = true;
-    return {};
+    return;
   }
 
   auto dict = LookupTokenizer(snapshot, database_id, schema_name, c.opclass);
   if (!dict) {
-    if (c.opclass == kHNSWKind || c.opclass == kIncludedKind) {
-      // Maybe confused with hnws(...) and included(...), give a hint
+    if (c.opclass == kIVFKind || c.opclass == kIncludedKind) {
       ThrowUnknownBuiltinOpclass(c.opclass, owner_label, schema_name);
     }
-    return MakeUnknownOpclassError(c.opclass, owner_label, schema_name);
+    ThrowUnknownOpclassError(c.opclass, owner_label, schema_name);
   }
-  auto analyzer = InstantiateAnalyzer(c.opclass, *dict);
-  if (!analyzer) {
-    return std::move(analyzer).error();
-  }
-  if (auto r = ValidateTokenizerVsColumn(owner_label, value_type, **analyzer);
-      r.fail()) {
-    return r;
-  }
-  FillEntryFromTokenizer(*dict, **analyzer, value_type, entry);
-  if (IsGeoSourceAnalyzer(**analyzer)) {
-    if (auto r = ApplyIncludedOpclass(context, owner_label, value_type,
-                                      c.opclass_options, entry);
-        r.fail()) {
-      return r;
-    }
+  auto analyzer = dict->GetTokenizer();
+  ValidateTokenizerVsColumn(owner_label, value_type, *analyzer);
+  FillEntryFromTokenizer(*dict, *analyzer, value_type, entry);
+  if (IsGeoSourceAnalyzer(*analyzer)) {
+    ApplyIncludedOpclass(context, owner_label, value_type, c.opclass_options,
+                         entry);
     entry.store_values = true;
   }
-  return {};
 }
 
 }  // namespace
 
-ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
+std::shared_ptr<SecondaryIndex> CreateSecondaryIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
   std::string name, std::vector<catalog::CreateIndexColumn> columns,
   bool unique) {
@@ -729,7 +743,7 @@ ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
     std::move(key_columns), std::move(key_expressions), unique);
 }
 
-ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
+std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   duckdb::ClientContext& context, ObjectId database_id,
   std::string_view schema_name, ObjectId schema_id, ObjectId id,
   ObjectId relation_id, std::string name,
@@ -738,10 +752,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   InvertedIndexOptions options) {
   SDB_ASSERT(options.row_group_size != 0);
   SDB_ASSERT(options.norm_row_group_size != 0);
-  auto column_validation_res = ValidateInvertedIndexColumns(columns);
-  if (column_validation_res.fail()) {
-    return std::unexpected<Result>(std::move(column_validation_res));
-  }
+  ValidateInvertedIndexColumns(columns);
 
   InvertedIndex::Entries entries;
   std::vector<Column::Id> key_columns;
@@ -762,22 +773,20 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       const auto& expr_data = c.GetIndexedExpression();
       if (IsTokenizerOpclass(c) &&
           !tokenized_exprs.insert(expr_data.serialized_expr).second) {
-        return std::unexpected<Result>{
-          std::in_place, ERROR_BAD_PARAMETER, "Expression '",
-          expr_data.pretty_printed,
-          "' is listed more than once with a tokenizer opclass; the catalog "
-          "stores a single tokenizer per indexed expression. Stack "
-          "`included(...)` on the same expression instead, or remove the "
-          "duplicate."};
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG(
+            "Expression '", expr_data.pretty_printed,
+            "' is listed more than once with a tokenizer opclass; the catalog "
+            "stores a single tokenizer per indexed expression. Stack "
+            "`included(...)` on the same expression instead, or remove the "
+            "duplicate."));
       }
       const auto field_id = next_expr_field_id++;
       InvertedIndexEntryInfo expr_info;
-      if (auto r = ApplyOpclassToEntry(context, c, expr_data.pretty_printed,
-                                       expr_data.return_type, *snapshot,
-                                       database_id, schema_name, expr_info);
-          r.fail()) {
-        return std::unexpected<Result>(std::move(r));
-      }
+      ApplyOpclassToEntry(context, c, expr_data.pretty_printed,
+                          expr_data.return_type, *snapshot, database_id,
+                          schema_name, expr_info);
       entries.emplace(field_id, std::move(expr_info));
       expression_keys.emplace_back(expr_data, field_id);
       continue;
@@ -790,23 +799,21 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     if (col_inserted) {
       key_columns.push_back(c.GetCatalogColumn().GetId());
     }
-    if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kHNSWKind)) {
+    if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kIVFKind)) {
       index_col.indexed_term_dict = true;
     }
     if (IsTokenizerOpclass(c) &&
         !tokenized_cols.insert(c.GetCatalogColumn().GetId()).second) {
-      return std::unexpected<Result>{
-        std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
-        "' is listed more than once with a tokenizer opclass; the catalog "
-        "stores a single tokenizer per indexed column. Stack `included(...)` "
-        "on the same column instead, or remove the duplicate."};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(
+          "Column '", c.name,
+          "' is listed more than once with a tokenizer opclass; the catalog "
+          "stores a single tokenizer per indexed column. Stack `included(...)` "
+          "on the same column instead, or remove the duplicate."));
     }
-    if (auto r =
-          ApplyOpclassToEntry(context, c, c.name, c.GetCatalogColumn().type,
-                              *snapshot, database_id, schema_name, index_col);
-        r.fail()) {
-      return std::unexpected<Result>(std::move(r));
-    }
+    ApplyOpclassToEntry(context, c, c.name, c.GetCatalogColumn().type,
+                        *snapshot, database_id, schema_name, index_col);
   }
   for (auto& [_, entry] : entries) {
     if (entry.row_group_size == 0) {
@@ -815,9 +822,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     if (entry.norm_row_group_size == 0) {
       entry.norm_row_group_size = options.norm_row_group_size;
     }
-    if (!irs::field_limits::valid(entry.null_field_id)) {
-      entry.null_field_id = static_cast<irs::field_id>(NextId());
-    }
+    EnsureId(entry.null_field_id);
   }
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),
@@ -828,7 +833,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
              ObjectId relation_id, std::string name, DerivedColumnIds derived,
              ObjectType type)
-  : Object{schema_id, id, std::move(name), type},
+  : Object{Permissions{}, schema_id, id, std::move(name), type},
     _database_id{database_id},
     _relation_id{relation_id},
     _columns{std::move(derived.columns)},

@@ -103,6 +103,10 @@ class And final : public BooleanFilter {
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
+  TermPredicate::ptr CompileTermPredicate() const final;
+
+  TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
+
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
 };
 
@@ -125,6 +129,8 @@ class Or final : public BooleanFilter {
                                    const PrepareContext& ctx) const final;
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
 
@@ -181,6 +187,10 @@ class Exclusion : public FilterWithType<Exclusion> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
+  TermPredicate::ptr CompileTermPredicate() const final;
+
+  TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
+
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
 
   std::span<Filter::ptr> GetChildren() final { return std::span{_filters}; }
@@ -215,6 +225,8 @@ class Not final : public FilterWithType<Not> {
                                    const PrepareContext& ctx) const final;
 
   PrepareCollector::ptr MakeCollector(const Scorer* scorer) const final;
+
+  TermPredicate::ptr CompileTermPredicate() const final;
 
   std::span<Filter::ptr> GetChildren() final { return {&_filter, 1}; }
 

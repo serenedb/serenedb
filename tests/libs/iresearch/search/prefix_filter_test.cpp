@@ -24,6 +24,7 @@
 #include "basics/duckdb_engine.h"
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/bm25.hpp"
@@ -351,7 +352,9 @@ TEST_P(PrefixFilterTestCase, visit) {
   // get term dictionary for field
   const auto* reader = segment.field(field);
   ASSERT_NE(nullptr, reader);
-  irs::ByPrefix::visit(segment, *reader, term, visitor);
+  irs::ByPrefixOptions options;
+  options.term = irs::bstring{term};
+  irs::ByPrefix::visit(segment, *reader, options, visitor);
   ASSERT_EQ(1, visitor.prepare_calls_counter());
   ASSERT_EQ(6, visitor.visit_calls_counter());
   ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
@@ -441,7 +444,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
         auto doc = ctx.Insert();
         tests::StringField field{"name", value};
         field.id = kNameId;
-        doc.Insert(field);
+        tests::InsertField(doc, field);
       }
       ctx.Commit();
     }
@@ -481,7 +484,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_no_collector) {
     Docs docs;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto it = prepared.Execute(i);
-      while (it->next()) {
+      while (!irs::doc_limits::eof(it->advance())) {
         docs.push_back(it->value());
       }
     }

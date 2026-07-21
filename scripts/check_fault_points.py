@@ -10,8 +10,8 @@ in .pre-commit-config.yaml):
      outside tests/sqllogic/recovery/ is an error.
 
   2. Test -> Source: every fault NAME activated in a recovery .test must be
-     defined in C++ source (SDB_IF_FAILURE / WaitWhileFailurePointDebugging
-     string literal in server/ or libs/).
+     defined in C++ source (SDB_IF_FAILURE / SDB_WAIT_ON_FAILURE /
+     WaitWhileFailurePointDebugging string literal in server/ or libs/).
 
   3. Source -> Test: every fault NAME defined in C++ source must be exercised by
      at least one test (a recovery .test, or a C++/Python test under tests/).
@@ -42,16 +42,22 @@ SET_FAULT = re.compile(
 # Just the `SET ... sdb_faults` head, for the recovery-only location check.
 SET_FAULT_HEAD = re.compile(r"SET\s+(?:(?:LOCAL|SESSION)\s+)?sdb_faults\b", re.IGNORECASE)
 
-# Source-side definitions: SDB_IF_FAILURE("NAME") / WaitWhile...("NAME").
+# Source-side definitions: SDB_IF_FAILURE("NAME") / SDB_WAIT_ON_FAILURE("NAME")
+# / WaitWhile...("NAME").
 SOURCE_DEF = re.compile(
-    r'(?:SDB_IF_FAILURE|WaitWhileFailurePointDebugging)\s*\(\s*"([^"]+)"'
+    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|WaitWhileFailurePointDebugging)'
+    r'\s*\(\s*"([^"]+)"'
 )
 # Names referenced by C++/python tests (string literal in any of these calls,
 # or a SET sdb_faults activation).
 TESTNET_LITERAL = re.compile(
-    r'(?:SDB_IF_FAILURE|AddFailurePointDebugging|ShouldFailDebugging|'
-    r'WaitWhileFailurePointDebugging)\s*\(\s*"([^"]+)"'
+    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|AddFailurePointDebugging|'
+    r'ShouldFailDebugging|WaitWhileFailurePointDebugging)\s*\(\s*"([^"]+)"'
 )
+# Python driver tests activate faults through f-strings (`SET sdb_faults =
+# '{name}'`), so the SET literal itself carries no name; the names live in
+# module constants by convention: <SOMETHING>_FAULT = "name".
+PY_FAULT_CONST = re.compile(r'FAULT\w*\s*=\s*"([^"]+)"')
 
 # faults.test is the test of the fault FRAMEWORK itself; its names (some1, some2,
 # some3) are synthetic and intentionally have no source definition.
@@ -155,6 +161,9 @@ def main():
         if has_lit:
             for m in TESTNET_LITERAL.finditer(text):
                 exercised.add(m.group(1))
+        if path.endswith(".py") and (has_set or has_lit):
+            for m in PY_FAULT_CONST.finditer(text):
+                exercised.add(m.group(1))
 
     # ----- check #2: test -> source -----
     for name, loc in sorted(test_faults.items()):
@@ -166,8 +175,8 @@ def main():
             continue  # documented pending gap, issue #847
         errors.append(
             f"{loc}: fault '{name}' is activated by a test but is not defined in "
-            "C++ source (no SDB_IF_FAILURE/WaitWhileFailurePointDebugging literal "
-            "in server/ or libs/)"
+            "C++ source (no SDB_IF_FAILURE/SDB_WAIT_ON_FAILURE/"
+            "WaitWhileFailurePointDebugging literal in server/ or libs/)"
         )
 
     # ----- check #3: source -> test -----
@@ -178,7 +187,8 @@ def main():
             continue
         errors.append(
             f"{loc}: fault '{name}' is defined in C++ source but no test exercises "
-            "it (add a recovery .test or a gtest reference)"
+            "it (add a recovery .test, a gtest reference, or a python driver-test "
+            "*_FAULT constant)"
         )
 
     for e in errors:

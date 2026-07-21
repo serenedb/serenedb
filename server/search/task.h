@@ -27,14 +27,26 @@
 namespace sdb::search {
 
 class InvertedIndexStorage;
+class SearchTable;
 
-// One coroutine per index drives background refresh (+ cleanup tail); another
-// coordinates parallel compaction. Each holds a weak_ptr so a dropped index
-// ends the loop (no shared-ptr cycle keeps storage alive) and resets it while
-// idle so a concurrent DROP isn't blocked. The returned Future is collected by
-// SearchEngine so stop() can join every loop.
-yaclib::Future<> RefreshLoop(std::weak_ptr<InvertedIndexStorage> weak);
-yaclib::Future<> CompactionCoordinator(
-  std::weak_ptr<InvertedIndexStorage> weak);
+// One coroutine per maintenance target drives background refresh (+ cleanup);
+// another coordinates compaction. Each holds a weak_ptr so a dropped target
+// ends the loop, and the returned Future lets SearchEngine::stop() join it.
+//
+// Templated on the storage type so the same loops drive both an inverted index
+// and a search table (both expose the maintenance interface in maintenance.h).
+// Instantiated only for the two types below.
+template<class Storage>
+yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak);
+template<class Storage>
+yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak);
+
+extern template yaclib::Future<> RefreshLoop(
+  std::weak_ptr<InvertedIndexStorage>);
+extern template yaclib::Future<> CompactionCoordinator(
+  std::weak_ptr<InvertedIndexStorage>);
+extern template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
+extern template yaclib::Future<> CompactionCoordinator(
+  std::weak_ptr<SearchTable>);
 
 }  // namespace sdb::search

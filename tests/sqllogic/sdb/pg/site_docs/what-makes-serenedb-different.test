@@ -115,7 +115,7 @@ INSERT INTO articles VALUES
 
 statement ok
 CREATE INDEX articles_idx ON articles
-    USING inverted(id, title english, body english, embedding hnsw(metric = 'cosine'));
+    USING inverted(id, title english, body english, embedding ivf(metric = 'cosine'));
 
 statement ok
 VACUUM (REFRESH_TABLE) articles;

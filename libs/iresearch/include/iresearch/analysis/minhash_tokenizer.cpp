@@ -24,103 +24,111 @@
 
 #include <absl/strings/escaping.h>
 
-#include "basics/exceptions.h"
+#include <duckdb/common/vector/flat_vector.hpp>
+
 #include "basics/wyhash.h"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
 
-constexpr OffsAttr kEmptyOffset;
+constexpr uint64_t kHashSeed = 0xdeadbeef;
+
+class SignatureConsumer final : public TokenConsumer {
+ public:
+  explicit SignatureConsumer(MinHash& minhash) noexcept : _minhash{&minhash} {}
+
+  void Consume(TokenBatch& batch, std::span<const DocRun>) final {
+    const auto count = batch.count;
+    for (uint32_t i = 0; i < count; ++i) {
+      const auto& term = batch.terms[i];
+      _minhash->Insert(
+        sdb::basics::WyHash(term.GetData(), term.GetSize(), kHashSeed));
+    }
+  }
+
+ private:
+  MinHash* _minhash;
+};
 
 }  // namespace
 
-Analyzer::ptr MinHashTokenizer::Make(Options opts) {
+struct MinHashTokenizer::FillScratchT {
+  explicit FillScratchT(MinHash& minhash)
+    : consumer{minhash}, writer{consumer} {}
+
+  SignatureConsumer consumer;
+  TokenWriter writer;
+};
+
+void MinHashTokenizer::FillScratchDeleterT::operator()(
+  FillScratchT* p) const noexcept {
+  delete p;
+}
+
+Tokenizer::ptr MinHashTokenizer::Make(Options opts) {
   if (opts.num_hashes == 0) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "minhash: num_hashes must be positive");
+    THROW_SQL_ERROR(ERR_MSG("minhash: num_hashes must be positive"));
   }
-  Analyzer::ptr sub;
+  Tokenizer::ptr sub;
   if (opts.analyzer) {
-    sub = CreateAnalyzer(std::move(*opts.analyzer));
+    sub = CreateTokenizer(std::move(*opts.analyzer));
   }
   // If `analyzer` is absent the ctor falls back to StringTokenizer.
   return std::make_unique<MinHashTokenizer>(std::move(sub), opts.num_hashes);
 }
 
-MinHashTokenizer::MinHashTokenizer(analysis::Analyzer::ptr analyzer,
+MinHashTokenizer::MinHashTokenizer(analysis::Tokenizer::ptr analyzer,
                                    uint32_t num_hashes)
   : _analyzer{std::move(analyzer)},
     _num_hashes{num_hashes},
     _minhash{_num_hashes} {
   if (!_analyzer) {
-    // Fallback to default implementation
     _analyzer = std::make_unique<StringTokenizer>();
   }
-
-  _term = irs::get<TermAttr>(*_analyzer);
-
-  if (!_term) [[unlikely]] {
-    _analyzer = std::make_unique<EmptyAnalyzer>();
-  }
-
-  _offset = irs::get<OffsAttr>(*_analyzer);
-
-  std::get<TermAttr>(_attrs).value = {
-    reinterpret_cast<const byte_type*>(_buf.data()), _buf.size()};
 }
 
-bool MinHashTokenizer::next() {
-  if (_begin == _end) {
+template<TokenLayout Layout>
+bool MinHashTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
+  if (!_scratch) {
+    _scratch.reset(new FillScratchT(_minhash));
+  }
+  _minhash.Clear();
+  if (!_analyzer->Fill(value, _scratch->writer, TokenLayout::Terms)) {
     return false;
   }
-
-  const auto value = absl::little_endian::FromHost(*_begin);
-
-  [[maybe_unused]] const size_t length = absl::Base64EscapeInternal(
-    reinterpret_cast<const uint8_t*>(&value), sizeof value, _buf.data(),
-    _buf.size(), absl::kBase64Chars, false);
-  SDB_ASSERT(length == _buf.size());
-
-  std::get<IncAttr>(_attrs).value = std::exchange(_next_inc.value, 0);
-  ++_begin;
-
+  _scratch->writer.Finish();
+  EmitSignature<Layout>(sink);
   return true;
 }
 
-bool MinHashTokenizer::reset(std::string_view data) {
-  _begin = _end = {};
-  if (_analyzer->reset(data)) {
-    ComputeSignature();
-    return true;
-  }
-  return false;
-}
-
-void MinHashTokenizer::ComputeSignature() {
-  _minhash.Clear();
-  _next_inc.value = 1;
-
-  if (_analyzer->next()) {
-    SDB_ASSERT(_term);
-
-    const auto* offs = _offset ? _offset : &kEmptyOffset;
-    auto& [start, end] = std::get<OffsAttr>(_attrs);
-    start = offs->start;
-    end = offs->end;
-
-    do {
-      const std::string_view value = ViewCast<char>(_term->value);
-      const auto hash_value =
-        sdb::basics::WyHash(value.data(), value.size(), 0xdeadbeef);
-
-      _minhash.Insert(hash_value);
-      end = offs->end;
-    } while (_analyzer->next());
-
-    _begin = std::begin(_minhash);
-    _end = std::end(_minhash);
+template<TokenLayout Layout>
+void MinHashTokenizer::EmitSignature(TokenEmitter& sink) {
+  auto& buf = sink.buf;
+  auto it = _minhash.begin();
+  size_t remaining = static_cast<size_t>(_minhash.end() - it);
+  while (remaining != 0) {
+    const auto slots = sink.Next(remaining);
+    const auto first = static_cast<uint32_t>(slots.data() - buf.terms);
+    for (size_t j = 0; j < slots.size(); ++j) {
+      const auto value = absl::little_endian::FromHost(*it++);
+      char b64[11];
+      [[maybe_unused]] const size_t length = absl::Base64EscapeInternal(
+        reinterpret_cast<const uint8_t*>(&value), sizeof value, b64, sizeof b64,
+        absl::kBase64Chars, false);
+      SDB_ASSERT(length == sizeof b64);
+      slots[j] = duckdb::string_t{b64, static_cast<uint32_t>(sizeof b64)};
+      if constexpr (Layout != TokenLayout::Terms) {
+        buf.pos[first + j] = 1;
+      }
+    }
+    remaining -= slots.size();
   }
 }
+
+template class TypedTokenizer<MinHashTokenizer>;
 
 }  // namespace irs::analysis

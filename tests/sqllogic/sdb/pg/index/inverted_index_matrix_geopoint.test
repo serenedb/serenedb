@@ -71,7 +71,7 @@ CREATE TABLE g4_g(pk INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
 statement error
 CREATE INDEX g4_reject_geo_g ON g4_g USING inverted(pk, g geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
+db error: ERROR: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
 
 
 # Non-JSON / non-GEOMETRY scalars: generic geo-analyzer column-type rejection.
@@ -81,19 +81,19 @@ CREATE TABLE g4_reject(pk INTEGER PRIMARY KEY, v VARCHAR, b BLOB, i INTEGER);
 statement error
 CREATE INDEX g4_reject_geo_v ON g4_reject USING inverted(pk, v geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX g4_reject_geo_b ON g4_reject USING inverted(pk, b geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX g4_reject_geo_i ON g4_reject USING inverted(pk, i geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 # ============================================================================
@@ -172,7 +172,7 @@ CREATE TABLE g12_jl(pk INTEGER PRIMARY KEY, jl JSON[]);
 statement error
 CREATE INDEX g12_reject_geo_jl ON g12_jl USING inverted(pk, jl geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'jl' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'jl' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 # ---- (d) ARRAY<JSON, 2>: rejected (same reason) ---------------------------
@@ -182,7 +182,7 @@ CREATE TABLE g12_ja(pk INTEGER PRIMARY KEY, ja JSON[2]);
 statement error
 CREATE INDEX g12_reject_geo_ja ON g12_ja USING inverted(pk, ja geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'ja' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'ja' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 # ---- (e) LIST<GEOMETRY>: rejected EARLY by term_dict::Validate -----------
@@ -192,7 +192,7 @@ CREATE TABLE g12_gl(pk INTEGER PRIMARY KEY, gl GEOMETRY('OGC:CRS84')[]);
 statement error
 CREATE INDEX g12_reject_geo_gl ON g12_gl USING inverted(pk, gl geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'gl' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+db error: ERROR: Column 'gl' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
 
 
 # ---- (f/g/h/i) Mixed-scalar rejections in a single anchor table -----------
@@ -202,25 +202,25 @@ CREATE TABLE g12_reject(pk INTEGER PRIMARY KEY, v VARCHAR, b BLOB, i INTEGER, g 
 statement error
 CREATE INDEX g12_reject_geo_v ON g12_reject USING inverted(pk, v geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'v' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX g12_reject_geo_b ON g12_reject USING inverted(pk, b geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'b' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX g12_reject_geo_i ON g12_reject USING inverted(pk, i geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
+db error: ERROR: Column 'i' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
 
 
 statement error
 CREATE INDEX g12_reject_geo_g ON g12_reject USING inverted(pk, g geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
+db error: ERROR: Column 'g' is GEOMETRY but the analyzer is geopoint; geopoint's latitude/longitude paths are JSON-only -- use a geojson analyzer for GEOMETRY columns
 
 
 # ============================================================================
@@ -250,7 +250,7 @@ CREATE TABLE g18_t(pk INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX g18_src_nocrs ON g18_t USING inverted(pk, g_nocrs geo_src_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+db error: ERROR: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
 
 
 # (b) GEOMETRY with recognized non-CRS84 (Pseudo-Mercator, DUCKDB:1337) +
@@ -258,7 +258,7 @@ db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no 
 statement error
 CREATE INDEX g18_src_badcrs ON g18_t USING inverted(pk, g_badcrs geo_src_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g_badcrs': GEOMETRY type has invalid CRS 'DUCKDB:1337'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
+db error: ERROR: Column 'g_badcrs': GEOMETRY type has invalid CRS 'DUCKDB:1337'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
 
 
 # (c1) GEOMETRY without OGC:CRS84 + geopoint_dict -> CRS84 validator fires
@@ -267,7 +267,7 @@ db error: ERROR: Failed to create index: Column 'g_badcrs': GEOMETRY type has in
 statement error
 CREATE INDEX g18_gp_nocrs ON g18_t USING inverted(pk, g_nocrs geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
+db error: ERROR: Column 'g_nocrs': GEOMETRY type has no CRS attached; declare it with ::GEOMETRY('OGC:CRS84')
 
 
 # (c2) GEOMETRY with recognized non-CRS84 + geopoint_dict -> same precedence:
@@ -276,7 +276,7 @@ db error: ERROR: Failed to create index: Column 'g_nocrs': GEOMETRY type has no 
 statement error
 CREATE INDEX g18_gp_badcrs ON g18_t USING inverted(pk, g_badcrs geopoint_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g_badcrs': GEOMETRY type has invalid CRS 'DUCKDB:1337'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
+db error: ERROR: Column 'g_badcrs': GEOMETRY type has invalid CRS 'DUCKDB:1337'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
 
 
 # --- teardown ---------------------------------------------------------------

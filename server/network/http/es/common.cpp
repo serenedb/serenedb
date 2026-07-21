@@ -86,6 +86,9 @@ void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
       // Unknown field in a query/sort (BINDER errors land here too).
       WriteError(writer, 400, "query_shard_exception", data.errmsg);
       return;
+    case ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION:
+      WriteError(writer, 403, "security_exception", data.errmsg);
+      return;
     default:
       WriteError(writer, 500, "exception", data.errmsg);
       return;

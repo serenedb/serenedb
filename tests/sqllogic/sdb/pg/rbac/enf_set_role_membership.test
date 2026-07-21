@@ -1,0 +1,169 @@
+# serenedb-only: SET ROLE membership enforcement beyond the basics in
+# enf_set_role.test. Covers TRANSITIVE membership (a role may SET ROLE to a
+# group it belongs to indirectly), the RESET path back to the login role, and
+# the SET SESSION AUTHORIZATION -> SET ROLE interaction (once you become a
+# non-superuser via session auth, you may only SET ROLE to that role's own
+# memberships). Needs concurrent password sessions, so it cannot run on the
+# shared trust PG container.
+#
+# Runner note: a connection is keyed by its FULL directive (name+user+password);
+# a directive-less record uses the default (postgres) connection. Each record
+# that must share a role session repeats the identical full directive.
+#
+# Membership chain: leaf -> mid -> grp (leaf is a transitive member of grp).
+# Lore: intern vedernikoff climbs his own membership ladder but no further.
+
+statement ok
+DROP ROLE IF EXISTS srm_grp;
+
+
+statement ok
+DROP ROLE IF EXISTS srm_mid;
+
+
+statement ok
+DROP ROLE IF EXISTS srm_leaf;
+
+
+statement ok
+DROP ROLE IF EXISTS srm_stranger;
+
+
+statement ok
+CREATE ROLE srm_grp;
+
+
+statement ok
+CREATE ROLE srm_mid;
+
+
+statement ok
+CREATE ROLE srm_leaf LOGIN PASSWORD 'pw';
+
+
+statement ok
+CREATE ROLE srm_stranger LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT srm_grp TO srm_mid;
+
+
+statement ok
+GRANT srm_mid TO srm_leaf;
+
+
+# === a fresh session has no role set ===
+connection c_leaf user=srm_leaf password=pw
+query
+SHOW role;
+----
+role
+none
+
+
+# === direct membership: leaf may SET ROLE to mid ===
+connection c_leaf user=srm_leaf password=pw
+statement ok
+SET ROLE srm_mid;
+
+
+connection c_leaf user=srm_leaf password=pw
+query
+SELECT current_user, session_user;
+----
+current_user	session_user
+srm_mid	srm_leaf
+
+
+# === transitive membership: leaf may SET ROLE to grp (leaf in mid in grp) ===
+connection c_leaf user=srm_leaf password=pw
+statement ok
+SET ROLE srm_grp;
+
+
+connection c_leaf user=srm_leaf password=pw
+query
+SELECT current_user;
+----
+current_user
+srm_grp
+
+
+# === RESET ROLE returns to the login role, not to an intermediate ===
+connection c_leaf user=srm_leaf password=pw
+statement ok
+RESET ROLE;
+
+
+connection c_leaf user=srm_leaf password=pw
+query
+SELECT current_user, session_user;
+----
+current_user	session_user
+srm_leaf	srm_leaf
+
+
+# === a stranger (no membership path) may not SET ROLE to grp ===
+connection c_str user=srm_stranger password=pw
+statement error
+SET ROLE srm_grp;
+----
+db error: ERROR: permission denied to set role "srm_grp"<slt:ignore>
+
+
+# === nor to mid ===
+connection c_str user=srm_stranger password=pw
+statement error
+SET ROLE srm_mid;
+----
+db error: ERROR: permission denied to set role "srm_mid"<slt:ignore>
+
+
+# === SET SESSION AUTHORIZATION -> SET ROLE interaction ===
+# The superuser becomes srm_leaf via session auth; now the session IS a
+# non-superuser, so SET ROLE is governed by srm_leaf's memberships: mid/grp are
+# reachable, but an unrelated role (srm_stranger) is refused.
+connection c_sess user=postgres
+statement ok
+SET SESSION AUTHORIZATION srm_leaf;
+
+
+connection c_sess user=postgres
+query
+SELECT current_user, session_user;
+----
+current_user	session_user
+srm_leaf	srm_leaf
+
+
+# reachable via srm_leaf's membership
+connection c_sess user=postgres
+statement ok
+SET ROLE srm_grp;
+
+
+# unrelated role: refused, because the effective session is now non-super srm_leaf
+connection c_sess user=postgres
+statement error
+SET ROLE srm_stranger;
+----
+db error: ERROR: permission denied to set role "srm_stranger"<slt:ignore>
+
+
+# ---- cleanup (default = postgres superuser) ----
+
+statement ok
+DROP ROLE srm_leaf;
+
+
+statement ok
+DROP ROLE srm_stranger;
+
+
+statement ok
+DROP ROLE srm_mid;
+
+
+statement ok
+DROP ROLE srm_grp;

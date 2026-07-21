@@ -23,6 +23,8 @@
 
 #include "iresearch/index/segment_writer.hpp"
 
+#include <duckdb/storage/buffer_manager.hpp>
+
 #include "basics/log.h"
 #include "basics/shared.hpp"
 #include "index_meta.hpp"
@@ -31,8 +33,11 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/ivf/ivf_writer.hpp"
+#include "iresearch/index/inverter/columnar_flush.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -51,7 +56,6 @@ doc_id_t SegmentWriter::begin(DocContext ctx, doc_id_t batch_size) {
   SDB_ASSERT(LastDocId() < doc_limits::eof());
   _valid = true;
   SDB_ASSERT(batch_size > 0);
-  ResetNorms();
 
   const auto needed_docs = buffered_docs() + batch_size;
 
@@ -74,13 +78,13 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 size_t SegmentWriter::memory_active() const noexcept {
   return _docs_context.size() * sizeof(DocContext) +
          bitset::bits_to_words(_docs_mask.count) * sizeof(bitset::word_t) +
-         _fields.memory_active();
+         _fields.MemoryActive();
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
   return sizeof(SegmentWriter) + _docs_context.capacity() * sizeof(DocContext) +
          _docs_mask.set.capacity() / BitsRequired<char>() +
-         _fields.memory_reserved();
+         _fields.MemoryReserved();
 }
 
 bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
@@ -104,40 +108,21 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
   : _dir{dir},
     _scorer{options.scorer},
     _docs_context{{options.resource_manager}},
-    _fields{options.resource_manager, options.scorers_features},
+    _fields{InverterMemory{
+      duckdb::BufferManager::GetBufferManager(DerefDb(options.db))
+        .GetBufferAllocator(),
+      options.resource_manager}},
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options} {
   _docs_mask.set = decltype(_docs_mask.set){{options.resource_manager}};
 }
 
-bool SegmentWriter::index(field_id id, doc_id_t doc,
-                          IndexFeatures index_features, Tokenizer& tokens) {
-  auto* slot = _fields.emplace(id, index_features);
-
-  if (IsSubsetOf(index_features, slot->requested_features()) &&
-      slot->invert(tokens, doc)) {
-    if (!slot->seen() && slot->has_features()) {
-      _doc.emplace_back(slot);
-      slot->seen(true);
-    }
-    return true;
-  }
-
-  _valid = false;
-  return false;
-}
-
-void SegmentWriter::finish() {
-  for (const auto* field : _doc) {
-    field->compute_features();
-  }
-}
-
-void SegmentWriter::FlushFields(FlushState& state) {
+void SegmentWriter::FlushFields(FlushState& state,
+                                std::span<const BasicTermReader* const> extra) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.flush(*_field_writer, state);
+    _fields.Flush(*_field_writer, state, extra);
   } catch (...) {
     _field_writer.reset();
     throw;
@@ -158,15 +143,15 @@ void SegmentWriter::FlushFields(FlushState& state) {
 
   IdxWriter idx{_dir, _seg_name, _db};
 
+  std::vector<std::unique_ptr<IvfWriter>> ivf_writers;
   if (_col_writer) {
+    _fields.FinalizeNorms();
     _col_writer->Commit(buffered_docs());
-    auto built = _col_writer->TakeBuiltHnsw();
+    ivf_writers = _col_writer->TakeIvfWriters();
     _col_writer.reset();
-    if (!built.empty()) {
-      _built_hnsw_graphs.reserve(built.size());
-      for (auto& b : built) {
-        _built_hnsw_graphs.emplace(b.column_id, b.graph);
-        idx.AddHNSW(b.column_id, b.info, std::move(b.graph));
+    for (const auto& w : ivf_writers) {
+      if (auto built = w->Built()) {
+        idx.AddIvf(w->ColumnId(), w->Metric(), std::move(built));
       }
     }
   }
@@ -177,7 +162,10 @@ void SegmentWriter::FlushFields(FlushState& state) {
 
   if (state.doc_count != 0) {
     _field_writer->SetIdxWriter(idx);
-    FlushFields(state);
+    std::optional<ReadContext> ivf_ctx;
+    const auto cluster_readers =
+      PrepareIvfClusterReaders(ivf_writers, _col_reader.get(), ivf_ctx);
+    FlushFields(state, cluster_readers);
   }
 
   _col_reader.reset();
@@ -220,13 +208,12 @@ void SegmentWriter::ResetState() noexcept {
   _docs_mask.set.clear();
   _docs_mask.count = 0;
   _batch_first_doc_id = doc_limits::eof();
-  _fields.reset();
+  _fields.Reset();
   _col_reader.reset();
   if (_col_writer) {
     _col_writer->Rollback();
     _col_writer.reset();
   }
-  _built_hnsw_graphs.clear();
 }
 
 void SegmentWriter::reset() noexcept {

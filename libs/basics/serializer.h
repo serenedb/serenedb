@@ -61,8 +61,7 @@ static_assert(BOOST_PFR_ENABLED);
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::basics {
 namespace detail {
@@ -242,8 +241,8 @@ inline constexpr bool kIsSerializableArithmetic =
 
 template<typename T>
 [[noreturn]] void ThrowInvalidEnum(int64_t raw) {
-  SDB_THROW(ERROR_BAD_PARAMETER, "Invalid enum value ", raw, " for ",
-            magic_enum::enum_type_name<T>());
+  THROW_SQL_ERROR(ERR_MSG("Invalid enum value ", raw, " for ",
+                          magic_enum::enum_type_name<T>()));
 }
 
 }  // namespace detail
@@ -395,15 +394,14 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
       const bool matched =
         detail::ReadVariantIndex(value, index, [&](auto& v) { self(v, src); });
       if (!matched) [[unlikely]] {
-        SDB_THROW(ERROR_BAD_PARAMETER, "Variant index ", index,
-                  " out of range");
+        THROW_SQL_ERROR(ERR_MSG("Variant index ", index, " out of range"));
       }
     } else if constexpr (!std::is_empty_v<T>) {
       const size_t count = src.OnListBegin();
       auto check_size = [&](size_t expected) {
         if (count != expected) {
-          SDB_THROW(ERROR_BAD_PARAMETER, "Failed to read: serialized data has ",
-                    count, " element(s), expected ", expected);
+          THROW_SQL_ERROR(ERR_MSG("Failed to read: serialized data has ", count,
+                                  " element(s), expected ", expected));
         }
       };
       if constexpr (std::is_aggregate_v<T>) {
@@ -469,12 +467,12 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
         }
       } catch (const std::exception& e) {
         src.OnListEnd();
-        SDB_THROW(ERROR_BAD_PARAMETER, "Failed to read element ", element_idx,
-                  ": ", e.what());
+        THROW_SQL_ERROR(
+          ERR_MSG("Failed to read element ", element_idx, ": ", e.what()));
       } catch (...) {
         src.OnListEnd();
-        SDB_THROW(ERROR_BAD_PARAMETER, "Failed to read element ", element_idx,
-                  ": unspecified error");
+        THROW_SQL_ERROR(ERR_MSG("Failed to read element ", element_idx,
+                                ": unspecified error"));
       }
       src.OnListEnd();
     } else {
@@ -571,8 +569,8 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
       const std::string name = src.ReadString();
       auto cast = magic_enum::enum_cast<T>(name, magic_enum::case_insensitive);
       if (!cast) [[unlikely]] {
-        SDB_THROW(ERROR_BAD_PARAMETER, "Invalid enum value '", name, "' for ",
-                  magic_enum::enum_type_name<T>());
+        THROW_SQL_ERROR(ERR_MSG("Invalid enum value '", name, "' for ",
+                                magic_enum::enum_type_name<T>()));
       }
       value = *cast;
     } else if constexpr (detail::kIsSerializableArithmetic<T>) {
@@ -604,17 +602,16 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
       }
     } else if constexpr (kIsVariant<T>) {
       if (!src.OnListBegin()) [[unlikely]] {
-        SDB_THROW(ERROR_BAD_PARAMETER, "JSON: expected variant [index, value]");
+        THROW_SQL_ERROR(ERR_MSG("JSON: expected variant [index, value]"));
       }
       const size_t index = src.ReadUnsignedInt64();
       if (!src.NextListElement()) [[unlikely]] {
-        SDB_THROW(ERROR_BAD_PARAMETER, "JSON: variant missing its value");
+        THROW_SQL_ERROR(ERR_MSG("JSON: variant missing its value"));
       }
       const bool matched =
         detail::ReadVariantIndex(value, index, [&](auto& v) { self(v); });
       if (!matched) [[unlikely]] {
-        SDB_THROW(ERROR_BAD_PARAMETER, "Variant index ", index,
-                  " out of range");
+        THROW_SQL_ERROR(ERR_MSG("Variant index ", index, " out of range"));
       }
       src.OnScopeEnd();
     } else if constexpr (detail::IsMap<T>) {
@@ -632,8 +629,8 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
           auto cast =
             magic_enum::enum_cast<Key>(name, magic_enum::case_insensitive);
           if (!cast) [[unlikely]] {
-            SDB_THROW(ERROR_BAD_PARAMETER, "Invalid enum map key '", name,
-                      "' for ", magic_enum::enum_type_name<Key>());
+            THROW_SQL_ERROR(ERR_MSG("Invalid enum map key '", name, "' for ",
+                                    magic_enum::enum_type_name<Key>()));
           }
           key = *cast;
         } else {
@@ -641,8 +638,8 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
                         "ReadObject: only string/enum/integral map keys are "
                         "supported");
           if (!absl::SimpleAtoi(name, &key)) [[unlikely]] {
-            SDB_THROW(ERROR_BAD_PARAMETER, "Failed to parse integral map key '",
-                      name, "'");
+            THROW_SQL_ERROR(
+              ERR_MSG("Failed to parse integral map key '", name, "'"));
           }
         }
         typename T::mapped_type val{};
@@ -671,17 +668,17 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
         src.OnScopeEnd();
       }
       if (more) [[unlikely]] {
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  "JSON: tuple has more elements than the fixed size ", kSize);
+        THROW_SQL_ERROR(
+          ERR_MSG("JSON: tuple has more elements than the fixed size ", kSize));
       }
     } else if constexpr (kIsArray<T>) {
       auto it = value.begin();
       const auto last = value.end();
       src.ForEachListElement([&] {
         if (it == last) [[unlikely]] {
-          SDB_THROW(ERROR_BAD_PARAMETER,
-                    "JSON: array has more elements than the fixed size ",
-                    value.size());
+          THROW_SQL_ERROR(
+            ERR_MSG("JSON: array has more elements than the fixed size ",
+                    value.size()));
         }
         self(*it++);
       });

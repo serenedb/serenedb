@@ -39,27 +39,16 @@ query
 EXPLAIN SELECT pk, body FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      src_inc_only_idx     │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││notes(string) = one││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│             pk            │
-│            body           │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: src_inc_only_idx  │
+│ Filter:                  │
+│ ╭─ Term ───────────────╮ │
+│ │ Field: notes(string) │ │
+│ │ Value: one           │ │
+│ ╰──────────────────────╯ │
+│ Projections: pk, body    │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 
 # --- 2. Lookup-only projection: column not INCLUDE'd ---------------------
@@ -70,27 +59,17 @@ query
 EXPLAIN SELECT notes FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      src_inc_only_idx     │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││notes(string) = one││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│     Projections: notes    │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: src_inc_only_idx  │
+│ Lookup: table            │
+│ Filter:                  │
+│ ╭─ Term ───────────────╮ │
+│ │ Field: notes(string) │ │
+│ │ Value: one           │ │
+│ ╰──────────────────────╯ │
+│ Projections: notes       │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 
 # --- 3. Mixed projection: index + lookup columns ------------------------
@@ -100,179 +79,147 @@ query
 EXPLAIN SELECT pk, notes FROM src_inc_only_idx WHERE notes @@ ts_phrase('one');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             pk            │
-│           notes           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      src_inc_only_idx     │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││notes(string) = one││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│         notes (l)         │
-│           pk (i)          │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ PROJECTION ─────────────╮
+│ Projections: pk, notes   │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: src_inc_only_idx  │
+│ Lookup: table            │
+│ Filter:                  │
+│ ╭─ Term ───────────────╮ │
+│ │ Field: notes(string) │ │
+│ │ Value: one           │ │
+│ ╰──────────────────────╯ │
+│ Projections: notes (l),  │
+│              pk (i)      │
+│ ~1 row                   │
+╰──────────────────────────╯
 
 
-# --- 4. HNSW vector served by index when user projects only it ---------
-# After the auto-promotion of HNSW columns to store_values=true, the
+# --- 4. IVF vector served by index when user projects only it ---------
+# After the auto-promotion of IVF columns to store_values=true, the
 # vector column is materialized from the typed columnstore. Projecting
 # just `emb` is the all-index case, so the "Lookup" line disappears
 # and emb is shown without "(i)" annotation.
 statement ok
-CREATE TABLE src_hnsw_only (id INT PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE src_ivf_only (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX src_hnsw_only_idx ON src_hnsw_only
-  USING inverted(emb hnsw (metric = 'l2'));
+CREATE INDEX src_ivf_only_idx ON src_ivf_only
+  USING inverted(emb ivf (metric = 'l2'));
 
 statement ok
-INSERT INTO src_hnsw_only VALUES
+INSERT INTO src_ivf_only VALUES
   (1, [1.0, 0.0, 0.0]::FLOAT[3]),
   (2, [0.0, 1.0, 0.0]::FLOAT[3]);
 
 statement ok
-VACUUM (REFRESH_TABLE) src_hnsw_only;
+VACUUM (REFRESH_TABLE) src_ivf_only;
 
 query
-EXPLAIN SELECT emb FROM src_hnsw_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+EXPLAIN SELECT emb FROM src_ivf_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 1          │
-│      Order By: #1 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│  src_hnsw_only_idx (ANN)  │
-│                           │
-│           Top: 1          │
-│          Dims: 3          │
-│                           │
-│        Projections:       │
-│            emb            │
-│  sdb_inverted_index_score │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 1                                 │
+│ Order By: #1 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: src_ivf_only_idx                │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
+│ Top: 1                                 │
+│ Projections: emb,                      │
+│              sdb_inverted_index_score  │
+│ ~2 rows                                │
+╰────────────────────────────────────────╯
 
 
-# --- 4b. HNSW with PK projection: PK is lookup-served, emb is index-served
+# --- 4b. IVF with PK projection: PK is lookup-served, emb is index-served
 # Without an INCLUDE on the PK column, projecting (id, emb) is mixed.
 query
-EXPLAIN SELECT id, emb FROM src_hnsw_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+EXPLAIN SELECT id, emb FROM src_ivf_only_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 1          │
-│      Order By: #2 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│  src_hnsw_only_idx (ANN)  │
-│                           │
-│       Lookup: table       │
-│           Top: 1          │
-│          Dims: 3          │
-│                           │
-│        Projections:       │
-│           id (l)          │
-│          emb (i)          │
-│  sdb_inverted_index_score │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 1                                 │
+│ Order By: #2 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: src_ivf_only_idx                │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
+│ Top: 1                                 │
+│ Projections: id (l), emb (i),          │
+│              sdb_inverted_index_score  │
+│ ~2 rows                                │
+╰────────────────────────────────────────╯
 
 
-# --- 5. HNSW + extra non-INCLUDE'd column → mixed annotation -----------
-# Add a non-INCLUDE'd column to an HNSW index and project both. emb is
-# (i) (HNSW columns are store_values=true), label is (l) (lookup
+# --- 5. IVF + extra non-INCLUDE'd column → mixed annotation -----------
+# Add a non-INCLUDE'd column to an IVF index and project both. emb is
+# (i) (IVF columns are store_values=true), label is (l) (lookup
 # fallback through IndexSource).
 statement ok
-CREATE TABLE src_hnsw_mixed (id INT PRIMARY KEY, emb FLOAT[3], label VARCHAR);
+CREATE TABLE src_ivf_mixed (id INT PRIMARY KEY, emb FLOAT[3], label VARCHAR);
 
 statement ok
-CREATE INDEX src_hnsw_mixed_idx ON src_hnsw_mixed
-  USING inverted(emb hnsw (metric = 'l2'));
+CREATE INDEX src_ivf_mixed_idx ON src_ivf_mixed
+  USING inverted(emb ivf (metric = 'l2'));
 
 statement ok
-INSERT INTO src_hnsw_mixed VALUES
+INSERT INTO src_ivf_mixed VALUES
   (1, [1.0, 0.0, 0.0]::FLOAT[3], 'a'),
   (2, [0.0, 1.0, 0.0]::FLOAT[3], 'b');
 
 statement ok
-VACUUM (REFRESH_TABLE) src_hnsw_mixed;
+VACUUM (REFRESH_TABLE) src_ivf_mixed;
 
 query
-EXPLAIN SELECT emb, label FROM src_hnsw_mixed_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
+EXPLAIN SELECT emb, label FROM src_ivf_mixed_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           TOP_N           │
-│    ────────────────────   │
-│           Top: 1          │
-│      Order By: #2 ASC     │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│  src_hnsw_mixed_idx (ANN) │
-│                           │
-│       Lookup: table       │
-│           Top: 1          │
-│          Dims: 3          │
-│                           │
-│        Projections:       │
-│          emb (i)          │
-│         label (l)         │
-│  sdb_inverted_index_score │
-│                           │
-│          ~2 rows          │
-└───────────────────────────┘
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 1                                 │
+│ Order By: #2 ASC                       │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: src_ivf_mixed_idx               │
+│ Lookup: table                          │
+│ Filter:                                │
+│ ╭─ Vector KNN ─╮                       │
+│ │ Field: emb   │                       │
+│ │ Metric: l2   │                       │
+│ │ Dims: 3      │                       │
+│ ╰──────────────╯                       │
+│ Top: 1                                 │
+│ Projections: emb (i), label (l),       │
+│              sdb_inverted_index_score  │
+│ ~2 rows                                │
+╰────────────────────────────────────────╯
 
 
-# --- 6. Functional check: HNSW vector is correctly materialized --------
+# --- 6. Functional check: IVF vector is correctly materialized --------
 # Confirms that when EXPLAIN says (i) for emb, the value really comes
 # back through the index path (not garbage / not empty).
 statement ok
-VACUUM (REFRESH_TABLE) src_hnsw_only;
+VACUUM (REFRESH_TABLE) src_ivf_only;
 
 query
-SELECT id, emb FROM src_hnsw_only_idx ORDER BY id;
+SELECT id, emb FROM src_ivf_only_idx ORDER BY id;
 ----
 id	emb
 1	{1,0,0}

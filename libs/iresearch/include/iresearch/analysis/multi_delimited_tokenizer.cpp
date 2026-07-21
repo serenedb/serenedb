@@ -23,41 +23,55 @@
 #include <fst/union.h>
 #include <fstext/determinize-star.h>
 
+#include <bit>
+#include <concepts>
 #include <string_view>
 
 #include "absl/container/flat_hash_map.h"
-#include "basics/exceptions.h"
+#include "iresearch/analysis/batch/classify.hpp"
+#include "iresearch/analysis/batch/term_view.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/fstext/fst_draw.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
-namespace {
+
+template<TokenLayout Layout, typename MaskFn, typename DelimFn>
+void DrainSingleCharValue(TokenEmitter& sink, bytes_view data, size_t value_off,
+                          MaskFn mask_at, DelimFn is_delim);
 
 template<typename Derived>
-class MultiDelimitedTokenizerBase : public MultiDelimitedTokenizer {
+class MultiDelimitedTokenizerBase : public TypedTokenizer<Derived>,
+                                    public MultiDelimitedTokenizer {
  public:
   MultiDelimitedTokenizerBase() = default;
 
-  bool next() override {
-    while (true) {
-      if (_data.begin() == _data.end()) {
-        return false;
-      }
-
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink) {
+    auto& buf = sink.buf;
+    _data = ViewCast<byte_type>(value);
+    _start = _data.data();
+    while (_data.begin() != _data.end()) {
       auto [next, skip] = static_cast<Derived*>(this)->FindNextDelim();
 
       if (next == _data.begin()) {
-        // skip empty terms
         SDB_ASSERT(skip <= _data.size());
         _data = bytes_view(_data.data() + skip, _data.size() - skip);
         continue;
       }
 
-      auto& term = std::get<TermAttr>(_attrs);
-      term.value = bytes_view(_data.data(), std::distance(_data.begin(), next));
-      auto& offset = std::get<OffsAttr>(_attrs);
-      offset.start = std::distance(_start, _data.data());
-      offset.end = offset.start + term.value.size();
+      const auto size =
+        static_cast<uint32_t>(std::distance(_data.begin(), next));
+      const auto i = sink.Next();
+      buf.terms[i] =
+        MakeTermView(reinterpret_cast<const char*>(_data.data()), size);
+      if constexpr (Layout == TokenLayout::TermsPosOffs) {
+        const auto off =
+          static_cast<uint32_t>(std::distance(_start, _data.data()));
+        buf.offs_start[i] = off;
+        buf.offs_end[i] = off + size;
+      }
 
       if (next == _data.end()) {
         _data = {};
@@ -65,9 +79,8 @@ class MultiDelimitedTokenizerBase : public MultiDelimitedTokenizer {
         _data =
           bytes_view(&(*next) + skip, std::distance(next, _data.end()) - skip);
       }
-
-      return true;
     }
+    return true;
   }
 };
 
@@ -80,23 +93,36 @@ class MultiDelimitedTokenizerSingleCharsBase
     auto where = static_cast<Derived*>(this)->FindNextDelim();
     return std::make_pair(where, size_t{1});
   }
+
+  using Base = MultiDelimitedTokenizerBase<
+    MultiDelimitedTokenizerSingleCharsBase<Derived>>;
+
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink) {
+    if constexpr (kHasBlockScan) {
+      auto* impl = static_cast<Derived*>(this);
+      if (impl->CanBlockScan()) {
+        DrainSingleCharValue<Layout>(
+          sink, ViewCast<byte_type>(value), 0,
+          [impl](const byte_type* p) { return impl->ClassifyBlock(p); },
+          [impl](byte_type c) { return impl->IsDelimByte(c); });
+        return true;
+      }
+    }
+    return Base::template DoFill<Layout>(value, sink);
+  }
+
+ private:
+  static constexpr bool kHasBlockScan =
+    requires(Derived& d, const byte_type* p, byte_type c) {
+      { d.ClassifyBlock(p) } -> std::same_as<uint32_t>;
+      { d.IsDelimByte(c) } -> std::same_as<bool>;
+      { d.CanBlockScan() } -> std::same_as<bool>;
+    };
 };
 
 template<size_t N>
-class MultiDelimitedTokenizerSingleChars final
-  : public MultiDelimitedTokenizerSingleCharsBase<
-      MultiDelimitedTokenizerSingleChars<N>> {
- public:
-  explicit MultiDelimitedTokenizerSingleChars(
-    const std::vector<bstring>& /*delimiters*/) {
-    // according to benchmarks "table" version is
-    // ~1.5x faster except cases for 0 and 1.
-    // So this should not be used.
-    SDB_ASSERT(false);
-  }
-
-  auto FindNextDelim() { return this->data.end(); }
-};
+class MultiDelimitedTokenizerSingleChars;
 
 template<>
 class MultiDelimitedTokenizerSingleChars<1> final
@@ -115,6 +141,12 @@ class MultiDelimitedTokenizerSingleChars<1> final
       return this->_data.begin() + pos;
     }
     return this->_data.end();
+  }
+
+  bool CanBlockScan() const { return true; }
+  bool IsDelimByte(byte_type c) const { return c == delim; }
+  uint32_t ClassifyBlock(const byte_type* block) const {
+    return ClassifyEqBlock(block, delim);
   }
 
   byte_type delim;
@@ -138,15 +170,30 @@ class MultiDelimitedTokenizerGenericSingleChars final
   : public MultiDelimitedTokenizerSingleCharsBase<
       MultiDelimitedTokenizerGenericSingleChars> {
  public:
+  static constexpr size_t kMaxBlockDelims = 8;
+
   explicit MultiDelimitedTokenizerGenericSingleChars(
     const std::vector<bstring>& delimiters) {
     for (const auto& delim : delimiters) {
       SDB_ASSERT(delim.size() == 1);
+      if (delim[0] > SCHAR_MAX) {
+        // The table path never matches high bytes; keep that behavior and
+        // disable the block path so both agree.
+        high_byte_delim = true;
+        continue;
+      }
       bytes[delim[0]] = true;
+      if (ndelims < kMaxBlockDelims) {
+        delims[ndelims] = delim[0];
+      }
+      ++ndelims;
     }
   }
 
   auto FindNextDelim() {
+    if (CanBlockScan()) {
+      return FindNextDelimBlock();
+    }
     return absl::c_find_if(_data, [&](auto c) {
       if (c > SCHAR_MAX) {
         return false;
@@ -155,9 +202,87 @@ class MultiDelimitedTokenizerGenericSingleChars final
       return bytes[c];
     });
   }
+
+  bool CanBlockScan() const {
+    return !high_byte_delim && ndelims <= kMaxBlockDelims;
+  }
+  bool IsDelimByte(byte_type c) const { return c <= SCHAR_MAX && bytes[c]; }
+  uint32_t ClassifyBlock(const byte_type* block) const {
+    return ClassifyAnyEqBlock(block, {delims.data(), ndelims});
+  }
+
   // TODO(mbkkt) maybe use a bitset instead?
   std::array<bool, SCHAR_MAX + 1> bytes{};
+  std::array<byte_type, kMaxBlockDelims> delims{};
+  size_t ndelims = 0;
+  bool high_byte_delim = false;
+
+ private:
+  bytes_view::iterator FindNextDelimBlock() {
+    const auto* p = _data.data();
+    const size_t size = _data.size();
+    size_t offset = 0;
+    while (size - offset >= kClassifyBlock) {
+      const uint32_t mask =
+        ClassifyAnyEqBlock(p + offset, {delims.data(), ndelims});
+      if (mask != 0) {
+        return _data.begin() + offset + std::countr_zero(mask);
+      }
+      offset += kClassifyBlock;
+    }
+    for (; offset < size; ++offset) {
+      const auto c = p[offset];
+      if (c <= SCHAR_MAX && bytes[c]) {
+        return _data.begin() + offset;
+      }
+    }
+    return _data.end();
+  }
 };
+
+// Block-drained splitter for single-byte delimiter sets: one classification
+// mask per 32-byte block, every set bit consumed, empty tokens skipped,
+// zero-copy token views.
+template<TokenLayout Layout, typename MaskFn, typename DelimFn>
+void DrainSingleCharValue(TokenEmitter& sink, bytes_view data, size_t value_off,
+                          MaskFn mask_at, DelimFn is_delim) {
+  auto& buf = sink.buf;
+  const auto* p = data.data();
+  const size_t size = data.size();
+  size_t tok_begin = 0;
+
+  const auto emit = [&](size_t begin, size_t end) {
+    if (begin == end) {
+      return;
+    }
+    const auto i = sink.Next();
+    buf.terms[i] = MakeTermView(reinterpret_cast<const char*>(p + begin),
+                                static_cast<uint32_t>(end - begin));
+    if constexpr (Layout == TokenLayout::TermsPosOffs) {
+      buf.offs_start[i] = static_cast<uint32_t>(value_off + begin);
+      buf.offs_end[i] = static_cast<uint32_t>(value_off + end);
+    }
+  };
+
+  size_t offset = 0;
+  while (size - offset >= kClassifyBlock) {
+    uint32_t mask = mask_at(p + offset);
+    while (mask != 0) {
+      const size_t pos = offset + std::countr_zero(mask);
+      mask &= mask - 1;
+      emit(tok_begin, pos);
+      tok_begin = pos + 1;
+    }
+    offset += kClassifyBlock;
+  }
+  for (; offset < size; ++offset) {
+    if (is_delim(p[offset])) {
+      emit(tok_begin, offset);
+      tok_begin = offset + 1;
+    }
+  }
+  emit(tok_begin, size);
+}
 
 struct TrieNode {
   explicit TrieNode(int32_t id, int32_t depth) : state_id(id), depth(depth) {}
@@ -379,8 +504,25 @@ class MultiDelimitedTokenizerSingle final
 
 #endif
 
+}  // namespace irs::analysis
+namespace irs {
+
+template<typename Derived>
+struct Type<analysis::MultiDelimitedTokenizerSingleCharsBase<Derived>>
+  : Type<analysis::MultiDelimitedTokenizer> {};
+template<>
+struct Type<analysis::MultiDelimitedTokenizerGeneric>
+  : Type<analysis::MultiDelimitedTokenizer> {};
+template<>
+struct Type<analysis::MultiDelimitedTokenizerSingle>
+  : Type<analysis::MultiDelimitedTokenizer> {};
+
+}  // namespace irs
+namespace irs::analysis {
+namespace {
+
 template<size_t N>
-Analyzer::ptr MakeSingleChar(std::vector<bstring>&& delimiters) {
+Tokenizer::ptr MakeSingleChar(std::vector<bstring>&& delimiters) {
   if constexpr (N >= 2) {
     return std::make_unique<MultiDelimitedTokenizerGenericSingleChars>(
       delimiters);
@@ -391,7 +533,7 @@ Analyzer::ptr MakeSingleChar(std::vector<bstring>&& delimiters) {
   }
 }
 
-Analyzer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
+Tokenizer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
   const bool single_character_case = absl::c_all_of(
     delimiters, [](const auto& delim) { return delim.size() == 1; });
   if (single_character_case) {
@@ -405,19 +547,19 @@ Analyzer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
 
 }  // namespace
 
-Analyzer::ptr MultiDelimitedTokenizer::Make(
+Tokenizer::ptr MultiDelimitedTokenizer::Make(
   MultiDelimitedTokenizer::Options opts) {
   for (size_t i = 0; i < opts.delimiters.size(); ++i) {
     const bytes_view view{opts.delimiters[i]};
     if (view.empty()) {
-      SDB_THROW(sdb::ERROR_BAD_PARAMETER, "multi_delimited: empty delimiter");
+      THROW_SQL_ERROR(ERR_MSG("multi_delimited: empty delimiter"));
     }
     for (size_t j = 0; j < i; ++j) {
       const bytes_view known{opts.delimiters[j]};
       if (view.starts_with(known) || known.starts_with(view)) {
-        SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-                  "multi_delimited: delimiters must not be prefixes of one "
-                  "another");
+        THROW_SQL_ERROR(
+          ERR_MSG("multi_delimited: delimiters must not be prefixes of one "
+                  "another"));
       }
     }
   }

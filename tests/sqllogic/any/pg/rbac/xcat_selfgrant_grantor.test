@@ -1,0 +1,156 @@
+# Cross-catalog: the GRANTOR component of a relacl element ("grantee=privs/
+# GRANTOR") and the owner self-grant. Two facts:
+#   1. When a holder of WITH GRANT OPTION grants onward, the new element's
+#      grantor is THAT holder, not the table owner. relacl and
+#      information_schema.table_privileges both record it, identically on both
+#      engines.
+#   2. An explicit grant to the OWNER materializes an owner element. Its
+#      privilege letters begin "arwdDxt"; PostgreSQL19 appends a trailing 'm'
+#      (MAINTAIN) that serenedb does not synthesize, so the element is matched
+#      by a "starts with arwdDxt" / "ends with /postgres" predicate rather than
+#      asserted as a fixed string -- this is the one documented divergence.
+#
+# Vedernikoff lore: the mop table; deleg the delegator, recv the recipient.
+# Idempotent + self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS xcat_sg_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_sg_deleg;
+
+
+statement ok
+DROP ROLE IF EXISTS xcat_sg_recv;
+
+
+statement ok
+CREATE TABLE xcat_sg_mop (id int, payload text);
+
+
+statement ok
+CREATE ROLE xcat_sg_deleg LOGIN PASSWORD 'xcat_sg_deleg_pw';
+
+
+statement ok
+CREATE ROLE xcat_sg_recv;
+
+
+# Owner grants SELECT WITH GRANT OPTION to deleg: deleg's element has grantor
+# postgres and a starred letter (r* = SELECT with grant option).
+statement ok
+GRANT SELECT ON xcat_sg_mop TO xcat_sg_deleg WITH GRANT OPTION;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_sg_mop'
+) g WHERE e LIKE 'xcat_sg_deleg=%';
+----
+e
+xcat_sg_deleg=r*/postgres
+
+
+# deleg (not the owner) grants SELECT onward to recv. The grantor recorded in
+# recv's element is xcat_sg_deleg -- the delegator, not postgres.
+connection c_deleg user=xcat_sg_deleg password=xcat_sg_deleg_pw
+statement ok
+GRANT SELECT ON xcat_sg_mop TO xcat_sg_recv;
+
+
+query
+SELECT e FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_sg_mop'
+) g WHERE e LIKE 'xcat_sg_recv=%';
+----
+e
+xcat_sg_recv=r/xcat_sg_deleg
+
+
+# information_schema.table_privileges records the same grantor (deleg) for the
+# recv row.
+query
+SELECT grantor, grantee, privilege_type FROM information_schema.table_privileges
+WHERE table_name = 'xcat_sg_mop' AND grantee = 'xcat_sg_recv'
+ORDER BY privilege_type;
+----
+grantor	grantee	privilege_type
+xcat_sg_deleg	xcat_sg_recv	SELECT
+
+
+# The owner's row for the same privilege still lists grantor postgres -- a
+# separate element from deleg's onward grant.
+query
+SELECT grantor FROM information_schema.table_privileges
+WHERE table_name = 'xcat_sg_mop' AND grantee = 'xcat_sg_deleg' AND privilege_type = 'SELECT';
+----
+grantor
+postgres
+
+
+# ----------------------------------------------------------------------
+# Owner self-grant: GRANT ... TO postgres materializes an owner element. We
+# assert it EXISTS, that its grantor is the owner itself (ends with /postgres),
+# and that its privilege letters start with arwdDxt -- WITHOUT pinning the exact
+# string, because PG appends a trailing 'm' (MAINTAIN) serenedb omits.
+# ----------------------------------------------------------------------
+
+statement ok
+GRANT ALL ON xcat_sg_mop TO postgres;
+
+
+query
+SELECT count(*) AS owner_elem,
+       bool_and(e LIKE 'postgres=arwdDxt%') AS letters_ok,
+       bool_and(e LIKE '%/postgres') AS grantor_is_owner
+FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_sg_mop'
+) g WHERE e LIKE 'postgres=%';
+----
+owner_elem	letters_ok	grantor_is_owner
+1	t	t
+
+
+# The owner self-grant does not perturb the privilege oracle: the owner still
+# has every privilege (it always did, via ownership).
+query
+SELECT has_table_privilege('postgres', 'xcat_sg_mop', 'SELECT') AS sel,
+       has_table_privilege('postgres', 'xcat_sg_mop', 'UPDATE') AS upd;
+----
+sel	upd
+t	t
+
+
+# recv's grant was made BY deleg, so it must be revoked BY deleg (the grantor).
+# A REVOKE issued by a different grantor -- e.g. the owner -- does not touch
+# another grantor's grant, so we revoke from deleg's own session. After that,
+# recv's element is gone; deleg's own element (grantor postgres) survives.
+connection c_deleg user=xcat_sg_deleg password=xcat_sg_deleg_pw
+statement ok
+REVOKE SELECT ON xcat_sg_mop FROM xcat_sg_recv;
+
+
+query
+SELECT count(*) AS recv_rows,
+       (SELECT count(*) FROM (
+          SELECT unnest(relacl::text[]) AS e2 FROM pg_class WHERE relname = 'xcat_sg_mop'
+        ) h WHERE e2 LIKE 'xcat_sg_deleg=%') AS deleg_rows
+FROM (
+  SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_sg_mop'
+) g WHERE e LIKE 'xcat_sg_recv=%';
+----
+recv_rows	deleg_rows
+0	1
+
+
+statement ok
+DROP TABLE xcat_sg_mop;
+
+
+statement ok
+DROP ROLE xcat_sg_deleg;
+
+
+statement ok
+DROP ROLE xcat_sg_recv;

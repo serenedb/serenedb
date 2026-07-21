@@ -42,9 +42,9 @@ struct PgStatisticExt {
   Name stxname;
   Oid stxnamespace;
   Oid stxowner;
-  Vector<int16_t> stxkeys;
+  Array<int16_t> stxkeys;
   int16_t stxstattarget;
-  Vector<Stxkind> stxkind;
+  Array<Stxkind> stxkind;
   PgNodeTree stxexprs;
 };
 // NOLINTEND

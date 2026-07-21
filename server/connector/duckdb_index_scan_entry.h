@@ -37,6 +37,8 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext& context, duckdb::column_t column_id) final;
 
+  const catalog::Object* GetIndexedRelation() const { return _relation; }
+
  protected:
   SereneDBIndexScanEntry(duckdb::Catalog& catalog,
                          duckdb::SchemaCatalogEntry& schema,
@@ -44,6 +46,7 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
                          std::vector<size_t> indexed_col_indices);
 
   std::vector<size_t> _indexed_col_indices;
+  const catalog::Object* _relation = nullptr;
 };
 
 class InvertedIndexScanEntry : public SereneDBIndexScanEntry {

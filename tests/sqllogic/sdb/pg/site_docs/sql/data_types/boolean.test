@@ -5,7 +5,7 @@
 query
 SELECT true, false, NULL::BOOLEAN;
 ----
-bool	bool	bool
+?column?	?column?	bool
 t	f	NULL
 
 # DOCS_TEST: example_002

@@ -23,36 +23,40 @@
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/query_node.hpp>
+#include <ranges>
 
 #include "basics/serializer.h"
 #include "catalog/create_info_serde.h"
 
 namespace sdb::catalog {
 
-PgSqlFunction::PgSqlFunction(ObjectId schema_id, ObjectId id,
+PgSqlFunction::PgSqlFunction(Permissions perm, ObjectId schema_id, ObjectId id,
                              std::string_view name,
                              duckdb::unique_ptr<duckdb::CreateMacroInfo> info)
-  : Object{schema_id, id, std::string{name}, ObjectType::PgSqlFunction},
+  : Object{std::move(perm), schema_id, id, std::string{name},
+           ObjectType::PgSqlFunction},
     _info{std::move(info)} {}
 
 std::shared_ptr<PgSqlFunction> PgSqlFunction::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
   CreateInfoReadData<duckdb::CreateMacroInfo> data;
   basics::ReadTuple(src, data);
-  return std::make_shared<PgSqlFunction>(ctx.schema_id, ctx.id, data.name,
+  return std::make_shared<PgSqlFunction>(std::move(data.perm), ctx.schema_id,
+                                         ctx.id, data.name,
                                          std::move(data.info.info));
 }
 
 void PgSqlFunction::Serialize(duckdb::Serializer& sink) const {
   basics::WriteTuple(sink, CreateInfoWriteData<duckdb::CreateMacroInfo>{
-                             GetName(), {_info.get()}});
+                             GetName(), {_info.get()}, GetPermissions()});
 }
 
 std::shared_ptr<Object> PgSqlFunction::Clone() const {
   auto cloned_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       _info->Copy());
-  return std::make_shared<PgSqlFunction>(GetParentId(), GetId(), GetName(),
+  return std::make_shared<PgSqlFunction>(GetPermissions(), GetParentId(),
+                                         GetId(), GetName(),
                                          std::move(cloned_info));
 }
 

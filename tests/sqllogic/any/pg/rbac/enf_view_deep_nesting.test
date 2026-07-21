@@ -1,0 +1,418 @@
+# DEEP view-nesting security under RULE R (PostgreSQL 18.3, oracle-verified).
+#
+# RULE R: every relation reference (base table OR view) is checked against an
+# effective user determined ONLY by the view that DIRECTLY encloses it. Directly
+# inside a DEFINER view (owner-rights, the default) -> checked as that view's
+# OWNER. Directly inside an INVOKER (security_invoker=true) view -> checked as
+# the SESSION CALLER. Not enclosed at all -> the caller. ONLY the innermost
+# enclosing view matters; outer views do NOT affect a nested reference. There is
+# no "outside-in fold" and no "definer rescues everything below it".
+#
+# The view RELATION itself is also a SELECT-checked reference: reading a view the
+# caller wasn't granted (and doesn't own) fails with "permission denied for view
+# <name>", checked under the same RULE R effective user. So an ungranted
+# intermediate view can deny BEFORE the base is ever reached.
+#
+# Here every view and the base are owned by the superuser; the reader
+# (vedernikoff) is granted SELECT on the TOPMOST view of each chain ONLY -- never
+# the base or any intermediate view. The topmost view always reads (it is granted
+# and unenclosed). The result then hinges on the SECOND level: the topmost view's
+# direct child is checked as OWNER if the topmost view is DEFINER (-> chain keeps
+# descending under owner rights), or as the CALLER if the topmost view is INVOKER
+# (-> immediate "permission denied for view <child>", since the caller has no
+# grant on it).
+#
+# Each view projects a stable single column `mop` so every read is deterministic.
+#
+# Lore: vedernikoff peers down the clickclack lens stack at the iceberg he was
+# never granted.
+
+statement ok
+DROP VIEW IF EXISTS evdn_iid_3;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_iid_2;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_iid_1;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_l5_alt;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_l4_alt;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_ddd_3;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_ddd_2;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_ddd_1;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_iii_3;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_iii_2;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_iii_1;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_did_3;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_did_2;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_did_1;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_idi_3;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_idi_2;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_idi_1;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_alt_4;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_alt_3;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_alt_2;
+
+
+statement ok
+DROP VIEW IF EXISTS evdn_alt_1;
+
+
+statement ok
+DROP TABLE IF EXISTS evdn_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS evdn_vedernikoff;
+
+
+statement ok
+CREATE TABLE evdn_iceberg (mop int, secret int);
+
+
+statement ok
+INSERT INTO evdn_iceberg VALUES (10, 100), (20, 200);
+
+
+statement ok
+CREATE ROLE evdn_vedernikoff LOGIN PASSWORD 'evdn_vedernikoff_pw';
+
+
+# === Chain A: def(def(def)) -- 3-level all definer ===
+# Topmost is DEFINER, so every child is checked as the owner all the way to the
+# base -> ALLOW.
+statement ok
+CREATE VIEW evdn_ddd_1 AS SELECT mop FROM evdn_iceberg;
+
+
+statement ok
+CREATE VIEW evdn_ddd_2 AS SELECT mop FROM evdn_ddd_1;
+
+
+statement ok
+CREATE VIEW evdn_ddd_3 AS SELECT mop FROM evdn_ddd_2;
+
+
+statement ok
+GRANT SELECT ON evdn_ddd_3 TO evdn_vedernikoff;
+
+
+# === Chain B: inv(inv(inv)) -- 3-level all invoker ===
+# Topmost is INVOKER, so its child evdn_iii_2 is checked as the caller, who has
+# no grant on it -> DENY at the intermediate VIEW (never reaches the base).
+statement ok
+CREATE VIEW evdn_iii_1 WITH (security_invoker=true) AS SELECT mop FROM evdn_iceberg;
+
+
+statement ok
+CREATE VIEW evdn_iii_2 WITH (security_invoker=true) AS SELECT mop FROM evdn_iii_1;
+
+
+statement ok
+CREATE VIEW evdn_iii_3 WITH (security_invoker=true) AS SELECT mop FROM evdn_iii_2;
+
+
+statement ok
+GRANT SELECT ON evdn_iii_3 TO evdn_vedernikoff;
+
+
+# === Chain C: def(inv(def)) -- 3-level definer/invoker/definer ===
+# Topmost evdn_did_3 is DEFINER: its child evdn_did_2 is owner-checked (OK). But
+# evdn_did_2 is INVOKER, so ITS child evdn_did_1 is caller-checked -> DENY at the
+# innermost view evdn_did_1 (the caller has no grant on it).
+statement ok
+CREATE VIEW evdn_did_1 AS SELECT mop FROM evdn_iceberg;
+
+
+statement ok
+CREATE VIEW evdn_did_2 WITH (security_invoker=true) AS SELECT mop FROM evdn_did_1;
+
+
+statement ok
+CREATE VIEW evdn_did_3 AS SELECT mop FROM evdn_did_2;
+
+
+statement ok
+GRANT SELECT ON evdn_did_3 TO evdn_vedernikoff;
+
+
+# === Chain D: inv(def(inv)) -- 3-level invoker/definer/invoker ===
+# Topmost evdn_idi_3 is INVOKER, so its child evdn_idi_2 is caller-checked -> DENY
+# at evdn_idi_2. The middle definer never gets a chance to "rescue" anything.
+statement ok
+CREATE VIEW evdn_idi_1 WITH (security_invoker=true) AS SELECT mop FROM evdn_iceberg;
+
+
+statement ok
+CREATE VIEW evdn_idi_2 AS SELECT mop FROM evdn_idi_1;
+
+
+statement ok
+CREATE VIEW evdn_idi_3 WITH (security_invoker=true) AS SELECT mop FROM evdn_idi_2;
+
+
+statement ok
+GRANT SELECT ON evdn_idi_3 TO evdn_vedernikoff;
+
+
+# === Chain E: 5-level alternating inv(def(inv(def(inv)))) ===
+# Topmost evdn_l5_alt is INVOKER, so its child evdn_alt_4 is caller-checked ->
+# DENY at evdn_alt_4. The deeper definers are unreachable.
+statement ok
+CREATE VIEW evdn_alt_1 WITH (security_invoker=true) AS SELECT mop FROM evdn_iceberg;
+
+
+statement ok
+CREATE VIEW evdn_alt_2 AS SELECT mop FROM evdn_alt_1;
+
+
+statement ok
+CREATE VIEW evdn_alt_3 WITH (security_invoker=true) AS SELECT mop FROM evdn_alt_2;
+
+
+statement ok
+CREATE VIEW evdn_alt_4 AS SELECT mop FROM evdn_alt_3;
+
+
+statement ok
+CREATE VIEW evdn_l5_alt WITH (security_invoker=true) AS SELECT mop FROM evdn_alt_4;
+
+
+statement ok
+GRANT SELECT ON evdn_l5_alt TO evdn_vedernikoff;
+
+
+# === Chain F: inv(inv(def)) -- 3-level invoker/invoker/definer ===
+# Topmost evdn_iid_3 is INVOKER, so its child evdn_iid_2 is caller-checked -> DENY
+# at evdn_iid_2. The innermost definer is never reached.
+statement ok
+CREATE VIEW evdn_iid_1 AS SELECT mop FROM evdn_iceberg;
+
+
+statement ok
+CREATE VIEW evdn_iid_2 WITH (security_invoker=true) AS SELECT mop FROM evdn_iid_1;
+
+
+statement ok
+CREATE VIEW evdn_iid_3 WITH (security_invoker=true) AS SELECT mop FROM evdn_iid_2;
+
+
+statement ok
+GRANT SELECT ON evdn_iid_3 TO evdn_vedernikoff;
+
+
+# ---- Reads (reader granted ONLY the topmost view of each chain) ----
+
+# A: def(def(def)) -> ALLOW (topmost definer keeps every child owner-checked)
+connection c_a user=evdn_vedernikoff password=evdn_vedernikoff_pw
+query
+SELECT mop FROM evdn_ddd_3 ORDER BY mop;
+----
+mop
+10
+20
+
+
+# B: inv(inv(inv)) -> DENY at the intermediate VIEW (topmost invoker => child
+# checked as caller, who lacks the grant)
+connection c_b user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_iii_3 ORDER BY mop;
+----
+db error: ERROR: permission denied for view evdn_iii_2<slt:ignore>
+
+
+# C: def(inv(def)) -> DENY at the innermost view (definer top, invoker middle =>
+# innermost view caller-checked)
+connection c_c user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_did_3 ORDER BY mop;
+----
+db error: ERROR: permission denied for view evdn_did_1<slt:ignore>
+
+
+# D: inv(def(inv)) -> DENY at the intermediate view (topmost invoker => child
+# caller-checked; the middle definer never rescues)
+connection c_d user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_idi_3 ORDER BY mop;
+----
+db error: ERROR: permission denied for view evdn_idi_2<slt:ignore>
+
+
+# E: inv(def(inv(def(inv)))) -> DENY at the intermediate view (topmost invoker =>
+# child caller-checked)
+connection c_e user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_l5_alt ORDER BY mop;
+----
+db error: ERROR: permission denied for view evdn_alt_4<slt:ignore>
+
+
+# F: inv(inv(def)) -> DENY at the intermediate view (topmost invoker => child
+# caller-checked; the deep definer is never reached)
+connection c_f user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_iid_3 ORDER BY mop;
+----
+db error: ERROR: permission denied for view evdn_iid_2<slt:ignore>
+
+
+# Control: the reader still cannot touch the BASE TABLE directly.
+connection c_base user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_iceberg;
+----
+db error: ERROR: permission denied for table evdn_iceberg<slt:ignore>
+
+
+# Control: reading an INTERMEDIATE view the reader was never granted
+# (evdn_ddd_1). It is read directly (unenclosed), so it is caller-checked; the
+# caller has no grant on it -> DENY on the VIEW relation itself.
+connection c_mid user=evdn_vedernikoff password=evdn_vedernikoff_pw
+statement error
+SELECT mop FROM evdn_ddd_1 ORDER BY mop;
+----
+db error: ERROR: permission denied for view evdn_ddd_1<slt:ignore>
+
+
+# ---- teardown ----
+statement ok
+DROP VIEW evdn_iid_3;
+
+
+statement ok
+DROP VIEW evdn_iid_2;
+
+
+statement ok
+DROP VIEW evdn_iid_1;
+
+
+statement ok
+DROP VIEW evdn_l5_alt;
+
+
+statement ok
+DROP VIEW evdn_alt_4;
+
+
+statement ok
+DROP VIEW evdn_alt_3;
+
+
+statement ok
+DROP VIEW evdn_alt_2;
+
+
+statement ok
+DROP VIEW evdn_alt_1;
+
+
+statement ok
+DROP VIEW evdn_idi_3;
+
+
+statement ok
+DROP VIEW evdn_idi_2;
+
+
+statement ok
+DROP VIEW evdn_idi_1;
+
+
+statement ok
+DROP VIEW evdn_did_3;
+
+
+statement ok
+DROP VIEW evdn_did_2;
+
+
+statement ok
+DROP VIEW evdn_did_1;
+
+
+statement ok
+DROP VIEW evdn_iii_3;
+
+
+statement ok
+DROP VIEW evdn_iii_2;
+
+
+statement ok
+DROP VIEW evdn_iii_1;
+
+
+statement ok
+DROP VIEW evdn_ddd_3;
+
+
+statement ok
+DROP VIEW evdn_ddd_2;
+
+
+statement ok
+DROP VIEW evdn_ddd_1;
+
+
+statement ok
+DROP TABLE evdn_iceberg;
+
+
+statement ok
+DROP ROLE evdn_vedernikoff;

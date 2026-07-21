@@ -1,0 +1,174 @@
+hash-threshold 100
+
+# Term-dictionary enumeration composes with joins. Each scan of an inverted
+# index is an independent LogicalGet with its own table index, so a self-join
+# (the same index scanned twice) and cross-index joins resolve correctly even
+# though the virtual term columns share a display name across scans -- identity
+# is the column binding, not the name. Background maintenance disabled;
+# visibility driven by VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jkw(template = 'keyword')
+
+statement ok
+CREATE TABLE ja(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX ja_idx ON ja USING inverted(cat jkw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO ja VALUES (1, 'apple'), (2, 'banana'), (3, 'apple')
+
+statement ok
+VACUUM (REFRESH_TABLE) ja;
+
+statement ok
+CREATE TABLE jb(id INTEGER PRIMARY KEY, kind VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX jb_idx ON jb USING inverted(kind jkw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO jb VALUES (1, 'apple'), (2, 'cherry')
+
+statement ok
+VACUUM (REFRESH_TABLE) jb;
+
+statement ok
+CREATE TABLE jallow(term VARCHAR)
+
+statement ok
+INSERT INTO jallow VALUES ('banana'), ('cherry')
+
+# Self-join: the same index enumerated twice cross-products its terms. Both
+# scans emit a column named sdb_inverted_index_term$cat but bind to distinct
+# table indexes, so the cross product is correct.
+query TT
+SELECT a.t AS at, b.t AS bt
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx) a
+CROSS JOIN (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx) b
+ORDER BY at, bt
+----
+at	bt
+apple	apple
+apple	banana
+banana	apple
+banana	banana
+
+# EXPLAIN of the self-join: two IRESEARCH_SCAN nodes, each projecting
+# sdb_inverted_index_term$cat -- the repeated name is standard self-join
+# rendering, disambiguated by the scan node / positional binding.
+query
+EXPLAIN SELECT a.t AS at, b.t AS bt
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx) a
+CROSS JOIN (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx) b
+ORDER BY at, bt
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: a.t ASC, b.t ASC               │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ CROSS_PRODUCT ─────┴────────────────────╮
+╰─────────────────────┬────────────────────╯
+                      ├─────────────────────────────────────────────╮
+╭─ HASH_GROUP_BY ─────┴────────────────────╮  ╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │  │ Groups: #0                               │
+│ ~1 row                                   │  │ ~1 row                                   │
+╰─────────────────────┬────────────────────╯  ╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: #0                          │  │ Projections: #0                          │
+│ ~3 rows                                  │  │ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯  ╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮  ╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: ja_idx                            │  │ Index: ja_idx                            │
+│ TsDict: cat                              │  │ TsDict: cat                              │
+│ Projections: sdb_inverted_index_term$cat │  │ Projections: sdb_inverted_index_term$cat │
+│ ~3 rows                                  │  │ ~3 rows                                  │
+╰──────────────────────────────────────────╯  ╰──────────────────────────────────────────╯
+
+# Each side of a self-join claims its own term filter independently.
+query TT
+SELECT a.t AS at, b.t AS bt
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx
+      WHERE cat @@ ts_starts_with('a')) a
+CROSS JOIN (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx
+            WHERE cat @@ ts_starts_with('b')) b
+ORDER BY at, bt
+----
+at	bt
+apple	banana
+
+# Cross-index join: term dictionaries of two different indexes joined on a
+# matching term. The two scans name their columns after their own fields
+# (sdb_inverted_index_term$cat and sdb_inverted_index_term$kind).
+query T
+SELECT a.t
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx) a
+JOIN (SELECT unnest(ts_dict_agg(kind)) AS t FROM jb_idx) b ON a.t = b.t
+ORDER BY a.t
+----
+t
+apple
+
+query
+EXPLAIN SELECT a.t
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx) a
+JOIN (SELECT unnest(ts_dict_agg(kind)) AS t FROM jb_idx) b ON a.t = b.t
+ORDER BY a.t
+----
+QUERY PLAN
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: a.t ASC                        │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: t                           │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_JOIN ─────────┴────────────────────╮
+│ Join Type: INNER                         │
+│ Conditions: t = t                        │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+                      ├────────────────────────────────────────╮
+╭─ HASH_GROUP_BY ─────┴────────────────────╮  ╭─ HASH_GROUP_BY ┴───────────────╮
+│ Groups: #0                               │  │ Groups: #0                     │
+│ ~1 row                                   │  │ ~1 row                         │
+╰─────────────────────┬────────────────────╯  ╰────────────────┬───────────────╯
+╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ───┴───────────────╮
+│ Projections: #0                          │  │ Projections: #0                │
+│ ~3 rows                                  │  │ ~2 rows                        │
+╰─────────────────────┬────────────────────╯  ╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮  ╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: ja_idx                            │  │ Index: jb_idx                  │
+│ TsDict: cat                              │  │ TsDict: kind                   │
+│ Projections: sdb_inverted_index_term$cat │  │ Projections:                   │
+│ ~3 rows                                  │  │ sdb_inverted_index_term$kind   │
+╰──────────────────────────────────────────╯  │ ~2 rows                        │
+                                              ╰────────────────────────────────╯
+
+# Enumerated terms joined against a plain table (dictionary filtered by an
+# allowlist relation).
+query T
+SELECT d.t
+FROM (SELECT unnest(ts_dict_agg(cat)) AS t FROM ja_idx) d
+JOIN jallow ON jallow.term = d.t
+ORDER BY d.t
+----
+t
+banana
+
+statement ok
+DROP TABLE ja
+
+statement ok
+DROP TABLE jb
+
+statement ok
+DROP TABLE jallow
+
+statement ok
+DROP TEXT SEARCH DICTIONARY jkw

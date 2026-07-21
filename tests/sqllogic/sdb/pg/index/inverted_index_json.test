@@ -225,12 +225,12 @@ SELECT id FROM jonly_idx WHERE content->'host' @@ ts_like('server-0_') ORDER BY 
 ----
 db error: ERROR: No function matches the given name and argument types 'json_extract(JSON, BOOLEAN)'. You might need to add explicit type casts.
 	Candidate functions:
-	json_extract(col VARCHAR, col2 BIGINT) -> JSON
-	json_extract(col VARCHAR, col2 VARCHAR) -> JSON
-	json_extract(col VARCHAR, col2 VARCHAR[]) -> JSON[]
-	json_extract(col JSON, col2 BIGINT) -> JSON
-	json_extract(col JSON, col2 VARCHAR) -> JSON
-	json_extract(col JSON, col2 VARCHAR[]) -> JSON[]
+	json_extract(col0 VARCHAR, col1 BIGINT) -> JSON
+	json_extract(col0 VARCHAR, col1 VARCHAR) -> JSON
+	json_extract(col0 VARCHAR, col1 VARCHAR[]) -> JSON[]
+	json_extract(col0 JSON, col1 BIGINT) -> JSON
+	json_extract(col0 JSON, col1 VARCHAR) -> JSON
+	json_extract(col0 JSON, col1 VARCHAR[]) -> JSON[]
 
 
 # `->` (JSON-typed leaf) is accepted as an indexed expression; the sink emits
@@ -441,30 +441,17 @@ query
 EXPLAIN SELECT id FROM num_str_split_idx WHERE (content->'val')::int = 42;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│     num_str_split_idx     │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ ("content" -> 'val││  │
-│  ││ ')(numeric) = \\xa0││  │
-│  ││ \\xc0E\\x0\\x0\\x0\\x0 ││  │
-│  ││       \\x0\\x0      ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: num_str_split_idx                 │
+│ Lookup: table                            │
+│ Filter:                                  │
+│ ╭─ Term ───────────────────────────────╮ │
+│ │ Field: ("content" -> 'val')(numeric) │ │
+│ │ Value: 42                            │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 
 
@@ -478,28 +465,17 @@ query
 EXPLAIN SELECT id FROM num_str_split_idx WHERE (content->'val')::bool = true;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│     num_str_split_idx     │
-│                           │
-│       Lookup: table       │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││ ("content" -> 'val││  │
-│  ││  ')(bool) = \\xff  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│      Projections: id      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: num_str_split_idx              │
+│ Lookup: table                         │
+│ Filter:                               │
+│ ╭─ Term ────────────────────────────╮ │
+│ │ Field: ("content" -> 'val')(bool) │ │
+│ │ Value: true                       │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
 
 query
 SELECT id FROM num_str_split_idx WHERE content->>'val' = '42' ORDER BY id;
@@ -513,35 +489,20 @@ query
 EXPLAIN SELECT id FROM num_str_split_idx WHERE content->>'val' = '42';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│ ((content ->> 'val') = '42│
-│             ')            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│     num_str_split_idx     │
-│                           │
-│       Lookup: table       │
-│                           │
-│        Projections:       │
-│          content          │
-│             id            │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ───────────────────────────╮
+│ Projections: #1                        │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ FILTER ───────────┴───────────────────╮
+│ Expression: (content ->> 'val') = '42' │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: num_str_split_idx               │
+│ Lookup: table                          │
+│ Projections: content, id               │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯
 
 query
 SELECT id FROM num_str_split_idx WHERE content->>'val' = 'true' ORDER BY id;
@@ -555,35 +516,20 @@ query
 EXPLAIN SELECT id FROM num_str_split_idx WHERE content->>'val' = 'true';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #1            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│  ((content ->> 'val') =   │
-│          'true')          │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│     num_str_split_idx     │
-│                           │
-│       Lookup: table       │
-│                           │
-│        Projections:       │
-│          content          │
-│             id            │
-│                           │
-│          ~4 rows          │
-└───────────────────────────┘
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: #1                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: (content ->> 'val') = 'true' │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: num_str_split_idx                 │
+│ Lookup: table                            │
+│ Projections: content, id                 │
+│ ~4 rows                                  │
+╰──────────────────────────────────────────╯
 
 # Same JSON path indexed once, but two tokenizers are in flight at the
 # same time: the user-configured keyword tokenizer for string
@@ -730,7 +676,7 @@ statement error
 CREATE INDEX dup_expr_err_idx ON dup_expr_err
 USING inverted(id, (content->'v') verbatim_dict, (content->'v') en_text);
 ----
-db error: ERROR: Failed to create index: Expression '("content" -> 'v')' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed expression. Stack `included(...)` on the same expression instead, or remove the duplicate.
+db error: ERROR: Expression '("content" -> 'v')' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed expression. Stack `included(...)` on the same expression instead, or remove the duplicate.
 
 
 

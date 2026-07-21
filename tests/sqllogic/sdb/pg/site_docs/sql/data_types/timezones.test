@@ -7,7 +7,7 @@
 
 # DOCS_TEST_BODY
 
-query ??
+query
 SELECT name, abbrev
 FROM (
     VALUES

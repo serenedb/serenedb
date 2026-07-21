@@ -1,0 +1,174 @@
+# The SQL-standard privilege views are self-filtering: a login role querying
+# information_schema.table_privileges (and its role_table_grants alias) sees
+# ONLY the grants in which it is grantor or grantee, never another role's
+# grants. We grant different privileges to two login roles, then connect AS
+# each role and confirm each sees exactly its own rows. The owner, on the
+# default connection, sees every row. All values are byte-identical on
+# PostgreSQL 19beta1 and serenedb.
+#
+# Vedernikoff lore: pavel and salam each get their own slice of the kryakva
+# table and can only see their own entitlements.
+
+statement ok
+DROP TABLE IF EXISTS isp_kryakva;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_pavel;
+
+
+statement ok
+DROP ROLE IF EXISTS isp_salam;
+
+
+statement ok
+CREATE TABLE isp_kryakva (id int, body text);
+
+
+statement ok
+CREATE ROLE isp_pavel LOGIN PASSWORD 'isp_pavel_pw';
+
+
+statement ok
+CREATE ROLE isp_salam LOGIN PASSWORD 'isp_salam_pw';
+
+
+statement ok
+GRANT SELECT, INSERT ON isp_kryakva TO isp_pavel;
+
+
+statement ok
+GRANT UPDATE, DELETE ON isp_kryakva TO isp_salam;
+
+
+# ============================================================================
+# Owner connection (default): every grantee's rows are visible. Filtered to our
+# two roles, sorted, the full grantee row set appears.
+# ============================================================================
+
+query
+SELECT grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_kryakva' AND grantee IN ('isp_pavel', 'isp_salam')
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type	is_grantable
+isp_pavel	INSERT	NO
+isp_pavel	SELECT	NO
+isp_salam	DELETE	NO
+isp_salam	UPDATE	NO
+
+
+# ============================================================================
+# Connected AS pavel: pavel sees only pavel's two rows -- salam's grants are
+# invisible. table_privileges and role_table_grants agree.
+# ============================================================================
+
+connection c_pavel user=isp_pavel password=isp_pavel_pw
+query
+SELECT grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_kryakva'
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type	is_grantable
+isp_pavel	INSERT	NO
+isp_pavel	SELECT	NO
+
+
+connection c_pavel user=isp_pavel password=isp_pavel_pw
+query
+SELECT grantee, privilege_type
+FROM information_schema.role_table_grants
+WHERE table_name = 'isp_kryakva'
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type
+isp_pavel	INSERT
+isp_pavel	SELECT
+
+
+# pavel cannot see salam's grants at all.
+connection c_pavel user=isp_pavel password=isp_pavel_pw
+query
+SELECT count(*) AS salam_rows_seen
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_kryakva' AND grantee = 'isp_salam';
+----
+salam_rows_seen
+0
+
+
+# ============================================================================
+# Connected AS salam: the mirror image -- only salam's two rows are visible.
+# ============================================================================
+
+connection c_salam user=isp_salam password=isp_salam_pw
+query
+SELECT grantee, privilege_type, is_grantable
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_kryakva'
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type	is_grantable
+isp_salam	DELETE	NO
+isp_salam	UPDATE	NO
+
+
+connection c_salam user=isp_salam password=isp_salam_pw
+query
+SELECT count(*) AS pavel_rows_seen
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_kryakva' AND grantee = 'isp_pavel';
+----
+pavel_rows_seen
+0
+
+
+# ============================================================================
+# After REVOKE the affected role's self-view shrinks accordingly. Revoke INSERT
+# from pavel; on pavel's connection only SELECT remains visible.
+# ============================================================================
+
+statement ok
+REVOKE INSERT ON isp_kryakva FROM isp_pavel;
+
+
+connection c_pavel user=isp_pavel password=isp_pavel_pw
+query
+SELECT grantee, privilege_type
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_kryakva'
+ORDER BY privilege_type;
+----
+grantee	privilege_type
+isp_pavel	SELECT
+
+
+# The owner sees the same shrunk pavel set plus salam's untouched rows.
+query
+SELECT grantee, privilege_type
+FROM information_schema.table_privileges
+WHERE table_name = 'isp_kryakva' AND grantee IN ('isp_pavel', 'isp_salam')
+ORDER BY grantee, privilege_type;
+----
+grantee	privilege_type
+isp_pavel	SELECT
+isp_salam	DELETE
+isp_salam	UPDATE
+
+
+# ============================================================================
+# Cleanup.
+# ============================================================================
+
+statement ok
+DROP TABLE isp_kryakva;
+
+
+statement ok
+DROP ROLE isp_pavel;
+
+
+statement ok
+DROP ROLE isp_salam;

@@ -1,0 +1,214 @@
+# Quoted / case-sensitive role names. MixedCase identifiers wrapped in double
+# quotes ("ident_Vedernikoff") create, grant, and round-trip through pg_roles
+# and has_table_privilege byte-identically on real PostgreSQL and serenedb.
+#
+# Key facts proven here:
+#   * A quoted MixedCase role preserves its case in pg_roles.rolname.
+#   * has_table_privilege takes the role NAME as a string literal, so the case
+#     must match exactly: the quoted name works, the folded lowercase name is a
+#     hard "does not exist" error -- the SAME error text on both engines.
+#   * Grants/revokes to the quoted name drive the oracle exactly like an
+#     unquoted role.
+#   * A connection that logs in AS the MixedCase role sees the MixedCase name
+#     from current_user and is enforced under that identity.
+#
+# All objects are prefixed ident_; the file is idempotent and self-cleaning.
+
+statement ok
+DROP TABLE IF EXISTS ident_makak;
+
+
+statement ok
+DROP ROLE IF EXISTS "ident_Vedernikoff";
+
+
+statement ok
+DROP ROLE IF EXISTS "ident_ClickClack";
+
+
+statement ok
+DROP ROLE IF EXISTS ident_babsky;
+
+
+statement ok
+CREATE TABLE ident_makak (id int, gul text);
+
+
+# ============================================================================
+# Create two MixedCase quoted roles and one plain lowercase role.
+# ============================================================================
+
+statement ok
+CREATE ROLE "ident_Vedernikoff" LOGIN PASSWORD 'ident_Vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE "ident_ClickClack";
+
+
+statement ok
+CREATE ROLE ident_babsky;
+
+
+# The quoted names preserve their exact case in the catalog; the plain name
+# is stored lowercase. Listing all three confirms the stored spellings.
+
+query
+SELECT rolname FROM pg_roles
+ WHERE rolname IN ('ident_Vedernikoff','ident_ClickClack','ident_babsky')
+ ORDER BY rolname;
+----
+rolname
+ident_ClickClack
+ident_Vedernikoff
+ident_babsky
+
+
+# Membership reachability is case-exact through pg_has_role. We make babsky a
+# member of the MixedCase group and confirm the closure uses the exact name.
+
+statement ok
+GRANT "ident_Vedernikoff" TO ident_babsky;
+
+
+query
+SELECT pg_has_role('ident_babsky','ident_Vedernikoff','MEMBER') AS mem,
+       pg_has_role('ident_babsky','ident_Vedernikoff','USAGE')  AS usg,
+       pg_has_role('ident_babsky','ident_Vedernikoff','SET')    AS st;
+----
+mem	usg	st
+t	t	t
+
+
+query
+SELECT pg_has_role('ident_Vedernikoff','ident_babsky','MEMBER') AS reversed;
+----
+reversed
+f
+
+
+# ============================================================================
+# Grant table privileges to the MixedCase role and read them back through
+# has_table_privilege using the EXACT quoted spelling.
+# ============================================================================
+
+statement ok
+GRANT SELECT, INSERT ON ident_makak TO "ident_Vedernikoff";
+
+
+query
+SELECT has_table_privilege('ident_Vedernikoff','ident_makak','SELECT') AS sel,
+       has_table_privilege('ident_Vedernikoff','ident_makak','INSERT') AS ins,
+       has_table_privilege('ident_Vedernikoff','ident_makak','UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	f
+
+
+# babsky inherits the MixedCase group's grant: the closure is case-exact.
+
+query
+SELECT has_table_privilege('ident_babsky','ident_makak','SELECT') AS sel,
+       has_table_privilege('ident_babsky','ident_makak','INSERT') AS ins;
+----
+sel	ins
+t	t
+
+
+# ============================================================================
+# Case sensitivity of the NAME argument. has_table_privilege resolves its
+# first argument as a string-valued role name, NOT an identifier, so it is
+# case-sensitive: the folded lowercase spelling does not name any role and
+# raises the SAME 'does not exist' error on both engines.
+# ============================================================================
+
+statement error
+SELECT has_table_privilege('ident_vedernikoff','ident_makak','SELECT');
+----
+db error: ERROR: role "ident_vedernikoff" does not exist
+
+
+# An entirely unknown role name is the same hard error.
+
+statement error
+SELECT has_table_privilege('ident_NoSuchPudge','ident_makak','SELECT');
+----
+db error: ERROR: role "ident_NoSuchPudge" does not exist
+
+
+# ============================================================================
+# REVOKE off the MixedCase role drops exactly the named bits; the rest stay.
+# ============================================================================
+
+statement ok
+REVOKE INSERT ON ident_makak FROM "ident_Vedernikoff";
+
+
+query
+SELECT has_table_privilege('ident_Vedernikoff','ident_makak','SELECT') AS sel,
+       has_table_privilege('ident_Vedernikoff','ident_makak','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# The inheriting member tracks the revoke too.
+
+query
+SELECT has_table_privilege('ident_babsky','ident_makak','SELECT') AS sel,
+       has_table_privilege('ident_babsky','ident_makak','INSERT') AS ins;
+----
+sel	ins
+t	f
+
+
+# ============================================================================
+# A connection logged in AS the MixedCase role sees the MixedCase name from
+# current_user, and the quoted-name oracle matches the real query path.
+# ============================================================================
+
+connection c_v user=ident_Vedernikoff password=ident_Vedernikoff_pw
+query
+SELECT current_user AS cu, session_user AS su, current_role AS cr;
+----
+cu	su	cr
+ident_Vedernikoff	ident_Vedernikoff	ident_Vedernikoff
+
+
+# SELECT is held -> the real read works on the MixedCase connection.
+
+connection c_v user=ident_Vedernikoff password=ident_Vedernikoff_pw
+query
+SELECT count(*) AS n FROM ident_makak;
+----
+n
+0
+
+
+# INSERT was revoked -> the real write is denied under the MixedCase identity.
+
+connection c_v user=ident_Vedernikoff password=ident_Vedernikoff_pw
+statement error
+INSERT INTO ident_makak VALUES (1, 'iceberg');
+----
+db error: ERROR: permission denied for table ident_makak<slt:ignore>
+
+
+# ============================================================================
+# Cleanup. DROP with the exact quoted spelling.
+# ============================================================================
+
+statement ok
+DROP TABLE ident_makak;
+
+
+statement ok
+DROP ROLE "ident_Vedernikoff";
+
+
+statement ok
+DROP ROLE "ident_ClickClack";
+
+
+statement ok
+DROP ROLE ident_babsky;

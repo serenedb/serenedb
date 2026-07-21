@@ -1,0 +1,66 @@
+# Regression: a full-segment columnstore scan that crosses an index-segment
+# boundary mid-vector must not crash.
+#
+# RunStreamingScan fills one STANDARD_VECTOR_SIZE (2048) output chunk. A bulk
+# (match-all) segment materializes its rows via a zero-copy SCAN_ENTIRE_VECTOR,
+# which rebases the output vector to an external buffer sized to what was
+# scanned. When a segment's live-doc count is not a multiple of 2048, the chunk
+# covering its tail zero-copies that tail, then -- before the fix -- packed the
+# next segment into the same chunk via Gather, writing past the external
+# buffer's capacity. SetChildCardinality then grew it to 2048 ->
+# "Vector::SetSize out of range". The fix emits a partial chunk at the segment
+# boundary for bulk scans instead of straddling.
+#
+# Two unmerged segments of 3000 docs each (3000 % 2048 = 952, not aligned) are
+# built with `compaction_interval = 0` so they are never consolidated into one.
+# `v` is forced UNCOMPRESSED so it takes the zero-copy FixedSizeScan path.
+
+hash-threshold 100
+
+statement ok
+CREATE TABLE t (pk INTEGER PRIMARY KEY, v BIGINT, txt VARCHAR);
+
+statement ok
+INSERT INTO t SELECT i, i, 'doc' || i::text FROM generate_series(1, 3000) i;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY straddle_dict (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX t_idx ON t USING inverted(txt straddle_dict)
+  INCLUDE (pk, v included (compression = 'uncompressed'))
+  WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO t SELECT i, i, 'doc' || i::text FROM generate_series(3001, 6000) i;
+
+# Make the second batch a separate, unmerged segment (compaction is disabled,
+# so REFRESH publishes it without consolidating it into the first segment).
+statement ok
+VACUUM (REFRESH_TABLE) t;
+
+# Full-segment scan: materializes `v` across the first segment's 2048->3000 tail
+# and into the second segment.
+query
+SELECT count(*) AS n, sum(v) AS s, min(v) AS mn, max(v) AS mx FROM t_idx;
+----
+n	s	mn	mx
+6000	18003000	1	6000
+
+# Per-row values straddling the boundary (rows 2999..3002) materialize intact.
+query
+SELECT pk, v FROM t_idx ORDER BY pk LIMIT 4 OFFSET 2998;
+----
+pk	v
+2999	2999
+3000	3000
+3001	3001
+3002	3002

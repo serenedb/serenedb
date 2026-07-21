@@ -93,13 +93,13 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
 // `EXECUTE name` reports the underlying statement's tag in PG (e.g. a
 // SELECT-backed prepared statement yields "SELECT N"). Look the referenced
 // statement up in DuckDB's client-local prepared-statement catalog.
-CommandTag ExecuteTagForPrepared(const duckdb::PreparedStatement& prepared) {
-  auto* unbound = prepared.data->unbound_statement.get();
-  if (!unbound) {
+CommandTag ExecuteTag(const duckdb::SQLStatement* unbound,
+                      duckdb::ClientContext* context) {
+  if (!unbound || !context) {
     return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
   }
   auto& exec_stmt = unbound->Cast<duckdb::ExecuteStatement>();
-  auto& client_data = duckdb::ClientData::Get(*prepared.context);
+  auto& client_data = duckdb::ClientData::Get(*context);
   auto it = client_data.prepared_statements.find(exec_stmt.name);
   if (it == client_data.prepared_statements.end() || !it->second) {
     return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
@@ -121,10 +121,11 @@ CommandTag ExecuteTagForPrepared(const duckdb::PreparedStatement& prepared) {
 }
 
 }  // namespace
+namespace {
 
-CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
-  const auto stmt_type = prepared.data->statement_type;
-  const auto* unbound = prepared.data->unbound_statement.get();
+CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
+                               const duckdb::SQLStatement* unbound,
+                               duckdb::ClientContext* context) {
   auto make = [&](std::string_view s, bool rowcount = false) -> CommandTag {
     return {s, stmt_type, rowcount};
   };
@@ -148,7 +149,7 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
     case StatementType::PREPARE_STATEMENT:
       return make("PREPARE");
     case StatementType::EXECUTE_STATEMENT:
-      return ExecuteTagForPrepared(prepared);
+      return ExecuteTag(unbound, context);
     case StatementType::EXPLAIN_STATEMENT:
       return make("EXPLAIN");
     case StatementType::VACUUM_STATEMENT:
@@ -195,8 +196,9 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
         const auto& drop_stmt = unbound->Cast<duckdb::DropStatement>();
         if (drop_stmt.info) {
           if (drop_stmt.info->type == duckdb::CatalogType::PREPARED_STATEMENT) {
-            return make(drop_stmt.info->name.empty() ? "DEALLOCATE ALL"
-                                                     : "DEALLOCATE");
+            return make(drop_stmt.info->GetQualifiedName().Name().empty()
+                          ? "DEALLOCATE ALL"
+                          : "DEALLOCATE");
           }
           return make(DropObjectTag(drop_stmt.info->type));
         }
@@ -247,6 +249,19 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
     default:
       return make(duckdb::StatementTypeToString(stmt_type));
   }
+}
+
+}  // namespace
+
+CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
+  return BuildCommandTagImpl(prepared.data->statement_type,
+                             prepared.data->unbound_statement.get(),
+                             prepared.context.get());
+}
+
+CommandTag BuildCommandTag(const duckdb::SQLStatement& statement,
+                           duckdb::ClientContext& context) {
+  return BuildCommandTagImpl(statement.type, &statement, &context);
 }
 
 }  // namespace sdb::pg

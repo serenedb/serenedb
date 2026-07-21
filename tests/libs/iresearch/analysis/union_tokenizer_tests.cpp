@@ -21,14 +21,16 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/analysis/union_tokenizer.hpp"
 #include "tests_config.hpp"
+#include "token_sink_utils.hpp"
 
 namespace {
 
@@ -41,31 +43,20 @@ struct UnionToken {
 using UnionTokens = std::vector<UnionToken>;
 
 // Assert a union tokenizer produces the expected token sequence.
-// No offset checking; union does not expose OffsAttr.
-void AssertUnion(irs::analysis::Analyzer* u, const std::string& data,
+// No offset checking; union does not produce offsets.
+void AssertUnion(irs::analysis::Tokenizer* u, const std::string& data,
                  const UnionTokens& expected_tokens) {
   SCOPED_TRACE(data);
-  auto* offset = irs::get<irs::OffsAttr>(*u);
-  ASSERT_FALSE(offset) << "Union must not expose OffsAttr";
-  auto* term = irs::get<irs::TermAttr>(*u);
-  ASSERT_TRUE(term);
-  auto* inc = irs::get<irs::IncAttr>(*u);
-  ASSERT_TRUE(inc);
-  ASSERT_TRUE(u->reset(data));
-  uint32_t pos{0};  // consumer starts at pos_limits::invalid() == 0
+  ASSERT_FALSE(u->Traits().offsets) << "Union must not produce offsets";
+  const auto tokens = tests::Analyze(*u, data, irs::TokenLayout::TermsPos);
+  ASSERT_TRUE(tokens.has_value());
   auto expected = expected_tokens.begin();
-  while (u->next()) {
-    pos += inc->value;
-    auto term_str =
-      std::string(irs::ViewCast<char>(term->value).data(), term->value.size());
-    SCOPED_TRACE(testing::Message("Term:") << term_str);
+  for (const auto& tok : *tokens) {
+    SCOPED_TRACE(testing::Message("Term:") << tok.term);
     ASSERT_NE(expected, expected_tokens.end())
       << "More tokens produced than expected";
-    EXPECT_EQ(expected->value,
-              std::string_view(irs::ViewCast<char>(term->value).data(),
-                               term->value.size()));
-    EXPECT_EQ(expected->inc, inc->value) << "inc mismatch for: " << term_str;
-    EXPECT_EQ(expected->pos, pos) << "pos mismatch for: " << term_str;
+    EXPECT_EQ(expected->value, tok.term);
+    EXPECT_EQ(expected->pos, tok.pos) << "pos mismatch for: " << tok.term;
     ++expected;
   }
   ASSERT_EQ(expected, expected_tokens.end())
@@ -75,7 +66,7 @@ void AssertUnion(irs::analysis::Analyzer* u, const std::string& data,
 void AssertUnionMembers(irs::analysis::UnionTokenizer& u,
                         const std::vector<irs::TypeInfo::type_id>& expected) {
   size_t i{0};
-  auto visitor = [&expected, &i](const irs::analysis::Analyzer& a) {
+  auto visitor = [&expected, &i](const irs::analysis::Tokenizer& a) {
     EXPECT_LT(i, expected.size());
     if (i >= expected.size()) {
       return false;
@@ -87,9 +78,9 @@ void AssertUnionMembers(irs::analysis::UnionTokenizer& u,
   ASSERT_EQ(i, expected.size());
 }
 
-irs::analysis::Analyzer::ptr MakeText(std::string_view locale,
-                                      irs::Case case_convert, bool stemming,
-                                      std::vector<std::string> stopwords = {}) {
+irs::analysis::Tokenizer::ptr MakeText(
+  std::string_view locale, irs::Case case_convert, bool stemming,
+  std::vector<std::string> stopwords = {}) {
   irs::analysis::TextTokenizer::Options opts;
   opts.locale = icu::Locale::createFromName(std::string(locale).c_str());
   opts.case_convert = case_convert;
@@ -101,8 +92,8 @@ irs::analysis::Analyzer::ptr MakeText(std::string_view locale,
   return irs::analysis::TextTokenizer::Make(std::move(opts));
 }
 
-irs::analysis::Analyzer::ptr MakeNgram(size_t min_gram, size_t max_gram,
-                                       bool preserve_original) {
+irs::analysis::Tokenizer::ptr MakeNgram(size_t min_gram, size_t max_gram,
+                                        bool preserve_original) {
   return irs::analysis::NGramTokenizerBase::Make(
     irs::analysis::NGramTokenizerBase::Options{
       .min_gram = min_gram,
@@ -118,18 +109,20 @@ TEST(union_tokenizer_test, consts) {
 }
 
 TEST(union_tokenizer_test, empty_union) {
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   irs::analysis::UnionTokenizer u(std::move(options));
 
   std::string data = "hello world";
-  ASSERT_FALSE(u.reset(data));
+  const auto tokens = tests::Analyze(u, data, irs::TokenLayout::TermsPos);
+  ASSERT_TRUE(tokens.has_value());
+  ASSERT_TRUE(tokens->empty());
 }
 
 TEST(union_tokenizer_test, single_sub) {
   auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   options.emplace_back(std::move(text));
   irs::analysis::UnionTokenizer u(std::move(options));
 
@@ -147,7 +140,7 @@ TEST(union_tokenizer_test, text_plus_ngram) {
   auto ngram = MakeNgram(3, 3, /*preserve_original=*/false);
   ASSERT_NE(nullptr, ngram);
 
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   options.emplace_back(std::move(text));
   options.emplace_back(std::move(ngram));
   irs::analysis::UnionTokenizer u(std::move(options));
@@ -168,7 +161,7 @@ TEST(union_tokenizer_test, two_text_tokenizers_homogeneous) {
   auto text_none = MakeText("en_US.UTF-8", irs::Case::None, /*stemming=*/false);
   ASSERT_NE(nullptr, text_none);
 
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   options.emplace_back(std::move(text_lower));
   options.emplace_back(std::move(text_none));
   irs::analysis::UnionTokenizer u(std::move(options));
@@ -191,7 +184,7 @@ TEST(union_tokenizer_test, unequal_token_counts) {
   auto text2 = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text2);
 
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   options.emplace_back(std::move(text));   // sub 0: stopwords filtered
   options.emplace_back(std::move(text2));  // sub 1: all words
   irs::analysis::UnionTokenizer u(std::move(options));
@@ -212,32 +205,30 @@ TEST(union_tokenizer_test, no_offset_attr) {
   auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   options.emplace_back(std::move(text));
   irs::analysis::UnionTokenizer u(std::move(options));
 
-  auto* offset = irs::get<irs::OffsAttr>(u);
-  ASSERT_EQ(nullptr, offset);
+  ASSERT_FALSE(u.Traits().offsets);
 }
 
 TEST(union_tokenizer_test, get_mutable_non_core) {
   auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   options.emplace_back(std::move(text));
   irs::analysis::UnionTokenizer u(std::move(options));
 
-  ASSERT_NE(nullptr, irs::get<irs::TermAttr>(u));
-  ASSERT_NE(nullptr, irs::get<irs::IncAttr>(u));
-  ASSERT_EQ(nullptr, irs::get<irs::OffsAttr>(u));
+  ASSERT_FALSE(u.Traits().offsets);
+  ASSERT_FALSE(u.Traits().store);
 }
 
 TEST(union_tokenizer_test, VisitMembers) {
   auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   auto ngram = MakeNgram(2, 3, /*preserve_original=*/false);
 
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   options.emplace_back(std::move(text));
   options.emplace_back(std::move(ngram));
   irs::analysis::UnionTokenizer u(std::move(options));
@@ -307,7 +298,7 @@ TEST(union_tokenizer_test, reset_twice) {
   auto text = MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false);
   ASSERT_NE(nullptr, text);
 
-  std::vector<irs::analysis::Analyzer::ptr> options;
+  std::vector<irs::analysis::Tokenizer::ptr> options;
   options.emplace_back(std::move(text));
   irs::analysis::UnionTokenizer u(std::move(options));
 
@@ -320,4 +311,50 @@ TEST(union_tokenizer_test, reset_twice) {
     const UnionTokens expected{{"foo", 1, 1}};
     AssertUnion(&u, "foo", expected);
   }
+}
+
+TEST(union_tokenizer_test, column_fill_matches_pull) {
+  auto make_union = [] {
+    std::vector<irs::analysis::Tokenizer::ptr> subs;
+    subs.push_back(
+      MakeText("en_US.UTF-8", irs::Case::Lower, /*stemming=*/false));
+    subs.push_back(MakeNgram(3, 3, /*preserve_original=*/false));
+    return std::make_unique<irs::analysis::UnionTokenizer>(std::move(subs));
+  };
+  auto pull_stream = make_union();
+  auto fill_stream = make_union();
+
+  const std::vector<std::string> raw = {"QUICK brown FoX", "", "ab",
+                                        "The Lazy dog Jumps over"};
+  std::vector<duckdb::string_t> values;
+  std::vector<irs::doc_id_t> docs;
+  for (size_t i = 0; i < raw.size(); ++i) {
+    values.emplace_back(raw[i].data(), static_cast<uint32_t>(raw[i].size()));
+    docs.push_back(static_cast<irs::doc_id_t>(100 + i));
+  }
+
+  tests::OneBatchSink sink{irs::TokenLayout::TermsPos};
+  fill_stream->Fill(values, docs, sink.writer, sink.layout);
+  ASSERT_FALSE(sink.flushed());
+  auto& batch = sink.writer.buf;
+  const auto runs = sink.writer.Runs();
+  ASSERT_FALSE(batch.dense_pos);
+  ASSERT_EQ(raw.size(), runs.size());
+
+  uint32_t token_idx = 0;
+  for (size_t v = 0; v < raw.size(); ++v) {
+    SCOPED_TRACE(raw[v]);
+    ASSERT_EQ(docs[v], runs[v].doc);
+    const auto single =
+      tests::Analyze(*pull_stream, raw[v], irs::TokenLayout::TermsPos);
+    ASSERT_TRUE(single.has_value());
+    ASSERT_EQ(single->size(), runs[v].ntokens);
+    for (const auto& expected : *single) {
+      const auto& t = batch.terms[token_idx];
+      ASSERT_EQ(expected.term, (std::string{t.GetData(), t.GetSize()}));
+      ASSERT_EQ(expected.pos, batch.pos[token_idx]);
+      ++token_idx;
+    }
+  }
+  ASSERT_EQ(batch.count, token_idx);
 }

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -37,7 +38,6 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
-#include "basics/result.h"
 #include "catalog/object.h"
 
 namespace sdb::catalog {
@@ -237,31 +237,29 @@ class CatalogStore {
   void Initialize(std::string_view database_directory);
   void Shutdown();
 
-  Result CreateDefinition(ObjectId parent_id, ObjectType type, ObjectId id,
-                          std::string_view def);
-  Result Write(absl::FunctionRef<void(WriteContext&)> fill);
-  Result DropDefinition(ObjectId parent_id, ObjectType type, ObjectId id);
+  void CreateDefinition(ObjectId parent_id, ObjectType type, ObjectId id,
+                        std::string_view def);
+  void Write(absl::FunctionRef<void(WriteContext&)> fill);
+  void DropDefinition(ObjectId parent_id, ObjectType type, ObjectId id);
   // Pair with DropDefinition(..., ObjectType::Sequence, id) to fully drop.
-  Result DropSequence(ObjectId sequence_id);
-  Result DropEntry(ObjectId parent_id, ObjectType type);
-  Result DropEntry(ObjectId parent_id);
-  Result WriteTombstone(ObjectId parent_id, ObjectId id);
+  void DropSequence(ObjectId sequence_id);
+  void DropEntry(ObjectId parent_id, ObjectType type);
+  void DropEntry(ObjectId parent_id);
+  void WriteTombstone(ObjectId parent_id, ObjectId id);
 
-  // Visits (parent_id, type) definitions ordered by id. A non-ok visitor
-  // result stops the iteration and is returned.
-  Result VisitDefinitions(
-    ObjectId parent_id, ObjectType type,
-    absl::FunctionRef<Result(Key, std::string_view)> visitor);
+  // Visits (parent_id, type) definitions ordered by id. Returning false from
+  // the visitor stops the iteration; a real error throws.
+  void VisitDefinitions(ObjectId parent_id, ObjectType type,
+                        absl::FunctionRef<bool(Key, std::string_view)> visitor);
 
   // Boot load: one in-pipeline pass per table -- the sdb_init_catalog /
   // sdb_init_sequences in-out table functions consume the scan's vectors
   // directly (no result materialization). The loaded state serves the
   // hierarchical catalog walk (which must not issue per-(parent,type)
   // scans) and the per-sequence counter reads, until ReleaseBootState().
-  Result LoadBootState();
-  Result VisitBoot(
-    ObjectId parent_id, ObjectType type,
-    absl::FunctionRef<Result(Key, std::string_view)> visitor) const;
+  void LoadBootState();
+  void VisitBoot(ObjectId parent_id, ObjectType type,
+                 absl::FunctionRef<bool(Key, std::string_view)> visitor) const;
   bool TryGetBootSequenceValue(ObjectId sequence_id, uint64_t& value) const;
   void ReleaseBootState();
 
@@ -271,9 +269,9 @@ class CatalogStore {
   uint64_t BootDefsLoaded() const;
   uint64_t BootSequencesLoaded() const;
 
-  Result PutSequenceValue(ObjectId sequence_id, uint64_t value);
+  void PutSequenceValue(ObjectId sequence_id, uint64_t value);
   // Missing counter reads as 0.
-  Result GetSequenceValue(ObjectId sequence_id, uint64_t& value);
+  void GetSequenceValue(ObjectId sequence_id, uint64_t& value);
 
   // Boot-time sanity: the store table of a catalog table exists and its
   // column names/types match. Assert-only (no-op in release builds).
@@ -285,10 +283,10 @@ class CatalogStore {
     std::string def;
   };
 
-  Result ExecuteEntries(std::vector<WriteContext::Entry>& entries);
-  Result ExecuteCreateStoreTable(const StoreTableDef& def);
-  Result ExecuteCreateStoreTableImpl(const StoreTableDef& def,
-                                     bool with_checks);
+  absl::Status ExecuteEntries(std::vector<WriteContext::Entry>& entries);
+  absl::Status ExecuteCreateStoreTable(const StoreTableDef& def);
+  absl::Status ExecuteCreateStoreTableImpl(const StoreTableDef& def,
+                                           bool with_checks);
   void EnsureSystemDatabase();
 
   std::atomic<bool> _boot_loading = false;

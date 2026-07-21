@@ -1,0 +1,47 @@
+# has_table_privilege has a 2-arg form that defaults the role to current_user.
+# The runner connects as the bootstrap superuser, so current_user = postgres,
+# who owns every table and thus holds every privilege implicitly.
+
+statement ok
+DROP TABLE IF EXISTS cu_audit;
+
+
+statement ok
+CREATE TABLE cu_audit (id int);
+
+
+# current_user is the bootstrap superuser.
+query
+SELECT current_user;
+----
+current_user
+postgres
+
+
+# 2-arg has_table_privilege(table, priv) uses current_user = postgres (owner).
+query
+SELECT
+  has_table_privilege('cu_audit', 'SELECT'),
+  has_table_privilege('cu_audit', 'INSERT'),
+  has_table_privilege('cu_audit', 'TRUNCATE');
+----
+has_table_privilege	has_table_privilege	has_table_privilege
+t	t	t
+
+
+# The 2-arg and 3-arg (explicit postgres) forms agree.
+query
+SELECT
+  has_table_privilege('cu_audit', 'SELECT') =
+    has_table_privilege('postgres', 'cu_audit', 'SELECT');
+----
+?column?
+t
+
+
+# session_user agrees with current_user when no SET ROLE has happened.
+query
+SELECT session_user = current_user;
+----
+?column?
+t

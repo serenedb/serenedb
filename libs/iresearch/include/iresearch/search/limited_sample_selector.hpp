@@ -158,7 +158,7 @@ class SampledMultiTermVisitor {
     : _collector{collector}, _state{state} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& reader,
-               const SeekTermIterator& terms) {
+               SeekTermIterator& terms) {
     // get term metadata
     auto* meta = irs::get<TermMeta>(terms);
 
@@ -175,8 +175,9 @@ class SampledMultiTermVisitor {
   }
 
   // FIXME can incorporate boost into collecting logic
-  void Visit(score_t boost) {
+  bool Visit(score_t boost) {
     SDB_ASSERT(_docs_count && _terms);
+    _terms->read();
     const uint32_t docs_count = *_docs_count;
     _state.Push(MultiTermState::Entry{
       .cookie = _terms->cookie(),
@@ -189,13 +190,14 @@ class SampledMultiTermVisitor {
                           Key::Make(_offset, docs_count, boost));
     }
     ++_offset;
+    return true;
   }
 
  private:
   const decltype(TermMeta::docs_count) _no_docs = 0;
   LimitedSampleSelector<Key>* _collector;
   MultiTermState& _state;
-  const SeekTermIterator* _terms = nullptr;
+  SeekTermIterator* _terms = nullptr;
   const decltype(TermMeta::docs_count)* _docs_count = nullptr;
   uint32_t _offset = 0;
 };

@@ -305,10 +305,26 @@ NULL
 
 query error
 SELECT ARRAY[] <-> ARRAY[];
+----
+db error: ERROR: No function matches the given name and argument types '<->("NULL"[], "NULL"[])'. You might need to add explicit type casts.
+	Candidate functions:
+	<->(col0 VARCHAR, col1 VARCHAR) -> DOUBLE
+	<->(col0 VARCHAR, col1 GEOMETRY('OGC:CRS84')) -> DOUBLE
+	<->(col0 GEOMETRY('OGC:CRS84'), col1 VARCHAR) -> DOUBLE
+	<->(col0 GEOMETRY('OGC:CRS84'), col1 GEOMETRY('OGC:CRS84')) -> DOUBLE
+	<->(col0 FLOAT[ANY], col1 FLOAT[ANY]) -> FLOAT
+	<->(col0 DOUBLE[ANY], col1 DOUBLE[ANY]) -> DOUBLE
+
 
 
 query error
 SELECT ARRAY[] <=> ARRAY[];
+----
+db error: ERROR: No function matches the given name and argument types '<=>("NULL"[], "NULL"[])'. You might need to add explicit type casts.
+	Candidate functions:
+	<=>(col0 FLOAT[ANY], col1 FLOAT[ANY]) -> FLOAT
+	<=>(col0 DOUBLE[ANY], col1 DOUBLE[ANY]) -> DOUBLE
+
 
 
 query error

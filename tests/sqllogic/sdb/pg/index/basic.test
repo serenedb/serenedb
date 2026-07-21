@@ -24,7 +24,7 @@ CREATE INDEX index_t ON t USING inverted(r test_english);
 statement error
 CREATE INDEX index_t_parens ON t USING inverted(r test_english ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on 'r' (known: included, hnsw)
+db error: ERROR: Unknown built-in opclass 'test_english' on 'r' (known: included, ivf)
 
 
 statement error
@@ -61,13 +61,13 @@ VACUUM (REFRESH_TABLE) t;
 statement error
 VACUUM (REFRESH_TABLE) wrong_t_name;
 ----
-db error: ERROR: relation 'wrong_t_name' not found.
+db error: ERROR: relation "wrong_t_name" does not exist<slt:ignore>
 
 
 statement error
 VACUUM (REFRESH_TABLE) index_t;
 ----
-db error: ERROR: relation 'index_t' not found.
+db error: ERROR: relation "index_t" does not exist<slt:ignore>
 
 
 query
@@ -226,13 +226,13 @@ DROP INDEX index_ts;
 statement error
 CREATE INDEX index_ts on tstest USING inverted(d);
 ----
-db error: ERROR: Failed to create index: Column 'd' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column 'd' has unsupported type HUGEINT and can not be indexed
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(e);
 ----
-db error: ERROR: Failed to create index: Column 'e' has unsupported type DECIMAL(10,2) and can not be indexed
+db error: ERROR: Column 'e' has unsupported type DECIMAL(10,2) and can not be indexed
 
 
 statement ok
@@ -246,13 +246,13 @@ DROP INDEX index_ts;
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'unknown_dict' on column 'c': no text dictionary by that name in schema 'public'
+db error: ERROR: Unknown opclass 'unknown_dict' on column 'c': no text dictionary by that name in schema 'public'
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'test_english' on column 'a': no text dictionary by that name in schema 'public'
+db error: ERROR: Unknown opclass 'test_english' on column 'a': no text dictionary by that name in schema 'public'
 
 
 statement error
@@ -264,7 +264,7 @@ db error: ERROR: Opclass option must be a constant value
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english ());
 ----
-db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on 'c' (known: included, hnsw)
+db error: ERROR: Unknown built-in opclass 'test_english' on 'c' (known: included, ivf)
 
 
 
@@ -505,7 +505,7 @@ CREATE TABLE s2.foo (a INTEGER, b VARCHAR);
 statement error
 CREATE INDEX idx ON s2.foo USING inverted(b s1.te);
 ----
-db error: ERROR: Failed to create index: Accessing text dictionary from different schema is not supported
+db error: ERROR: Accessing text dictionary from different schema is not supported
 
 
 statement ok

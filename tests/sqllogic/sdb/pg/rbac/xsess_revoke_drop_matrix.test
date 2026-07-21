@@ -1,0 +1,153 @@
+# serenedb-only (needs concurrent non-superuser password sessions): one role's
+# authority changing while ANOTHER role's session is LIVE. Every check
+# re-resolves against the COW snapshot, so a REVOKE / membership REVOKE / DROP
+# by the owner is visible on the affected session's next statement -- no
+# reconnect. The single-connection drop-dependency semantics are in
+# any/pg/rbac/drm_role_drop_deps.test (dual-verified vs PG); this file keeps
+# only the cases that genuinely need a live authenticated second session.
+# Cannot run on the shared trust PG container (per-role password sessions).
+#
+# Lore: clickclack the overseer owns the mop ledger; vedernikoff the intern
+# gets, then loses, then regains reach; babsky is the group vedernikoff climbs
+# into via SET ROLE.
+
+statement ok
+DROP TABLE IF EXISTS xsess_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS xsess_intern;
+
+
+statement ok
+DROP ROLE IF EXISTS xsess_babsky;
+
+
+statement ok
+CREATE TABLE xsess_ledger (id int, note text);
+
+
+statement ok
+INSERT INTO xsess_ledger VALUES (1, 'clickclack'), (2, 'iceberg');
+
+
+statement ok
+CREATE ROLE xsess_intern LOGIN PASSWORD 'xsess_intern_pw';
+
+
+statement ok
+CREATE ROLE xsess_babsky;
+
+
+statement ok
+GRANT SELECT ON xsess_ledger TO xsess_intern;
+
+
+# ---- (1) REVOKE another user's rights takes effect on the intern's NEXT query
+# The intern reads fine while the grant is held.
+connection c_intern user=xsess_intern password=xsess_intern_pw
+query
+SELECT count(*) AS n FROM xsess_ledger;
+----
+n
+2
+
+
+# Owner (default superuser) revokes the intern's SELECT.
+connection default
+statement ok
+REVOKE SELECT ON xsess_ledger FROM xsess_intern;
+
+
+# The intern's very next statement on the SAME live session is now denied.
+connection c_intern user=xsess_intern password=xsess_intern_pw
+statement error
+SELECT count(*) FROM xsess_ledger;
+----
+db error: ERROR: permission denied for table xsess_ledger<slt:ignore>
+
+
+# Owner re-grants; access is restored on the next statement, still same session.
+connection default
+statement ok
+GRANT SELECT ON xsess_ledger TO xsess_intern;
+
+
+connection c_intern user=xsess_intern password=xsess_intern_pw
+query
+SELECT count(*) AS n FROM xsess_ledger;
+----
+n
+2
+
+
+# ---- (2) REVOKE membership while the member relies on SET ROLE
+# Give the intern SELECT via the babsky group + membership in babsky.
+connection default
+statement ok
+GRANT SELECT ON xsess_ledger TO xsess_babsky;
+
+
+statement ok
+GRANT xsess_babsky TO xsess_intern;
+
+
+# The intern can SET ROLE babsky (is a member).
+connection c_intern2 user=xsess_intern password=xsess_intern_pw
+statement ok
+SET ROLE xsess_babsky;
+
+
+# Owner revokes the intern's membership in babsky.
+connection default
+statement ok
+REVOKE xsess_babsky FROM xsess_intern;
+
+
+# A fresh intern session can no longer SET ROLE babsky (membership gone).
+connection c_intern3 user=xsess_intern password=xsess_intern_pw
+statement error
+SET ROLE xsess_babsky;
+----
+db error: ERROR: permission denied to set role "xsess_babsky"<slt:ignore>
+
+
+# ---- (3) DROP a live LOGIN role: a NEW connect as it fails.
+# (Needs a real authenticated session -- the any/ drop-dependency test covers
+# the ownership-refusal side single-connection; this covers the login side.)
+connection default
+statement ok
+DROP ROLE IF EXISTS xsess_eve;
+
+
+statement ok
+CREATE ROLE xsess_eve LOGIN PASSWORD 'xsess_eve_pw';
+
+
+statement ok
+DROP ROLE xsess_eve;
+
+
+# The refusal is the generic auth failure, not "does not exist": auth runs
+# before role lookup, so a dropped role is indistinguishable from a bad
+# password (role names cannot be probed).
+connection c_eve user=xsess_eve password=xsess_eve_pw
+statement error
+SELECT 1;
+----
+db error: FATAL: password authentication failed for user "xsess_eve"<slt:ignore>
+
+
+# ---- cleanup ----
+
+connection default
+statement ok
+DROP TABLE xsess_ledger;
+
+
+statement ok
+DROP ROLE xsess_intern;
+
+
+statement ok
+DROP ROLE xsess_babsky;

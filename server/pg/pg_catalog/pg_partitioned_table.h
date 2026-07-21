@@ -40,9 +40,9 @@ struct PgPartitionedTable {
   Partstrat partstrat;
   int16_t partnatts;
   Oid partdefid;
-  Vector<int16_t> partattrs;
-  Vector<Oid> partclass;
-  Vector<Oid> partcollation;
+  Array<int16_t> partattrs;
+  Array<Oid> partclass;
+  Array<Oid> partcollation;
   PgNodeTree partexprs;
 };
 // NOLINTEND

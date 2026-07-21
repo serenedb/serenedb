@@ -615,3 +615,50 @@ id	v
 
 statement ok
 DROP TABLE unnest_test
+
+
+# table functions without a same-named scalar function in the SELECT list
+
+query
+SELECT generate_subscripts(ARRAY[10, 20, 30], 1);
+----
+generate_subscripts
+1
+2
+3
+
+
+query
+SELECT generate_subscripts(ARRAY[10, 20, 30], 1, true);
+----
+generate_subscripts
+3
+2
+1
+
+
+query
+SELECT generate_subscripts(a, 1) FROM (VALUES (ARRAY[1, 2]), (ARRAY[7, 8, 9])) t(a);
+----
+generate_subscripts
+1
+2
+1
+2
+3
+
+
+skipif postgres
+query
+SELECT glob('/nonexistent_sqllogic_path/*');
+----
+glob
+
+
+skipif postgres
+query
+SELECT unnest(ARRAY[1, 2]), glob('/nonexistent_sqllogic_path/*');
+----
+unnest	glob
+1	NULL
+2	NULL

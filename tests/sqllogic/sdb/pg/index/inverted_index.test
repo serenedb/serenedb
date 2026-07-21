@@ -242,36 +242,21 @@ query
 EXPLAIN SELECT COUNT(*) FROM vedernikoff_idx WHERE b @@ ts_phrase('pudge') AND b @@ ts_phrase('game');
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│    UNGROUPED_AGGREGATE    │
-│    ────────────────────   │
-│        Aggregates:        │
-│        count_star()       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│      vedernikoff_idx      │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       TERMS       ││  │
-│  ││    ────────────   ││  │
-│  ││ b(string) {['game'││  │
-│  ││ , 1],['pudge', 1] ││  │
-│  ││   ,} min_match=2  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│          Output:          │
-│       row-count only      │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ UNGROUPED_AGGREGATE ───────╮
+│ Aggregates: count_star()    │
+│ ~1 row                      │
+╰──────────────┬──────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: vedernikoff_idx      │
+│ Filter:                     │
+│ ╭─ Terms ─────────────────╮ │
+│ │ Field: b(string)        │ │
+│ │ Values: 'game', 'pudge' │ │
+│ │ Min Match: 2            │ │
+│ ╰─────────────────────────╯ │
+│ Output: row-count only      │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 query
@@ -334,96 +319,60 @@ query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: biksalen_memes   │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ───────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: biksalen_memes │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: biksalen_memes   │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ───────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: biksalen_memes │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│   Table: biksalen_memes   │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ EXTENSION ───────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: biksalen_memes │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
+
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
 
 
 query
 EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
 ----
 QUERY PLAN
-┌─────────────────────────────────────┐
-│┌───────────────────────────────────┐│
-││    Query Profiling Information    ││
-│└───────────────────────────────────┘│
-└─────────────────────────────────────┘
-EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
-<slt:ignore>
-┌───────────────────────────┐
-│      RESULT_COLLECTOR     │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      EXPLAIN_ANALYZE      │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         EXTENSION         │
-│    ────────────────────   │
-│                           │
-│           1 row           │
-<slt:ignore>
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         TABLE_SCAN        │
-│    ────────────────────   │
-│   Table: biksalen_memes   │
-│   Type: Sequential Scan   │
-│                           │
-│                           │
-│                           │
-│           3 rows          │
-<slt:ignore>
-└───────────────────────────┘
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ EXTENSION ───────────╮
+│ 1 row             0µs │
+╰───────────┒┎──────────╯
+╭─ TABLE_SCAN ──────────╮
+│ Table: biksalen_memes │
+│ Type: Sequential Scan │
+│ 3 rows            0µs │
+╰───────────────────────╯
 
 
 # EXPLAIN ANALYZE must actually create the index
@@ -646,47 +595,27 @@ query
 EXPLAIN SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│  score_parquet_idx.a ASC  │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             a             │
-│         has_score         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│           Index:          │
-│     score_parquet_idx     │
-│                           │
-│      Lookup: parquet      │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││        Term       ││  │
-│  ││    ────────────   ││  │
-│  ││  b(string) = fox  ││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
-│                           │
-│        Projections:       │
-│             a             │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ ORDER_BY ─────────────────────────────╮
+│ Order By: score_parquet_idx.a ASC      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections: a, has_score              │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: score_parquet_idx               │
+│ Lookup: parquet                        │
+│ Filter:                                │
+│ ╭─ Term ───────────╮                   │
+│ │ Field: b(string) │                   │
+│ │ Value: fox       │                   │
+│ ╰──────────────────╯                   │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: a,                        │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 
 query
@@ -944,21 +873,14 @@ query
 EXPLAIN CREATE INDEX dense_csv_idx ON dense_csv_ext USING inverted(a, b test_english, c test_english);
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│         EXTENSION         │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          READ_CSV         │
-│    ────────────────────   │
-│     Function: READ_CSV    │
-│                           │
-│        Projections:       │
-│             a             │
-│             b             │
-│             c             │
-│                           │
-│          ~13 rows         │
-└───────────────────────────┘
+╭─ EXTENSION ────────╮
+╰──────────┬─────────╯
+╭─ READ_CSV ─────────╮
+│ Function: READ_CSV │
+│ Projections: a, b, │
+│              c     │
+│ ~13 rows           │
+╰────────────────────╯
 
 
 statement ok
@@ -968,44 +890,26 @@ query
 EXPLAIN SELECT a, b FROM dense_csv_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          ORDER_BY         │
-│    ────────────────────   │
-│    dense_csv_idx.a ASC    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             a             │
-│             b             │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│       IRESEARCH_SCAN      │
-│    ────────────────────   │
-│    Index: dense_csv_idx   │
-│        Lookup: csv        │
-│                           │
-│          Filter:          │
-│  ┌─────────────────────┐  │
-│  │┌───────────────────┐│  │
-│  ││       PHRASE      ││  │
-│  ││    ────────────   ││  │
-│  ││ b(string) = <Term ││  │
-│  ││   :shared(0, 0);  ││  │
-│  ││ Term:term(1, 1); >││  │
-│  │└───────────────────┘│  │
-│  └─────────────────────┘  │
-│                           │
-│        Projections:       │
-│             b             │
-│             a             │
-│                           │
-│           ~1 row          │
-└───────────────────────────┘
+╭─ ORDER_BY ───────────────────────────────╮
+│ Order By: dense_csv_idx.a ASC            │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: a, b                        │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: dense_csv_idx                     │
+│ Lookup: csv                              │
+│ Filter:                                  │
+│ ╭─ Phrase ─────────────────────────────╮ │
+│ │ Field: b(string)                     │ │
+│ │ Parts:                               │ │
+│ │ Term:shared(0, 0); Term:term(1, 1);  │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: b, a                        │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 
 query
@@ -1295,7 +1199,7 @@ CREATE TABLE dup_tok (id INTEGER PRIMARY KEY, txt VARCHAR);
 statement error
 CREATE INDEX dup_tok_idx ON dup_tok USING inverted(id, txt tok_kw, txt test_english);
 ----
-db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+db error: ERROR: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
 
 
 # Same column listed twice with the same tokenizer is also rejected --
@@ -1303,7 +1207,7 @@ db error: ERROR: Failed to create index: Column 'txt' is listed more than once w
 statement error
 CREATE INDEX dup_tok_same_idx ON dup_tok USING inverted(id, txt tok_kw, txt tok_kw);
 ----
-db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+db error: ERROR: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
 
 
 # A bare column (no opclass) implicitly binds the default tokenizer, so it
@@ -1313,13 +1217,13 @@ db error: ERROR: Failed to create index: Column 'txt' is listed more than once w
 statement error
 CREATE INDEX dup_tok_bare_idx ON dup_tok USING inverted(id, txt, txt);
 ----
-db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+db error: ERROR: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
 
 
 statement error
 CREATE INDEX dup_tok_bare_mix_idx ON dup_tok USING inverted(id, txt, txt tok_kw);
 ----
-db error: ERROR: Failed to create index: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
+db error: ERROR: Column 'txt' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed column. Stack `included(...)` on the same column instead, or remove the duplicate.
 
 
 # Stacking a tokenizer with `included()` on the same column stays legal:

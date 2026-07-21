@@ -50,12 +50,6 @@ template<size_t Len0, size_t Len1, size_t Len2>
 DtoaLiterals(const char (&)[Len0], const char (&)[Len1], const char (&)[Len2])
   -> DtoaLiterals<Len0, Len1, Len2>;
 
-inline constexpr DtoaLiterals kVPackDtoaLiterals{
-  .nan = "\"NaN\"",
-  .neg_inf = "\"-Infinity\"",
-  .pos_inf = "\"Infinity\"",
-};
-
 inline constexpr DtoaLiterals kPgDtoaLiterals{
   .nan = "NaN",
   .neg_inf = "-Infinity",
@@ -84,7 +78,5 @@ char* dtoa_literals(Float d, char* buf) {  // NOLINT
 
 template<typename Float>
 char* dtoa_fast(Float d, char* buf);  // NOLINT
-
-char* dtoa_vpack(double d, char* buf);  // NOLINT
 
 }  // namespace sdb::basics

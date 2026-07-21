@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -47,7 +48,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_schema_entry.h"
-#include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/index_expression.hpp"
 #include "connector/inverted_store_index.h"
@@ -55,10 +55,12 @@
 #include "connector/primary_key.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
+#include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
-#include "pg/progress_tracker.h"
+#include "pg/progress_registry.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 
 namespace sdb::connector {
@@ -74,8 +76,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool created = false;
   bool finalized = false;
   ObjectId database_id;
-  // Set once the catalog entry exists; the failure rollback drops by this id
-  // (not by name) so a concurrent rename can't redirect it to another index.
   ObjectId index_id;
   std::string schema_name;
   std::string table_name;
@@ -85,22 +85,12 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   ObjectId table_id;
   std::vector<InsertColumnMeta> columns;
 
-  duckdb::idx_t file_row_number_col_idx = 0;
-  duckdb::idx_t file_index_col_idx = 0;
-  duckdb::idx_t generated_pk_col_idx = 0;
-  bool is_external = false;
-  bool is_glob_external = false;
-  bool has_generated_pk_col = false;
-  // No PK column in the chunk -- Sink synthesises a monotonic counter.
-  bool is_view_synth_pk = false;
+  bool pk_term = false;
+  catalog::PkColumnKind pk_column = catalog::PkColumnKind::None;
+  duckdb::idx_t pk_hi_col_idx = 0;
+  duckdb::idx_t pk_lo_col_idx = 0;
 
-  std::atomic<int64_t> view_row_counter_atomic{0};
   std::atomic<duckdb::idx_t> backfill_count_atomic{0};
-  int64_t external_row_counter = 0;
-
-  std::unique_ptr<DuckDBSinkIndexWriter> writer;
-  std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
-  std::vector<std::string> row_keys;
 
   std::shared_ptr<search::InvertedIndexStorage> index_storage;
   std::shared_ptr<const catalog::Snapshot> snapshot_for_providers;
@@ -108,14 +98,12 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 
   std::string value_buffer;
 
-  pg::ProgressReporter* progress = nullptr;
+  pg::ProgressMetrics* progress = nullptr;
 
   ~CreateIndexGlobalState() {
-    search_trx.reset();
     if (created && !finalized) {
       try {
-        auto& catalog = catalog::GetCatalog();
-        std::ignore = catalog.DropIndexById(database_id, index_id, true);
+        catalog::GetCatalog().DropIndexById(database_id, index_id, true);
       } catch (...) {
       }
     }
@@ -175,27 +163,32 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
-  state->schema_name = _schema_entry.name;
+  state->schema_name = _schema_entry.name.GetIdentifierName();
   state->table_name = std::string{_relation->GetName()};
-  state->index_name = _info->index_name;
+  state->index_name = _info->GetIndexName().GetIdentifierName();
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
         kSereneDBClientStateKey)) {
-    state->progress = sdb_state->progress.get();
+    auto& metrics = sdb_state->Progress();
+    metrics.SetCommand(pg::ProgressCommand::CreateIndex);
+    metrics.SetPhase(pg::progress_phase::CreateIndex::Initializing);
+    pg::ProgressMetrics::Set(metrics.relid,
+                             static_cast<int64_t>(_relation->GetId().id()));
+    if (estimated_cardinality > 0) {
+      pg::ProgressMetrics::Set(metrics.tuples_total,
+                               static_cast<int64_t>(estimated_cardinality));
+    }
+    state->progress = &metrics;
   }
 
   auto& catalog_impl = catalog::GetCatalog();
 
-  // Determine index type
   if (absl::EqualsIgnoreCase(_info->index_type, "inverted")) {
     state->index_type = catalog::ObjectType::InvertedIndex;
   } else {
     state->index_type = catalog::ObjectType::SecondaryIndex;
   }
 
-  // Build CreateIndexColumn vector from parsed_expressions.
-  // _info->names has ALL scan columns, not just index columns.
-  // _info->parsed_expressions has the actual index column refs.
   const auto& columns = Columns();
   std::vector<catalog::CreateIndexColumn> idx_columns;
   auto resolve_column = [&](std::string_view col_name) {
@@ -239,11 +232,12 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
-      auto col_name = col_ref.GetColumnName();
+      const auto& col_name = col_ref.GetColumnName().GetIdentifierName();
       const auto* cat_col = resolve_column(col_name);
       if (!cat_col) {
-        throw duckdb::CatalogException("column \"%s\" not found in table",
-                                       col_name);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", col_name, "\" not found in table"));
       }
       idx_columns.emplace_back(cat_col->GetName(), cat_col, std::nullopt,
                                std::move(opclass), std::move(opclass_options));
@@ -259,8 +253,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     std::string serialized = SerializeBoundExpression(*normalized);
     auto dependent_columns = CollectDependentColumns(*normalized);
     if (dependent_columns.empty()) {
-      throw duckdb::CatalogException(
-        "indexed expression must reference at least one base table column");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
+        ERR_MSG(
+          "indexed expression must reference at least one base table column"));
     }
     auto return_type = normalized->GetReturnType();
     auto& indexed_column = idx_columns.emplace_back(
@@ -278,77 +274,139 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   bool if_not_exists =
     _info->on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  Result create_result;
+  // CREATE INDEX requires ownership of the target relation; the mutation
+  // enforces it and throws "must be owner of table <name>" on a non-owner.
+  bool created = false;
   if (state->index_type == catalog::ObjectType::InvertedIndex) {
     auto find_with = [&](std::string_view name) -> const duckdb::Value* {
       auto it = _info->options.find(name);
       return it != _info->options.end() ? &it->second : nullptr;
     };
     auto resolve_uint = [&](std::string_view name) -> uint32_t {
-      if (auto* v = find_with(name)) {
-        return v->GetValue<uint32_t>();
-      }
-      duckdb::Value v;
-      auto r = context.TryGetCurrentSetting(std::string{name}, v);
-      SDB_ASSERT(r, "missing DB-level default for setting: ", name);
-      return v.GetValue<uint32_t>();
+      return ResolveUintWithOption(context, name, find_with(name));
     };
 
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint("row_group_size"),
       .norm_row_group_size = resolve_uint("norm_row_group_size"),
-      .refresh_interval_ms = resolve_uint("refresh_interval"),
-      .compaction_interval_ms = resolve_uint("compaction_interval"),
-      .cleanup_interval_step = resolve_uint("cleanup_interval_step"),
+      .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
+      .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
+      .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),
     };
     if (auto* v = find_with("optimize_top_k")) {
       auto value =
         v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
+    std::string store_pk = "auto";
+    if (auto* v = find_with("store_pk")) {
+      store_pk = duckdb::StringUtil::Lower(
+        v->DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>());
+      if (store_pk == "true") {
+        store_pk = "auto";
+      } else if (store_pk == "false") {
+        store_pk = "none";
+      }
+    }
+    const bool table_backed = TableOrNull() != nullptr;
+    enum class KeyShape { Single, Two, Synth };
+    auto shape = KeyShape::Synth;
+    if (table_backed) {
+      shape = KeyShape::Single;
+    } else if (auto it = _info->options.find("_sdb_view_fast_path_pk");
+               it != _info->options.end()) {
+      const auto kind = it->second.GetValue<std::string>();
+      shape = (kind == "file_index_plus_row_number" ||
+               kind == "file_index_plus_duckdb_rowid")
+                ? KeyShape::Two
+                : KeyShape::Single;
+    }
+    options.pk_term = table_backed;
+    if (store_pk == "none") {
+      options.pk_term = false;
+      options.pk_column = catalog::PkColumnKind::None;
+    } else if (store_pk == "auto") {
+      options.pk_column = shape == KeyShape::Single ? catalog::PkColumnKind::I64
+                          : shape == KeyShape::Two
+                            ? catalog::PkColumnKind::I64I64
+                            : catalog::PkColumnKind::Unable;
+    } else if (store_pk == "i64") {
+      if (shape != KeyShape::Single) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("store_pk = 'i64' requires a single-part row key; this "
+                  "index's key is ",
+                  shape == KeyShape::Two ? "(file_index, row)" : "synthetic"));
+      }
+      options.pk_column = catalog::PkColumnKind::I64;
+    } else if (store_pk == "i64i64") {
+      if (shape != KeyShape::Two) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("store_pk = 'i64i64' requires a two-part (file_index, row) "
+                  "key; this index's key is ",
+                  table_backed ? "the table rowid" : "single-part"));
+      }
+      options.pk_column = catalog::PkColumnKind::I64I64;
+    } else {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("store_pk must be one of none/auto/i64/i64i64 (or "
+                "true/false), got '",
+                store_pk, "'"));
+    }
 
-    create_result = catalog_impl.CreateInvertedIndex(
-      context, _database_id, _schema_entry.name, _relation->GetName(),
-      _info->index_name, std::move(idx_columns), std::move(options),
-      {.create_with_tombstone = true});
+    state->pk_term = options.pk_term;
+    state->pk_column = options.pk_column;
+
+    created = catalog_impl.CreateInvertedIndex(
+      catalog::ActingAs(context), context, _database_id,
+      _schema_entry.name.GetIdentifierName(), _relation->GetName(),
+      _info->GetIndexName().GetIdentifierName(), std::move(idx_columns),
+      std::move(options),
+      {.create_with_tombstone = true, .if_not_exists = if_not_exists});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
-    create_result = catalog_impl.CreateSecondaryIndex(
-      _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
-      std::move(idx_columns), unique, {.create_with_tombstone = true});
+    created = catalog_impl.CreateSecondaryIndex(
+      catalog::ActingAs(context), _database_id,
+      _schema_entry.name.GetIdentifierName(), _relation->GetName(),
+      _info->GetIndexName().GetIdentifierName(), std::move(idx_columns), unique,
+      {.create_with_tombstone = true, .if_not_exists = if_not_exists});
   }
 
-  if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+  if (!created) {
     // Index already exists, nothing to do
     return state;
-  }
-  if (!create_result.ok()) {
-    throw duckdb::CatalogException("Failed to create index: %s",
-                                   create_result.errorMessage());
   }
 
   state->created = true;
 
-  // Get fresh snapshot with the new index
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_index =
-    snapshot->GetRelation(_database_id, _schema_entry.name, _info->index_name);
+    snapshot->GetRelation(catalog::NoAccessCheck(), _database_id,
+                          _schema_entry.name.GetIdentifierName(),
+                          _info->GetIndexName().GetIdentifierName());
   SDB_ASSERT(catalog_index);
   state->index_id = catalog_index->GetId();
-  if (state->progress) {
-    state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
+  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    SDB_ASSERT(!sdb_state->transaction_abort_cleanup);
+    sdb_state->transaction_abort_cleanup =
+      [database_id = _database_id,
+       index_id = state->index_id](duckdb::MetaTransaction&) {
+        catalog::GetCatalog().DropIndexById(database_id, index_id, true);
+      };
   }
-  // Inverted indexes carry their iresearch storage (bound in CreateIndexImpl);
-  // secondary indexes do not, so this is null for them.
+  if (state->progress) {
+    state->progress->SetPhase(pg::progress_phase::CreateIndex::BuildingIndex);
+  }
   auto inverted =
     snapshot->GetObject<catalog::InvertedIndex>(catalog_index->GetId());
   auto storage = inverted ? inverted->GetData() : nullptr;
   state->index_storage = storage;
 
   if (storage) {
-    // Must be set before StartTasks so the first Commit's meta_payload records
-    // it.
     if (auto it = _info->options.find("_sdb_iceberg_snapshot_id");
         it != _info->options.end()) {
       storage->SetIcebergSnapshotId(it->second.GetValue<int64_t>());
@@ -358,15 +416,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   auto* table_ptr = TableOrNull();
   state->table_id = table_ptr ? table_ptr->GetId() : _relation->GetId();
-  // Populated only on the base-table branch; describes the chunk-order list
-  // of catalog positions the scan projects. Reused below for PK chunk-index
-  // resolution.
   std::vector<size_t> projection;
   if (table_ptr) {
-    // Base-table backfill: BindCreateIndex narrowed the scan to index
-    // columns + PK columns. Mirror that projection here so chunk positions
-    // and state->columns agree. input_col_idx is the chunk position, not
-    // the catalog index.
     projection = BuildCreateIndexProjection(
       table_ptr->Columns(), table_ptr->PKColumns(), _info->column_ids);
     state->columns.reserve(projection.size());
@@ -379,9 +430,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       });
     }
   } else {
-    // View-backed: chunk holds the view body's projection at catalog
-    // positions; trailing positions hold virtual PK columns appended by
-    // BindCreateIndex.
     for (size_t i = 0; i < columns.size(); ++i) {
       if (columns[i].GetId() == catalog::Column::kGeneratedPKId) {
         continue;
@@ -393,41 +441,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       });
     }
   }
-  state->file_row_number_col_idx = state->columns.size();
-  state->generated_pk_col_idx = state->columns.size();
-  if (auto it = _info->options.find("_sdb_view_fast_path_pk");
-      !table_ptr && it != _info->options.end()) {
-    const auto kind = it->second.GetValue<std::string>();
-    state->is_external = true;
-    if (kind == "file_index_plus_row_number" ||
-        kind == "file_index_plus_duckdb_rowid") {
-      state->is_glob_external = true;
-      state->file_index_col_idx = state->columns.size();
-      state->file_row_number_col_idx = state->columns.size() + 1;
-    }
-  }
-  if (table_ptr) {
-    // Store-table postings are keyed by the native rowid the scan appends
-    // after the projection, regardless of the declared PK.
-    state->has_generated_pk_col = true;
-    state->is_view_synth_pk = false;
-  } else if (state->is_external) {
-    state->is_view_synth_pk = false;
-    state->has_generated_pk_col = false;
-  } else if (state->has_generated_pk_col) {
-    state->is_view_synth_pk = false;
-  } else {
-    state->has_generated_pk_col = false;
-    state->is_view_synth_pk = true;
-  }
+  state->pk_hi_col_idx = state->columns.size();
+  state->pk_lo_col_idx = state->columns.size() + 1;
 
   auto index = snapshot->GetObject<catalog::Index>(catalog_index->GetId());
   SDB_ASSERT(index);
 
   if (state->index_type == catalog::ObjectType::SecondaryIndex) {
-    // Table-backed secondary indexes are mirrored as native store indexes;
-    // the store CREATE INDEX builds from existing rows itself. View-backed
-    // secondary indexes are rejected at bind time.
     SDB_ASSERT(table_ptr);
   } else {
     state->snapshot_for_providers = snapshot;
@@ -461,9 +481,6 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
     inverted_storage.GetTransaction());
-  // Encode the built segments against the index being created (the index IS the
-  // per-column options); co-owned via the gstate's snapshot so the segment
-  // writer can pin it until flush.
   lstate->search_trx->SetFieldOptions(
     basics::downCast<const catalog::InvertedIndex>(gstate.index_for_providers));
 
@@ -471,10 +488,13 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
   auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
   auto indexed_exprs = MakeIndexedExpressions(inverted_index, context.client);
+  const auto& index_options = inverted_index.GetOptions();
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
     gstate.index_for_providers->GetColumns(), std::move(entry_info_provider),
-    std::move(indexed_exprs));
+    std::move(indexed_exprs),
+    PkPolicy{.index_term = index_options.pk_term,
+             .column = index_options.pk_column});
 
   return lstate;
 }
@@ -491,89 +511,64 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  const bool parallel = ParallelSink();
-  CreateIndexLocalState* lstate = nullptr;
-  if (parallel) {
-    lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state);
-    if (!lstate || !lstate->writer) {
-      return duckdb::SinkResultType::NEED_MORE_INPUT;
-    }
-  } else if (!gstate.writer) {
+  if (!ParallelSink()) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
+  auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state);
+  if (!lstate || !lstate->writer) {
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
+  auto* writer = lstate->writer.get();
 
-  auto* writer = parallel ? lstate->writer.get() : gstate.writer.get();
-  auto& row_keys = parallel ? lstate->row_keys : gstate.row_keys;
-
-  row_keys.clear();
-  row_keys.reserve(num_rows);
-  auto append_row_number_key = [&](int64_t row_number) {
-    auto& key = row_keys.emplace_back();
-    primary_key::AppendSigned(key, row_number);
-  };
-  auto append_glob_key = [&](int64_t file_index, int64_t row_number) {
-    auto& key = row_keys.emplace_back();
-    primary_key::AppendSigned(key, file_index);
-    primary_key::AppendSigned(key, row_number);
-  };
-  if (gstate.is_glob_external) {
-    SDB_ASSERT(gstate.file_index_col_idx < chunk.ColumnCount());
-    SDB_ASSERT(gstate.file_row_number_col_idx < chunk.ColumnCount());
-    auto& fi_vec = chunk.data[gstate.file_index_col_idx];
-    auto& rn_vec = chunk.data[gstate.file_row_number_col_idx];
-    duckdb::UnifiedVectorFormat fi_fmt;
-    duckdb::UnifiedVectorFormat rn_fmt;
-    fi_vec.ToUnifiedFormat(num_rows, fi_fmt);
-    rn_vec.ToUnifiedFormat(num_rows, rn_fmt);
-    // file_index is UBIGINT but always non-negative -- AppendSigned is
-    // bijective.
-    auto* fis = duckdb::UnifiedVectorFormat::GetData<uint64_t>(fi_fmt);
-    auto* rns = duckdb::UnifiedVectorFormat::GetData<int64_t>(rn_fmt);
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      const auto fi_idx = fi_fmt.sel->get_index(row);
-      const auto rn_idx = rn_fmt.sel->get_index(row);
-      append_glob_key(static_cast<int64_t>(fis[fi_idx]), rns[rn_idx]);
+  PkChunk pk;
+  std::unique_ptr<duckdb::Vector> pk_scratch;
+  auto& row_keys = lstate->row_keys;
+  std::vector<std::string_view> key_views;
+  switch (gstate.pk_column) {
+    case catalog::PkColumnKind::None:
+    case catalog::PkColumnKind::Unable:
+      break;
+    case catalog::PkColumnKind::I64:
+      SDB_ASSERT(gstate.pk_hi_col_idx < chunk.ColumnCount());
+      pk.column = &chunk.data[gstate.pk_hi_col_idx];
+      break;
+    case catalog::PkColumnKind::I64I64: {
+      SDB_ASSERT(gstate.pk_lo_col_idx < chunk.ColumnCount());
+      pk_scratch = std::make_unique<duckdb::Vector>(
+        PkColumnType(catalog::PkColumnKind::I64I64));
+      auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
+      entries[0].Reinterpret(chunk.data[gstate.pk_hi_col_idx]);
+      entries[1].Reference(chunk.data[gstate.pk_lo_col_idx]);
+      pk.column = pk_scratch.get();
+      break;
     }
-  } else if (gstate.is_external) {
-    SDB_ASSERT(gstate.file_row_number_col_idx < chunk.ColumnCount());
-    auto& rownum_vec = chunk.data[gstate.file_row_number_col_idx];
-    duckdb::UnifiedVectorFormat fmt;
-    rownum_vec.ToUnifiedFormat(num_rows, fmt);
-    auto* rownums = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      append_row_number_key(rownums[fmt.sel->get_index(row)]);
-    }
-  } else if (gstate.is_view_synth_pk) {
-    // View-backed: no PK column in chunk; synthesise a monotonic counter.
-    const int64_t base = gstate.view_row_counter_atomic.fetch_add(
-      static_cast<int64_t>(num_rows), std::memory_order_relaxed);
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      append_row_number_key(base + static_cast<int64_t>(row));
-    }
-  } else if (gstate.has_generated_pk_col) {
-    SDB_ASSERT(gstate.generated_pk_col_idx < chunk.ColumnCount());
-    auto& pk_vec = chunk.data[gstate.generated_pk_col_idx];
+  }
+  if (gstate.pk_term) {
+    SDB_ASSERT(gstate.pk_column == catalog::PkColumnKind::I64);
+    auto& pk_vec = chunk.data[gstate.pk_hi_col_idx];
     duckdb::UnifiedVectorFormat fmt;
     pk_vec.ToUnifiedFormat(num_rows, fmt);
     auto* pks = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
+    row_keys.clear();
+    row_keys.reserve(num_rows);
+    key_views.reserve(num_rows);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      append_row_number_key(pks[fmt.sel->get_index(row)]);
+      auto& key = row_keys.emplace_back();
+      primary_key::AppendSigned(key, pks[fmt.sel->get_index(row)]);
+      key_views.emplace_back(key);
     }
-  } else {
-    SDB_UNREACHABLE();
+    pk.keys = key_views;
   }
 
-  writer->Init(num_rows, chunk);
+  writer->Init(num_rows, pk);
 
-  std::vector<std::string_view> view_row_keys{row_keys.begin(), row_keys.end()};
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
     }
 
     const ColumnDescriptor desc{col.id, col.duckdb_type};
-    writer->SwitchColumn(desc, chunk.data[col.input_col_idx], view_row_keys,
-                         num_rows);
+    writer->SwitchColumn(desc, chunk.data[col.input_col_idx], num_rows);
   }
 
   if (auto indexed_exprs = writer->IndexedExpressions();
@@ -583,14 +578,14 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
                            std::ranges::to<std::vector<catalog::Column::Id>>();
     EvaluateAndWriteIndexedExpressions(*writer, indexed_exprs, chunk,
                                        gstate.table_id, slot_to_col_ids,
-                                       context.client, num_rows, row_keys);
+                                       context.client, num_rows);
   }
 
   writer->Finish();
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
   if (gstate.progress) {
-    gstate.progress->Add(pg::create_index_progress::Param::TuplesDone,
-                         num_rows);
+    pg::ProgressMetrics::Add(gstate.progress->tuples_processed, num_rows);
+    SDB_WAIT_ON_FAILURE("pause_create_index_mid_build");
   }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
@@ -620,10 +615,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   if (gstate.index_type == catalog::ObjectType::InvertedIndex &&
       gstate.index_storage) {
     if (gstate.progress) {
-      gstate.progress->SetPhase(pg::create_index_progress::Phase::Committing);
+      gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
     }
-    gstate.writer.reset();
-    gstate.search_trx.reset();
 
     auto& inverted_storage = *gstate.index_storage;
     inverted_storage.Refresh();
@@ -632,15 +625,14 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   if (gstate.progress) {
-    gstate.progress->SetPhase(pg::create_index_progress::Phase::Finalizing);
+    gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog = catalog::GetCatalog();
-  auto r = catalog.RemoveTombstone(_database_id, gstate.schema_name,
-                                   gstate.index_name);
-  if (!r.ok()) {
-    throw duckdb::InternalException("Failed to remove tombstone: %s",
-                                    r.errorMessage());
+  catalog::GetCatalog().RemoveTombstone(_database_id, gstate.schema_name,
+                                        gstate.index_name);
+  if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
+        kSereneDBClientStateKey)) {
+    sdb_state->transaction_abort_cleanup = nullptr;
   }
   gstate.finalized = true;
 
@@ -674,7 +666,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   duckdb::PlanIndexInput& input) {
   auto& op = input.op;
   if (!op.info) {
-    throw duckdb::InternalException("CreateIndexInfo is null in create_plan");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("CreateIndexInfo is null in create_plan"));
   }
 
   auto* sdb_catalog = dynamic_cast<SereneDBCatalog*>(&op.table.ParentCatalog());
@@ -682,17 +675,17 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     if (op.table.type == duckdb::CatalogType::TABLE_ENTRY &&
         op.table.Cast<duckdb::TableCatalogEntry>().IsDuckTable() &&
         op.info->options.contains(InvertedStoreIndex::kIndexIdOption)) {
-      // Store tables (identified by the mirror's linkage options) build
-      // through the generic pipeline (build callbacks + create_instance);
-      // other duck tables (temp, user attaches) keep the error below.
       return input.planner.CreateDefaultIndexPlan(op, input.table_scan);
     }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("cannot CREATE INDEX on ", op.table.ParentCatalog().GetName(),
-              ".", op.table.name,
+      ERR_MSG("cannot CREATE INDEX on ",
+              op.table.ParentCatalog().GetName().GetIdentifierName(), ".",
+              op.table.name.GetIdentifierName(),
               ": its catalog differs from the current one (",
-              duckdb::DatabaseManager::GetDefaultDatabase(input.context), ")"));
+              duckdb::DatabaseManager::GetDefaultDatabase(input.context)
+                .GetIdentifierName(),
+              ")"));
   }
   auto& schema_entry = op.table.ParentSchema().Cast<SereneDBSchemaEntry>();
   auto database_id = sdb_catalog->GetDatabaseId();
@@ -701,22 +694,18 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   std::vector<catalog::Column> view_columns;
 
   if (op.table.type == duckdb::CatalogType::VIEW_ENTRY) {
-    // Foreign-source view: resolve the SereneDB-catalog PgSqlView by name
-    // and synthesise a column list from its bound schema.
     auto& conn_ctx = GetSereneDBContext(input.context);
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    relation =
-      snapshot->GetRelation(database_id, schema_entry.name, op.table.name);
+    auto snapshot = conn_ctx.CatalogSnapshot();
+    relation = snapshot->GetRelation(catalog::NoAccessCheck(), database_id,
+                                     schema_entry.name.GetIdentifierName(),
+                                     op.table.name.GetIdentifierName());
     if (!relation || relation->GetType() != catalog::ObjectType::PgSqlView) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("view \"", op.table.name, "\" not found in SereneDB catalog"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("view \"", op.table.name.GetIdentifierName(),
+                              "\" not found in SereneDB catalog"));
     }
     auto& view = basics::downCast<catalog::PgSqlView>(*relation);
     const auto& vinfo = view.GetInfo();
-    // When pruning narrowed the view, build view_columns only for the
-    // surviving positions. column.id keeps the original view position
-    // so downstream id-based lookups stay stable.
     std::vector<size_t> view_positions;
     if (auto it = op.info->options.find("_sdb_view_kept_positions");
         it != op.info->options.end()) {
@@ -733,7 +722,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     for (auto p : view_positions) {
       SDB_ASSERT(p < vinfo.names.size());
       view_columns.emplace_back(ObjectId{}, catalog::Column::Id{p},
-                                vinfo.names[p], vinfo.types[p]);
+                                vinfo.names[p].GetIdentifierName(),
+                                vinfo.types[p]);
       view_columns.back().SetId(catalog::Column::Id{p});
     }
   } else {

@@ -1,0 +1,235 @@
+# Table-level INSERT/UPDATE/DELETE privilege matrix: a role granted exactly one
+# of INSERT/UPDATE/DELETE may run the matching operation (in a form that reads
+# no column, so SELECT is not also required) and is refused the other two with
+# `permission denied for table <t>`. INSERT-only may INSERT but RETURNING needs
+# SELECT; a role holding all three but no SELECT runs constant/blind forms yet
+# is refused any column-reading form. Mirrors PostgreSQL (ExecCheckOneRelPerms).
+#
+# Lore: vedernikoff, babsky and mop each hold a single write privilege and we
+# probe the privilege boundary around clickclack.
+
+statement ok
+DROP TABLE IF EXISTS iud_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS iud_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS iud_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS iud_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS iud_clickclack;
+
+
+statement ok
+CREATE TABLE iud_iceberg (clickclack int, mop int);
+
+
+statement ok
+INSERT INTO iud_iceberg VALUES (1, 10), (2, 20), (3, 30);
+
+
+statement ok
+CREATE ROLE iud_vedernikoff LOGIN PASSWORD 'iud_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE iud_babsky LOGIN PASSWORD 'iud_babsky_pw';
+
+
+statement ok
+CREATE ROLE iud_mop LOGIN PASSWORD 'iud_mop_pw';
+
+
+statement ok
+CREATE ROLE iud_clickclack LOGIN PASSWORD 'iud_clickclack_pw';
+
+
+# === INSERT-only: vedernikoff ===
+
+statement ok
+GRANT INSERT ON iud_iceberg TO iud_vedernikoff;
+
+
+# INSERT ... VALUES assigns columns without reading any -> INSERT alone suffices.
+connection c_ins user=iud_vedernikoff password=iud_vedernikoff_pw
+statement ok
+INSERT INTO iud_iceberg (clickclack) VALUES (4);
+
+
+# UPDATE needs the UPDATE privilege, which the insert-only role lacks.
+connection c_ins2 user=iud_vedernikoff password=iud_vedernikoff_pw
+statement error
+UPDATE iud_iceberg SET mop = 99;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# DELETE needs the DELETE privilege, which the insert-only role lacks.
+connection c_ins3 user=iud_vedernikoff password=iud_vedernikoff_pw
+statement error
+DELETE FROM iud_iceberg WHERE false;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# RETURNING reads the inserted row back -> needs SELECT, which is absent.
+connection c_ins4 user=iud_vedernikoff password=iud_vedernikoff_pw
+statement error
+INSERT INTO iud_iceberg (clickclack) VALUES (5) RETURNING clickclack;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# === UPDATE-only: babsky ===
+
+statement ok
+GRANT UPDATE ON iud_iceberg TO iud_babsky;
+
+
+# Constant SET with no predicate reads nothing -> UPDATE alone suffices.
+connection c_upd user=iud_babsky password=iud_babsky_pw
+statement ok
+UPDATE iud_iceberg SET mop = 99;
+
+
+# INSERT needs the INSERT privilege, which the update-only role lacks.
+connection c_upd2 user=iud_babsky password=iud_babsky_pw
+statement error
+INSERT INTO iud_iceberg (clickclack) VALUES (6);
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# DELETE needs the DELETE privilege, which the update-only role lacks.
+connection c_upd3 user=iud_babsky password=iud_babsky_pw
+statement error
+DELETE FROM iud_iceberg WHERE false;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# === DELETE-only: mop ===
+
+statement ok
+GRANT DELETE ON iud_iceberg TO iud_mop;
+
+
+# Blind DELETE with a constant-false predicate reads no column -> DELETE alone
+# suffices.
+connection c_del user=iud_mop password=iud_mop_pw
+statement ok
+DELETE FROM iud_iceberg WHERE false;
+
+
+# INSERT needs the INSERT privilege, which the delete-only role lacks.
+connection c_del2 user=iud_mop password=iud_mop_pw
+statement error
+INSERT INTO iud_iceberg (clickclack) VALUES (7);
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# UPDATE needs the UPDATE privilege, which the delete-only role lacks.
+connection c_del3 user=iud_mop password=iud_mop_pw
+statement error
+UPDATE iud_iceberg SET mop = 99;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# === all three write privileges, no SELECT: clickclack ===
+
+statement ok
+GRANT INSERT, UPDATE, DELETE ON iud_iceberg TO iud_clickclack;
+
+
+# Constant/blind forms read no column, so INSERT/UPDATE/DELETE alone suffice.
+connection c_all user=iud_clickclack password=iud_clickclack_pw
+statement ok
+INSERT INTO iud_iceberg (clickclack) VALUES (8);
+
+
+connection c_all2 user=iud_clickclack password=iud_clickclack_pw
+statement ok
+UPDATE iud_iceberg SET mop = 42;
+
+
+connection c_all3 user=iud_clickclack password=iud_clickclack_pw
+statement ok
+DELETE FROM iud_iceberg WHERE false;
+
+
+# SET reading a column (mop = mop + 1) needs SELECT, which is absent.
+connection c_all4 user=iud_clickclack password=iud_clickclack_pw
+statement error
+UPDATE iud_iceberg SET mop = mop + 1;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# WHERE reading a column needs SELECT, which is absent.
+connection c_all5 user=iud_clickclack password=iud_clickclack_pw
+statement error
+UPDATE iud_iceberg SET mop = 1 WHERE clickclack = 1;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# DELETE with a column predicate needs SELECT, which is absent.
+connection c_all6 user=iud_clickclack password=iud_clickclack_pw
+statement error
+DELETE FROM iud_iceberg WHERE clickclack = 1;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# RETURNING reads the affected rows -> needs SELECT, which is absent.
+connection c_all7 user=iud_clickclack password=iud_clickclack_pw
+statement error
+INSERT INTO iud_iceberg (clickclack) VALUES (9) RETURNING clickclack;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+connection c_all8 user=iud_clickclack password=iud_clickclack_pw
+statement error
+DELETE FROM iud_iceberg WHERE false RETURNING clickclack;
+----
+db error: ERROR: permission denied for table iud_iceberg<slt:ignore>
+
+
+# Owner confirms the surviving rows after all the allowed writes.
+connection default
+query
+SELECT count(*) AS n FROM iud_iceberg;
+----
+n
+5
+
+
+statement ok
+DROP TABLE iud_iceberg;
+
+
+statement ok
+DROP ROLE iud_vedernikoff;
+
+
+statement ok
+DROP ROLE iud_babsky;
+
+
+statement ok
+DROP ROLE iud_mop;
+
+
+statement ok
+DROP ROLE iud_clickclack;

@@ -554,20 +554,18 @@ TEST_P(FormatTestCase, fields_seek_ge) {
 
   // seek_ge before every term
   {
-    irs::NumericTokenizer stream;
-    auto* term = irs::get<irs::TermAttr>(stream);
-    ASSERT_NE(nullptr, term);
+    irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
 
     auto it = field->iterator(irs::SeekMode::NORMAL);
     ASSERT_NE(nullptr, it);
 
     for (size_t begin = 74, end = 7000, step = 2; begin < end; begin += step) {
-      stream.reset(double_t(begin));
-      ASSERT_TRUE(stream.next());
-      ASSERT_EQ(irs::SeekResult::NotFound, it->seek_ge(term->value));
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(buf, double_t(begin));
+      ASSERT_EQ(irs::SeekResult::NotFound, it->seek_ge(term));
 
       auto expected_it =
-        std::lower_bound(all_terms.begin(), all_terms.end(), term->value,
+        std::lower_bound(all_terms.begin(), all_terms.end(), term,
                          [](const irs::bstring& lhs,
                             const irs::bytes_view& rhs) { return lhs < rhs; });
       ASSERT_NE(all_terms.end(), expected_it);
@@ -848,7 +846,8 @@ TEST_P(FormatTestCase, fields_read_write) {
         ASSERT_TRUE(term->seek(*expected_sorted_term));
         ASSERT_EQ(*expected_sorted_term, term->value());
         ASSERT_NO_THROW(term->read());
-        ASSERT_THROW(term->next(), irs::NotSupported);
+        ASSERT_FALSE(term->next());
+        ASSERT_EQ(*expected_sorted_term, term->value());
         ASSERT_THROW(term->seek_ge(*expected_sorted_term), irs::NotSupported);
         auto cookie = term->cookie();
         ASSERT_NE(nullptr, cookie);
@@ -1543,7 +1542,7 @@ TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
 
     size_t hits = 0;
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         docs_itr->next();) {
+         !irs::doc_limits::eof(docs_itr->advance());) {
       ++hits;
     }
     ASSERT_EQ(1, hits);
@@ -2363,7 +2362,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
       const auto* col = r.Column(3);
       ASSERT_NE(col, nullptr);
       EXPECT_EQ(col->RowCount(), kRowCount);
-      EXPECT_TRUE(col->HasValidity());
+      EXPECT_TRUE(col->HasValidity() || col->NullsInData());
 
       // Pass 1: not-cached random reads.
       {
@@ -2495,8 +2494,8 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_TRUE(col->HasValidity());
-    EXPECT_GE(col->ValidityRgCount(), 2u);  // at least 2 row groups
+    EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+    EXPECT_GE(col->DataRgCount(), 2u);  // at least 2 row groups
 
     // Probes spanning row-group boundaries (511/512/513 etc).
     const std::vector<uint64_t> boundary_rows = {
@@ -3316,7 +3315,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
       const auto* col = r.Column(13);
       ASSERT_NE(col, nullptr);
       EXPECT_EQ(col->RowCount(), kRowCount);
-      EXPECT_TRUE(col->HasValidity());
+      EXPECT_TRUE(col->HasValidity() || col->NullsInData());
 
       // Pass 1: per-row point read.
       {
@@ -3441,7 +3440,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_TRUE(col->HasValidity());
+    EXPECT_TRUE(col->HasValidity() || col->NullsInData());
     EXPECT_GE(col->DataRgCount(), 2u);
 
     // Per-row check across the rg-boundary gap.
@@ -3550,7 +3549,9 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
         const auto* col = r.Column(kSparseId);
         ASSERT_NE(col, nullptr);
         EXPECT_EQ(col->RowCount(), kRowCount);
-        EXPECT_TRUE(col->HasValidity());
+        // Nulls live either in a real validity stream or inside the data
+        // codec (NO_VALIDITY_REQUIRED, e.g. dict_fsst) -- both are valid.
+        EXPECT_TRUE(col->HasValidity() || col->NullsInData());
 
         // Point-read.
         irs::ColumnReader::BlobPointReader pr{r, *col};
@@ -3694,7 +3695,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
     EXPECT_EQ(dense_col->RowCount(), kBigRows);
     EXPECT_EQ(sparse_col->RowCount(), kBigRows);
     EXPECT_GE(dense_col->DataRgCount(), 2u);
-    EXPECT_GE(sparse_col->ValidityRgCount(), 2u);
+    EXPECT_GE(sparse_col->DataRgCount(), 2u);
 
     // Dense column at boundaries.
     const std::vector<uint64_t> boundary_rows = {

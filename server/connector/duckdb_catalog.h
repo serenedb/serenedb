@@ -24,7 +24,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 
-#include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace sdb::connector {
@@ -39,6 +38,7 @@ class SereneDBCatalog final : public duckdb::Catalog {
 
   std::string GetCatalogType() final { return "serenedb"; }
   std::string GetDefaultSchema() const final { return "public"; }
+  duckdb::optional_idx GetCatalogVersion(duckdb::ClientContext& context) final;
   void Initialize(bool load_builtin) final;
 
   duckdb::ErrorData SupportsCreateTable(

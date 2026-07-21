@@ -1,0 +1,119 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tx (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE doc (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX doc_idx ON doc USING inverted (id, body tx);
+
+statement ok
+INSERT INTO doc VALUES
+(1, 'wireless noise cancelling headphones with long battery life');
+
+statement ok
+VACUUM (REFRESH_TABLE) doc;
+
+statement ok
+CREATE TABLE alerts (id INTEGER PRIMARY KEY, name VARCHAR, term VARCHAR);
+
+statement ok
+INSERT INTO alerts VALUES
+(1, 'audio gear',    'headphones'),
+(2, 'battery watch', 'battery'),
+(3, 'laptops',       'laptop'),
+(4, 'wireless',      'wireless'),
+(5, 'cameras',       'camera');
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT list_sort(ts_dict_agg(body)) AS terms FROM doc_idx;
+----
+terms
+{battery,cancelling,headphones,life,long,noise,wireless,with}
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT a.id, a.name
+FROM alerts a
+WHERE a.term IN (SELECT unnest(ts_dict_agg(body)) FROM doc_idx)
+ORDER BY a.id;
+----
+id	name
+1	audio gear
+2	battery watch
+4	wireless
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT a.id, a.name, a.term AS matched
+FROM alerts a
+JOIN (SELECT unnest(ts_dict_agg(body)) AS t FROM doc_idx) dt ON dt.t = a.term
+ORDER BY a.id;
+----
+id	name	matched
+1	audio gear	headphones
+2	battery watch	battery
+4	wireless	wireless
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT a.id, a.name
+FROM alerts a
+WHERE a.term NOT IN (SELECT unnest(ts_dict_agg(body)) FROM doc_idx)
+ORDER BY a.id;
+----
+id	name
+3	laptops
+5	cameras
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE doc2 (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX doc2_idx ON doc2 USING inverted (id, body tx);
+
+statement ok
+INSERT INTO doc2 VALUES
+(1, 'lightweight aluminium laptop with wireless keyboard');
+
+statement ok
+VACUUM (REFRESH_TABLE) doc2;
+
+# DOCS_TEST_BODY
+
+query
+SELECT a.id, a.name, a.term AS matched
+FROM alerts a
+JOIN (SELECT unnest(ts_dict_agg(body)) AS t FROM doc2_idx) dt ON dt.t = a.term
+ORDER BY a.id;
+----
+id	name	matched
+3	laptops	laptop
+4	wireless	wireless

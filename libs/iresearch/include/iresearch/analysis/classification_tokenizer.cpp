@@ -27,15 +27,16 @@
 
 #include <string_view>
 
-#include "basics/exceptions.h"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
 
 std::atomic<ClassificationTokenizer::model_provider_f> gModelProvider = nullptr;
 
-Analyzer::ptr Construct(const ClassificationTokenizer::Options& options) {
+Tokenizer::ptr Construct(const ClassificationTokenizer::Options& options) {
   auto provider = gModelProvider.load(std::memory_order_relaxed);
 
   ClassificationTokenizer::model_ptr model;
@@ -50,22 +51,19 @@ Analyzer::ptr Construct(const ClassificationTokenizer::Options& options) {
       model = new_model;
     }
   } catch (const std::exception& e) {
-    SDB_THROW(
-      sdb::ERROR_BAD_PARAMETER,
+    THROW_SQL_ERROR(ERR_MSG(
       absl::StrCat("classification: failed to load fasttext model from: ",
-                   options.model_location, ", error: ", e.what()));
+                   options.model_location, ", error: ", e.what())));
   } catch (...) {
-    SDB_THROW(
-      sdb::ERROR_BAD_PARAMETER,
+    THROW_SQL_ERROR(ERR_MSG(
       absl::StrCat("classification: failed to load fasttext model from: ",
-                   options.model_location));
+                   options.model_location)));
   }
 
   if (!model) {
-    SDB_THROW(
-      sdb::ERROR_BAD_PARAMETER,
+    THROW_SQL_ERROR(ERR_MSG(
       absl::StrCat("classification: failed to load fasttext model from: ",
-                   options.model_location));
+                   options.model_location)));
   }
 
   return std::make_unique<ClassificationTokenizer>(options, std::move(model));
@@ -73,17 +71,15 @@ Analyzer::ptr Construct(const ClassificationTokenizer::Options& options) {
 
 }  // namespace
 
-Analyzer::ptr ClassificationTokenizer::Make(Options opts) {
+Tokenizer::ptr ClassificationTokenizer::Make(Options opts) {
   if (opts.model_location.empty()) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "classification: empty model location");
+    THROW_SQL_ERROR(ERR_MSG("classification: empty model location"));
   }
   if (opts.top_k <= 0) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "classification: top_k must be positive");
+    THROW_SQL_ERROR(ERR_MSG("classification: top_k must be positive"));
   }
   if (opts.threshold < 0.0 || opts.threshold > 1.0) {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "classification: threshold must be in [0, 1]");
+    THROW_SQL_ERROR(ERR_MSG("classification: threshold must be in [0, 1]"));
   }
   return Construct(opts);
 }
@@ -103,30 +99,10 @@ ClassificationTokenizer::ClassificationTokenizer(const Options& options,
   SDB_ASSERT(_model);
 }
 
-bool ClassificationTokenizer::next() {
-  if (_predictions_it == _predictions.end()) {
-    return false;
-  }
+bool ClassificationTokenizer::Bind(std::string_view value) {
+  _input_size = static_cast<uint32_t>(value.size());
 
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = {
-    reinterpret_cast<const byte_type*>(_predictions_it->second.c_str()),
-    _predictions_it->second.size()};
-
-  auto& inc = std::get<IncAttr>(_attrs);
-  inc.value = static_cast<uint32_t>(_predictions_it == _predictions.begin());
-
-  ++_predictions_it;
-
-  return true;
-}
-
-bool ClassificationTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = static_cast<uint32_t>(data.size());
-
-  BytesViewInput s_input{ViewCast<byte_type>(data)};
+  BytesViewInput s_input{ViewCast<byte_type>(value)};
   InputBuf buf{&s_input};
   std::istream ss{&buf};
   _predictions.clear();
@@ -135,5 +111,25 @@ bool ClassificationTokenizer::reset(std::string_view data) {
 
   return true;
 }
+
+template<TokenLayout Layout>
+bool ClassificationTokenizer::DoFill(std::string_view value,
+                                     TokenEmitter& sink) {
+  if (!Bind(value)) {
+    return false;
+  }
+  const auto input_end = _input_size;
+  while (_predictions_it != _predictions.end()) {
+    const auto& label = _predictions_it->second;
+    sink.EmitInterned<Layout>(
+      irs::bytes_view{reinterpret_cast<const byte_type*>(label.data()),
+                      label.size()},
+      1, 0, input_end);
+    ++_predictions_it;
+  }
+  return true;
+}
+
+template class TypedTokenizer<ClassificationTokenizer>;
 
 }  // namespace irs::analysis

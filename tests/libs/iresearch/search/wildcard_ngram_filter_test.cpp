@@ -20,6 +20,8 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "insert_field.hpp"
+#include "iresearch/analysis/batch/token_sinks.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
@@ -33,25 +35,25 @@ namespace {
 
 // Field type backed by WildcardAnalyzer.
 //
-// GetTokens() calls analyzer.reset(value) which:
+// InsertField drives GetTokens().Fill(Value(), sink) which:
 //   1. Tokenizes the value via the base analyzer (StringTokenizer by default)
-//   2. Packs the resulting terms into _store.value in the format expected by
+//   2. Packs the resulting terms into Store() in the format expected by
 //      WildcardIterator: [vint(size)][0xFF][term_bytes][0xFF] per term
 //
-// Write() then persists _store.value verbatim into the stored column so that
+// Write() then persists Store() verbatim into the stored column so that
 // WildcardIterator can post-filter documents with the RE2 matcher.
 struct WildcardField final {
   irs::field_id Id() const { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    analyzer->reset(value);
-    return *analyzer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *analyzer; }
+
+  std::string_view Value() const noexcept { return value; }
 
   bool Write(irs::DataOutput& out) const {
-    const auto* store = irs::get<irs::StoreAttr>(*analyzer);
-    if (store && !store->value.empty()) {
-      out.WriteData(store->value.data(), store->value.size());
+    irs::TokenCollector collector{irs::TokenLayout::Terms};
+    if (analyzer->Fill(value, collector.writer, collector.layout) &&
+        !collector.store.empty()) {
+      out.WriteData(collector.store.data(), collector.store.size());
     }
     return true;
   }
@@ -207,7 +209,7 @@ TEST(WildcardNgramFilterTest, query) {
     for (auto v : kValues) {
       field.value = v;
       auto doc = ctx.Insert();
-      ASSERT_TRUE(doc.Insert(field));
+      ASSERT_TRUE(tests::InsertField(doc, field));
       // Stored bytes -> cs BLOB column kStoreId; filter reads via the
       // same id (set in MakeFilter / mutable_options()->store_field_id).
       auto* cs = doc.GetColWriter();
@@ -233,7 +235,7 @@ TEST(WildcardNgramFilterTest, query) {
     std::vector<irs::doc_id_t> result;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto docs = prepared.Execute(i);
-      while (docs->next()) {
+      while (!irs::doc_limits::eof(docs->advance())) {
         result.push_back(docs->value());
       }
     }

@@ -22,6 +22,8 @@
 
 #include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
 
+#include "bench_token_sink.hpp"
+
 namespace {
 
 using Options = irs::analysis::PathHierarchyTokenizer::Options;
@@ -63,15 +65,12 @@ static void BmForwardSingleCharZeroCopy(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
+  bench::DrainSink sink;
+
   for (auto _ : state) {
-    tokenizer->reset(input);
+    tokenizer->Fill(input, sink);
 
-    size_t token_count = 0;
-    while (tokenizer->next()) {
-      ++token_count;
-    }
-
-    benchmark::DoNotOptimize(token_count);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -91,15 +90,12 @@ static void BmForwardMultiCharZeroCopy(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
+  bench::DrainSink sink;
+
   for (auto _ : state) {
-    tokenizer->reset(input);
+    tokenizer->Fill(input, sink);
 
-    size_t token_count = 0;
-    while (tokenizer->next()) {
-      ++token_count;
-    }
-
-    benchmark::DoNotOptimize(token_count);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -120,15 +116,12 @@ static void BmForwardBuffered(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
+  bench::DrainSink sink;
+
   for (auto _ : state) {
-    tokenizer->reset(input);
+    tokenizer->Fill(input, sink);
 
-    size_t token_count = 0;
-    while (tokenizer->next()) {
-      ++token_count;
-    }
-
-    benchmark::DoNotOptimize(token_count);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -148,15 +141,12 @@ static void BmReverseSingleCharZeroCopy(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
+  bench::DrainSink sink;
+
   for (auto _ : state) {
-    tokenizer->reset(input);
+    tokenizer->Fill(input, sink);
 
-    size_t token_count = 0;
-    while (tokenizer->next()) {
-      ++token_count;
-    }
-
-    benchmark::DoNotOptimize(token_count);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -175,15 +165,12 @@ static void BmReverseMultiCharZeroCopy(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
+  bench::DrainSink sink;
+
   for (auto _ : state) {
-    tokenizer->reset(input);
+    tokenizer->Fill(input, sink);
 
-    size_t token_count = 0;
-    while (tokenizer->next()) {
-      ++token_count;
-    }
-
-    benchmark::DoNotOptimize(token_count);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -203,15 +190,12 @@ static void BmReverseBuffered(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
+  bench::DrainSink sink;
+
   for (auto _ : state) {
-    tokenizer->reset(input);
+    tokenizer->Fill(input, sink);
 
-    size_t token_count = 0;
-    while (tokenizer->next()) {
-      ++token_count;
-    }
-
-    benchmark::DoNotOptimize(token_count);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -235,12 +219,11 @@ static void BmForwardWithSkip(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
-  for (auto _ : state) {
-    tokenizer->reset(input);
+  bench::DrainSink sink;
 
-    while (tokenizer->next()) {
-      benchmark::DoNotOptimize(tokenizer);
-    }
+  for (auto _ : state) {
+    tokenizer->Fill(input, sink);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -263,12 +246,11 @@ static void BmReverseWithSkip(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
-  for (auto _ : state) {
-    tokenizer->reset(input);
+  bench::DrainSink sink;
 
-    while (tokenizer->next()) {
-      benchmark::DoNotOptimize(tokenizer);
-    }
+  for (auto _ : state) {
+    tokenizer->Fill(input, sink);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -288,12 +270,11 @@ static void BmForwardNoDelimiters(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
-  for (auto _ : state) {
-    tokenizer->reset(input);
+  bench::DrainSink sink;
 
-    while (tokenizer->next()) {
-      benchmark::DoNotOptimize(tokenizer);
-    }
+  for (auto _ : state) {
+    tokenizer->Fill(input, sink);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());
@@ -312,12 +293,11 @@ static void BmReverseNoDelimiters(benchmark::State& state) {
   auto tokenizer =
     irs::analysis::PathHierarchyTokenizer::Make(Options{options});
 
-  for (auto _ : state) {
-    tokenizer->reset(input);
+  bench::DrainSink sink;
 
-    while (tokenizer->next()) {
-      benchmark::DoNotOptimize(tokenizer);
-    }
+  for (auto _ : state) {
+    tokenizer->Fill(input, sink);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 
   state.SetBytesProcessed(state.iterations() * input.size());

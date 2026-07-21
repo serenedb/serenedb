@@ -20,6 +20,7 @@
 
 #include "basics/signals.h"
 
+#include "basics/lifecycle.h"
 #include "basics/operating-system.h"
 
 #ifdef SERENEDB_HAVE_SIGNAL_H
@@ -28,26 +29,14 @@
 
 namespace sdb::signals {
 
-void MaskAllSignalsServer() {
-#ifdef SERENEDB_HAVE_POSIX_THREADS
-  sigset_t all;
-  sigfillset(&all);
-  // Keep failure-class signals unblocked so they're delivered to the
-  // offending thread; absl's failure signal handler relies on that.
-  sigdelset(&all, SIGSEGV);
-  sigdelset(&all, SIGBUS);
-  sigdelset(&all, SIGILL);
-  sigdelset(&all, SIGFPE);
-  sigdelset(&all, SIGABRT);
-  pthread_sigmask(SIG_SETMASK, &all, nullptr);
-#endif
-}
-
-void UnmaskAllSignals() {
-#ifdef SERENEDB_HAVE_POSIX_THREADS
-  sigset_t all;
-  sigfillset(&all);
-  pthread_sigmask(SIG_UNBLOCK, &all, nullptr);
+void InstallShutdownHandlers() {
+#ifdef SERENEDB_HAVE_SIGNAL_H
+  struct sigaction action = {};
+  action.sa_handler = +[](int) { lifecycle::BeginShutdown(); };
+  sigemptyset(&action.sa_mask);
+  ::sigaction(SIGTERM, &action, nullptr);
+  ::sigaction(SIGINT, &action, nullptr);
+  ::sigaction(SIGQUIT, &action, nullptr);
 #endif
 }
 

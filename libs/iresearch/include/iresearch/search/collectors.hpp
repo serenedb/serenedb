@@ -91,12 +91,6 @@ class StatsBuffer {
   std::vector<StatsBuffer> _children;
 };
 
-FieldCollector MergeFieldCollectors(
-  std::span<const FieldCollector> collectors) noexcept;
-
-TermCollector MergeTermCollectors(
-  std::span<const TermCollector> collectors) noexcept;
-
 class PrepareCollector {
  public:
   using ptr = std::unique_ptr<PrepareCollector>;

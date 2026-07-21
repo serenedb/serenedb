@@ -6,56 +6,42 @@ query
 EXPLAIN select * from t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│          Table: t         │
-│   Type: Sequential Scan   │
-│                           │
-│        Projections:       │
-│          column1          │
-│          column2          │
-│                           │
-│          ~0 rows          │
-└───────────────────────────┘
+╭─ SEQ_SCAN ────────────╮
+│ Table: t              │
+│ Type: Sequential Scan │
+│ Projections: column1, │
+│              column2  │
+│ ~0 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN UPDATE t SET column2 = 42 WHERE column1 = 'foo';
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           UPDATE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│        EMPTY_RESULT       │
-└───────────────────────────┘
+╭─ UPDATE ───────╮
+╰────────┬───────╯
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
 
 
 query
 EXPLAIN UPDATE t SET column2 = column2 + 1;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           UPDATE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│       (column2 + 1)       │
-│           rowid           │
-│                           │
-│          ~0 rows          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│          Table: t         │
-│   Type: Sequential Scan   │
-│    Projections: column2   │
-│                           │
-│          ~0 rows          │
-└───────────────────────────┘
+╭─ UPDATE ──────────────────╮
+╰─────────────┬─────────────╯
+╭─ PROJECTION ┴─────────────╮
+│ Projections: column2 + 1, │
+│              rowid        │
+│ ~0 rows                   │
+╰─────────────┬─────────────╯
+╭─ SEQ_SCAN ──┴─────────────╮
+│ Table: t                  │
+│ Type: Sequential Scan     │
+│ Projections: column2      │
+│ ~0 rows                   │
+╰───────────────────────────╯
 
 
 statement error

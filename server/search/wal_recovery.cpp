@@ -20,7 +20,6 @@
 
 #include "search/wal_recovery.h"
 
-#include <absl/container/flat_hash_set.h>
 #include <absl/time/time.h>
 
 #include <chrono>
@@ -37,9 +36,9 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
-#include "basics/errors.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
@@ -66,7 +65,9 @@ void BindStoreTableIndexes(duckdb::ClientContext& context,
     catalog::StoreTableName(database_name, schema_name, table_name);
   auto& entry = duckdb::Catalog::GetEntry(
                   context, duckdb::CatalogType::TABLE_ENTRY,
-                  std::string{catalog::kStoreDatabaseName}, "main", store_name)
+                  duckdb::QualifiedName(
+                    duckdb::Identifier{catalog::kStoreDatabaseName},
+                    duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
                   .Cast<duckdb::DuckTableEntry>();
   entry.GetStorage().GetDataTableInfo()->BindIndexes(
     context, connector::InvertedStoreIndex::kTypeName);
@@ -90,7 +91,7 @@ void InitInvertedIndexes() {
     std::string table_name;
   };
   std::vector<TableCoord> tables_to_bind;
-  absl::flat_hash_set<ObjectId> seen_tables;
+  containers::FlatHashSet<ObjectId> seen_tables;
   std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
   std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
 

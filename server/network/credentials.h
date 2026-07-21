@@ -47,6 +47,7 @@ struct ScramVerifier {
 struct Credential {
   std::optional<ScramVerifier> scram;
   std::optional<std::string> cleartext;
+  std::optional<std::string> md5;
 };
 
 // The storage-decoupled seam. Returning nullopt => no credential for this user
@@ -64,16 +65,35 @@ class CredentialProvider {
 // Parse "SCRAM-SHA-256$<iters>:<b64 salt>$<b64 StoredKey>:<b64 ServerKey>".
 std::optional<ScramVerifier> ParseScramVerifier(std::string_view verifier);
 
+// True iff `s` is a well-formed SCRAM-SHA-256 stored verifier (the mirror of
+// IsMd5Verifier; recognizes the rolpassword form without needing the struct).
+bool IsScramVerifier(std::string_view s);
+
+// Render a verifier back to the PG "SCRAM-SHA-256$..." string (inverse of
+// ParseScramVerifier) -- used to store rolpassword on a role.
+std::string ScramVerifierToString(const ScramVerifier& verifier);
+
 // Derive a fresh verifier from a cleartext password (random salt, default
-// iterations) -- used by the temporary config credential source.
+// iterations) -- used to hash CREATE/ALTER ROLE ... PASSWORD and by the config
+// credential source.
 std::optional<ScramVerifier> BuildScramVerifier(std::string_view password);
 
-// The AuthenticationMD5Password expected response:
-// "md5" + md5_hex(md5_hex(password + username) + salt). The server compares
-// this against the client's PasswordMessage (constant-time at the call site).
-std::string BuildMd5Password(std::string_view username,
-                             std::string_view password,
+// Hash a cleartext password straight to the stored SCRAM verifier string
+// (BuildScramVerifier + ScramVerifierToString); nullopt on crypto failure. The
+// SCRAM twin of BuildMd5Verifier -- plaintext -> stored rolpassword string.
+std::optional<std::string> BuildScramVerifierString(std::string_view password);
+
+bool IsMd5Verifier(std::string_view s);
+
+std::string BuildMd5Verifier(std::string_view username,
+                             std::string_view password);
+
+std::string BuildMd5Response(std::string_view stored_md5,
                              std::span<const uint8_t> salt);
+
+bool VerifyCleartextAgainstMd5(std::string_view stored_md5,
+                               std::string_view username,
+                               std::string_view cleartext);
 
 // RFC 4013 SASLprep; falls back to the raw bytes on invalid-UTF8/prohibited.
 std::string SaslPrep(std::string_view password);

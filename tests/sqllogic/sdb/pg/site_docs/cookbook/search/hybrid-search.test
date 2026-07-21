@@ -1,0 +1,105 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX items_idx ON items
+    USING inverted (id, name en, emb ivf (metric = 'l2'));
+
+statement ok
+INSERT INTO items VALUES
+(1, 'trail running shoe', [1.0, 0.0, 0.0]::FLOAT[3]),
+(2, 'road running shoe',  [0.9, 0.1, 0.0]::FLOAT[3]),
+(3, 'leather dress shoe', [0.0, 1.0, 0.0]::FLOAT[3]),
+(4, 'wireless earbuds',   [0.0, 0.0, 1.0]::FLOAT[3]),
+(5, 'marathon racer',     [0.95, 0.05, 0.0]::FLOAT[3]);
+
+statement ok
+VACUUM (REFRESH_TABLE) items;
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name,
+       round((emb <-> [1.0, 0.0, 0.0]::FLOAT[3])::numeric, 3) AS distance
+FROM items_idx
+ORDER BY distance, id
+LIMIT 3;
+----
+id	name	distance
+1	trail running shoe	0.000
+5	marathon racer	0.071
+2	road running shoe	0.141
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name FROM items_idx WHERE name @@ 'running' ORDER BY id;
+----
+id	name
+1	trail running shoe
+2	road running shoe
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, name
+FROM items_idx
+WHERE name @@ 'shoe'
+ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3], id
+LIMIT 2;
+----
+id	name
+1	trail running shoe
+2	road running shoe
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+WITH fused AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY s DESC) AS rank FROM (
+        SELECT id, BM25(items_idx.tableoid) AS s
+        FROM items_idx
+        WHERE name @@ 'running'
+        ORDER BY s DESC LIMIT 100
+    ) lex
+    UNION ALL
+    SELECT id, ROW_NUMBER() OVER (ORDER BY dist) AS rank FROM (
+        SELECT id, emb <-> [1.0, 0.0, 0.0]::FLOAT[3] AS dist
+        FROM items_idx
+        ORDER BY dist LIMIT 100
+    ) vec
+)
+SELECT id
+FROM fused
+GROUP BY id
+ORDER BY SUM(1.0 / (60 + rank)) DESC, id
+LIMIT 4;
+----
+id
+1
+2
+5
+3

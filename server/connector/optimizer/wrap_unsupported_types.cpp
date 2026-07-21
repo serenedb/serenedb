@@ -39,6 +39,8 @@ bool NeedsClientCast(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       return true;
+    case duckdb::LogicalTypeId::SQLNULL:
+      return true;
     case duckdb::LogicalTypeId::LIST:
       return NeedsClientCast(duckdb::ListType::GetChildType(type));
     case duckdb::LogicalTypeId::ARRAY:
@@ -62,6 +64,8 @@ duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       return duckdb::LogicalType::JSON();
+    case duckdb::LogicalTypeId::SQLNULL:
+      return duckdb::LogicalType::VARCHAR;
     case duckdb::LogicalTypeId::LIST:
       return duckdb::LogicalType::LIST(
         ClientCastTarget(duckdb::ListType::GetChildType(type)));
@@ -140,7 +144,7 @@ void WrapVariantOutputs(duckdb::PlannerExtensionInput& input,
     explain.children[0] =
       WrapPlan(input.context, input.binder, std::move(explain.children[0]));
     explain.logical_plan_unopt =
-      explain.children[0]->ToString(explain.explain_format);
+      explain.children[0]->ToString(input.context, explain.format);
     return;
   }
   if (!AnyNeedsClientCast(statement.types)) {

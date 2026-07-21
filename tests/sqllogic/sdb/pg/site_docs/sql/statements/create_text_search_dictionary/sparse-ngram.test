@@ -9,7 +9,7 @@ CREATE TEXT SEARCH DICTIONARY code_grams (
     norm = true
 );
 
-query ?
+query
 SELECT ts_lexize('code_grams', 'hello world');
 ----
 ts_lexize
@@ -25,7 +25,7 @@ CREATE TEXT SEARCH DICTIONARY code_grams_q (
     covering = true
 );
 
-query ?
+query
 SELECT ts_lexize('code_grams_q', 'hello world');
 ----
 ts_lexize
@@ -48,7 +48,7 @@ INSERT INTO snippets VALUES
 statement ok
 CREATE INDEX snippets_idx ON snippets USING inverted (id, code code_grams);
 
-query ??
+query
 SELECT id, ts_highlight(code) AS match
 FROM snippets_idx
 WHERE code @@ ts_all(ts_lexize('code_grams_q', 'for(int i=42'))
@@ -75,7 +75,7 @@ INSERT INTO ranked VALUES
 statement ok
 CREATE INDEX ranked_idx ON ranked USING inverted (id, code code_grams);
 
-query ??
+query
 SELECT id, ts_highlight(code) AS match
 FROM ranked_idx
 WHERE code @@ ts_any(ts_lexize('code_grams_q', 'while l < r: m = (l + r) // 2'), 1)
@@ -97,7 +97,7 @@ CREATE TEXT SEARCH DICTIONARY code_grams_q2 (
     covering = true
 );
 
-query ?
+query
 SELECT ts_lexize('code_grams_q2', 'for(int i=42');
 ----
 ts_lexize
@@ -113,7 +113,7 @@ CREATE TEXT SEARCH DICTIONARY code_grams_short (
     maxngramlength = 4
 );
 
-query ?
+query
 SELECT ts_lexize('code_grams_short', 'hello world');
 ----
 ts_lexize

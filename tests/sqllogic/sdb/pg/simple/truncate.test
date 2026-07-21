@@ -235,9 +235,11 @@ CREATE TEXT SEARCH DICTIONARY test_english(
 statement ok
 CREATE INDEX vedernikoff_team_idx ON vedernikoff (team);
 
-# Inverted index: phrase search on quote
+# Inverted index: phrase search on quote. refresh_interval = 0 disables the
+# background refresh loop: the as-of-last-refresh assertions below are only
+# deterministic when refreshes happen solely through the explicit VACUUM.
 statement ok
-CREATE INDEX vedernikoff_quote_idx ON vedernikoff USING inverted(id, team, quote test_english);
+CREATE INDEX vedernikoff_quote_idx ON vedernikoff USING inverted(id, team, quote test_english) WITH (refresh_interval = 0);
 
 # 10000 rows; team cycles through 4 buckets, quote cycles through 5 sentences.
 # Each sentence mentions vedernikoff so a phrase('vedernikoff') match hits
@@ -787,48 +789,36 @@ query
 EXPLAIN DELETE FROM explain_t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           DELETE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│      Table: explain_t     │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ DELETE ──────────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: explain_t      │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN TRUNCATE explain_t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           DELETE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│      Table: explain_t     │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ DELETE ──────────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: explain_t      │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯
 
 
 query
 EXPLAIN TRUNCATE TABLE explain_t;
 ----
 QUERY PLAN
-┌───────────────────────────┐
-│           DELETE          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│          SEQ_SCAN         │
-│    ────────────────────   │
-│      Table: explain_t     │
-│   Type: Sequential Scan   │
-│                           │
-│          ~3 rows          │
-└───────────────────────────┘
+╭─ DELETE ──────────────╮
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: explain_t      │
+│ Type: Sequential Scan │
+│ ~3 rows               │
+╰───────────────────────╯

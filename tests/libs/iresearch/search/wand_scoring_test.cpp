@@ -31,8 +31,8 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 }
 
 #include "index/index_tests.hpp"
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/parser/parser.hpp"
 #include "iresearch/search/bm25.hpp"
@@ -85,22 +85,19 @@ void WandScoringFieldFactory(tests::Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (data.is_number()) {
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();

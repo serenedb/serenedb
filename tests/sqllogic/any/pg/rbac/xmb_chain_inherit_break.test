@@ -1,0 +1,167 @@
+# Cross-membership: a 3-hop chain and how a single non-inheriting edge severs
+# the privilege flow above the break while leaving membership reachability and
+# the leaf grant intact.
+#
+# Chain (-> reads "is a member of"):
+#   xmb_cib_babsky -> xmb_cib_kostya -> xmb_cib_deadinside -> xmb_cib_iceberg
+# The leaf group xmb_cib_iceberg holds SELECT on xmb_cib_makak. With all edges
+# inheriting, SELECT reaches the whole chain. Flip the middle edge
+# (kostya -> deadinside) to WITH INHERIT FALSE and the flow stops at kostya.
+#
+# Byte-identical on real PostgreSQL and serenedb.
+
+statement ok
+DROP ROLE IF EXISTS xmb_cib_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cib_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cib_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cib_iceberg;
+
+
+statement ok
+DROP TABLE IF EXISTS xmb_cib_makak;
+
+
+statement ok
+CREATE TABLE xmb_cib_makak (id int);
+
+
+statement ok
+CREATE ROLE xmb_cib_babsky LOGIN PASSWORD 'xmb_cib_babsky_pw';
+
+
+statement ok
+CREATE ROLE xmb_cib_kostya;
+
+
+statement ok
+CREATE ROLE xmb_cib_deadinside;
+
+
+statement ok
+CREATE ROLE xmb_cib_iceberg;
+
+
+statement ok
+GRANT xmb_cib_kostya TO xmb_cib_babsky;
+
+
+statement ok
+GRANT xmb_cib_deadinside TO xmb_cib_kostya;
+
+
+statement ok
+GRANT xmb_cib_iceberg TO xmb_cib_deadinside;
+
+
+statement ok
+GRANT SELECT ON xmb_cib_makak TO xmb_cib_iceberg;
+
+
+# ---- All edges inherit: SELECT reaches every role at/above the grant ----
+
+query
+SELECT has_table_privilege('xmb_cib_babsky', 'xmb_cib_makak', 'SELECT') AS a,
+       has_table_privilege('xmb_cib_kostya', 'xmb_cib_makak', 'SELECT') AS b,
+       has_table_privilege('xmb_cib_deadinside', 'xmb_cib_makak', 'SELECT') AS c,
+       has_table_privilege('xmb_cib_iceberg', 'xmb_cib_makak', 'SELECT') AS d;
+----
+a	b	c	d
+t	t	t	t
+
+
+connection c_babsky user=xmb_cib_babsky password=xmb_cib_babsky_pw
+query
+SELECT count(*) FROM xmb_cib_makak;
+----
+count
+0
+
+
+# ---- Break the MIDDLE edge inherit: kostya -> deadinside WITH INHERIT FALSE.
+# kostya still reaches deadinside/iceberg for MEMBER, but stops wielding their
+# privileges; babsky (above kostya) loses the privilege too. deadinside and
+# iceberg keep SELECT (they are at/below the grant). ----
+
+statement ok
+GRANT xmb_cib_deadinside TO xmb_cib_kostya WITH INHERIT FALSE;
+
+
+query
+SELECT has_table_privilege('xmb_cib_babsky', 'xmb_cib_makak', 'SELECT') AS a,
+       has_table_privilege('xmb_cib_kostya', 'xmb_cib_makak', 'SELECT') AS b,
+       has_table_privilege('xmb_cib_deadinside', 'xmb_cib_makak', 'SELECT') AS c,
+       has_table_privilege('xmb_cib_iceberg', 'xmb_cib_makak', 'SELECT') AS d;
+----
+a	b	c	d
+f	f	t	t
+
+
+# MEMBER reachability is unaffected by the INHERIT bit: babsky still MEMBER of
+# the whole chain, but USAGE (has_privs_of_role) is cut at the break.
+query
+SELECT pg_has_role('xmb_cib_babsky', 'xmb_cib_iceberg', 'MEMBER') AS member_leaf,
+       pg_has_role('xmb_cib_babsky', 'xmb_cib_iceberg', 'USAGE') AS usage_leaf,
+       pg_has_role('xmb_cib_babsky', 'xmb_cib_kostya', 'USAGE') AS usage_kostya;
+----
+member_leaf	usage_leaf	usage_kostya
+t	f	t
+
+
+connection c_babsky2 user=xmb_cib_babsky password=xmb_cib_babsky_pw
+statement error
+SELECT * FROM xmb_cib_makak;
+----
+db error: ERROR: permission denied for table xmb_cib_makak<slt:ignore>
+
+
+# ---- Restore the edge inherit: full chain flows again ----
+
+statement ok
+GRANT xmb_cib_deadinside TO xmb_cib_kostya WITH INHERIT TRUE;
+
+
+query
+SELECT has_table_privilege('xmb_cib_babsky', 'xmb_cib_makak', 'SELECT') AS a,
+       pg_has_role('xmb_cib_babsky', 'xmb_cib_iceberg', 'USAGE') AS usage_leaf;
+----
+a	usage_leaf
+t	t
+
+
+connection c_babsky3 user=xmb_cib_babsky password=xmb_cib_babsky_pw
+query
+SELECT count(*) FROM xmb_cib_makak;
+----
+count
+0
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS xmb_cib_makak;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cib_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cib_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cib_deadinside;
+
+
+statement ok
+DROP ROLE IF EXISTS xmb_cib_iceberg;

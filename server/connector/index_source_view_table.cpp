@@ -29,7 +29,6 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "pg/errcodes.h"
@@ -43,13 +42,15 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
   SDB_ASSERT(fast_path.catalog_ref);
   auto& entry =
     duckdb::Catalog::GetEntry(
-      context, duckdb::CatalogType::TABLE_ENTRY, fast_path.catalog_ref->catalog,
-      fast_path.catalog_ref->schema, fast_path.catalog_ref->table)
+      context, duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName(duckdb::Identifier{fast_path.catalog_ref->catalog},
+                            duckdb::Identifier{fast_path.catalog_ref->schema},
+                            duckdb::Identifier{fast_path.catalog_ref->table}))
       .Cast<duckdb::TableCatalogEntry>();
   if (!entry.IsDuckTable()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("cannot materialise rows from \"", entry.name,
+      ERR_MSG("cannot materialise rows from \"", entry.name.GetIdentifierName(),
               "\" -- the attached source table has no native storage"));
   }
   return entry;
@@ -60,12 +61,14 @@ duckdb::TableCatalogEntry& ResolveStoreTableEntry(
   const catalog::Table& table) {
   // The scan entry is the facade table or one of its index entries; either
   // way it shares the table's database and schema.
-  auto store_name =
-    catalog::StoreTableName(scan_entry.ParentCatalog().GetName(),
-                            scan_entry.ParentSchema().name, table.GetName());
-  return duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
-                                   std::string{catalog::kStoreDatabaseName},
-                                   "main", store_name)
+  auto store_name = catalog::StoreTableName(
+    scan_entry.ParentCatalog().GetName().GetIdentifierName(),
+    scan_entry.ParentSchema().name.GetIdentifierName(), table.GetName());
+  return duckdb::Catalog::GetEntry(
+           context, duckdb::CatalogType::TABLE_ENTRY,
+           duckdb::QualifiedName(
+             duckdb::Identifier{catalog::kStoreDatabaseName},
+             duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
     .Cast<duckdb::TableCatalogEntry>();
 }
 
@@ -76,8 +79,9 @@ duckdb::LogicalType RowIdFetchIndexSource::AddFetchColumn(
   if (col.Generated()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("cannot materialise generated column \"", col.Name(), "\" of \"",
-              _table->name, "\" through an index lookup"));
+      ERR_MSG("cannot materialise generated column \"",
+              col.Name().GetIdentifierName(), "\" of \"",
+              _table->name.GetIdentifierName(), "\" through an index lookup"));
   }
   const auto storage_idx =
     _table->GetStorageIndex(duckdb::ColumnIndex(col.Logical().index));
@@ -121,7 +125,7 @@ ViewTableIndexSource::ViewTableIndexSource(
     name_to_col.reserve(columns.LogicalColumnCount());
     duckdb::idx_t logical = 0;
     for (const auto& col : columns.Logical()) {
-      name_to_col.emplace(col.Name(), logical++);
+      name_to_col.emplace(col.Name().GetIdentifierName(), logical++);
     }
   }
   InitProjection(
@@ -169,8 +173,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
     },
     [&](duckdb::idx_t col_id) {
       auto it = id_to_pos.find(col_id);
-      SDB_ENSURE(it != id_to_pos.end(), ERROR_INTERNAL,
-                 "column id is not on the store table");
+      SDB_ENSURE(it != id_to_pos.end(), "column id is not on the store table");
       SDB_ASSERT(it->second < columns.LogicalColumnCount());
       return AddFetchColumn(
         columns.GetColumn(duckdb::LogicalIndex(it->second)));
@@ -178,15 +181,15 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   FinishInit(context);
 }
 
-duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
-                                                 PrimaryKeyBatch& batch,
-                                                 duckdb::idx_t start,
-                                                 duckdb::idx_t count,
-                                                 duckdb::DataChunk& output) {
+void RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
+                                        PrimaryKeyBatch& batch,
+                                        duckdb::idx_t start,
+                                        duckdb::idx_t count,
+                                        duckdb::DataChunk& output) {
   if (count == 0) {
-    return count;
+    return;
   }
-  auto& pk = std::get<PrimaryKeyI64>(batch);
+  auto& pk = batch;
   SDB_ASSERT(start + count <= pk.rows.size());
 
   SortRows(pk, start, count);
@@ -197,10 +200,8 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   // Rows deleted in the source since CREATE INDEX produce no fetch result --
   // pre-null every slot so stale rowids surface as NULLs instead of garbage.
   for (duckdb::idx_t c = 0; c < _col_to_fetch.size(); ++c) {
-    auto& dst = _tf_target.data[c];
-    for (duckdb::idx_t k = 0; k < count; ++k) {
-      duckdb::FlatVector::SetNull(dst, k, true);
-    }
+    duckdb::FlatVector::ValidityMutable(_tf_target.data[c])
+      .SetAllInvalid(count);
   }
 
   auto& storage = _table->Cast<duckdb::DuckTableEntry>().GetStorage();
@@ -244,7 +245,6 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   }
 
   RunCastPass(output, count);
-  return count;
 }
 
 }  // namespace sdb::connector

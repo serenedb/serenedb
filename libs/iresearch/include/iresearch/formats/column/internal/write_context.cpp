@@ -22,24 +22,13 @@
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
-#include <duckdb/storage/block_allocator.hpp>
-#include <duckdb/storage/buffer/block_handle.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
-#include <duckdb/storage/metadata/metadata_manager.hpp>
-#include <duckdb/storage/storage_info.hpp>
 
-#include "basics/errors.h"
-#include "basics/exceptions.h"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
 WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out)
-  : duckdb::BlockManager(duckdb::BufferManager::GetBufferManager(db),
-                         DEFAULT_BLOCK_ALLOC_SIZE,
-                         duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE),
-    _db{&db},
-    _allocator{&duckdb::BlockAllocator::Get(db)},
-    _out{&out} {}
+  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE}, _out{&out} {}
 
 WriteContext::~WriteContext() = default;
 
@@ -58,10 +47,6 @@ duckdb::block_id_t WriteContext::PeekFreeBlockId() {
   return _next_id < cursor ? cursor : _next_id;
 }
 
-duckdb::block_id_t WriteContext::GetFreeBlockIdForCheckpoint() {
-  return GetFreeBlockId();
-}
-
 void WriteContext::Write(duckdb::FileBuffer& block,
                          duckdb::block_id_t block_id) {
   Write(duckdb::QueryContext{}, block, block_id);
@@ -71,63 +56,40 @@ void WriteContext::Write(duckdb::QueryContext /*context*/,
                          duckdb::FileBuffer& block,
                          duckdb::block_id_t block_id) {
   const auto cursor = static_cast<duckdb::block_id_t>(_out->Position());
-  SDB_ENSURE(cursor == block_id, sdb::ERROR_INTERNAL,
+  SDB_ENSURE(cursor == block_id,
              "WriteContext::Write out-of-order: cursor=", cursor,
              " expected=", block_id);
   _out->WriteData(reinterpret_cast<const byte_type*>(block.InternalBuffer()),
                   block.AllocSize());
 }
 
-duckdb::unique_ptr<duckdb::Block> WriteContext::ConvertBlock(
-  duckdb::block_id_t block_id, duckdb::FileBuffer& source_buffer) {
-  return duckdb::make_uniq<duckdb::Block>(source_buffer, block_id,
-                                          GetBlockHeaderSize());
-}
-
-duckdb::unique_ptr<duckdb::Block> WriteContext::CreateBlock(
-  duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) {
-  if (source_buffer) {
-    return ConvertBlock(block_id, *source_buffer);
-  }
-  return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id, *this);
-}
-
 void WriteContext::Read(duckdb::QueryContext /*context*/,
                         duckdb::Block& /*block*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::Read on write-only context");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::Read on write-only context"));
 }
 
-void WriteContext::ReadBlocks(duckdb::FileBuffer& /*buffer*/,
+void WriteContext::ReadBlocks(duckdb::QueryContext /*context*/,
+                              duckdb::FileBuffer& /*buffer*/,
                               duckdb::block_id_t /*start_block*/,
                               duckdb::idx_t /*block_count*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL,
-            "WriteContext::ReadBlocks on write-only context");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::ReadBlocks on write-only context"));
 }
 
 bool WriteContext::IsRootBlock(duckdb::MetaBlockPointer /*root*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::IsRootBlock");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::IsRootBlock"));
 }
 
-void WriteContext::MarkBlockAsCheckpointed(duckdb::block_id_t /*block_id*/) {}
-void WriteContext::MarkBlockAsUsed(duckdb::block_id_t /*block_id*/) {}
-void WriteContext::MarkBlockAsModified(duckdb::block_id_t /*block_id*/) {}
-void WriteContext::IncreaseBlockReferenceCount(
-  duckdb::block_id_t /*block_id*/) {}
-
 duckdb::idx_t WriteContext::GetMetaBlock() {
-  SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::GetMetaBlock");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::GetMetaBlock"));
 }
 
 void WriteContext::WriteHeader(duckdb::QueryContext /*context*/,
                                duckdb::DatabaseHeader /*header*/) {
-  SDB_THROW(sdb::ERROR_INTERNAL, "WriteContext::WriteHeader");
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::WriteHeader"));
 }
 
 duckdb::idx_t WriteContext::TotalBlocks() {
   return static_cast<duckdb::idx_t>(_next_id / GetBlockAllocSize());
 }
-
-duckdb::idx_t WriteContext::FreeBlocks() { return 0; }
-void WriteContext::FileSync() {}
 
 }  // namespace irs

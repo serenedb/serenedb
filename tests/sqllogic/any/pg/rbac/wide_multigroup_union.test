@@ -1,0 +1,413 @@
+# Wide fan-IN: one member (wide_mg_vedernikoff) belongs to TEN distinct groups,
+# each granting a different privilege on the same table. The member inherits the
+# UNION of all ten privileges. Revoking the member out of one group strips
+# exactly that one privilege and nothing else. A second member sharing only a
+# subset of the groups inherits only that subset. Asserted with
+# has_table_privilege / pg_has_role (byte-identical), with real query-path
+# enforcement on a separate authenticated connection.
+#
+# Groups (-> reads "is a member of"), each grants ONE table privilege:
+#   wide_mg_g_select     SELECT
+#   wide_mg_g_insert     INSERT
+#   wide_mg_g_update     UPDATE
+#   wide_mg_g_delete     DELETE
+#   wide_mg_g_truncate   TRUNCATE
+#   wide_mg_g_references REFERENCES
+#   wide_mg_g_trigger    TRIGGER
+#   wide_mg_g_extra1     (also SELECT, redundant)
+#   wide_mg_g_extra2     (also INSERT, redundant)
+#   wide_mg_g_extra3     (also UPDATE, redundant)
+# wide_mg_vedernikoff is in all ten; wide_mg_kostya is in only the first three.
+
+statement ok
+DROP TABLE IF EXISTS wide_mg_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_select;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_insert;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_update;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_delete;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_truncate;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_references;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_trigger;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_extra1;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_extra2;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_extra3;
+
+
+statement ok
+CREATE TABLE wide_mg_iceberg (id int, payload text);
+
+
+statement ok
+INSERT INTO wide_mg_iceberg VALUES (1, 'clickclack'), (2, 'mop'), (3, 'pudge');
+
+
+statement ok
+CREATE ROLE wide_mg_vedernikoff LOGIN PASSWORD 'wide_mg_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE wide_mg_kostya LOGIN PASSWORD 'wide_mg_kostya_pw';
+
+
+statement ok
+CREATE ROLE wide_mg_g_select;
+
+
+statement ok
+CREATE ROLE wide_mg_g_insert;
+
+
+statement ok
+CREATE ROLE wide_mg_g_update;
+
+
+statement ok
+CREATE ROLE wide_mg_g_delete;
+
+
+statement ok
+CREATE ROLE wide_mg_g_truncate;
+
+
+statement ok
+CREATE ROLE wide_mg_g_references;
+
+
+statement ok
+CREATE ROLE wide_mg_g_trigger;
+
+
+statement ok
+CREATE ROLE wide_mg_g_extra1;
+
+
+statement ok
+CREATE ROLE wide_mg_g_extra2;
+
+
+statement ok
+CREATE ROLE wide_mg_g_extra3;
+
+
+# ---- Grant one privilege to each group ----
+
+statement ok
+GRANT SELECT ON wide_mg_iceberg TO wide_mg_g_select;
+
+
+statement ok
+GRANT INSERT ON wide_mg_iceberg TO wide_mg_g_insert;
+
+
+statement ok
+GRANT UPDATE ON wide_mg_iceberg TO wide_mg_g_update;
+
+
+statement ok
+GRANT DELETE ON wide_mg_iceberg TO wide_mg_g_delete;
+
+
+statement ok
+GRANT TRUNCATE ON wide_mg_iceberg TO wide_mg_g_truncate;
+
+
+statement ok
+GRANT REFERENCES ON wide_mg_iceberg TO wide_mg_g_references;
+
+
+statement ok
+GRANT TRIGGER ON wide_mg_iceberg TO wide_mg_g_trigger;
+
+
+statement ok
+GRANT SELECT ON wide_mg_iceberg TO wide_mg_g_extra1;
+
+
+statement ok
+GRANT INSERT ON wide_mg_iceberg TO wide_mg_g_extra2;
+
+
+statement ok
+GRANT UPDATE ON wide_mg_iceberg TO wide_mg_g_extra3;
+
+
+# ---- Make vedernikoff a member of ALL ten groups ----
+
+statement ok
+GRANT wide_mg_g_select TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_insert TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_update TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_delete TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_truncate TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_references TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_trigger TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_extra1 TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_extra2 TO wide_mg_vedernikoff;
+
+
+statement ok
+GRANT wide_mg_g_extra3 TO wide_mg_vedernikoff;
+
+
+# vedernikoff inherits the UNION of all seven distinct privileges.
+query
+SELECT has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'SELECT')     AS sel,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'INSERT')     AS ins,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'UPDATE')     AS upd,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'DELETE')     AS del,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'TRUNCATE')   AS trunc,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'REFERENCES') AS refs,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	t	t	t	t
+
+
+# ---- kostya is in only three groups: SELECT, INSERT, UPDATE ----
+
+statement ok
+GRANT wide_mg_g_select TO wide_mg_kostya;
+
+
+statement ok
+GRANT wide_mg_g_insert TO wide_mg_kostya;
+
+
+statement ok
+GRANT wide_mg_g_update TO wide_mg_kostya;
+
+
+query
+SELECT has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'SELECT')     AS sel,
+       has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'INSERT')     AS ins,
+       has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'UPDATE')     AS upd,
+       has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'DELETE')     AS del,
+       has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'TRUNCATE')   AS trunc,
+       has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	trig
+t	t	t	f	f	f
+
+
+# pg_has_role: vedernikoff reaches all ten groups; kostya reaches only three.
+query
+SELECT pg_has_role('wide_mg_vedernikoff', 'wide_mg_g_select', 'USAGE')   AS v_sel,
+       pg_has_role('wide_mg_vedernikoff', 'wide_mg_g_trigger', 'USAGE')  AS v_trig,
+       pg_has_role('wide_mg_kostya', 'wide_mg_g_select', 'USAGE')        AS k_sel,
+       pg_has_role('wide_mg_kostya', 'wide_mg_g_trigger', 'USAGE')       AS k_trig;
+----
+v_sel	v_trig	k_sel	k_trig
+t	t	t	f
+
+
+# ---- Revoking ONE edge strips exactly one privilege from that member ----
+# Drop vedernikoff out of the DELETE group only.
+
+statement ok
+REVOKE wide_mg_g_delete FROM wide_mg_vedernikoff;
+
+
+# DELETE is gone; the other six distinct privileges survive.
+query
+SELECT has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'SELECT')     AS sel,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'INSERT')     AS ins,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'UPDATE')     AS upd,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'DELETE')     AS del,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'TRUNCATE')   AS trunc,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'REFERENCES') AS refs,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'TRIGGER')    AS trig;
+----
+sel	ins	upd	del	trunc	refs	trig
+t	t	t	f	t	t	t
+
+
+# A redundant edge keeps a privilege alive: revoke the g_select group, but
+# extra1 also grants SELECT, so SELECT survives.
+statement ok
+REVOKE wide_mg_g_select FROM wide_mg_vedernikoff;
+
+
+query
+SELECT has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'SELECT') AS still_sel,
+       pg_has_role('wide_mg_vedernikoff', 'wide_mg_g_select', 'USAGE') AS in_select_grp,
+       pg_has_role('wide_mg_vedernikoff', 'wide_mg_g_extra1', 'USAGE') AS in_extra1_grp;
+----
+still_sel	in_select_grp	in_extra1_grp
+t	f	t
+
+
+# Revoking the redundant extra1 too finally drops SELECT.
+statement ok
+REVOKE wide_mg_g_extra1 FROM wide_mg_vedernikoff;
+
+
+query
+SELECT has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'SELECT') AS sel,
+       has_table_privilege('wide_mg_vedernikoff', 'wide_mg_iceberg', 'INSERT') AS ins;
+----
+sel	ins
+f	t
+
+
+# kostya is untouched by all of vedernikoff's revokes.
+query
+SELECT has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'SELECT') AS sel,
+       has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'INSERT') AS ins,
+       has_table_privilege('wide_mg_kostya', 'wide_mg_iceberg', 'UPDATE') AS upd;
+----
+sel	ins	upd
+t	t	t
+
+
+# ---- Real query-path enforcement of the unioned privileges ----
+# kostya still has SELECT and INSERT through its three groups.
+
+connection c_kostya user=wide_mg_kostya password=wide_mg_kostya_pw
+query
+SELECT count(*) FROM wide_mg_iceberg;
+----
+count
+3
+
+
+connection c_kostya user=wide_mg_kostya password=wide_mg_kostya_pw
+statement ok
+INSERT INTO wide_mg_iceberg VALUES (4, 'vedernikoff');
+
+
+# kostya never had DELETE (not in the delete group): denied for real.
+connection c_kostya user=wide_mg_kostya password=wide_mg_kostya_pw
+statement error
+DELETE FROM wide_mg_iceberg WHERE id = 1;
+----
+db error: ERROR: permission denied for table wide_mg_iceberg<slt:ignore>
+
+
+# vedernikoff lost SELECT entirely above: real SELECT is denied.
+connection c_ved user=wide_mg_vedernikoff password=wide_mg_vedernikoff_pw
+statement error
+SELECT * FROM wide_mg_iceberg;
+----
+db error: ERROR: permission denied for table wide_mg_iceberg<slt:ignore>
+
+
+# vedernikoff still has INSERT (through the insert group and extra2).
+connection c_ved user=wide_mg_vedernikoff password=wide_mg_vedernikoff_pw
+statement ok
+INSERT INTO wide_mg_iceberg VALUES (5, 'pudge');
+
+
+# ---- Cleanup ----
+
+statement ok
+DROP TABLE IF EXISTS wide_mg_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_select;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_insert;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_update;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_delete;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_truncate;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_references;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_trigger;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_extra1;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_extra2;
+
+
+statement ok
+DROP ROLE IF EXISTS wide_mg_g_extra3;

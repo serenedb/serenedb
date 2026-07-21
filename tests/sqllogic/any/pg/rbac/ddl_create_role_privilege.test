@@ -1,0 +1,73 @@
+# CREATE ROLE requires the CREATEROLE attribute (or superuser), like
+# PostgreSQL: a plain role is refused ("permission denied to create role"); a
+# role with CREATEROLE succeeds. (Regression guard: CREATE ROLE was superuser-
+# only, wrongly refusing CREATEROLE holders.)
+#
+# Lore: vedernikoff lacks CREATEROLE and is refused; babsky has CREATEROLE and
+# creates the clickclack role.
+
+statement ok
+DROP ROLE IF EXISTS cr_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS cr_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS cr_babsky;
+
+
+statement ok
+CREATE ROLE cr_vedernikoff LOGIN PASSWORD 'cr_vedernikoff_pw';
+
+
+statement ok
+CREATE ROLE cr_babsky LOGIN PASSWORD 'cr_babsky_pw';
+
+
+statement ok
+ALTER ROLE cr_babsky CREATEROLE;
+
+
+# A plain role (no CREATEROLE) is refused.
+connection c_ved user=cr_vedernikoff password=cr_vedernikoff_pw
+statement error
+CREATE ROLE cr_clickclack;
+----
+db error: ERROR: permission denied to create role<slt:ignore>
+
+
+# Nothing was created.
+connection default
+query
+SELECT count(*) AS n FROM pg_authid WHERE rolname = 'cr_clickclack';
+----
+n
+0
+
+
+# A role with CREATEROLE succeeds.
+connection c_bab user=cr_babsky password=cr_babsky_pw
+statement ok
+CREATE ROLE cr_clickclack;
+
+
+connection default
+query
+SELECT count(*) AS n FROM pg_authid WHERE rolname = 'cr_clickclack';
+----
+n
+1
+
+
+statement ok
+DROP ROLE cr_clickclack;
+
+
+statement ok
+DROP ROLE cr_vedernikoff;
+
+
+statement ok
+DROP ROLE cr_babsky;

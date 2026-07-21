@@ -22,8 +22,7 @@
 
 #include <vector>
 
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs::analysis {
@@ -38,7 +37,7 @@ namespace irs::analysis {
 ///        covering chain of at most n-2 ngrams whose conjunction selects
 ///        documents containing the input as a substring (query side).
 ////////////////////////////////////////////////////////////////////////////////
-class SparseNGramTokenizer final : public TypedAnalyzer<SparseNGramTokenizer>,
+class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
                                    private util::Noncopyable {
  public:
   static constexpr std::string_view type_name() noexcept {
@@ -54,21 +53,15 @@ class SparseNGramTokenizer final : public TypedAnalyzer<SparseNGramTokenizer>,
 
   explicit SparseNGramTokenizer(Options options);
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  TokenTraits Traits() const noexcept final {
+    return {.terms = TokenTraits::Terms::Ngrams};
   }
-  bool next() final {
-    if (_pending_idx >= _pending_size && !Advance()) {
-      return false;
-    }
-    const uint64_t entry = _pending[_pending_idx++];
-    SetTerm(static_cast<uint32_t>(entry), static_cast<uint32_t>(entry >> 32));
-    return true;
-  }
-  bool reset(std::string_view data) final;
+
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
 
  private:
-  using attributes = std::tuple<IncAttr, TermAttr, OffsAttr>;
+  bool Bind(std::string_view value);
 
   struct HashAndPos {
     uint32_t hash;
@@ -84,19 +77,10 @@ class SparseNGramTokenizer final : public TypedAnalyzer<SparseNGramTokenizer>,
     *_pending_out++ = begin | (end << 32);
   }
 
-  void SetTerm(uint32_t begin, uint32_t end) noexcept {
-    std::get<TermAttr>(_attrs).value =
-      bytes_view{_data.data() + begin, end - begin};
-    auto& offs = std::get<OffsAttr>(_attrs);
-    offs.start = begin;
-    offs.end = end;
-  }
-
   size_t StackSize() const noexcept { return _stack.size() - _head; }
 
   Options _options;
   bytes_view _data;
-  attributes _attrs;
   std::vector<HashAndPos> _stack;
   std::vector<uint64_t> _pending;
   uint64_t* _pending_out{nullptr};
@@ -105,9 +89,10 @@ class SparseNGramTokenizer final : public TypedAnalyzer<SparseNGramTokenizer>,
   size_t _hash_end{0};
   size_t _head{0};
   size_t _pending_size{0};
-  size_t _pending_idx{0};
   size_t _pos{0};
   bool _finalized{true};
 };
+
+extern template class TypedTokenizer<SparseNGramTokenizer>;
 
 }  // namespace irs::analysis

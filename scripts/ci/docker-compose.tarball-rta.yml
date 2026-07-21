@@ -35,6 +35,24 @@ services:
           --listen postgres://0.0.0.0:7890 \
       '
 
+  # HBA network tests: the mask test launches its OWN serened (from its own
+  # tarball extraction) and connects from different 127.x source addresses, so
+  # client and server must share a container.
+  network-tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    volumes:
+      - "${WORKSPACE}:/workspace:ro"
+    environment:
+      - HOME=/tmp
+      - TARBALL_NAME
+    command: >
+      sh -c '
+        mkdir -p /tmp/serenedb &&
+        tar -xzf /workspace/$TARBALL_NAME -C /tmp/serenedb --strip-components=1 &&
+        SERENED=/tmp/serenedb/usr/bin/serened /workspace/tests/network/run.sh
+      '
+
   tests:
     image: ${BUILD_IMAGE}
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"

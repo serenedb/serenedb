@@ -23,15 +23,16 @@
 #include <absl/strings/str_cat.h>
 
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <yaclib/async/make.hpp>
 #include <yaclib/async/when_all.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
+#include <yaclib/coro/on.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
-#include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
@@ -45,18 +46,19 @@
 namespace sdb::catalog {
 namespace {
 
-Result RemoveIndexStorage(ObjectId db_id, ObjectId schema_id = ObjectId{0},
-                          ObjectId table_id = ObjectId{0},
-                          ObjectId index_id = ObjectId{0}) {
+absl::Status RemoveIndexStorage(ObjectId db_id,
+                                ObjectId schema_id = ObjectId{0},
+                                ObjectId table_id = ObjectId{0},
+                                ObjectId index_id = ObjectId{0}) {
   auto path =
     search::InvertedIndexStorage::GetPath(db_id, schema_id, table_id, index_id);
   std::error_code ec;
   std::filesystem::remove_all(path, ec);
   if (ec) {
-    return Result{ERROR_FAILED,
-                  "Failed to remove index storage: " + ec.message()};
+    return absl::InternalError(
+      absl::StrCat("Failed to remove index storage: ", ec.message()));
   }
-  return {};
+  return absl::OkStatus();
 }
 template<typename T>
 yaclib::Future<> RunChildrenTasks(std::span<std::shared_ptr<T>> tasks) {
@@ -80,51 +82,31 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
     while (true) {
       auto& scheduler = BackgroundScheduler::instance();
       co_await scheduler.Delay(task->_delay);
-      auto r = co_await scheduler.Run(
+      auto outcome = co_await scheduler.Run(
         [task] { return DropTask::ExecuteTask(std::move(task)); });
-      if (r.errorNumber() == ERROR_LOCKED) {
+      if (outcome == DropOutcome::Retry) {
         task->_delay = std::min(kMaxDelay, task->_delay * 2);
         continue;
       }
-      if (!r.ok()) {
-        SDB_ERROR(GENERAL, "Failed to execute ", task->GetContext(),
-                  ", error: ", r.errorMessage());
-      }
-      co_return r;
+      co_return outcome;
     }
   } catch (std::exception& e) {
     SDB_ERROR(GENERAL, "Unable to schedule ", task->GetName(), ": \"", e.what(),
               "\"");
-    co_return Result{ERROR_INTERNAL,
-                     "Unable to schedule ",
-                     task->GetName(),
-                     ": ",
-                     "\"",
-                     e.what(),
-                     "\""};
+    co_return DropOutcome::Done;
   }
 }
 
-Result IndexDrop::Finalize() {
+void IndexDrop::Finalize() {
   if (_type == catalog::ObjectType::InvertedIndex ||
       _type == catalog::ObjectType::SecondaryIndex) {
-    auto r =
-      GetCatalogStore().Write([&](auto& ctx) { ctx.DropStoreIndex(_id); });
-    if (!r.ok()) {
-      return r;
-    }
+    GetCatalogStore().Write([&](auto& ctx) { ctx.DropStoreIndex(_id); });
   }
   auto& server = GetCatalogStore();
   if (_is_root) {
-    auto r = server.DropDefinition(_parent_id, _type, _id);
-    if (!r.ok()) {
-      return r;
-    }
-
-    return server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone,
-                                 _id);
+    server.DropDefinition(_parent_id, _type, _id);
+    server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
   }
-  return {};
 }
 
 AsyncResult IndexDrop::Execute() {
@@ -133,30 +115,23 @@ AsyncResult IndexDrop::Execute() {
     // on _data.expired(), so neither this drop nor any ancestor reaches Execute
     // while a catalog snapshot, query, replay session, or background task still
     // holds the iresearch storage -- no live holder touches the removed dir.
-    auto r = RemoveIndexStorage(_db_id, _schema_id, _parent_id, _id);
-    if (!r.ok()) {
-      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-      return yaclib::MakeFuture<Result>(ERROR_LOCKED);
+    if (auto s = RemoveIndexStorage(_db_id, _schema_id, _parent_id, _id);
+        !s.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", s.message());
+      return yaclib::MakeFuture<DropOutcome>(DropOutcome::Retry);
     }
   }
-  auto r = Finalize();
-  if (!r.ok()) {
-    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-    return yaclib::MakeFuture<Result>(ERROR_LOCKED);
-  }
-  return yaclib::MakeFuture<Result>();
+  Finalize();
+  return yaclib::MakeFuture<DropOutcome>(DropOutcome::Done);
 }
 
-Result TableDrop::Finalize() {
+void TableDropBase::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
   auto& server = GetCatalogStore();
   // Indexes and their storage.
-  auto r = server.DropEntry(_id);
-  if (!r.ok()) {
-    return r;
-  }
+  server.DropEntry(_id);
   // Owned seqs (def + counter) + the table's own catalog rows in one batch.
-  return server.Write([&](auto& ctx) {
+  server.Write([&](auto& ctx) {
     for (auto seq_id : _owned_sequences) {
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
       ctx.DropSequence(seq_id);
@@ -165,112 +140,89 @@ Result TableDrop::Finalize() {
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
     }
-    ctx.DropStoreTable(catalog::DroppedStoreTableName(_id));
+    FinalizeStore(ctx);
   });
 }
 
 AsyncResult TableDrop::Execute() {
-  if (_db_id.isSet()) {
-    // Search table: wait until every holder of the iresearch store has
-    // released it (mirrors IndexDrop's weak_ptr drain), then remove the
-    // directory + WAL chunks. _db_id is set only for Search tables.
-    if (!_search_data.expired()) {
-      co_return Result{ERROR_LOCKED};
-    }
-    if (auto r = search::SearchTable::DropArtifacts(_db_id, _id); !r.ok()) {
-      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-      co_return Result{ERROR_LOCKED};
-    }
-  }
   if (_is_root && !_indexes.empty()) {
     ObjectId db_id = _indexes.back()->GetDatabaseId();
     ObjectId schema_id = _parent_id;
-    auto r = RemoveIndexStorage(db_id, schema_id, _id);
-    if (!r.ok()) {
-      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-      co_return Result{ERROR_LOCKED};
+    if (auto s = RemoveIndexStorage(db_id, schema_id, _id); !s.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", s.message());
+      co_return DropOutcome::Retry;
     }
   }
   co_await RunChildrenTasks(std::span{_indexes});
-  Result r = Finalize();
-  if (!r.ok()) {
-    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-    co_return Result{ERROR_LOCKED};
-  }
-  co_return {};
+  Finalize();
+  co_return DropOutcome::Done;
 }
 
-Result SchemaDrop::Finalize() {
+AsyncResult SearchTableDrop::Execute() {
+  // The WAL chunk dir + shard registration live under the per-database WAL,
+  // which no ancestor schema/database drop reaches, so they are always removed
+  // per-table here.
+  if (auto r = search::SearchTable::DropWalShard(_db_id, _id); !r.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.message());
+    co_return DropOutcome::Retry;
+  }
+
+  if (_is_root) {
+    if (auto r = search::SearchTable::DropIndexDir(_db_id, _parent_id, _id);
+        !r.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.message());
+      co_return DropOutcome::Retry;
+    }
+  }
+  Finalize();
+  co_return DropOutcome::Done;
+}
+
+void SchemaDrop::Finalize() {
   auto& server = GetCatalogStore();
   // Standalone seq counter rows -- DropEntry only sweeps definition rows.
-  auto r = server.VisitDefinitions(
-    _id, catalog::ObjectType::Sequence,
-    [&](CatalogStore::Key key, std::string_view) -> Result {
-      return server.DropSequence(key.id);
-    });
-  if (!r.ok()) {
-    return r;
-  }
-  r = server.DropEntry(_id);
-  if (!r.ok()) {
-    return r;
-  }
+  server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
+                          [&](CatalogStore::Key key, std::string_view) {
+                            server.DropSequence(key.id);
+                            return true;
+                          });
+  server.DropEntry(_id);
   if (_is_root) {
-    r = server.DropDefinition(_parent_id, catalog::ObjectType::Schema, _id);
-    if (!r.ok()) {
-      return r;
-    }
-    return server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone,
-                                 _id);
+    server.DropDefinition(_parent_id, catalog::ObjectType::Schema, _id);
+    server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
   }
-  return {};
 }
 
 AsyncResult SchemaDrop::Execute() {
   if (_is_root) {
-    auto r = RemoveIndexStorage(_parent_id, _id);
-    if (!r.ok()) {
-      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-      co_return Result{ERROR_LOCKED};
+    if (auto s = RemoveIndexStorage(_parent_id, _id); !s.ok()) {
+      SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", s.message());
+      co_return DropOutcome::Retry;
     }
   }
   co_await RunChildrenTasks(std::span{_tables});
-  if (auto r = Finalize(); !r.ok()) {
-    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-    co_return Result{ERROR_LOCKED};
-  }
-  co_return {};
+  Finalize();
+  co_return DropOutcome::Done;
 }
 
-Result DatabaseDrop::Finalize() {
+void DatabaseDrop::Finalize() {
   auto& server = GetCatalogStore();
   // Range-delete schema Definitions under db. Per-schema standalone-seq
   // counter wipes already ran inside each SchemaDrop::Finalize above.
-  auto r = server.DropEntry(_id, catalog::ObjectType::Schema);
-  if (!r.ok()) {
-    return r;
-  }
-  r = server.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
-  if (!r.ok()) {
-    return r;
-  }
-  return server.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone,
-                               _id);
+  server.DropEntry(_id, catalog::ObjectType::Schema);
+  server.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
+  server.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone, _id);
 }
 
 AsyncResult DatabaseDrop::Execute() {
   SDB_ASSERT(_is_root);
-  auto r = RemoveIndexStorage(_id);
-  if (!r.ok()) {
-    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-    co_return Result{ERROR_LOCKED};
+  if (auto s = RemoveIndexStorage(_id); !s.ok()) {
+    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", s.message());
+    co_return DropOutcome::Retry;
   }
   co_await RunChildrenTasks(std::span{_schemas});
-  if (auto r = Finalize(); !r.ok()) {
-    SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", r.errorMessage());
-    co_return Result{ERROR_LOCKED};
-  }
-  co_return {};
+  Finalize();
+  co_return DropOutcome::Done;
 }
 
 }  // namespace sdb::catalog

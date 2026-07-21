@@ -88,21 +88,21 @@ CREATE TABLE g20_t(pk     INTEGER PRIMARY KEY,
 statement error
 CREATE INDEX g20_kw_li ON g20_t USING inverted(pk, list_i kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+db error: ERROR: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
 
 
 # (b) kw_dict on LIST<BIGINT>: NumericI64 child, ValidateTokenizerVsColumn.
 statement error
 CREATE INDEX g20_kw_lbi ON g20_t USING inverted(pk, list_bi kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+db error: ERROR: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
 
 
 # (c) kw_dict on LIST<DOUBLE>: NumericF64 child, ValidateTokenizerVsColumn.
 statement error
 CREATE INDEX g20_kw_ld ON g20_t USING inverted(pk, list_d kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+db error: ERROR: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
 
 
 # (d) kw_dict on LIST<UUID>: UUID classifies Unsupported (default arm), so
@@ -110,7 +110,7 @@ db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must 
 statement error
 CREATE INDEX g20_kw_lu ON g20_t USING inverted(pk, list_u kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+db error: ERROR: Column 'list_u' has unsupported type UUID[] and can not be indexed
 
 
 # (e) kw_dict on LIST<GEOMETRY('OGC:CRS84')>: explicit child-GEOMETRY guard
@@ -118,21 +118,21 @@ db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UU
 statement error
 CREATE INDEX g20_kw_lg ON g20_t USING inverted(pk, list_g kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+db error: ERROR: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
 
 
 # (f) kw_dict on ARRAY<INTEGER,3>: NumericI32 child, ValidateTokenizerVsColumn.
 statement error
 CREATE INDEX g20_kw_ai ON g20_t USING inverted(pk, arr_i kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+db error: ERROR: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
 
 
 # (g) kw_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>: explicit child-GEOMETRY guard.
 statement error
 CREATE INDEX g20_kw_ag ON g20_t USING inverted(pk, arr_g kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+db error: ERROR: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
 
 
 # (h) kw_dict on ARRAY<JSON,3>: JSON child is VARCHAR-aliased; is_string_leaf
@@ -141,7 +141,7 @@ db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEO
 statement error
 CREATE INDEX g20_kw_aj ON g20_t USING inverted(pk, arr_j kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+db error: ERROR: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
 
 
 # (i) kw_dict on scalar BIT: Classify default arm -> Unsupported,
@@ -149,7 +149,7 @@ db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must b
 statement error
 CREATE INDEX g20_kw_bit ON g20_t USING inverted(pk, bit_s kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+db error: ERROR: Column 'bit_s' has unsupported type BIT and can not be indexed
 
 
 # (j) kw_dict on scalar ENUM: same path; the user-visible type alias
@@ -157,7 +157,7 @@ db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT
 statement error
 CREATE INDEX g20_kw_en ON g20_t USING inverted(pk, enum_s kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+db error: ERROR: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
 
 
 # (k) kw_dict on INTEGER expression source: term_dict accepts (NumericI32),
@@ -166,7 +166,7 @@ db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g2
 statement error
 CREATE INDEX g20_kw_expr_n ON g20_t USING inverted(pk, (n + 1) kw_dict);
 ----
-db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+db error: ERROR: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
 
 
 # (l) kw_dict on GEOMETRY('OGC:CRS84') expression source: term_dict accepts
@@ -176,7 +176,7 @@ db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must
 statement error
 CREATE INDEX g20_kw_expr_g ON g20_t USING inverted(pk, (g) kw_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
 
 
 # ----------------------------------------------------------------------------
@@ -187,28 +187,28 @@ db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VA
 statement error
 CREATE INDEX g20_ng_li ON g20_t USING inverted(pk, list_i ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+db error: ERROR: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
 
 
 # (b) ng_dict on LIST<BIGINT>.
 statement error
 CREATE INDEX g20_ng_lbi ON g20_t USING inverted(pk, list_bi ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+db error: ERROR: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
 
 
 # (c) ng_dict on LIST<DOUBLE>.
 statement error
 CREATE INDEX g20_ng_ld ON g20_t USING inverted(pk, list_d ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+db error: ERROR: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
 
 
 # (d) ng_dict on LIST<UUID>.
 statement error
 CREATE INDEX g20_ng_lu ON g20_t USING inverted(pk, list_u ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+db error: ERROR: Column 'list_u' has unsupported type UUID[] and can not be indexed
 
 
 # (e) ng_dict on LIST<GEOMETRY('OGC:CRS84')>: not previously covered for
@@ -216,49 +216,49 @@ db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UU
 statement error
 CREATE INDEX g20_ng_lg ON g20_t USING inverted(pk, list_g ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+db error: ERROR: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
 
 
 # (f) ng_dict on ARRAY<INTEGER,3>.
 statement error
 CREATE INDEX g20_ng_ai ON g20_t USING inverted(pk, arr_i ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+db error: ERROR: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
 
 
 # (g) ng_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>.
 statement error
 CREATE INDEX g20_ng_ag ON g20_t USING inverted(pk, arr_g ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+db error: ERROR: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
 
 
 # (h) ng_dict on ARRAY<JSON,3>.
 statement error
 CREATE INDEX g20_ng_aj ON g20_t USING inverted(pk, arr_j ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+db error: ERROR: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
 
 
 # (i) ng_dict on scalar BIT.
 statement error
 CREATE INDEX g20_ng_bit ON g20_t USING inverted(pk, bit_s ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+db error: ERROR: Column 'bit_s' has unsupported type BIT and can not be indexed
 
 
 # (j) ng_dict on scalar ENUM.
 statement error
 CREATE INDEX g20_ng_en ON g20_t USING inverted(pk, enum_s ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+db error: ERROR: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
 
 
 # (k) ng_dict on INTEGER expression source.
 statement error
 CREATE INDEX g20_ng_expr_n ON g20_t USING inverted(pk, (n + 1) ng_dict);
 ----
-db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+db error: ERROR: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
 
 
 # (l) ng_dict on GEOMETRY('OGC:CRS84') expression source. Single-identifier
@@ -266,7 +266,7 @@ db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must
 statement error
 CREATE INDEX g20_ng_expr_g ON g20_t USING inverted(pk, (g) ng_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
 
 
 # ----------------------------------------------------------------------------
@@ -277,49 +277,49 @@ db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VA
 statement error
 CREATE INDEX g20_at_li ON g20_t USING inverted(pk, list_i any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
+db error: ERROR: Column 'list_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[])
 
 
 # (b) any_text_dict on LIST<BIGINT>.
 statement error
 CREATE INDEX g20_at_lbi ON g20_t USING inverted(pk, list_bi any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
+db error: ERROR: Column 'list_bi' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got BIGINT[])
 
 
 # (c) any_text_dict on LIST<DOUBLE>.
 statement error
 CREATE INDEX g20_at_ld ON g20_t USING inverted(pk, list_d any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
+db error: ERROR: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
 
 
 # (d) any_text_dict on LIST<UUID>.
 statement error
 CREATE INDEX g20_at_lu ON g20_t USING inverted(pk, list_u any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_u' has unsupported type UUID[] and can not be indexed
+db error: ERROR: Column 'list_u' has unsupported type UUID[] and can not be indexed
 
 
 # (e) any_text_dict on LIST<GEOMETRY('OGC:CRS84')>.
 statement error
 CREATE INDEX g20_at_lg ON g20_t USING inverted(pk, list_g any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
+db error: ERROR: Column 'list_g' has unsupported type GEOMETRY('OGC:CRS84')[] and can not be indexed
 
 
 # (f) any_text_dict on ARRAY<INTEGER,3>.
 statement error
 CREATE INDEX g20_at_ai ON g20_t USING inverted(pk, arr_i any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
+db error: ERROR: Column 'arr_i' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER[3])
 
 
 # (g) any_text_dict on ARRAY<GEOMETRY('OGC:CRS84'),3>.
 statement error
 CREATE INDEX g20_at_ag ON g20_t USING inverted(pk, arr_g any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
+db error: ERROR: Column 'arr_g' has unsupported type GEOMETRY('OGC:CRS84')[3] and can not be indexed
 
 
 # (h) any_text_dict on ARRAY<JSON,3>: g1 covered LIST<JSON> with any_text but
@@ -327,28 +327,28 @@ db error: ERROR: Failed to create index: Column 'arr_g' has unsupported type GEO
 statement error
 CREATE INDEX g20_at_aj ON g20_t USING inverted(pk, arr_j any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
+db error: ERROR: Column 'arr_j' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[3])
 
 
 # (i) any_text_dict on scalar BIT.
 statement error
 CREATE INDEX g20_at_bit ON g20_t USING inverted(pk, bit_s any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'bit_s' has unsupported type BIT and can not be indexed
+db error: ERROR: Column 'bit_s' has unsupported type BIT and can not be indexed
 
 
 # (j) any_text_dict on scalar ENUM.
 statement error
 CREATE INDEX g20_at_en ON g20_t USING inverted(pk, enum_s any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
+db error: ERROR: Column 'enum_s' has unsupported type g20_enum_t and can not be indexed
 
 
 # (k) any_text_dict on INTEGER expression source.
 statement error
 CREATE INDEX g20_at_expr_n ON g20_t USING inverted(pk, (n + 1) any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
+db error: ERROR: Column '(n + 1)' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got INTEGER)
 
 
 # (l) any_text_dict on GEOMETRY('OGC:CRS84') expression source. Single-identifier
@@ -356,7 +356,7 @@ db error: ERROR: Failed to create index: Column '(n + 1)' uses a tokenizer; must
 statement error
 CREATE INDEX g20_at_expr_g ON g20_t USING inverted(pk, (g) any_text_dict);
 ----
-db error: ERROR: Failed to create index: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
+db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got GEOMETRY('OGC:CRS84'))
 
 
 # --- teardown ---------------------------------------------------------------

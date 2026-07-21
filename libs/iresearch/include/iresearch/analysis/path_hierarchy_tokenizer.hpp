@@ -24,8 +24,7 @@
 #include <memory>
 #include <string>
 
-#include "analyzer.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs {
 namespace analysis {
@@ -45,7 +44,7 @@ namespace analysis {
 ///       - reverse: use reverse tokenization for domain-like hierarchies
 ///       (default: false)
 ///       - skip: number of initial tokens to skip (default: 0)
-class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
+class PathHierarchyTokenizer {
  public:
   struct Options {
     using Owner = PathHierarchyTokenizer;
@@ -60,17 +59,13 @@ class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
     return "path_hierarchy";
   }
 
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts);
 
-  ~PathHierarchyTokenizer() override;
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
+  virtual ~PathHierarchyTokenizer();
 
  protected:
   explicit PathHierarchyTokenizer(Options&& options) noexcept;
 
-  using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-  Attributes _attrs;
   const Options _options;
 
   bool _term_eof = true;

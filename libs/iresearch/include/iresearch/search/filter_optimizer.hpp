@@ -35,6 +35,8 @@ namespace irs {
 
 struct OptimizeContext {
   bool scored = false;
+  bool fuse_seekable_acceptors = false;
+  bool fuse_acceptor_intersections = false;
   sdb::containers::FlatHashSet<irs::field_id> analyzed_fields;
 
   bool HasAnalyzer(irs::field_id field) const noexcept {

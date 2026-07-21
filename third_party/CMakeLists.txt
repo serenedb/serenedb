@@ -409,6 +409,7 @@ elseif(ARCH_AARCH64)
     set(FAISS_OPT_LEVEL "sve")
     set(FAISS_LIB faiss_sve)
 endif()
+set(FAISS_LIB "${FAISS_LIB}" CACHE INTERNAL "faiss target to link" FORCE)
 
 sdb_update_module(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)

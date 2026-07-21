@@ -55,24 +55,20 @@
 // out-of-cache arrays, which these use-cases are not. This benchmark is kept
 // as the record of that investigation.
 
+#include <absl/container/btree_set.h>
+#include <absl/container/flat_hash_set.h>
 #include <benchmark/benchmark.h>
+#include <frozen/bits/algorithms.h>
+#include <frozen/set.h>
+#include <immintrin.h>
 
+#include <algorithm>
+#include <array>
+#include <boost/text/detail/case_mapping_tables.hpp>
 #include <boost/text/grapheme_break.hpp>
 #include <boost/text/line_break.hpp>
 #include <boost/text/sentence_break.hpp>
 #include <boost/text/word_break.hpp>
-#include <boost/text/detail/case_mapping_tables.hpp>
-
-#include <immintrin.h>
-
-#include <frozen/bits/algorithms.h>
-#include <frozen/set.h>
-
-#include <absl/container/btree_set.h>
-#include <absl/container/flat_hash_set.h>
-
-#include <algorithm>
-#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -166,7 +162,8 @@ size_t simd_lower_bound_le16(const uint32_t* a, size_t n, uint32_t x) {
   const __m256i vx = _mm256_set1_epi32(static_cast<int>(x));
   const __m256i lm0 = _mm256_cmpgt_epi32(vn, lane0);
   const __m256i lm1 = _mm256_cmpgt_epi32(vn, lane1);
-  const __m256i a0 = _mm256_maskload_epi32(reinterpret_cast<const int*>(a), lm0);
+  const __m256i a0 =
+    _mm256_maskload_epi32(reinterpret_cast<const int*>(a), lm0);
   const __m256i a1 =
     _mm256_maskload_epi32(reinterpret_cast<const int*>(a) + 8, lm1);
   const __m256i ge0 = _mm256_cmpeq_epi32(_mm256_max_epu32(a0, vx), a0);
@@ -213,7 +210,7 @@ size_t hybrid_simd_lower_bound(const uint32_t* a, size_t n, uint32_t x) {
   return lo + simd_lower_bound_le16(a + lo, len, x);
 }
 
-// Compile-time-N (unrolled) variants — the fair comparison against the current
+// Compile-time-N (unrolled) variants -- the fair comparison against the current
 // branchless arm, which inlines with a compile-time size (like doc_id_t[128]).
 template<size_t N>
 size_t sb_lower_bound_n(const uint32_t* a, uint32_t x) {
@@ -243,8 +240,7 @@ size_t hybrid_simd_lower_bound_n(const uint32_t* a, uint32_t x) {
 // probablydance/irs branchless as a (ptr, n, x) function; when n is a
 // compile-time constant at the call site it unrolls like the postings path.
 size_t pd_lower_bound(const uint32_t* a, size_t n, uint32_t x) {
-  return static_cast<size_t>(
-    irs::branchless_lower_bound(a, a + n, x) - a);
+  return static_cast<size_t>(irs::branchless_lower_bound(a, a + n, x) - a);
 }
 
 // ---------------------------------------------------------------------------
@@ -296,8 +292,7 @@ size_t FzStoreBranchless(const frozen::set<T, N>& set) {
   size_t sum = 0;
   for (uint32_t cp : kQueries) {
     const T query{cp, cp + 1};
-    const auto it =
-      irs::branchless_lower_bound(set.begin(), set.end(), query);
+    const auto it = irs::branchless_lower_bound(set.begin(), set.end(), query);
     if (it != set.end() && Contains(*it, cp)) {
       sum += Weight(*it);
     }
@@ -383,10 +378,11 @@ void RegisterInterval(const std::string& name, const frozen::set<T, N>& set) {
 
   // Startup correctness check: SoA arms must match the frozen result.
   const size_t ref = FrozenBits(set);
-  const size_t soa_pd =
-    soa->Sum([](const uint32_t* a, uint32_t x) { return pd_lower_bound(a, N, x); });
-  const size_t soa_sd = soa->Sum(
-    [](const uint32_t* a, uint32_t x) { return hybrid_simd_lower_bound_n<N>(a, x); });
+  const size_t soa_pd = soa->Sum(
+    [](const uint32_t* a, uint32_t x) { return pd_lower_bound(a, N, x); });
+  const size_t soa_sd = soa->Sum([](const uint32_t* a, uint32_t x) {
+    return hybrid_simd_lower_bound_n<N>(a, x);
+  });
   if (ref != soa_pd || ref != soa_sd) {
     std::fprintf(stderr, "%s SoA VALIDATION FAILED: ref=%zu pd=%zu sd=%zu\n",
                  name.c_str(), ref, soa_pd, soa_sd);
@@ -396,9 +392,8 @@ void RegisterInterval(const std::string& name, const frozen::set<T, N>& set) {
   Add(name + "/frozen_bits", [&set] { return FrozenBits(set); });
   Add(name + "/fzstore_branchless", [&set] { return FzStoreBranchless(set); });
   Add(name + "/soa_branchless", [soa] {
-    return soa->Sum([](const uint32_t* a, uint32_t x) {
-      return pd_lower_bound(a, N, x);
-    });
+    return soa->Sum(
+      [](const uint32_t* a, uint32_t x) { return pd_lower_bound(a, N, x); });
   });
   Add(name + "/soa_hybrid_simd", [soa] {
     return soa->Sum([](const uint32_t* a, uint32_t x) {
@@ -421,8 +416,7 @@ void RegisterMembership() {
   auto bts =
     std::make_shared<absl::btree_set<uint32_t>>(soft.begin(), soft.end());
   auto sst = std::make_shared<std::set<uint32_t>>(soft.begin(), soft.end());
-  auto vec =
-    std::make_shared<std::vector<uint32_t>>(soft.begin(), soft.end());
+  auto vec = std::make_shared<std::vector<uint32_t>>(soft.begin(), soft.end());
   std::sort(vec->begin(), vec->end());
 
   Add("soft_dotted/frozen", [] {
@@ -578,8 +572,7 @@ void RegisterPostingBlock() {
   Add("posting_block/std_lower_bound", [] {
     size_t sum = 0;
     for (uint32_t tgt : kTargets) {
-      const auto it =
-        std::lower_bound(kDocBlock.begin(), kDocBlock.end(), tgt);
+      const auto it = std::lower_bound(kDocBlock.begin(), kDocBlock.end(), tgt);
       sum += it != kDocBlock.end() ? *it : 0;
     }
     return sum;
@@ -657,7 +650,9 @@ void ValidatePostingBlock() {
   size_t gal = 0;
   size_t hyl = 0;
   size_t hys = 0;
-  const auto idx_val = [](size_t i) { return i < kBlockSize ? kDocBlock[i] : 0; };
+  const auto idx_val = [](size_t i) {
+    return i < kBlockSize ? kDocBlock[i] : 0;
+  };
   for (uint32_t tgt : kTargets) {
     const auto it = std::lower_bound(kDocBlock.begin(), kDocBlock.end(), tgt);
     ref += it != kDocBlock.end() ? *it : 0;
@@ -665,7 +660,8 @@ void ValidatePostingBlock() {
     sb += idx_val(sb_lower_bound_n<kBlockSize>(kDocBlock.data(), tgt));
     gal += idx_val(galloping_lower_bound(kDocBlock.data(), kBlockSize, tgt));
     hyl += idx_val(hybrid_lower_bound(kDocBlock.data(), kBlockSize, tgt));
-    hys += idx_val(hybrid_simd_lower_bound_n<kBlockSize>(kDocBlock.data(), tgt));
+    hys +=
+      idx_val(hybrid_simd_lower_bound_n<kBlockSize>(kDocBlock.data(), tgt));
   }
   if (ref != eyt || ref != sb || ref != gal || ref != hyl || ref != hys) {
     std::fprintf(stderr,

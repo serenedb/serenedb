@@ -179,6 +179,39 @@ descent per key); the IN-subquery form adds a Unique/Sort dedup and join
 plumbing. ClickHouse builds the same hash set either way. So the single-key
 special case stays for pg (and CH keeps the symmetric direct form for free).
 
+### 7d. Key-type matrix: our code vs bare, all supported key types
+
+Same method as section 0 (bare = exact shipped inner statement; our code =
+gul wall / 243 batches of ~103 keys); bare at 2048 keys to make type effects
+visible. All nine through-code runs returned identical sums (correctness).
+
+| key type | shipped query (inner) | bare, 2048 keys | our code, per batch |
+|---|---|---|---|
+| pg BIGINT | `id = ANY('{..}'::int8[])` | 1.03 ms (IN literals: 0.97) | 3.8 ms |
+| pg TEXT | `skey = ANY('{..}'::text[])` | 4.05 ms (IN literals: 4.07) | 3.2 ms |
+| pg DATE | `dkey = ANY('{..}'::date[])` | 1.21 ms | 3.7 ms |
+| pg TIMESTAMP | `tskey = ANY('{..}'::timestamp[])` | 1.26 ms | 3.8 ms |
+| pg composite (TEXT, BIGINT) | unnest zip | 3.40 ms | 5.2 ms |
+| CH Int64 | `IN [..]` | 3.84 ms | 4.9 ms |
+| CH String | `IN ['..',..]` | 3.74 ms | 5.4 ms |
+| CH DateTime | `IN ['2000-01-01 ..',..]` | 3.82 ms | 5.0 ms |
+| CH composite (String, Int64) | ARRAY JOIN zip | 6.97 ms (tuple literals: 13.3 — 1.9x worse) | 4.0 ms |
+
+Findings:
+
+- Every supported type round-trips correctly through the generic renderers
+  (double-quoted pg array elements re-parsed by `::T[]`; quoted CH literals
+  coerced to the column type).
+- pg TEXT keys are ~4x costlier than ints bare at 2048 (collation-aware
+  btree comparisons + bigger literals); DATE/TIMESTAMP price like ints.
+- pg `= ANY($1)` vs `IN (literals)` are EQUAL execute-only for both int and
+  text — the array form stays (smaller text, one node).
+- CH is type-insensitive (hash set; string hashing ~free); the composite zip
+  beats tuple literals ~2x on mixed types too.
+- Through our code every type lands in the same 3-5 ms/batch band: per-batch
+  transport overhead dominates and type effects (~0.1 ms at 103 keys) vanish —
+  no type-specific hotspots in the render/probe path.
+
 Through our code (gul, ~103-key batches, same stack):
 
 | path | per batch | note |

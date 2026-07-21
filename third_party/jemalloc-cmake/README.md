@@ -31,8 +31,12 @@ cross toolchains (`gcc-<arch>-linux-gnu`).
 cd third_party/jemalloc          # the submodule, at the target tag
 ./autogen.sh                     # produces ./configure (needs autoconf)
 
-# x86_64 (native) — also the source of the common include/ headers:
-./configure --with-version=<ver>-0-g0
+# x86_64 (native) — also the source of the common include/ headers. Configure
+# with CC=clang: serenedb builds with clang, and only clang's config is correct
+# for the common headers (gcc would set JEMALLOC_HAVE_ATTR_FORMAT_GNU_PRINTF,
+# which clang rejects with -Wignored-attributes). The per-arch internal_defs are
+# clang/gcc-identical, so the cross arches below may use their gcc toolchains.
+./configure CC=clang CXX=clang++ --with-version=<ver>-0-g0
 # harvest include/jemalloc/*.h + include/jemalloc/internal/jemalloc_preamble.h
 # into jemalloc-cmake/include/, and
 # include/jemalloc/internal/jemalloc_internal_defs.h into

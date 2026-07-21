@@ -143,8 +143,12 @@ class SearchSinkInsertBaseImpl {
                            std::vector<IndexedExpression>&& indexed_exprs = {},
                            PkPolicy pk_policy = {});
 
+  void SetTransaction(irs::IndexWriter::Transaction& trx) noexcept {
+    _trx = &trx;
+  }
+
   void InitImpl(size_t batch_size, const PkChunk& pk = {},
-                bool* commit_on_flush = nullptr);
+                uint64_t* commit_on_flush = nullptr);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
@@ -263,7 +267,7 @@ class SearchSinkInsertBaseImpl {
   Field _pk_field;
   Field _field;
   Field _null_field;
-  irs::IndexWriter::Transaction& _trx;
+  irs::IndexWriter::Transaction* _trx;
   std::optional<irs::IndexWriter::Document> _document;
 
   containers::FlatHashMap<irs::field_id, irs::ColumnWriter*> _column_writers;
@@ -285,6 +289,10 @@ class SearchSinkDeleteBaseImpl {
  public:
   explicit SearchSinkDeleteBaseImpl(irs::IndexWriter::Transaction& trx);
 
+  void SetTransaction(irs::IndexWriter::Transaction& trx) noexcept {
+    _trx = &trx;
+  }
+
   void InitImpl(size_t batch_size);
 
   void FinishImpl();
@@ -294,7 +302,7 @@ class SearchSinkDeleteBaseImpl {
   void AbortImpl() { _remove_filter.reset(); }
 
  protected:
-  irs::IndexWriter::Transaction& _trx;
+  irs::IndexWriter::Transaction* _trx;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 

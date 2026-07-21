@@ -355,16 +355,7 @@ int64_t StoreTableSizeProxy(duckdb::ClientContext& context,
       table->Tombstoned()) {
     return 0;
   }
-  auto schema = snapshot.GetObject<catalog::Schema>(table->GetParentId());
-  if (!schema) {
-    return 0;
-  }
-  auto database = snapshot.GetDatabase(schema->GetParentId());
-  if (!database) {
-    return 0;
-  }
-  auto store_name = catalog::StoreTableName(
-    database->GetName(), schema->GetName(), table->GetName());
+  auto store_name = catalog::StoreTableName(table->GetId());
   duckdb::EntryLookupInfo lookup(
     duckdb::CatalogType::TABLE_ENTRY,
     duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},

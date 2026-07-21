@@ -48,6 +48,10 @@ enum class ObjectType : uint8_t {
   // Tombstone must be scanned first so deleted objects are known
   // before live objects are loaded.
   Tombstone = 1,
+  // Crash bracket of an order-sensitive store-DDL batch (column retype):
+  // present only between the batch's flag append and its final append; the
+  // boot reconciler rolls it forward or back.
+  PendingAlter = 2,
   // Catalog objects start at 128.
   // Order matters: within the same parent, objects are scanned in enum order.
   // Indexes must come after their table so the table exists when the index
@@ -143,18 +147,41 @@ struct Permissions {
 
 template<typename Context>
 void SerdeWrite(Context ctx, const Permissions& perm) {
-  ctx.io().OnListBegin(2);
-  basics::WriteTuple(ctx.io(), perm.owner, ctx.arg());
-  basics::WriteTuple(ctx.io(), perm.acl, ctx.arg());
-  ctx.io().OnListEnd();
+  if constexpr (std::is_same_v<typename Context::Format,
+                               basics::ObjectFormat>) {
+    auto&& b = ctx.io();
+    b.OnObjectBegin();
+    b.OnPropertyBegin("owner");
+    basics::WriteObject(b, perm.owner, ctx.arg());
+    b.OnSeparator();
+    b.OnPropertyBegin("acl");
+    basics::WriteObject(b, perm.acl, ctx.arg());
+    b.OnObjectEnd();
+  } else {
+    ctx.io().OnListBegin(2);
+    basics::WriteTuple(ctx.io(), perm.owner, ctx.arg());
+    basics::WriteTuple(ctx.io(), perm.acl, ctx.arg());
+    ctx.io().OnListEnd();
+  }
 }
 
 template<typename Context>
 void SerdeRead(Context ctx, Permissions& perm) {
-  ctx.io().OnListBegin();
-  basics::ReadTuple(ctx.io(), perm.owner, ctx.arg());
-  basics::ReadTuple(ctx.io(), perm.acl, ctx.arg());
-  ctx.io().OnListEnd();
+  if constexpr (std::is_same_v<typename Context::Format,
+                               basics::ObjectFormat>) {
+    struct View {
+      ObjectId owner;
+      Acl acl;
+    } view;
+    basics::ReadObject(ctx.io(), view, ctx.arg());
+    perm.owner = view.owner;
+    perm.acl = std::move(view.acl);
+  } else {
+    ctx.io().OnListBegin();
+    basics::ReadTuple(ctx.io(), perm.owner, ctx.arg());
+    basics::ReadTuple(ctx.io(), perm.acl, ctx.arg());
+    ctx.io().OnListEnd();
+  }
 }
 
 class Object {

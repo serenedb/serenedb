@@ -26,7 +26,10 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
@@ -51,27 +54,52 @@
 namespace sdb::search {
 namespace {
 
-// Trigger duckdb to bind the inverted indexes on one store table. Binding
-// applies the operations buffered during this boot's WAL replay
-// (InvertedStoreIndex::Append/Delete with no committing context), feeding the
-// post-checkpoint delta into the iresearch storage. The storages must already
-// be loaded (this runs after InitCatalog) so the index's replay path can
-// resolve them.
-void BindStoreTableIndexes(duckdb::ClientContext& context,
-                           std::string_view database_name,
-                           std::string_view schema_name,
-                           std::string_view table_name) {
-  const auto store_name =
-    catalog::StoreTableName(database_name, schema_name, table_name);
+// Collect the injected inverted indexes of one store table. The indexes were
+// injected bound when the store DataTable came alive during attach, so this
+// boot's WAL replay streamed the post-checkpoint delta straight into each
+// index's replay session; FinishReplay commits it into the iresearch storage.
+void CollectStoreTableReplays(duckdb::ClientContext& context,
+                              ObjectId table_id,
+                              std::vector<duckdb::BoundIndex*>& out) {
+  const auto store_name = catalog::StoreTableName(table_id);
   auto& entry = duckdb::Catalog::GetEntry(
                   context, duckdb::CatalogType::TABLE_ENTRY,
                   duckdb::QualifiedName(
                     duckdb::Identifier{catalog::kStoreDatabaseName},
                     duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
                   .Cast<duckdb::DuckTableEntry>();
-  entry.GetStorage().GetDataTableInfo()->BindIndexes(
-    context, connector::InvertedStoreIndex::kTypeName);
+  for (auto& index :
+       entry.GetStorage().GetDataTableInfo()->GetIndexes().Indexes()) {
+    if (index.IsBound() &&
+        index.GetIndexType() == connector::InvertedStoreIndex::kTypeName) {
+      out.push_back(&index.Cast<duckdb::BoundIndex>());
+    }
+  }
 }
+
+struct FinishReplayTask final : duckdb::BaseExecutorTask {
+  FinishReplayTask(duckdb::TaskExecutor& executor_in,
+                   duckdb::BoundIndex& index_in)
+    : BaseExecutorTask{executor_in}, index{index_in} {}
+
+  void ExecuteTask() override { index.FinishReplay(); }
+
+  std::string TaskType() const override { return "InvertedFinishReplay"; }
+
+  duckdb::BoundIndex& index;
+};
+
+struct RefreshTask final : duckdb::BaseExecutorTask {
+  RefreshTask(duckdb::TaskExecutor& executor_in,
+              InvertedIndexStorage& storage_in)
+    : BaseExecutorTask{executor_in}, storage{storage_in} {}
+
+  void ExecuteTask() override { storage.Refresh(); }
+
+  std::string TaskType() const override { return "InvertedRecoveryRefresh"; }
+
+  InvertedIndexStorage& storage;
+};
 
 }  // namespace
 
@@ -85,12 +113,7 @@ void InitInvertedIndexes() {
   // insert/delete since the last checkpoint against the (unbound) inverted
   // index; binding the index now replays exactly that delta into the storage.
   // No table rebuild -- recovery cost is O(WAL), not O(table).
-  struct TableCoord {
-    std::string database_name;
-    std::string schema_name;
-    std::string table_name;
-  };
-  std::vector<TableCoord> tables_to_bind;
+  std::vector<ObjectId> tables_to_bind;
   containers::FlatHashSet<ObjectId> seen_tables;
   std::vector<std::shared_ptr<InvertedIndexStorage>> recovering_storages;
   std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
@@ -123,9 +146,7 @@ void InitInvertedIndexes() {
         recovering_storages.push_back(std::move(inv_storage));
         const auto table_id = relation->GetId();
         if (seen_tables.insert(table_id).second) {
-          tables_to_bind.push_back(TableCoord{
-            std::string{database->GetName()}, std::string{schema->GetName()},
-            std::string{relation->GetName()}});
+          tables_to_bind.push_back(table_id);
         }
       }
     }
@@ -144,10 +165,9 @@ void InitInvertedIndexes() {
     return;
   }
 
-  // One scratch connection drives the binds; BindIndexes applies the buffered
-  // replays synchronously (InvertedStoreIndex::FinishReplay commits the delta
-  // into the storage). The bind path resolves the catalog through the
-  // connection's transaction, so an explicit transaction must be active.
+  // One scratch connection resolves the store entries; FinishReplay commits
+  // each index's streamed delta into the storage. Entry resolution goes
+  // through the connection's transaction, so an explicit one must be active.
   auto conn = DuckDBEngine::Instance().CreateConnection();
   conn->BeginTransaction();
   irs::Finally end_txn = [&] noexcept {
@@ -156,18 +176,25 @@ void InitInvertedIndexes() {
     } catch (...) {  // NOLINT(bugprone-empty-catch)
     }
   };
-  for (const auto& coord : tables_to_bind) {
-    BindStoreTableIndexes(*conn->context, coord.database_name,
-                          coord.schema_name, coord.table_name);
+  std::vector<duckdb::BoundIndex*> to_finish;
+  for (const auto table_id : tables_to_bind) {
+    CollectStoreTableReplays(*conn->context, table_id, to_finish);
   }
+  duckdb::TaskExecutor executor{
+    duckdb::TaskScheduler::GetScheduler(*conn->context)};
+  for (auto* index : to_finish) {
+    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(executor, *index));
+  }
+  executor.WorkOnTasks();
 
   // The replay committed the delta into each storage's writer, but the
   // storage's query snapshot is only refreshed by a background commit. Force it
   // now so the recovered rows are searchable the instant the server accepts
   // queries.
   for (auto& storage : recovering_storages) {
-    storage->Refresh();
+    executor.ScheduleTask(duckdb::make_uniq<RefreshTask>(executor, *storage));
   }
+  executor.WorkOnTasks();
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);

@@ -35,8 +35,14 @@ namespace sdb {
 class ConnectionContext;
 
 }  // namespace sdb
+namespace duckdb {
+
+class DataTable;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
+class InvertedIndex;
 class Table;
 
 }  // namespace sdb::catalog
@@ -51,13 +57,10 @@ namespace sdb::connector {
 // in the iresearch storage keyed by AppendSigned(rowid) PK bytes, fed at
 // COMMIT time with final row ids through the committing connection's
 // tokenizer/transaction machinery (see CurrentCommittingContext). The
-// catalog InvertedIndex/storage linkage rides CreateIndexInfo options
-// (sdb_table_id / sdb_index_id).
+// catalog InvertedIndex/storage linkage rides the injected ids.
 class InvertedStoreIndex final : public duckdb::BoundIndex {
  public:
   static constexpr const char* kTypeName = "inverted";
-  static constexpr const char* kTableIdOption = "sdb_table_id";
-  static constexpr const char* kIndexIdOption = "sdb_index_id";
 
   InvertedStoreIndex(
     const std::string& name, duckdb::TableIOManager& io,
@@ -77,17 +80,20 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) override;
 
-  // Called by duckdb before each buffered WAL-replay range, with that range's
-  // store-WAL byte offset. Operations strictly below the storage's durable
-  // cursor are already in the segments; we record the offset so
-  // ReplayAppend/ReplayDelete can skip them (the op exactly at the cursor is
-  // the first un-durable one and is streamed).
-  void OnReplayRange(duckdb::idx_t commit_offset) override;
+  // Payload lives in the iresearch storage: the checkpoint writes no storage
+  // info (the index is re-injected from the catalog at attach) but still runs
+  // CheckpointBarrier, which forces the storage durable -- or vetoes -- before
+  // the store WAL truncates.
+  bool IsExternal() const override { return true; }
+  void CheckpointBarrier() override;
 
   // Called by duckdb after every buffered WAL-replay insert/delete for this
   // bind has been delivered (via Append/Delete with no committing context).
   // Commits the accumulated replay transaction into the iresearch storage.
   void FinishReplay() override;
+  void ReplayAppendRange(duckdb::DataTable& table, duckdb::row_t row_start,
+                         duckdb::idx_t count,
+                         duckdb::shared_ptr<void>& share) override;
 
   void ResetStorage(duckdb::IndexLock&) override {}
   bool MergeIndexes(duckdb::IndexLock&, duckdb::BoundIndex&) override {
@@ -99,11 +105,6 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::string ToString(duckdb::IndexLock&, bool) override;
   void VerifyAllocations(duckdb::IndexLock&) override {}
   void VerifyBuffers(duckdb::IndexLock&) override {}
-  duckdb::IndexStorageInfo SerializeToDisk(
-    duckdb::QueryContext,
-    const duckdb::case_insensitive_map_t<duckdb::Value>& options) override;
-  duckdb::IndexStorageInfo SerializeToWAL(
-    const duckdb::case_insensitive_map_t<duckdb::Value>& options) override;
   std::string GetConstraintViolationMessage(duckdb::VerifyExistenceType,
                                             duckdb::idx_t,
                                             duckdb::DataChunk&) override;
@@ -133,26 +134,25 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   // operation.
   struct ReplaySession;
   ReplaySession& EnsureReplaySession();
+  duckdb::idx_t ReplayCommitOffset() const;
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
-
-  // Minimal IndexStorageInfo (catalog ids; postings live in the iresearch
-  // storage's own files). Shared by SerializeToDisk/SerializeToWAL.
-  duckdb::IndexStorageInfo MakeStorageInfo() const;
-  // Force the storage durable before a checkpoint truncates the store WAL; veto
-  // (throw) if the storage is out of sync. No-op at CREATE INDEX time.
-  void CheckpointBarrier() const;
 
   ObjectId _table_id;
   ObjectId _index_id;
   std::unique_ptr<ReplaySession> _replay;
-  // Store-WAL byte offset of the replay range currently being delivered by
-  // ApplyBufferedReplays (set by OnReplayRange). 0 = unknown (don't skip).
-  duckdb::idx_t _replay_commit_offset = 0;
 };
 
-// Attaches create_instance + the build pipeline for store-table CREATE
-// INDEX to the registered "inverted" index type.
-void AttachInvertedStoreIndexCallbacks(duckdb::IndexType& type);
+// Builds a bound inverted index over store table `storage` for the catalog
+// index `inverted`, ready for TableIndexList injection.
+duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
+  duckdb::DataTable& storage, const catalog::Table& table,
+  const catalog::InvertedIndex& inverted);
+
+// DBConfig::external_index_provider target: whenever a fresh store DataTable
+// comes alive (attach checkpoint load, WAL-replay CREATE TABLE, reconciler
+// recreate), injects every inverted index the catalog records for it --
+// before any of the table's WAL operations replay.
+void InjectExternalIndexes(duckdb::DataTable& storage);
 
 }  // namespace sdb::connector

@@ -68,6 +68,7 @@ AclMode ClassPrivs(ObjectType type) noexcept {
       return AclMode::Usage;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
+    case ObjectType::PendingAlter:
     case ObjectType::Role:
     case ObjectType::Tokenizer:
     case ObjectType::PgSqlView:
@@ -98,6 +99,7 @@ AclMode PublicDefaultPrivs(ObjectType type) noexcept {
     case ObjectType::Schema:
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
+    case ObjectType::PendingAlter:
     case ObjectType::Role:
     case ObjectType::Tokenizer:
     case ObjectType::PgSqlView:

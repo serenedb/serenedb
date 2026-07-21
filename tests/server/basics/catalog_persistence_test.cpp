@@ -326,9 +326,9 @@ TEST(CatalogPersistence, role_data) {
                                                   .privs = AclMode::Select}}}},
       // rolpassword: a stored SCRAM verifier, so the golden bytes exercise the
       // password round-trip.
-      .password_verifier = "SCRAM-SHA-256$4096:c2FsdHNhbHQ=$"
-                           "c3RvcmVka2V5c3RvcmVka2V5c3RvcmVka2V5c3Q=:"
-                           "c2VydmVya2V5c2VydmVya2V5c2VydmVya2V5c2U=",
+      .password_verifier = {"SCRAM-SHA-256$4096:c2FsdHNhbHQ=$"
+                            "c3RvcmVka2V5c3RvcmVka2V5c3RvcmVka2V5c3Q=:"
+                            "c2VydmVya2V5c2VydmVya2V5c2VydmVya2V5c2U="},
     });
 }
 

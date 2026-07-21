@@ -99,10 +99,8 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 
 duckdb::TableCatalogEntry& SereneDBTableEntry::ResolveStoreEntry(
   duckdb::ClientContext& context) const {
-  return *catalog::GetStoreTableEntry(
-    context, ParentCatalog().GetName().GetIdentifierName(),
-    ParentSchema().name.GetIdentifierName(), name.GetIdentifierName(),
-    duckdb::OnEntryNotFound::THROW_EXCEPTION);
+  return *catalog::GetStoreTableEntry(context, _sdb_table->GetId(),
+                                      duckdb::OnEntryNotFound::THROW_EXCEPTION);
 }
 
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(

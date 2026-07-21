@@ -286,26 +286,14 @@ std::shared_ptr<SchemaDrop> Snapshot::CreateSchemaDrop(
   return task;
 }
 
-// Store-table name of `table_id` ("db.schema.table"), or nullopt when
-// the id is unset (self-referencing FK) or not resolvable.
+// Store-table name of `table_id`, or nullopt when the id is unset
+// (self-referencing FK).
 std::optional<std::string> Snapshot::ComposeStoreTableName(
   ObjectId table_id) const {
   if (!table_id.isSet()) {
     return std::nullopt;
   }
-  auto table = GetObject<Table>(table_id);
-  if (!table) {
-    return std::nullopt;
-  }
-  auto schema_obj = GetObject<Schema>(table->GetParentId());
-  if (!schema_obj) {
-    return std::nullopt;
-  }
-  auto db = GetObject<Database>(schema_obj->GetParentId());
-  if (!db) {
-    return std::nullopt;
-  }
-  return StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
+  return StoreTableName(table_id);
 }
 
 std::shared_ptr<TableDropBase> Snapshot::CreateTableDrop(
@@ -332,11 +320,7 @@ std::shared_ptr<TableDropBase> Snapshot::CreateTableDrop(
     std::string store_name;
     std::vector<std::string> fk_referenced;
     if (!table->Tombstoned()) {
-      auto db = GetObject<Database>(db_id);
-      auto schema_obj = GetObject<Schema>(schema_id);
-      SDB_ASSERT(db && schema_obj);
-      store_name =
-        StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
+      store_name = StoreTableName(table_id);
       for (const auto& fk : table->ForeignKeys()) {
         if (auto name = ComposeStoreTableName(fk.referenced_table)) {
           fk_referenced.push_back(std::move(*name));
@@ -837,6 +821,7 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
+    case ObjectType::PendingAlter:
       SDB_UNREACHABLE();
   }
 }
@@ -1422,7 +1407,7 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
   for (auto idx_id : plan.index_drops) {
     if (auto idx = GetObject<Index>(idx_id)) {
       ctx.WriteTombstone(idx->GetRelationId(), idx_id);
-      ctx.DropStoreIndex(idx_id);
+      ctx.DropStoreIndex(idx_id, idx->GetRelationId());
     }
   }
   for (const auto& [tid, rw] : plan.table_rewrites) {
@@ -1438,12 +1423,7 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
     if (!old_table) {
       continue;
     }
-    auto schema_obj = GetObject<Schema>(rw.schema_id);
-    SDB_ASSERT(schema_obj);
-    auto database = GetObject<Database>(schema_obj->GetParentId());
-    SDB_ASSERT(database);
-    auto store_name = StoreTableName(database->GetName(), schema_obj->GetName(),
-                                     old_table->GetName());
+    auto store_name = StoreTableName(tid);
     for (const auto& fk : old_table->ForeignKeys()) {
       auto kept = absl::c_any_of(rw.table->ForeignKeys(), [&](const auto& f) {
         return f.referenced_table == fk.referenced_table &&
@@ -1457,8 +1437,7 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
         ctx.DropStoreForeignKey(store_name, *referenced);
       }
     }
-    auto rewritten =
-      MakeStoreTableDef(database->GetName(), schema_obj->GetName(), *rw.table);
+    auto rewritten = MakeStoreTableDef(*rw.table);
     if (rewritten.columns.empty()) {
       // Dropping the last column is refused by ALTER; recreate instead
       // (PG keeps the zero-column table). TODO(M2): rows must survive
@@ -1476,7 +1455,7 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
         return c.GetId() == old_col.GetId();
       });
       if (it == rw.table->Columns().end()) {
-        dropped_columns.emplace_back(old_col.GetName());
+        dropped_columns.push_back(StoreColumnName(old_col.GetId()));
       }
     }
     if (dropped_columns.empty()) {
@@ -1499,15 +1478,14 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
       }
     }
     for (const auto& idx : surviving) {
-      ctx.DropStoreIndex(idx->GetId());
+      ctx.DropStoreIndex(idx->GetId(), idx->GetRelationId());
     }
     for (auto& name : dropped_columns) {
       ctx.DropStoreColumn(store_name, std::move(name));
     }
     for (const auto& idx : surviving) {
-      if (auto def = MakeStoreIndexDef(
-            database->GetName(), schema_obj->GetName(), *rw.table, *idx)) {
-        ctx.CreateStoreIndex(std::move(*def));
+      if (auto def = MakeStoreIndexDef(*rw.table, *idx)) {
+        ctx.CreateStoreIndex(std::move(*def), rw.table, idx);
       }
     }
   }
@@ -1648,6 +1626,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       } break;
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
+      case ObjectType::PendingAlter:
       case ObjectType::Column:
       case ObjectType::CheckConstraint:
       case ObjectType::Virtual:
@@ -1712,6 +1691,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       break;
     case ObjectType::Invalid:
     case ObjectType::Tombstone:
+    case ObjectType::PendingAlter:
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
     case ObjectType::Virtual:
@@ -1943,6 +1923,16 @@ void Catalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
   });
 }
 
+void Catalog::ReplaceRelationForRecovery(ObjectId schema_id,
+                                         std::shared_ptr<Table> table) {
+  absl::MutexLock lock{&_mutex};
+  const auto name = std::string{table->GetName()};
+  Apply(_snapshot, [&](auto& clone) {
+    clone->template ReplaceObject<ResolveType::Relation>(schema_id, name,
+                                                         std::move(table));
+  });
+}
+
 void Catalog::CreateIndexImpl(std::string_view relation_schema,
                               std::shared_ptr<Index> index,
                               CreateIndexOperationOptions operation_options) {
@@ -1974,18 +1964,11 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
       }
       {
         auto table = clone->template GetObject<Table>(index->GetRelationId());
-        auto schema_obj =
-          table ? clone->template GetObject<Schema>(table->GetParentId())
-                : nullptr;
-        auto database =
-          schema_obj
-            ? clone->template GetObject<Database>(schema_obj->GetParentId())
-            : nullptr;
-        if (database) {
-          if (auto def = MakeStoreIndexDef(
-                database->GetName(), schema_obj->GetName(), *table, *index)) {
-            _engine->Write(
-              [&](auto& ctx) { ctx.CreateStoreIndex(std::move(*def)); });
+        if (table) {
+          if (auto def = MakeStoreIndexDef(*table, *index)) {
+            _engine->Write([&](auto& ctx) {
+              ctx.CreateStoreIndex(std::move(*def), table, index);
+            });
           }
         }
       }
@@ -2620,9 +2603,7 @@ bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
 
   std::optional<StoreTableDef> store_table;
   if (table->GetEngine() == TableEngine::Transactional) {
-    auto database = _snapshot->GetObject<Database>(database_id);
-    SDB_ASSERT(database);
-    store_table = MakeStoreTableDef(database->GetName(), schema, *table);
+    store_table = MakeStoreTableDef(*table);
     for (const auto& fk : table->ForeignKeys()) {
       StoreForeignKey out;
       const Table* referenced = nullptr;
@@ -2634,10 +2615,7 @@ bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
         if (!ref_obj || ref_obj->GetEngine() != TableEngine::Transactional) {
           continue;
         }
-        auto ref_schema = _snapshot->GetObject<Schema>(ref_obj->GetParentId());
-        SDB_ASSERT(ref_schema);
-        out.referenced_table = StoreTableName(
-          database->GetName(), ref_schema->GetName(), ref_obj->GetName());
+        out.referenced_table = StoreTableName(ref_obj->GetId());
         referenced = ref_obj.get();
       }
       auto names_for = [](const Table& t, std::span<const Column::Id> ids,
@@ -2649,7 +2627,7 @@ bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
             out_names.clear();
             return;
           }
-          out_names.emplace_back(it->GetName());
+          out_names.push_back(StoreColumnName(col_id));
         }
       };
       names_for(*table, fk.columns, out.columns);
@@ -2657,11 +2635,6 @@ bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
       if (!out.columns.empty() && !out.referenced_columns.empty()) {
         store_table->foreign_keys.push_back(std::move(out));
       }
-    }
-    if (with_tombstone) {
-      // Not-yet-committed (CTAS) tables live under the dropped name; commit
-      // renames to the public name (RemoveTombstone), failure drops by id.
-      store_table->name = DroppedStoreTableName(table->GetId());
     }
   } else if (table->GetEngine() == TableEngine::Search) {
     table->SetData(search::SearchTable::Create(database_id, *schema_id,
@@ -2807,19 +2780,7 @@ void Catalog::RenameObjectImpl(ObjectId schema_id,
         parent_id = schema_id;
       }
 
-      if constexpr (std::is_same_v<T, Table>) {
-        if (new_object->GetEngine() == TableEngine::Transactional &&
-            !new_object->Tombstoned()) {
-          _engine->Write([&](auto& ctx) {
-            ctx.PutDefinition(parent_id, new_object->GetType(),
-                              new_object->GetId(), bytes);
-            ctx.RenameStoreTable(
-              StoreTableName(database_name, schema_name, name),
-              StoreTableName(database_name, schema_name, new_name));
-          });
-          return;
-        }
-      }
+      // Store tables are id-named, so every rename is catalog-only.
       _engine->CreateDefinition(parent_id, new_object->GetType(),
                                 new_object->GetId(), bytes);
     },
@@ -3491,9 +3452,7 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
   std::string store_name;
   if (updated->GetEngine() == TableEngine::Transactional &&
       !updated->Tombstoned()) {
-    auto database = _snapshot->GetObject<Database>(database_id);
-    SDB_ASSERT(database);
-    store_name = StoreTableName(database->GetName(), schema, name);
+    store_name = StoreTableName(updated->GetId());
   }
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
@@ -3505,10 +3464,9 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
       _engine->Write([&](auto& ctx) {
         ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
                           bytes);
-        if (store_name.empty()) {
-          return;
-        }
-        bool renamed_columns = false;
+        // Store columns are id-named, so facade column renames never touch
+        // the store; only the persisted expression-key texts (which bake
+        // facade names for display and re-rendering) need a refresh.
         containers::FlatHashMap<std::string, std::string> renames;
         for (const auto& old_col : table->Columns()) {
           if (old_col.GetId() == Column::kGeneratedPKId) {
@@ -3519,12 +3477,52 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
             [&](const auto& c) { return c.GetId() == old_col.GetId(); });
           if (it != updated->Columns().end() &&
               it->GetName() != old_col.GetName()) {
-            ctx.RenameStoreColumn(store_name, std::string{old_col.GetName()},
-                                  std::string{it->GetName()});
             renames.emplace(std::string{old_col.GetName()},
                             std::string{it->GetName()});
-            renamed_columns = true;
           }
+        }
+        if (!renames.empty()) {
+          auto deps =
+            _snapshot->GetDependency<TableDependency>(updated->GetId());
+          if (deps) {
+            for (auto idx_id : deps->indexes) {
+              auto idx = _snapshot->GetObject<Index>(idx_id);
+              if (!idx || idx->GetType() != ObjectType::SecondaryIndex) {
+                continue;
+              }
+              const auto& sec = basics::downCast<const SecondaryIndex>(*idx);
+              if (sec.Expressions().empty()) {
+                continue;
+              }
+              auto exprs = sec.Expressions();
+              bool changed = false;
+              for (auto& e : exprs) {
+                if (auto pretty =
+                      RerenderPrettyAfterRename(e.pretty_printed, renames)) {
+                  if (*pretty != e.pretty_printed) {
+                    e.pretty_printed = std::move(*pretty);
+                    changed = true;
+                  }
+                }
+              }
+              if (changed) {
+                auto new_idx = std::make_shared<SecondaryIndex>(
+                  sec.GetDatabaseId(), sec.GetParentId(), sec.GetId(),
+                  sec.GetRelationId(), std::string{sec.GetName()},
+                  sec.Columns(), std::move(exprs), sec.IsUnique());
+                clone->ReplaceObject<ResolveType::Relation>(
+                  *schema_id, new_idx->GetName(), new_idx);
+                duckdb::MemoryStream idx_stream;
+                ctx.PutDefinition(
+                  new_idx->GetRelationId(), ObjectType::SecondaryIndex,
+                  new_idx->GetId(),
+                  catalog::SerializeObject(*new_idx, idx_stream));
+              }
+            }
+          }
+        }
+        if (store_name.empty()) {
+          return;
         }
         // Newly added columns -> mirror to the store table. A constant
         // DEFAULT backfills existing rows; the store handler retries without
@@ -3543,64 +3541,8 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
           if (new_col.expr && new_col.expr->HasExpr()) {
             default_sql = new_col.expr->GetExpr().ToString();
           }
-          ctx.AddStoreColumn(store_name, std::string{new_col.GetName()},
+          ctx.AddStoreColumn(store_name, StoreColumnName(new_col.GetId()),
                              new_col.type.ToString(), std::move(default_sql));
-        }
-        if (renamed_columns) {
-          // Mirrored index definitions embed column names;
-          // recreate them against the renamed table (rowid
-          // postings and row data are untouched).
-          auto deps =
-            _snapshot->GetDependency<TableDependency>(updated->GetId());
-          auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
-          auto database = _snapshot->GetObject<Database>(database_id);
-          if (deps && schema_obj && database) {
-            for (auto idx_id : deps->indexes) {
-              auto idx = _snapshot->GetObject<Index>(idx_id);
-              if (!idx) {
-                continue;
-              }
-              // Expression keys bake column NAMES into pretty_printed at
-              // CREATE INDEX time; re-render against the renamed columns so
-              // the store recreate SQL binds, and persist the refreshed text.
-              if (idx->GetType() == ObjectType::SecondaryIndex) {
-                const auto& sec = basics::downCast<const SecondaryIndex>(*idx);
-                if (!sec.Expressions().empty()) {
-                  auto exprs = sec.Expressions();
-                  bool changed = false;
-                  for (auto& e : exprs) {
-                    if (auto pretty = RerenderPrettyAfterRename(
-                          e.pretty_printed, renames)) {
-                      if (*pretty != e.pretty_printed) {
-                        e.pretty_printed = std::move(*pretty);
-                        changed = true;
-                      }
-                    }
-                  }
-                  if (changed) {
-                    auto new_idx = std::make_shared<SecondaryIndex>(
-                      sec.GetDatabaseId(), sec.GetParentId(), sec.GetId(),
-                      sec.GetRelationId(), std::string{sec.GetName()},
-                      sec.Columns(), std::move(exprs), sec.IsUnique());
-                    clone->ReplaceObject<ResolveType::Relation>(
-                      *schema_id, new_idx->GetName(), new_idx);
-                    duckdb::MemoryStream idx_stream;
-                    ctx.PutDefinition(
-                      new_idx->GetRelationId(), ObjectType::SecondaryIndex,
-                      new_idx->GetId(),
-                      catalog::SerializeObject(*new_idx, idx_stream));
-                    idx = new_idx;
-                  }
-                }
-              }
-              if (auto def =
-                    MakeStoreIndexDef(database->GetName(),
-                                      schema_obj->GetName(), *updated, *idx)) {
-                ctx.DropStoreIndex(idx_id);
-                ctx.CreateStoreIndex(std::move(*def));
-              }
-            }
-          }
         }
         for (const auto& oc : table->CheckConstraints()) {
           bool survives = absl::c_any_of(
@@ -3612,10 +3554,13 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
           if (auto idx = oc.IsNotNull(table->Columns())) {
             const auto& col = table->Columns()[*idx];
             if (col.GetId() != Column::kGeneratedPKId) {
-              ctx.DropStoreNotNull(store_name, std::string{col.GetName()});
+              ctx.DropStoreNotNull(store_name, StoreColumnName(col.GetId()));
             }
           } else if (oc.expr && oc.expr->HasExpr()) {
-            ctx.DropStoreCheck(store_name, oc.expr->GetExpr().ToString());
+            auto text = oc.expr->GetExpr().ToString();
+            ctx.DropStoreCheck(
+              store_name,
+              RewriteExprToStoreNames(text, *table).value_or(std::move(text)));
           }
         }
         // Newly added PRIMARY KEY -> ADD PRIMARY KEY on the store table; it
@@ -3631,7 +3576,7 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
               ok = false;
               break;
             }
-            pk_names.emplace_back(col->GetName());
+            pk_names.push_back(StoreColumnName(id));
           }
           if (ok) {
             ctx.AddStorePrimaryKey(store_name, std::move(pk_names));
@@ -3654,7 +3599,7 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
               ok = false;
               break;
             }
-            names.emplace_back(col->GetName());
+            names.push_back(StoreColumnName(id));
           }
           if (ok) {
             ctx.AddStoreUnique(store_name, std::move(names));
@@ -3672,7 +3617,7 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
           if (auto idx = nc.IsNotNull(updated->Columns())) {
             const auto& col = updated->Columns()[*idx];
             if (col.GetId() != Column::kGeneratedPKId) {
-              ctx.AddStoreNotNull(store_name, col.GetName());
+              ctx.AddStoreNotNull(store_name, StoreColumnName(col.GetId()));
             }
           } else if (nc.expr && nc.expr->HasExpr()) {
             // Function calls bind against the store connection's catalog, so
@@ -3690,7 +3635,10 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
             };
             scan(nc.expr->GetExpr());
             if (!has_function) {
-              ctx.AddStoreCheck(store_name, nc.expr->GetExpr().ToString());
+              auto text = nc.expr->GetExpr().ToString();
+              ctx.AddStoreCheck(store_name,
+                                RewriteExprToStoreNames(text, *updated)
+                                  .value_or(std::move(text)));
             }
           }
         }
@@ -3992,11 +3940,16 @@ void Catalog::ChangeColumnType(const AccessContext& ax, ObjectId database_id,
   table_ptr->ChangeColumnType(updated, column, new_type);
 
   std::string store_name;
+  std::string store_column;
   if (updated->GetEngine() == TableEngine::Transactional &&
       !updated->Tombstoned()) {
-    auto database = _snapshot->GetObject<Database>(database_id);
-    SDB_ASSERT(database);
-    store_name = StoreTableName(database->GetName(), schema, table);
+    store_name = StoreTableName(*table_id);
+    store_column = StoreColumnName(col_id);
+    if (!using_sql.empty()) {
+      if (auto rewritten = RewriteExprToStoreNames(using_sql, *updated)) {
+        using_sql = std::move(*rewritten);
+      }
+    }
   }
   std::string type_sql = new_type.ToString();
 
@@ -4015,27 +3968,24 @@ void Catalog::ChangeColumnType(const AccessContext& ax, ObjectId database_id,
         // table; drop the mirrored store indexes, change the type, then
         // recreate them (the data lives in the rows / iresearch, so the
         // rebuild carries no state of its own).
-        std::vector<StoreIndexDef> recreate;
-        auto deps = _snapshot->GetDependency<TableDependency>(*table_id);
-        auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
-        auto database = _snapshot->GetObject<Database>(database_id);
-        if (deps && schema_obj && database) {
+        std::vector<std::pair<StoreIndexDef, std::shared_ptr<const Index>>>
+          recreate;
+        if (auto deps = _snapshot->GetDependency<TableDependency>(*table_id)) {
           for (auto idx_id : deps->indexes) {
             auto idx = _snapshot->GetObject<Index>(idx_id);
             if (!idx) {
               continue;
             }
-            if (auto def = MakeStoreIndexDef(
-                  database->GetName(), schema_obj->GetName(), *updated, *idx)) {
-              ctx.DropStoreIndex(idx_id);
-              recreate.push_back(std::move(*def));
+            if (auto def = MakeStoreIndexDef(*updated, *idx)) {
+              ctx.DropStoreIndex(idx_id, idx->GetRelationId());
+              recreate.emplace_back(std::move(*def), std::move(idx));
             }
           }
         }
-        ctx.ChangeStoreColumnType(store_name, std::string{column}, type_sql,
+        ctx.ChangeStoreColumnType(store_name, store_column, type_sql,
                                   using_sql);
-        for (auto& def : recreate) {
-          ctx.CreateStoreIndex(std::move(def));
+        for (auto& [def, idx] : recreate) {
+          ctx.CreateStoreIndex(std::move(def), updated, std::move(idx));
         }
       });
     }
@@ -4076,17 +4026,10 @@ void Catalog::RemoveTombstone(ObjectId database_id, std::string_view schema,
     basics::downCast<Object>(*object).SetTombstoned(false);
   };
 
+  // Store tables are named by id, so a tombstoned (CTAS) table already sits
+  // under its final store name; committing is catalog-only.
   _engine->Write([&](auto& ctx) {
     ctx.DropDefinition(tombstone_parent, ObjectType::Tombstone, *object_id);
-    if (object->GetType() == ObjectType::Table) {
-      auto& table = basics::downCast<Table>(*object);
-      if (table.GetEngine() == TableEngine::Transactional) {
-        auto database = _snapshot->GetObject<Database>(database_id);
-        SDB_ASSERT(database);
-        ctx.RenameStoreTable(DroppedStoreTableName(*object_id),
-                             StoreTableName(database->GetName(), schema, name));
-      }
-    }
   });
 }
 
@@ -4159,7 +4102,7 @@ void Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
     // runs.
     _engine->Write([&](auto& ctx) {
       ctx.WriteTombstone(index->GetRelationId(), index_id);
-      ctx.DropStoreIndex(index_id);
+      ctx.DropStoreIndex(index_id, index->GetRelationId());
     });
 
     // Check that SereneDB won't open this index after reboot
@@ -4877,8 +4820,7 @@ void OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
           THROW_SQL_ERROR(ERR_MSG("Failed to read table definition"));
         }
         if (table->GetEngine() == TableEngine::Transactional) {
-          GetCatalogStore().ValidateStoreTable(
-            MakeStoreTableDef(_database_name, _schema_name, *table));
+          GetCatalogStore().ValidateStoreTable(MakeStoreTableDef(*table));
         } else if (table->GetEngine() == TableEngine::Search) {
           RegisterSearchTable(db_id, schema_id, *table);
         }
@@ -4968,15 +4910,129 @@ namespace {
 
 std::shared_ptr<Catalog> g_catalog;
 
+// Error-message name mapping: constraint violations surface from the store
+// database with t/c/i<id> identifiers; users must see facade names. Called
+// by the engine only while constructing an error.
+std::shared_ptr<Table> ErrorEntityTable(const Snapshot& snapshot,
+                                        const std::string& entity) {
+  if (auto id = ParseStoreId('t', entity)) {
+    return snapshot.GetObject<Table>(*id);
+  }
+  if (auto id = ParseStoreId('i', entity)) {
+    if (auto index = snapshot.GetObject<Index>(*id)) {
+      return snapshot.GetObject<Table>(index->GetRelationId());
+    }
+  }
+  return nullptr;
+}
+
+std::string FacadePath(const Snapshot& snapshot, const Object& leaf,
+                       ObjectId schema_id) {
+  auto schema = snapshot.GetObject<Schema>(schema_id);
+  if (!schema) {
+    return std::string{leaf.GetName()};
+  }
+  auto db = snapshot.GetObject<Database>(schema->GetParentId());
+  if (!db) {
+    return std::string{leaf.GetName()};
+  }
+  return absl::StrCat(db->GetName(), ".", schema->GetName(), ".",
+                      leaf.GetName());
+}
+
+std::shared_ptr<const Snapshot> ErrorSnapshot() {
+  auto* catalog = TryGetCatalog();
+  return catalog ? catalog->GetCatalogSnapshot() : nullptr;
+}
+
+std::string MapErrorEntity(const std::string& name) {
+  auto snapshot = ErrorSnapshot();
+  if (!snapshot) {
+    return name;
+  }
+  if (auto id = ParseStoreId('t', name)) {
+    if (auto table = snapshot->GetObject<Table>(*id)) {
+      return FacadePath(*snapshot, *table, table->GetParentId());
+    }
+  }
+  if (auto id = ParseStoreId('i', name)) {
+    if (auto index = snapshot->GetObject<Index>(*id)) {
+      if (auto rel = snapshot->GetObject(index->GetRelationId())) {
+        return FacadePath(*snapshot, *index, rel->GetParentId());
+      }
+    }
+  }
+  return name;
+}
+
+std::string MapErrorColumn(const std::string& entity,
+                           const std::string& column) {
+  const auto col_id = ParseStoreId('c', column);
+  if (!col_id) {
+    return column;
+  }
+  auto snapshot = ErrorSnapshot();
+  if (!snapshot) {
+    return column;
+  }
+  if (auto table = ErrorEntityTable(*snapshot, entity)) {
+    if (const auto* col = table->ColumnById(*col_id)) {
+      return std::string{col->GetName()};
+    }
+  }
+  // Constraint-backed ART indexes carry engine-generated names; resolve the
+  // column by scanning the catalog instead (error construction only).
+  for (const auto& db : snapshot->GetDatabases()) {
+    for (const auto& schema : snapshot->GetSchemas(db->GetId())) {
+      for (const auto& table :
+           snapshot->GetTables(db->GetId(), schema->GetName())) {
+        if (const auto* col = table->ColumnById(*col_id)) {
+          return std::string{col->GetName()};
+        }
+      }
+    }
+  }
+  return column;
+}
+
+std::string MapErrorExpression(const std::string& entity,
+                               const std::string& expression) {
+  auto snapshot = ErrorSnapshot();
+  if (!snapshot) {
+    return expression;
+  }
+  auto table = ErrorEntityTable(*snapshot, entity);
+  if (!table) {
+    return expression;
+  }
+  // Constraint texts arrive as "CHECK(<expr>)", which is not itself a
+  // parseable expression.
+  std::string_view inner = expression;
+  bool wrapped = false;
+  if (absl::StartsWithIgnoreCase(inner, "CHECK(") && inner.ends_with(')')) {
+    inner = inner.substr(6, inner.size() - 7);
+    wrapped = true;
+  }
+  auto rewritten = RewriteExprToFacadeNames(inner, *table);
+  if (!rewritten) {
+    return expression;
+  }
+  return wrapped ? absl::StrCat("CHECK(", *rewritten, ")")
+                 : std::move(*rewritten);
+}
+
+void InstallErrorNameMappers() {
+  auto& config =
+    duckdb::DBConfig::GetConfig(DuckDBEngine::Instance().instance());
+  config.error_entity_name_mapper = &MapErrorEntity;
+  config.error_column_name_mapper = &MapErrorColumn;
+  config.error_expression_mapper = &MapErrorExpression;
+}
+
 }  // namespace
 
 void InitCatalog() {
   g_catalog = std::make_shared<Catalog>();
-
-  GetCatalogStore().LoadBootState();
-  irs::Finally release_boot = [] noexcept {
-    GetCatalogStore().ReleaseBootState();
-  };
 
   OpenDatabase open_db{GetCatalog()};
   open_db.AddRoles();
@@ -5001,7 +5057,7 @@ void InitCatalog() {
       .options = static_cast<uint32_t>(RoleOption::All),
       .conn_limit = Role::kNoConnLimit,
       .valid_until = Role::kNoValidUntil,
-      .password_verifier = std::move(initial_verifier),
+      .password_verifier = {std::move(initial_verifier)},
     });
     GetCatalog().CreateRole(NoAccessCheck(), std::move(root));
   }
@@ -5033,6 +5089,8 @@ void InitCatalog() {
       }
     }
   }
+
+  InstallErrorNameMappers();
 }
 
 void ShutdownCatalog() { g_catalog.reset(); }

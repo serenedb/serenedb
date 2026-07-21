@@ -203,9 +203,7 @@ duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   // Scanning a secondary index by name reads the table: the index itself
   // is a native ART on the store table.
-  auto store_name = catalog::StoreTableName(
-    ParentCatalog().GetName().GetIdentifierName(),
-    ParentSchema().name.GetIdentifierName(), _sdb_table->GetName());
+  auto store_name = catalog::StoreTableName(_sdb_table->GetId());
   auto& store_entry =
     duckdb::Catalog::GetEntry(
       context, duckdb::CatalogType::TABLE_ENTRY,

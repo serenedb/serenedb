@@ -518,8 +518,13 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     const auto refresh_tick = [&] {
       switch (_phase) {
         case Phase::Creating:
-        case Phase::Recovering:
           return irs::writer_limits::kMaxTick;
+        case Phase::Recovering:
+          // Replay retires eagerly but only the committed frontier may become
+          // durable: the cursor payload covers exactly the ticks below it.
+          // Before any frontier exists this commits nothing.
+          return std::max(_recovery_frontier_tick.load(std::memory_order_acquire),
+                          irs::writer_limits::kMinTick + 1);
         case Phase::Active:
           return before_refresh;
       }

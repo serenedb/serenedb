@@ -387,12 +387,14 @@ class IndexWriter : private util::Noncopyable {
     // `disable_flush` don't trigger segment flush
     // `commit_on_flush` (nullable): non-null makes a flush triggered by this
     // insert (everything inserted before this batch) commit immediately --
-    // a commit failure throws -- and `*commit_on_flush` is set to true
+    // a commit failure throws. On input `*commit_on_flush` is the tick for
+    // that commit, 0 meaning allocate from the writer (as segment creation
+    // does); on output it is 1 if the flush+commit happened, 0 otherwise.
     //
     // The changes are not visible until commit()
     // Transaction should be valid
     Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
-                    bool* commit_on_flush = nullptr) {
+                    uint64_t* commit_on_flush = nullptr) {
       UpdateSegment(disable_flush, commit_on_flush);
       return {*_active.Segment(), SegmentWriter::DocContext{_queries},
               batch_size};
@@ -460,10 +462,21 @@ class IndexWriter : private util::Noncopyable {
     // (parallel tail flush) instead of leaving it for the flush context to
     // drain later.
     bool FlushAndCommit() noexcept {
-      if (auto* segment = _active.Segment()) {
-        segment->Flush();
+      try {
+        Flush();
+      } catch (...) {
+        return false;
       }
       return Commit();
+    }
+
+    bool FlushAndCommit(uint64_t last_tick) noexcept {
+      try {
+        Flush();
+      } catch (...) {
+        return false;
+      }
+      return Commit(last_tick);
     }
 
     bool Commit(uint64_t last_tick) noexcept {
@@ -477,12 +490,39 @@ class IndexWriter : private util::Noncopyable {
     // Reset all accumulated modifications and release resources
     void Abort() noexcept;
 
+    // Serialize the buffered documents into segment files now, so the
+    // upcoming Commit (and the writer-level commit after it) only stamps
+    // ticks and registers the segment. Lets concurrent transactions pay the
+    // flush cost in parallel instead of under the writer's commit lock.
+    void Flush() {
+      auto* segment = _active.Segment();
+      if (segment == nullptr) {
+        return;
+      }
+      try {
+        segment->Flush();
+      } catch (...) {
+        segment->Reset(true);
+        throw;
+      }
+    }
+
     bool FlushRequired() const noexcept {
       auto* segment = _active.Segment();
       if (segment == nullptr) {
         return false;
       }
       return _writer->FlushRequired(*segment->writer);
+    }
+
+    // In-memory bytes buffered by the active segment (0 when none) -- lets a
+    // caller flush on its own cadence, tighter than the writer limits.
+    size_t ActiveMemory() const noexcept {
+      auto* segment = _active.Segment();
+      if (segment == nullptr) {
+        return 0;
+      }
+      return segment->writer->memory_active();
     }
 
     bool Valid() const noexcept { return _writer != nullptr; }
@@ -508,7 +548,7 @@ class IndexWriter : private util::Noncopyable {
     // refresh segment if required (guarded by FlushContext::context_mutex_)
     // is is thread-safe to use ctx_/segment_ while holding 'flush_context_ptr'
     // since active 'flush_context' will not change and hence no reload required
-    void UpdateSegment(bool disable_flush, bool* commit_on_flush);
+    void UpdateSegment(bool disable_flush, uint64_t* commit_on_flush);
 
     IndexWriter* _writer{nullptr};
     // the segment_context used for storing changes (lazy-initialized)

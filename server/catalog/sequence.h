@@ -80,8 +80,22 @@ class Sequence final : public Object {
   void Write(uint64_t value);
 
  private:
+  // How far past the handed-out range each persist runs (PG's SEQ_LOG_VALS):
+  // values up to the durable horizon are covered by a synced append, so the
+  // next kLogAhead fetches are append-free. A crash burns at most the gap.
+  static constexpr uint64_t kLogAhead = 32;
+
   std::atomic_uint64_t _cnt{0};
   mutable absl::Mutex _cnt_mtx;
+  // Two-stage horizon: extend publishes _pending_horizon and appends the
+  // max-merge AdvanceSequence record OUTSIDE the lock (so concurrent bumps of
+  // one sequence group-commit); the append's return promotes it to
+  // _durable_horizon. Values are handed out only once durably covered.
+  uint64_t _durable_horizon ABSL_GUARDED_BY(_cnt_mtx) = 0;
+  uint64_t _pending_horizon ABSL_GUARDED_BY(_cnt_mtx) = 0;
+  // Advance appends in flight; setval drains them so its authoritative
+  // PutSequence lands after every advance it raced (wal order == map order).
+  uint32_t _appends_in_flight ABSL_GUARDED_BY(_cnt_mtx) = 0;
   // Owns the wire-format state (name, options, owner_table_id) -- see
   // SequenceOptions comment for the reflection-based persistence contract.
   SequenceOptions _options;
@@ -93,8 +107,11 @@ class Sequence final : public Object {
   uint64_t ReserveCached(uint64_t count);
   uint64_t AdvanceCounter(uint64_t count);
   uint64_t RefillCache(uint64_t count);
-  // Persists the absolute counter value; requires _cnt_mtx held.
-  void Persist(uint64_t value);
+  // Ensures values up to next_end are durably covered: fast when already
+  // durable, waits on a covering in-flight append, or extends the horizon
+  // (dropping the lock around the wal append). Requires _cnt_mtx held.
+  void CoverDurable(uint64_t next_end)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_cnt_mtx);
 };
 
 }  // namespace sdb::catalog

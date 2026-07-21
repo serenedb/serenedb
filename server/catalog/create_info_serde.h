@@ -41,6 +41,14 @@ struct CreateInfoRef {
   }
 };
 
+// ObjectFormat (JSON) renders the info as its CREATE statement text; the
+// binary tuple format keeps the duckdb member Serialize above.
+template<typename Context, typename Info>
+  requires std::is_same_v<typename Context::Format, basics::ObjectFormat>
+void SerdeWrite(Context ctx, const CreateInfoRef<Info>& ref) {
+  basics::detail::WriteString(ctx.io(), ref.info->ToString());
+}
+
 template<typename Info>
 struct CreateInfoOwned {
   duckdb::unique_ptr<Info> info;

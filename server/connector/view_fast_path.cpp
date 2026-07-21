@@ -321,10 +321,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.catalog_ref =
         CatalogTableRef{.catalog = std::string{catalog::kStoreDatabaseName},
                         .schema = "main",
-                        .table = catalog::StoreTableName(
-                          entry.ParentCatalog().GetName().GetIdentifierName(),
-                          entry.ParentSchema().name.GetIdentifierName(),
-                          entry.name.GetIdentifierName())};
+                        .table = catalog::StoreTableName(sdb_table->GetId())};
       out.pk_spec = catalog::PkSpec::DuckDBRowId;
       out.supports_filters = true;
       out.projection_columns = std::move(projection_columns);

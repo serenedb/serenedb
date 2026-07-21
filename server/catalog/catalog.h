@@ -440,6 +440,11 @@ class Catalog final {
   void RegisterIndex(ObjectId database_id, ObjectId schema_id,
                      std::shared_ptr<Index> index);
 
+  // Boot-only: swaps in the table definition an interrupted order-sensitive
+  // DDL batch committed (the reconciler rolled it forward).
+  void ReplaceRelationForRecovery(ObjectId schema_id,
+                                  std::shared_ptr<Table> table);
+
   bool CreateDatabase(const AccessContext& ax,
                       std::shared_ptr<Database> database, bool if_not_exists);
   void CreateRole(const AccessContext& ax, std::shared_ptr<Role> role);

@@ -210,3 +210,77 @@ struct CreateTableOptions {
 // NOLINTEND
 
 }  // namespace sdb::catalog
+
+// ObjectFormat (JSON) renders for the types whose tuple format goes through
+// duckdb member Serialize: named fields, expressions as their SQL text. The
+// binary format is untouched (overloads are constrained to ObjectFormat).
+namespace sdb {
+
+template<typename Context>
+  requires std::is_same_v<typename Context::Format, basics::ObjectFormat>
+void SerdeWrite(Context ctx, const ColumnExpr& expr) {
+  if (expr.HasExpr()) {
+    basics::detail::WriteString(ctx.io(), expr.GetExpr().ToString());
+  } else {
+    ctx.io().WriteNull();
+  }
+}
+
+}  // namespace sdb
+namespace sdb::catalog {
+
+template<typename Context>
+  requires std::is_same_v<typename Context::Format, basics::ObjectFormat>
+void SerdeWrite(Context ctx, const Column& col) {
+  auto&& b = ctx.io();
+  b.OnObjectBegin();
+  b.OnPropertyBegin("id");
+  basics::WriteObject(b, col.GetId(), ctx.arg());
+  b.OnSeparator();
+  b.OnPropertyBegin("name");
+  basics::detail::WriteString(b, col.GetName());
+  b.OnSeparator();
+  b.OnPropertyBegin("type");
+  basics::WriteObject(b, col.type, ctx.arg());
+  b.OnSeparator();
+  b.OnPropertyBegin("expr");
+  basics::WriteObject(b, col.expr, ctx.arg());
+  b.OnSeparator();
+  b.OnPropertyBegin("generated_type");
+  basics::WriteObject(b, col.generated_type, ctx.arg());
+  b.OnSeparator();
+  b.OnPropertyBegin("acl");
+  basics::WriteObject(b, col.GetAcl(), ctx.arg());
+  b.OnSeparator();
+  b.OnPropertyBegin("comment");
+  basics::detail::WriteString(b, col.comment);
+  b.OnObjectEnd();
+}
+
+template<typename Context>
+  requires std::is_same_v<typename Context::Format, basics::ObjectFormat>
+void SerdeWrite(Context ctx, const CheckConstraint& check) {
+  auto&& b = ctx.io();
+  b.OnObjectBegin();
+  b.OnPropertyBegin("id");
+  basics::WriteObject(b, check.GetId(), ctx.arg());
+  b.OnSeparator();
+  b.OnPropertyBegin("name");
+  basics::detail::WriteString(b, check.GetName());
+  b.OnSeparator();
+  b.OnPropertyBegin("expr");
+  basics::WriteObject(b, check.expr, ctx.arg());
+  b.OnObjectEnd();
+}
+
+}  // namespace sdb::catalog
+namespace duckdb {
+
+template<typename Context>
+  requires std::is_same_v<typename Context::Format,
+                          sdb::basics::ObjectFormat>
+void SerdeWrite(Context ctx, const LogicalType& type) {
+  sdb::basics::detail::WriteString(ctx.io(), type.ToString());
+}
+
+}  // namespace duckdb

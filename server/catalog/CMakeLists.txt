@@ -20,6 +20,8 @@ target_sources(
         secondary_index.cpp
         inverted_index.cpp
         scorer_options.cpp
+        store/data_store.cpp
         store/store.cpp
+        store/wal.cpp
         tokenizer.cpp
 )

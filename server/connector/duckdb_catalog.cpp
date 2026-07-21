@@ -487,7 +487,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   // execution.
   const auto on_conflict = table_info.on_conflict;
 
-  for (auto& col : table_info.columns.Logical()) {
+  const auto column_count = table_info.columns.LogicalColumnCount();
+  for (duckdb::idx_t i = 0; i < column_count; ++i) {
+    auto& col = table_info.columns.GetColumnMutable(duckdb::LogicalIndex{i});
     catalog::Column sdb_col{
       {}, catalog::NextId(), col.Name().GetIdentifierName(), col.Type()};
     if (col.Generated()) {
@@ -497,6 +499,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
     } else if (col.HasDefaultValue()) {
       sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
     }
+    // The insert child creates the physical store table straight from this
+    // ColumnList (no MakeStoreTableDef pass), so retarget the column name too.
+    col.SetName(duckdb::Identifier{catalog::StoreColumnName(sdb_col.GetId())});
     options.columns.push_back(std::move(sdb_col));
   }
 
@@ -505,8 +510,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   // and the columns are already bound, so no rebind is needed.
   table_info.SetCatalog(duckdb::Identifier{catalog::kStoreDatabaseName});
   table_info.SetSchema(duckdb::Identifier{"main"});
-  table_info.SetTableName(
-    duckdb::Identifier{catalog::DroppedStoreTableName(table_id)});
+  table_info.SetTableName(duckdb::Identifier{catalog::StoreTableName(table_id)});
   table_info.on_conflict = duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
   table_info.query.reset();
 

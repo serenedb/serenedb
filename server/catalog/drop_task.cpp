@@ -98,15 +98,16 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
 }
 
 void IndexDrop::Finalize() {
-  if (_type == catalog::ObjectType::InvertedIndex ||
-      _type == catalog::ObjectType::SecondaryIndex) {
-    GetCatalogStore().Write([&](auto& ctx) { ctx.DropStoreIndex(_id); });
-  }
-  auto& server = GetCatalogStore();
-  if (_is_root) {
-    server.DropDefinition(_parent_id, _type, _id);
-    server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
-  }
+  GetCatalogStore().Write([&](auto& ctx) {
+    if (_type == catalog::ObjectType::InvertedIndex ||
+        _type == catalog::ObjectType::SecondaryIndex) {
+      ctx.DropStoreIndex(_id, _parent_id);
+    }
+    if (_is_root) {
+      ctx.DropDefinition(_parent_id, _type, _id);
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
+    }
+  });
 }
 
 AsyncResult IndexDrop::Execute() {
@@ -128,10 +129,10 @@ AsyncResult IndexDrop::Execute() {
 void TableDropBase::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
   auto& server = GetCatalogStore();
-  // Indexes and their storage.
-  server.DropEntry(_id);
-  // Owned seqs (def + counter) + the table's own catalog rows in one batch.
+  // Indexes, owned seqs (def + counter), the table's own catalog rows, and
+  // the store drop -- one batch, one append.
   server.Write([&](auto& ctx) {
+    ctx.DropEntry(_id);
     for (auto seq_id : _owned_sequences) {
       ctx.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
       ctx.DropSequence(seq_id);
@@ -181,16 +182,22 @@ AsyncResult SearchTableDrop::Execute() {
 void SchemaDrop::Finalize() {
   auto& server = GetCatalogStore();
   // Standalone seq counter rows -- DropEntry only sweeps definition rows.
+  std::vector<ObjectId> seq_ids;
   server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
                           [&](CatalogStore::Key key, std::string_view) {
-                            server.DropSequence(key.id);
+                            seq_ids.push_back(key.id);
                             return true;
                           });
-  server.DropEntry(_id);
-  if (_is_root) {
-    server.DropDefinition(_parent_id, catalog::ObjectType::Schema, _id);
-    server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
-  }
+  server.Write([&](auto& ctx) {
+    for (auto seq_id : seq_ids) {
+      ctx.DropSequence(seq_id);
+    }
+    ctx.DropEntry(_id);
+    if (_is_root) {
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Schema, _id);
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
+    }
+  });
 }
 
 AsyncResult SchemaDrop::Execute() {
@@ -209,9 +216,11 @@ void DatabaseDrop::Finalize() {
   auto& server = GetCatalogStore();
   // Range-delete schema Definitions under db. Per-schema standalone-seq
   // counter wipes already ran inside each SchemaDrop::Finalize above.
-  server.DropEntry(_id, catalog::ObjectType::Schema);
-  server.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
-  server.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone, _id);
+  server.Write([&](auto& ctx) {
+    ctx.DropEntry(_id, catalog::ObjectType::Schema);
+    ctx.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
+    ctx.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone, _id);
+  });
 }
 
 AsyncResult DatabaseDrop::Execute() {

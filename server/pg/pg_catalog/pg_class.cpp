@@ -168,8 +168,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       return 0.0F;
     }
     auto entry = catalog::GetStoreTableEntry(
-      context, db_name, schema_name, table.GetName(),
-      duckdb::OnEntryNotFound::RETURN_NULL);
+      context, table.GetId(), duckdb::OnEntryNotFound::RETURN_NULL);
     if (!entry) {
       return 0.0F;
     }

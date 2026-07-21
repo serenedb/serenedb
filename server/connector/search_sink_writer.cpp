@@ -51,7 +51,7 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _indexed_expressions{std::move(indexed_exprs)},
-    _trx{trx},
+    _trx{&trx},
     _pk_policy{pk_policy} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.id = catalog::term_dict::kPKFieldId;
@@ -579,12 +579,12 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
-                                        bool* commit_on_flush) {
+                                        uint64_t* commit_on_flush) {
   SDB_ASSERT(batch_size > 0);
   if (_document) {
     _document.reset();
   }
-  _document.emplace(_trx.Insert(false, batch_size, commit_on_flush));
+  _document.emplace(_trx->Insert(false, batch_size, commit_on_flush));
   _pk_column_writer = nullptr;
   if (_pk_policy.column == catalog::PkColumnKind::I64 ||
       _pk_policy.column == catalog::PkColumnKind::I64I64) {
@@ -771,7 +771,7 @@ void SearchSinkInsertBaseImpl::Field::SetNullValue() {
 
 SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
   irs::IndexWriter::Transaction& trx)
-  : _trx{trx} {}
+  : _trx{&trx} {}
 
 void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
   SDB_ASSERT(_remove_filter);
@@ -788,7 +788,7 @@ void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
 
 void SearchSinkDeleteBaseImpl::FinishImpl() {
   if (_remove_filter && !_remove_filter->Empty()) {
-    _trx.Remove(std::move(_remove_filter));
+    _trx->Remove(std::move(_remove_filter));
   }
   _remove_filter.reset();
 }

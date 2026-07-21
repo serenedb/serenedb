@@ -30,7 +30,11 @@ class StaticStrings {
   StaticStrings() = delete;
 
  public:
-  static constexpr std::string_view kCatalogStoreRoot = "engine_duckdb";
+  // Datadir subtrees: the data DB (store tables), the catalog WAL, and the
+  // iresearch storages.
+  static constexpr std::string_view kDataStoreRoot = "engine_duckdb";
+  static constexpr std::string_view kCatalogRoot = "engine_catalog";
+  static constexpr std::string_view kSearchRoot = "engine_search";
 
   // constants
   inline static const std::string kEmpty;

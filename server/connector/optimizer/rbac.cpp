@@ -167,15 +167,14 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
     containers::FlatHashMap<std::string, const catalog::Object*> facades;
     for (size_t i = 0; i < reqs.size(); ++i) {
       const auto* entry = reqs[i].table;
-      if (!objects[i] || !entry ||
-          !dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
+      const auto* sdb_entry =
+        dynamic_cast<const connector::SereneDBTableEntry*>(entry);
+      if (!objects[i] || !sdb_entry) {
         continue;
       }
-      facades.emplace(catalog::StoreTableName(
-                        entry->ParentCatalog().GetName().GetIdentifierName(),
-                        entry->ParentSchema().name.GetIdentifierName(),
-                        entry->name.GetIdentifierName()),
-                      objects[i]);
+      facades.emplace(
+        catalog::StoreTableName(sdb_entry->GetSereneDBTable()->GetId()),
+        objects[i]);
     }
     for (size_t i = 0; i < reqs.size(); ++i) {
       if (objects[i] || !reqs[i].table || !IsStoreEntry(*reqs[i].table)) {

@@ -70,12 +70,22 @@ struct TokenizerConfig {
 
 template<typename Context>
 void SerdeWrite(Context ctx, const TokenizerConfig& cfg) {
-  sdb::basics::WriteTuple(ctx.io(), cfg.config, ctx.arg());
+  if constexpr (std::is_same_v<typename Context::Format,
+                               sdb::basics::ObjectFormat>) {
+    sdb::basics::WriteObject(ctx.io(), cfg.config, ctx.arg());
+  } else {
+    sdb::basics::WriteTuple(ctx.io(), cfg.config, ctx.arg());
+  }
 }
 
 template<typename Context>
 void SerdeRead(Context ctx, TokenizerConfig& cfg) {
-  sdb::basics::ReadTuple(ctx.io(), cfg.config, ctx.arg());
+  if constexpr (std::is_same_v<typename Context::Format,
+                               sdb::basics::ObjectFormat>) {
+    sdb::basics::ReadObject(ctx.io(), cfg.config, ctx.arg());
+  } else {
+    sdb::basics::ReadTuple(ctx.io(), cfg.config, ctx.arg());
+  }
 }
 
 TokenizerConfig Clone(const TokenizerConfig& cfg);

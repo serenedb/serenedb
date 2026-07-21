@@ -264,6 +264,12 @@ class InvertedIndexStorage final
     _phase = Phase::Recovering;
   }
 
+  // Highest tick the recovery replay has both retired and covered with a
+  // cursor point; a Recovering-phase refresh commits at most this tick.
+  void SetRecoveryFrontierTick(Tick tick) noexcept {
+    _recovery_frontier_tick.store(tick, std::memory_order_release);
+  }
+
   // Persisted in the segment meta payload to survive iceberg compactions. 0 =
   // not pinned.
   void SetIcebergSnapshotId(int64_t id) noexcept { _iceberg_snapshot_id = id; }
@@ -350,6 +356,7 @@ class InvertedIndexStorage final
   MovingAverageMs _avg_consolidation_time_ms;
   int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};
+  std::atomic<Tick> _recovery_frontier_tick{0};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

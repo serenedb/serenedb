@@ -2,6 +2,7 @@ target_sources(
     serene_connector
     PRIVATE
         array.cpp
+        catalog_introspect.cpp
         encode_key.cpp
         es.cpp
         inout.cpp

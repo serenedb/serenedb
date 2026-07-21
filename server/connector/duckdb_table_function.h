@@ -282,8 +282,6 @@ struct TableScanBindData final : public SereneDBScanBindData {
 
 struct ViewScanBindData final : public SereneDBScanBindData {
   std::shared_ptr<const catalog::PgSqlView> view;
-  // Resolved once at scan bind (with the index's key_columns); consumed by
-  // MakeIndexSource. nullopt = the view is not a fast-path source.
   std::optional<ViewFastPath> fast_path;
 
   ViewScanBindData() : SereneDBScanBindData(Kind::View) {}

@@ -96,8 +96,8 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
     });
 
   duckdb::vector<std::string> key_cols;
-  _split_rowid = _fast_path.pk_spec == catalog::PkSpec::ExternalRowId;
-  if (_split_rowid) {
+  _postgres_ctid = _fast_path.pk_spec == catalog::PkSpec::ExternalPostgresCtid;
+  if (_postgres_ctid) {
     key_cols.push_back("rowid");
   } else {
     key_cols.reserve(_fast_path.key_columns.size());
@@ -169,7 +169,7 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   for (duckdb::idx_t i = 0; i < count; ++i) {
     duckdb::Value key = pk.column->GetValue(i);
     const auto& children = duckdb::StructValue::GetChildren(key);
-    if (_split_rowid) {
+    if (_postgres_ctid) {
       _params[i] = duckdb::Value::BIGINT(
         (children[0].GetValue<int64_t>() << 16) |
         children[1].GetValue<int64_t>());
@@ -230,7 +230,7 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   drain(_struct_slot,
         [&](duckdb::DataChunk& chunk, duckdb::idx_t, duckdb::idx_t row) {
           duckdb::vector<duckdb::Value> children;
-          if (_split_rowid) {
+          if (_postgres_ctid) {
             const auto v = chunk.data[0].GetValue(row).GetValue<int64_t>();
             children.push_back(duckdb::Value::BIGINT(v >> 16));
             children.push_back(duckdb::Value::BIGINT(v & 0xFFFF));

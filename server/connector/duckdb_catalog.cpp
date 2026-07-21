@@ -1168,8 +1168,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       // independently (the page column is run-heavy, the tuple column is a
       // small sawtooth), 2x smaller than the packed int64 as one column.
       create_index_info->options["_sdb_view_fast_path_pk"] = duckdb::Value(
-        view_fast_path->pk_spec == catalog::PkSpec::ExternalRowId
-          ? "external_rowid_split"
+        view_fast_path->pk_spec == catalog::PkSpec::ExternalPostgresCtid
+          ? "external_postgres_ctid"
           : "external_struct_key");
     } else if (view_fast_path) {
       switch (view_fast_path->pk_spec) {

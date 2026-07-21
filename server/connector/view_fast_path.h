@@ -69,7 +69,7 @@ struct ViewFastPath {
   int64_t pinned_iceberg_snapshot_id = 0;
   catalog::PkSpec pk_spec;
   // ExternalColumnKey: the key columns in order (any types, count >= 1);
-  // empty for ExternalRowId (pg ctid, keyed on the virtual rowid).
+  // empty for ExternalPostgresCtid (keyed on the virtual duckdb rowid).
   duckdb::vector<ExternalKeyColumn> key_columns;
   // Whether the backing reader's lookup applies pushed table filters (parquet /
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see

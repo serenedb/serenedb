@@ -91,9 +91,10 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::vector<InsertColumnMeta> columns;
 
   bool pk_term = false;
-  // ExternalRowId: the single projected rowid (ctid: page<<16|tuple) is split
-  // into STRUCT{page, tuple} at pack time -- the halves compress independently.
-  bool split_rowid = false;
+  // ExternalPostgresCtid: the ctid travels as the duckdb rowid (page<<16|tuple)
+  // and is split into STRUCT{page, tuple} at pack time -- the halves compress
+  // independently.
+  bool postgres_ctid = false;
   catalog::PkColumnKind pk_column = catalog::PkColumnKind::None;
   duckdb::idx_t pk_hi_col_idx = 0;
   duckdb::idx_t pk_lo_col_idx = 0;
@@ -355,8 +356,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     } else if (auto it = _info->options.find("_sdb_view_fast_path_pk");
                it != _info->options.end()) {
       const auto kind = it->second.GetValue<std::string>();
-      state->split_rowid = kind == "external_rowid_split";
-      shape = (kind == "external_struct_key" || state->split_rowid)
+      state->postgres_ctid = kind == "external_postgres_ctid";
+      shape = (kind == "external_struct_key" || state->postgres_ctid)
                 ? KeyShape::Struct
               : (kind == "file_index_plus_row_number" ||
                  kind == "file_index_plus_duckdb_rowid")
@@ -631,10 +632,10 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     case catalog::PkColumnKind::Struct: {
       const auto base = gstate.pk_hi_col_idx;
       SDB_ASSERT(base < chunk.ColumnCount());
-      if (gstate.split_rowid) {
-        // Split the packed rowid into STRUCT{page, tuple}: the page half is
-        // run-heavy (RLE) and the tuple half is a small sawtooth (bitpacked),
-        // ~2x smaller than the packed int64 as one column.
+      if (gstate.postgres_ctid) {
+        // Split the duckdb rowid back into the ctid's STRUCT{page, tuple}: the
+        // page half is run-heavy (RLE) and the tuple half is a small sawtooth
+        // (bitpacked), ~2x smaller than the packed int64 as one column.
         SDB_ASSERT(base + 1 == chunk.ColumnCount());
         auto& rowid_vec = chunk.data[base];
         duckdb::UnifiedVectorFormat fmt;

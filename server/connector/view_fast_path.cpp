@@ -399,7 +399,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // is pushed down as a `ctid IN (...)` TID scan.
       ViewFastPath out;
       out.catalog_ref = ext_ref;
-      out.pk_spec = catalog::PkSpec::ExternalRowId;
+      out.pk_spec = catalog::PkSpec::ExternalPostgresCtid;
       out.projection_columns = std::move(projection_columns);
       return out;
     }
@@ -570,7 +570,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
-  if (fp.pk_spec == catalog::PkSpec::ExternalRowId) {
+  if (fp.pk_spec == catalog::PkSpec::ExternalPostgresCtid) {
     // Postgres ctid: the key is the virtual rowid, not a real column.
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }

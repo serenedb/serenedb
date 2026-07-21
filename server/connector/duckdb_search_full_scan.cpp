@@ -1381,37 +1381,37 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
   }
 }
 
+struct ColFilterCtx {
+  std::span<const TableFilterDocIterator::FilterSpec> active;
+  IResearchScanGlobalState* g = nullptr;
+  ColFilterStateCache* states = nullptr;
+};
+
 uint32_t CountDocs(irs::DocIterator::ptr docs, const irs::SubReader& seg,
-                   bool count_all,
-                   std::span<const TableFilterDocIterator::FilterSpec> active,
-                   IResearchScanGlobalState& g, ColFilterStateCache& states) {
-  docs = MaybeWrapColFilter(std::move(docs), seg, active, g, states);
+                   bool count_all, const ColFilterCtx& cf) {
+  docs = MaybeWrapColFilter(std::move(docs), seg, cf.active, *cf.g, *cf.states);
   if (count_all) {
     return static_cast<uint32_t>(docs->count());
   }
   return irs::doc_limits::eof(docs->advance()) ? 0 : 1;
 }
 
-uint32_t WhereLiveDocs(
-  irs::TermIterator& it, const irs::SubReader& seg,
-  const irs::QueryBuilder& where, bool count_all,
-  std::span<const TableFilterDocIterator::FilterSpec> active,
-  IResearchScanGlobalState& g, ColFilterStateCache& states) {
+uint32_t WhereLiveDocs(irs::TermIterator& it, const irs::SubReader& seg,
+                       const irs::QueryBuilder& where, bool count_all,
+                       const ColFilterCtx& cf) {
   std::vector<irs::ScoreAdapter> itrs;
   itrs.reserve(2);
   itrs.emplace_back(it.postings(irs::IndexFeatures::None));
   itrs.emplace_back(where.Execute({}, irs::StatsBuffer::Empty()));
   return CountDocs(irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
                                         seg.docs_count(), std::move(itrs)),
-                   seg, count_all, active, g, states);
+                   seg, count_all, cf);
 }
 
-uint32_t MaskedLiveDocs(
-  irs::TermIterator& it, const irs::SubReader& seg, bool count_all,
-  std::span<const TableFilterDocIterator::FilterSpec> active,
-  IResearchScanGlobalState& g, ColFilterStateCache& states) {
+uint32_t MaskedLiveDocs(irs::TermIterator& it, const irs::SubReader& seg,
+                        bool count_all, const ColFilterCtx& cf) {
   return CountDocs(seg.mask(it.postings(irs::IndexFeatures::None)), seg,
-                   count_all, active, g, states);
+                   count_all, cf);
 }
 
 class MinMaxTermsIterator : public irs::TermIterator {
@@ -1446,17 +1446,16 @@ class MinMaxTermsIterator : public irs::TermIterator {
   size_t _next = 0;
 };
 
-uint32_t NullFieldLiveCount(
-  const irs::SubReader& seg, irs::field_id field,
-  TsDictLocalState::CountMode count_mode, const irs::QueryBuilder* where_query,
-  std::span<const TableFilterDocIterator::FilterSpec> active,
-  IResearchScanGlobalState& g, ColFilterStateCache& states) {
+uint32_t NullFieldLiveCount(const irs::SubReader& seg, irs::field_id field,
+                            TsDictLocalState::CountMode count_mode,
+                            const irs::QueryBuilder* where_query,
+                            const ColFilterCtx& cf) {
   using Mode = TsDictLocalState::CountMode;
   const auto* reader = seg.field(field);
   if (!reader) {
     return 0;
   }
-  if (count_mode == Mode::Meta && active.empty() &&
+  if (count_mode == Mode::Meta && cf.active.empty() &&
       seg.live_docs_count() == seg.docs_count()) {
     return static_cast<uint32_t>(reader->docs_count());
   }
@@ -1465,10 +1464,9 @@ uint32_t NullFieldLiveCount(
   if (!it->next()) {
     return 0;
   }
-  const auto live =
-    count_mode == Mode::Where
-      ? WhereLiveDocs(*it, seg, *where_query, true, active, g, states)
-      : MaskedLiveDocs(*it, seg, true, active, g, states);
+  const auto live = count_mode == Mode::Where
+                      ? WhereLiveDocs(*it, seg, *where_query, true, cf)
+                      : MaskedLiveDocs(*it, seg, true, cf);
   SDB_ASSERT(!it->next());
   return static_cast<uint32_t>(live);
 }
@@ -2452,8 +2450,8 @@ irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
       auto it = reader.iterator(irs::SeekMode::RandomOnly);
       const auto pin = [&](irs::bytes_view term) {
         if (!it->seek(term) ||
-            WhereLiveDocs(*it, *_seg, *where_query, false, seg_cls.active, *_g,
-                          filter_states) == 0) {
+            WhereLiveDocs(*it, *_seg, *where_query, false,
+                          {seg_cls.active, _g, &filter_states}) == 0) {
           return false;
         }
         terms[count++] = term;
@@ -2507,9 +2505,7 @@ struct TsDictEmitContext {
   const irs::SubReader* seg;
   TsDictLocalState::CountMode count_mode;
   const irs::QueryBuilder* where_query;
-  std::span<const TableFilterDocIterator::FilterSpec> active;
-  IResearchScanGlobalState* g;
-  ColFilterStateCache* states;
+  ColFilterCtx cf;
   duckdb::idx_t row;
   duckdb::idx_t end_row;
 };
@@ -2546,11 +2542,10 @@ struct TsDictEmitter {
       case Mode::Meta:
         return ctx.meta ? ctx.meta->docs_count : 1;
       case Mode::Masked:
-        return MaskedLiveDocs(it, *ctx.seg, ctx.count_data, ctx.active, *ctx.g,
-                              *ctx.states);
+        return MaskedLiveDocs(it, *ctx.seg, ctx.count_data, ctx.cf);
       case Mode::Where:
         return WhereLiveDocs(it, *ctx.seg, *ctx.where_query, ctx.count_data,
-                             ctx.active, *ctx.g, *ctx.states);
+                             ctx.cf);
     }
     return 0;
   }
@@ -2621,9 +2616,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
       .seg = _seg,
       .count_mode = _cursor_mode,
       .where_query = where_query,
-      .active = seg_cls.active,
-      .g = _g,
-      .states = &filter_states,
+      .cf = {seg_cls.active, _g, &filter_states},
       .row = output_start,
       .end_row = output_start + field_capacity}};
     while (emitter.ctx.row < emitter.ctx.end_row) {
@@ -2672,7 +2665,7 @@ duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
                                               duckdb::idx_t row) {
   const auto nulls =
     NullFieldLiveCount(*_seg, field.null_field_id, count_mode, where_query,
-                       seg_cls.active, *_g, filter_states);
+                       {seg_cls.active, _g, &filter_states});
   if (nulls == 0) {
     return 0;
   }

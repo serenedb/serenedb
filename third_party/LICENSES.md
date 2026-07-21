@@ -41,7 +41,6 @@
 
 ### [MIT license](https://opensource.org/licenses/MIT)
 
-* [FakeIt](https://github.com/eranpeer/FakeIt)
 * [llhttp](https://github.com/nodejs/llhttp)
 * [FastText](https://github.com/facebookresearch/fastText)
 * [YACLib](https://github.com/YACLib/YACLib)

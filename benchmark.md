@@ -212,6 +212,59 @@ Findings:
   transport overhead dominates and type effects (~0.1 ms at 103 keys) vanish —
   no type-specific hotspots in the render/probe path.
 
+### 7e. Full candidate grid: every lookup kind x every query shape (EXECUTE-only)
+
+pg: one session, server-side PREPARE, `force_generic_plan`, 2048 keys,
+alternating executes, median of reps 2-6. [ship] marks the form our code emits.
+
+| pg kind | `IN (2048 literals)` | `= ANY($1::T[])` | `IN (SELECT * FROM unnest($1))` |
+|---|---|---|---|
+| ctid | 0.25 ms * | **0.34 ms [ship]** | 0.88 ms |
+| BIGINT | 1.12 ms | **1.00 ms [ship]** | 1.79 ms |
+| TEXT | 4.36 ms | **4.25 ms [ship]** | 4.49 ms |
+| DATE | 1.23 ms | **1.13 ms [ship]** | 1.71 ms |
+| TIMESTAMP | 1.23 ms | **1.22 ms [ship]** | 1.79 ms |
+
+| pg composite (TEXT, BIGINT) | median |
+|---|---|
+| `(a,b) IN ((v,v),...)` row-IN literals | 47.1 ms |
+| `(a,b) IN (VALUES (v,v),...)` | 16.7 ms |
+| **`(a,b) IN (SELECT * FROM unnest($1,$2))` [ship]** | **4.00 ms** |
+
+\* ctid `IN (literals)` won here because THIS (wider) table costed the
+Tid Scan under the seq scan; on the narrow table of section 3 the same form
+hit the cliff at 8.1 ms with the bad plan baked into the cached prepared
+statement. The literal form is bimodal across table shapes; `= ANY($1)` plans
+Tid Scan regardless of key count — shipped for stability, not best-case.
+
+ClickHouse: persistent `clickhouse-client --time`, 2048 keys, median of 6
+(1 ms resolution; CH has no prepared plans — parse is part of every execute).
+
+| CH kind | `IN (v,v,..)` lits | `IN [array]` | `IN {param:Array(T)}` | zip subquery |
+|---|---|---|---|---|
+| Int64 | 5 ms | **4 ms [ship]** | 4 ms | 4 ms |
+| String | 5 ms | **4 ms [ship]** | 3 ms | 4 ms |
+| DateTime | 4 ms | **4 ms [ship]** | 3 ms | 5 ms |
+
+| CH composite (String, Int64) | median |
+|---|---|
+| `IN [(v,v),...]` tuple literals | 13 ms |
+| **parallel `ARRAY JOIN` zip [ship]** | **7 ms** |
+| `IN (SELECT arrayJoin(arrayZip(..)))` | 8 ms |
+
+Grid takeaways:
+
+- Single-key pg: `= ANY($1)` ties-or-beats literals on every type and never
+  hits the ctid plan cliff; unnest-IN costs a consistent +0.6-0.8 ms (dedup +
+  join plumbing) on singles. Composite: unnest zip 4x VALUES, 12x row-IN.
+- pg TEXT is ~4.3 ms on ALL forms — collation-aware btree comparison
+  dominates, the transport shape is irrelevant.
+- CH single-key: all reasonable forms within 1 ms; `{param}` is marginally
+  best on strings (server receives the value pre-parsed) — the natural next
+  step if clickhouse_query grows param support. Composite: zip ~2x tuple
+  literals; the arrayZip+arrayJoin spelling is equivalent to the parallel
+  ARRAY JOIN.
+
 Through our code (gul, ~103-key batches, same stack):
 
 | path | per batch | note |

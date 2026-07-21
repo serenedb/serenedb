@@ -15,17 +15,22 @@ sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_
 ## JEMALLOC
 ################################################################################
 if("${SDB_ALLOC}" MATCHES "JE")
-    # TODO(mbkkt) make it submodule
-    add_subdirectory(jemalloc)
-    file(MAKE_DIRECTORY "${JEMALLOC_HOME}/include")
+    # jemalloc source is the third_party/jemalloc submodule; jemalloc-cmake
+    # compiles it natively (no autotools) into the `jemalloc_native` target.
+    add_subdirectory(jemalloc-cmake)
+    # Expose it as an IMPORTED target: it is linked globally, so it ends up in
+    # the link interface of vendored libs that export() their targets (croaring),
+    # and export() tolerates IMPORTED but not in-tree targets.
     add_library(jemalloc STATIC IMPORTED GLOBAL)
     set_target_properties(
         jemalloc
         PROPERTIES
-            IMPORTED_LOCATION "${JEMALLOC_HOME}/lib/libjemalloc.a"
-            INTERFACE_INCLUDE_DIRECTORIES "${JEMALLOC_HOME}/include"
+            IMPORTED_LOCATION
+                "${CMAKE_CURRENT_BINARY_DIR}/jemalloc-cmake/libjemalloc_native.a"
+            INTERFACE_INCLUDE_DIRECTORIES
+                "${CMAKE_CURRENT_SOURCE_DIR}/jemalloc-cmake/include"
     )
-    add_dependencies(jemalloc jemalloc_build)
+    add_dependencies(jemalloc jemalloc_native)
     link_libraries(jemalloc)
     set(FOLLY_USE_JEMALLOC ON)
 else()

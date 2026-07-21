@@ -438,6 +438,17 @@ set(SNAPPY_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(snappy)
 
 ################################################################################
+## BROTLI
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "brotli" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+set(BROTLI_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(BROTLI_DISABLE_TESTS ON CACHE BOOL "" FORCE)
+set(BROTLI_BUNDLED_MODE ON CACHE BOOL "" FORCE)
+
+add_subdirectory(brotli)
+
+################################################################################
 ## Google S2
 ################################################################################
 

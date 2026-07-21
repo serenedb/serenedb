@@ -229,7 +229,6 @@ struct TsDictLocalState : public IResearchScanLocalState {
   const irs::QueryBuilder* where_query = nullptr;
   TableFilterDocIterator::SegmentClassification seg_cls;
   ColFilterStateCache filter_states;
-  std::vector<duckdb::idx_t> null_slots;
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, IResearchScanGlobalState& g);
@@ -1057,31 +1056,6 @@ irs::DocIterator::ptr MaybeWrapColFilter(
   std::span<const TableFilterDocIterator::FilterSpec> active,
   IResearchScanGlobalState& g, ColFilterStateCache& states);
 
-bool TsDictRealOutputsAreColFilters(const IResearchScanGlobalState& g,
-                                    const SereneDBScanBindData& bind_data) {
-  for (size_t proj = 0; proj < g.projected_columns.size(); ++proj) {
-    const auto bind_idx = g.projected_columns[proj];
-    if (bind_idx == duckdb::DConstants::INVALID_INDEX) {
-      continue;
-    }
-    const bool in_output =
-      g.output_projection_ids.empty() ||
-      absl::c_find(g.output_projection_ids, proj) !=
-        g.output_projection_ids.end();
-    if (!in_output) {
-      continue;
-    }
-    const auto field =
-      static_cast<irs::field_id>(bind_data.column_ids[bind_idx].id());
-    if (!absl::c_any_of(g.col_filters, [&](const auto& cf) {
-          return !cf.is_score && cf.field == field;
-        })) {
-      return false;
-    }
-  }
-  return true;
-}
-
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
@@ -1105,8 +1079,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   ClassifyColumnstoreProjections(*state, bind_data);
   state->mode = DecideScanMode(*state, ss);
   if (state->mode == ScanMode::TsDict) {
-    if (state->has_real_output_column &&
-        !TsDictRealOutputsAreColFilters(*state, bind_data)) {
+    if (state->has_real_output_column) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("ts_dict_agg() cannot be combined with other table columns"));
@@ -1539,7 +1512,6 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
       continue;
     }
     const auto cat = bd.column_ids[col_id];
-    bool matched = false;
     for (auto& kind : kinds) {
       if (cat != kind.cat) {
         continue;
@@ -1548,11 +1520,7 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
         ++kind.next;
       }
       lstate.fields[kind.next++].*kind.slot = out_slot;
-      matched = true;
       break;
-    }
-    if (!matched) {
-      lstate.null_slots.push_back(out_slot);
     }
     ++out_slot;
   }
@@ -2421,14 +2389,6 @@ void RunTsDictScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
       l.StartSegment(ctx, seg, seg_idx, g);
     }
     if (collected != 0 || exhausted) {
-      for (const auto slot : l.null_slots) {
-        auto& vec = output.data[slot];
-        vec.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-        auto& validity = duckdb::FlatVector::ValidityMutable(vec);
-        for (duckdb::idx_t i = 0; i < collected; ++i) {
-          validity.SetInvalid(i);
-        }
-      }
       output.SetChildCardinality(collected);
       return;
     }

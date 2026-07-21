@@ -418,9 +418,6 @@ add_subdirectory(lz4/build/cmake)
 
 get_target_property(LZ4_INCLUDE_DIR lz4_static INTERFACE_INCLUDE_DIRECTORIES)
 
-# Create lz4::lz4 alias for velox compatibility
-add_library(lz4::lz4 ALIAS lz4_static)
-
 ################################################################################
 ## ZSTD
 ################################################################################
@@ -434,7 +431,6 @@ set(ZSTD_INSTALL OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(zstd/build/cmake)
 
-# Create zstd::zstd alias for velox compatibility
 add_library(zstd::zstd ALIAS libzstd_static)
 
 ################################################################################

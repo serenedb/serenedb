@@ -28,7 +28,6 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/prepared_statement.hpp>
 #include <memory>
 #include <span>
 
@@ -57,11 +56,13 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
                             duckdb::DataChunk& output) final;
 
  private:
-  // PgArray / ChArray: the batch is shipped as ONE array inside a raw-query
-  // passthrough (postgres_query / clickhouse_query) -- duckdb plans a tiny
-  // constant statement instead of rebinding a 2048-node IN per Execute.
-  // Legacy (composite / non-integral keys): prepared scan-path statement.
-  enum class LookupMode : uint8_t { Legacy, PgArray, ChArray };
+  // The batch ships as array literal(s) inside a raw-query passthrough
+  // (postgres_query / clickhouse_query): duckdb plans a tiny constant
+  // statement instead of rebinding a 2048-node IN per Execute. Postgres keys
+  // go as one '{..}'::T[] per key column (composite: (k1,..) IN
+  // (SELECT * FROM unnest(a1, ..))); ClickHouse as IN [..] (composite:
+  // tuples).
+  enum class LookupMode : uint8_t { PgArray, ChArray };
 
   duckdb::idx_t _num_proj_cols = 0;
   duckdb::idx_t _num_key_cols = 0;
@@ -69,15 +70,14 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
   // shipped to postgres as a tid[] array literal and probed back from
   // ctid::text.
   bool _postgres_ctid = false;
-  LookupMode _mode = LookupMode::Legacy;
+  LookupMode _mode = LookupMode::PgArray;
 
   std::unique_ptr<duckdb::Connection> _con;
-  std::unique_ptr<duckdb::PreparedStatement> _prepared;
 
-  std::string _sql_prefix;
-  std::string _sql_suffix;
-  std::string _keys_text;
-  duckdb::vector<duckdb::Value> _params;
+  // The per-batch query is _sql_parts[0] + _key_texts[0] + _sql_parts[1] + ...
+  // -- one key-text buffer per embedded array literal.
+  std::vector<std::string> _sql_parts;
+  std::vector<std::string> _key_texts;
   absl::flat_hash_map<duckdb::Value, duckdb::idx_t> _struct_slot;
 };
 

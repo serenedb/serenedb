@@ -37,7 +37,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <string>
 #include <string_view>
@@ -54,6 +53,109 @@ namespace {
 
 std::string Quote(const std::string& id) {
   return duckdb::KeywordHelper::WriteQuoted(id, '"');
+}
+
+// Doubles single quotes: embeds a raw inner-SQL piece into the outer duckdb
+// string literal. The per-batch key texts never contain single quotes for
+// postgres (array elements are double-quoted) and escape their own for
+// ClickHouse.
+std::string Embed(const std::string& raw) {
+  return absl::StrReplaceAll(raw, {{"'", "''"}});
+}
+
+// The postgres array type the key column's values are shipped as.
+std::string PgArrayTypeName(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+      return "int2";
+    case duckdb::LogicalTypeId::UTINYINT:
+    case duckdb::LogicalTypeId::USMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+      return "int4";
+    case duckdb::LogicalTypeId::UINTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+      return "int8";
+    case duckdb::LogicalTypeId::UBIGINT:
+    case duckdb::LogicalTypeId::HUGEINT:
+    case duckdb::LogicalTypeId::DECIMAL:
+      return "numeric";
+    case duckdb::LogicalTypeId::FLOAT:
+      return "float4";
+    case duckdb::LogicalTypeId::DOUBLE:
+      return "float8";
+    case duckdb::LogicalTypeId::BOOLEAN:
+      return "bool";
+    case duckdb::LogicalTypeId::VARCHAR:
+      return "text";
+    case duckdb::LogicalTypeId::DATE:
+      return "date";
+    case duckdb::LogicalTypeId::TIME:
+      return "time";
+    case duckdb::LogicalTypeId::TIMESTAMP:
+      return "timestamp";
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      return "timestamptz";
+    case duckdb::LogicalTypeId::UUID:
+      return "uuid";
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("external lookup key of type ", type.ToString(),
+                              " is not supported"));
+  }
+}
+
+// The key texts are appended between _sql_parts, i.e. INSIDE the outer duckdb
+// single-quoted literal that Embed() built -- so every single quote they emit
+// must be doubled for duckdb on top of the remote engine's own escaping.
+
+// One element of a postgres array literal: always double-quoted (legal for
+// every type, the ::T[] cast re-parses), backslash-escaped. A single quote
+// inside the element must survive the pg '{...}' literal ('' pg-side) and the
+// duckdb literal ('''' here).
+void AppendPgArrayElem(std::string& out, const duckdb::Value& v) {
+  if (v.IsNull()) {
+    out += "NULL";
+    return;
+  }
+  out += '"';
+  for (const char c : v.ToString()) {
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if (c == '\'') {
+      out += "''''";
+    } else {
+      out += c;
+    }
+  }
+  out += '"';
+}
+
+// One element of a ClickHouse IN [..] list: numbers plain, everything else a
+// string literal (ClickHouse coerces it to the column type on comparison).
+// The quotes are written pre-doubled for the enclosing duckdb literal: the
+// remote sees 'a\'b' where this emits ''a\''b''.
+void AppendChElem(std::string& out, const duckdb::Value& v) {
+  if (v.IsNull()) {
+    out += "NULL";
+    return;
+  }
+  if (v.type().IsNumeric()) {
+    out += v.ToString();
+    return;
+  }
+  out += "''";
+  for (const char c : v.ToString()) {
+    if (c == '\\') {
+      out += "\\\\";
+    } else if (c == '\'') {
+      out += "\\''";
+    } else {
+      out += c;
+    }
+  }
+  out += "''";
 }
 
 }  // namespace
@@ -111,109 +213,106 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   _num_key_cols = key_cols.size();
   _num_proj_cols = select_names.size();
 
-  std::string select_list = absl::StrJoin(key_cols, ", ");
-  for (const auto& name : select_names) {
-    absl::StrAppend(&select_list, ", ", Quote(name));
-  }
-
-  const auto is_int_type = [](const duckdb::LogicalType& t) {
-    switch (t.id()) {
-      case duckdb::LogicalTypeId::TINYINT:
-      case duckdb::LogicalTypeId::SMALLINT:
-      case duckdb::LogicalTypeId::INTEGER:
-      case duckdb::LogicalTypeId::BIGINT:
-        return true;
-      default:
-        return false;
-    }
-  };
-  const bool single_int_key = !_postgres_ctid && _num_key_cols == 1 &&
-                              is_int_type(_fast_path.key_columns[0].type);
   const auto catalog_type = entry.ParentCatalog().GetCatalogType();
-  if (catalog_type == "postgres" && (_postgres_ctid || single_int_key)) {
+  if (catalog_type == "postgres") {
     _mode = LookupMode::PgArray;
-  } else if (catalog_type == "clickhouse" && single_int_key) {
+  } else if (catalog_type == "clickhouse") {
     _mode = LookupMode::ChArray;
+  } else {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("external lookup over catalog type \"",
+                            catalog_type, "\" is not supported"));
   }
-  // The ctid spec only ever comes from a postgres attach, so it always takes
-  // the array passthrough -- the legacy path never sees it.
   SDB_ASSERT(!_postgres_ctid || _mode == LookupMode::PgArray);
 
   _con = std::make_unique<duckdb::Connection>(*context.db);
+  // The inner query is assembled as raw pieces with one gap per key-array
+  // literal; Embed() folds every static piece into the outer duckdb string.
   if (_mode == LookupMode::PgArray) {
-    std::string inner = "SELECT ";
-    inner += _postgres_ctid ? "ctid::text" : key_cols[0];
-    inner += " AS __sdb_lookup_key";
-    for (const auto& name : select_names) {
-      absl::StrAppend(&inner, ", ", Quote(name));
+    std::string head = "SELECT ";
+    if (_postgres_ctid) {
+      head += "ctid::text AS __sdb_lookup_key";
+    } else {
+      for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+        absl::StrAppend(&head, k ? ", " : "", key_cols[k],
+                        " AS __sdb_lookup_key", k);
+      }
     }
-    absl::StrAppend(&inner, " FROM ", Quote(ref.schema), ".", Quote(ref.table),
-                    " WHERE ", _postgres_ctid ? "ctid" : key_cols[0],
-                    " = ANY('{");
-    const std::string inner_suffix =
-      absl::StrCat("}'::", _postgres_ctid ? "tid" : "bigint", "[])");
-    _sql_prefix = absl::StrCat(
+    for (const auto& name : select_names) {
+      absl::StrAppend(&head, ", ", Quote(name));
+    }
+    absl::StrAppend(&head, " FROM ", Quote(ref.schema), ".", Quote(ref.table),
+                    " WHERE ");
+    std::vector<std::string> pieces;
+    if (_postgres_ctid) {
+      absl::StrAppend(&head, "ctid = ANY('{");
+      pieces = {std::move(head), "}'::tid[])"};
+    } else if (_num_key_cols == 1) {
+      absl::StrAppend(&head, key_cols[0], " = ANY('{");
+      pieces = {std::move(head),
+                absl::StrCat("}'::",
+                             PgArrayTypeName(_fast_path.key_columns[0].type),
+                             "[])")};
+    } else {
+      // Composite: exact tuple matching against zipped per-column arrays.
+      absl::StrAppend(&head, "(", absl::StrJoin(key_cols, ", "),
+                      ") IN (SELECT * FROM unnest('{");
+      pieces.push_back(std::move(head));
+      for (duckdb::idx_t k = 1; k < _num_key_cols; ++k) {
+        pieces.push_back(absl::StrCat(
+          "}'::", PgArrayTypeName(_fast_path.key_columns[k - 1].type),
+          "[], '{"));
+      }
+      pieces.push_back(absl::StrCat(
+        "}'::",
+        PgArrayTypeName(_fast_path.key_columns[_num_key_cols - 1].type),
+        "[]))"));
+    }
+    _sql_parts.resize(pieces.size());
+    _sql_parts[0] = absl::StrCat(
       "SELECT * FROM postgres_query(",
       duckdb::KeywordHelper::WriteQuoted(ref.catalog, '\''), ", '",
-      absl::StrReplaceAll(inner, {{"'", "''"}}));
-    _sql_suffix =
-      absl::StrCat(absl::StrReplaceAll(inner_suffix, {{"'", "''"}}), "')");
-  } else if (_mode == LookupMode::ChArray) {
+      Embed(pieces[0]));
+    for (size_t j = 1; j < pieces.size(); ++j) {
+      _sql_parts[j] = Embed(pieces[j]);
+    }
+    _sql_parts.back() += "')";
+    _key_texts.resize(pieces.size() - 1);
+  } else {
     const auto bq = [](const std::string& id) {
       return absl::StrCat("`", absl::StrReplaceAll(id, {{"`", "``"}}), "`");
     };
-    std::string inner =
-      absl::StrCat("SELECT ", bq(_fast_path.key_columns[0].name),
-                   " AS __sdb_lookup_key");
-    for (const auto& name : select_names) {
-      absl::StrAppend(&inner, ", ", bq(name));
+    std::string head = "SELECT ";
+    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+      absl::StrAppend(&head, k ? ", " : "", bq(_fast_path.key_columns[k].name),
+                      " AS __sdb_lookup_key", k);
     }
-    absl::StrAppend(&inner, " FROM ", bq(ref.schema), ".", bq(ref.table),
-                    " WHERE ", bq(_fast_path.key_columns[0].name), " IN [");
-    _sql_prefix = absl::StrCat(
+    for (const auto& name : select_names) {
+      absl::StrAppend(&head, ", ", bq(name));
+    }
+    absl::StrAppend(&head, " FROM ", bq(ref.schema), ".", bq(ref.table));
+    // schema_query: same result schema, no keys -- DESCRIBE parses this tiny
+    // constant text instead of the full per-batch key list.
+    const std::string schema_inner = absl::StrCat(head, " WHERE 0");
+    absl::StrAppend(&head, " WHERE ");
+    if (_num_key_cols == 1) {
+      absl::StrAppend(&head, bq(_fast_path.key_columns[0].name), " IN [");
+    } else {
+      std::string tuple;
+      for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+        absl::StrAppend(&tuple, k ? ", " : "",
+                        bq(_fast_path.key_columns[k].name));
+      }
+      absl::StrAppend(&head, "(", tuple, ") IN [");
+    }
+    _sql_parts.resize(2);
+    _sql_parts[0] = absl::StrCat(
       "SELECT * FROM clickhouse_query(",
       duckdb::KeywordHelper::WriteQuoted(ref.catalog, '\''), ", '",
-      absl::StrReplaceAll(inner, {{"'", "''"}}));
-    // schema_query: a dummy-key variant with the identical result schema --
-    // DESCRIBE parses this tiny text instead of the full per-batch key list.
-    _sql_suffix = absl::StrCat(
-      "]', schema_query := '",
-      absl::StrReplaceAll(absl::StrCat(inner, "0]"), {{"'", "''"}}), "')");
-  } else {
-    // Single key: flat `key IN (?,...)`. Multiple: `(a=? AND b=?) OR ...` --
-    // DuckDB re-applies the OR locally, so the source returns exactly the
-    // requested tuples. The fixed 2048-term OR exceeds the default parser
-    // depth.
-    std::string predicate;
-    if (_num_key_cols == 1) {
-      predicate = absl::StrCat(
-        key_cols[0], " IN (",
-        absl::StrJoin(std::vector<std::string_view>(STANDARD_VECTOR_SIZE, "?"),
-                      ","),
-        ")");
-    } else {
-      const std::string term = absl::StrJoin(
-        key_cols, " AND ", [](std::string* out, const std::string& kc) {
-          absl::StrAppend(out, kc, " = ?");
-        });
-      predicate =
-        absl::StrJoin(std::vector<std::string>(STANDARD_VECTOR_SIZE,
-                                               absl::StrCat("(", term, ")")),
-                      " OR ");
-    }
-    if (_num_key_cols > 1) {
-      _con->Query(
-        absl::StrCat("SET max_expression_depth TO ", 4 * STANDARD_VECTOR_SIZE));
-    }
-    _prepared = _con->Prepare(absl::StrCat(
-      "SELECT ", select_list, " FROM ", Quote(ref.catalog), ".",
-      Quote(ref.schema), ".", Quote(ref.table), " WHERE ", predicate));
-    if (_prepared->HasError()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-                      ERR_MSG("external lookup failed: ",
-                              _prepared->GetError()));
-    }
-    _params.resize(static_cast<size_t>(STANDARD_VECTOR_SIZE) * _num_key_cols);
+      Embed(head));
+    _sql_parts[1] =
+      absl::StrCat("]', schema_query := '", Embed(schema_inner), "')");
+    _key_texts.resize(1);
   }
 
   _struct_slot.reserve(STANDARD_VECTOR_SIZE);
@@ -236,59 +335,55 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
   const duckdb::idx_t num_key_cols = _num_key_cols;
 
-  // _params is row-major: tuple i occupies [i*num_key_cols,
-  // (i+1)*num_key_cols), matching the placeholder order.
   _struct_slot.clear();
-  _keys_text.clear();
+  for (auto& text : _key_texts) {
+    text.clear();
+  }
   for (duckdb::idx_t i = 0; i < count; ++i) {
     duckdb::Value key = pk.struct_column->GetValue(i);
     const auto& children = duckdb::StructValue::GetChildren(key);
-    switch (_mode) {
-      case LookupMode::Legacy:
+    if (_postgres_ctid) {
+      auto& out = _key_texts[0];
+      if (i) {
+        out += ',';
+      }
+      absl::StrAppend(&out, "\"(", children[0].GetValue<int64_t>(), ",",
+                      children[1].GetValue<int64_t>(), ")\"");
+    } else if (_mode == LookupMode::PgArray) {
+      for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
+        auto& out = _key_texts[k];
+        if (i) {
+          out += ',';
+        }
+        AppendPgArrayElem(out, children[k]);
+      }
+    } else {
+      auto& out = _key_texts[0];
+      if (i) {
+        out += ',';
+      }
+      if (num_key_cols > 1) {
+        out += '(';
         for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-          _params[i * num_key_cols + k] = children[k];
+          if (k) {
+            out += ',';
+          }
+          AppendChElem(out, children[k]);
         }
-        break;
-      case LookupMode::PgArray:
-        if (i) {
-          _keys_text += ',';
-        }
-        if (_postgres_ctid) {
-          absl::StrAppend(&_keys_text, "\"(", children[0].GetValue<int64_t>(),
-                          ",", children[1].GetValue<int64_t>(), ")\"");
-        } else if (children[0].IsNull()) {
-          _keys_text += "NULL";
-        } else {
-          absl::StrAppend(&_keys_text, children[0].GetValue<int64_t>());
-        }
-        break;
-      case LookupMode::ChArray:
-        if (i) {
-          _keys_text += ',';
-        }
-        if (children[0].IsNull()) {
-          _keys_text += "NULL";
-        } else {
-          absl::StrAppend(&_keys_text, children[0].GetValue<int64_t>());
-        }
-        break;
+        out += ')';
+      } else {
+        AppendChElem(out, children[0]);
+      }
     }
     _struct_slot.try_emplace(std::move(key), i);
   }
 
-  duckdb::unique_ptr<duckdb::QueryResult> result;
-  if (_mode == LookupMode::Legacy) {
-    // Pad the unused groups of a partial last batch by repeating the first
-    // tuple.
-    for (duckdb::idx_t i = count; i < STANDARD_VECTOR_SIZE; ++i) {
-      for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
-        _params[i * num_key_cols + k] = _params[k];
-      }
-    }
-    result = _prepared->Execute(_params, /*allow_stream_result=*/false);
-  } else {
-    result = _con->Query(absl::StrCat(_sql_prefix, _keys_text, _sql_suffix));
+  std::string query = _sql_parts[0];
+  for (size_t j = 0; j < _key_texts.size(); ++j) {
+    query += _key_texts[j];
+    query += _sql_parts[j + 1];
   }
+  auto result = _con->Query(query);
   if (result->HasError()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
                     ERR_MSG("external lookup failed: ", result->GetError()));

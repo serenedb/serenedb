@@ -91,6 +91,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   // bind has been delivered (via Append/Delete with no committing context).
   // Commits the accumulated replay transaction into the iresearch storage.
   void FinishReplay() override;
+  void ReplayAppendRange(duckdb::DataTable& table, duckdb::row_t row_start,
+                         duckdb::idx_t count,
+                         duckdb::shared_ptr<void>& share) override;
 
   void ResetStorage(duckdb::IndexLock&) override {}
   bool MergeIndexes(duckdb::IndexLock&, duckdb::BoundIndex&) override {

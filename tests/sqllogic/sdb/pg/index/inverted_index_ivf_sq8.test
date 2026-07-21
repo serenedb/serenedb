@@ -24,7 +24,7 @@ CREATE TABLE sq8_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX sq8_l2_idx ON sq8_l2
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
   INCLUDE (label)
 
 statement count 6
@@ -75,7 +75,7 @@ CREATE TABLE sq8_rerank_run (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_rerank_run_idx ON sq8_rerank_run
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 6
 INSERT INTO sq8_rerank_run VALUES
@@ -110,7 +110,7 @@ CREATE TABLE sq8_mc (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_mc_idx ON sq8_mc
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 3))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 6
 INSERT INTO sq8_mc VALUES
@@ -154,7 +154,7 @@ CREATE TABLE sq8_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX sq8_dml_idx ON sq8_dml
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
   INCLUDE (label)
 
 statement count 4
@@ -260,7 +260,7 @@ CREATE TABLE sq8_ip (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_ip_idx ON sq8_ip
-  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq8'))
 
 statement count 4
 INSERT INTO sq8_ip VALUES
@@ -291,7 +291,7 @@ CREATE TABLE sq8_hyb (pk INTEGER PRIMARY KEY, emb FLOAT[3], cat INTEGER)
 
 statement ok
 CREATE INDEX sq8_hyb_idx ON sq8_hyb
-  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 4
 INSERT INTO sq8_hyb VALUES
@@ -339,7 +339,7 @@ CREATE TABLE sq8_edge (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_edge_idx ON sq8_edge
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 5
 INSERT INTO sq8_edge VALUES
@@ -416,7 +416,7 @@ CREATE TABLE sq8_mc_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX sq8_mc_dml_idx ON sq8_mc_dml
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
   INCLUDE (label)
 
 statement count 8
@@ -539,7 +539,7 @@ CREATE TABLE sq8_del_mask (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_del_mask_idx ON sq8_del_mask
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 6
 INSERT INTO sq8_del_mask VALUES

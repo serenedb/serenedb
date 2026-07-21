@@ -163,14 +163,10 @@ void SegmentWriter::FlushFields(FlushState& state,
 
   std::vector<std::unique_ptr<IvfWriter>> ivf_writers;
   if (_col_writer) {
+    _col_writer->SetIdxWriter(idx);
     _col_writer->Commit(buffered_docs());
     ivf_writers = _col_writer->TakeIvfWriters();
     _col_writer.reset();
-    for (const auto& w : ivf_writers) {
-      if (auto built = w->Built()) {
-        idx.AddIvf(w->ColumnId(), w->Metric(), std::move(built));
-      }
-    }
   }
 
   if (state.doc_count != 0) {
@@ -183,6 +179,12 @@ void SegmentWriter::FlushFields(FlushState& state,
     const auto cluster_readers =
       PrepareIvfClusterReaders(ivf_writers, _col_reader.get(), ivf_ctx);
     FlushFields(state, cluster_readers);
+  }
+
+  for (const auto& w : ivf_writers) {
+    if (w) {
+      w->FlushTree();
+    }
   }
 
   _col_reader.reset();

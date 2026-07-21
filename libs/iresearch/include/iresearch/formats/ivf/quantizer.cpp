@@ -23,7 +23,7 @@
 #include <faiss/impl/ProductQuantizer.h>
 #include <faiss/impl/RaBitQuantizer.h>
 #include <faiss/impl/ScalarQuantizer.h>
-#include <faiss/impl/pq4_fast_scan.h>
+#include <faiss/impl/fast_scan/fast_scan.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/quantize_lut.h>
@@ -197,14 +197,11 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   mutable std::vector<uint8_t> _code;
 };
 
-class ScalarQuantizerCodebook final : public QuantizerCodebook {
+class ScalarQuantizerStats final : public QuantizerStats {
  public:
-  ScalarQuantizerCodebook(uint32_t d, VectorQuantization quant,
-                          std::span<const byte_type> stats,
-                          std::span<const float> query, VectorMetric metric)
-    : _sq{d, FaissScalarType(quant)},
-      _metric{metric},
-      _query(query.begin(), query.end()) {
+  ScalarQuantizerStats(uint32_t d, VectorQuantization quant,
+                       std::span<const byte_type> stats, VectorMetric metric)
+    : _sq{d, FaissScalarType(quant)}, _quant{quant}, _metric{metric} {
     _sq.trained.assign(2 * static_cast<size_t>(d), 0.f);
     const size_t want = _sq.trained.size() * sizeof(float);
     if (stats.size() >= want) {
@@ -212,16 +209,35 @@ class ScalarQuantizerCodebook final : public QuantizerCodebook {
     }
   }
 
-  std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const final;
+  VectorQuantization Kind() const noexcept final { return _quant; }
+
+  std::shared_ptr<const QuantizerCodebook> MakeCodebook(
+    std::span<const float> query) const final;
 
   const faiss::ScalarQuantizer& Sq() const noexcept { return _sq; }
-  std::span<const float> Query() const noexcept { return _query; }
   VectorMetric Metric() const noexcept { return _metric; }
 
  private:
   faiss::ScalarQuantizer _sq;
+  VectorQuantization _quant;
   VectorMetric _metric;
+};
+
+class ScalarQuantizerCodebook final : public QuantizerCodebook {
+ public:
+  ScalarQuantizerCodebook(std::shared_ptr<const ScalarQuantizerStats> stats,
+                          std::span<const float> query)
+    : _stats{std::move(stats)}, _query(query.begin(), query.end()) {}
+
+  std::unique_ptr<QuantizerReader> MakeReader(
+    std::unique_ptr<IndexInput> pay_in) const final;
+
+  const faiss::ScalarQuantizer& Sq() const noexcept { return _stats->Sq(); }
+  std::span<const float> Query() const noexcept { return _query; }
+  VectorMetric Metric() const noexcept { return _stats->Metric(); }
+
+ private:
+  std::shared_ptr<const ScalarQuantizerStats> _stats;
   std::vector<float> _query;
 };
 
@@ -286,10 +302,23 @@ std::unique_ptr<QuantizerReader> MakeReaderT(const Codebook* self,
     std::move(in));
 }
 
+template<class Stats, class Codebook>
+std::shared_ptr<const QuantizerCodebook> MakeCodebookT(
+  const Stats* self, std::span<const float> query) {
+  return std::make_shared<const Codebook>(
+    std::static_pointer_cast<const Stats>(self->shared_from_this()), query);
+}
+
 std::unique_ptr<QuantizerReader> ScalarQuantizerCodebook::MakeReader(
   std::unique_ptr<IndexInput> pay_in) const {
   return MakeReaderT<ScalarQuantizerCodebook, ScalarQuantizerReader>(
     this, std::move(pay_in));
+}
+
+std::shared_ptr<const QuantizerCodebook> ScalarQuantizerStats::MakeCodebook(
+  std::span<const float> query) const {
+  return MakeCodebookT<ScalarQuantizerStats, ScalarQuantizerCodebook>(this,
+                                                                      query);
 }
 
 class ProductQuantizerWriter final : public QuantizerWriter {
@@ -397,14 +426,14 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   std::vector<uint8_t> _packed;
 };
 
-class ProductQuantizerCodebook final : public QuantizerCodebook {
+class ProductQuantizerStats final : public QuantizerStats {
  public:
-  ProductQuantizerCodebook(uint32_t d, std::span<const byte_type> stats,
-                           std::span<const float> query, VectorMetric metric)
-    : _metric{metric}, _query(query.begin(), query.end()) {
+  ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats,
+                        VectorMetric metric)
+    : _metric{metric} {
     SDB_ASSERT(metric == VectorMetric::L2Sqr ||
                metric == VectorMetric::InnerProduct);
-    const PqStatsHeader hdr = ReadHeader(stats);
+    const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
     if (hdr.m != 0 && d % hdr.m == 0 && hdr.ksub != 0) {
       _pq.d = d;
       _pq.M = hdr.m;
@@ -416,47 +445,67 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
         std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
                     want);
         _valid = true;
-        if (_metric == VectorMetric::InnerProduct) {
-          const size_t ksub = _pq.ksub;
-          const size_t nsq = FastScanNsq(_pq.M);
-          std::vector<float> ip_table(static_cast<size_t>(_pq.M) * ksub);
-          _pq.compute_inner_prod_table(_query.data(), ip_table.data());
-          std::vector<byte_type> lutq(nsq * ksub);
-          faiss::quantize_lut::quantize_LUT_and_bias(
-            1, _pq.M, ksub, false, ip_table.data(), nullptr, lutq.data(), nsq,
-            nullptr, &_ip_a, &_ip_b);
-          _packed_ip_lut.resize(nsq * ksub);
-          faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
-                              _packed_ip_lut.data());
-        }
       }
     }
   }
 
   bool Valid() const noexcept { return _valid; }
 
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::PQ;
+  }
+
+  std::shared_ptr<const QuantizerCodebook> MakeCodebook(
+    std::span<const float> query) const final;
+
+  const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
+  VectorMetric Metric() const noexcept { return _metric; }
+
+ private:
+  faiss::ProductQuantizer _pq;
+  VectorMetric _metric;
+  bool _valid = false;
+};
+
+class ProductQuantizerCodebook final : public QuantizerCodebook {
+ public:
+  ProductQuantizerCodebook(std::shared_ptr<const ProductQuantizerStats> stats,
+                           std::span<const float> query)
+    : _stats{std::move(stats)}, _query(query.begin(), query.end()) {
+    if (_stats->Metric() == VectorMetric::InnerProduct) {
+      // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
+      // query-only and precomputed once per query here.
+      const faiss::ProductQuantizer& pq = _stats->Pq();
+      const size_t ksub = pq.ksub;
+      const size_t nsq = FastScanNsq(pq.M);
+      std::vector<float> ip_table(static_cast<size_t>(pq.M) * ksub);
+      pq.compute_inner_prod_table(_query.data(), ip_table.data());
+      std::vector<byte_type> lutq(nsq * ksub);
+      faiss::quantize_lut::quantize_LUT_and_bias(
+        1, pq.M, ksub, false, ip_table.data(), nullptr, lutq.data(), nsq,
+        nullptr, &_ip_a, &_ip_b);
+      _packed_ip_lut.resize(nsq * ksub);
+      faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
+                          _packed_ip_lut.data());
+    }
+  }
+
   std::unique_ptr<QuantizerReader> MakeReader(
     std::unique_ptr<IndexInput> pay_in) const final;
 
-  const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
+  const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
   std::span<const float> Query() const noexcept { return _query; }
-  VectorMetric Metric() const noexcept { return _metric; }
+  VectorMetric Metric() const noexcept { return _stats->Metric(); }
   const uint8_t* PackedIpLut() const noexcept { return _packed_ip_lut.data(); }
   float IpA() const noexcept { return _ip_a; }
   float IpB() const noexcept { return _ip_b; }
 
  private:
-  static PqStatsHeader ReadHeader(std::span<const byte_type> stats) noexcept {
-    return ReadPodHeader<PqStatsHeader>(stats);
-  }
-
-  faiss::ProductQuantizer _pq;
-  VectorMetric _metric;
+  std::shared_ptr<const ProductQuantizerStats> _stats;
   std::vector<float> _query;
   faiss::AlignedTable<uint8_t> _packed_ip_lut;
   float _ip_a = 1.f;
   float _ip_b = 0.f;
-  bool _valid = false;
 };
 
 class ProductQuantizerReader final : public QuantizerReader {
@@ -554,6 +603,12 @@ std::unique_ptr<QuantizerReader> ProductQuantizerCodebook::MakeReader(
     this, std::move(pay_in));
 }
 
+std::shared_ptr<const QuantizerCodebook> ProductQuantizerStats::MakeCodebook(
+  std::span<const float> query) const {
+  return MakeCodebookT<ProductQuantizerStats, ProductQuantizerCodebook>(this,
+                                                                        query);
+}
+
 class RaBitQuantizerWriter final : public QuantizerWriter {
  public:
   RaBitQuantizerWriter(uint32_t d, VectorMetric metric, uint32_t nb_bits)
@@ -610,11 +665,11 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   mutable std::vector<uint8_t> _code;
 };
 
-class RaBitQuantizerCodebook final : public QuantizerCodebook {
+class RaBitQuantizerStats final : public QuantizerStats {
  public:
-  RaBitQuantizerCodebook(uint32_t d, std::span<const byte_type> stats,
-                         std::span<const float> query, VectorMetric metric) {
-    const RaBitQStatsHeader hdr = ReadHeader(stats);
+  RaBitQuantizerStats(uint32_t d, std::span<const byte_type> stats,
+                      VectorMetric metric) {
+    const RaBitQStatsHeader hdr = ReadPodHeader<RaBitQStatsHeader>(stats);
     if (hdr.nb_bits >= kRaBitQMinBits && hdr.nb_bits <= kRaBitQMaxBits &&
         hdr.d == d && stats.size() >= 2 * sizeof(uint32_t)) {
       _d = d;
@@ -622,8 +677,6 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
       _rabitq = std::make_unique<faiss::RaBitQuantizer>(
         _rd, FaissMetric(metric), hdr.nb_bits);
       GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
-      _rotated_query.resize(_rd);
-      RotateInto(_signs.data(), query.data(), _rotated_query.data(), _d, _rd);
       _metric = metric;
       _valid = true;
     }
@@ -631,31 +684,55 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
 
   bool Valid() const noexcept { return _valid; }
 
-  std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const final;
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::RaBitQ;
+  }
+
+  std::shared_ptr<const QuantizerCodebook> MakeCodebook(
+    std::span<const float> query) const final;
 
   const faiss::RaBitQuantizer& Rabitq() const noexcept { return *_rabitq; }
   const std::vector<float>& Signs() const noexcept { return _signs; }
-  const std::vector<float>& RotatedQuery() const noexcept {
-    return _rotated_query;
-  }
   uint32_t SrcDim() const noexcept { return _d; }
   uint32_t RotDim() const noexcept { return _rd; }
   VectorMetric Metric() const noexcept { return _metric; }
 
  private:
-  static RaBitQStatsHeader ReadHeader(
-    std::span<const byte_type> stats) noexcept {
-    return ReadPodHeader<RaBitQStatsHeader>(stats);
-  }
-
   uint32_t _d = 0;
   uint32_t _rd = 0;
   std::unique_ptr<faiss::RaBitQuantizer> _rabitq;
   std::vector<float> _signs;
-  std::vector<float> _rotated_query;
   VectorMetric _metric = VectorMetric::L2Sqr;
   bool _valid = false;
+};
+
+class RaBitQuantizerCodebook final : public QuantizerCodebook {
+ public:
+  RaBitQuantizerCodebook(std::shared_ptr<const RaBitQuantizerStats> stats,
+                         std::span<const float> query)
+    : _stats{std::move(stats)} {
+    _rotated_query.resize(_stats->RotDim());
+    RotateInto(_stats->Signs().data(), query.data(), _rotated_query.data(),
+               _stats->SrcDim(), _stats->RotDim());
+  }
+
+  std::unique_ptr<QuantizerReader> MakeReader(
+    std::unique_ptr<IndexInput> pay_in) const final;
+
+  const faiss::RaBitQuantizer& Rabitq() const noexcept {
+    return _stats->Rabitq();
+  }
+  const std::vector<float>& Signs() const noexcept { return _stats->Signs(); }
+  const std::vector<float>& RotatedQuery() const noexcept {
+    return _rotated_query;
+  }
+  uint32_t SrcDim() const noexcept { return _stats->SrcDim(); }
+  uint32_t RotDim() const noexcept { return _stats->RotDim(); }
+  VectorMetric Metric() const noexcept { return _stats->Metric(); }
+
+ private:
+  std::shared_ptr<const RaBitQuantizerStats> _stats;
+  std::vector<float> _rotated_query;
 };
 
 class RaBitQuantizerReader final : public QuantizerReader {
@@ -709,6 +786,12 @@ std::unique_ptr<QuantizerReader> RaBitQuantizerCodebook::MakeReader(
     this, std::move(pay_in));
 }
 
+std::shared_ptr<const QuantizerCodebook> RaBitQuantizerStats::MakeCodebook(
+  std::span<const float> query) const {
+  return MakeCodebookT<RaBitQuantizerStats, RaBitQuantizerCodebook>(this,
+                                                                    query);
+}
+
 }  // namespace
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
@@ -728,31 +811,29 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   return nullptr;
 }
 
-std::shared_ptr<const QuantizerCodebook> MakeQuantizerCodebook(
+std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  std::span<const float> query, VectorMetric metric) {
+  VectorMetric metric) {
   switch (quant) {
     case VectorQuantization::None:
       return nullptr;
     case VectorQuantization::SQ8:
     case VectorQuantization::SQ4:
-      return std::make_shared<ScalarQuantizerCodebook>(d, quant, stats, query,
-                                                       metric);
+      return std::make_shared<const ScalarQuantizerStats>(d, quant, stats,
+                                                          metric);
     case VectorQuantization::PQ: {
-      auto cb =
-        std::make_shared<ProductQuantizerCodebook>(d, stats, query, metric);
-      if (!cb->Valid()) {
+      auto s = std::make_shared<const ProductQuantizerStats>(d, stats, metric);
+      if (!s->Valid()) {
         return nullptr;
       }
-      return cb;
+      return s;
     }
     case VectorQuantization::RaBitQ: {
-      auto cb =
-        std::make_shared<RaBitQuantizerCodebook>(d, stats, query, metric);
-      if (!cb->Valid()) {
+      auto s = std::make_shared<const RaBitQuantizerStats>(d, stats, metric);
+      if (!s->Valid()) {
         return nullptr;
       }
-      return cb;
+      return s;
     }
   }
   return nullptr;

@@ -636,8 +636,7 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
   DocIterator::ptr res;
   // RawVectorReader now yields "larger = nearer" scores, so map the radius into
   // that scoring space: distance metrics (nearest = smallest) get negated.
-  const float threshold =
-    VectorMetricNearestIsLargest(_metric) ? _radius : -_radius;
+  const float threshold = VectorMetricIsAngular(_metric) ? _radius : -_radius;
   irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
     auto v_it = memory::make_managed<VectorRangeIterator<Inclusive>>(
       std::move(it), threshold);

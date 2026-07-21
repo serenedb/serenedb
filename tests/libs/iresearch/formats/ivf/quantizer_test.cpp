@@ -70,8 +70,10 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
     out.Flush();
   }
 
-  auto codebook = MakeQuantizerCodebook(VectorQuantization::PQ, d,
-                                        writer->StatsBytes(), query, metric);
+  auto stats =
+    MakeQuantizerStats(VectorQuantization::PQ, d, writer->StatsBytes(), metric);
+  EXPECT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
 
   auto reader =
@@ -122,8 +124,10 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
 
   std::vector<float> query(d, 0.f);
   query[0] = 1.5f;
-  auto codebook = MakeQuantizerCodebook(VectorQuantization::RaBitQ, d,
-                                        writer->StatsBytes(), query, metric);
+  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d,
+                                  writer->StatsBytes(), metric);
+  ASSERT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
   auto reader =
@@ -172,8 +176,10 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
 
   // Query closest to p0 (distance 0.5), then p1 (2.5), then p2 (18.5).
   const std::vector<float> query{1.5f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-  auto codebook = MakeQuantizerCodebook(VectorQuantization::RaBitQ, d,
-                                        writer->StatsBytes(), query, metric);
+  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d,
+                                  writer->StatsBytes(), metric);
+  ASSERT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
   auto reader =
@@ -239,8 +245,10 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   }
 
   const std::vector<float> query{3.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-  auto codebook = MakeQuantizerCodebook(VectorQuantization::RaBitQ, d,
-                                        writer->StatsBytes(), query, metric);
+  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d,
+                                  writer->StatsBytes(), metric);
+  ASSERT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
   auto reader =
@@ -360,8 +368,10 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   }
 
   const std::vector<float> query{1.5f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-  auto codebook = MakeQuantizerCodebook(VectorQuantization::PQ, d,
-                                        writer->StatsBytes(), query, metric);
+  auto stats =
+    MakeQuantizerStats(VectorQuantization::PQ, d, writer->StatsBytes(), metric);
+  ASSERT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
   auto reader =

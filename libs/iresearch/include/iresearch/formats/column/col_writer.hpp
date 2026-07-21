@@ -42,6 +42,7 @@
 namespace irs {
 
 class IvfWriter;
+class IdxWriter;
 
 class ColWriter final {
  public:
@@ -63,6 +64,8 @@ class ColWriter final {
                            bool hyperloglog = false);
 
   IvfWriter& AttachIVF(field_id column_id, IvfInfo info);
+
+  void SetIdxWriter(IdxWriter& idx) noexcept;
 
   NormColumnWriter& OpenNormColumn(field_id id, uint32_t row_group_size);
 

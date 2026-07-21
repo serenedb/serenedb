@@ -54,11 +54,10 @@ namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kMetricField = "metric";
-constexpr std::string_view kNlistField = "nlist";
-constexpr std::string_view kNlistFactorField = "nlist_factor";
 constexpr std::string_view kQuantField = "quant";
 constexpr std::string_view kPqMField = "pq_m";
 constexpr std::string_view kRaBitQBitsField = "rabitq_bits";
+constexpr std::string_view kIvfCompressionField = "compression";
 
 constexpr std::string_view kL2Metric = "l2";
 constexpr std::string_view kL1Metric = "l1";
@@ -109,13 +108,6 @@ bool GetIndexBoolOption(std::string_view index_kind,
                               duckdb::LogicalTypeId::BOOLEAN, "a boolean");
 }
 
-double GetIndexDoubleOption(std::string_view index_kind,
-                            std::string_view column_name, std::string_view key,
-                            const duckdb::Value& v) {
-  return GetIndexOption<double>(index_kind, column_name, key, v,
-                                duckdb::LogicalTypeId::DOUBLE, "a number");
-}
-
 constexpr std::array<std::string_view, 2> kKnownOpclassTypes{
   kIncludedKind,
   kIVFKind,
@@ -128,18 +120,6 @@ uint32_t ParsePositiveUintOption(std::string_view kind,
                                  std::string_view key, const duckdb::Value& v) {
   auto n = GetIndexIntOption(kind, column_name, key, v);
   if (n == 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Column '", column_name, "': ivf option '", key,
-                            "' must be positive, got ", n));
-  }
-  return n;
-}
-
-double ParsePositiveDoubleOption(std::string_view kind,
-                                 std::string_view column_name,
-                                 std::string_view key, const duckdb::Value& v) {
-  auto n = GetIndexDoubleOption(kind, column_name, key, v);
-  if (n <= 0.0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Column '", column_name, "': ivf option '", key,
                             "' must be positive, got ", n));
@@ -266,18 +246,15 @@ std::string DescribeIVFOptions() {
     std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant, kNoneQuant}, "|");
   const std::string quants_need_metric = absl::StrJoin(
     std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant}, "|");
-  return absl::StrCat("metric (string: ", metrics, ", REQUIRED), ",
-                      "nlist (int >= 1, default auto ~sqrt(rows)), ",
-                      "nlist_factor (number > 0, nlist = round(nlist_factor * "
-                      "sqrt(rows)), default "
-                      "2.0), ",
-                      "quant (string: ", quants, ", default ", kNoneQuant, "; ",
-                      quants_need_metric, " need ", kL2Metric, "|", kIPMetric,
-                      "), ", "pq_m (int >= 1, divides dimension, quant='",
-                      kPQQuant, "' only, default auto ~d/2), ",
-                      "rabitq_bits (int ", irs::kRaBitQMinBits, "-",
-                      irs::kRaBitQMaxBits, ", quant='", kRaBitQQuant,
-                      "' only, default ", irs::kRaBitQMinBits, ")");
+  return absl::StrCat(
+    "metric (string: ", metrics, ", REQUIRED), ", "quant (string: ", quants,
+    ", default ", kNoneQuant, "; ", quants_need_metric, " need ", kL2Metric,
+    "|", kIPMetric, "), ", "pq_m (int >= 1, divides dimension, quant='",
+    kPQQuant, "' only, default auto ~d/2), ", "rabitq_bits (int ",
+    irs::kRaBitQMinBits, "-", irs::kRaBitQMaxBits, ", quant='", kRaBitQQuant,
+    "' only, default ", irs::kRaBitQMinBits, "), ",
+    "compression (bool, default true; false stores the index "
+    "vectors uncompressed)");
 }
 
 irs::VectorMetric ParseIVFMetric(std::string_view column_name,
@@ -333,11 +310,6 @@ void ApplyIVFOptions(std::string_view column_name,
       auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
       cfg.metric = ParseIVFMetric(column_name, str);
       metric_set = true;
-    } else if (key == kNlistField) {
-      cfg.nlist = ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
-    } else if (key == kNlistFactorField) {
-      cfg.nlist_factor = static_cast<float>(
-        ParsePositiveDoubleOption(kIVFKind, column_name, key, raw_val));
     } else if (key == kQuantField) {
       auto str = GetIndexStringOption(kIVFKind, column_name, key, raw_val);
       cfg.quant = ParseIVFQuant(column_name, str);
@@ -346,6 +318,8 @@ void ApplyIVFOptions(std::string_view column_name,
     } else if (key == kRaBitQBitsField) {
       cfg.rabitq_bits =
         ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
+    } else if (key == kIvfCompressionField) {
+      cfg.compression = GetIndexBoolOption(kIVFKind, column_name, key, raw_val);
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -360,12 +334,6 @@ void ApplyIVFOptions(std::string_view column_name,
               kMetricField, "' option (one of: ", kL2Metric, ", ", kL1Metric,
               ", ", kCosineMetric, ", ", kIPMetric,
               "). Example: ivf (metric = 'l2')"));
-  }
-  if (cfg.nlist != 0 && cfg.nlist_factor != 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Column '", column_name, "': ivf options '", kNlistField,
-              "' and '", kNlistFactorField, "' are mutually exclusive"));
   }
   if (cfg.quant != irs::VectorQuantization::None &&
       cfg.metric != irs::VectorMetric::L2Sqr &&
@@ -554,8 +522,27 @@ void ApplyIncludedOpclass(
   }
 }
 
+float ReadIVFSampleFactor(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  context.TryGetCurrentSetting("sdb_ivf_sample_factor", v);
+  SDB_ASSERT(!v.IsNull());
+  const auto f = v.GetValue<double>();
+  SDB_ASSERT(f >= 0.0 && f <= 1.0);
+  return static_cast<float>(f);
+}
+
+uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  context.TryGetCurrentSetting("sdb_ivf_posting_size", v);
+  SDB_ASSERT(!v.IsNull());
+  const auto n = v.GetValue<int32_t>();
+  SDB_ASSERT(n >= 1);
+  return static_cast<uint32_t>(n);
+}
+
 void ApplyIVFOpclass(
-  std::string_view owner_label, const duckdb::LogicalType& value_type,
+  duckdb::ClientContext& context, std::string_view owner_label,
+  const duckdb::LogicalType& value_type,
   const std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>& opts,
   InvertedIndexEntryInfo& entry) {
   SDB_ASSERT(opts);
@@ -566,8 +553,12 @@ void ApplyIVFOpclass(
     .d = static_cast<int>(duckdb::ArrayType::GetSize(value_type)),
   };
   ApplyIVFOptions(owner_label, *opts, cfg);
+  cfg.sample_factor = ReadIVFSampleFactor(context);
+  cfg.posting_size = ReadIVFPostingSize(context);
   entry.ivf_config = cfg;
-  entry.compression = duckdb::CompressionType::COMPRESSION_AUTO;
+  entry.compression = cfg.compression
+                        ? duckdb::CompressionType::COMPRESSION_AUTO
+                        : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
   entry.row_group_size = 0;
   entry.store_values = true;
 }
@@ -667,7 +658,7 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
     return;
   }
   if (c.IsBuiltin(kIVFKind)) {
-    ApplyIVFOpclass(owner_label, value_type, c.opclass_options, entry);
+    ApplyIVFOpclass(context, owner_label, value_type, c.opclass_options, entry);
     return;
   }
   if (c.IsBuiltin(kIncludedKind)) {

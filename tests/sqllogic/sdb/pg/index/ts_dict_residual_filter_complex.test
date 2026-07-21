@@ -1,0 +1,1491 @@
+hash-threshold 100
+
+# ts_dict facet pushdown with complex residual filters over covered (INCLUDE'd)
+# columns of assorted types: numeric ranges, BETWEEN, casts, timestamp ranges,
+# scalar-function expressions, boolean predicates and LIKE. Any predicate whose
+# column references all resolve to ONE covered column pushes as a columnstore
+# Column Filter and is applied per document during term counting. Plain
+# comparisons over the bare column (and AND-trees of them) push as constant
+# filters and are unlimited; a predicate that TRANSFORMS the column
+# (function/cast/coalesce) becomes an expression filter, and duckdb does not
+# reliably push two or more such transforms together, so at most one is
+# admitted -- extra transforms, IN-lists and OR disjunctions decline to a
+# document scan (still correct). Each query has an EXPLAIN pinning the plan, and
+# each result is checked against the same query over the base table (oracle).
+# Background maintenance is off so plan estimates are stable.
+
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ckw(template = 'keyword', frequency = true)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ctx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE cev(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
+                 svc VARCHAR NOT NULL, amount INTEGER, ts TIMESTAMP,
+                 flag BOOLEAN, body VARCHAR NOT NULL)
+
+statement ok
+INSERT INTO cev VALUES
+  (1, 'ERROR', 'frontend', 150,  TIMESTAMP '2026-01-01 10:00', true,  'disk failed'),
+  (2, 'INFO',  'frontend', 50,   TIMESTAMP '2026-01-02 11:00', false, 'all ok'),
+  (3, 'ERROR', 'backend',  300,  TIMESTAMP '2026-01-01 12:00', true,  'net failed'),
+  (4, 'WARN',  'frontend', 80,   TIMESTAMP '2026-01-03 09:00', NULL,  'failed retry'),
+  (5, 'INFO',  'backend',  120,  TIMESTAMP '2026-01-02 08:00', false, 'failed once'),
+  (6, 'ERROR', 'frontend', NULL, TIMESTAMP '2026-01-01 15:00', true,  'failed hard'),
+  (7, 'WARN',  'backend',  200,  TIMESTAMP '2026-01-03 22:00', false, 'disk slow'),
+  (8, 'ERROR', 'frontend', 100,  TIMESTAMP '2026-01-02 14:00', true,  'failed again')
+
+statement ok
+CREATE INDEX cev_idx ON cev USING inverted(sev ckw, body ctx)
+    INCLUDE (svc, amount, ts, flag)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+CREATE VIEW cvw AS
+SELECT id, sev AS Sev, svc AS Svc, amount AS Amount, ts AS Ts, flag AS Flag,
+       body AS Body
+FROM cev
+
+statement ok
+CREATE INDEX cvw_idx ON cvw USING inverted(Sev ckw, Body ctx)
+    INCLUDE (Svc, Amount, Ts, Flag)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) cev;
+
+# ==========================================================================
+# Numeric ranges
+# ==========================================================================
+
+# --- two comparisons on one column fold into one range Column Filter
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE amount >= 80 AND amount < 200 GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ (amount >= 80) AND (amount < 200)         │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE amount >= 80 AND amount < 200 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE amount >= 80 AND amount < 200 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+WARN	1
+
+# --- BETWEEN over the bare column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE amount BETWEEN 80 AND 200 GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ (amount >= 80) AND (amount <= 200)        │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE amount BETWEEN 80 AND 200 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+WARN	2
+INFO	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE amount BETWEEN 80 AND 200 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+WARN	2
+INFO	1
+
+# --- IS NULL over a covered numeric column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE amount IS NULL GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: amount IS NULL             │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE amount IS NULL GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE amount IS NULL GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+
+# ==========================================================================
+# Casts and timestamp ranges
+# ==========================================================================
+
+# --- cast of a covered timestamp to date
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE ts::DATE = DATE '2026-01-01' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ ts < '2026-01-02 00:00:00'::TIMESTAMP     │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE ts::DATE = DATE '2026-01-01' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE ts::DATE = DATE '2026-01-01' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+
+# --- half-open timestamp range
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE ts >= TIMESTAMP '2026-01-02' AND ts < TIMESTAMP '2026-01-03' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, CAST(#1 AS BIGINT)                         │
+│ ~0 rows                                                                              │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ───────────────────────────┴──────────────────────────────────────────╮
+│ Groups: #0                                                                           │
+│ Aggregates: sum(#1)                                                                  │
+│ ~0 rows                                                                              │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
+│ Index: cev_idx                                                                       │
+│ TsDict: sev                                                                          │
+│ Projections:                                                                         │
+│ sdb_inverted_index_term$sev, sdb_inverted_index_term_count$sev                       │
+│ Column Filter:                                                                       │
+│ (ts >= '2026-01-02 00:00:00'::TIMESTAMP) AND (ts < '2026-01-03 00:00:00'::TIMESTAMP) │
+│ ~1 row                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE ts >= TIMESTAMP '2026-01-02' AND ts < TIMESTAMP '2026-01-03' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+INFO	2
+ERROR	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE ts >= TIMESTAMP '2026-01-02' AND ts < TIMESTAMP '2026-01-03' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+INFO	2
+ERROR	1
+
+# --- date_trunc expression (single transform)
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE date_trunc('day', ts) = TIMESTAMP '2026-01-02' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, CAST(#1 AS BIGINT)                         │
+│ ~0 rows                                                                              │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ───────────────────────────┴──────────────────────────────────────────╮
+│ Groups: #0                                                                           │
+│ Aggregates: sum(#1)                                                                  │
+│ ~0 rows                                                                              │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
+│ Index: cev_idx                                                                       │
+│ TsDict: sev                                                                          │
+│ Projections:                                                                         │
+│ sdb_inverted_index_term$sev, sdb_inverted_index_term_count$sev                       │
+│ Column Filter:                                                                       │
+│ (ts >= '2026-01-02 00:00:00'::TIMESTAMP) AND (ts < '2026-01-03 00:00:00'::TIMESTAMP) │
+│ ~1 row                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE date_trunc('day', ts) = TIMESTAMP '2026-01-02' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+INFO	2
+ERROR	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE date_trunc('day', ts) = TIMESTAMP '2026-01-02' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+INFO	2
+ERROR	1
+
+# ==========================================================================
+# Scalar-function expressions (single transform each)
+# ==========================================================================
+
+# --- abs() over a covered numeric column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE abs(amount) >= 120 GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: amount >= 120              │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE abs(amount) >= 120 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE abs(amount) >= 120 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+WARN	1
+
+# --- arithmetic over a covered numeric column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE amount % 100 = 0 GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: (amount % 100) = 0         │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE amount % 100 = 0 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE amount % 100 = 0 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+WARN	1
+
+# --- length() over a covered varchar column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE length(svc) > 7 GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: length(svc) > 7            │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE length(svc) > 7 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE length(svc) > 7 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- coalesce() over a nullable covered column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE coalesce(amount, 0) >= 100 GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ COALESCE(amount, 0) >= 100                │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE coalesce(amount, 0) >= 100 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE coalesce(amount, 0) >= 100 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- upper() over a covered varchar column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE upper(svc) = 'FRONTEND' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: upper(svc) = 'FRONTEND'    │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE upper(svc) = 'FRONTEND' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE upper(svc) = 'FRONTEND' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- substr() over a covered varchar column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE substr(svc, 1, 5) = 'front' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ substr(svc, 1, 5) = 'front'               │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE substr(svc, 1, 5) = 'front' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE substr(svc, 1, 5) = 'front' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- arithmetic (multiply) over a covered numeric column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE amount * 2 > 200 GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: amount > 100               │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE amount * 2 > 200 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE amount * 2 > 200 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+WARN	1
+
+# ==========================================================================
+# Comparison needing a cast (int column vs float literal)
+# ==========================================================================
+
+# --- int covered column compared to a float literal (implicit cast)
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE amount = 100.0 GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ CAST(amount AS DECIMAL(11,1)) = 100.0     │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE amount = 100.0 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE amount = 100.0 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+
+# ==========================================================================
+# String predicate functions (each a single transform)
+# ==========================================================================
+
+# --- starts_with() over a covered varchar column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE starts_with(svc, 'front') GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: starts_with(svc, 'front')  │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE starts_with(svc, 'front') GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE starts_with(svc, 'front') GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- contains() over a covered varchar column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE contains(svc, 'end') GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: contains(svc, 'end')       │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE contains(svc, 'end') GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4
+INFO	2
+WARN	2
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE contains(svc, 'end') GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4
+INFO	2
+WARN	2
+
+# --- regex match (~) over a covered varchar column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE svc ~ '^front' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ (svc >= 'front') AND (svc < 'fronu')      │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE svc ~ '^front' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE svc ~ '^front' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- SIMILAR TO over a covered varchar column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE svc SIMILAR TO 'front%' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ regexp_full_match(svc, '^(?:front.*)$')   │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE svc SIMILAR TO 'front%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE svc SIMILAR TO 'front%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# --- NOT LIKE over a covered varchar column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE svc NOT LIKE 'back%' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: NOT prefix(svc, 'back')    │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE svc NOT LIKE 'back%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE svc NOT LIKE 'back%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# ==========================================================================
+# Boolean predicates and LIKE
+# ==========================================================================
+
+# --- boolean covered column equality (plain comparison)
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE flag = true GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: flag = true                │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE flag = true GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE flag = true GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4
+
+# --- NOT over a boolean covered column
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE NOT flag GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: NOT flag                   │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE NOT flag GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+INFO	2
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE NOT flag GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+INFO	2
+WARN	1
+
+# --- LIKE over a covered varchar column (single transform)
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE svc LIKE 'front%' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ (svc >= 'front') AND (svc < 'fronu')      │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE svc LIKE 'front%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE svc LIKE 'front%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+INFO	1
+WARN	1
+
+# ==========================================================================
+# One transform combined with plain comparisons and an @@ predicate
+# ==========================================================================
+
+# --- lower(svc) transform + two plain comparisons + indexed @@
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE lower(svc) = 'frontend' AND amount >= 100 AND flag = true AND body @@ 'failed' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ Index Filter:                             │
+│ ╭─ Term ──────────────╮                   │
+│ │ Field: body(string) │                   │
+│ │ Value: failed       │                   │
+│ ╰─────────────────────╯                   │
+│ Column Filter: lower(svc) = 'frontend',   │
+│                amount >= 100, flag = true │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE lower(svc) = 'frontend' AND amount >= 100 AND flag = true AND body @@ 'failed' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE lower(svc) = 'frontend' AND amount >= 100 AND flag = true AND body LIKE '%failed%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+# --- many plain comparisons + @@ (all constant filters, unlimited)
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE svc = 'frontend' AND amount >= 100 AND flag = true AND body @@ 'failed' GROUP BY sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cev_idx                            │
+│ Index Filter:                             │
+│ ╭─ Term ──────────────╮                   │
+│ │ Field: body(string) │                   │
+│ │ Value: failed       │                   │
+│ ╰─────────────────────╯                   │
+│ Column Filter: svc = 'frontend',          │
+│                amount >= 100, flag = true │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE svc = 'frontend' AND amount >= 100 AND flag = true AND body @@ 'failed' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE svc = 'frontend' AND amount >= 100 AND flag = true AND body LIKE '%failed%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+# ==========================================================================
+# Declines to a document scan (still correct)
+# ==========================================================================
+
+# --- two transforms on different columns -> doc scan
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE abs(amount) >= 100 AND length(svc) > 7 GROUP BY sev
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────╮
+│ Groups: #0                     │
+│ Aggregates: count_star()       │
+│ ~0 rows                        │
+╰────────────────┬───────────────╯
+╭─ PROJECTION ───┴───────────────╮
+│ Projections: #1                │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ FILTER ───────┴───────────────╮
+│ Expression: amount >= 100      │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: cev_idx                 │
+│ Lookup: table                  │
+│ Projections: amount (i),       │
+│              sev (l)           │
+│ Column Filter: length(svc) > 7 │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE abs(amount) >= 100 AND length(svc) > 7 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE abs(amount) >= 100 AND length(svc) > 7 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+# --- two transforms + @@ -> doc scan
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE abs(amount) >= 100 AND upper(svc) = 'FRONTEND' AND body @@ 'failed' GROUP BY sev
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────╮
+│ Groups: #0                              │
+│ Aggregates: count_star()                │
+│ ~0 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: cev_idx                          │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Term ──────────────╮                 │
+│ │ Field: body(string) │                 │
+│ │ Value: failed       │                 │
+│ ╰─────────────────────╯                 │
+│ Column Filter: amount >= 100,           │
+│                upper(svc) = 'FRONTEND'  │
+│ Projections: sev                        │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE abs(amount) >= 100 AND upper(svc) = 'FRONTEND' AND body @@ 'failed' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE abs(amount) >= 100 AND upper(svc) = 'FRONTEND' AND body LIKE '%failed%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+# --- IN-list -> doc scan
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE svc IN ('frontend', 'backend') GROUP BY sev
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────────────────╮
+│ Groups: #0                                 │
+│ Aggregates: count_star()                   │
+│ ~0 rows                                    │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections: #1                            │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ FILTER ─────────────┴─────────────────────╮
+│ Expression:                                │
+│ (svc = 'frontend') OR (svc = 'backend')    │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: cev_idx                             │
+│ Lookup: table                              │
+│ Projections: svc (i), sev (l)              │
+│ Column Filter:                             │
+│ optional: (svc IN ('frontend', 'backend')) │
+│ ~8 rows                                    │
+╰────────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE svc IN ('frontend', 'backend') GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4
+INFO	2
+WARN	2
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE svc IN ('frontend', 'backend') GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4
+INFO	2
+WARN	2
+
+# --- same-column OR -> doc scan
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE amount = 150 OR amount = 300 GROUP BY sev
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: count_star()                     │
+│ ~0 rows                                      │
+╰───────────────────────┬──────────────────────╯
+╭─ PROJECTION ──────────┴──────────────────────╮
+│ Projections: #1                              │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ FILTER ──────────────┴──────────────────────╮
+│ Expression:                                  │
+│ (amount = 150) OR (amount = 300)             │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: cev_idx                               │
+│ Lookup: table                                │
+│ Projections: amount (i), sev (l)             │
+│ Column Filter:                               │
+│ optional: ((amount = 150) OR (amount = 300)) │
+│ ~8 rows                                      │
+╰──────────────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE amount = 150 OR amount = 300 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE amount = 150 OR amount = 300 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+
+# --- cross-column OR -> doc scan
+query
+EXPLAIN SELECT sev, count(*) FROM cev_idx
+WHERE svc = 'backend' OR amount > 250 GROUP BY sev
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────╮
+│ Groups: #0                          │
+│ Aggregates: count_star()            │
+│ ~0 rows                             │
+╰──────────────────┬──────────────────╯
+╭─ PROJECTION ─────┴──────────────────╮
+│ Projections: #2                     │
+│ ~1 row                              │
+╰──────────────────┬──────────────────╯
+╭─ FILTER ─────────┴──────────────────╮
+│ Expression:                         │
+│ (amount > 250) OR (svc = 'backend') │
+│ ~1 row                              │
+╰──────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ─┴──────────────────╮
+│ Index: cev_idx                      │
+│ Lookup: table                       │
+│ Projections: svc (i), amount (i),   │
+│              sev (l)                │
+│ ~8 rows                             │
+╰─────────────────────────────────────╯
+
+query TI
+SELECT sev, count(*) AS n FROM cev_idx
+WHERE svc = 'backend' OR amount > 250 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE svc = 'backend' OR amount > 250 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+INFO	1
+WARN	1
+
+# ==========================================================================
+# View-backed index: complex residuals behave identically
+# ==========================================================================
+
+# --- range on a covered column of the view
+query
+EXPLAIN SELECT Sev, count(*) FROM cvw_idx
+WHERE Amount >= 80 AND Amount < 200 GROUP BY Sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cvw_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter:                            │
+│ (amount >= 80) AND (amount < 200)         │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT Sev, count(*) AS n FROM cvw_idx
+WHERE Amount >= 80 AND Amount < 200 GROUP BY Sev ORDER BY n DESC, Sev
+----
+sev	n
+ERROR	2
+INFO	1
+WARN	1
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE amount >= 80 AND amount < 200 GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	2
+INFO	1
+WARN	1
+
+# --- cast transform + indexed @@ on the view
+query
+EXPLAIN SELECT Sev, count(*) FROM cvw_idx
+WHERE Ts::DATE = DATE '2026-01-01' AND Body @@ 'failed' GROUP BY Sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~0 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cvw_idx                            │
+│ Index Filter:                             │
+│ ╭─ Term ──────────────╮                   │
+│ │ Field: body(string) │                   │
+│ │ Value: failed       │                   │
+│ ╰─────────────────────╯                   │
+│ Column Filter:                            │
+│ ts < '2026-01-02 00:00:00'::TIMESTAMP     │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT Sev, count(*) AS n FROM cvw_idx
+WHERE Ts::DATE = DATE '2026-01-01' AND Body @@ 'failed' GROUP BY Sev ORDER BY n DESC, Sev
+----
+sev	n
+ERROR	3
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE ts::DATE = DATE '2026-01-01' AND body LIKE '%failed%' GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	3
+
+# --- boolean predicate on the view
+query
+EXPLAIN SELECT Sev, count(*) FROM cvw_idx
+WHERE Flag = true GROUP BY Sev
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$sev, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: cvw_idx                            │
+│ TsDict: sev                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$sev,              │
+│ sdb_inverted_index_term_count$sev         │
+│ Column Filter: flag = true                │
+│ ~2 rows                                   │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT Sev, count(*) AS n FROM cvw_idx
+WHERE Flag = true GROUP BY Sev ORDER BY n DESC, Sev
+----
+sev	n
+ERROR	4
+
+query TI
+SELECT sev, count(*) AS n FROM cev
+WHERE flag = true GROUP BY sev ORDER BY n DESC, sev
+----
+sev	n
+ERROR	4

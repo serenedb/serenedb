@@ -232,6 +232,10 @@ struct TsDictLocalState : public IResearchScanLocalState {
   // the per-term postings intersection during counting.
   TableFilterDocIterator::SegmentClassification seg_cls;
   ColFilterStateCache filter_states;
+  // Output slots of real columns scanned only for a pushed `.col` filter: the
+  // term-dict scan produces no value for them, so they are set all-NULL (the
+  // filter already applied during counting; the value is dropped upstream).
+  std::vector<duckdb::idx_t> null_slots;
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
                     uint32_t seg_idx, IResearchScanGlobalState& g);
@@ -1059,6 +1063,35 @@ irs::DocIterator::ptr MaybeWrapColFilter(
   std::span<const TableFilterDocIterator::FilterSpec> active,
   IResearchScanGlobalState& g, ColFilterStateCache& states);
 
+// Every real column the term-dict scan would emit is present only as the target
+// of a pushed `.col` filter (its value is unused -- read from the columnstore
+// during counting, then dropped). If any real output column is not such a
+// filter target, the scan is asked to produce a real column it cannot.
+bool TsDictRealOutputsAreColFilters(const IResearchScanGlobalState& g,
+                                    const SereneDBScanBindData& bind_data) {
+  for (size_t proj = 0; proj < g.projected_columns.size(); ++proj) {
+    const auto bind_idx = g.projected_columns[proj];
+    if (bind_idx == duckdb::DConstants::INVALID_INDEX) {
+      continue;
+    }
+    const bool in_output =
+      g.output_projection_ids.empty() ||
+      absl::c_find(g.output_projection_ids, proj) !=
+        g.output_projection_ids.end();
+    if (!in_output) {
+      continue;
+    }
+    const auto field =
+      static_cast<irs::field_id>(bind_data.column_ids[bind_idx].id());
+    if (!absl::c_any_of(g.col_filters, [&](const auto& cf) {
+          return !cf.is_score && cf.field == field;
+        })) {
+      return false;
+    }
+  }
+  return true;
+}
+
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
@@ -1082,7 +1115,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   ClassifyColumnstoreProjections(*state, bind_data);
   state->mode = DecideScanMode(*state, ss);
   if (state->mode == ScanMode::TsDict) {
-    if (state->has_real_output_column) {
+    // A term-dict scan emits only term/count columns. A real column is
+    // tolerated only when it is there purely for a pushed columnstore filter
+    // (a WHERE on an INCLUDE'd column, applied during counting) -- its emitted
+    // value is never read. A real column that is genuinely projected cannot be
+    // produced per term.
+    if (state->has_real_output_column &&
+        !TsDictRealOutputsAreColFilters(*state, bind_data)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("ts_dict_agg() cannot be combined with other table columns"));
@@ -1512,6 +1551,7 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
       continue;
     }
     const auto cat = bd.column_ids[col_id];
+    bool matched = false;
     for (auto& kind : kinds) {
       if (cat != kind.cat) {
         continue;
@@ -1520,7 +1560,11 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
         ++kind.next;
       }
       lstate.fields[kind.next++].*kind.slot = out_slot;
+      matched = true;
       break;
+    }
+    if (!matched) {
+      lstate.null_slots.push_back(out_slot);
     }
     ++out_slot;
   }
@@ -2389,6 +2433,14 @@ void RunTsDictScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
       l.StartSegment(ctx, seg, seg_idx, g);
     }
     if (collected != 0 || exhausted) {
+      for (const auto slot : l.null_slots) {
+        auto& vec = output.data[slot];
+        vec.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+        auto& validity = duckdb::FlatVector::ValidityMutable(vec);
+        for (duckdb::idx_t i = 0; i < collected; ++i) {
+          validity.SetInvalid(i);
+        }
+      }
       output.SetChildCardinality(collected);
       return;
     }

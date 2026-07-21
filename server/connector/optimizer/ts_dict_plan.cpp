@@ -30,7 +30,6 @@
 #include <duckdb/planner/expression/bound_aggregate_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-#include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_unnest_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -619,16 +618,27 @@ void CollectEnumFieldRefs(
     });
 }
 
-// Every column reference under `expr` resolves to ONE covered (stored `.col`)
-// index column, joined only by scalar nodes (functions, casts, constants).
-// Non-scalar nodes (subquery/aggregate/window/lambda/positional ref) never
-// push as table filters and are rejected.
+// A conjunct duckdb pushes as an EXACT per-column table filter over ONE covered
+// (stored `.col`) index column: comparisons, ranges, BETWEEN, casts, and scalar
+// functions over that single column joined by AND -- any scalar shape whose
+// every column reference resolves to the same stored column. The scan's
+// columnstore filter (`col_filters`) then applies it during term counting, so
+// the facet need not claim it into the term index.
+//
+// Rejected because they never push as a servable table filter here:
+//   * non-scalar nodes (subquery/aggregate/window/lambda/positional ref);
+//   * IN-lists and OR disjunctions -- duckdb pushes those as *optional* zonemap
+//     filters and keeps an exact residual FILTER above the scan, which forces
+//     the column into the scan output; a term-dict scan emits only term/count
+//     columns, so it cannot serve a real output column.
+// `col` ends set to the one covered column when the whole tree qualifies.
 bool ScalarOverSingleCoveredColumn(
   const duckdb::Expression& expr,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get, const catalog::InvertedIndex& index,
   std::optional<catalog::Column::Id>& col) {
   using C = duckdb::ExpressionClass;
+  using T = duckdb::ExpressionType;
   const auto cls = expr.GetExpressionClass();
   if (cls == C::BOUND_COLUMN_REF) {
     const auto& ref = expr.Cast<duckdb::BoundColumnRefExpression>();
@@ -657,6 +667,17 @@ bool ScalarOverSingleCoveredColumn(
     case C::BOUND_UNNEST:
     case C::BOUND_PARAMETER:
       return false;
+    case C::BOUND_OPERATOR:
+      if (expr.GetExpressionType() == T::COMPARE_IN ||
+          expr.GetExpressionType() == T::COMPARE_NOT_IN) {
+        return false;
+      }
+      break;
+    case C::BOUND_CONJUNCTION:
+      if (expr.GetExpressionType() == T::CONJUNCTION_OR) {
+        return false;
+      }
+      break;
     default:
       break;
   }
@@ -669,30 +690,61 @@ bool ScalarOverSingleCoveredColumn(
   return ok;
 }
 
-// A conjunct duckdb pushes as an EXACT per-column table filter over one covered
-// (stored `.col`) index column: a single comparison (`col-expr CMP const`,
-// including function/cast forms like `lower(svc) = 'x'`) or a bare IS [NOT]
-// NULL over that column. The scan's columnstore filter (`col_filters`) applies
-// it during term counting, so the facet need not claim it into the term index.
-// IN-lists / disjunctions are excluded: duckdb pushes those as *optional*
-// zonemap filters and keeps an exact residual FILTER above the scan, which
-// would force the column into the scan output -- a term-dict scan emits only
-// term/count columns, so it cannot serve a real output column.
 bool IsCoveredColumnResidual(
   const duckdb::Expression& expr,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get, const catalog::InvertedIndex& index,
   std::optional<catalog::Column::Id>& col) {
+  return ScalarOverSingleCoveredColumn(expr, bind_data, get, index, col) &&
+         col.has_value();
+}
+
+bool ExprHasColumnRef(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() ==
+      duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    return true;
+  }
+  bool found = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      found = found || ExprHasColumnRef(child);
+    });
+  return found;
+}
+
+// A covered residual "computes" over its column when a function/cast/coalesce
+// transforms it (`abs(amount) >= x`, `lower(svc) = 'y'`, `ts::DATE = z`) rather
+// than comparing the bare column to a constant. duckdb pushes plain
+// comparisons (and AND-trees of them) as constant filters -- unlimited -- but a
+// transform becomes an ExpressionFilter, and two or more of those on different
+// columns are not reliably pushed together (duckdb may materialise one as a
+// projected column, which a term-dict scan cannot produce), so the facet admits
+// at most one. Comparison operators are themselves scalar functions here, so a
+// bare comparison is classified by its type, not its class; anything not a
+// plain comparison / AND that still references the column is treated as a
+// transform (the safe side -- at worst it declines an extra combination).
+bool ResidualComputesOverColumn(const duckdb::Expression& expr) {
+  using C = duckdb::ExpressionClass;
   using T = duckdb::ExpressionType;
-  const bool shape =
-    duckdb::BoundComparisonExpression::IsComparison(expr) ||
-    (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_OPERATOR &&
-     (expr.GetExpressionType() == T::OPERATOR_IS_NULL ||
-      expr.GetExpressionType() == T::OPERATOR_IS_NOT_NULL));
-  if (!shape) {
+  const auto cls = expr.GetExpressionClass();
+  if (cls == C::BOUND_COLUMN_REF || cls == C::BOUND_CONSTANT) {
     return false;
   }
-  return ScalarOverSingleCoveredColumn(expr, bind_data, get, index, col);
+  const auto type = expr.GetExpressionType();
+  const bool plain_comparison =
+    type == T::COMPARE_EQUAL || type == T::COMPARE_NOTEQUAL ||
+    type == T::COMPARE_LESSTHAN || type == T::COMPARE_GREATERTHAN ||
+    type == T::COMPARE_LESSTHANOREQUALTO ||
+    type == T::COMPARE_GREATERTHANOREQUALTO || type == T::CONJUNCTION_AND;
+  if (!plain_comparison) {
+    return ExprHasColumnRef(expr);
+  }
+  bool found = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      found = found || ResidualComputesOverColumn(child);
+    });
+  return found;
 }
 
 struct TsDictFacetKey {
@@ -1621,6 +1673,7 @@ bool TsDictFacetPushdown::WhereOk() {
     *_found.get, *_found.bind_data, *_index, _snapshot, _context,
     [&](const SearchGetters& getters) {
       auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
+      size_t computed_residuals = 0;
       for (auto& expr : _where->expressions) {
         if (expr->HasParameter()) {
           return false;
@@ -1636,6 +1689,9 @@ bool TsDictFacetPushdown::WhereOk() {
           if (IsCoveredColumnResidual(*expr, *_found.bind_data, *_found.get,
                                       *_index, residual_col) &&
               residual_col) {
+            if (ResidualComputesOverColumn(*expr) && ++computed_residuals > 1) {
+              return false;
+            }
             continue;
           }
         }

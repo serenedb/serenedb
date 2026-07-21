@@ -48,19 +48,20 @@ struct PrimaryKeyBatch {
   Kind kind = Kind::None;
   std::vector<int64_t> files;
   std::vector<int64_t> rows;
-  // Kind::Struct only: BORROWS the batch's flattened STRUCT key vector
-  // (column_count rows); valid only until the next Materialize consumes it.
-  duckdb::Vector* column = nullptr;
-  duckdb::idx_t column_count = 0;
+  
+  // Kind::Struct only: the key column borrowed from the pk reader (a duckdb
+  // Vector doesn't know its own row count, so it travels alongside).
+  duckdb::Vector* struct_column = nullptr;
+  duckdb::idx_t struct_column_count = 0;
 
   size_t Size() const noexcept {
-    return kind == Kind::Struct ? column_count : rows.size();
+    return kind == Kind::Struct ? struct_column_count : rows.size();
   }
   void Reset() {
     files.clear();
     rows.clear();
-    column = nullptr;
-    column_count = 0;
+    struct_column = nullptr;
+    struct_column_count = 0;
   }
   void Append(int64_t row) { rows.push_back(row); }
   void Append(int64_t file, int64_t row) {

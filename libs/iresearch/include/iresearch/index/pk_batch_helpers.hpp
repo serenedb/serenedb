@@ -39,8 +39,8 @@ inline void AppendPrimaryKeysFromVector(PrimaryKeyBatch& pk,
       type_id == duckdb::LogicalTypeId::STRUCT) {
     // Borrow the already-read key column (self-describing struct type); the
     // lookup reads its field vectors back generically. No copy, no Value.
-    pk.column = &vec;
-    pk.column_count = count;
+    pk.struct_column = &vec;
+    pk.struct_column_count = count;
     return;
   }
   if (pk.kind == PrimaryKeyBatch::Kind::I64 &&

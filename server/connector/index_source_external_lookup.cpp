@@ -159,7 +159,7 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   }
   auto& pk = batch;
   SDB_ASSERT(pk.kind == PrimaryKeyBatch::Kind::Struct);
-  SDB_ASSERT(pk.column && start == 0 && count <= pk.column_count);
+  SDB_ASSERT(pk.struct_column && start == 0 && count <= pk.struct_column_count);
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
   const duckdb::idx_t num_key_cols = _num_key_cols;
 
@@ -167,7 +167,7 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   // matching the placeholder order.
   _struct_slot.clear();
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    duckdb::Value key = pk.column->GetValue(i);
+    duckdb::Value key = pk.struct_column->GetValue(i);
     const auto& children = duckdb::StructValue::GetChildren(key);
     if (_postgres_ctid) {
       _params[i] = duckdb::Value::BIGINT(
@@ -226,7 +226,7 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
       }
     }
   };
-  const auto& key_type = pk.column->GetType();
+  const auto& key_type = pk.struct_column->GetType();
   drain(_struct_slot,
         [&](duckdb::DataChunk& chunk, duckdb::idx_t, duckdb::idx_t row) {
           duckdb::vector<duckdb::Value> children;

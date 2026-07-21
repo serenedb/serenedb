@@ -37,7 +37,7 @@
 namespace irs {
 
 class Directory;
-class TwoLayerCentroids;
+class CentroidsTree;
 struct IResourceManager;
 
 struct TermDictMeta {
@@ -49,6 +49,13 @@ struct TermDictMeta {
   bool has_wand{false};
   uint64_t body_offset{};
   field_id norm{field_limits::invalid()};
+};
+
+struct IvfCentroidMeta {
+  uint64_t tree_offset = 0;
+  uint64_t tree_byte_size = 0;
+  uint64_t stats_offset = 0;
+  uint64_t stats_byte_size = 0;
 };
 
 inline constexpr std::string_view kIdxFormatExt = "idx";
@@ -68,7 +75,8 @@ class IdxReader final {
   IdxReader(const IdxReader&) = delete;
   IdxReader& operator=(const IdxReader&) = delete;
 
-  const TwoLayerCentroids* Ivf(field_id id) const noexcept;
+  bool HasIvf(field_id id) const noexcept;
+  const CentroidsTree* Ivf(field_id id) const noexcept;
 
   std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
 

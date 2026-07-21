@@ -20,76 +20,24 @@
 
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 
-#include <cmath>
 #include <cstring>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <memory>
 #include <span>
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/misc.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "iresearch/utils/vector.hpp"
-#include "pg/sql_exception_macro.h"
 
 namespace irs {
-namespace {
-
-float CosineSimilarity(const byte_type* l, const byte_type* r, uint16_t d) {
-  const auto [ll, lr, rr] =
-    vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
-  const float denom = std::sqrt(ll) * std::sqrt(rr);
-  return denom == 0.f ? 0.f : lr / denom;
-}
-
-float NegL2SqrDistance(const byte_type* l, const byte_type* r, uint16_t d) {
-  return -vector::L2Space<float, float, float>::Dist(l, r, d);
-}
-
-float NegL1Distance(const byte_type* l, const byte_type* r, uint16_t d) {
-  return -vector::L1Space<float, float, float>::Dist(l, r, d);
-}
-
-}  // namespace
-
-VectorDistanceFn ResolveVectorDistance(VectorMetric metric) {
-  switch (metric) {
-    case VectorMetric::L2Sqr:
-      return &vector::L2Space<float, float, float>::Dist;
-    case VectorMetric::L1:
-      return &vector::L1Space<float, float, float>::Dist;
-    case VectorMetric::InnerProduct:
-      return &vector::DotProductImpl<float, float>::Compute;
-    case VectorMetric::Cosine:
-      return &CosineSimilarity;
-  }
-  THROW_SQL_ERROR(ERR_MSG("unsupported IVF vector metric"));
-}
 
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric) {
-  switch (metric) {
-    case VectorMetric::L2Sqr:
-      return &NegL2SqrDistance;
-    case VectorMetric::L1:
-      return &NegL1Distance;
-    case VectorMetric::InnerProduct:
-      return &vector::DotProductImpl<float, float>::Compute;
-    case VectorMetric::Cosine:
-      return &CosineSimilarity;
-  }
-  THROW_SQL_ERROR(ERR_MSG("unsupported IVF vector metric"));
-}
-
-bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept {
-  switch (metric) {
-    case VectorMetric::InnerProduct:
-    case VectorMetric::Cosine:
-      return true;
-    case VectorMetric::L2Sqr:
-    case VectorMetric::L1:
-      return false;
-  }
-  return false;
+  VectorDistanceFn fn = nullptr;
+  ResolveEnum<VectorMetric>(
+    metric, [&]<VectorMetric Metric>() { fn = &ComputeDistance<Metric>; });
+  return fn;
 }
 
 bool VectorMetricIsAngular(VectorMetric metric) noexcept {
@@ -99,40 +47,33 @@ bool VectorMetricIsAngular(VectorMetric metric) noexcept {
 IvfVectorReader::IvfVectorReader(const ColumnReader& vector_column,
                                  ReadContext& ctx)
   : _d{static_cast<uint32_t>(vector_column.ArraySize())},
-    _child{vector_column.Child()},
+    _reader{&vector_column},
     _ctx{&ctx},
-    _scan{vector_column.Child()->InitScan(ctx)},
-    _buf{duckdb::LogicalType::FLOAT, static_cast<duckdb::idx_t>(_d)} {
+    _scan{vector_column.InitScan(ctx)} {
   SDB_ASSERT(vector_column.Child());
 }
 
-void IvfVectorReader::ReadInto(uint64_t start, uint64_t count) {
-  if (start < _pos) {
-    _scan = _child->InitScan(*_ctx);
-    _pos = 0;
+void IvfVectorReader::Seek(uint64_t row) {
+  if (row < _reader->GatherCursor(_scan)) {
+    _scan = _reader->InitScan(*_ctx);
   }
-  if (start > _pos) {
-    _child->Skip(_scan, static_cast<duckdb::idx_t>(start - _pos));
-    _pos = start;
-  }
-  uint64_t done = 0;
-  while (done < count) {
-    const auto n =
-      _child->ScanCount(_scan, _buf, static_cast<duckdb::idx_t>(count - done),
-                        static_cast<duckdb::idx_t>(done));
-    SDB_ASSERT(n > 0);
-    done += n;
-    _pos += n;
+  if (const uint64_t cur = _reader->GatherCursor(_scan); row > cur) {
+    _reader->Skip(_scan, static_cast<duckdb::idx_t>(row - cur));
   }
 }
 
 const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
   SDB_ASSERT(count >= 1);
   const uint64_t row0 = static_cast<uint64_t>(first) - doc_limits::min();
-  const size_t total = count * _d;
-  _buf.Reserve(total);
-  ReadInto(row0 * _d, total);
-  return duckdb::FlatVector::GetData<float>(_buf);
+  if (count > _cap) {
+    _cap = count;
+    _out = std::make_unique<duckdb::Vector>(_reader->Type(),
+                                            static_cast<duckdb::idx_t>(_cap));
+  }
+  Seek(row0);
+  _reader->Scan(_scan, *_out, static_cast<duckdb::idx_t>(count));
+  return duckdb::FlatVector::GetData<float>(
+    duckdb::ArrayVector::GetChildMutable(*_out));
 }
 
 }  // namespace irs

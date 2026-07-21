@@ -19,7 +19,7 @@ CREATE TABLE sq4_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX sq4_l2_idx ON sq4_l2
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
   INCLUDE (label)
 
 statement count 6
@@ -58,7 +58,7 @@ CREATE TABLE sq4_mc (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq4_mc_idx ON sq4_mc
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 3))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
 
 statement count 6
 INSERT INTO sq4_mc VALUES
@@ -95,7 +95,7 @@ CREATE TABLE sq4_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq4_dml_idx ON sq4_dml
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
 
 statement count 4
 INSERT INTO sq4_dml VALUES
@@ -137,7 +137,7 @@ CREATE TABLE sq4_ip (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq4_ip_idx ON sq4_ip
-  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq4', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq4'))
 
 statement count 4
 INSERT INTO sq4_ip VALUES
@@ -166,7 +166,7 @@ CREATE TABLE sq4_hyb (pk INTEGER PRIMARY KEY, emb FLOAT[3], cat INTEGER)
 
 statement ok
 CREATE INDEX sq4_hyb_idx ON sq4_hyb
-  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq4'))
 
 statement count 4
 INSERT INTO sq4_hyb VALUES

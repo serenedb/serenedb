@@ -347,6 +347,45 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_ivf_sample_factor",
+      {
+        LogicalTypeId::DOUBLE,
+        "Fraction of rows used to train the IVF centroid tree "
+        "(sample_size = sample_factor * N), captured into the index config at "
+        "CREATE INDEX. 0 (default) uses an automatic heuristic; any value in "
+        "(0, 1] overrides it. Default 0 (adaptive).",
+        [] { return duckdb::Value::DOUBLE(0.0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto f = value.GetValue<double>();
+          if (f < 0.0 || f > 1.0) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_ivf_sample_factor\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
+      "sdb_ivf_posting_size",
+      {
+        LogicalTypeId::INTEGER,
+        "Target IVF posting-list size (leaf cap t), captured into the index "
+        "config at CREATE INDEX. Smaller values force deeper multi-level "
+        "centroid trees (useful for testing). Default 1024.",
+        [] { return duckdb::Value::INTEGER(1024); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 1) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_ivf_posting_size\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
       "sdb_rerank_factor",
       {
         LogicalTypeId::INTEGER,

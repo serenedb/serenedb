@@ -192,15 +192,19 @@ statement error
 CREATE INDEX compr_mismatch_num ON compr_bad_num USING inverted(txt compr_english)
   INCLUDE (pk, n included (compression = 'fsst'));
 
-# --- 9. IVF rejects the compression option -----------------------------
-# `compression` is no longer an IVF opclass option; vectors always use the
-# auto codec. It stays valid on the `included` opclass (cases above).
+# --- 9. IVF accepts the compression boolean option ---------------------
+# `compression` is a boolean IVF opclass option (default true; false stores
+# the index vectors uncompressed). A non-boolean value is rejected.
 statement ok
 CREATE TABLE ivf_comp (id INT PRIMARY KEY, emb FLOAT[3]);
 
-statement error unknown ivf option 'compression'
-CREATE INDEX ivf_comp_unc ON ivf_comp
+statement error ivf option 'compression' must be a boolean
+CREATE INDEX ivf_comp_bad ON ivf_comp
   USING inverted(emb ivf (metric = 'l2', compression = 'uncompressed'));
+
+statement ok
+CREATE INDEX ivf_comp_unc ON ivf_comp
+  USING inverted(emb ivf (metric = 'l2', compression = false));
 
 # --- 10. IVF vector column visible to materialization ------------------
 # After auto-promoting ivf columns to store_values=true, the materializer

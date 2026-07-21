@@ -369,6 +369,31 @@ target_compile_definitions(
 add_subdirectory(fastText)
 
 ################################################################################
+### BLAS
+################################################################################
+add_library(sdb_blas INTERFACE)
+add_library(sdb::blas ALIAS sdb_blas)
+
+sdb_update_module(${GIT_EXECUTABLE} "OpenBLAS" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+set(USE_THREAD 0 CACHE BOOL "" FORCE)
+set(USE_OPENMP 0 CACHE BOOL "" FORCE)
+set(USE_LOCKING 1 CACHE BOOL "" FORCE)
+set(NO_WARMUP 1 CACHE BOOL "" FORCE)
+set(NO_AFFINITY 1 CACHE BOOL "" FORCE)
+set(NO_LAPACK 1 CACHE BOOL "" FORCE)
+set(BUILD_SINGLE 1 CACHE BOOL "" FORCE) # only sgemm_ is ever called; drops DOUBLE/COMPLEX/COMPLEX16
+set(NO_CBLAS 1 CACHE BOOL "" FORCE) # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
+set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
+set(DYNAMIC_ARCH OFF CACHE BOOL "" FORCE)
+if(ARCH_AARCH64)
+    set(TARGET ARMV8 CACHE STRING "" FORCE)
+elseif(ARCH_AMD64)
+    set(TARGET HASWELL CACHE STRING "" FORCE)
+endif()
+add_subdirectory(OpenBLAS)
+target_link_libraries(sdb_blas INTERFACE openblas)
+
+################################################################################
 ### faiss library
 ################################################################################
 set(FAISS_LIB "")
@@ -377,15 +402,23 @@ if(ARCH_AMD64)
     set(FAISS_OPT_LEVEL "avx2")
     set(FAISS_LIB faiss_avx2)
 elseif(ARCH_AARCH64)
-    # TODO(mbkkt) is it ok?
-    set(FAISS_OPT_LEVEL "sve")
-    set(FAISS_LIB faiss_sve)
+    set(FAISS_OPT_LEVEL "generic")
+    set(FAISS_LIB faiss)
 endif()
+set(FAISS_LIB "${FAISS_LIB}" CACHE INTERNAL "faiss target to link" FORCE)
 
 sdb_update_module(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
+set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
 add_subdirectory(faiss)
+target_compile_options(
+    ${FAISS_LIB}
+    PUBLIC
+        -Wno-suggest-override
+        -Wno-sign-compare
+        -Wno-suggest-destructor-override
+)
 
 ################################################################################
 ## snowball stemmer

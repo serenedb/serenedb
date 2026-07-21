@@ -69,7 +69,7 @@ target_link_libraries(
         absl::status
         absl::statusor
         absl::strings
-        faiss
+        ${FAISS_LIB}
         fmt::fmt
         yaclib
         zlib

@@ -417,10 +417,8 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .d = cfg.d,
     .metric = cfg.metric,
     .quant = {.kind = cfg.quant, .pq_m = cfg.pq_m, .nb_bits = cfg.rabitq_bits},
-    .nlist = cfg.nlist,
-    .nlist_factor = cfg.nlist_factor,
-    .train_sample = cfg.train_sample,
-    .cluster_iters = cfg.cluster_iters,
+    .sample_factor = cfg.sample_factor,
+    .posting_size = cfg.posting_size,
   };
 }
 

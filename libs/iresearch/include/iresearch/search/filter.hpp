@@ -73,7 +73,7 @@ class QueryBuilder : public memory::Managed {
 
   QueryBuilder(const SubReader& segment) noexcept : _segment{segment} {}
 
-  virtual ~QueryBuilder() = default;
+  virtual ~QueryBuilder() override = default;
 
   static QueryBuilder::ptr Empty();
   virtual DocIterator::ptr Execute(const ExecutionContext& ctx,

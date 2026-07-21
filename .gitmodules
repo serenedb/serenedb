@@ -198,3 +198,7 @@
 	path = third_party/duckdb_inet
 	url = https://github.com/serenedb/duckdb-inet.git
 	shallow = true
+[submodule "third_party/brotli"]
+	path = third_party/brotli
+	url = git@github.com:serenedb/brotli.git
+	shallow = true

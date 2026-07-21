@@ -37,7 +37,6 @@
 
 * [Boost](http://www.boost.org)
 * [function2](https://github.com/Naios/function2)
-* [immer](https://github.com/arximboldi/immer)
 * [Boost::Text](https://github.com/tzlaine/text)
 
 ### [MIT license](https://opensource.org/licenses/MIT)

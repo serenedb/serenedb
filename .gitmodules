@@ -26,10 +26,6 @@
 	path = third_party/zlib-ng
 	url = https://github.com/serenedb/zlib-ng.git
 	shallow = true
-[submodule "third_party/immer"]
-	path = third_party/immer
-	url = https://github.com/serenedb/immer.git
-	shallow = true
 [submodule "third_party/tcmalloc"]
 	path = third_party/tcmalloc
 	url = https://github.com/serenedb/tcmalloc.git

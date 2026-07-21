@@ -579,7 +579,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
-                                        bool* commit_on_flush) {
+                                        uint64_t* commit_on_flush) {
   SDB_ASSERT(batch_size > 0);
   if (_document) {
     _document.reset();

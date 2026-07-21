@@ -39,6 +39,7 @@
 #include <deque>
 #include <iterator>
 #include <mutex>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -74,10 +75,12 @@ std::string RowIdKey(duckdb::row_t row) {
 // partition, so per-key op order -- incl. rowid reuse and truncate -- is the
 // dispatch order) and partitions drain on the duckdb task scheduler: at most
 // one drain task per partition at a time, so each writer transaction stays
-// single-threaded, the writer's supported model. Partitions never commit
-// mid-replay (segment flushes bound memory; tickless commits are unsafe on
-// pooled segments); FinishReplay drains the executor and commits each
-// transaction on its own ascending TickDomain range.
+// single-threaded, the writer's supported model. A full segment flushes and
+// commits mid-drain on its per-batch reserved tick (commit-on-flush, bounding
+// replay memory); FinishReplay drains the executor, records the cursor at the
+// last reserved tick, then flush+commits every trailing segment in parallel.
+// Nothing becomes durable ahead of that cursor: background refresh stays off
+// until the whole feed is committed.
 struct InvertedStoreIndex::ReplaySession {
   struct Batch {
     bool is_delete = false;
@@ -141,7 +144,15 @@ struct InvertedStoreIndex::ReplaySession {
         count};
 
       auto& ins = *insert_writer;
-      ins.Init(count, PkChunk{.keys = key_views, .column = &rowid_vec});
+      // A full segment commits on flush, bounding replay memory; everything
+      // buffered so far is covered by the last reserved tick.
+      uint64_t commit_tick = pending_ops != 0 ? last_reserved_tick : 0;
+      ins.InitImpl(count, PkChunk{.keys = key_views, .column = &rowid_vec},
+                   &commit_tick);
+      if (commit_tick == 1) {
+        pending_ops = 0;
+      }
+      Reserve();
       for (duckdb::idx_t k = 0; k < batch.chunk.ColumnCount(); ++k) {
         const ColumnDescriptor desc{s.ref_col_ids[k], s.ref_types[k]};
         ins.SwitchColumn(desc, batch.chunk.data[k], count);
@@ -169,7 +180,16 @@ struct InvertedStoreIndex::ReplaySession {
         delete_writer->DeleteRow(key);
       }
       delete_writer->Finish();
+      Reserve();
       ++ops;
+    }
+
+    // Every batch is one writer query tick (inserts advance by one, a delete
+    // batch is one Remove filter); reserving per batch keeps the domain in
+    // step so a mid-replay commit always has its covering tick at hand.
+    void Reserve() {
+      last_reserved_tick = search::TickDomain::Instance().Advance(1);
+      ++pending_ops;
     }
 
     void Teardown() {
@@ -186,11 +206,16 @@ struct InvertedStoreIndex::ReplaySession {
     std::unique_ptr<DuckDBSearchSinkDeleteWriter> delete_writer;
     bool expr_txn_open = false;
     uint64_t ops = 0;
-    uint64_t last_tick = 0;
+    uint64_t pending_ops = 0;
+    uint64_t last_reserved_tick = 0;
 
     std::mutex mu;
     std::deque<std::unique_ptr<Batch>> queue;
     bool running = false;
+
+    // Producer-side only: rows accumulate here until kBatchRows (or an op-kind
+    // switch) so drainers see few, large batches instead of per-chunk slivers.
+    std::unique_ptr<Batch> staging;
   };
 
   struct DrainTask final : duckdb::BaseExecutorTask {
@@ -204,19 +229,52 @@ struct InvertedStoreIndex::ReplaySession {
     Partition& partition;
   };
 
+  struct CommitTask final : duckdb::BaseExecutorTask {
+    CommitTask(duckdb::TaskExecutor& executor_in, Partition& partition_in,
+               ObjectId index_id_in)
+      : BaseExecutorTask{executor_in},
+        partition{partition_in},
+        index_id{index_id_in} {}
+
+    void ExecuteTask() override {
+      partition.insert_writer.reset();
+      partition.delete_writer.reset();
+      SDB_ENSURE(partition.trx.FlushAndCommit(partition.last_reserved_tick),
+                 "inverted index replay: commit failed for index ",
+                 index_id.id());
+    }
+
+    std::string TaskType() const override { return "InvertedReplayCommit"; }
+
+    Partition& partition;
+    ObjectId index_id;
+  };
+
   static constexpr size_t kMaxQueuedBatches = 4;
+  static constexpr size_t kBatchRows = 2048;
+  static constexpr uint64_t kFanOutRows = 32768;
 
   std::shared_ptr<search::InvertedIndexStorage> storage;
   std::shared_ptr<const catalog::Snapshot> snapshot;
   std::shared_ptr<const catalog::InvertedIndex> index;
   std::shared_ptr<const catalog::Table> table;
   std::vector<duckdb::idx_t> ref_positions;
+  std::vector<duckdb::idx_t> compact_positions;
   std::vector<catalog::Column::Id> ref_col_ids;
   duckdb::vector<duckdb::LogicalType> ref_types;
   duckdb::DatabaseInstance& instance;
   duckdb::TaskExecutor executor;
   std::vector<std::unique_ptr<Partition>> partitions;
   uint64_t durable_offset = 0;
+  // Fan out only past kFanOutRows: every partition ends as its own segment
+  // whose files the writer commit fsyncs, so for a small delta one partition
+  // beats saving microseconds of tokenization. Until the threshold, batches
+  // buffer un-scattered; per-key order is safe because nothing is processed
+  // before the partition count is final.
+  std::vector<std::unique_ptr<Batch>> pre_buffer;
+  uint64_t buffered_rows = 0;
+  size_t width = 1;
+  bool fanned_out = false;
 
   ReplaySession(std::shared_ptr<search::InvertedIndexStorage> storage_in,
                 std::shared_ptr<const catalog::Snapshot> snapshot_in,
@@ -242,6 +300,8 @@ struct InvertedStoreIndex::ReplaySession {
       ref_col_ids.push_back(chunk_column_ids[pos]);
       ref_types.push_back(col->type);
     }
+    compact_positions.resize(ref_positions.size());
+    absl::c_iota(compact_positions, 0);
     partitions.resize(std::clamp<duckdb::idx_t>(
       duckdb::TaskScheduler::GetScheduler(db).NumberOfThreads(), 1, 8));
   }
@@ -255,8 +315,6 @@ struct InvertedStoreIndex::ReplaySession {
     }
   }
 
-  // Scatter one replayed batch: per-partition rowid lists (and for inserts a
-  // per-partition owned copy of the referenced rows).
   void Dispatch(bool is_delete, duckdb::DataChunk& chunk,
                 duckdb::Vector& row_ids, duckdb::idx_t count) {
     if (executor.HasError()) {
@@ -267,7 +325,57 @@ struct InvertedStoreIndex::ReplaySession {
     const auto* rows =
       duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(row_fmt);
 
-    const auto n = partitions.size();
+    if (!fanned_out) {
+      auto batch = std::make_unique<Batch>();
+      batch->is_delete = is_delete;
+      batch->rowids.reserve(count);
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        batch->rowids.push_back(
+          static_cast<int64_t>(rows[row_fmt.sel->get_index(i)]));
+      }
+      if (!is_delete) {
+        // Only the referenced columns: replay chunks leave the rest
+        // unmaterialized. Row i stays row i, so a later scatter can select
+        // straight from this compact copy.
+        batch->chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
+                                ref_types, count);
+        for (size_t k = 0; k < ref_positions.size(); ++k) {
+          duckdb::VectorOperations::Copy(chunk.data[ref_positions[k]],
+                                         batch->chunk.data[k], count, 0, 0);
+        }
+        batch->chunk.SetCardinality(count);
+      }
+      buffered_rows += count;
+      pre_buffer.push_back(std::move(batch));
+      if (buffered_rows >= kFanOutRows) {
+        width = partitions.size();
+        fanned_out = true;
+        DrainPreBuffer();
+      }
+      return;
+    }
+
+    Scatter(is_delete, chunk, ref_positions, [&](duckdb::idx_t i) {
+      return static_cast<int64_t>(rows[row_fmt.sel->get_index(i)]);
+    }, count);
+  }
+
+  void DrainPreBuffer() {
+    for (auto& buffered : pre_buffer) {
+      Scatter(buffered->is_delete, buffered->chunk, compact_positions,
+              [&](duckdb::idx_t i) { return buffered->rowids[i]; },
+              buffered->rowids.size());
+    }
+    pre_buffer.clear();
+  }
+
+  // Scatter one batch: per-partition rowid lists (and for inserts a
+  // per-partition owned copy of the referenced rows).
+  template<typename RowIdAt>
+  void Scatter(bool is_delete, duckdb::DataChunk& chunk,
+               std::span<const duckdb::idx_t> positions, RowIdAt row_at,
+               duckdb::idx_t count) {
+    const auto n = width;
     std::vector<std::vector<int64_t>> rowids(n);
     std::vector<duckdb::SelectionVector> sels;
     std::vector<duckdb::idx_t> counts(n, 0);
@@ -278,8 +386,7 @@ struct InvertedStoreIndex::ReplaySession {
       }
     }
     for (duckdb::idx_t i = 0; i < count; ++i) {
-      const auto row =
-        static_cast<int64_t>(rows[row_fmt.sel->get_index(i)]);
+      const auto row = row_at(i);
       const auto w = static_cast<uint64_t>(row) % n;
       rowids[w].push_back(row);
       if (!is_delete) {
@@ -290,27 +397,39 @@ struct InvertedStoreIndex::ReplaySession {
       if (rowids[w].empty()) {
         continue;
       }
-      auto batch = std::make_unique<Batch>();
-      batch->is_delete = is_delete;
-      batch->rowids = std::move(rowids[w]);
-      if (!is_delete) {
-        // Only the referenced columns: replay chunks leave the rest
-        // unmaterialized, and the compact layout maps slot k exactly to
-        // ref_col_ids[k] for the writer and the expression evaluator.
-        batch->chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
-                                ref_types, counts[w]);
-        for (size_t k = 0; k < ref_positions.size(); ++k) {
-          duckdb::VectorOperations::Copy(chunk.data[ref_positions[k]],
-                                         batch->chunk.data[k], sels[w],
-                                         counts[w], 0, 0);
-        }
-        batch->chunk.SetCardinality(counts[w]);
-      }
       auto& slot = partitions[w];
       if (!slot) {
         slot = std::make_unique<Partition>(*this, instance);
       }
-      Push(*slot, std::move(batch));
+      auto& partition = *slot;
+      auto& staging = partition.staging;
+      if (staging &&
+          (staging->is_delete != is_delete ||
+           staging->rowids.size() + rowids[w].size() > kBatchRows)) {
+        Push(partition, std::move(staging));
+      }
+      if (!staging) {
+        staging = std::make_unique<Batch>();
+        staging->is_delete = is_delete;
+        staging->rowids.reserve(kBatchRows);
+        if (!is_delete) {
+          staging->chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
+                                    ref_types, kBatchRows);
+        }
+      }
+      const auto at = staging->rowids.size();
+      staging->rowids.insert(staging->rowids.end(), rowids[w].begin(),
+                             rowids[w].end());
+      if (!is_delete) {
+        // The compact layout maps slot k exactly to ref_col_ids[k] for the
+        // writer and the expression evaluator.
+        for (size_t k = 0; k < positions.size(); ++k) {
+          duckdb::VectorOperations::Copy(chunk.data[positions[k]],
+                                         staging->chunk.data[k], sels[w],
+                                         counts[w], 0, at);
+        }
+        staging->chunk.SetCardinality(at + counts[w]);
+      }
     }
   }
 
@@ -425,6 +544,14 @@ void InvertedStoreIndex::FinishReplay() {
   }
   auto& session = *_replay;
   const absl::Cleanup reset = [&] { _replay.reset(); };
+  if (!session.fanned_out) {
+    session.DrainPreBuffer();
+  }
+  for (auto& partition : session.partitions) {
+    if (partition && partition->staging) {
+      session.Push(*partition, std::move(partition->staging));
+    }
+  }
   session.executor.WorkOnTasks();
   uint64_t total_ops = 0;
   for (auto& partition : session.partitions) {
@@ -435,30 +562,29 @@ void InvertedStoreIndex::FinishReplay() {
   if (total_ops == 0) {
     return;
   }
-  // One ascending tick range per partition; the cursor records the final tick
-  // before any commit so a mid-commit crash re-replays rather than skips.
-  auto& tick_domain = search::TickDomain::Instance();
+  // Ticks were reserved per batch while draining; the cursor records the
+  // final one before the trailing commits so a mid-commit crash re-replays
+  // rather than skips.
   uint64_t final_tick = 0;
   for (auto& partition : session.partitions) {
     if (partition && partition->ops != 0) {
-      partition->last_tick = tick_domain.Advance(partition->ops);
-      final_tick = partition->last_tick;
+      final_tick = std::max(final_tick, partition->last_reserved_tick);
     }
   }
   auto& sm = db.GetStorageManager();
   session.storage->RecordFlushCursor(
     final_tick, search::WalCursor{sm.GetBlockManager().GetCheckpointIteration(),
                                   sm.GetWALSize()});
+  // Segment flush is the expensive half of a commit; the transactions are
+  // independent, so flush them in parallel and only order by pre-issued ticks.
   for (auto& partition : session.partitions) {
     if (!partition || partition->ops == 0) {
       continue;
     }
-    partition->insert_writer.reset();
-    partition->delete_writer.reset();
-    SDB_ENSURE(partition->trx.Commit(partition->last_tick),
-               "inverted index replay: commit failed for index ",
-               _index_id.id());
+    session.executor.ScheduleTask(duckdb::make_uniq<ReplaySession::CommitTask>(
+      session.executor, *partition, _index_id));
   }
+  session.executor.WorkOnTasks();
 }
 
 duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,

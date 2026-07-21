@@ -26,7 +26,10 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
@@ -51,13 +54,13 @@
 namespace sdb::search {
 namespace {
 
-// Commit the replay transaction of every injected inverted index on one
-// store table. The indexes were injected bound when the store DataTable came
-// alive during attach, so this boot's WAL replay streamed the post-checkpoint
-// delta straight into each index's replay session; FinishReplay commits it
-// into the iresearch storage in one shot.
-void FinishStoreTableReplay(duckdb::ClientContext& context,
-                            ObjectId table_id) {
+// Collect the injected inverted indexes of one store table. The indexes were
+// injected bound when the store DataTable came alive during attach, so this
+// boot's WAL replay streamed the post-checkpoint delta straight into each
+// index's replay session; FinishReplay commits it into the iresearch storage.
+void CollectStoreTableReplays(duckdb::ClientContext& context,
+                              ObjectId table_id,
+                              std::vector<duckdb::BoundIndex*>& out) {
   const auto store_name = catalog::StoreTableName(table_id);
   auto& entry = duckdb::Catalog::GetEntry(
                   context, duckdb::CatalogType::TABLE_ENTRY,
@@ -69,10 +72,34 @@ void FinishStoreTableReplay(duckdb::ClientContext& context,
        entry.GetStorage().GetDataTableInfo()->GetIndexes().Indexes()) {
     if (index.IsBound() &&
         index.GetIndexType() == connector::InvertedStoreIndex::kTypeName) {
-      index.Cast<duckdb::BoundIndex>().FinishReplay();
+      out.push_back(&index.Cast<duckdb::BoundIndex>());
     }
   }
 }
+
+struct FinishReplayTask final : duckdb::BaseExecutorTask {
+  FinishReplayTask(duckdb::TaskExecutor& executor_in,
+                   duckdb::BoundIndex& index_in)
+    : BaseExecutorTask{executor_in}, index{index_in} {}
+
+  void ExecuteTask() override { index.FinishReplay(); }
+
+  std::string TaskType() const override { return "InvertedFinishReplay"; }
+
+  duckdb::BoundIndex& index;
+};
+
+struct RefreshTask final : duckdb::BaseExecutorTask {
+  RefreshTask(duckdb::TaskExecutor& executor_in,
+              InvertedIndexStorage& storage_in)
+    : BaseExecutorTask{executor_in}, storage{storage_in} {}
+
+  void ExecuteTask() override { storage.Refresh(); }
+
+  std::string TaskType() const override { return "InvertedRecoveryRefresh"; }
+
+  InvertedIndexStorage& storage;
+};
 
 }  // namespace
 
@@ -103,7 +130,6 @@ void InitInvertedIndexes() {
         SDB_ASSERT(inv_storage);
         // Keep ordinals monotone across restarts.
         TickDomain::Instance().SeedAtLeast(inv_storage->GetRecoveryTick());
-        inv_storage->StartTasks();
 
         // View-backed indexes are static -- the view body doesn't change at
         // runtime, so the persisted index is already current.
@@ -111,10 +137,15 @@ void InitInvertedIndexes() {
         const bool table_backed =
           relation && relation->GetType() == catalog::ObjectType::Table;
         if (!table_backed) {
+          inv_storage->StartTasks();
           static_storages.push_back(std::move(inv_storage));
           continue;
         }
 
+        // Background refresh/compaction stay off until the feed is committed:
+        // replay commits segments mid-feed, and a background writer commit
+        // would make them durable ahead of the recorded cursor (a crash then
+        // re-feeds those rows). StartTasks happens after the final refresh.
         inv_storage->StartRecovery();
         recovering_storages.push_back(std::move(inv_storage));
         const auto table_id = relation->GetId();
@@ -149,16 +180,28 @@ void InitInvertedIndexes() {
     } catch (...) {  // NOLINT(bugprone-empty-catch)
     }
   };
+  std::vector<duckdb::BoundIndex*> to_finish;
   for (const auto table_id : tables_to_bind) {
-    FinishStoreTableReplay(*conn->context, table_id);
+    CollectStoreTableReplays(*conn->context, table_id, to_finish);
   }
+  duckdb::TaskExecutor executor{
+    duckdb::TaskScheduler::GetScheduler(*conn->context)};
+  for (auto* index : to_finish) {
+    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(executor, *index));
+  }
+  executor.WorkOnTasks();
 
   // The replay committed the delta into each storage's writer, but the
   // storage's query snapshot is only refreshed by a background commit. Force it
   // now so the recovered rows are searchable the instant the server accepts
   // queries.
   for (auto& storage : recovering_storages) {
-    storage->Refresh();
+    executor.ScheduleTask(duckdb::make_uniq<RefreshTask>(executor, *storage));
+  }
+  executor.WorkOnTasks();
+
+  for (auto& storage : recovering_storages) {
+    storage->StartTasks();
   }
 
   const auto duration =

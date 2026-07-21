@@ -674,7 +674,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     pk.keys = key_views;
   }
 
-  bool committed = false;
+  uint64_t committed = 0;
   writer->InitImpl(num_rows, pk, &committed);
 
   for (const auto& col : gstate.columns) {

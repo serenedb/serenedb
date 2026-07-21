@@ -661,19 +661,6 @@ bool IsCoveredColumnResidual(
   return walk(expr) && col != catalog::Column::kInvalidId;
 }
 
-bool ExprHasColumnRef(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() ==
-      duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    return true;
-  }
-  bool found = false;
-  duckdb::ExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::Expression& child) {
-      found = found || ExprHasColumnRef(child);
-    });
-  return found;
-}
-
 bool ResidualComputesOverColumn(const duckdb::Expression& expr) {
   using C = duckdb::ExpressionClass;
   using T = duckdb::ExpressionType;
@@ -688,7 +675,7 @@ bool ResidualComputesOverColumn(const duckdb::Expression& expr) {
     type == T::COMPARE_LESSTHANOREQUALTO ||
     type == T::COMPARE_GREATERTHANOREQUALTO || type == T::CONJUNCTION_AND;
   if (!plain_comparison) {
-    return ExprHasColumnRef(expr);
+    return !expr.IsFoldable();
   }
   bool found = false;
   duckdb::ExpressionIterator::EnumerateChildren(

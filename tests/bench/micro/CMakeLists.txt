@@ -65,10 +65,12 @@ target_include_directories(
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
 )
 
+# regexp_vs_wildcard splits UTF-8 via duckdb's vendored utf8proc + simdutf.
+target_link_libraries(serenedb-bench-micro-regexp_vs_wildcard PRIVATE simdutf)
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard
     SYSTEM
-    PRIVATE $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
 target_include_directories(

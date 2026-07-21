@@ -42,10 +42,6 @@
 	path = third_party/liburing
 	url = https://github.com/serenedb/liburing.git
 	shallow = true
-[submodule "third_party/tests/rapidjson"]
-	path = third_party/tests/rapidjson
-	url = https://github.com/serenedb/rapidjson.git
-	shallow = true
 [submodule "third_party/minizip-ng"]
 	path = third_party/minizip-ng
 	url = https://github.com/serenedb/minizip-ng.git

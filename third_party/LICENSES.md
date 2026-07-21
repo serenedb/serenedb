@@ -125,8 +125,5 @@
 
 Libraries used only by the test suite, not shipped in the distribution.
 
-* [cmdline](https://github.com/tanakh/cmdline)
-* [RapidJSON](https://github.com/Tencent/rapidjson)
-* [utfcpp](https://github.com/nemtrif/utfcpp)
 * [sqllogictest-rs](https://github.com/risinglightdb/sqllogictest-rs)
 * [sqlite sqllogictest](https://github.com/gregrahn/sqllogictest/blob/master/COPYRIGHT.md)

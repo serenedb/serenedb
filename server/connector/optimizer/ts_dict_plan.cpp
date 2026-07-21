@@ -618,19 +618,18 @@ void CollectEnumFieldRefs(
     });
 }
 
-bool IsCoveredColumnResidual(
-  const duckdb::Expression& expr,
-  const connector::SereneDBScanBindData& bind_data,
-  const duckdb::LogicalGet& get, const catalog::InvertedIndex& index) {
+bool IsCoveredColumnResidual(const duckdb::Expression& expr,
+                             const connector::SereneDBScanBindData& bind_data,
+                             const duckdb::LogicalGet& get,
+                             const catalog::InvertedIndex& index) {
   using C = duckdb::ExpressionClass;
   using T = duckdb::ExpressionType;
   auto col = catalog::Column::kInvalidId;
   const auto walk = [&](this auto& self, const duckdb::Expression& e) -> bool {
     const auto cls = e.GetExpressionClass();
     if (cls == C::BOUND_COLUMN_REF) {
-      const auto id =
-        ResolveColumnId(e.Cast<duckdb::BoundColumnRefExpression>().Binding(),
-                        bind_data, get);
+      const auto id = ResolveColumnId(
+        e.Cast<duckdb::BoundColumnRefExpression>().Binding(), bind_data, get);
       if (id == catalog::Column::kInvalidId ||
           id == catalog::Column::kInvertedIndexTermId) {
         return false;

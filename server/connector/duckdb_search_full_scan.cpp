@@ -1077,12 +1077,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->mode = DecideScanMode(*state, ss);
   if (state->mode == ScanMode::TsDict) {
     const auto& out = state->output_projection_ids;
-    const bool real_output =
-      out.empty() ? state->has_real_column
-                  : absl::c_any_of(out, [&](duckdb::idx_t proj) {
-                      return state->projected_columns[proj] !=
-                             duckdb::DConstants::INVALID_INDEX;
-                    });
+    const bool real_output = out.empty()
+                               ? state->has_real_column
+                               : absl::c_any_of(out, [&](duckdb::idx_t proj) {
+                                   return state->projected_columns[proj] !=
+                                          duckdb::DConstants::INVALID_INDEX;
+                                 });
     if (real_output) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

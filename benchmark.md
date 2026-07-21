@@ -164,6 +164,21 @@ The zip form is now what ships: both dialects carry composite keys as one flat
 array per key column ("columnar"), zipped server-side — pg by `unnest`,
 ClickHouse by parallel `ARRAY JOIN`.
 
+### 7c. Would unifying single-key onto the zip form cost anything?
+
+(2048 keys; pg EXECUTE-only with $1 array param, alternating; CH
+clickhouse-benchmark, 100 iters.)
+
+| engine | direct single-key form | unified zip form | verdict |
+|---|---|---|---|
+| pg | `id = ANY($1)` — 0.95 ms (Index Scan SAOP) | `id IN (SELECT * FROM unnest($1))` — 1.62 ms (NL + probes + dedup) | **keep = ANY: zip costs +71%** |
+| CH | `id IN [arr]` — 3.80 ms | zip subquery — 3.88 ms | identical within noise |
+
+pg's `= ANY` compiles to a ScalarArrayOp index scan (one machinery-free btree
+descent per key); the IN-subquery form adds a Unique/Sort dedup and join
+plumbing. ClickHouse builds the same hash set either way. So the single-key
+special case stays for pg (and CH keeps the symmetric direct form for free).
+
 Through our code (gul, ~103-key batches, same stack):
 
 | path | per batch | note |

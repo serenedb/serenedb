@@ -44,6 +44,7 @@ add_bench(select_thresholds)
 add_bench(simd_base64)
 add_bench(simd_json_validate)
 add_bench(simd_utf8_validate)
+add_bench(frozen_vs_alternatives)
 
 # SIMD string-encoding benches: link the candidate libraries directly.
 target_link_libraries(serenedb-bench-micro-simd_base64 PRIVATE simdutf)
@@ -63,6 +64,19 @@ target_include_directories(
     serenedb-bench-micro-ci_hash
     SYSTEM
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
+)
+
+# frozen_vs_alternatives measures the boost::text frozen::set use-cases against
+# what we already vendor; needs frozen headers + the boost::text data tables.
+target_link_libraries(serenedb-bench-micro-frozen_vs_alternatives PRIVATE text)
+target_compile_definitions(
+    serenedb-bench-micro-frozen_vs_alternatives
+    PRIVATE BOOST_TEXT_DISABLE_CONCEPTS
+)
+target_include_directories(
+    serenedb-bench-micro-frozen_vs_alternatives
+    SYSTEM
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include
 )
 
 # regexp_vs_wildcard splits UTF-8 via duckdb's vendored utf8proc + simdutf.

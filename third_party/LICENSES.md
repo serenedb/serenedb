@@ -36,7 +36,6 @@
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
 * [Boost](http://www.boost.org)
-* [function2](https://github.com/Naios/function2)
 * [Boost::Text](https://github.com/tzlaine/text)
 
 ### [MIT license](https://opensource.org/licenses/MIT)

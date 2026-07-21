@@ -57,11 +57,12 @@ void SerializeNormColumn(duckdb::Serializer& s, const NormColumnWriter& nw) {
 }
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db)
+                     duckdb::DatabaseInstance& db, duckdb::CompressEffort effort)
   : _dir{&dir},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
-    _db{&db} {}
+    _db{&db},
+    _effort{effort} {}
 
 ColWriter::~ColWriter() {
   if (_out && !_committed) {

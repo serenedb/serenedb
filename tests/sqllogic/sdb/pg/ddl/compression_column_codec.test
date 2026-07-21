@@ -1,0 +1,156 @@
+# Foundation for the compression-codec matrix: the shared plumbing every codec
+# rides on. Covers (1) the four new global compression settings
+# (compression_dictionary, compression_dictionary_scope, zstd_compression_level,
+# lz4_compression_level) round-tripping through SET/SHOW, (2) per-column codec
+# selection for a normal (facade) table via the `USING COMPRESSION <name>`
+# column clause, (3) the global `force_compression` path, and (4) explicit
+# selection re-enabling a version-gated codec (fsst) that auto-selection skips.
+# Data is CHECKPOINTed so the columnstore compression path actually runs, then
+# read back to prove a byte-faithful round-trip.
+
+control substitution on
+
+# --- 1. New global settings register and round-trip ---------------------
+statement ok
+SET compression_dictionary = true;
+
+query
+SHOW compression_dictionary;
+----
+compression_dictionary
+on
+
+statement ok
+SET compression_dictionary_scope = 'row_group';
+
+query
+SHOW compression_dictionary_scope;
+----
+compression_dictionary_scope
+row_group
+
+statement ok
+SET zstd_compression_level = 9;
+
+query
+SHOW zstd_compression_level;
+----
+zstd_compression_level
+9
+
+statement ok
+SET lz4_compression_level = 4;
+
+query
+SHOW lz4_compression_level;
+----
+lz4_compression_level
+4
+
+statement ok
+SET compression_dictionary = false;
+
+statement ok
+SET compression_dictionary_scope = 'none';
+
+
+# --- 2. Per-column USING COMPRESSION on a facade table ------------------
+# zstd and dict_fsst are both selectable per column; validity/other columns
+# stay AUTO. Insert a spread of edge inputs, checkpoint, and read back.
+statement ok
+CREATE TABLE cc_percol (
+    pk INTEGER PRIMARY KEY,
+    z VARCHAR USING COMPRESSION zstd,
+    d VARCHAR USING COMPRESSION dict_fsst
+);
+
+statement ok
+INSERT INTO cc_percol VALUES
+    (1, '', ''),
+    (2, NULL, NULL),
+    (3, 'ascii', 'dup'),
+    (4, 'ünïcödé ☃ 日本語', 'dup'),
+    (5, repeat('x', 20000), 'dup');
+
+statement ok
+INSERT INTO cc_percol SELECT i, 'hi' || i::VARCHAR, 'grp' || (i % 4)::VARCHAR
+    FROM range(6, 5000) t(i);
+
+statement ok
+CHECKPOINT;
+
+query
+SELECT count(*) AS n,
+       count(z) AS nz,
+       count(d) AS nd,
+       max(length(z)) AS maxz
+FROM cc_percol;
+----
+n	nz	nd	maxz
+4999	4998	4998	20000
+
+query
+SELECT z, d FROM cc_percol WHERE pk = 4;
+----
+z	d
+ünïcödé ☃ 日本語	dup
+
+query
+SELECT z FROM cc_percol WHERE pk = 1;
+----
+z
+(empty)
+
+
+# --- 3. Global force_compression round-trip -----------------------------
+statement ok
+SET force_compression = 'zstd';
+
+statement ok
+CREATE TABLE cc_forced (pk INTEGER PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO cc_forced SELECT i, md5(i::VARCHAR) FROM range(3000) t(i);
+
+statement ok
+CHECKPOINT;
+
+query
+SELECT count(*) AS n, count(DISTINCT v) AS d, min(length(v)) AS l FROM cc_forced;
+----
+n	d	l
+3000	3000	32
+
+statement ok
+SET force_compression = 'auto';
+
+
+# --- 4. Explicit selection re-enables a version-gated codec (fsst) ------
+# On the current storage version fsst is skipped by auto-selection (dict_fsst
+# supersedes it), so it can only appear when explicitly named. This proves the
+# force/selection bypass without changing auto-selection defaults.
+statement ok
+CREATE TABLE cc_fsst (pk INTEGER PRIMARY KEY, v VARCHAR USING COMPRESSION fsst);
+
+statement ok
+INSERT INTO cc_fsst SELECT i, 'fsst_value_' || (i % 50)::VARCHAR FROM range(4000) t(i);
+
+statement ok
+CHECKPOINT;
+
+query
+SELECT count(*) AS n, count(DISTINCT v) AS d FROM cc_fsst;
+----
+n	d
+4000	50
+
+
+# --- cleanup ------------------------------------------------------------
+statement ok
+DROP TABLE cc_percol;
+
+statement ok
+DROP TABLE cc_forced;
+
+statement ok
+DROP TABLE cc_fsst;

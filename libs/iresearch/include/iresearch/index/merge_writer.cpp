@@ -714,7 +714,8 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
-  col_writer = std::make_unique<ColWriter>(dir, segment_name, db);
+  col_writer = std::make_unique<ColWriter>(dir, segment_name, db,
+                                           duckdb::CompressEffort::MERGE);
   col_writer->SetFieldOptions(field_options);
 }
 

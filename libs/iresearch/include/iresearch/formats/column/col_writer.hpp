@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/storage/compression/compression_options.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -46,8 +47,10 @@ class IdxWriter;
 
 class ColWriter final {
  public:
-  ColWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
+  ColWriter(
+    Directory& dir, std::string_view segment_name,
+    duckdb::DatabaseInstance& db,
+    duckdb::CompressEffort effort = duckdb::CompressEffort::FLUSH);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -82,6 +85,7 @@ class ColWriter final {
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
   IndexOutput& Out() const noexcept { return *_out; }
+  duckdb::CompressEffort Effort() const noexcept { return _effort; }
 
  private:
   struct IvfEntry {
@@ -101,6 +105,7 @@ class ColWriter final {
   std::string _segment_name;
   std::string _filename;
   duckdb::DatabaseInstance* _db;
+  duckdb::CompressEffort _effort = duckdb::CompressEffort::FLUSH;
   const IndexFieldOptions* _field_options = nullptr;
   IndexOutput::ptr _out;
   std::unique_ptr<WriteContext> _write_ctx;

@@ -165,6 +165,11 @@ duckdb::CompressionType ParseCompressionName(std::string_view column_name,
       {"alprd", duckdb::CompressionType::COMPRESSION_ALPRD},
       {"roaring", duckdb::CompressionType::COMPRESSION_ROARING},
       {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST},
+      {"fsst", duckdb::CompressionType::COMPRESSION_FSST},
+      {"lz4", duckdb::CompressionType::COMPRESSION_LZ4},
+      {"fsst_plus", duckdb::CompressionType::COMPRESSION_FSST_PLUS},
+      {"dict_fsst_plus", duckdb::CompressionType::COMPRESSION_FSST_PLUS},
+      {"sorted_dict_fsst_plus", duckdb::CompressionType::COMPRESSION_FSST_PLUS},
     };
   for (const auto& [k, v] : kMap) {
     if (n == k) {
@@ -176,7 +181,8 @@ duckdb::CompressionType ParseCompressionName(std::string_view column_name,
     ERR_MSG("Column '", column_name, "': unknown compression '", name,
             "'. Accepted: auto, uncompressed, rle, "
             "bitpacking, zstd, alp, alprd, roaring, "
-            "dict_fsst"));
+            "dict_fsst, fsst, lz4, fsst_plus, dict_fsst_plus, "
+            "sorted_dict_fsst_plus"));
 }
 
 // The "data" physical type that a forced codec must support. Composite

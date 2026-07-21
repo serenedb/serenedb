@@ -154,11 +154,17 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
   }
 
   duckdb::CompressionAnalyzeContext actx{ctx, db, kStorageVersion};
+  actx.options = config.GetCompressionOptions();
+  actx.options.effort = _owner->Effort();
+  actx.force_selection = forced_method != duckdb::CompressionType::COMPRESSION_AUTO;
   std::vector<duckdb::unique_ptr<duckdb::AnalyzeState>> states(
     candidates.size());
   for (size_t i = 0; i < candidates.size(); ++i) {
     if (auto* init_analyze = candidates[i].get().init_analyze) {
       states[i] = init_analyze(actx, codec_type.InternalType());
+      if (states[i]) {
+        states[i]->info.SetCompressionOptions(actx.options);
+      }
     }
   }
   for (auto& c : chunks) {
@@ -247,6 +253,9 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     std::move(flush_internal_fn),
     ctx,
   };
+  auto options = duckdb::DBConfig::GetConfig(db).GetCompressionOptions();
+  options.effort = _owner->Effort();
+  ckp.SetCompressionOptions(options);
   auto comp_state = picked.init_compression(ckp, std::move(state));
   for (auto& c : chunks) {
     picked.compress(*comp_state, c.data);

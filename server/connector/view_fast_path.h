@@ -62,7 +62,7 @@ struct ViewFastPath {
   duckdb::named_parameter_map_t named_params;
   std::optional<CatalogTableRef> catalog_ref;
   // Source-side names post CAST-peel. Empty for `SELECT *`.
-  duckdb::vector<std::string> projection_columns;
+  std::vector<std::string> projection_columns;
   std::string function_name;
   bool is_glob = false;
   // 0 = not pinned. Set at query time from the index's commit payload.
@@ -70,7 +70,7 @@ struct ViewFastPath {
   catalog::PkSpec pk_spec;
   // ExternalColumnKey: the key columns in order (any types, count >= 1);
   // empty for ExternalPostgresCtid (keyed on the virtual duckdb rowid).
-  duckdb::vector<ExternalKeyColumn> key_columns;
+  std::vector<ExternalKeyColumn> key_columns;
   // Whether the backing reader's lookup applies pushed table filters (parquet /
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see
   // IResearchSupportsPushdownFilter.

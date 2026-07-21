@@ -80,7 +80,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
       name_to_col.emplace(names[i], i);
     }
   }
-  duckdb::vector<std::string> select_names;
+  std::vector<std::string> select_names;
   select_names.reserve(projected_columns.size());
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
@@ -95,7 +95,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
       return types[source_col];
     });
 
-  duckdb::vector<std::string> key_cols;
+  std::vector<std::string> key_cols;
   _postgres_ctid = _fast_path.pk_spec == catalog::PkSpec::ExternalPostgresCtid;
   if (_postgres_ctid) {
     key_cols.push_back("rowid");

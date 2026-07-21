@@ -630,10 +630,6 @@ bool IsCoveredColumnResidual(const duckdb::Expression& expr,
     if (cls == C::BOUND_COLUMN_REF) {
       const auto id = ResolveColumnId(
         e.Cast<duckdb::BoundColumnRefExpression>().Binding(), bind_data, get);
-      if (id == catalog::Column::kInvalidId ||
-          id == catalog::Column::kInvertedIndexTermId) {
-        return false;
-      }
       const auto* info = index.FindColumnInfo(id);
       if (!info || !info->IsStored()) {
         return false;

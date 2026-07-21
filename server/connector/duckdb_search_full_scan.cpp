@@ -227,14 +227,8 @@ struct TsDictLocalState : public IResearchScanLocalState {
   std::vector<FieldState> fields;
   CountMode count_mode = CountMode::Meta;
   const irs::QueryBuilder* where_query = nullptr;
-  // Covered `.col` filters (e.g. a WHERE on an INCLUDE'd column) restrict the
-  // documents each term counts: classified per segment, then wrapped around
-  // the per-term postings intersection during counting.
   TableFilterDocIterator::SegmentClassification seg_cls;
   ColFilterStateCache filter_states;
-  // Output slots of real columns scanned only for a pushed `.col` filter: the
-  // term-dict scan produces no value for them, so they are set all-NULL (the
-  // filter already applied during counting; the value is dropped upstream).
   std::vector<duckdb::idx_t> null_slots;
 
   void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
@@ -1063,10 +1057,6 @@ irs::DocIterator::ptr MaybeWrapColFilter(
   std::span<const TableFilterDocIterator::FilterSpec> active,
   IResearchScanGlobalState& g, ColFilterStateCache& states);
 
-// Every real column the term-dict scan would emit is present only as the target
-// of a pushed `.col` filter (its value is unused -- read from the columnstore
-// during counting, then dropped). If any real output column is not such a
-// filter target, the scan is asked to produce a real column it cannot.
 bool TsDictRealOutputsAreColFilters(const IResearchScanGlobalState& g,
                                     const SereneDBScanBindData& bind_data) {
   for (size_t proj = 0; proj < g.projected_columns.size(); ++proj) {
@@ -1115,11 +1105,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   ClassifyColumnstoreProjections(*state, bind_data);
   state->mode = DecideScanMode(*state, ss);
   if (state->mode == ScanMode::TsDict) {
-    // A term-dict scan emits only term/count columns. A real column is
-    // tolerated only when it is there purely for a pushed columnstore filter
-    // (a WHERE on an INCLUDE'd column, applied during counting) -- its emitted
-    // value is never read. A real column that is genuinely projected cannot be
-    // produced per term.
     if (state->has_real_output_column &&
         !TsDictRealOutputsAreColFilters(*state, bind_data)) {
       THROW_SQL_ERROR(
@@ -1423,6 +1408,17 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
   }
 }
 
+uint32_t CountDocs(irs::DocIterator::ptr docs, const irs::SubReader& seg,
+                   bool count_all,
+                   std::span<const TableFilterDocIterator::FilterSpec> active,
+                   IResearchScanGlobalState& g, ColFilterStateCache& states) {
+  docs = MaybeWrapColFilter(std::move(docs), seg, active, g, states);
+  if (count_all) {
+    return static_cast<uint32_t>(docs->count());
+  }
+  return irs::doc_limits::eof(docs->advance()) ? 0 : 1;
+}
+
 uint32_t WhereLiveDocs(
   irs::TermIterator& it, const irs::SubReader& seg,
   const irs::QueryBuilder& where, bool count_all,
@@ -1432,25 +1428,17 @@ uint32_t WhereLiveDocs(
   itrs.reserve(2);
   itrs.emplace_back(it.postings(irs::IndexFeatures::None));
   itrs.emplace_back(where.Execute({}, irs::StatsBuffer::Empty()));
-  irs::DocIterator::ptr docs = irs::MakeConjunction(
-    irs::ScoreMergeType::Noop, {}, seg.docs_count(), std::move(itrs));
-  docs = MaybeWrapColFilter(std::move(docs), seg, active, g, states);
-  if (count_all) {
-    return static_cast<uint32_t>(docs->count());
-  }
-  return irs::doc_limits::eof(docs->advance()) ? 0 : 1;
+  return CountDocs(irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                                        seg.docs_count(), std::move(itrs)),
+                   seg, count_all, active, g, states);
 }
 
 uint32_t MaskedLiveDocs(
   irs::TermIterator& it, const irs::SubReader& seg, bool count_all,
   std::span<const TableFilterDocIterator::FilterSpec> active,
   IResearchScanGlobalState& g, ColFilterStateCache& states) {
-  irs::DocIterator::ptr docs = seg.mask(it.postings(irs::IndexFeatures::None));
-  docs = MaybeWrapColFilter(std::move(docs), seg, active, g, states);
-  if (count_all) {
-    return static_cast<uint32_t>(docs->count());
-  }
-  return irs::doc_limits::eof(docs->advance()) ? 0 : 1;
+  return CountDocs(seg.mask(it.postings(irs::IndexFeatures::None)), seg,
+                   count_all, active, g, states);
 }
 
 class MinMaxTermsIterator : public irs::TermIterator {
@@ -2474,8 +2462,6 @@ void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
     where_query = &query;
     count_mode = CountMode::Where;
   }
-  // A covered `.col` filter can't be answered from term metadata; force the
-  // postings-iterating count path (Masked is identity when nothing is deleted).
   if (!seg_cls.active.empty() && count_mode == CountMode::Meta) {
     count_mode = CountMode::Masked;
   }

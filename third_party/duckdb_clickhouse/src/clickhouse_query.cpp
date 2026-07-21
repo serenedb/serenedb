@@ -24,7 +24,14 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 	auto bind_data = make_uniq<ClickHouseBindData>();
 
 	auto connection_string = input.inputs[0].GetValue<string>();
-	bind_data->params = ClickHouseConnectionParams::FromConnectionString(connection_string);
+	// Accept an attached-database alias (like postgres_query) or a raw
+	// key=value connection string.
+	auto db = DatabaseManager::Get(context).GetDatabase(context, Identifier(connection_string));
+	if (db && db->GetCatalog().GetCatalogType() == "clickhouse") {
+		bind_data->params = db->GetCatalog().Cast<ClickHouseCatalog>().GetConnectionParams();
+	} else {
+		bind_data->params = ClickHouseConnectionParams::FromConnectionString(connection_string);
+	}
 	auto sql = input.inputs[1].GetValue<string>();
 	StringUtil::RTrim(sql);
 	while (!sql.empty() && sql.back() == ';') {

@@ -414,6 +414,13 @@ sdb_update_module(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 add_subdirectory(faiss)
+target_compile_options(
+    ${FAISS_LIB}
+    PUBLIC
+        -Wno-suggest-override
+        -Wno-sign-compare
+        -Wno-suggest-destructor-override
+)
 
 ################################################################################
 ## snowball stemmer

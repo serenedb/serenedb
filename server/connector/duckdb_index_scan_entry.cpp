@@ -143,9 +143,10 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   if (_inverted_index) {
     key_cols = _inverted_index->GetOptions().key_columns;
   }
-  if (auto fp = ResolveViewFastPath(context, *_sdb_view, key_cols)) {
-    data->lookup_label = FormatLookupLabel(*fp);
-    data->lookup_supports_filters = fp->supports_filters;
+  data->fast_path = ResolveViewFastPath(context, *_sdb_view, key_cols);
+  if (data->fast_path) {
+    data->lookup_label = FormatLookupLabel(*data->fast_path);
+    data->lookup_supports_filters = data->fast_path->supports_filters;
   } else {
     data->lookup_label = "view";
   }

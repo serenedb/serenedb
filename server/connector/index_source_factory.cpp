@@ -45,12 +45,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
   duckdb::TableFilterSet* pushed_filters) {
   if (bind_data.IsViewBacked()) {
     const auto& vbd = bind_data.As<ViewScanBindData>();
-    std::span<const std::string> key_cols;
-    if (vbd.inverted_index) {
-      key_cols = vbd.inverted_index->GetOptions().key_columns;
-    }
-    auto fp = ResolveViewFastPath(context, *vbd.view, key_cols);
-    if (!fp) {
+    if (!vbd.fast_path) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("materialising real columns from this view-backed inverted "
@@ -58,29 +53,32 @@ std::unique_ptr<IndexSource> MakeIndexSource(
                 "`SELECT * FROM <reader>(literal_args)` over a recognised "
                 "fast-path source (read_parquet/csv/json/...)"));
     }
+    // Copy: the bind data outlives this execution, and the snapshot pin below
+    // is per-execution state.
+    auto fp = *vbd.fast_path;
     // Re-bind must target the same manifest as CREATE INDEX did.
     if (vbd.inverted_index) {
       if (auto storage = vbd.inverted_index->GetData()) {
-        fp->pinned_iceberg_snapshot_id = storage->GetIcebergSnapshotId();
+        fp.pinned_iceberg_snapshot_id = storage->GetIcebergSnapshotId();
       }
     }
-    if (fp->catalog_ref && fp->pk_spec == catalog::PkSpec::DuckDBRowId) {
+    if (fp.catalog_ref && fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
       return std::make_unique<ViewTableIndexSource>(
-        context, std::move(*fp), projected_columns, projected_types,
+        context, std::move(fp), projected_columns, projected_types,
         bind_column_ids, pushed_filters);
     }
-    if (fp->catalog_ref && catalog::IsExternalPK(fp->pk_spec)) {
+    if (fp.catalog_ref && catalog::IsExternalPK(fp.pk_spec)) {
       return std::make_unique<ExternalLookupIndexSource>(
-        context, std::move(*fp), projected_columns, projected_types,
+        context, std::move(fp), projected_columns, projected_types,
         bind_column_ids);
     }
-    if (catalog::IsGlobPK(fp->pk_spec)) {
+    if (catalog::IsGlobPK(fp.pk_spec)) {
       return std::make_unique<ViewFileGlobIndexSource>(
-        context, std::move(*fp), projected_columns, projected_types,
+        context, std::move(fp), projected_columns, projected_types,
         bind_column_ids, pushed_filters);
     }
     return std::make_unique<ViewFileSingleFileIndexSource>(
-      context, std::move(*fp), projected_columns, projected_types,
+      context, std::move(fp), projected_columns, projected_types,
       bind_column_ids, pushed_filters);
   }
   const auto& tbd = bind_data.As<TableScanBindData>();

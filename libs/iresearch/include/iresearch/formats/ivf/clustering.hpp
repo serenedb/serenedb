@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <span>
 #include <vector>
 
@@ -51,22 +52,25 @@ void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
                           std::span<size_t> ids, std::span<size_t> perm = {},
                           std::span<std::span<const float>> gathered = {});
 
-std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
-                               ReadContext& ctx);
-
+// Streams the vector column row-batch by row-batch. `vector_column` is the
+// parent ARRAY(FLOAT,d) reader; each batch is materialized through the modern
+// reader API (Scan resets its own scratch, so no cross-batch segment
+// accumulation) and the sink receives the batch's flat float child plus the
+// per-row validity mask.
 template<typename Sink>
-void StreamRowBatches(const ColumnReader& child, uint64_t rows, uint32_t d,
+void StreamRowBatches(const ColumnReader& vector_column, uint64_t rows,
                       ReadContext& ctx, Sink&& sink) {
-  const auto rows_per_batch =
-    static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
-  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
-                       static_cast<duckdb::idx_t>(rows_per_batch) * d};
-  auto scan = child.InitScan(ctx);
-  for (uint64_t first = 0; first < rows; first += rows_per_batch) {
+  ColumnReader::VectorScratch scratch{vector_column.Type()};
+  auto scan = vector_column.InitScan(ctx);
+  for (uint64_t first = 0; first < rows; first += STANDARD_VECTOR_SIZE) {
     const auto n = static_cast<duckdb::idx_t>(
-      std::min<uint64_t>(rows_per_batch, rows - first));
-    child.ScanCount(scan, batch, static_cast<duckdb::idx_t>(n) * d, 0);
-    sink(first, n, duckdb::FlatVector::GetData<float>(batch));
+      std::min<uint64_t>(STANDARD_VECTOR_SIZE, rows - first));
+    auto& out = scratch.Reset();
+    vector_column.Scan(scan, out, n);
+    sink(first, n,
+         duckdb::FlatVector::GetData<float>(
+           duckdb::ArrayVector::GetChildMutable(out)),
+         duckdb::FlatVector::Validity(out));
   }
 }
 

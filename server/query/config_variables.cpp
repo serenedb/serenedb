@@ -357,7 +357,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value::DOUBLE(0.0); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto f = value.GetValue<double>();
-          if (f < 0.0 || f > 1.0) {
+          if (f <= 0.0 || f > 1.0) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_ivf_sample_factor\": \"",

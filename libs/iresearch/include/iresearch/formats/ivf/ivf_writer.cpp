@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <random>
 #include <span>
 #include <utility>
@@ -32,6 +33,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
@@ -51,12 +53,19 @@ constexpr uint64_t kMinCentroidTrainSample = 256;
 constexpr size_t kPqTrainResiduals = 65536;
 constexpr uint32_t kPqTrainSeed = 0x51ED270Bu;
 
+struct DocRowView {
+  const doc_id_t* docs;
+  size_t n;
+  size_t size() const noexcept { return n; }
+  uint64_t operator[](size_t i) const noexcept {
+    return static_cast<uint64_t>(docs[i]) - doc_limits::min();
+  }
+};
+
 }  // namespace
 
 BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                              ReadContext& ctx, QuantizerWriter* qw) const {
-  const auto* child = vector_column.Child();
-  SDB_ASSERT(child);
   const auto d = static_cast<uint32_t>(vector_column.ArraySize());
   const auto rows = vector_column.RowCount();
 
@@ -73,15 +82,6 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool needs_centroid = _info.quant.kind == VectorQuantization::PQ ||
                               _info.quant.kind == VectorQuantization::RaBitQ;
 
-  const auto valid = ReadValidity(vector_column, rows, ctx);
-  uint64_t valid_count = 0;
-  for (uint64_t r = 0; r < rows; ++r) {
-    valid_count += valid[r] ? 1 : 0;
-  }
-  if (valid_count == 0) {
-    return result;
-  }
-
   auto centroids = CentroidsBuilder::Create(
     vector_column, ctx, rows, _info.metric, d,
     CentroidsBuildParams{
@@ -94,11 +94,13 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   std::vector<float> pq_train_res;
   size_t pq_res_seen = 0;
   const size_t pq_res_cap =
-    pq && qw != nullptr ? std::min<size_t>(valid_count, kPqTrainResiduals) : 0;
+    pq && qw != nullptr ? std::min<size_t>(rows, kPqTrainResiduals) : 0;
   std::mt19937 pq_rng{kPqTrainSeed};
 
   std::vector<uint32_t> doc_cluster;
-  doc_cluster.reserve(valid_count);
+  doc_cluster.reserve(rows);
+  std::vector<doc_id_t> valid_rows;
+  valid_rows.reserve(rows);
 
   {
     std::vector<float> gather;
@@ -147,12 +149,15 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
       gather.clear();
       gathered = 0;
     };
-    StreamRowBatches(*child, rows, d, ctx,
-                     [&](uint64_t first, duckdb::idx_t n, const float* p) {
+    StreamRowBatches(vector_column, rows, ctx,
+                     [&](uint64_t first, duckdb::idx_t n, const float* p,
+                         const duckdb::ValidityMask& mask) {
                        for (duckdb::idx_t k = 0; k < n; ++k) {
-                         if (!valid[first + k]) {
+                         if (!mask.RowIsValid(k)) {
                            continue;
                          }
+                         valid_rows.push_back(static_cast<doc_id_t>(
+                           first + k + doc_limits::min()));
                          const float* v = p + static_cast<size_t>(k) * d;
                          gather.insert(gather.end(), v, v + d);
                          if (++gathered >= STANDARD_VECTOR_SIZE) {
@@ -161,7 +166,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                        }
                      });
     flush();
-    SDB_ASSERT(doc_cluster.size() == valid_count);
+    SDB_ASSERT(doc_cluster.size() == valid_rows.size());
   }
 
   if (pq && qw != nullptr) {
@@ -176,20 +181,14 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   for (size_t c = 0; c < n_clusters; ++c) {
     result.cluster_offsets[c + 1] += result.cluster_offsets[c];
   }
-  result.cluster_docs.resize(valid_count);
+  result.cluster_docs.resize(valid_rows.size());
   {
     std::vector<uint64_t> cursor(result.cluster_offsets.begin(),
                                  result.cluster_offsets.begin() + n_clusters);
-    size_t seen = 0;
-    for (uint64_t r = 0; r < rows; ++r) {
-      if (!valid[r]) {
-        continue;
-      }
-      const uint32_t c = doc_cluster[seen++];
-      result.cluster_docs[cursor[c]++] =
-        static_cast<doc_id_t>(r + doc_limits::min());
+    for (size_t i = 0; i < valid_rows.size(); ++i) {
+      const uint32_t c = doc_cluster[i];
+      result.cluster_docs[cursor[c]++] = valid_rows[i];
     }
-    SDB_ASSERT(seen == valid_count);
   }
 
   result.centroids = std::move(centroids);
@@ -351,28 +350,17 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     return;
   }
   _qw->BeginCluster(n);
-  constexpr size_t kBatch = STANDARD_VECTOR_SIZE;
-  RangeScanCursor cursor{*_vectors->Child(), *_ctx};
-  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
-                       static_cast<duckdb::idx_t>(kBatch) * _d};
-  const float* vecs = duckdb::FlatVector::GetData<float>(batch);
-  size_t filled = 0;
-  size_t k = 0;
-  while (k < n) {
-    const size_t run = std::min(ConsecutiveRunLength(docs, k), kBatch - filled);
-    const uint64_t r = static_cast<uint64_t>(docs[k]) - doc_limits::min();
-    cursor.SeekTo(r * _d);
-    cursor.Read(batch, static_cast<duckdb::idx_t>(run) * _d,
-                static_cast<duckdb::idx_t>(filled) * _d);
-    filled += run;
-    k += run;
-    if (filled == kBatch) {
-      _qw->EncodeCluster(out, vecs, filled);
-      filled = 0;
-    }
-  }
-  if (filled != 0) {
-    _qw->EncodeCluster(out, vecs, filled);
+  ColumnReader::VectorScratch scratch{_vectors->Type()};
+  auto scan = _vectors->InitScan(*_ctx);
+  for (size_t b = 0; b < n; b += STANDARD_VECTOR_SIZE) {
+    const auto m = std::min<size_t>(STANDARD_VECTOR_SIZE, n - b);
+    auto& out_vec = scratch.Reset();
+    column_internal::GatherRows(*_vectors, scan, DocRowView{docs.data() + b, m},
+                                out_vec, /*out_offset=*/0,
+                                /*whole_output=*/true);
+    const float* vecs = duckdb::FlatVector::GetData<float>(
+      duckdb::ArrayVector::GetChildMutable(out_vec));
+    _qw->EncodeCluster(out, vecs, m);
   }
   _qw->FinishCluster(out);
 }

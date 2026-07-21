@@ -154,14 +154,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         auto body = _impl->in->Dup();
         body->Seek(tree_offset);
         auto entry = CentroidsTree::Deserialize(*body, tree_byte_size);
-
-        if (stats_byte_size != 0) {
-          body->Seek(stats_offset);
-          const size_t stats_size = static_cast<size_t>(body->ReadI64());
-          bstring stats(stats_size, 0);
-          body->ReadData(stats.data(), stats_size);
-          entry.SetQuantStats(std::move(stats));
-        }
+        entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
 
         const size_t idx = _impl->ivf_entries.size();
         _impl->ivf_entries.emplace_back(id, std::move(entry));

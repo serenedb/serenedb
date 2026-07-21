@@ -241,27 +241,4 @@ void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
   }
 }
 
-std::vector<bool> ReadValidity(const ColumnReader& vector_column, uint64_t rows,
-                               ReadContext& ctx) {
-  std::vector<bool> valid(rows, true);
-  const ColumnReader* validity = vector_column.Validity();
-  if (!validity) {
-    return valid;
-  }
-  duckdb::Vector vbatch{duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY},
-                        duckdb::idx_t{0}};
-  vbatch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
-  auto vscan = validity->InitScan(ctx);
-  for (uint64_t start = 0; start < rows; start += STANDARD_VECTOR_SIZE) {
-    const auto take =
-      std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, rows - start);
-    validity->Scan(vscan, vbatch, take);
-    const auto& mask = vbatch.Buffer().GetValidityMask();
-    for (uint64_t k = 0; k < take; ++k) {
-      valid[start + k] = mask.RowIsValid(k);
-    }
-  }
-  return valid;
-}
-
 }  // namespace irs

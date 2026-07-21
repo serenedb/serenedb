@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <functional>
 #include <numeric>
 #include <random>
@@ -72,42 +73,22 @@ struct LayerLayout {
   }
 };
 
-template<typename Sink>
-void StreamSelectedRanges(const ColumnReader& child,
-                          std::span<const std::pair<uint64_t, uint64_t>> ranges,
-                          uint32_t d, ReadContext& ctx, Sink&& sink) {
-  const auto rows_per_batch =
-    static_cast<duckdb::idx_t>(std::max<uint64_t>(1, STANDARD_VECTOR_SIZE / d));
-  duckdb::Vector batch{duckdb::LogicalType::FLOAT,
-                       static_cast<duckdb::idx_t>(rows_per_batch) * d};
-  RangeScanCursor cursor{child, ctx};
-  for (const auto& [start, n_rows] : ranges) {
-    for (uint64_t off = 0; off < n_rows; off += rows_per_batch) {
-      const auto n = static_cast<duckdb::idx_t>(
-        std::min<uint64_t>(rows_per_batch, n_rows - off));
-      cursor.SeekTo((start + off) * d);
-      cursor.Read(batch, static_cast<duckdb::idx_t>(n) * d, 0);
-      sink(start + off, n, duckdb::FlatVector::GetData<float>(batch));
-    }
-  }
-}
-
-std::vector<float> GatherTrainingSample(const ColumnReader& child,
+std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
                                         uint64_t rows, uint32_t d,
-                                        ReadContext& ctx,
-                                        const std::vector<bool>& valid,
-                                        uint64_t valid_count, uint64_t n_train,
+                                        ReadContext& ctx, uint64_t n_train,
                                         uint32_t seed) {
   std::vector<float> sample(static_cast<size_t>(n_train) * d);
+  // TODO(codeworse): replace with PCG
   absl::InsecureBitGen rng(std::seed_seq{seed});
   uint64_t seen = 0;
-  const auto reservoir_sink = [&](uint64_t first, duckdb::idx_t n,
-                                  const float* p) {
+  const auto reservoir_sink = [&](uint64_t /*first*/, duckdb::idx_t n,
+                                  const float* data,
+                                  const duckdb::ValidityMask& mask) {
     for (duckdb::idx_t k = 0; k < n; ++k) {
-      if (!valid[first + k]) {
+      if (!mask.RowIsValid(k)) {
         continue;
       }
-      const float* v = p + static_cast<size_t>(k) * d;
+      const float* v = data + static_cast<size_t>(k) * d;
       if (seen < n_train) {
         std::memcpy(sample.data() + seen * d, v, d * sizeof(float));
       } else {
@@ -121,45 +102,47 @@ std::vector<float> GatherTrainingSample(const ColumnReader& child,
     }
   };
 
-  const uint64_t target = (n_train > valid_count / kSampleSegmentOversample)
-                            ? valid_count
-                            : n_train * kSampleSegmentOversample;
-  const size_t n_seg = child.DataRgCount();
-  if (target >= valid_count || n_seg <= 1) {
-    StreamRowBatches(child, rows, d, ctx, reservoir_sink);
-    SDB_ASSERT(seen == valid_count);
+  const auto* child = vector_column.Child();
+  SDB_ASSERT(child);
+  const size_t n_seg = child->DataRgCount();
+  if (n_seg <= 1 || n_train * kSampleSegmentOversample >= rows) {
+    StreamRowBatches(vector_column, rows, ctx, reservoir_sink);
   } else {
     std::vector<size_t> order(n_seg);
     std::iota(order.begin(), order.end(), size_t{0});
     absl::InsecureBitGen seg_rng(std::seed_seq{seed});
     std::shuffle(order.begin(), order.end(), seg_rng);
 
-    std::vector<std::pair<uint64_t, uint64_t>> ranges;
-    uint64_t valid_selected = 0;
-    for (size_t i = 0; i < n_seg && valid_selected < target; ++i) {
-      const uint64_t w_begin = child.DataBlockFirstRow(order[i]);
-      const uint64_t w_end = child.DataBlockFirstRow(order[i] + 1);
+    ColumnReader::VectorScratch scratch{vector_column.Type()};
+    auto scan = vector_column.InitScan(ctx);
+    for (size_t i = 0; i < n_seg && seen < n_train; ++i) {
+      const uint64_t w_begin = child->DataBlockFirstRow(order[i]);
+      const uint64_t w_end = child->DataBlockFirstRow(order[i] + 1);
       const uint64_t r_lo = (w_begin + d - 1) / d;
       const uint64_t r_hi = w_end / d;
       if (r_lo >= r_hi) {
         continue;
       }
-      uint64_t vc = 0;
-      for (uint64_t r = r_lo; r < r_hi; ++r) {
-        vc += valid[r] ? 1 : 0;
+      if (r_lo < vector_column.GatherCursor(scan)) {
+        scan = vector_column.InitScan(ctx);
       }
-      if (vc == 0) {
-        continue;
+      if (const uint64_t cur = vector_column.GatherCursor(scan); r_lo > cur) {
+        vector_column.Skip(scan, static_cast<duckdb::idx_t>(r_lo - cur));
       }
-      ranges.emplace_back(r_lo, r_hi - r_lo);
-      valid_selected += vc;
+      for (uint64_t off = r_lo; off < r_hi;) {
+        const auto n = static_cast<duckdb::idx_t>(
+          std::min<uint64_t>(STANDARD_VECTOR_SIZE, r_hi - off));
+        auto& out = scratch.Reset();
+        vector_column.Scan(scan, out, n);
+        reservoir_sink(off, n,
+                       duckdb::FlatVector::GetData<float>(
+                         duckdb::ArrayVector::GetChildMutable(out)),
+                       duckdb::FlatVector::Validity(out));
+        off += n;
+      }
     }
-    absl::c_sort(ranges);
-    StreamSelectedRanges(child,
-                         std::span<const std::pair<uint64_t, uint64_t>>{ranges},
-                         d, ctx, reservoir_sink);
-    SDB_ASSERT(seen >= n_train && seen <= valid_count);
   }
+  sample.resize(std::min<uint64_t>(seen, n_train) * d);
   return sample;
 }
 
@@ -466,30 +449,20 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
   const size_t t = params.posting_size;
   SDB_ASSERT(t > 0);
 
-  const auto* child = vector_column.Child();
-  SDB_ASSERT(child);
-  const auto valid = ReadValidity(vector_column, rows, ctx);
-  size_t valid_count = 0;
-  for (const bool v : valid) {
-    valid_count += v;
-  }
-
-  size_t sample_size =
-    params.sample_factor > 0
-      ? static_cast<size_t>(params.sample_factor * valid_count)
-      : (valid_count / t) * kTrainPointsPerLeaf;
+  size_t sample_size = params.sample_factor > 0
+                         ? static_cast<size_t>(params.sample_factor * rows)
+                         : (rows / t) * kTrainPointsPerLeaf;
   sample_size = std::max<size_t>(sample_size, params.min_train_sample);
   sample_size = std::min<size_t>(sample_size, kMaxTrainSample);
-  sample_size = std::min<size_t>(sample_size, valid_count);
+  sample_size = std::min<size_t>(sample_size, rows);
 
   const size_t tau =
-    valid_count == 0
+    rows == 0
       ? t
-      : std::max<size_t>(1,
-                         static_cast<size_t>(static_cast<double>(sample_size) /
-                                             valid_count * t));
-  auto sample = GatherTrainingSample(*child, rows, d, ctx, valid, valid_count,
-                                     sample_size, kTrainSeed);
+      : std::max<size_t>(
+          1, static_cast<size_t>(static_cast<double>(sample_size) / rows * t));
+  auto sample =
+    GatherTrainingSample(vector_column, rows, d, ctx, sample_size, kTrainSeed);
   return BuildFromSample(std::move(sample), d, metric, tau, params.max_fanout);
 }
 
@@ -602,7 +575,7 @@ AssignedCentroids CentroidsBuilder::AssignCentroids(
   AssignedCentroids result;
   result.ids.resize(n);
   result.perm.resize(n);
-  std::iota(result.perm.begin(), result.perm.end(), size_t{0});
+  absl::c_iota(result.perm, size_t{0});
   if (_nodes.empty()) {
     return result;
   }

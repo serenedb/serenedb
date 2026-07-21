@@ -59,14 +59,14 @@ class IvfVectorReader {
   const float* ReadDocBatch(doc_id_t first, size_t count);
 
  private:
-  void ReadInto(uint64_t start, uint64_t count);
+  void Seek(uint64_t row);
 
   uint32_t _d;
-  const ColumnReader* _child;
+  const ColumnReader* _reader;
   ReadContext* _ctx;
   ColumnReader::ScanState _scan;
-  uint64_t _pos = 0;
-  duckdb::Vector _buf;
+  std::unique_ptr<duckdb::Vector> _out;
+  size_t _cap = 0;
 };
 
 }  // namespace irs

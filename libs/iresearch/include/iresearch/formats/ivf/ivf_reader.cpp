@@ -21,6 +21,7 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 
 #include <cstring>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <memory>
 #include <span>
 #include <vector>
@@ -46,40 +47,33 @@ bool VectorMetricIsAngular(VectorMetric metric) noexcept {
 IvfVectorReader::IvfVectorReader(const ColumnReader& vector_column,
                                  ReadContext& ctx)
   : _d{static_cast<uint32_t>(vector_column.ArraySize())},
-    _child{vector_column.Child()},
+    _reader{&vector_column},
     _ctx{&ctx},
-    _scan{vector_column.Child()->InitScan(ctx)},
-    _buf{duckdb::LogicalType::FLOAT, static_cast<duckdb::idx_t>(_d)} {
+    _scan{vector_column.InitScan(ctx)} {
   SDB_ASSERT(vector_column.Child());
 }
 
-void IvfVectorReader::ReadInto(uint64_t start, uint64_t count) {
-  if (start < _pos) {
-    _scan = _child->InitScan(*_ctx);
-    _pos = 0;
+void IvfVectorReader::Seek(uint64_t row) {
+  if (row < _reader->GatherCursor(_scan)) {
+    _scan = _reader->InitScan(*_ctx);
   }
-  if (start > _pos) {
-    _child->Skip(_scan, static_cast<duckdb::idx_t>(start - _pos));
-    _pos = start;
-  }
-  uint64_t done = 0;
-  while (done < count) {
-    const auto n =
-      _child->ScanCount(_scan, _buf, static_cast<duckdb::idx_t>(count - done),
-                        static_cast<duckdb::idx_t>(done));
-    SDB_ASSERT(n > 0);
-    done += n;
-    _pos += n;
+  if (const uint64_t cur = _reader->GatherCursor(_scan); row > cur) {
+    _reader->Skip(_scan, static_cast<duckdb::idx_t>(row - cur));
   }
 }
 
 const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
   SDB_ASSERT(count >= 1);
   const uint64_t row0 = static_cast<uint64_t>(first) - doc_limits::min();
-  const size_t total = count * _d;
-  _buf.Reserve(total);
-  ReadInto(row0 * _d, total);
-  return duckdb::FlatVector::GetData<float>(_buf);
+  if (count > _cap) {
+    _cap = count;
+    _out = std::make_unique<duckdb::Vector>(_reader->Type(),
+                                            static_cast<duckdb::idx_t>(_cap));
+  }
+  Seek(row0);
+  _reader->Scan(_scan, *_out, static_cast<duckdb::idx_t>(count));
+  return duckdb::FlatVector::GetData<float>(
+    duckdb::ArrayVector::GetChildMutable(*_out));
 }
 
 }  // namespace irs

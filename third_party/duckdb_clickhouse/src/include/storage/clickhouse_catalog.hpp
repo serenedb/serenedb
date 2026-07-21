@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include "duckdb/catalog/catalog.hpp"
@@ -85,6 +86,30 @@ public:
 	//! freeing them, keeping any concurrently-bound raw pointers valid.
 	void ClearCache();
 
+	//! Cached clickhouse_query DESCRIBE results, keyed by the describe SQL (+
+	//! settings that affect the mapping). A per-batch caller with a constant
+	//! schema_query skips one server round trip per bind; cleared with the rest
+	//! of the metadata cache.
+	struct DescribeCacheEntry {
+		vector<std::string> names;
+		vector<LogicalType> types;
+		vector<bool> stringified;
+		vector<std::string> clickhouse_types;
+	};
+	bool TryGetDescribe(const string &key, DescribeCacheEntry &out) {
+		std::lock_guard<std::mutex> guard(describe_cache_lock);
+		auto it = describe_cache.find(key);
+		if (it == describe_cache.end()) {
+			return false;
+		}
+		out = it->second;
+		return true;
+	}
+	void StoreDescribe(const string &key, DescribeCacheEntry entry) {
+		std::lock_guard<std::mutex> guard(describe_cache_lock);
+		describe_cache.emplace(key, std::move(entry));
+	}
+
 	CatalogLookupBehavior CatalogTypeLookupRule(CatalogType type) const override {
 		switch (type) {
 		case CatalogType::TABLE_ENTRY:
@@ -108,6 +133,9 @@ private:
 	vector<unique_ptr<ClickHouseSchemaEntry>> retired_schemas;
 
 	shared_ptr<ClickHouseConnectionPool> connection_pool;
+
+	std::mutex describe_cache_lock;
+	std::unordered_map<string, DescribeCacheEntry> describe_cache;
 };
 
 } // namespace duckdb

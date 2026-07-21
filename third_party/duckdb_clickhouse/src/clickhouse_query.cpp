@@ -12,6 +12,7 @@
 #include "clickhouse_types.hpp"
 #include "clickhouse_scanner.hpp"
 #include "storage/clickhouse_catalog.hpp"
+#include "storage/clickhouse_transaction.hpp"
 
 namespace duckdb {
 
@@ -28,7 +29,9 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 	// key=value connection string.
 	auto db = DatabaseManager::Get(context).GetDatabase(context, Identifier(connection_string));
 	if (db && db->GetCatalog().GetCatalogType() == "clickhouse") {
-		bind_data->params = db->GetCatalog().Cast<ClickHouseCatalog>().GetConnectionParams();
+		auto &ch_catalog = db->GetCatalog().Cast<ClickHouseCatalog>();
+		bind_data->params = ch_catalog.GetConnectionParams();
+		bind_data->catalog_alias = connection_string;
 	} else {
 		bind_data->params = ClickHouseConnectionParams::FromConnectionString(connection_string);
 	}
@@ -39,15 +42,52 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 		StringUtil::RTrim(sql);
 	}
 
-	auto describe_sql = StringUtil::Format("DESCRIBE (%s)", sql);
+	// schema_query: an optional cheaper query with the SAME result schema, used
+	// only for DESCRIBE. A caller re-issuing a large-literal query per batch
+	// (e.g. the external-lookup index source) passes a tiny constant variant so
+	// ClickHouse does not parse the full statement twice.
+	auto schema_sql = sql;
+	auto schema_it = input.named_parameters.find("schema_query");
+	if (schema_it != input.named_parameters.end() && !schema_it->second.IsNull()) {
+		schema_sql = schema_it->second.GetValue<string>();
+	}
+	auto describe_sql = StringUtil::Format("DESCRIBE (%s)", schema_sql);
 
 	Value binary_setting;
 	bool binary_as_blob =
 	    context.TryGetCurrentSetting("ch_binary_as_blob", binary_setting) && BooleanValue::Get(binary_setting);
 	try {
-		auto connection = ClickHouseConnection::Open(bind_data->params);
-		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
-		                          bind_data->stringified, bind_data->clickhouse_types);
+		if (!bind_data->catalog_alias.empty()) {
+			// The describe result is cached in the catalog (same trust model as its
+			// table-metadata cache): a per-batch caller with a constant schema_query
+			// pays the describe round trip once.
+			auto &ch_catalog = db->GetCatalog().Cast<ClickHouseCatalog>();
+			// Lease the transaction connection HERE, on the binding thread, even on
+			// a describe-cache hit: the pool's thread-local cache then serves every
+			// per-batch lease/release from one thread. Leaving the first lease to
+			// the scan (a rotating executor thread) scatters connections across
+			// thread-local caches and stalls the shared pool.
+			auto &transaction = ClickHouseTransaction::Get(context, db->GetCatalog());
+			auto &connection = transaction.GetConnection();
+			const auto cache_key = StringUtil::Format("%d:%s", binary_as_blob ? 1 : 0, describe_sql);
+			ClickHouseCatalog::DescribeCacheEntry cached;
+			if (ch_catalog.TryGetDescribe(cache_key, cached)) {
+				names = cached.names;
+				return_types = cached.types;
+				bind_data->stringified = std::move(cached.stringified);
+				bind_data->clickhouse_types = std::move(cached.clickhouse_types);
+			} else {
+				ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
+				                          bind_data->stringified, bind_data->clickhouse_types);
+				ch_catalog.StoreDescribe(cache_key, ClickHouseCatalog::DescribeCacheEntry {
+				                                        names, return_types, bind_data->stringified,
+				                                        bind_data->clickhouse_types});
+			}
+		} else {
+			auto connection = ClickHouseConnection::Open(bind_data->params);
+			ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
+			                          bind_data->stringified, bind_data->clickhouse_types);
+		}
 	} catch (const clickhouse::Error &e) {
 		ClickHouseConnection::ThrowError("describing query", describe_sql, e);
 	}
@@ -61,6 +101,7 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 
 ClickHouseQueryFunction::ClickHouseQueryFunction()
     : TableFunction("clickhouse_query", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, ClickHouseQueryBind) {
+	named_parameters["schema_query"] = LogicalType::VARCHAR;
 	ClickHouseScanFunction scan_function;
 	init_global = scan_function.init_global;
 	function = scan_function.function;

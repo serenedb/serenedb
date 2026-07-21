@@ -98,6 +98,10 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 }
 
 void ClickHouseCatalog::ClearCache() {
+	{
+		std::lock_guard<std::mutex> guard(describe_cache_lock);
+		describe_cache.clear();
+	}
 	std::lock_guard<std::mutex> l(schema_lock);
 	// Retire every cached schema (and its cached table metadata) rather than
 	// freeing it, so bound statements keep working; the next lookup rebuilds a

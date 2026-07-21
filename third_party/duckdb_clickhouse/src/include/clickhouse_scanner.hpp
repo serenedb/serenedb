@@ -20,6 +20,11 @@ namespace duckdb {
 
 struct ClickHouseBindData : public dbconnector::BindData {
 	ClickHouseConnectionParams params;
+	//! Alias of the attached database this clickhouse_query bind resolved
+	//! through; empty for raw-connection-string binds. Execution re-resolves it
+	//! and rides the transaction's pooled connection (like postgres_query)
+	//! instead of opening a detached connection per query.
+	std::string catalog_alias;
 	std::string database;
 	std::string table;
 	std::string sql;

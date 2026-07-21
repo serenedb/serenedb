@@ -23,6 +23,7 @@
 #include "clickhouse_scanner.hpp"
 #include "storage/clickhouse_catalog.hpp"
 #include "storage/clickhouse_connection_pool.hpp"
+#include "storage/clickhouse_transaction.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 namespace duckdb {
@@ -30,6 +31,7 @@ namespace duckdb {
 unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	auto result = make_uniq<ClickHouseBindData>();
 	result->params = params;
+	result->catalog_alias = catalog_alias;
 	result->database = database;
 	result->table = table;
 	result->sql = sql;
@@ -68,12 +70,30 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 		// fully drained (done): an early abort (e.g. LIMIT) or a mid-scan error
 		// leaves unread blocks on the wire, so those connections are invalidated
 		// (dropped), never pooled. Ad-hoc scans hold a detached (pool-less)
-		// connection that simply closes either way.
+		// connection that simply closes either way. A stream on the borrowed
+		// transaction connection is drained instead -- the transaction keeps
+		// using that connection after this scan.
 		if (!done) {
-			connection.Invalidate();
+			if (borrowed_tx) {
+				try {
+					while (borrowed_tx->GetConnection().GetClient().NextBlock()) {
+					}
+				} catch (...) {
+					borrowed_tx->InvalidateConnection();
+				}
+			} else {
+				connection.Invalidate();
+			}
 		}
 	}
 
+	ClickHouseConnection &Conn() {
+		return borrowed_tx ? borrowed_tx->GetConnection() : *connection.operator->();
+	}
+
+	//! Set when the scan rides the transaction's pooled connection
+	//! (clickhouse_query bound through an attached-database alias).
+	optional_ptr<ClickHouseTransaction> borrowed_tx;
 	ClickHousePoolConnection connection;
 	std::optional<clickhouse::Block> current_block;
 	idx_t block_offset = 0;
@@ -291,20 +311,35 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 
 	try {
 		// A catalog-backed scan leases from that catalog's connection pool (its params
-		// match bind_data.params); ad-hoc clickhouse_scan/clickhouse_query open a
-		// detached (pool-less) connection that closes on release.
+		// match bind_data.params); a clickhouse_query bound through an
+		// attached-database alias rides the transaction's pooled connection
+		// (like postgres_query); ad-hoc raw-connection-string
+		// clickhouse_scan/clickhouse_query open a detached (pool-less) connection
+		// that closes on release.
 		if (bind_data.table_entry) {
 			auto &catalog = bind_data.table_entry->catalog.Cast<ClickHouseCatalog>();
 			result->connection = catalog.GetConnectionPool().GetConnection();
-		} else {
+		} else if (!bind_data.catalog_alias.empty()) {
+			auto db = DatabaseManager::Get(context).GetDatabase(context, Identifier(bind_data.catalog_alias));
+			if (db && db->GetCatalog().GetCatalogType() == "clickhouse") {
+				result->borrowed_tx = ClickHouseTransaction::Get(context, db->GetCatalog());
+			}
+		}
+		if (!result->borrowed_tx && !bind_data.table_entry) {
 			result->connection = ClickHousePoolConnection(
 			    nullptr, make_uniq<ClickHouseConnection>(ClickHouseConnection::Open(bind_data.params)),
 			    std::chrono::steady_clock::now());
 		}
 		ClickHouseConnection::LogQuery(sql);
-		result->connection->GetClient().BeginSelect(ClickHouseConnection::MakeQuery(context, sql));
+		result->Conn().GetClient().BeginSelect(ClickHouseConnection::MakeQuery(context, sql));
 	} catch (const clickhouse::Error &e) {
-		result->connection.Invalidate();
+		if (result->borrowed_tx) {
+			result->borrowed_tx->InvalidateConnection();
+			result->borrowed_tx = nullptr;
+			result->done = true;
+		} else {
+			result->connection.Invalidate();
+		}
 		ClickHouseConnection::ThrowError("starting scan", sql, e);
 	}
 	result->remote_sql = std::move(sql);
@@ -330,7 +365,7 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 				return;
 			}
 			if (!gstate.current_block || gstate.block_offset >= gstate.current_block->GetRowCount()) {
-				auto block = gstate.connection->GetClient().NextBlock();
+				auto block = gstate.Conn().GetClient().NextBlock();
 				if (!block) {
 					gstate.done = true;
 					output.SetChildCardinality(0);

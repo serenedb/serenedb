@@ -28,6 +28,11 @@ public:
 	void Rollback();
 
 	ClickHouseConnection &GetConnection();
+	//! Drop the leased connection (protocol desync: unread stream blocks); the
+	//! next GetConnection leases a fresh one.
+	void InvalidateConnection() {
+		connection.Invalidate();
+	}
 
 	static ClickHouseTransaction &Get(ClientContext &context, Catalog &catalog);
 

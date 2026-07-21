@@ -174,7 +174,11 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
       "SELECT * FROM clickhouse_query(",
       duckdb::KeywordHelper::WriteQuoted(ref.catalog, '\''), ", '",
       absl::StrReplaceAll(inner, {{"'", "''"}}));
-    _sql_suffix = "]')";
+    // schema_query: a dummy-key variant with the identical result schema --
+    // DESCRIBE parses this tiny text instead of the full per-batch key list.
+    _sql_suffix = absl::StrCat(
+      "]', schema_query := '",
+      absl::StrReplaceAll(absl::StrCat(inner, "0]"), {{"'", "''"}}), "')");
   } else {
     // Single key: flat `key IN (?,...)`. Multiple: `(a=? AND b=?) OR ...` --
     // DuckDB re-applies the OR locally, so the source returns exactly the

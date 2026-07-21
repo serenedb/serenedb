@@ -618,6 +618,68 @@ void CollectEnumFieldRefs(
     });
 }
 
+bool IsCoveredColumnResidual(const duckdb::Expression& expr,
+                             const connector::SereneDBScanBindData& bind_data,
+                             const duckdb::LogicalGet& get,
+                             const catalog::InvertedIndex& index) {
+  using C = duckdb::ExpressionClass;
+  using T = duckdb::ExpressionType;
+  auto col = catalog::Column::kInvalidId;
+  const auto walk = [&](this auto& self, const duckdb::Expression& e) -> bool {
+    const auto cls = e.GetExpressionClass();
+    if (cls == C::BOUND_COLUMN_REF) {
+      const auto id = ResolveColumnId(
+        e.Cast<duckdb::BoundColumnRefExpression>().Binding(), bind_data, get);
+      const auto* info = index.FindColumnInfo(id);
+      if (!info || !info->IsStored()) {
+        return false;
+      }
+      if (col != catalog::Column::kInvalidId && col != id) {
+        return false;
+      }
+      col = id;
+      return true;
+    }
+    if (cls == C::BOUND_SUBQUERY) {
+      return false;
+    }
+    const auto type = e.GetExpressionType();
+    if (type == T::COMPARE_IN || type == T::COMPARE_NOT_IN ||
+        type == T::CONJUNCTION_OR) {
+      return false;
+    }
+    bool ok = true;
+    duckdb::ExpressionIterator::EnumerateChildren(
+      e, [&](const duckdb::Expression& child) { ok = ok && self(child); });
+    return ok;
+  };
+  return walk(expr) && col != catalog::Column::kInvalidId;
+}
+
+bool ResidualComputesOverColumn(const duckdb::Expression& expr) {
+  using C = duckdb::ExpressionClass;
+  using T = duckdb::ExpressionType;
+  const auto cls = expr.GetExpressionClass();
+  if (cls == C::BOUND_COLUMN_REF || cls == C::BOUND_CONSTANT) {
+    return false;
+  }
+  const auto type = expr.GetExpressionType();
+  const bool plain_comparison =
+    type == T::COMPARE_EQUAL || type == T::COMPARE_NOTEQUAL ||
+    type == T::COMPARE_LESSTHAN || type == T::COMPARE_GREATERTHAN ||
+    type == T::COMPARE_LESSTHANOREQUALTO ||
+    type == T::COMPARE_GREATERTHANOREQUALTO || type == T::CONJUNCTION_AND;
+  if (!plain_comparison) {
+    return !expr.IsFoldable();
+  }
+  bool found = false;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::Expression& child) {
+      found = found || ResidualComputesOverColumn(child);
+    });
+  return found;
+}
+
 struct TsDictFacetKey {
   irs::field_id field_id = irs::field_limits::invalid();
   catalog::Column::Id col_id = catalog::Column::kInvalidId;
@@ -1544,6 +1606,7 @@ bool TsDictFacetPushdown::WhereOk() {
     *_found.get, *_found.bind_data, *_index, _snapshot, _context,
     [&](const SearchGetters& getters) {
       auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
+      size_t computed_residuals = 0;
       for (auto& expr : _where->expressions) {
         if (expr->HasParameter()) {
           return false;
@@ -1553,6 +1616,14 @@ bool TsDictFacetPushdown::WhereOk() {
                              *_found.get, refs);
         if (!refs.any_ref) {
           return false;
+        }
+        if (!refs.matched_key && !refs.term_virtual && !refs.multi_enum &&
+            IsCoveredColumnResidual(*expr, *_found.bind_data, *_found.get,
+                                    *_index)) {
+          if (ResidualComputesOverColumn(*expr) && ++computed_residuals > 1) {
+            return false;
+          }
+          continue;
         }
         bool need_acceptor = false;
         auto acceptor_field = _keys.front().field_id;
@@ -1808,6 +1879,9 @@ class TsDictFilterClaim {
     }
     for (size_t i = 0; i < _filters.size(); ++i) {
       if (_routes[i] != TsDictRoute::Rejected || _filters[i]->HasParameter()) {
+        continue;
+      }
+      if (IsCoveredColumnResidual(*_filters[i], _bind_data, _get, _index)) {
         continue;
       }
       EnumFieldRefs refs;

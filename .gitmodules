@@ -98,10 +98,6 @@
 	path = third_party/avro
 	url = https://github.com/serenedb/avro.git
 	shallow = true
-[submodule "third_party/croaring"]
-	path = third_party/croaring
-	url = https://github.com/RoaringBitmap/CRoaring.git
-	shallow = true
 [submodule "third_party/aws-c-auth"]
 	path = third_party/aws-c-auth
 	url = https://github.com/serenedb/aws-c-auth.git
@@ -194,11 +190,15 @@
 	path = third_party/duckdb_inet
 	url = https://github.com/serenedb/duckdb-inet.git
 	shallow = true
-[submodule "third_party/brotli"]
-	path = third_party/brotli
-	url = https://github.com/serenedb/brotli.git
-	shallow = true
 [submodule "third_party/jemalloc"]
 	path = third_party/jemalloc
 	url = https://github.com/serenedb/jemalloc.git
+	shallow = true
+[submodule "third_party/croaring"]
+	path = third_party/croaring
+	url = https://github.com/serenedb/CRoaring.git
+	shallow = true
+[submodule "third_party/brotli"]
+	path = third_party/brotli
+	url = https://github.com/serenedb/brotli.git
 	shallow = true

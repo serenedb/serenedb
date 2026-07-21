@@ -212,87 +212,101 @@ Findings:
   transport overhead dominates and type effects (~0.1 ms at 103 keys) vanish —
   no type-specific hotspots in the render/probe path.
 
-### 7e. Definitive grid: every lookup kind x every candidate, bare + our code
+### 7e. Proper candidate grid — one metric, stated reps, both key counts
 
-Single stack, single moment (both engines in docker, 10 indexes). Bare pg =
-one session, server-side PREPARE, `force_generic_plan`, 2048 keys, median of
-10 executes after warm-up (EXECUTE-only). Bare CH = `clickhouse-benchmark`
--i 200 on a persistent connection (param rows: 20x `clickhouse-client
---time`, 1 ms resolution; CH has no prepared plans — parse is part of every
-CH execute). "Our code" = gul query wall / 243 batches of ~103 keys, median
-of 5 runs — includes FTS, emit, transport, probe. [ship] = the form our code
-emits; our-code numbers exist only for shipped forms.
+**Method.** One host, one moment, both engines in docker on localhost.
+Bare = SERVER-SIDE wall time per query: pg from `log_min_duration_statement=0`
+durations of EXECUTE on statements PREPAREd once per session with
+`force_generic_plan` (pure execute, plan cached); CH from
+`system.query_log` `query_start_time_microseconds -> event_time_microseconds`
+on one connection per candidate (CH has no plan cache; parse is inherently
+part of every CH execute). 210 executions per cell, first 10 discarded,
+p50/p90 over the remaining 200. Key counts: 103 (the real batch size the
+engine emits at gul density) and 2048 (max batch). "Our code" = client wall
+of the full gul query (FTS + 243 batches + probe), 7 runs, p50/p90;
+per-batch = p50/243.
 
-**Postgres**
+**Postgres — server-side, ms** ([ship] = form our code emits)
 
-| kind | candidate | bare, 2048 keys | our code, per batch |
+| candidate | p50 @103 | p90 @103 | p50 @2048 | p90 @2048 |
+|---|---|---|---|---|
+| ctid `IN (tid literals)` | 0.013 | 0.013 | 0.207 | 0.210 |
+| ctid `= ANY($1::tid[])` [ship] | 0.018 | 0.018 | 0.299 | 0.305 |
+| ctid unnest-IN | 0.045 | 0.049 | 0.839 | 0.854 |
+| int `IN (literals)` | 0.050 | 0.051 | 0.951 | 0.969 |
+| int `= ANY($1)` [ship] | 0.054 | 0.056 | 0.986 | 1.009 |
+| int unnest-IN | 0.079 | 0.081 | 1.562 | 1.582 |
+| text `IN (literals)` | 0.197 | 0.203 | 3.899 | 4.018 |
+| text `= ANY($1)` [ship] | 0.202 | 0.205 | 3.955 | 4.015 |
+| text unnest-IN | 0.215 | 0.218 | 4.327 | 4.685 |
+| date `IN (literals)` | 0.050 | 0.051 | 0.964 | 0.991 |
+| date `= ANY($1)` [ship] | 0.059 | 0.062 | 1.152 | 1.241 |
+| date unnest-IN | 0.086 | 0.092 | 1.676 | 1.855 |
+| ts `IN (literals)` | 0.052 | 0.054 | 0.949 | 0.979 |
+| ts `= ANY($1)` [ship] | 0.063 | 0.065 | 1.198 | 1.214 |
+| ts unnest-IN | 0.090 | 0.094 | 1.756 | 1.777 |
+| comp row-IN literals | 0.243 | 0.260 | 45.197 | 46.661 |
+| comp `IN (VALUES)` | 0.169 | 0.173 | 16.565 | 17.234 |
+| comp unnest zip [ship] | 0.177 | 0.181 | 3.332 | 3.364 |
+
+**ClickHouse — server-side, ms**
+
+| candidate | p50 @103 | p90 @103 | p50 @2048 | p90 @2048 |
+|---|---|---|---|---|
+| int `IN (literals)` | 0.884 | 1.000 | 3.454 | 3.962 |
+| int `IN [array]` [ship] | 0.856 | 0.965 | 2.854 | 3.548 |
+| int `IN {param}` | 0.888 | 1.005 | 2.170 | 2.573 |
+| int zip subquery | 1.032 | 1.118 | 2.844 | 3.280 |
+| str `IN (literals)` | 0.910 | 0.993 | 3.774 | 4.526 |
+| str `IN [array]` [ship] | 0.886 | 0.985 | 2.922 | 3.442 |
+| str `IN {param}` | 0.900 | 0.980 | 2.274 | 2.520 |
+| str zip subquery | 1.132 | 1.272 | 3.421 | 4.031 |
+| dt `IN (literals)` | 0.882 | 1.000 | 3.974 | 4.514 |
+| dt `IN [array]` [ship] | 0.811 | 0.923 | 3.050 | 3.596 |
+| dt `IN {param}` | 0.882 | 0.973 | 1.902 | 2.183 |
+| dt zip subquery | 1.170 | 1.305 | 4.080 | 4.574 |
+| comp `IN [(tuples)]` | 3.634 | 4.013 | 13.404 | 14.340 |
+| comp ARRAY JOIN zip [ship] | 2.042 | 2.273 | 6.541 | 7.159 |
+| comp `arrayJoin(arrayZip(..))` | FAILED * | | 7.483 | |
+
+\* type inference broke at 103 keys (small Int64 literals inferred UInt8 ->
+tuple type mismatch, CANNOT_CONVERT_TYPE). The parallel ARRAY JOIN form
+handled identical input at both sizes — the arrayZip spelling is
+type-fragile and out of the running.
+
+**Our code — full gul query (25k docs, 243 batches), client wall, 7 runs**
+
+| index kind | total p50 | total p90 | per batch |
 |---|---|---|---|
-| ctid | `IN (2048 tid literals)` | 0.247 ms * | |
-| ctid | `= ANY($1::tid[])` [ship] | 0.334 ms | **4.00 ms** |
-| ctid | `IN (SELECT * FROM unnest($1))` | 0.891 ms | |
-| BIGINT | `IN (literals)` | 1.156 ms | |
-| BIGINT | `= ANY($1::int8[])` [ship] | 1.015 ms | **3.62 ms** |
-| BIGINT | unnest-IN | 1.812 ms | |
-| TEXT | `IN (literals)` | 4.414 ms | |
-| TEXT | `= ANY($1::text[])` [ship] | 4.199 ms | **4.18 ms** |
-| TEXT | unnest-IN | 4.414 ms | |
-| DATE | `IN (literals)` | 1.258 ms | |
-| DATE | `= ANY($1::date[])` [ship] | 1.183 ms | **3.68 ms** |
-| DATE | unnest-IN | 1.784 ms | |
-| TIMESTAMP | `IN (literals)` | 1.255 ms | |
-| TIMESTAMP | `= ANY($1::timestamp[])` [ship] | 1.240 ms | **3.80 ms** |
-| TIMESTAMP | unnest-IN | 1.820 ms | |
-| composite (TEXT,BIGINT) | row-IN literals | 46.325 ms | |
-| composite | `IN (VALUES ...)` | 17.038 ms | |
-| composite | unnest zip [ship] | 4.101 ms | **5.15 ms** |
+| pg ctid | 997 ms | 1034 | 4.10 ms |
+| pg BIGINT | 898 | 916 | 3.69 |
+| pg TEXT | 1034 | 1037 | 4.25 |
+| pg DATE | 913 | 922 | 3.76 |
+| pg TIMESTAMP | 934 | 937 | 3.84 |
+| pg composite (TEXT,BIGINT) | 1264 | 1280 | 5.20 |
+| CH Int64 | 1201 | 1213 | 4.94 |
+| CH String | 1321 | 1348 | 5.44 |
+| CH DateTime | 1233 | 1244 | 5.07 |
+| CH composite (String,Int64) | 984 | 994 | 4.05 |
 
-\* the ctid literal form is bimodal across table shapes: 0.25 ms here (this
-wider table costed Tid Scan under the seq scan) but 8.1 ms on the narrow
-table of section 3, where the seq-scan cliff bakes into the cached plan.
-`= ANY($1)` plans Tid Scan regardless of key count — shipped for stability.
+Takeaways at the REAL batch size (103 keys):
 
-**ClickHouse**
-
-| kind | candidate | bare, 2048 keys | our code, per batch |
-|---|---|---|---|
-| Int64 | `IN (v,v,..)` literals | 3.832 ms | |
-| Int64 | `IN [array]` [ship] | 3.139 ms | **4.90 ms** |
-| Int64 | `IN {ks:Array(Int64)}` | **2.20 ms** (200 reps, us-precise) | |
-| Int64 | zip subquery | 3.224 ms | |
-| String | `IN (..)` literals | 3.972 ms | |
-| String | `IN [array]` [ship] | 3.209 ms | **5.31 ms** |
-| String | `IN {param}` | **2.39 ms** (200 reps, us-precise) | |
-| String | zip subquery | 3.602 ms | |
-| DateTime | `IN (..)` literals | 4.059 ms | |
-| DateTime | `IN [array]` [ship] | 3.391 ms | **4.98 ms** |
-| DateTime | `IN {param}` | ~3 ms (20x --time only) | |
-| DateTime | zip subquery | 4.241 ms | |
-| composite (String,Int64) | `IN [(v,v),..]` tuples | 12.419 ms | |
-| composite | parallel ARRAY JOIN zip [ship] | 5.765 ms | **4.00 ms** |
-| composite | `arrayJoin(arrayZip(..))` | 7.483 ms | |
-
-Grid takeaways:
-
-- Every shipped form is the best or within noise of the best in its group on
-  its engine; the one deliberate trade is ctid `= ANY` vs the bimodal literal
-  form (stability over best-case).
-- pg: unnest-IN costs a consistent +0.6-0.8 ms on single keys (set dedup +
-  join plumbing) — hence the single-key/composite split. TEXT keys price the
-  same (~4.2-4.4 ms) on every form: collation-aware btree comparison
-  dominates, transport shape is irrelevant.
-- CH: `IN [array]` beats element-wise literals by ~0.6-0.8 ms on every type;
-  `{param}` BEATS the array literal by a further ~0.8 ms (~27%) — re-measured
-  at 200 reps with us-precise server-side timing (query_log
-  query_start_time_microseconds -> event_time_microseconds): int 2.20 vs
-  3.02 ms avg, str 2.39 vs 3.06 — the param value bypasses SQL grammar
-  parsing entirely. Strongest single argument for adding `params :=` to
-  clickhouse_query (also makes the per-batch query text constant). Composite
-  zip is ~2.2x the tuple literals; the arrayZip spelling sits between.
-- Our-code per batch sits 3.6-5.3 ms across ALL kinds while bare spans
-  0.25-5.8 ms — per-batch transport overhead flattens everything, which is
-  why batch accumulation (section 8) dominates every remaining
-  per-query-shape optimization. Note our composite CH batch (4.00 ms) runs
-  FASTER than its 2048-key bare form (5.77 ms): batches carry only ~103 keys.
+- pg executes every shipped form in 0.018-0.20 ms server-side — i.e. under
+  5% of our per-batch cost; even comp row-IN is fine at 103 (0.24 ms) and
+  only detonates at 2048 (45 ms). Shape choice matters at large batches,
+  which is exactly where accumulation will take us — the shipped forms are
+  chosen for the 2048 end.
+- CH single-key forms are all ~0.85-0.9 ms at 103 (the engine's per-query
+  floor dominates); differentiation appears at 2048 where `{param}` wins
+  (int 2.17 / str 2.27 / dt 1.90 vs [array] 2.85/2.92/3.05) — ~25-38%
+  under the shipped array literal. `params :=` support in clickhouse_query
+  is the quantified next transport step.
+- CH composite ARRAY JOIN zip beats tuple literals ~1.8x at BOTH sizes
+  (2.04 vs 3.63 @103; 6.54 vs 13.40 @2048).
+- Our-code per batch (3.7-5.4 ms) vs bare-at-103 (0.02-2.0 ms): 60-95% of
+  every batch is transport + engine floor + our machinery, not the lookup
+  query — the flattening that makes batch accumulation (section 8) the
+  dominant lever.
 
 ## 8. Current per-batch anatomy and remaining levers
 

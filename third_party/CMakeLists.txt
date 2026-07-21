@@ -405,9 +405,8 @@ if(ARCH_AMD64)
     set(FAISS_OPT_LEVEL "avx2")
     set(FAISS_LIB faiss_avx2)
 elseif(ARCH_AARCH64)
-    # TODO(mbkkt) is it ok?
-    set(FAISS_OPT_LEVEL "sve")
-    set(FAISS_LIB faiss_sve)
+    set(FAISS_OPT_LEVEL "generic")
+    set(FAISS_LIB faiss)
 endif()
 set(FAISS_LIB "${FAISS_LIB}" CACHE INTERNAL "faiss target to link" FORCE)
 

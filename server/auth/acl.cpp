@@ -73,6 +73,8 @@ AclMode ClassPrivs(ObjectType type) noexcept {
     case ObjectType::PgSqlView:
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
+    case ObjectType::Policy:
+    case ObjectType::RowSecurity:
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
     case ObjectType::Virtual:
@@ -103,6 +105,8 @@ AclMode PublicDefaultPrivs(ObjectType type) noexcept {
     case ObjectType::PgSqlView:
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
+    case ObjectType::Policy:
+    case ObjectType::RowSecurity:
     case ObjectType::Column:
     case ObjectType::CheckConstraint:
     case ObjectType::Virtual:

@@ -1,0 +1,82 @@
+# serenedb-only RLS: catalog introspection of policies and the per-table flags.
+# pg_policy carries polname/polcmd/polpermissive/polroles; pg_policies renders
+# them for humans; pg_class.relrowsecurity / relforcerowsecurity reflect the
+# ENABLE / FORCE state.
+#
+# Lore: the ledger's guard rules, as the catalog sees them.
+
+statement ok
+DROP TABLE IF EXISTS ins_t;
+
+
+statement ok
+DROP ROLE IF EXISTS ins_r;
+
+
+statement ok
+CREATE TABLE ins_t (owner text, amount int);
+
+
+statement ok
+CREATE ROLE ins_r;
+
+
+# No RLS yet: flags are false.
+query
+SELECT relrowsecurity, relforcerowsecurity FROM pg_catalog.pg_class WHERE relname = 'ins_t';
+----
+relrowsecurity	relforcerowsecurity
+f	f
+
+
+statement ok
+ALTER TABLE ins_t ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE ins_t FORCE ROW LEVEL SECURITY;
+
+
+query
+SELECT relrowsecurity, relforcerowsecurity FROM pg_catalog.pg_class WHERE relname = 'ins_t';
+----
+relrowsecurity	relforcerowsecurity
+t	t
+
+
+# One permissive SELECT policy TO PUBLIC, one restrictive INSERT policy TO a role.
+statement ok
+CREATE POLICY p_sel ON ins_t AS PERMISSIVE FOR SELECT USING (amount > 0);
+
+
+statement ok
+CREATE POLICY p_ins ON ins_t AS RESTRICTIVE FOR INSERT TO ins_r WITH CHECK (amount < 100);
+
+
+# pg_policy: polcmd is 'r' for SELECT, 'a' for INSERT; polpermissive reflects AS.
+query
+SELECT polname, polcmd, polpermissive FROM pg_catalog.pg_policy
+WHERE polrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'ins_t')
+ORDER BY polname;
+----
+polname	polcmd	polpermissive
+p_ins	a	f
+p_sel	r	t
+
+
+# pg_policies: the human view, cmd spelled out, roles resolved.
+query ????
+SELECT policyname, permissive, cmd, roles FROM pg_catalog.pg_policies
+WHERE tablename = 'ins_t' ORDER BY policyname;
+----
+policyname	permissive	cmd	roles
+p_ins	RESTRICTIVE	INSERT	{ins_r}
+p_sel	PERMISSIVE	SELECT	{public}
+
+
+statement ok
+DROP TABLE ins_t;
+
+
+statement ok
+DROP ROLE ins_r;

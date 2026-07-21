@@ -41,6 +41,7 @@
 #include "catalog/index.h"
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
+#include "catalog/persistence/policy.h"
 #include "catalog/resolution_table.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
@@ -63,6 +64,8 @@ using ChangeCallback = absl::FunctionRef<void(const T&, std::shared_ptr<T>&)>;
 
 class SecondaryIndex;
 class InvertedIndex;
+class Policy;
+class RowSecurity;
 
 struct CreateTableOperationOptions {
   // A valid id puts CreateTable in CTAS mode: the entry is created with this
@@ -118,6 +121,10 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Sequence;
   } else if constexpr (std::is_same_v<T, Role>) {
     return ObjectType::Role;
+  } else if constexpr (std::is_same_v<T, Policy>) {
+    return ObjectType::Policy;
+  } else if constexpr (std::is_same_v<T, RowSecurity>) {
+    return ObjectType::RowSecurity;
   } else {
     static_assert(false);
   }
@@ -263,6 +270,14 @@ struct Snapshot {
     }
     return basics::downCast<T>(obj);
   }
+
+  // RLS: the policy object ids attached to a table, and the enable/force pair.
+  std::vector<ObjectId> PolicyIds(ObjectId table_id) const;
+  struct RowSecurityState {
+    bool enabled = false;
+    bool forced = false;
+  };
+  RowSecurityState GetRowSecurity(ObjectId table_id) const;
 
  private:
   friend class Catalog;
@@ -439,6 +454,8 @@ class Catalog final {
                      std::shared_ptr<Table> table);
   void RegisterIndex(ObjectId database_id, ObjectId schema_id,
                      std::shared_ptr<Index> index);
+  void RegisterPolicy(std::shared_ptr<Policy> policy);
+  void RegisterRowSecurity(std::shared_ptr<RowSecurity> rs);
 
   bool CreateDatabase(const AccessContext& ax,
                       std::shared_ptr<Database> database, bool if_not_exists);
@@ -477,6 +494,25 @@ class Catalog final {
   bool CreateType(const AccessContext& ax, ObjectId database_id,
                   std::string_view schema, std::shared_ptr<PgSqlType> type,
                   bool if_not_exists);
+
+  // Row-Level Security. All require ownership of the target table.
+  void CreatePolicy(const AccessContext& ax, ObjectId database_id,
+                    std::string_view schema, std::string_view relation,
+                    persistence::PolicyData data);
+  // Applies only the fields flagged present: roles if has_roles, using if
+  // has_using, check if has_check. `new_name` renames when non-empty.
+  void AlterPolicy(const AccessContext& ax, ObjectId database_id,
+                   std::string_view schema, std::string_view relation,
+                   std::string_view name, std::string_view new_name,
+                   bool has_roles, std::vector<ObjectId> roles, bool has_using,
+                   std::string using_text, bool has_check,
+                   std::string check_text);
+  void DropPolicy(const AccessContext& ax, ObjectId database_id,
+                  std::string_view schema, std::string_view relation,
+                  std::string_view name, bool if_exists);
+  void SetRowSecurity(const AccessContext& ax, ObjectId database_id,
+                      std::string_view schema, std::string_view relation,
+                      std::optional<bool> enabled, std::optional<bool> forced);
 
   void RenameView(const AccessContext& ax, ObjectId database_id,
                   std::string_view schema, std::string_view name,

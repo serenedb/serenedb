@@ -1,0 +1,71 @@
+# serenedb-only RLS: multiple PERMISSIVE policies are OR'd -- a row is visible if
+# ANY permissive policy allows it. Adding a second permissive policy can only
+# widen visibility, never narrow it.
+#
+# Lore: vedernikoff sees his own rows, plus anything flagged public.
+
+statement ok
+DROP TABLE IF EXISTS mp_t;
+
+
+statement ok
+DROP ROLE IF EXISTS mp_r;
+
+
+statement ok
+CREATE TABLE mp_t (owner text, is_public bool, tag text);
+
+
+statement ok
+INSERT INTO mp_t VALUES
+  ('mp_r',  false, 'mine-private'),
+  ('other', true,  'theirs-public'),
+  ('other', false, 'theirs-private');
+
+
+statement ok
+CREATE ROLE mp_r LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON mp_t TO mp_r;
+
+
+statement ok
+ALTER TABLE mp_t ENABLE ROW LEVEL SECURITY;
+
+
+# First permissive policy: your own rows.
+statement ok
+CREATE POLICY p_own ON mp_t FOR SELECT USING (owner = current_user);
+
+
+# With only the own policy: just the private-mine row.
+connection c1 user=mp_r password=pw
+query
+SELECT tag FROM mp_t ORDER BY tag;
+----
+tag
+mine-private
+
+
+# Add a second permissive policy: public rows. Now OR'd -> mine + public.
+statement ok
+CREATE POLICY p_public ON mp_t FOR SELECT USING (is_public = true);
+
+
+connection c2 user=mp_r password=pw
+query
+SELECT tag FROM mp_t ORDER BY tag;
+----
+tag
+mine-private
+theirs-public
+
+
+statement ok
+DROP TABLE mp_t;
+
+
+statement ok
+DROP ROLE mp_r;

@@ -224,6 +224,10 @@ struct RelationDependency : ObjectDependencyBase {
 struct TableDependency : RelationDependency {
   containers::FlatHashSet<ObjectId> owned_sequences;
   containers::FlatHashSet<ObjectId> fk_referencing_tables;
+  containers::FlatHashSet<ObjectId> policies;
+  ObjectId row_security_id;
+  bool rls_enabled = false;
+  bool rls_forced = false;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TableDependency>(*this);
   }
@@ -235,6 +239,9 @@ struct TableDependency : RelationDependency {
       e.EmitCascadeForeignKeyDrop(id, self);
     }
     for (auto id : indexes) {
+      e.EmitAutoDrop(id);
+    }
+    for (auto id : policies) {
       e.EmitAutoDrop(id);
     }
     for (auto id : views) {

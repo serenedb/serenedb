@@ -1,0 +1,122 @@
+# serenedb-only RLS: bypass rules. The table owner normally bypasses RLS on
+# their own table; FORCE ROW LEVEL SECURITY subjects the owner too. A BYPASSRLS
+# role always bypasses. Superusers always bypass.
+#
+# Lore: the mop owns the ledger but is still bound once it is FORCEd.
+
+statement ok
+DROP TABLE IF EXISTS fb_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS fb_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS fb_bypass;
+
+
+statement ok
+CREATE ROLE fb_owner LOGIN PASSWORD 'opw';
+
+
+statement ok
+CREATE ROLE fb_bypass LOGIN PASSWORD 'bpw' BYPASSRLS;
+
+
+# The owner needs CREATE on the schema to make its own table.
+statement ok
+GRANT CREATE ON SCHEMA public TO fb_owner;
+
+
+# fb_owner creates and owns the table.
+connection c_own user=fb_owner password=opw
+statement ok
+CREATE TABLE fb_ledger (owner text, amount int);
+
+
+connection c_own2 user=fb_owner password=opw
+statement ok
+INSERT INTO fb_ledger VALUES ('fb_owner', 1), ('someone', 2);
+
+
+connection c_own3 user=fb_owner password=opw
+statement ok
+ALTER TABLE fb_ledger ENABLE ROW LEVEL SECURITY;
+
+
+connection c_own4 user=fb_owner password=opw
+statement ok
+CREATE POLICY p_self ON fb_ledger FOR ALL USING (owner = current_user);
+
+
+# Owner bypasses RLS (not FORCEd) -> sees both rows.
+connection c_own5 user=fb_owner password=opw
+query
+SELECT owner FROM fb_ledger ORDER BY owner;
+----
+owner
+fb_owner
+someone
+
+
+# Now FORCE it: the owner is subject to RLS and sees only their own row.
+connection c_own6 user=fb_owner password=opw
+statement ok
+ALTER TABLE fb_ledger FORCE ROW LEVEL SECURITY;
+
+
+connection c_own7 user=fb_owner password=opw
+query
+SELECT owner FROM fb_ledger ORDER BY owner;
+----
+owner
+fb_owner
+
+
+# A BYPASSRLS role bypasses even under FORCE (needs SELECT grant).
+connection c_own8 user=fb_owner password=opw
+statement ok
+GRANT SELECT ON fb_ledger TO fb_bypass;
+
+
+connection c_by user=fb_bypass password=bpw
+query
+SELECT owner FROM fb_ledger ORDER BY owner;
+----
+owner
+fb_owner
+someone
+
+
+# NO FORCE reverts: owner bypasses again.
+connection c_own9 user=fb_owner password=opw
+statement ok
+ALTER TABLE fb_ledger NO FORCE ROW LEVEL SECURITY;
+
+
+connection c_own10 user=fb_owner password=opw
+query
+SELECT owner FROM fb_ledger ORDER BY owner;
+----
+owner
+fb_owner
+someone
+
+
+connection c_own11 user=fb_owner password=opw
+statement ok
+DROP TABLE fb_ledger;
+
+
+# Release the schema grant the owner held before dropping the role.
+statement ok
+REVOKE CREATE ON SCHEMA public FROM fb_owner;
+
+
+statement ok
+DROP ROLE fb_owner;
+
+
+statement ok
+DROP ROLE fb_bypass;

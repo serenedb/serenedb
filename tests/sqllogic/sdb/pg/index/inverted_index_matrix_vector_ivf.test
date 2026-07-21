@@ -123,12 +123,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: m_vec_ivf_st                    │
 │ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ─╮                       │
-│ │ Field: emb   │                       │
-│ │ Metric: l2   │                       │
-│ │ Dims: 3      │                       │
-│ ╰──────────────╯                       │
+│ Score: l2_distance(emb)                │
 │ Top: 1                                 │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │
@@ -148,12 +143,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: m_vec_ivf_expr_ns               │
 │ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ─╮                       │
-│ │ Field: emb   │                       │
-│ │ Metric: l2   │                       │
-│ │ Dims: 3      │                       │
-│ ╰──────────────╯                       │
+│ Score: l2_distance(emb)                │
 │ Top: 1                                 │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │
@@ -172,7 +162,6 @@ QUERY PLAN
 │ ╭─ Vector Range ─╮  │
 │ │ Field: emb     │  │
 │ │ Metric: l2     │  │
-│ │ Dims: 3        │  │
 │ │ Radius: < 1.5  │  │
 │ ╰────────────────╯  │
 │ Projections: pk     │
@@ -191,7 +180,6 @@ QUERY PLAN
 │ ╭─ Vector Range ─╮       │
 │ │ Field: emb     │       │
 │ │ Metric: l2     │       │
-│ │ Dims: 3        │       │
 │ │ Radius: < 1.5  │       │
 │ ╰────────────────╯       │
 │ Projections: pk          │

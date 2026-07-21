@@ -1344,25 +1344,20 @@ query
 EXPLAIN SELECT id FROM ivf_e_idx ORDER BY array_value(x, y, z) <-> [1,2,3]::FLOAT[3] LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 ASC                       │
-│ ~2 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: ivf_e_idx                       │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ────────────────╮        │
-│ │ Field: array_value(x, y, z) │        │
-│ │ Metric: l2                  │        │
-│ │ Dims: 3                     │        │
-│ ╰─────────────────────────────╯        │
-│ Top: 2                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4 rows                                │
-╰────────────────────────────────────────╯
+╭─ TOP_N ──────────────────────────────────╮
+│ Top: 2                                   │
+│ Order By: #1 ASC                         │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: ivf_e_idx                         │
+│ Lookup: table                            │
+│ Score: l2_distance(array_value(x, y, z)) │
+│ Top: 2                                   │
+│ Projections: id,                         │
+│              sdb_inverted_index_score    │
+│ ~4 rows                                  │
+╰──────────────────────────────────────────╯
 
 
 # Wrong dimensionality of the query vector should disqualify the ANN scan

@@ -55,12 +55,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: mv_ivf                          │
 │ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ─╮                       │
-│ │ Field: a     │                       │
-│ │ Metric: l2   │                       │
-│ │ Dims: 3      │                       │
-│ ╰──────────────╯                       │
+│ Score: l2_distance(a)                  │
 │ Top: 2                                 │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │
@@ -80,12 +75,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: mv_ivf                          │
 │ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ───╮                     │
-│ │ Field: b       │                     │
-│ │ Metric: cosine │                     │
-│ │ Dims: 4        │                     │
-│ ╰────────────────╯                     │
+│ Score: cosine_distance(b)              │
 │ Top: 2                                 │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │

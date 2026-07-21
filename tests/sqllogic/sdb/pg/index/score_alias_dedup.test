@@ -189,12 +189,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: deadinside_alias_idx            │
 │ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ──────╮                  │
-│ │ Field: clickclack │                  │
-│ │ Metric: l2        │                  │
-│ │ Dims: 3           │                  │
-│ ╰───────────────────╯                  │
+│ Score: l2_distance(clickclack)         │
 │ Top: 2                                 │
 │ Projections: kostya,                   │
 │              sdb_inverted_index_score  │

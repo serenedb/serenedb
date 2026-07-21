@@ -132,8 +132,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
           const auto c = cents[j];
           size_t slot = pq_res_seen;
           if (pq_res_seen >= pq_res_cap) {
-            slot =
-              std::uniform_int_distribution<size_t>{0, pq_res_seen}(pq_rng);
+            slot = absl::Uniform(pq_rng, 0u, pq_res_seen);
           } else {
             pq_train_res.insert(pq_train_res.end(), d, 0.f);
           }

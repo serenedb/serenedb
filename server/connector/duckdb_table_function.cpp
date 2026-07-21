@@ -51,6 +51,7 @@
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/duckdb_table_entry.h"
+#include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
 #include "pg/errcodes.h"
@@ -518,6 +519,20 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
   };
 }
 
+std::string_view VectorMetricFunctionName(irs::VectorMetric metric) {
+  switch (metric) {
+    case irs::VectorMetric::L2Sqr:
+      return kL2Distance;
+    case irs::VectorMetric::L1:
+      return kL1Distance;
+    case irs::VectorMetric::Cosine:
+      return kCosineDistance;
+    case irs::VectorMetric::InnerProduct:
+      return kIP;
+  }
+  return "?";
+}
+
 }  // namespace
 
 void SereneDBScanBindData::AppendSummary(
@@ -539,7 +554,10 @@ void SereneDBScanBindData::AppendSummary(
   if (bind.inverted_index) {
     const auto name_of = MakeFieldNameResolver(bind, *bind.inverted_index);
     const auto kind_of = MakeFieldKindResolver(bind, *bind.inverted_index);
-    if (vector_scorer) {
+    const bool vector_is_range =
+      vector_scorer &&
+      vector_scorer->radius != std::numeric_limits<float>::max();
+    if (vector_is_range) {
       const auto display =
         MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
       out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
@@ -562,6 +580,13 @@ void SereneDBScanBindData::AppendSummary(
               ")");
       out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
                                    *req.having_filter, name_of, kind_of)));
+    }
+    if (vector_scorer && !vector_is_range) {
+      const auto fname =
+        name_of(static_cast<catalog::Column::Id>(vector_scorer->field_id));
+      out.insert("Score",
+                 absl::StrCat(VectorMetricFunctionName(vector_scorer->metric),
+                              "(", fname, ")"));
     }
   }
   if (text_scorer) {

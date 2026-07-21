@@ -106,12 +106,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_ann                        │
 │ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ───╮                     │
-│ │ Field: emb     │                     │
-│ │ Metric: cosine │                     │
-│ │ Dims: 384      │                     │
-│ ╰────────────────╯                     │
+│ Score: cosine_distance(emb)            │
 │ Top: 3                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │

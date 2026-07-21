@@ -92,7 +92,9 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
         absl::MutexLock lock{&_delays_mutex};
         _delays.erase(timer);
       }
-      Run([p = std::move(p)]() mutable { std::move(p).Set(); }).Detach();
+      // Runs on an io thread: trivial promise-set only, no background work
+      // here.
+      std::move(p).Set();
     });
   _delays.insert(std::move(timer));
   return std::move(f);

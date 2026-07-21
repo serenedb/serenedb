@@ -367,6 +367,7 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
       }
       cascade = false;
 
+      co_await yaclib::On(s.executor());
       auto runs = LaunchCompactionFanout(s, engine, weak);
       if (runs.empty()) {
         // Gate full: every slot is busy elsewhere; wait for one to free up.

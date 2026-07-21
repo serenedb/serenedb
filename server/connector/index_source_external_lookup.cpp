@@ -215,20 +215,20 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
 
   const auto catalog_type = entry.ParentCatalog().GetCatalogType();
   if (catalog_type == "postgres") {
-    _mode = LookupMode::PgArray;
+    _dialect = Dialect::Postgres;
   } else if (catalog_type == "clickhouse") {
-    _mode = LookupMode::ChArray;
+    _dialect = Dialect::ClickHouse;
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("external lookup over catalog type \"",
                             catalog_type, "\" is not supported"));
   }
-  SDB_ASSERT(!_postgres_ctid || _mode == LookupMode::PgArray);
+  SDB_ASSERT(!_postgres_ctid || _dialect == Dialect::Postgres);
 
   _con = std::make_unique<duckdb::Connection>(*context.db);
   // The inner query is assembled as raw pieces with one gap per key-array
   // literal; Embed() folds every static piece into the outer duckdb string.
-  if (_mode == LookupMode::PgArray) {
+  if (_dialect == Dialect::Postgres) {
     std::string head = "SELECT ";
     if (_postgres_ctid) {
       head += "ctid::text AS __sdb_lookup_key";
@@ -349,7 +349,7 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
       }
       absl::StrAppend(&out, "\"(", children[0].GetValue<int64_t>(), ",",
                       children[1].GetValue<int64_t>(), ")\"");
-    } else if (_mode == LookupMode::PgArray) {
+    } else if (_dialect == Dialect::Postgres) {
       for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
         auto& out = _key_texts[k];
         if (i) {

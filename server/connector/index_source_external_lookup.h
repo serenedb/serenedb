@@ -62,7 +62,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
   // go as one '{..}'::T[] per key column (composite: (k1,..) IN
   // (SELECT * FROM unnest(a1, ..))); ClickHouse as IN [..] (composite:
   // tuples).
-  enum class LookupMode : uint8_t { PgArray, ChArray };
+  enum class Dialect : uint8_t { Postgres, ClickHouse };
 
   duckdb::idx_t _num_proj_cols = 0;
   duckdb::idx_t _num_key_cols = 0;
@@ -70,7 +70,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
   // shipped to postgres as a tid[] array literal and probed back from
   // ctid::text.
   bool _postgres_ctid = false;
-  LookupMode _mode = LookupMode::PgArray;
+  Dialect _dialect = Dialect::Postgres;
 
   std::unique_ptr<duckdb::Connection> _con;
 

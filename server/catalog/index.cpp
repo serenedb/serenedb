@@ -527,7 +527,7 @@ float ReadIVFSampleFactor(duckdb::ClientContext& context) {
   context.TryGetCurrentSetting("sdb_ivf_sample_factor", v);
   SDB_ASSERT(!v.IsNull());
   const auto f = v.GetValue<double>();
-  SDB_ASSERT(f > 0.0 && f <= 1.0);
+  SDB_ASSERT(f >= 0.0 && f <= 1.0);
   return static_cast<float>(f);
 }
 

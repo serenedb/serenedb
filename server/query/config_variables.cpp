@@ -502,6 +502,17 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      kRecoveryReplayDepthSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum WAL chunks in flight per inverted index during recovery "
+        "replay (the prefetch window; bounds replay memory). 0 = auto "
+        "(4 x cpu threads).",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       kCompactionMaxSegmentsSetting,
       {
         LogicalTypeId::UINTEGER,

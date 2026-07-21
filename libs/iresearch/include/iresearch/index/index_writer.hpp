@@ -515,6 +515,16 @@ class IndexWriter : private util::Noncopyable {
       return _writer->FlushRequired(*segment->writer);
     }
 
+    // In-memory bytes buffered by the active segment (0 when none) -- lets a
+    // caller flush on its own cadence, tighter than the writer limits.
+    size_t ActiveMemory() const noexcept {
+      auto* segment = _active.Segment();
+      if (segment == nullptr) {
+        return 0;
+      }
+      return segment->writer->memory_active();
+    }
+
     bool Valid() const noexcept { return _writer != nullptr; }
 
     uint64_t GetQueries() const noexcept { return _queries; }

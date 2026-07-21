@@ -130,6 +130,7 @@ void InitInvertedIndexes() {
         SDB_ASSERT(inv_storage);
         // Keep ordinals monotone across restarts.
         TickDomain::Instance().SeedAtLeast(inv_storage->GetRecoveryTick());
+        inv_storage->StartTasks();
 
         // View-backed indexes are static -- the view body doesn't change at
         // runtime, so the persisted index is already current.
@@ -137,15 +138,10 @@ void InitInvertedIndexes() {
         const bool table_backed =
           relation && relation->GetType() == catalog::ObjectType::Table;
         if (!table_backed) {
-          inv_storage->StartTasks();
           static_storages.push_back(std::move(inv_storage));
           continue;
         }
 
-        // Background refresh/compaction stay off until the feed is committed:
-        // replay commits segments mid-feed, and a background writer commit
-        // would make them durable ahead of the recorded cursor (a crash then
-        // re-feeds those rows). StartTasks happens after the final refresh.
         inv_storage->StartRecovery();
         recovering_storages.push_back(std::move(inv_storage));
         const auto table_id = relation->GetId();
@@ -199,10 +195,6 @@ void InitInvertedIndexes() {
     executor.ScheduleTask(duckdb::make_uniq<RefreshTask>(executor, *storage));
   }
   executor.WorkOnTasks();
-
-  for (auto& storage : recovering_storages) {
-    storage->StartTasks();
-  }
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);

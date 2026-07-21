@@ -203,7 +203,7 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   BackgroundScheduler& s, SearchEngine& engine,
   const std::weak_ptr<Storage>& weak) noexcept {
   std::vector<yaclib::FutureOn<bool>> runs;
-  while (engine.TryAcquireCompaction()) {
+  while (!ShouldStop() && engine.TryAcquireCompaction()) {
     const bool small = engine.FreeCompactionSlots() == 0;
     runs.push_back(s.Run([&, weak, small] {
       absl::Cleanup release = [&] { engine.ReleaseCompaction(); };

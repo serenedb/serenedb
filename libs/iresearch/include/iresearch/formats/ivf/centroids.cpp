@@ -44,6 +44,7 @@ namespace irs {
 namespace {
 
 constexpr size_t kTrainSeed = 42;
+constexpr double kBeamOverprobe = 3.0;
 constexpr uint64_t kSampleSegmentOversample = 4;
 constexpr size_t kMaxFanout = 1024;
 constexpr size_t kTrainPointsPerLeaf = 64;
@@ -373,9 +374,11 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     out_ids.push_back(0);
     return;
   }
-  const double levels = static_cast<double>(_root.level + 1);
-  const auto beam = static_cast<uint32_t>(
-    std::ceil(std::pow(levels * static_cast<double>(nprobe), 1.0 / levels)));
+  auto beam = static_cast<uint32_t>(
+    std::ceil(kBeamOverprobe * std::sqrt(static_cast<double>(nprobe))));
+  if (_root.level >= 2) {
+    beam = std::max(beam, nprobe);
+  }
   if (_root.level > 0) {
     in.Seek(_next_level_offset);
   }

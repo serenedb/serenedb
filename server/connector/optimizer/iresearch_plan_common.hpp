@@ -90,8 +90,6 @@ duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
                                      const duckdb::LogicalType& col_type,
                                      std::string_view col_name);
 
-bool ColumnIsNotNull(const catalog::Table& table, catalog::Column::Id col_id);
-
 bool TryClaimIResearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,

@@ -264,17 +264,6 @@ duckdb::idx_t AppendVirtualGetColumn(connector::SereneDBScanBindData& bind_data,
   return get_col_idx;
 }
 
-bool ColumnIsNotNull(const catalog::Table& table, catalog::Column::Id col_id) {
-  const auto* col = table.ColumnById(col_id);
-  if (!col) {
-    return false;
-  }
-  const std::string_view name = col->GetName();
-  return absl::c_any_of(table.CheckConstraints(), [&](const auto& cc) {
-    return cc.NotNullColumnName() == name;
-  });
-}
-
 bool TryClaimIResearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
@@ -321,7 +310,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   const auto column_not_null = [&](catalog::Column::Id col_id) {
     const auto [it, inserted] = not_null_cache.try_emplace(col_id, false);
     if (inserted) {
-      it->second = ColumnIsNotNull(*table, col_id);
+      it->second = bind_data.IsColumnNotNull(col_id);
     }
     return it->second;
   };

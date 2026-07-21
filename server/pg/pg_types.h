@@ -176,8 +176,6 @@ enum PgTypeOID : int32_t {
   kTsvectorArray = 3643,
   kGtsvector = 3642,
   kGtsvectorArray = 3644,
-  kTsquery = 3615,
-  kTsqueryArray = 3645,
   kRegconfig = 3734,
   kRegconfigArray = 3735,
   kRegdictionary = 3769,
@@ -243,6 +241,8 @@ enum PgTypeOID : int32_t {
   kPgBrinMinmaxMultiSummary = 4601,
   kVariant = id::kVariant.id(),
   kVariantArray = id::kVariantArray.id(),
+  kTsquery = id::kTsquery.id(),
+  kTsqueryArray = id::kTsqueryArray.id(),
 };
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the

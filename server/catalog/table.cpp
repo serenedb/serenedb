@@ -89,6 +89,17 @@ Table::Table(Permissions perm, ObjectId schema_id, ObjectId id,
   }
 }
 
+bool Table::IsColumnNotNull(Column::Id col_id) const {
+  const auto* col = ColumnById(col_id);
+  if (!col) {
+    return false;
+  }
+  const std::string_view name = col->GetName();
+  return absl::c_any_of(_check_constraints, [&](const auto& cc) {
+    return cc.NotNullColumnName() == name;
+  });
+}
+
 void Table::RebuildColumnIndex() {
   _column_index.clear();
   _column_index.reserve(_columns.size());

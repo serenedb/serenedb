@@ -55,7 +55,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: mv_ivf                          │
 │ Lookup: table                          │
-│ Score: l2_distance(a)                  │
+│ Score: l2_distance(a, FLOAT[3])        │
 │ Top: 2                                 │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │
@@ -75,7 +75,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: mv_ivf                          │
 │ Lookup: table                          │
-│ Score: cosine_distance(b)              │
+│ Score: cosine_distance(b, FLOAT[4])    │
 │ Top: 2                                 │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │

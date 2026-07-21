@@ -128,7 +128,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: src_ivf_only_idx                │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 1                                 │
 │ Projections: emb,                      │
 │              sdb_inverted_index_score  │
@@ -150,7 +150,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: src_ivf_only_idx                │
 │ Lookup: table                          │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 1                                 │
 │ Projections: id (l), emb (i),          │
 │              sdb_inverted_index_score  │
@@ -189,7 +189,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: src_ivf_mixed_idx               │
 │ Lookup: table                          │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 1                                 │
 │ Projections: emb (i), label (l),       │
 │              sdb_inverted_index_score  │

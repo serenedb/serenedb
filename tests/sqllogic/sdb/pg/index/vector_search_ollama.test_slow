@@ -98,20 +98,20 @@ ORDER BY emb <=> ai_embed(
 LIMIT 3;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 3                                 │
-│ Order By: #1 ASC                       │
-│ ~3 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: docs_ann                        │
-│ Lookup: table                          │
-│ Score: cosine_distance(emb)            │
-│ Top: 3                                 │
-│ Projections: id,                       │
-│              sdb_inverted_index_score  │
-│ ~4 rows                                │
-╰────────────────────────────────────────╯
+╭─ TOP_N ─────────────────────────────────╮
+│ Top: 3                                  │
+│ Order By: #1 ASC                        │
+│ ~3 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: docs_ann                         │
+│ Lookup: table                           │
+│ Score: cosine_distance(emb, FLOAT[384]) │
+│ Top: 3                                  │
+│ Projections: id,                        │
+│              sdb_inverted_index_score   │
+│ ~4 rows                                 │
+╰─────────────────────────────────────────╯
 
 
 query error

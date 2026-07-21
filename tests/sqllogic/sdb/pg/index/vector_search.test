@@ -26,7 +26,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: l2_index                        │
 │ Lookup: table                          │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -46,7 +46,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: l2_index                        │
 │ Lookup: table                          │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 5                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -67,7 +67,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: l2_index                        │
 │ Lookup: table                          │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 10                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -292,7 +292,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: l2_index                        │
 │ Lookup: table                          │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 10                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -391,7 +391,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: l1_index                        │
 │ Lookup: table                          │
-│ Score: l1_distance(emb)                │
+│ Score: l1_distance(emb, FLOAT[3])      │
 │ Top: 5                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -412,7 +412,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: l1_index                        │
 │ Lookup: table                          │
-│ Score: l1_distance(emb)                │
+│ Score: l1_distance(emb, FLOAT[3])      │
 │ Top: 5                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -465,7 +465,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: cos_index                       │
 │ Lookup: table                          │
-│ Score: cosine_distance(emb)            │
+│ Score: cosine_distance(emb, FLOAT[3])  │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -493,7 +493,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: cos_index                       │
 │ Lookup: table                          │
-│ Score: cosine_distance(emb)            │
+│ Score: cosine_distance(emb, FLOAT[3])  │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -513,7 +513,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: cos_index                       │
 │ Lookup: table                          │
-│ Score: cosine_distance(emb)            │
+│ Score: cosine_distance(emb, FLOAT[3])  │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -543,15 +543,15 @@ query
 EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) > 0.5;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: cos_index               │
-│ Lookup: table                  │
-│ Score: cosine_distance(emb)    │
-│ Projections: id                │
-│ Column Filter:                 │
-│ sdb_inverted_index_score > 0.5 │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: cos_index                      │
+│ Lookup: table                         │
+│ Score: cosine_distance(emb, FLOAT[3]) │
+│ Projections: id                       │
+│ Column Filter:                        │
+│ sdb_inverted_index_score > 0.5        │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
 
 
 statement ok
@@ -578,7 +578,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: ip_index                        │
 │ Lookup: table                          │
-│ Score: inner_product(emb)              │
+│ Score: inner_product(emb, FLOAT[3])    │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -606,7 +606,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: ip_index                        │
 │ Lookup: table                          │
-│ Score: inner_product(emb)              │
+│ Score: inner_product(emb, FLOAT[3])    │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -626,7 +626,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: ip_index                        │
 │ Lookup: table                          │
-│ Score: inner_product(emb)              │
+│ Score: inner_product(emb, FLOAT[3])    │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -648,7 +648,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: ip_index                        │
 │ Lookup: table                          │
-│ Score: inner_product(emb)              │
+│ Score: inner_product(emb, FLOAT[3])    │
 │ Top: 2                                 │
 │ Min Score: 50                          │
 │ Projections: id,                       │
@@ -686,15 +686,15 @@ query
 EXPLAIN SELECT id FROM ip_index WHERE inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) > 50;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: ip_index                │
-│ Lookup: table                  │
-│ Score: inner_product(emb)      │
-│ Projections: id                │
-│ Column Filter:                 │
-│ sdb_inverted_index_score > 50  │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: ip_index                     │
+│ Lookup: table                       │
+│ Score: inner_product(emb, FLOAT[3]) │
+│ Projections: id                     │
+│ Column Filter:                      │
+│ sdb_inverted_index_score > 50       │
+│ ~1 row                              │
+╰─────────────────────────────────────╯
 
 
 statement ok
@@ -820,7 +820,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: l2_index                                         │
 │ Lookup: table                                           │
-│ Score: l2_distance(emb)                                 │
+│ Score: l2_distance(emb, FLOAT[3])                       │
 │ Projections: id, sdb_inverted_index_score               │
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
@@ -902,7 +902,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: proj_idx                        │
 │ Lookup: table                          │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -1030,7 +1030,7 @@ QUERY PLAN
 │ │ Field: body(string) │                │
 │ │ Value: red          │                │
 │ ╰─────────────────────╯                │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -1170,7 +1170,7 @@ QUERY PLAN
 │ │ Min Match: 1          │              │
 │ ╰───────────────────────╯              │
 │ Column Filter: id > 2                  │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 2                                 │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │

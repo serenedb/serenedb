@@ -148,7 +148,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vecs_pq_idx                     │
 │ Lookup: parquet                        │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[8])      │
 │ Top: 10                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -181,7 +181,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vecs_pq_idx                     │
 │ Lookup: parquet                        │
-│ Score: l2_distance(emb)                │
+│ Score: l2_distance(emb, FLOAT[8])      │
 │ Top: 10                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │

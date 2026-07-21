@@ -582,11 +582,19 @@ void SereneDBScanBindData::AppendSummary(
                                    *req.having_filter, name_of, kind_of)));
     }
     if (vector_scorer && !vector_is_range) {
-      const auto fname =
-        name_of(static_cast<catalog::Column::Id>(vector_scorer->field_id));
+      const auto col_id =
+        static_cast<catalog::Column::Id>(vector_scorer->field_id);
+      const auto fname = name_of(col_id);
+      auto ctype = bind.ColumnTypeById(col_id);
+      if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
+        if (const auto* expr = bind.inverted_index->ExpressionByFieldId(
+              vector_scorer->field_id)) {
+          ctype = expr->return_type;
+        }
+      }
       out.insert("Score",
                  absl::StrCat(VectorMetricFunctionName(vector_scorer->metric),
-                              "(", fname, ")"));
+                              "(", fname, ", ", ctype.ToString(), ")"));
     }
   }
   if (text_scorer) {

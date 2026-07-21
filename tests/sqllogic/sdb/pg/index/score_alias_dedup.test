@@ -177,24 +177,24 @@ query
 EXPLAIN SELECT kostya, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d1, clickclack <-> [0.0, 0.0, 0.0]::FLOAT[3] AS d2 FROM deadinside_alias_idx ORDER BY d1 LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By: #1 ASC                       │
-│ ~2 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ PROJECTION ───────┴───────────────────╮
-│ Projections: kostya, d1, d2            │
-│ ~4 rows                                │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: deadinside_alias_idx            │
-│ Lookup: table                          │
-│ Score: l2_distance(clickclack)         │
-│ Top: 2                                 │
-│ Projections: kostya,                   │
-│              sdb_inverted_index_score  │
-│ ~4 rows                                │
-╰────────────────────────────────────────╯
+╭─ TOP_N ──────────────────────────────────╮
+│ Top: 2                                   │
+│ Order By: #1 ASC                         │
+│ ~2 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections: kostya, d1, d2              │
+│ ~4 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: deadinside_alias_idx              │
+│ Lookup: table                            │
+│ Score: l2_distance(clickclack, FLOAT[3]) │
+│ Top: 2                                   │
+│ Projections: kostya,                     │
+│              sdb_inverted_index_score    │
+│ ~4 rows                                  │
+╰──────────────────────────────────────────╯
 
 
 query

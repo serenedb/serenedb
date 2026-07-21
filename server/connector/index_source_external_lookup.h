@@ -57,16 +57,26 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
                             duckdb::DataChunk& output) final;
 
  private:
+  // PgArray / ChArray: the batch is shipped as ONE array inside a raw-query
+  // passthrough (postgres_query / clickhouse_query) -- duckdb plans a tiny
+  // constant statement instead of rebinding a 2048-node IN per Execute.
+  // Legacy (composite / non-integral keys): prepared scan-path statement.
+  enum class LookupMode : uint8_t { Legacy, PgArray, ChArray };
+
   duckdb::idx_t _num_proj_cols = 0;
   duckdb::idx_t _num_key_cols = 0;
-  // ExternalPostgresCtid: stored split as STRUCT{page, tuple} for compression,
-  // but bound/returned as the duckdb rowid int64 (page<<16|tuple) the connector
-  // pushes down.
+  // ExternalPostgresCtid: stored split as STRUCT{page, tuple} for compression;
+  // shipped to postgres as a tid[] array literal and probed back from
+  // ctid::text.
   bool _postgres_ctid = false;
+  LookupMode _mode = LookupMode::Legacy;
 
   std::unique_ptr<duckdb::Connection> _con;
   std::unique_ptr<duckdb::PreparedStatement> _prepared;
 
+  std::string _sql_prefix;
+  std::string _sql_suffix;
+  std::string _keys_text;
   duckdb::vector<duckdb::Value> _params;
   absl::flat_hash_map<duckdb::Value, duckdb::idx_t> _struct_slot;
 };

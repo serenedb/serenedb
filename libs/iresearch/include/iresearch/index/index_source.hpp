@@ -48,7 +48,7 @@ struct PrimaryKeyBatch {
   Kind kind = Kind::None;
   std::vector<int64_t> files;
   std::vector<int64_t> rows;
-  
+
   // Kind::Struct only: the key column borrowed from the pk reader (a duckdb
   // Vector doesn't know its own row count, so it travels alongside).
   duckdb::Vector* struct_column = nullptr;

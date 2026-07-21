@@ -375,8 +375,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       .table = entry.name.GetIdentifierName()};
     if ((cat_type == "clickhouse" || cat_type == "postgres") &&
         !key_columns.empty()) {
-      // User key via WITH (key_columns = '...'): any column count/types, overrides
-      // the auto default (pg ctid / CH PK). Unknown column -> no fast path.
+      // User key via WITH (key_columns = '...'): any column count/types,
+      // overrides the auto default (pg ctid / CH PK). Unknown column -> no fast
+      // path.
       duckdb::vector<ExternalKeyColumn> cols;
       cols.reserve(key_columns.size());
       for (const auto& name : key_columns) {

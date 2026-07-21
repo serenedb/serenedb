@@ -641,9 +641,10 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         duckdb::UnifiedVectorFormat fmt;
         rowid_vec.ToUnifiedFormat(num_rows, fmt);
         const auto* packed = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
-        pk_scratch = std::make_unique<duckdb::Vector>(
-          duckdb::LogicalType::STRUCT({{"page", duckdb::LogicalType::BIGINT},
-                                       {"tuple", duckdb::LogicalType::BIGINT}}));
+        pk_scratch =
+          std::make_unique<duckdb::Vector>(duckdb::LogicalType::STRUCT(
+            {{"page", duckdb::LogicalType::BIGINT},
+             {"tuple", duckdb::LogicalType::BIGINT}}));
         auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
         auto* pages = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
         auto* tuples = duckdb::FlatVector::GetDataMutable<int64_t>(entries[1]);

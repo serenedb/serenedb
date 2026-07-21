@@ -163,16 +163,16 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
   const duckdb::idx_t num_key_cols = _num_key_cols;
 
-  // _params is row-major: tuple i occupies [i*num_key_cols, (i+1)*num_key_cols),
-  // matching the placeholder order.
+  // _params is row-major: tuple i occupies [i*num_key_cols,
+  // (i+1)*num_key_cols), matching the placeholder order.
   _struct_slot.clear();
   for (duckdb::idx_t i = 0; i < count; ++i) {
     duckdb::Value key = pk.struct_column->GetValue(i);
     const auto& children = duckdb::StructValue::GetChildren(key);
     if (_postgres_ctid) {
-      _params[i] = duckdb::Value::BIGINT(
-        (children[0].GetValue<int64_t>() << 16) |
-        children[1].GetValue<int64_t>());
+      _params[i] =
+        duckdb::Value::BIGINT((children[0].GetValue<int64_t>() << 16) |
+                              children[1].GetValue<int64_t>());
     } else {
       for (duckdb::idx_t k = 0; k < num_key_cols; ++k) {
         _params[i * num_key_cols + k] = children[k];

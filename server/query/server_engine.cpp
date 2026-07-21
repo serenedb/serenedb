@@ -59,6 +59,7 @@
 #include "pg/system_catalog.h"
 #include "pg/system_table.h"
 #include "query/config.h"
+#include "query/config_variable_names.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
@@ -222,6 +223,11 @@ ABSL_FLAG(uint64_t, cpu_threads, 0,
           "auto-detect from cpu_count. The SQL-level `SET threads = N` "
           "continues to win at runtime.");
 
+ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
+          "Maximum WAL chunks in flight per inverted index during recovery "
+          "replay (the prefetch window; bounds replay memory). 0 = auto "
+          "(4 x cpu threads).");
+
 ABSL_DECLARE_FLAG(std::string, server_directory);
 
 namespace sdb::server::query {
@@ -253,6 +259,11 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
     absl::SetFlag(&FLAGS_cpu_threads, threads);
   }
   config.SetOptionByName("threads", duckdb::Value::UBIGINT(threads));
+  if (const auto depth = absl::GetFlag(FLAGS_recovery_replay_depth);
+      depth != 0) {
+    config.SetOptionByName(std::string{kRecoveryReplayDepthSetting},
+                           duckdb::Value::UINTEGER(depth));
+  }
   // serenedb runs every query on the internal pool (sessions are scheduled as
   // tasks; the driver is itself a pool worker), so there is no external thread
   // feeding the scheduler. Default external_threads=1 would over-count

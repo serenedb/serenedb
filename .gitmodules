@@ -196,8 +196,9 @@
 	shallow = true
 [submodule "third_party/brotli"]
 	path = third_party/brotli
-	url = git@github.com:serenedb/brotli.git
+	url = https://github.com/serenedb/brotli.git
 	shallow = true
 [submodule "third_party/jemalloc"]
 	path = third_party/jemalloc
 	url = https://github.com/serenedb/jemalloc.git
+	shallow = true

@@ -35,6 +35,7 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_aggregate.hpp>
 #include <duckdb/planner/operator/logical_cross_product.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
@@ -773,6 +774,27 @@ bool ContainsTSQueryExpr(const duckdb::Expression& expr) {
 // the enumerated field (the ts_dict claim then turns it into a term acceptor
 // or a term post-filter). Anything else between the aggregate and the scan
 // consumes document rows, which the term-dict scan no longer produces.
+bool IsConstantTrue(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
+    return false;
+  }
+  const auto& value = expr.Cast<duckdb::BoundConstantExpression>().GetValue();
+  return value.type().id() == duckdb::LogicalTypeId::BOOLEAN && !value.IsNull() &&
+         duckdb::BooleanValue::Get(value);
+}
+
+bool IsAlwaysTrueFilter(const duckdb::LogicalFilter& filter) {
+  if (filter.expressions.empty()) {
+    return false;
+  }
+  for (const auto& expr : filter.expressions) {
+    if (!IsConstantTrue(*expr)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::pair<duckdb::LogicalGet*, duckdb::LogicalFilter*> ImplicitTsDictTarget(
   duckdb::LogicalOperator& aggr) {
   auto* node = &aggr;
@@ -783,10 +805,13 @@ std::pair<duckdb::LogicalGet*, duckdb::LogicalFilter*> ImplicitTsDictTarget(
       return {&child->Cast<duckdb::LogicalGet>(), filter};
     }
     if (child->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
-      if (filter) {
-        return {nullptr, nullptr};
+      auto& child_filter = child->Cast<duckdb::LogicalFilter>();
+      if (!IsAlwaysTrueFilter(child_filter)) {
+        if (filter) {
+          return {nullptr, nullptr};
+        }
+        filter = &child_filter;
       }
-      filter = &child->Cast<duckdb::LogicalFilter>();
     } else if (child->type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
       return {nullptr, nullptr};
     }

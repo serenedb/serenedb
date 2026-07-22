@@ -1819,3 +1819,88 @@ SELECT list_sort(ts_dict_agg(SeverityText)) AS terms FROM fvw_idx
 ----
 terms
 {ERROR,INFO}
+
+
+# A constant-true WHERE predicate (`WHERE true`, `WHERE 1=1`, `WHERE true AND
+# 1=1`) folds away and must not block the term-dictionary facet pushdown; a
+# constant-false predicate stays restrictive and still eliminates every row.
+
+statement ok
+CREATE TABLE fconst(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX fconst_idx ON fconst USING inverted(cat fct_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO fconst VALUES (1,'red'),(2,'green'),(3,'red'),(4,'blue'),(5,'red'),(6,'green')
+
+statement ok
+VACUUM (REFRESH_TABLE) fconst;
+
+query TI
+SELECT cat, count(*) AS n FROM fconst_idx WHERE true GROUP BY cat ORDER BY cat
+----
+cat	n
+blue	1
+green	2
+red	3
+
+query
+EXPLAIN SELECT cat, count(*) AS n FROM fconst_idx WHERE true GROUP BY cat
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: fconst_idx                         │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~3 rows                                   │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT cat, count(*) AS n FROM fconst_idx WHERE 1=1 GROUP BY cat ORDER BY cat
+----
+cat	n
+blue	1
+green	2
+red	3
+
+query
+EXPLAIN SELECT cat, count(*) AS n FROM fconst_idx WHERE true AND 1=1 GROUP BY cat
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: fconst_idx                         │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~3 rows                                   │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT cat, count(*) AS n FROM fconst_idx WHERE false GROUP BY cat ORDER BY cat
+----
+cat	n

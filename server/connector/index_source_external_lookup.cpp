@@ -272,55 +272,54 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   auto& entries = duckdb::StructVector::GetEntries(*batch.struct_column);
 
   duckdb::vector<duckdb::Value> params;
-  {
-    duckdb::child_list_t<duckdb::Value> arrays;
-    arrays.reserve(_num_key_cols + 1);
-    if (_postgres_ctid) {
-      duckdb::UnifiedVectorFormat page_fmt;
-      duckdb::UnifiedVectorFormat tuple_fmt;
-      entries[0].ToUnifiedFormat(count, page_fmt);
-      entries[1].ToUnifiedFormat(count, tuple_fmt);
-      const auto* pages =
-        duckdb::UnifiedVectorFormat::GetData<int64_t>(page_fmt);
-      const auto* tuples =
-        duckdb::UnifiedVectorFormat::GetData<int64_t>(tuple_fmt);
-      const auto tid_type =
-        duckdb::LogicalType::STRUCT({{"block", duckdb::LogicalType::BIGINT},
-                                     {"offset", duckdb::LogicalType::BIGINT}});
+
+  duckdb::child_list_t<duckdb::Value> arrays;
+  arrays.reserve(_num_key_cols + 1);
+  if (_postgres_ctid) {
+    duckdb::UnifiedVectorFormat page_fmt;
+    duckdb::UnifiedVectorFormat tuple_fmt;
+    entries[0].ToUnifiedFormat(count, page_fmt);
+    entries[1].ToUnifiedFormat(count, tuple_fmt);
+    const auto* pages = duckdb::UnifiedVectorFormat::GetData<int64_t>(page_fmt);
+    const auto* tuples =
+      duckdb::UnifiedVectorFormat::GetData<int64_t>(tuple_fmt);
+    const auto tid_type =
+      duckdb::LogicalType::STRUCT({{"block", duckdb::LogicalType::BIGINT},
+                                   {"offset", duckdb::LogicalType::BIGINT}});
+    duckdb::vector<duckdb::Value> keys;
+    keys.reserve(count);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      keys.push_back(duckdb::Value::STRUCT(
+        {{"block", duckdb::Value::BIGINT(pages[page_fmt.sel->get_index(i)])},
+         {"offset",
+          duckdb::Value::BIGINT(tuples[tuple_fmt.sel->get_index(i)])}}));
+    }
+    arrays.emplace_back("__sdb_a0",
+                        duckdb::Value::LIST(tid_type, std::move(keys)));
+  } else {
+    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
       duckdb::vector<duckdb::Value> keys;
       keys.reserve(count);
       for (duckdb::idx_t i = 0; i < count; ++i) {
-        keys.push_back(duckdb::Value::STRUCT(
-          {{"block", duckdb::Value::BIGINT(pages[page_fmt.sel->get_index(i)])},
-           {"offset",
-            duckdb::Value::BIGINT(tuples[tuple_fmt.sel->get_index(i)])}}));
-      }
-      arrays.emplace_back("__sdb_a0",
-                          duckdb::Value::LIST(tid_type, std::move(keys)));
-    } else {
-      for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-        duckdb::vector<duckdb::Value> keys;
-        keys.reserve(count);
-        for (duckdb::idx_t i = 0; i < count; ++i) {
-          keys.push_back(entries[k].GetValue(i));
-        }
-        arrays.emplace_back(
-          absl::StrCat("__sdb_a", k),
-          duckdb::Value::LIST(entries[k].GetType(), std::move(keys)));
-      }
-    }
-    if (_dialect == Dialect::ClickHouse) {
-      duckdb::vector<duckdb::Value> ords;
-      ords.reserve(count);
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        ords.emplace_back(static_cast<int64_t>(i + 1));
+        keys.push_back(entries[k].GetValue(i));
       }
       arrays.emplace_back(
-        "__sdb_ord",
-        duckdb::Value::LIST(duckdb::LogicalType::BIGINT, std::move(ords)));
+        absl::StrCat("__sdb_a", k),
+        duckdb::Value::LIST(entries[k].GetType(), std::move(keys)));
     }
-    params.emplace_back(duckdb::Value::STRUCT(std::move(arrays)));
   }
+  if (_dialect == Dialect::ClickHouse) {
+    duckdb::vector<duckdb::Value> ords;
+    ords.reserve(count);
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      ords.emplace_back(static_cast<int64_t>(i + 1));
+    }
+    arrays.emplace_back(
+      "__sdb_ord",
+      duckdb::Value::LIST(duckdb::LogicalType::BIGINT, std::move(ords)));
+  }
+  params.emplace_back(duckdb::Value::STRUCT(std::move(arrays)));
+
   auto result = _stmt->Execute(params, /*allow_stream_result=*/false);
   if (result->HasError()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),

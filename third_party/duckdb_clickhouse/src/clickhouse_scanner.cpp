@@ -13,6 +13,10 @@
 #include <clickhouse/block.h>
 #include <clickhouse/columns/string.h>
 #include <clickhouse/columns/numeric.h>
+#include <clickhouse/columns/date.h>
+#include <clickhouse/columns/decimal.h>
+#include <clickhouse/columns/nullable.h>
+#include <clickhouse/columns/uuid.h>
 #include <clickhouse/exceptions.h>
 
 #include <optional>
@@ -28,6 +32,137 @@
 
 namespace duckdb {
 
+
+//===--------------------------------------------------------------------===//
+// External data: STRUCT of LISTs -> native binary Block
+//===--------------------------------------------------------------------===//
+namespace {
+
+// One Nullable column of the external block from one LIST child. Values are
+// typed by the duckdb list child type; the server joins/compares through the
+// usual type-family supertypes.
+clickhouse::ColumnRef BuildExternalColumn(const LogicalType &child_type, const vector<Value> &rows) {
+	auto nulls = std::make_shared<clickhouse::ColumnUInt8>();
+	for (auto &v : rows) {
+		nulls->Append(v.IsNull() ? 1 : 0);
+	}
+	auto wrap = [&](clickhouse::ColumnRef nested) -> clickhouse::ColumnRef {
+		return std::make_shared<clickhouse::ColumnNullable>(std::move(nested), std::move(nulls));
+	};
+	switch (child_type.id()) {
+	case LogicalTypeId::BOOLEAN: {
+		auto col = std::make_shared<clickhouse::ColumnUInt8>();
+		for (auto &v : rows) {
+			col->Append(!v.IsNull() && BooleanValue::Get(v) ? 1 : 0);
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT: {
+		auto col = std::make_shared<clickhouse::ColumnInt64>();
+		for (auto &v : rows) {
+			col->Append(v.IsNull() ? 0 : BigIntValue::Get(v.DefaultCastAs(LogicalType::BIGINT)));
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+	case LogicalTypeId::UBIGINT: {
+		auto col = std::make_shared<clickhouse::ColumnUInt64>();
+		for (auto &v : rows) {
+			col->Append(v.IsNull() ? 0 : UBigIntValue::Get(v.DefaultCastAs(LogicalType::UBIGINT)));
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::FLOAT: {
+		auto col = std::make_shared<clickhouse::ColumnFloat32>();
+		for (auto &v : rows) {
+			col->Append(v.IsNull() ? 0.0f : FloatValue::Get(v));
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::DOUBLE: {
+		auto col = std::make_shared<clickhouse::ColumnFloat64>();
+		for (auto &v : rows) {
+			col->Append(v.IsNull() ? 0.0 : DoubleValue::Get(v));
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::VARCHAR: {
+		auto col = std::make_shared<clickhouse::ColumnString>();
+		for (auto &v : rows) {
+			col->Append(v.IsNull() ? std::string() : StringValue::Get(v));
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::DATE: {
+		auto col = std::make_shared<clickhouse::ColumnDate32>();
+		for (auto &v : rows) {
+			col->AppendRaw(v.IsNull() ? 0 : DateValue::Get(v).days);
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_TZ: {
+		auto col = std::make_shared<clickhouse::ColumnDateTime64>(6);
+		for (auto &v : rows) {
+			col->Append(v.IsNull() ? 0 : v.DefaultCastAs(LogicalType::TIMESTAMP).GetValue<timestamp_t>().value);
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::UUID: {
+		auto col = std::make_shared<clickhouse::ColumnUUID>();
+		for (auto &v : rows) {
+			if (v.IsNull()) {
+				col->Append(clickhouse::UUID {0, 0});
+			} else {
+				const auto h = v.GetValue<hugeint_t>();
+				col->Append(clickhouse::UUID {static_cast<uint64_t>(h.upper) ^ (uint64_t(1) << 63),
+				                               static_cast<uint64_t>(h.lower)});
+			}
+		}
+		return wrap(std::move(col));
+	}
+	case LogicalTypeId::DECIMAL: {
+		auto col = std::make_shared<clickhouse::ColumnDecimal>(DecimalType::GetWidth(child_type),
+		                                                       DecimalType::GetScale(child_type));
+		for (auto &v : rows) {
+			col->Append(v.IsNull() ? std::string("0") : v.ToString());
+		}
+		return wrap(std::move(col));
+	}
+	default:
+		throw BinderException("clickhouse external data column type %s is not supported",
+		                      child_type.ToString().c_str());
+	}
+}
+
+clickhouse::Block BuildExternalBlock(const Value &struct_val) {
+	auto &child_types = StructType::GetChildTypes(struct_val.type());
+	auto &children = StructValue::GetChildren(struct_val);
+	clickhouse::Block block;
+	idx_t rows = 0;
+	for (idx_t c = 0; c < children.size(); c++) {
+		if (children[c].type().id() != LogicalTypeId::LIST) {
+			throw BinderException("clickhouse external data expects a STRUCT of LISTs");
+		}
+		auto &list = ListValue::GetChildren(children[c]);
+		if (c == 0) {
+			rows = list.size();
+		} else if (list.size() != rows) {
+			throw BinderException("clickhouse external data lists must have equal lengths");
+		}
+		block.AppendColumn(child_types[c].first.GetIdentifierName(),
+		                   BuildExternalColumn(ListType::GetChildType(children[c].type()), list));
+	}
+	return block;
+}
+
+} // namespace
+
 unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	auto result = make_uniq<ClickHouseBindData>();
 	result->params = params;
@@ -35,6 +170,7 @@ unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	result->database = database;
 	result->table = table;
 	result->sql = sql;
+	result->external = external;
 	result->from_query = from_query;
 	result->names = names;
 	result->types = types;
@@ -60,7 +196,7 @@ bool ClickHouseBindData::ColumnPushdownUnsafe(idx_t col) const {
 bool ClickHouseBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<ClickHouseBindData>();
 	return database == other.database && table == other.table && sql == other.sql &&
-	       from_query == other.from_query && names == other.names;
+	       from_query == other.from_query && names == other.names && external == other.external;
 }
 
 struct ClickHouseGlobalState : public GlobalTableFunctionState {
@@ -331,7 +467,13 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 			    std::chrono::steady_clock::now());
 		}
 		ClickHouseConnection::LogQuery(sql);
-		result->Conn().GetClient().BeginSelect(ClickHouseConnection::MakeQuery(context, sql));
+		if (!bind_data.external.IsNull()) {
+			const auto block = BuildExternalBlock(bind_data.external);
+			result->Conn().GetClient().BeginSelectWithExternalData(ClickHouseConnection::MakeQuery(context, sql),
+			                                                       {{"__sdb_keys", block}});
+		} else {
+			result->Conn().GetClient().BeginSelect(ClickHouseConnection::MakeQuery(context, sql));
+		}
 	} catch (const clickhouse::Error &e) {
 		if (result->borrowed_tx) {
 			result->borrowed_tx->InvalidateConnection();

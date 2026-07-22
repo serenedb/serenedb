@@ -28,6 +28,10 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	std::string database;
 	std::string table;
 	std::string sql;
+	//! Optional external-data table shipped with the query as a native binary
+	//! block: a STRUCT of equal-length LISTs, one per column, keyed by column
+	//! name; the query references it as `__sdb_keys`. NULL when unused.
+	Value external;
 	bool from_query = false;
 	//! MergeTree-family engine: pushed filters render as PREWHERE (legal only
 	//! there), else WHERE. False for ad-hoc clickhouse_scan/query binds.

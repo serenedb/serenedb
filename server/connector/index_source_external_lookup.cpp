@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 
 #include <cstdint>
@@ -36,7 +35,6 @@
 #include <duckdb/common/vector_size.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/database.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <string>
 #include <string_view>
@@ -55,79 +53,8 @@ std::string Quote(const std::string& id) {
   return duckdb::KeywordHelper::WriteQuoted(id, '"');
 }
 
-// Doubles single quotes: embeds the constant schema_query into the PREPAREd
-// outer statement's string literal. The per-batch inner SQL travels as a
-// bound parameter, so it never needs this.
-std::string Embed(const std::string& raw) {
-  return absl::StrReplaceAll(raw, {{"'", "''"}});
-}
-
-// A postgres string literal: 'a''b'.
-std::string PgStringLiteral(const std::string& s) {
-  return absl::StrCat("'", absl::StrReplaceAll(s, {{"'", "''"}}), "'");
-}
-
-// The key texts are appended between _sql_parts to form the INNER remote
-// SQL, which ships as a bound parameter -- only the remote engine's own
-// escaping applies.
-
-// One element of a postgres array literal: always double-quoted (legal for
-// every type, the ::T[] cast re-parses), backslash-escaped. A single quote
-// inside the element must survive the pg '{...}' string literal ('').
-void AppendPgArrayElem(std::string& out, const duckdb::Value& v) {
-  if (v.IsNull()) {
-    out += "NULL";
-    return;
-  }
-  out += '"';
-  for (const char c : v.ToString()) {
-    if (c == '"' || c == '\\') {
-      out += '\\';
-      out += c;
-    } else if (c == '\'') {
-      out += "''";
-    } else {
-      out += c;
-    }
-  }
-  out += '"';
-}
-
-// A ClickHouse string literal: the remote sees 'a\'b'.
-void AppendChString(std::string& out, const std::string& s) {
-  out += '\'';
-  for (const char c : s) {
-    if (c == '\\') {
-      out += "\\\\";
-    } else if (c == '\'') {
-      out += "\\'";
-    } else {
-      out += c;
-    }
-  }
-  out += '\'';
-}
-
-// One element of a ClickHouse array literal: integers/floats plain, bools
-// 0/1, everything else a string literal -- the coercive IN parses strings
-// into the column type, and the strict clauses (transform / JOIN ON) read
-// the array through a CAST to the column's native type, which parses the
-// same way. Decimals stay strings so the CAST parses the exact decimal text
-// instead of converting a rounded float.
-void AppendChPlainElem(std::string& out, const duckdb::Value& v) {
-  if (v.IsNull()) {
-    out += "NULL";
-    return;
-  }
-  if (v.type().id() == duckdb::LogicalTypeId::BOOLEAN) {
-    out += v.GetValue<bool>() ? '1' : '0';
-    return;
-  }
-  if (v.type().IsNumeric() && v.type().id() != duckdb::LogicalTypeId::DECIMAL) {
-    out += v.ToString();
-    return;
-  }
-  AppendChString(out, v.ToString());
+std::string SingleQuote(const std::string& s) {
+  return duckdb::KeywordHelper::WriteQuoted(s, '\'');
 }
 
 }  // namespace
@@ -190,139 +117,90 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
 
   _con = std::make_unique<duckdb::Connection>(*context.db);
   BuildQuery(ref, select_names);
-  _key_texts.resize(_num_key_cols);
 
   _filled.reserve(STANDARD_VECTOR_SIZE);
   _take_sel.Initialize(STANDARD_VECTOR_SIZE);
-  // This source never sorts its pks -- rows land in their batch slot by the
-  // echoed ordinal, so survivors already sit in doc-id order and the reorder
-  // permutation GatherNonLookupColumns applies is the identity, fixed for
-  // all batches.
   _sort_perm.resize(STANDARD_VECTOR_SIZE);
   absl::c_iota(_sort_perm, duckdb::idx_t{0});
 }
 
-std::vector<std::string> ExternalLookupIndexSource::ResolveKeyTypeNames(
-  const CatalogTableRef& ref) {
-  if (_postgres_ctid) {
-    // The synthetic physical-row key is a tid by construction.
-    return {"tid"};
-  }
-  const auto& key_columns = _fast_path.key_columns;
-  std::string inner;
-  if (_dialect == Dialect::Postgres) {
-    inner = absl::StrCat(
-      "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
-      "WHERE attrelid = ",
-      PgStringLiteral(absl::StrCat(Quote(ref.schema), ".", Quote(ref.table))),
-      "::regclass AND attname IN (");
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&inner, k ? ", " : "",
-                      PgStringLiteral(key_columns[k].name));
-    }
-    inner += ")";
-  } else {
-    inner = "SELECT name, type FROM system.columns WHERE database = ";
-    AppendChString(inner, ref.schema);
-    inner += " AND table = ";
-    AppendChString(inner, ref.table);
-    inner += " AND name IN (";
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      if (k) {
-        inner += ", ";
-      }
-      AppendChString(inner, key_columns[k].name);
-    }
-    inner += ")";
-  }
-  const auto outer = absl::StrCat(
-    "SELECT * FROM ",
-    _dialect == Dialect::Postgres ? "postgres_query(" : "clickhouse_query(",
-    duckdb::KeywordHelper::WriteQuoted(ref.catalog, '\''), ", '", Embed(inner),
-    "')");
-  auto result = _con->Query(outer);
-  if (result->HasError()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-                    ERR_MSG("external lookup key type resolution failed: ",
-                            result->GetError()));
-  }
-  containers::FlatHashMap<std::string, std::string> by_name;
-  while (auto chunk = result->Fetch()) {
-    for (duckdb::idx_t row = 0; row < chunk->size(); ++row) {
-      by_name.emplace(chunk->GetValue(0, row).ToString(),
-                      chunk->GetValue(1, row).ToString());
-    }
-  }
-  std::vector<std::string> out;
-  out.reserve(_num_key_cols);
-  for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-    auto it = by_name.find(key_columns[k].name);
-    if (it == by_name.end()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-        ERR_MSG("external lookup key column \"", key_columns[k].name,
-                "\" not found in the remote catalog"));
-    }
-    out.push_back(it->second);
-  }
-  return out;
-}
-
 void ExternalLookupIndexSource::BuildQuery(
   const CatalogTableRef& ref, const std::vector<std::string>& select_names) {
-  const auto key_type_names = ResolveKeyTypeNames(ref);
   if (_dialect == Dialect::Postgres) {
-    BuildPostgresQuery(ref, select_names, key_type_names);
+    BuildPostgresQuery(ref, select_names);
   } else {
-    BuildClickHouseQuery(ref, select_names, key_type_names);
+    BuildClickHouseQuery(ref, select_names);
   }
 }
 
-// Every postgres key kind is one shape: join the table against the zipped,
-// ordinality-tagged unnest of the key arrays and echo the ordinal -- the
-// position of each returned row in the batch. Cheaper than shipping the key
-// columns back (composite even beats the plain join: one int8 replaces N
-// echoed keys) and deletes the client-side routing.
 void ExternalLookupIndexSource::BuildPostgresQuery(
-  const CatalogTableRef& ref, const std::vector<std::string>& select_names,
-  const std::vector<std::string>& key_type_names) {
-  std::vector<std::string> pieces;
-  std::string head = "SELECT u.__sdb_ord";
-  for (const auto& name : select_names) {
-    absl::StrAppend(&head, ", t.", Quote(name));
-  }
-  absl::StrAppend(&head, " FROM unnest('{");
-  pieces.push_back(std::move(head));
-  for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-    const auto& type_name = key_type_names[k];
-    if (k + 1 < _num_key_cols) {
-      pieces.push_back(absl::StrCat("}'::", type_name, "[], '{"));
-    } else {
-      std::string tail =
-        absl::StrCat("}'::", type_name, "[]) WITH ORDINALITY u(");
-      for (duckdb::idx_t j = 0; j < _num_key_cols; ++j) {
-        absl::StrAppend(&tail, "__sdb_a", j, ", ");
+  const CatalogTableRef& ref, const std::vector<std::string>& select_names) {
+  std::vector<std::string> key_type_names;
+  if (_postgres_ctid) {
+    key_type_names = {"tid"};
+  } else {
+    const auto& key_columns = _fast_path.key_columns;
+    std::string meta = absl::StrCat(
+      "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
+      "WHERE attrelid = ",
+      SingleQuote(absl::StrCat(Quote(ref.schema), ".", Quote(ref.table))),
+      "::regclass AND attname IN (");
+    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+      absl::StrAppend(&meta, k ? ", " : "", SingleQuote(key_columns[k].name));
+    }
+    meta += ")";
+    auto result = _con->Query(absl::StrCat("SELECT * FROM postgres_query(",
+                                           SingleQuote(ref.catalog), ", ",
+                                           SingleQuote(meta), ")"));
+    if (result->HasError()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+                      ERR_MSG("external lookup key type resolution failed: ",
+                              result->GetError()));
+    }
+    containers::FlatHashMap<std::string, std::string> by_name;
+    while (auto chunk = result->Fetch()) {
+      for (duckdb::idx_t row = 0; row < chunk->size(); ++row) {
+        by_name.emplace(chunk->GetValue(0, row).ToString(),
+                        chunk->GetValue(1, row).ToString());
       }
-      absl::StrAppend(&tail, "__sdb_ord) JOIN ", Quote(ref.schema), ".",
-                      Quote(ref.table), " AS t ON ");
-      for (duckdb::idx_t j = 0; j < _num_key_cols; ++j) {
-        absl::StrAppend(&tail, j ? " AND " : "", "t.",
-                        _postgres_ctid ? std::string("ctid")
-                                       : Quote(_fast_path.key_columns[j].name),
-                        " = u.__sdb_a", j);
+    }
+    key_type_names.reserve(_num_key_cols);
+    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+      auto it = by_name.find(key_columns[k].name);
+      if (it == by_name.end()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+          ERR_MSG("external lookup key column \"", key_columns[k].name,
+                  "\" not found in the remote catalog"));
       }
-      pieces.push_back(std::move(tail));
+      key_type_names.push_back(it->second);
     }
   }
-  // schema_query: the same statement with EMPTY key arrays -- identical
-  // result schema, constant text, so postgres_query's describe cache makes
-  // repeated binds round-trip-free.
-  const std::string schema_inner = absl::StrJoin(pieces, "");
-  _sql_parts = std::move(pieces);
-  _stmt = _con->Prepare(
-    absl::StrCat("SELECT * FROM postgres_query(",
-                 duckdb::KeywordHelper::WriteQuoted(ref.catalog, '\''),
-                 ", $1, schema_query := '", Embed(schema_inner), "')"));
+
+  std::string inner = "SELECT u.__sdb_ord";
+  for (const auto& name : select_names) {
+    absl::StrAppend(&inner, ", t.", Quote(name));
+  }
+  inner += " FROM unnest(";
+  for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+    absl::StrAppend(&inner, k ? ", " : "", "$", k + 1, "::", key_type_names[k],
+                    "[]");
+  }
+  inner += ") WITH ORDINALITY u(";
+  for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+    absl::StrAppend(&inner, "__sdb_a", k, ", ");
+  }
+  absl::StrAppend(&inner, "__sdb_ord) JOIN ", Quote(ref.schema), ".",
+                  Quote(ref.table), " AS t ON ");
+  for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+    absl::StrAppend(&inner, k ? " AND " : "", "t.",
+                    _postgres_ctid ? std::string("ctid")
+                                   : Quote(_fast_path.key_columns[k].name),
+                    " = u.__sdb_a", k);
+  }
+  _stmt = _con->Prepare(absl::StrCat("SELECT * FROM postgres_query(",
+                                     SingleQuote(ref.catalog), ", ",
+                                     SingleQuote(inner), ", params := $1)"));
   if (_stmt->HasError()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
@@ -330,138 +208,49 @@ void ExternalLookupIndexSource::BuildPostgresQuery(
   }
 }
 
-// ClickHouse: keys travel as one flat string/number array per key column
-// (WITH-aliased, each literal appears once). The coercive IN prune reads the
-// arrays directly; the strict ordinal clauses (transform / JOIN ON) read
-// them through a `CAST(.., 'Array(<native column type>)')` alias -- exact
-// comparisons for every type without any client-side type knowledge.
-// Single key = transform() straight to the ordinal (the join machinery costs
-// +1.7 ms per query at real batch sizes), with an ordinal-join fallback for
-// NULL-bearing batches (transform rejects NULL array elements); composite =
-// parallel ARRAY JOIN zip + arrayEnumerate ordinal join + tuple-IN prune.
 void ExternalLookupIndexSource::BuildClickHouseQuery(
-  const CatalogTableRef& ref, const std::vector<std::string>& select_names,
-  const std::vector<std::string>& key_type_names) {
+  const CatalogTableRef& ref, const std::vector<std::string>& select_names) {
   const auto bq = [](const std::string& id) {
     return absl::StrCat("`", absl::StrReplaceAll(id, {{"`", "``"}}), "`");
   };
   const auto& key_columns = _fast_path.key_columns;
-
-  // WITH chain: pieces around one gap per key column, in column order.
-  std::vector<std::string> with_pieces;
-  std::string with_tail = "WITH ";
-  for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-    absl::StrAppend(&with_tail, k ? ", [" : "[");
-    with_pieces.push_back(std::move(with_tail));
-    with_tail = absl::StrCat("] AS __sdb_x", k);
-  }
-  // Typed aliases for the strict clauses; the join form casts to Nullable so
-  // NULL keys ride along and simply never match.
-  const auto cast_aliases = [&](bool nullable) {
-    std::string out;
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      const auto& t = key_type_names[k];
-      const bool wrap = nullable && t.rfind("Nullable(", 0) != 0;
-      absl::StrAppend(&out, ", CAST(__sdb_x", k, ", 'Array(",
-                      wrap ? absl::StrCat("Nullable(", t, ")") : t,
-                      ")') AS __sdb_w", k);
-    }
-    return out;
-  };
-  const auto join_arr = [&](duckdb::idx_t k) {
-    return absl::StrCat("__sdb_w", k);
-  };
-
-  // The coercive prune keeps PK granule reads bounded; qual prefixes the key
-  // columns ("t." inside the join form, none in the transform form).
-  const auto make_prune = [&](const char* qual) {
-    std::string prune;
-    if (_num_key_cols == 1) {
-      return absl::StrCat(qual, bq(key_columns[0].name), " IN __sdb_x0");
-    }
-    prune = "(";
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&prune, k ? ", " : "", qual, bq(key_columns[k].name));
-    }
-    prune += ") IN (SELECT ";
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&prune, k ? ", " : "", "__sdb_b", k);
-    }
-    prune += " FROM (SELECT ";
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&prune, k ? ", " : "", "__sdb_x", k, " AS __sdb_p", k);
-    }
-    prune += ") ARRAY JOIN ";
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&prune, k ? ", " : "", "__sdb_p", k, " AS __sdb_b", k);
-    }
-    prune += ")";
-    return prune;
-  };
-
-  std::string proj_plain;
-  std::string proj_joined;
-  for (const auto& name : select_names) {
-    absl::StrAppend(&proj_plain, ", ", bq(name));
-    absl::StrAppend(&proj_joined, ", t.", bq(name));
-  }
   const std::string table = absl::StrCat(bq(ref.schema), ".", bq(ref.table));
 
-  const auto join_form = [&]() {
-    std::string join_sub = "(SELECT ";
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&join_sub, "__sdb_a", k, ", ");
-    }
-    join_sub += "__sdb_o FROM (SELECT ";
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&join_sub, k ? ", " : "", join_arr(k), " AS __sdb_q", k);
-    }
-    join_sub += ") ARRAY JOIN ";
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&join_sub, "__sdb_q", k, " AS __sdb_a", k, ", ");
-    }
-    join_sub += "arrayEnumerate(__sdb_q0) AS __sdb_o) AS u";
-    std::string on_clause;
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&on_clause, k ? " AND " : "", "t.",
-                      bq(key_columns[k].name), " = u.__sdb_a", k);
-    }
-    return absl::StrCat("SELECT toInt64(u.__sdb_o) AS __sdb_ord", proj_joined,
-                        " FROM ", table, " AS t INNER JOIN ", join_sub, " ON ",
-                        on_clause, " WHERE ", make_prune("t."));
-  };
-
-  std::vector<std::string> pieces;
-  std::vector<std::string> null_pieces;
+  std::string proj;
+  std::string proj_joined;
+  for (const auto& name : select_names) {
+    absl::StrAppend(&proj, ", ", bq(name));
+    absl::StrAppend(&proj_joined, ", t.", bq(name));
+  }
+  std::string inner =
+    absl::StrCat("SELECT toInt64(e.__sdb_ord) AS __sdb_ord", proj_joined,
+                 " FROM ", table, " AS t INNER JOIN __sdb_keys AS e ON ");
+  for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+    absl::StrAppend(&inner, k ? " AND " : "", "t.", bq(key_columns[k].name),
+                    " = e.__sdb_a", k);
+  }
+  inner += " WHERE ";
   if (_num_key_cols == 1) {
-    const std::string transform_form = absl::StrCat(
-      "SELECT toInt64(transform(", bq(key_columns[0].name), ", ", join_arr(0),
-      ", arrayEnumerate(", join_arr(0), "), 0)) AS __sdb_ord", proj_plain,
-      " FROM ", table, " WHERE ", make_prune(""));
-    pieces = with_pieces;
-    pieces.push_back(
-      absl::StrCat(with_tail, cast_aliases(false), " ", transform_form));
-    null_pieces = with_pieces;
-    null_pieces.push_back(
-      absl::StrCat(with_tail, cast_aliases(true), " ", join_form()));
+    absl::StrAppend(&inner, "t.", bq(key_columns[0].name),
+                    " IN (SELECT __sdb_a0 FROM __sdb_keys)");
   } else {
-    pieces = with_pieces;
-    pieces.push_back(
-      absl::StrCat(with_tail, cast_aliases(true), " ", join_form()));
+    inner += "(";
+    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+      absl::StrAppend(&inner, k ? ", " : "", "t.", bq(key_columns[k].name));
+    }
+    inner += ") IN (SELECT ";
+    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+      absl::StrAppend(&inner, k ? ", " : "", "__sdb_a", k);
+    }
+    inner += " FROM __sdb_keys)";
   }
 
-  // schema_query: a constant statement with the same result names and
-  // types -- DESCRIBE parses this instead of the full per-batch key list.
-  // Both templates share one prepared statement: the inner SQL is just the
-  // $1 value.
   const std::string schema_inner = absl::StrCat(
-    "SELECT toInt64(0) AS __sdb_ord", proj_plain, " FROM ", table, " WHERE 0");
-  _sql_parts = std::move(pieces);
-  _null_sql_parts = std::move(null_pieces);
-  _stmt = _con->Prepare(
-    absl::StrCat("SELECT * FROM clickhouse_query(",
-                 duckdb::KeywordHelper::WriteQuoted(ref.catalog, '\''),
-                 ", $1, schema_query := '", Embed(schema_inner), "')"));
+    "SELECT toInt64(0) AS __sdb_ord", proj, " FROM ", table, " WHERE 0");
+  _stmt = _con->Prepare(absl::StrCat(
+    "SELECT * FROM clickhouse_query(", SingleQuote(ref.catalog), ", ",
+    SingleQuote(inner), ", schema_query := ", SingleQuote(schema_inner),
+    ", external := $1)"));
   if (_stmt->HasError()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
@@ -475,67 +264,63 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   if (count == 0) {
     return 0;
   }
-  auto& pk = batch;
-  SDB_ASSERT(pk.kind == PrimaryKeyBatch::Kind::Struct);
-  SDB_ASSERT(pk.struct_column && start == 0 && count <= pk.struct_column_count);
+  SDB_ASSERT(batch.kind == PrimaryKeyBatch::Kind::Struct);
+  SDB_ASSERT(batch.struct_column && start == 0 &&
+             count <= batch.struct_column_count);
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
 
-  auto& entries = duckdb::StructVector::GetEntries(*pk.struct_column);
-  std::vector<duckdb::UnifiedVectorFormat> key_fmt(entries.size());
-  for (size_t k = 0; k < entries.size(); ++k) {
-    entries[k].ToUnifiedFormat(count, key_fmt[k]);
-  }
+  auto& entries = duckdb::StructVector::GetEntries(*batch.struct_column);
 
-  for (auto& text : _key_texts) {
-    text.clear();
-  }
-  bool has_null_key = false;
-  for (duckdb::idx_t i = 0; i < count; ++i) {
-    if (_postgres_ctid) {
-      auto& out = _key_texts[0];
-      if (i) {
-        out += ',';
-      }
-      const auto page = duckdb::UnifiedVectorFormat::GetData<int64_t>(
-        key_fmt[0])[key_fmt[0].sel->get_index(i)];
-      const auto tuple = duckdb::UnifiedVectorFormat::GetData<int64_t>(
-        key_fmt[1])[key_fmt[1].sel->get_index(i)];
-      absl::StrAppend(&out, "\"(", page, ",", tuple, ")\"");
-      continue;
-    }
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      auto& out = _key_texts[k];
-      if (i) {
-        out += ',';
-      }
-      const auto v = entries[k].GetValue(i);
-      has_null_key |= v.IsNull();
-      if (_dialect == Dialect::Postgres) {
-        AppendPgArrayElem(out, v);
-      } else {
-        AppendChPlainElem(out, v);
-      }
-    }
-  }
-
-  // transform() requires CONSTANT arrays and rejects NULL elements, so a
-  // NULL-bearing ClickHouse single-key batch takes the ordinality-join
-  // template instead (a NULL key just never matches there). pg and CH
-  // composite have no fallback -- _null_sql_parts is empty and the flag is
-  // ignored.
-  const auto& parts =
-    has_null_key && !_null_sql_parts.empty() ? _null_sql_parts : _sql_parts;
-  std::string inner = parts[0];
-  for (size_t j = 0; j + 1 < parts.size(); ++j) {
-    inner += _key_texts[j];
-    inner += parts[j + 1];
-  }
-  // PreparedStatement::Execute takes the values by non-const reference, and
-  // the variadic convenience overload cannot pin allow_stream_result --
-  // hence the explicit one-element vector. Materialized (non-stream) result
-  // so the early-exit below never abandons a live stream.
   duckdb::vector<duckdb::Value> params;
-  params.emplace_back(std::move(inner));
+  {
+    duckdb::child_list_t<duckdb::Value> arrays;
+    arrays.reserve(_num_key_cols + 1);
+    if (_postgres_ctid) {
+      duckdb::UnifiedVectorFormat page_fmt;
+      duckdb::UnifiedVectorFormat tuple_fmt;
+      entries[0].ToUnifiedFormat(count, page_fmt);
+      entries[1].ToUnifiedFormat(count, tuple_fmt);
+      const auto* pages =
+        duckdb::UnifiedVectorFormat::GetData<int64_t>(page_fmt);
+      const auto* tuples =
+        duckdb::UnifiedVectorFormat::GetData<int64_t>(tuple_fmt);
+      const auto tid_type =
+        duckdb::LogicalType::STRUCT({{"block", duckdb::LogicalType::BIGINT},
+                                     {"offset", duckdb::LogicalType::BIGINT}});
+      duckdb::vector<duckdb::Value> keys;
+      keys.reserve(count);
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        keys.push_back(duckdb::Value::STRUCT(
+          {{"block", duckdb::Value::BIGINT(pages[page_fmt.sel->get_index(i)])},
+           {"offset",
+            duckdb::Value::BIGINT(tuples[tuple_fmt.sel->get_index(i)])}}));
+      }
+      arrays.emplace_back("__sdb_a0",
+                          duckdb::Value::LIST(tid_type, std::move(keys)));
+    } else {
+      for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
+        duckdb::vector<duckdb::Value> keys;
+        keys.reserve(count);
+        for (duckdb::idx_t i = 0; i < count; ++i) {
+          keys.push_back(entries[k].GetValue(i));
+        }
+        arrays.emplace_back(
+          absl::StrCat("__sdb_a", k),
+          duckdb::Value::LIST(entries[k].GetType(), std::move(keys)));
+      }
+    }
+    if (_dialect == Dialect::ClickHouse) {
+      duckdb::vector<duckdb::Value> ords;
+      ords.reserve(count);
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        ords.emplace_back(static_cast<int64_t>(i + 1));
+      }
+      arrays.emplace_back(
+        "__sdb_ord",
+        duckdb::Value::LIST(duckdb::LogicalType::BIGINT, std::move(ords)));
+    }
+    params.emplace_back(duckdb::Value::STRUCT(std::move(arrays)));
+  }
   auto result = _stmt->Execute(params, /*allow_stream_result=*/false);
   if (result->HasError()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
@@ -548,10 +333,6 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   _filled.assign(count, 0);
   duckdb::idx_t rows = 0;
 
-  // Column 0 is the echoed 1-based batch position; misses simply never
-  // arrive. Out-of-range or repeated ordinals from a misbehaving remote are
-  // dropped rather than trusted. Accepted rows gather into _tf_target with
-  // ONE Copy per column per chunk, appended at the running row offset.
   duckdb::UnifiedVectorFormat ord_fmt;
   while (rows < count) {
     auto chunk = result->Fetch();

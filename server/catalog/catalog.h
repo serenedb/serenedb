@@ -82,6 +82,11 @@ struct CreateIndexOperationOptions {
   // IF NOT EXISTS: an existing relation of the same name makes the create
   // return false instead of throwing "already exists".
   bool if_not_exists = false;
+  // Online CREATE INDEX injects the inverted index into the store table's
+  // live index list itself, under the table's checkpoint lock; the create
+  // must not do it early (commits between the create and the lock would
+  // straddle the publication).
+  bool defer_injection = false;
 };
 
 // Site-specific error phrasing for ChangeTable. The defaults throw

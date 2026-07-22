@@ -38,7 +38,9 @@
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_lock.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 
 #include "basics/assert.h"
@@ -98,6 +100,10 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   duckdb::idx_t pk_lo_col_idx = 0;
 
   std::atomic<duckdb::idx_t> backfill_count_atomic{0};
+  // Rows at or above this rowid committed after the index was published and
+  // reach it through the live commit-time feed; Sink truncates them out of
+  // the backfill. INT64_MAX (no filtering) when the source has no rowids.
+  int64_t backfill_rowid_end = std::numeric_limits<int64_t>::max();
 
   // delete logs stuff
   std::vector<std::atomic<int64_t>> uncommitted_min_rowids;
@@ -296,20 +302,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   bool if_not_exists =
     _info->on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  // Online-build publication must be atomic with the backfill snapshot:
-  // under the store table's exclusive checkpoint lock (no commit can be in
-  // flight or land), the index is injected and a fresh store transaction is
-  // pinned for the pipeline. Every commit is then either before both (in the
-  // backfill scan) or after both (feeds the injected index) -- no hole, no
-  // overlap. The bind-time store transaction's older snapshot is shadowed by
-  // the override below.
-  duckdb::unique_ptr<duckdb::StorageLockKey> publish_lock;
   duckdb::optional_ptr<duckdb::TableCatalogEntry> store_entry;
   if (state->index_type == catalog::ObjectType::InvertedIndex &&
       IsDuckDBTable()) {
     store_entry = catalog::GetStoreTableEntry(
       context, _relation->GetId(), duckdb::OnEntryNotFound::THROW_EXCEPTION);
-    publish_lock = store_entry->GetStorage().GetCheckpointLock();
   }
 
   // CREATE INDEX requires ownership of the target relation; the mutation
@@ -421,7 +418,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       _schema_entry.name.GetIdentifierName(), _relation->GetName(),
       _info->GetIndexName().GetIdentifierName(), std::move(idx_columns),
       std::move(options),
-      {.create_with_tombstone = true, .if_not_exists = if_not_exists});
+      {.create_with_tombstone = true,
+       .if_not_exists = if_not_exists,
+       .defer_injection = IsDuckDBTable()});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
@@ -477,20 +476,51 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     storage->StartTasks();
 
     if (IsDuckDBTable()) {
-      SDB_ASSERT(store_entry && publish_lock);
-      storage->SetDeleteLogRowidEnd(store_entry->GetStorage().GetNextRowId());
+      SDB_ASSERT(store_entry);
+      auto* table_obj = TableOrNull();
+      SDB_ASSERT(table_obj);
+      auto& store_storage = store_entry->GetStorage();
+      duckdb::idx_t horizon = 0;
+      {
+        // Publication point. The exclusive checkpoint lock brackets exactly
+        // {rowid assignment, commit-time index feed} of every store commit
+        // (both run under the table's shared key in LocalStorage::Flush), so
+        // rows below the horizon were fed to the pre-injection list and rows
+        // at or above it feed the injected index. Nothing that can wait on
+        // the transaction manager, the meta transaction, or the append lock
+        // may run under this lock: committers hold those while blocking on
+        // the shared key, so the catalog create above, the WAL barrier and
+        // the snapshot pin below all stay outside.
+        auto publish_lock = store_storage.GetCheckpointLock();
+        store_storage.GetDataTableInfo()->GetIndexes().AddIndex(
+          MakeInjectedInvertedIndex(store_storage, *table_obj, *inverted));
+        horizon = store_storage.GetNextRowId();
+        storage->SetDeleteLogRowidEnd(horizon);
+      }
+      state->backfill_rowid_end = static_cast<int64_t>(horizon);
       state->uncommitted_min_rowids = std::vector<std::atomic<int64_t>>(
         duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
 
-      // The backfill's snapshot, pinned while the lock still excludes
-      // commits: a fresh store transaction routed to this pipeline's scan
-      // (the CTAS second-transaction pattern). Read-only; Finalize (or the
-      // abort hook) pops and rolls it back.
       auto& store_db = store_entry->ParentCatalog().GetAttached();
+      {
+        // A committer releases the shared key before its visibility rewrite
+        // but holds the WAL lock across both; passing through it here means
+        // every pre-injection flush is fully visible to the snapshot below.
+        auto wal_barrier = store_db.GetStorageManager().GetWALLock();
+      }
+
+      // The backfill's snapshot: every commit below the horizon completed
+      // before the WAL barrier, everything at or above it is live-fed and
+      // truncated out of the backfill by rowid in Sink. The refresh lifts
+      // the snapshot above commits whose group fsync is still pending --
+      // they are below the horizon, and if they never become durable the
+      // whole create dies with the server anyway. Read-only; Finalize (or
+      // the abort hook) pops and rolls it back.
       auto& meta = duckdb::MetaTransaction::Get(context);
-      auto& backfill_txn = store_db.GetTransactionManager()
-                             .StartTransaction(context)
-                             .Cast<duckdb::DuckTransaction>();
+      auto& store_txn_mgr = duckdb::DuckTransactionManager::Get(store_db);
+      auto& backfill_txn =
+        store_txn_mgr.StartTransaction(context).Cast<duckdb::DuckTransaction>();
+      store_txn_mgr.RefreshCheckpointSnapshot(backfill_txn);
       backfill_txn.active_query = meta.GetActiveQuery();
       meta.PushTransactionOverride(store_db, backfill_txn);
       state->store_db = &store_db;
@@ -620,7 +650,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   if (!gstate.created) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  const auto num_rows = chunk.size();
+  auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
@@ -633,6 +663,25 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   auto* writer = lstate->writer.get();
+
+  if (gstate.backfill_rowid_end != std::numeric_limits<int64_t>::max()) {
+    auto& rowid_vec = chunk.data[gstate.pk_hi_col_idx];
+    duckdb::UnifiedVectorFormat fmt;
+    rowid_vec.ToUnifiedFormat(num_rows, fmt);
+    auto* rowids = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
+    auto keep = num_rows;
+    while (keep > 0 &&
+           rowids[fmt.sel->get_index(keep - 1)] >= gstate.backfill_rowid_end) {
+      --keep;
+    }
+    if (keep == 0) {
+      return duckdb::SinkResultType::NEED_MORE_INPUT;
+    }
+    if (keep != num_rows) {
+      chunk.SetCardinality(keep);
+      num_rows = keep;
+    }
+  }
 
   PkChunk pk;
   std::unique_ptr<duckdb::Vector> pk_scratch;

@@ -1966,6 +1966,7 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
         auto table = clone->template GetObject<Table>(index->GetRelationId());
         if (table) {
           if (auto def = MakeStoreIndexDef(*table, *index)) {
+            def->defer_injection = operation_options.defer_injection;
             _engine->Write([&](auto& ctx) {
               ctx.CreateStoreIndex(std::move(*def), table, index);
             });

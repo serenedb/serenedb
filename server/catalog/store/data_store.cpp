@@ -259,6 +259,12 @@ absl::Status DataStore::ExecuteEntry(const CatalogStore::Entry& entry) {
     case Op::CreateStoreIndex: {
       const auto& def = entry.store_index;
       if (def.kind == StoreIndexDef::Kind::Inverted) {
+        if (def.defer_injection) {
+          // Online CREATE INDEX publishes the index itself, under the store
+          // table's checkpoint lock (doing it here, inside the create, would
+          // let commits straddle the publication).
+          break;
+        }
         // Externally-stored index: build it bound from the catalog objects
         // and inject it into the live index list -- same publication point
         // as duckdb's own CREATE INDEX finalize (storage.AddIndex), so

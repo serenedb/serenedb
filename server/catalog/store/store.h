@@ -99,6 +99,9 @@ struct StoreIndexDef {
   std::vector<std::string> keys;
   Kind kind = Kind::Inverted;
   bool unique = false;
+  // Inverted only: the caller publishes the index into the live list itself
+  // (online CREATE INDEX does it under the store table's checkpoint lock).
+  bool defer_injection = false;
 };
 
 class Table;

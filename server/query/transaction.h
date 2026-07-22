@@ -156,25 +156,40 @@ class Transaction : public Config {
         // feed here.
         continue;
       }
-      auto inverted = basics::downCast<const catalog::InvertedIndex>(index);
-      auto storage = inverted->GetData();
-      SDB_ASSERT(storage);
-      auto& entry =
-        _search_transactions.try_emplace(index->GetId()).first->second;
-      if (!entry.transaction) {
-        entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
-          storage->GetTransaction());
-        // Keep the storage alive and reachable for Commit() without a catalog
-        // re-lookup.
-        entry.storage = storage;
-        // Encode this transaction's rows against the InvertedIndex from its own
-        // DDL snapshot (the index IS the per-column options); co-owned via the
-        // catalog snapshot this transaction holds, so the segment writer can
-        // pin it until flush without a live-catalog lookup.
-        entry.transaction->SetFieldOptions(std::move(inverted));
-      }
-      visit(*entry.transaction, *index);
+      EnsureIndexTransaction(
+        basics::downCast<const catalog::InvertedIndex>(index), visit);
     }
+  }
+
+  // Feed hook for one index resolved by the caller. The commit-time duckdb
+  // index-list walk is the publication authority: an index published while
+  // this transaction's statement snapshot was already pinned must still be
+  // fed (its object then comes from a newer catalog snapshot), or the row
+  // exists in the table but never reaches the index.
+  template<typename Visit>
+  void EnsureIndexTransaction(
+    std::shared_ptr<const catalog::InvertedIndex> inverted, Visit&& visit) {
+    SDB_ASSERT(inverted);
+    auto storage = inverted->GetData();
+    SDB_ASSERT(storage);
+    auto& entry =
+      _search_transactions.try_emplace(inverted->GetId()).first->second;
+    if (!entry.transaction) {
+      entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
+        storage->GetTransaction());
+      // Keep the storage alive and reachable for Commit() without a catalog
+      // re-lookup.
+      entry.storage = storage;
+      const auto& index_ref = *inverted;
+      // Encode this transaction's rows against the InvertedIndex from its own
+      // DDL snapshot (the index IS the per-column options); owned by the
+      // transaction entry, so the segment writer can pin it until flush
+      // without a live-catalog lookup.
+      entry.transaction->SetFieldOptions(std::move(inverted));
+      visit(*entry.transaction, index_ref);
+      return;
+    }
+    visit(*entry.transaction, *inverted);
   }
 
  private:

@@ -62,40 +62,56 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
   duckdb::optional_ptr<duckdb::ClientContext> expr_context) {
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
   auto snapshot = conn_ctx.CatalogSnapshot();
-  conn_ctx.EnsureIndexesTransactions(
-    table_id, [&](auto& index_txn, const catalog::Index& index) {
-      if (index.GetId() != index_id) {
-        return;
+  auto make_writer = [&](auto& index_txn, const catalog::Index& index) {
+    if (index.GetId() != index_id) {
+      return;
+    }
+    auto& inverted_index = basics::downCast<const catalog::InvertedIndex>(index);
+    if constexpr (Kind == DuckDBWriteKind::Delete) {
+      if (!inverted_index.GetOptions().pk_term) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("inverted index \"", inverted_index.GetName(),
+                  "\" was created WITH (store_pk = 'none') and does not "
+                  "index row PKs: DELETE/UPDATE cannot maintain it; drop "
+                  "the index first or recreate it without store_pk = "
+                  "'none'"));
       }
-      auto& inverted_index =
-        basics::downCast<const catalog::InvertedIndex>(index);
-      if constexpr (Kind == DuckDBWriteKind::Delete) {
-        if (!inverted_index.GetOptions().pk_term) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-            ERR_MSG("inverted index \"", inverted_index.GetName(),
-                    "\" was created WITH (store_pk = 'none') and does not "
-                    "index row PKs: DELETE/UPDATE cannot maintain it; drop "
-                    "the index first or recreate it without store_pk = "
-                    "'none'"));
-        }
-      }
-      auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
-      auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
-      std::vector<IndexedExpression> indexed_exprs;
-      if constexpr (Kind == DuckDBWriteKind::Insert) {
-        indexed_exprs = MakeIndexedExpressions(
-          inverted_index,
-          expr_context ? *expr_context : conn_ctx.GetClientContext());
-      }
-      const auto& index_options = inverted_index.GetOptions();
-      writer =
-        MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
-                               std::move(entry_info_provider),
-                               index.GetColumns(), std::move(indexed_exprs),
-                               PkPolicy{.index_term = index_options.pk_term,
-                                        .column = index_options.pk_column});
-    });
+    }
+    auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
+    auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
+    std::vector<IndexedExpression> indexed_exprs;
+    if constexpr (Kind == DuckDBWriteKind::Insert) {
+      indexed_exprs = MakeIndexedExpressions(
+        inverted_index,
+        expr_context ? *expr_context : conn_ctx.GetClientContext());
+    }
+    const auto& index_options = inverted_index.GetOptions();
+    writer =
+      MakeDuckDBSearchWriter(Kind, index_txn, std::move(tokenizer_provider),
+                             std::move(entry_info_provider),
+                             index.GetColumns(), std::move(indexed_exprs),
+                             PkPolicy{.index_term = index_options.pk_term,
+                                      .column = index_options.pk_column});
+  };
+  conn_ctx.EnsureIndexesTransactions(table_id, make_writer);
+  if (!writer) {
+    // The caller is the duckdb index-list walk -- the publication authority.
+    // An index published after this transaction's snapshot was pinned (its
+    // creation held the table's checkpoint lock while this commit waited) is
+    // missing from the session snapshot but must still be fed; resolve it,
+    // and the tokenizers it references, from the latest catalog snapshot.
+    auto latest = catalog::GetCatalog().GetCatalogSnapshot();
+    auto inverted =
+      latest ? latest->GetObject<catalog::InvertedIndex>(index_id) : nullptr;
+    // No tombstone check: an index under construction stays tombstoned until
+    // its CREATE finalizes, and feeding it is the point. Membership in the
+    // live duckdb index list is the drop authority here.
+    if (inverted && inverted->GetRelationId() == table_id) {
+      snapshot = latest;
+      conn_ctx.EnsureIndexTransaction(std::move(inverted), make_writer);
+    }
+  }
   return writer;
 }
 

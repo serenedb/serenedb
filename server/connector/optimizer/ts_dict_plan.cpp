@@ -30,12 +30,12 @@
 #include <duckdb/planner/expression/bound_aggregate_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_unnest_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_aggregate.hpp>
 #include <duckdb/planner/operator/logical_cross_product.hpp>
-#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
@@ -779,8 +779,8 @@ bool IsConstantTrue(const duckdb::Expression& expr) {
     return false;
   }
   const auto& value = expr.Cast<duckdb::BoundConstantExpression>().GetValue();
-  return value.type().id() == duckdb::LogicalTypeId::BOOLEAN && !value.IsNull() &&
-         duckdb::BooleanValue::Get(value);
+  return value.type().id() == duckdb::LogicalTypeId::BOOLEAN &&
+         !value.IsNull() && duckdb::BooleanValue::Get(value);
 }
 
 bool IsAlwaysTrueFilter(const duckdb::LogicalFilter& filter) {

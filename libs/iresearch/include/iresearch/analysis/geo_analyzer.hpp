@@ -43,16 +43,20 @@ namespace irs::analysis {
 
 class GeoAnalyzer : private util::Noncopyable {
  public:
-  static constexpr TokenTraits kTraits{.terms = TokenTraits::Terms::GeoCells,
-                                       .dense_pos = false,
-                                       .offsets = false,
-                                       .store = true};
+  static constexpr TokenTraits kTraits{
+    .dense_pos = false, .offsets = false, .store = true};
+
+  static bool IsGeoAnalyzer(const Tokenizer& tokens) noexcept;
 
   // Resolves either of the two registered geo analyzers from a type-erased
   // tokenizer; callers guarantee IsGeoAnalyzer via catalog/column type.
   static GeoAnalyzer& Cast(Tokenizer& tokens) noexcept;
   static const GeoAnalyzer& Cast(const Tokenizer& tokens) noexcept {
     return Cast(const_cast<Tokenizer&>(tokens));
+  }
+
+  static GeoAnalyzer* TryCast(Tokenizer& tokens) noexcept {
+    return IsGeoAnalyzer(tokens) ? &Cast(tokens) : nullptr;
   }
 
   template<TokenLayout Layout>

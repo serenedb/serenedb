@@ -56,7 +56,7 @@ class StringTokenizer : public analysis::TypedTokenizer<StringTokenizer>,
   }
 
   TokenTraits Traits() const noexcept final {
-    return {.terms = TokenTraits::Terms::Keyword};
+    return {.unique = true, .keyword = true};
   }
 
   template<TokenLayout Layout>

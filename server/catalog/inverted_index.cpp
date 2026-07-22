@@ -57,8 +57,7 @@ ColumnTokenizer BuildColumnTokenizer(
     THROW_SQL_ERROR(ERR_MSG("Dictionary for inverted index does not exists"));
   }
   auto analyzer = dict->GetTokenizer();
-  const bool verbatim =
-    analyzer->Traits().terms == irs::TokenTraits::Terms::Keyword;
+  const bool verbatim = analyzer->Traits().keyword;
   return ColumnTokenizer{.analyzer = std::move(analyzer),
                          .features = features.GetIndexFeatures(),
                          .verbatim = verbatim};

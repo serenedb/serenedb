@@ -549,7 +549,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
                 bool ok = true;
                 if (jpf.string_field.keyword) {
                   w.buf.dense_pos = true;
-                  w.buf.one_to_one = true;
+                  w.buf.unique = true;
                   const auto i = w.Next();
                   w.buf.terms[i] =
                     w.Intern(irs::ViewCast<irs::byte_type>(value));
@@ -856,8 +856,8 @@ void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
   SDB_ASSERT(column_analyzer.analyzer);
   string_analyzer = column_analyzer.analyzer.get();
   const auto traits = string_analyzer->Traits();
-  if (traits.terms == irs::TokenTraits::Terms::GeoCells) {
-    irs::analysis::GeoAnalyzer::Cast(*string_analyzer).SetWkbInput(false);
+  if (auto* geo = irs::analysis::GeoAnalyzer::TryCast(*string_analyzer)) {
+    geo->SetWkbInput(false);
   }
   if (keyword) {
     has_store = true;

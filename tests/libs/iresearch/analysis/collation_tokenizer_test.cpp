@@ -553,7 +553,8 @@ TEST(collation_token_stream_test, native_fills_match_pull) {
   ASSERT_NE(nullptr, analyzer);
   auto& stream = *analyzer;
 
-  ASSERT_EQ(irs::TokenTraits::Terms::Normalized, stream.Traits().terms);
+  ASSERT_TRUE(stream.Traits().unique);
+  ASSERT_FALSE(stream.Traits().keyword);
   ASSERT_EQ(duckdb::LogicalTypeId::BLOB, stream.Traits().output);
 
   const std::vector<std::string> values = {

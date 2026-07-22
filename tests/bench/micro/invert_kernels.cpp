@@ -234,7 +234,7 @@ void BM_ColumnarInvert(benchmark::State& state) {
 }
 
 // 1-1 ingest (single-token analyzer columns: keyword/norm/stem/collation):
-// same batches and runs, only the one_to_one hint differs -- measures
+// same batches and runs, only the unique hint differs -- measures
 // InvertOneToOne against the general per-run loop directly.
 void BM_ColumnarOneToOne(benchmark::State& state) {
   const bool hint = state.range(0) != 0;
@@ -253,7 +253,7 @@ void BM_ColumnarOneToOne(benchmark::State& state) {
     fb.batch = std::make_unique<TokenBatch>();
     fb.batch->count = n;
     fb.batch->dense_pos = true;
-    fb.batch->one_to_one = hint;
+    fb.batch->unique = hint;
     for (uint32_t j = 0; j < n; ++j) {
       const auto term = corpus.Term((i + j) % card);
       fb.batch->terms[j] =

@@ -181,7 +181,7 @@ class FieldInverter : util::Noncopyable {
       auto* ids = ResolveBlock(batch);
 
       const bool first_continues = _state.value_open;
-      if (batch.one_to_one && !first_continues && !last_cut &&
+      if (batch.unique && !first_continues && !last_cut &&
           runs.size() == batch.count) {
         return InvertOneToOne(log, batch, runs, ids);
       }

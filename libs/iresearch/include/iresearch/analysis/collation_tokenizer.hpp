@@ -48,8 +48,7 @@ class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
   explicit CollationTokenizer(Options options);
 
   TokenTraits Traits() const noexcept final {
-    return {.output = duckdb::LogicalTypeId::BLOB,
-            .terms = TokenTraits::Terms::Normalized};
+    return {.output = duckdb::LogicalTypeId::BLOB, .unique = true};
   }
 
   template<TokenLayout Layout>

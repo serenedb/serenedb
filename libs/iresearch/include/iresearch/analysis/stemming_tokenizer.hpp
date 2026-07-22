@@ -51,7 +51,7 @@ class StemmingTokenizer final : public TypedTokenizer<StemmingTokenizer>,
   explicit StemmingTokenizer(Options options);
 
   TokenTraits Traits() const noexcept final {
-    return {.terms = TokenTraits::Terms::Normalized};
+    return {.unique = true};
   }
 
   template<TokenLayout Layout>

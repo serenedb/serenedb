@@ -101,7 +101,8 @@ void AssertFillsMatchPull(size_t ngram_size, std::string_view base_delimiter,
 
 TEST(wildcard_analyzer_tests, traits) {
   auto stream = MakeWildcard(3);
-  ASSERT_EQ(irs::TokenTraits::Terms::Ngrams, stream->Traits().terms);
+  ASSERT_FALSE(stream->Traits().offsets);
+  ASSERT_TRUE(stream->Traits().store);
 }
 
 TEST(wildcard_analyzer_tests, native_fills_match_pull) {

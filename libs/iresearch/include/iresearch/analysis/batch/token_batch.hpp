@@ -48,26 +48,13 @@ inline std::string_view AsView(const duckdb::string_t& s) noexcept {
 // a field requests (TokenLayout) and to per-batch runtime hints (see
 // TokenBatch): traits never change per fill.
 struct TokenTraits {
-  enum class Terms : uint8_t {
-    Tokens = 0,
-    Keyword,
-    Normalized,
-    Ngrams,
-    GeoCells,
-    NumericTrie,
-  };
-
   duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR;
   duckdb::LogicalTypeId output = duckdb::LogicalTypeId::VARCHAR;
-  Terms terms = Terms::Tokens;
+  bool unique = false;
+  bool keyword = false;
   bool dense_pos = true;
   bool offsets = true;
   bool store = false;
-
-  // At most one token per value (rejected values emit zero).
-  bool SingleToken() const noexcept {
-    return terms == Terms::Keyword || terms == Terms::Normalized;
-  }
 };
 
 // What a token stream carries; doubles as the occurrence-log layout. The
@@ -130,10 +117,10 @@ struct TokenBatch {
   // persists across consume cycles.
   bool dense_pos = true;
   // Every batch token is one doc's whole value: runs[i] == {doc_i, 1}. Set
-  // by the tokenizer's fill dispatch from its traits (SingleToken kernels),
+  // by the tokenizer's fill dispatch from its traits (unique kernels),
   // cleared when a value is rejected; per-fill like dense_pos. Consumers
   // additionally check runs.size() == count before trusting it.
-  bool one_to_one = false;
+  bool unique = false;
 
   bool Full() const noexcept { return count == kCapacity; }
 };

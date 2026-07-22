@@ -443,7 +443,7 @@ TEST(InverterColumnKeywordTest, MatchesPerValue) {
   }
 }
 
-// The one_to_one fast path must produce exactly the general path's output
+// The unique fast path must produce exactly the general path's output
 // over the same 1-1 shaped stream (single token per doc-run), across all
 // layouts and both position modes.
 TEST(InverterOneToOneTest, MatchesGeneralPath) {
@@ -483,9 +483,9 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
           batch->offs_end[j] = static_cast<uint32_t>(v.size());
           runs.push_back({doc_limits::min() + static_cast<doc_id_t>(i + j), 1});
         }
-        batch->one_to_one = true;
+        batch->unique = true;
         ASSERT_TRUE(fast->InvertBlock(*batch, runs));
-        batch->one_to_one = false;
+        batch->unique = false;
         ASSERT_TRUE(gen->InvertBlock(*batch, runs));
         i += n;
       }

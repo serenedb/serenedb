@@ -283,7 +283,7 @@ TEST(GeoPointAnalyzerTest, ctor) {
     GeoPointAnalyzer a(opts);
     ASSERT_TRUE(opts.latitude.empty());
     ASSERT_TRUE(opts.longitude.empty());
-    ASSERT_EQ(TokenTraits::Terms::GeoCells, a.Traits().terms);
+    ASSERT_TRUE(irs::analysis::GeoAnalyzer::IsGeoAnalyzer(a));
     ASSERT_FALSE(a.Traits().offsets);
     ASSERT_TRUE(a.Traits().store);
     ASSERT_EQ(Type<GeoPointAnalyzer>::id(), a.type());
@@ -296,7 +296,7 @@ TEST(GeoPointAnalyzerTest, ctor) {
     GeoPointAnalyzer a(opts);
     ASSERT_EQ(std::vector<std::string>{"foo"}, a.latitude());
     ASSERT_EQ(std::vector<std::string>{"bar"}, a.longitude());
-    ASSERT_EQ(TokenTraits::Terms::GeoCells, a.Traits().terms);
+    ASSERT_TRUE(irs::analysis::GeoAnalyzer::IsGeoAnalyzer(a));
     ASSERT_FALSE(a.Traits().offsets);
     ASSERT_TRUE(a.Traits().store);
     ASSERT_EQ(Type<GeoPointAnalyzer>::id(), a.type());
@@ -601,7 +601,7 @@ TEST(GeoJsonAnalyzerSourceTest, options) {
 
 TEST(GeoJsonAnalyzerSourceTest, ctor) {
   auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>({});
-  ASSERT_EQ(TokenTraits::Terms::GeoCells, a->Traits().terms);
+  ASSERT_TRUE(irs::analysis::GeoAnalyzer::IsGeoAnalyzer(*a));
   ASSERT_FALSE(a->Traits().offsets);
   ASSERT_TRUE(a->Traits().store);
   ASSERT_EQ(Type<GeoJsonAnalyzer>::id(), a->type());

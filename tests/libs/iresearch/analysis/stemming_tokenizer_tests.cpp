@@ -64,7 +64,8 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
     std::string_view data("running");
     irs::analysis::StemmingTokenizer stream(opts);
     ASSERT_EQ(irs::Type<irs::analysis::StemmingTokenizer>::id(), stream.type());
-    ASSERT_EQ(irs::TokenTraits::Terms::Normalized, stream.Traits().terms);
+    ASSERT_TRUE(stream.Traits().unique);
+    ASSERT_FALSE(stream.Traits().keyword);
 
     AssertStemBlock(stream, data, "running");
   }

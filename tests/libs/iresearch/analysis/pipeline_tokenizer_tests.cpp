@@ -25,6 +25,7 @@
 
 #include "gtest/gtest.h"
 #include "iresearch/analysis/batch/token_batch.hpp"
+#include "iresearch/analysis/collation_tokenizer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/normalizing_tokenizer.hpp"
@@ -37,6 +38,7 @@
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/analysis/wordnet_synonyms_tokenizer.hpp"
+#include "pg/sql_exception.h"
 #include "tests_config.hpp"
 #include "token_sink_utils.hpp"
 
@@ -46,6 +48,13 @@ irs::analysis::Tokenizer::ptr MakeDelimiter(std::string_view delim) {
   return irs::analysis::DelimitedTokenizer::Make(
     irs::analysis::DelimitedTokenizer::Options{.delimiter =
                                                  std::string(delim)});
+}
+
+irs::analysis::Tokenizer::ptr MakeCollation(std::string_view locale) {
+  return irs::analysis::CollationTokenizer::Make(
+    irs::analysis::CollationTokenizer::Options{
+      .locale = icu::Locale::createFromName(std::string(locale).c_str()),
+    });
 }
 
 irs::analysis::Tokenizer::ptr MakeNgram(size_t min_gram, size_t max_gram,
@@ -225,6 +234,16 @@ TEST(pipeline_token_stream_test, empty_pipeline) {
 
   std::string data = "quick broWn,, FOX  jumps,  over lazy dog";
   ASSERT_FALSE(tests::Analyze(pipe, data).has_value());
+}
+
+TEST(pipeline_token_stream_test, incompatible_types_rejected) {
+  std::vector<irs::analysis::Tokenizer::ptr> pipeline_options;
+  pipeline_options.emplace_back(MakeCollation("en_US.UTF-8"));
+  pipeline_options.emplace_back(MakeDelimiter(" "));
+
+  ASSERT_THROW(
+    irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options)),
+    sdb::SqlException);
 }
 
 TEST(pipeline_token_stream_test, many_tokenizers) {

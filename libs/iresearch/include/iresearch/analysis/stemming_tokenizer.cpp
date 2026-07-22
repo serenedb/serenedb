@@ -87,7 +87,7 @@ bool StemmingTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
       _stemmer = make_stemmer_ptr(_options.locale.getLanguage(), nullptr);
     }
     if (_stemmer) {
-      sink.buf.one_to_one = false;
+      sink.buf.unique = false;
       return false;
     }
   }

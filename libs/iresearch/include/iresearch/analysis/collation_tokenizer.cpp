@@ -148,7 +148,7 @@ bytes_view CollationTokenizer::CollatedTerm() const noexcept {
 template<TokenLayout Layout>
 bool CollationTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
   if (!Collate(value)) {
-    sink.buf.one_to_one = false;
+    sink.buf.unique = false;
     return false;
   }
   sink.EmitInterned<Layout>(CollatedTerm(), 0, _input_size);

@@ -175,7 +175,8 @@ TEST(string_token_stream_tests, native_batch_fill) {
 
 TEST(string_token_stream_tests, native_column_fill) {
   irs::StringTokenizer stream;
-  ASSERT_EQ(irs::TokenTraits::Terms::Keyword, stream.Traits().terms);
+  ASSERT_TRUE(stream.Traits().unique);
+  ASSERT_TRUE(stream.Traits().keyword);
 
   const std::string long_value(64, 'x');
   const duckdb::string_t values[] = {
@@ -462,13 +463,13 @@ class OneTokenMockTokenizer final
   }
 
   irs::TokenTraits Traits() const noexcept final {
-    return {.terms = irs::TokenTraits::Terms::Normalized};
+    return {.unique = true};
   }
 
   template<irs::TokenLayout Layout>
   bool DoFill(std::string_view value, irs::TokenEmitter& sink) {
     if (value == "!") {
-      sink.buf.one_to_one = false;
+      sink.buf.unique = false;
       return false;
     }
     const auto size = static_cast<uint32_t>(value.size());
@@ -479,11 +480,11 @@ class OneTokenMockTokenizer final
 
 }  // namespace
 
-TEST(token_sink_tests, one_to_one_hint) {
+TEST(token_sink_tests, unique_hint) {
   OneTokenMockTokenizer stream;
-  ASSERT_TRUE(stream.Traits().SingleToken());
-  ASSERT_TRUE(irs::StringTokenizer{}.Traits().SingleToken());
-  ASSERT_FALSE(irs::analysis::EmptyTokenizer{}.Traits().SingleToken());
+  ASSERT_TRUE(stream.Traits().unique);
+  ASSERT_TRUE(irs::StringTokenizer{}.Traits().unique);
+  ASSERT_FALSE(irs::analysis::EmptyTokenizer{}.Traits().unique);
 
   const std::string a{"aaa"};
   const std::string b{"bbb"};
@@ -495,7 +496,7 @@ TEST(token_sink_tests, one_to_one_hint) {
     tests::OneBatchSink sink{irs::TokenLayout::Terms};
     stream.Fill(vals, docs, sink.writer, sink.layout);
     ASSERT_FALSE(sink.flushed());
-    ASSERT_TRUE(sink.writer.buf.one_to_one);
+    ASSERT_TRUE(sink.writer.buf.unique);
     ASSERT_EQ(sink.writer.buf.count, sink.writer.Runs().size());
   }
 
@@ -505,7 +506,7 @@ TEST(token_sink_tests, one_to_one_hint) {
     const irs::doc_id_t docs[] = {1, 2, 3};
     tests::OneBatchSink sink{irs::TokenLayout::Terms};
     stream.Fill(vals, docs, sink.writer, sink.layout);
-    ASSERT_FALSE(sink.writer.buf.one_to_one);
+    ASSERT_FALSE(sink.writer.buf.unique);
     ASSERT_EQ(3, sink.writer.Runs().size());
     ASSERT_EQ(2, sink.writer.buf.count);
   }
@@ -513,7 +514,7 @@ TEST(token_sink_tests, one_to_one_hint) {
   {
     tests::OneBatchSink sink{irs::TokenLayout::Terms};
     ASSERT_TRUE(stream.Fill(a, sink.writer, sink.layout));
-    ASSERT_FALSE(sink.writer.buf.one_to_one);
+    ASSERT_FALSE(sink.writer.buf.unique);
     ASSERT_TRUE(sink.writer.Runs().empty());
   }
 
@@ -523,7 +524,7 @@ TEST(token_sink_tests, one_to_one_hint) {
     const irs::doc_id_t docs[] = {1};
     tests::OneBatchSink sink{irs::TokenLayout::Terms};
     empty.Fill(vals, docs, sink.writer, sink.layout);
-    ASSERT_FALSE(sink.writer.buf.one_to_one);
+    ASSERT_FALSE(sink.writer.buf.unique);
   }
 }
 

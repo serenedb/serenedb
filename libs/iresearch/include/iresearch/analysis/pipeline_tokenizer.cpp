@@ -45,10 +45,29 @@ bool AllHaveOffset(std::span<const Tokenizer::ptr> pipeline) {
     pipeline, [](const Tokenizer::ptr& v) { return v->Traits().offsets; });
 }
 
+// Each stage consumes the previous stage's output, so adjacent stages must
+// agree on type: stage i-1's `output` must equal stage i's `input`. Rejects
+// incompatible compositions (e.g. a text stage after collation, whose BLOB
+// sort-key output no text analyzer can consume).
+void ValidatePipelineTypes(std::span<const Tokenizer::ptr> pipeline) {
+  for (size_t i = 1; i < pipeline.size(); ++i) {
+    const auto produced = pipeline[i - 1]->Traits().output;
+    const auto expected = pipeline[i]->Traits().input;
+    if (produced != expected) {
+      THROW_SQL_ERROR(ERR_MSG(
+        "pipeline: stage ", i, " expects ",
+        duckdb::LogicalTypeIdToString(expected),
+        " input, but the preceding stage produces ",
+        duckdb::LogicalTypeIdToString(produced)));
+    }
+  }
+}
+
 }  // namespace
 
 PipelineTokenizer::PipelineTokenizer(std::vector<Tokenizer::ptr> options)
   : _track_offset{AllHaveOffset(options)} {
+  ValidatePipelineTypes(options);
   const auto track_offset = _track_offset;
   _pipeline.reserve(options.size());
   for (auto& p : options) {

@@ -87,7 +87,7 @@ class TypedTokenizer : public Tokenizer {
             TokenLayout layout) override {
     auto* impl = static_cast<Impl*>(this);
     sink.buf.dense_pos = impl->Impl::Traits().dense_pos;
-    sink.buf.one_to_one = false;
+    sink.buf.unique = false;
     return ResolveLayout(layout, [&]<TokenLayout L>() {
       return impl->template DoFill<L>(value, sink);
     });
@@ -100,7 +100,7 @@ class TypedTokenizer : public Tokenizer {
     auto* impl = static_cast<Impl*>(this);
     const auto traits = impl->Impl::Traits();
     sink.buf.dense_pos = traits.dense_pos;
-    sink.buf.one_to_one = traits.SingleToken();
+    sink.buf.unique = traits.unique;
     ResolveLayout(layout, [&]<TokenLayout L>() {
       for (size_t v = 0; v < values.size(); ++v) {
         sink.BeginValue(docs[v]);

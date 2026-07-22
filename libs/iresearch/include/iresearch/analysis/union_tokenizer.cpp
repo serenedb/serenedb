@@ -147,7 +147,7 @@ void UnionTokenizer::Fill(std::span<const duckdb::string_t> values,
   }
   _scratch->arena.Reset();
   sink.buf.dense_pos = Traits().dense_pos;
-  sink.buf.one_to_one = false;
+  sink.buf.unique = false;
   ResolveLayout(layout, [&]<TokenLayout Layout>() {
     for (size_t v = 0; v < values.size(); ++v) {
       sink.BeginValue(docs[v]);

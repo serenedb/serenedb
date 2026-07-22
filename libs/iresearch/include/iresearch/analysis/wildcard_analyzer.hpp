@@ -56,8 +56,7 @@ class WildcardAnalyzer final : public TypedTokenizer<WildcardAnalyzer>,
   bool DoFill(std::string_view value, TokenEmitter& sink);
 
   TokenTraits Traits() const noexcept final {
-    return {
-      .terms = TokenTraits::Terms::Ngrams, .offsets = false, .store = true};
+    return {.offsets = false, .store = true};
   }
 
   auto& ngram() const noexcept {

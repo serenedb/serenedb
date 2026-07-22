@@ -91,7 +91,7 @@ class NGramTokenizer : public TypedTokenizer<NGramTokenizer<StreamType>>,
   explicit NGramTokenizer(NGramTokenizerBase::Options&& options);
 
   TokenTraits Traits() const noexcept final {
-    return {.terms = TokenTraits::Terms::Ngrams, .dense_pos = false};
+    return {.dense_pos = false};
   }
 
   template<TokenLayout Layout>

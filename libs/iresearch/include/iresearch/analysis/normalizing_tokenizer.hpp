@@ -56,7 +56,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   void ForceUnicodePath(bool force) noexcept { _force_unicode = force; }
 
   TokenTraits Traits() const noexcept final {
-    return {.terms = TokenTraits::Terms::Normalized};
+    return {.unique = true};
   }
 
   template<TokenLayout Layout>

@@ -202,6 +202,11 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
 GeoAnalyzer::GeoAnalyzer(const S2RegionTermIndexer::Options& options)
   : _indexer{options} {}
 
+bool GeoAnalyzer::IsGeoAnalyzer(const Tokenizer& tokens) noexcept {
+  return tokens.type() == irs::Type<GeoPointAnalyzer>::id() ||
+         tokens.type() == irs::Type<GeoJsonAnalyzer>::id();
+}
+
 GeoAnalyzer& GeoAnalyzer::Cast(Tokenizer& tokens) noexcept {
   if (tokens.type() == irs::Type<GeoPointAnalyzer>::id()) {
     return sdb::basics::downCast<GeoPointAnalyzer>(tokens);

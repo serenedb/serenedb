@@ -53,9 +53,7 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
 
   explicit SparseNGramTokenizer(Options options);
 
-  TokenTraits Traits() const noexcept final {
-    return {.terms = TokenTraits::Terms::Ngrams};
-  }
+  TokenTraits Traits() const noexcept final { return {}; }
 
   template<TokenLayout Layout>
   bool DoFill(std::string_view value, TokenEmitter& sink);

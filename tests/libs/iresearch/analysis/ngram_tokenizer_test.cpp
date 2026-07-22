@@ -1637,12 +1637,11 @@ void AssertNgramFillsMatchPull() {
 }  // namespace
 
 TEST(ngram_token_stream_test, native_fills_match_pull_binary) {
-  ASSERT_EQ(irs::TokenTraits::Terms::Ngrams,
-            irs::analysis::NGramTokenizer<
-              irs::analysis::NGramTokenizerBase::InputType::Binary>{
-              irs::analysis::NGramTokenizerBase::Options{}}
-              .Traits()
-              .terms);
+  ASSERT_FALSE(irs::analysis::NGramTokenizer<
+                 irs::analysis::NGramTokenizerBase::InputType::Binary>{
+                 irs::analysis::NGramTokenizerBase::Options{}}
+                 .Traits()
+                 .dense_pos);
   AssertNgramFillsMatchPull<
     irs::analysis::NGramTokenizerBase::InputType::Binary>();
 }

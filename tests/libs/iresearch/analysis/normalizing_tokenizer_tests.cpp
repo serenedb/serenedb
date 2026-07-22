@@ -219,7 +219,8 @@ TEST_F(NormalizingTokenizerTests, native_fills_match_pull) {
   options.accent = false;
   irs::analysis::NormalizingTokenizer stream(options);
 
-  ASSERT_EQ(irs::TokenTraits::Terms::Normalized, stream.Traits().terms);
+  ASSERT_TRUE(stream.Traits().unique);
+  ASSERT_FALSE(stream.Traits().keyword);
 
   const std::vector<std::string> values = {
     "rUnNiNg", "Caf\xc3\xa9", std::string(64, 'X'),

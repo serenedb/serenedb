@@ -26,8 +26,8 @@
 #include <sstream>
 
 #include "iresearch/analysis/ngram_tokenizer.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
 #include "tests_shared.hpp"
-#include "utf8proc_wrapper.hpp"
 
 namespace {
 
@@ -248,12 +248,11 @@ TEST(ngram_token_stream_test, next_utf8) {
         ASSERT_EQ(expected_token->start, offset->start);
         ASSERT_EQ(expected_token->end, offset->end);
         pos += inc->value;
-        auto start = reinterpret_cast<const irs::byte_type*>(data.data());
-        for (uint32_t cp = 0; cp < pos; ++cp) {
-          int sz = 0;
-          duckdb::Utf8Proc::UTF8ToCodepoint(
-            reinterpret_cast<const char*>(start), sz);
-          start += sz > 0 ? sz : 1;
+        const auto* start =
+          reinterpret_cast<const irs::byte_type*>(data.data());
+        const auto* const end = start + data.size();
+        for (uint32_t cp = 0; cp < pos && start < end; ++cp) {
+          start = irs::utf8_utils::Next(start, end);
         }
         const auto size = value->value.size() -
                           expected_token->start_marker.size() -

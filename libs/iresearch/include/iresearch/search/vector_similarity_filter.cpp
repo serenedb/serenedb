@@ -75,7 +75,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     const size_t stats_size = static_cast<size_t>(idx_in->ReadI64());
     std::span<const byte_type> stats;
     bstring owned;
-    if (const byte_type* p = idx_in->ReadStable(stats_size)) {
+    if (const byte_type* p = idx_in->ReadVolatile(stats_size)) {
       stats = {p, stats_size};
     } else {
       owned.resize(stats_size);

@@ -530,7 +530,7 @@ std::string_view VectorMetricFunctionName(irs::VectorMetric metric) {
     case irs::VectorMetric::InnerProduct:
       return kIP;
   }
-  return "?";
+  SDB_UNREACHABLE();
 }
 
 }  // namespace

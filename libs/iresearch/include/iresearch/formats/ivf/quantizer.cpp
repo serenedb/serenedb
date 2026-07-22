@@ -561,7 +561,7 @@ class ProductQuantizerReader final : public QuantizerReader {
 
     const size_t nb = RoundUp(_n, kFastScanBbs);
     const size_t packed_bytes = nb * nsq / 2;
-    const byte_type* codes = _pay_in->ReadStable(pay_start, packed_bytes);
+    const byte_type* codes = _pay_in->ReadVolatile(pay_start, packed_bytes);
     if (!codes) {
       _codes_buf.resize(packed_bytes);
       _pay_in->ReadData(pay_start, _codes_buf.data(), packed_bytes);

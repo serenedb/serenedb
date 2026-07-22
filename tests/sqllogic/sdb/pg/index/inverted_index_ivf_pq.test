@@ -7,7 +7,7 @@ hash-threshold 100
 # approximate, so determinism here comes from far-separated "landmark"
 # vectors (queries can't miss them) plus an exhaustive nprobe. PQ training
 # needs >= 16 points, so the table is padded with filler rows. quant='pq'
-# supports only metric l2 and ip; pq_m must divide the dimension.
+# supports metric l2, ip, and cosine; pq_m must divide the dimension.
 
 statement ok
 SET sdb_nprobe = 1000
@@ -115,19 +115,64 @@ statement ok
 RESET sdb_nprobe
 
 # ===========================================================================
-# 3. Guards: pq requires metric l2/ip; pq_m must divide the dimension.
+# 3. Guards: pq requires metric l2/ip/cosine; pq_m must divide the dimension.
 # ===========================================================================
 
 statement ok
 CREATE TABLE pq_bad (pk INTEGER PRIMARY KEY, emb FLOAT[8])
 
 statement error
-CREATE INDEX pq_bad_cos ON pq_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'pq', pq_m = 4));
-----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
-
-
-statement error
 CREATE INDEX pq_bad_m ON pq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 3));
 ----
 db error: ERROR: Column 'emb': ivf option 'pq_m' (3) must divide the vector dimension 8
+
+# ===========================================================================
+# 3b. Cosine + PQ: folded into inner product over L2-normalized residuals.
+#     Filler sits in the positive octant; landmarks live on negative axes, so
+#     each landmark is angularly >= 90 degrees from every filler row and PQ
+#     loss cannot flip the rank-1 match for a query aimed down that axis.
+# ===========================================================================
+
+statement ok
+SET sdb_nprobe = 1000
+
+statement ok
+CREATE TABLE pq_cos (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX pq_cos_idx ON pq_cos
+  USING inverted(pk, emb ivf (metric = 'cosine', quant = 'pq', pq_m = 4))
+
+statement ok
+INSERT INTO pq_cos
+SELECT g,
+  ARRAY[ (g % 37)::float, ((g * 7) % 37)::float, ((g * 11) % 37)::float,
+         ((g * 13) % 37)::float, ((g * 17) % 37)::float, ((g * 19) % 37)::float,
+         ((g * 23) % 37)::float, ((g * 29) % 37)::float ]::FLOAT[8]
+FROM generate_series(1, 300) g
+
+statement count 3
+INSERT INTO pq_cos VALUES
+  (1001, [-1000, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [0, -1000, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 0, -1000]::FLOAT[8])
+
+statement ok
+VACUUM (REFRESH_TABLE) pq_cos
+
+query
+SELECT pk FROM pq_cos_idx
+  ORDER BY emb <=> [-5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1001
+
+query
+SELECT pk FROM pq_cos_idx
+  ORDER BY emb <=> [0, 0, 0, 0, 0, 0, 0, -2]::FLOAT[8] LIMIT 1;
+----
+pk
+1003
+
+statement ok
+RESET sdb_nprobe

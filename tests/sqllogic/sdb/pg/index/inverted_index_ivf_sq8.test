@@ -8,7 +8,8 @@ hash-threshold 100
 # with a WHERE filter and any range query fall back to the exact raw reranker.
 # SQ8 is lossy and IVF is approximate, so determinism comes from well-separated
 # vectors plus an exhaustive nprobe; assertions check row identity/order only,
-# never the distance score. quant='sq8' supports only metric l2 and ip.
+# never the distance score. quant='sq8' supports metric l2, ip, and cosine
+# (cosine is encoded as inner product over L2-normalized vectors).
 
 # Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
 statement ok
@@ -380,7 +381,7 @@ statement ok
 RESET sdb_nprobe
 
 # ===========================================================================
-# 7. Guard: SQ8 is only valid with metric l2 or ip; cosine/l1 + sq8 must be
+# 7. Guard: SQ8 is valid with metric l2, ip, or cosine; l1 + sq8 must be
 #    rejected at CREATE INDEX rather than crashing at query time.
 # ===========================================================================
 
@@ -388,15 +389,60 @@ statement ok
 CREATE TABLE sq8_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement error
-CREATE INDEX sq8_bad_cos ON sq8_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'sq8'));
-----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
-
-
-statement error
 CREATE INDEX sq8_bad_l1 ON sq8_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'sq8'));
 ----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip', or 'cosine'
+
+# ===========================================================================
+# 7b. Cosine + SQ8: cosine is folded into the inner-product quantized path over
+#     L2-normalized vectors, so magnitude is ignored and ranking is by angle.
+#     Vectors deliberately vary in magnitude to prove normalization happens.
+# ===========================================================================
+
+statement ok
+SET sdb_nprobe = 1000
+
+statement ok
+CREATE TABLE sq8_cos (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX sq8_cos_idx ON sq8_cos
+  USING inverted(pk, emb ivf (metric = 'cosine', quant = 'sq8'))
+
+statement count 4
+INSERT INTO sq8_cos VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [1, 1, 0]::FLOAT[3]),
+  (3, [0, 5, 0]::FLOAT[3]),
+  (4, [0, 0, 3]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_cos
+
+# nearest by angle to [2,0,0] (a scaled +x): pk=1 (aligned), then pk=2 (45deg).
+query
+SELECT pk FROM sq8_cos_idx ORDER BY emb <=> [2, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+# nearest by angle to +y: pk=3 (aligned), then pk=2 (45deg).
+query
+SELECT pk FROM sq8_cos_idx ORDER BY emb <=> [0, 100, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+3
+2
+
+query
+SELECT count(*) FROM sq8_cos_idx;
+----
+count
+4
+
+statement ok
+RESET sdb_nprobe
 
 
 # ===========================================================================

@@ -10,7 +10,7 @@ hash-threshold 100
 # below use rabitq_bits = 8 with well-separated vectors so exact row
 # order is deterministic; a dedicated section covers the default (1-bit)
 # quantizer with a coarser separation. quant='rabitq' supports only metric
-# l2 and ip, same as sq8/pq.
+# l2 and ip (unlike sq8/sq4/pq, which also support cosine).
 
 # Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
 statement ok
@@ -388,13 +388,13 @@ CREATE TABLE rabitq_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 statement error
 CREATE INDEX rabitq_bad_cos ON rabitq_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'rabitq'));
 ----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf rabitq quantization does not support metric 'cosine'
 
 
 statement error
 CREATE INDEX rabitq_bad_l1 ON rabitq_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'rabitq'));
 ----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip', or 'cosine'
 
 
 statement error

@@ -83,6 +83,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                       _info.quant.kind == VectorQuantization::SQ4);
   const bool needs_centroid = _info.quant.kind == VectorQuantization::PQ ||
                               _info.quant.kind == VectorQuantization::RaBitQ;
+  const bool normalize = qw != nullptr && _info.metric == VectorMetric::Cosine;
 
   auto centroids = CentroidsBuilder::Create(
     vector_column, ctx, rows, _info.metric, d,
@@ -113,6 +114,9 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     const auto flush = [&]() {
       if (gathered == 0) {
         return;
+      }
+      if (normalize) {
+        NormalizeRows(gather.data(), gathered, d);
       }
       auto assigned = centroids.AssignCentroids(
         {gather.data(), gathered * d}, d,
@@ -299,7 +303,8 @@ IvfTermReader::IvfTermReader(
   std::span<const uint64_t> cluster_offsets, QuantizerWriter* qw,
   const ColumnReader* vectors, ReadContext* ctx, uint32_t d,
   const sdb::containers::FlatHashMap<uint32_t, std::span<const float>>*
-    cluster_centroids)
+    cluster_centroids,
+  bool normalize)
   : _cluster_docs{cluster_docs},
     _cluster_offsets{cluster_offsets},
     _qw{qw},
@@ -307,6 +312,7 @@ IvfTermReader::IvfTermReader(
     _ctx{ctx},
     _d{d},
     _cluster_centroids{cluster_centroids},
+    _normalize{normalize},
     _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
     _meta{postings_id,
           qw != nullptr ? IndexFeatures::Pay : IndexFeatures::None} {
@@ -360,8 +366,11 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     column_internal::GatherRows(*_vectors, scan, DocRowView{docs.data() + b, m},
                                 out_vec, /*out_offset=*/0,
                                 /*whole_output=*/true);
-    const float* vecs = duckdb::FlatVector::GetData<float>(
+    float* vecs = duckdb::FlatVector::GetDataMutable<float>(
       duckdb::ArrayVector::GetChildMutable(out_vec));
+    if (_normalize) {
+      NormalizeRows(vecs, m, _d);
+    }
     _qw->EncodeCluster(out, vecs, m);
   }
   _qw->FinishCluster(out);
@@ -373,9 +382,9 @@ void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
-  auto qw =
-    MakeQuantizerWriter(_info.quant.kind, d, _info.metric, _info.quant.pq_m,
-                        kDefaultClusterIters, _info.quant.nb_bits);
+  auto qw = MakeQuantizerWriter(
+    _info.quant.kind, d, EffectiveQuantMetric(_info.metric), _info.quant.pq_m,
+    kDefaultClusterIters, _info.quant.nb_bits);
 
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());
@@ -419,7 +428,7 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
       _result.postings_id, _result.data.cluster_docs,
       _result.data.cluster_offsets, _result.qw.get(),
       col_reader.Column(_result.postings_id), &ctx, _result.data.d,
-      &_result.data.cluster_centroids);
+      &_result.data.cluster_centroids, _info.metric == VectorMetric::Cosine);
   }
   return _reader.get();
 }

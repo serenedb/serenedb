@@ -57,7 +57,6 @@ constexpr std::string_view kMetricField = "metric";
 constexpr std::string_view kQuantField = "quant";
 constexpr std::string_view kPqMField = "pq_m";
 constexpr std::string_view kRaBitQBitsField = "rabitq_bits";
-constexpr std::string_view kIvfCompressionField = "compression";
 
 constexpr std::string_view kL2Metric = "l2";
 constexpr std::string_view kL1Metric = "l1";
@@ -244,17 +243,17 @@ std::string DescribeIVFOptions() {
     std::array{kL2Metric, kL1Metric, kCosineMetric, kIPMetric}, "|");
   const std::string quants = absl::StrJoin(
     std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant, kNoneQuant}, "|");
-  const std::string quants_need_metric = absl::StrJoin(
-    std::array{kSQ8Quant, kSQ4Quant, kPQQuant, kRaBitQQuant}, "|");
+  const std::string quants_cosine =
+    absl::StrJoin(std::array{kSQ8Quant, kSQ4Quant, kPQQuant}, "|");
   return absl::StrCat(
     "metric (string: ", metrics, ", REQUIRED), ", "quant (string: ", quants,
-    ", default ", kNoneQuant, "; ", quants_need_metric, " need ", kL2Metric,
+    ", default ", kNoneQuant, "; ", quants_cosine, " need ", kL2Metric, "|",
+    kIPMetric, "|", kCosineMetric, ", ", kRaBitQQuant, " needs ", kL2Metric,
     "|", kIPMetric, "), ", "pq_m (int >= 1, divides dimension, quant='",
     kPQQuant, "' only, default auto ~d/2), ", "rabitq_bits (int ",
     irs::kRaBitQMinBits, "-", irs::kRaBitQMaxBits, ", quant='", kRaBitQQuant,
     "' only, default ", irs::kRaBitQMinBits, "), ",
-    "compression (bool, default true; false stores the index "
-    "vectors uncompressed)");
+    "compression (string: auto|alp|none, default auto)");
 }
 
 irs::VectorMetric ParseIVFMetric(std::string_view column_name,
@@ -301,6 +300,27 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
                           " ", kPQQuant, " ", kRaBitQQuant, " ", kNoneQuant));
 }
 
+duckdb::CompressionType ParseIVFCompression(std::string_view column_name,
+                                            std::string_view name) {
+  std::string n{name};
+  absl::AsciiStrToLower(&n);
+  static constexpr std::pair<std::string_view, duckdb::CompressionType> kMap[] =
+    {
+      {"auto", duckdb::CompressionType::COMPRESSION_AUTO},
+      {"alp", duckdb::CompressionType::COMPRESSION_ALP},
+      {"none", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED},
+    };
+  for (const auto& [k, v] : kMap) {
+    if (n == k) {
+      return v;
+    }
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("Column '", column_name, "': unknown ivf compression '", name,
+            "'. Accepted: auto, alp, none"));
+}
+
 void ApplyIVFOptions(std::string_view column_name,
                      const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
                      IVFColumnConfig& cfg) {
@@ -318,8 +338,10 @@ void ApplyIVFOptions(std::string_view column_name,
     } else if (key == kRaBitQBitsField) {
       cfg.rabitq_bits =
         ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
-    } else if (key == kIvfCompressionField) {
-      cfg.compression = GetIndexBoolOption(kIVFKind, column_name, key, raw_val);
+    } else if (key == kCompressionField) {
+      auto compression =
+        GetIndexStringOption(kIVFKind, column_name, key, raw_val);
+      cfg.compression = ParseIVFCompression(column_name, compression);
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -337,11 +359,21 @@ void ApplyIVFOptions(std::string_view column_name,
   }
   if (cfg.quant != irs::VectorQuantization::None &&
       cfg.metric != irs::VectorMetric::L2Sqr &&
-      cfg.metric != irs::VectorMetric::InnerProduct) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Column '", column_name,
-                            "': ivf quantization supports only metric '",
-                            kL2Metric, "' or '", kIPMetric, "'"));
+      cfg.metric != irs::VectorMetric::InnerProduct &&
+      cfg.metric != irs::VectorMetric::Cosine) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name,
+              "': ivf quantization supports only metric '", kL2Metric, "', '",
+              kIPMetric, "', or '", kCosineMetric, "'"));
+  }
+  if (cfg.quant == irs::VectorQuantization::RaBitQ &&
+      cfg.metric == irs::VectorMetric::Cosine) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column '", column_name,
+              "': ivf rabitq quantization does not support metric '",
+              kCosineMetric, "'"));
   }
   if (cfg.quant == irs::VectorQuantization::PQ) {
     if (cfg.pq_m == 0) {
@@ -556,9 +588,7 @@ void ApplyIVFOpclass(
   cfg.sample_factor = ReadIVFSampleFactor(context);
   cfg.posting_size = ReadIVFPostingSize(context);
   entry.ivf_config = cfg;
-  entry.compression = cfg.compression
-                        ? duckdb::CompressionType::COMPRESSION_AUTO
-                        : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+  entry.compression = cfg.compression;
   entry.row_group_size = 0;
   entry.store_values = true;
 }

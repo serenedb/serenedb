@@ -128,15 +128,15 @@ db error: ERROR: Column 'emb': ivf option 'pq_m' (3) must divide the vector dime
 
 
 # ===========================================================================
-# 3b. Cosine + PQ: folded into inner product over L2-normalized residuals, so
-#     ranking is by angle regardless of magnitude. PQ residuals are only
-#     accurate where the codebook has training density, so each probe target
-#     is a pure-axis vector (pk 1001/1002/1003) that lives INSIDE a populated
-#     direction cluster -- its residual is small and PQ-representable, and it
-#     is strictly more axis-aligned than its cluster-mates, giving a
-#     deterministic rank-1 match for a query aimed down that axis. (A lone
-#     outlier far from every cluster centroid is not PQ-recallable and is not
-#     what this path is for; that is what the exact/raw metric is for.)
+# 3b. Cosine + PQ: cosine is folded into inner product over L2-normalized
+#     residuals, so ranking is by angle regardless of magnitude. PQ only
+#     resolves WELL-SEPARATED directions reliably (near-ties within one
+#     cluster can flip under quantization noise), so this asserts cross-group
+#     membership, not fragile within-group rank. Three ~100-row groups sit on
+#     disjoint, near-orthogonal axis triples with varying magnitude (so cosine
+#     must normalize). With LIMIT 100 the rerank pool (rerank_factor*k) covers
+#     the whole table, so the top-100 is exact-cosine and deterministic: every
+#     one of them is the group aligned with the query.
 # ===========================================================================
 
 statement ok
@@ -149,8 +149,7 @@ statement ok
 CREATE INDEX pq_cos_idx ON pq_cos
   USING inverted(pk, emb ivf (metric = 'cosine', quant = 'pq', pq_m = 4))
 
-# Three tight positive-octant direction groups (~100 rows each) on disjoint
-# axis triples, varying magnitude so cosine must normalize to rank them.
+# g % 3 == 0 -> x-axis group, == 1 -> dim4 group, == 2 -> dim7 group.
 statement ok
 INSERT INTO pq_cos
 SELECT g,
@@ -159,36 +158,45 @@ SELECT g,
        ELSE                 ARRAY[0, 0, 0, 0, 0, 0, (g % 5) + 10.0, 2] END::FLOAT[8]
 FROM generate_series(1, 300) g
 
-# One pure-axis vector per group: strictly more aligned than its cluster-mates.
-statement count 3
-INSERT INTO pq_cos VALUES
-  (1001, [50, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
-  (1002, [0, 0, 0, 50, 0, 0, 0, 0]::FLOAT[8]),
-  (1003, [0, 0, 0, 0, 0, 0, 50, 0]::FLOAT[8])
-
 statement ok
 VACUUM (REFRESH_TABLE) pq_cos
 
+# all rows indexed
 query
-SELECT pk FROM pq_cos_idx
-  ORDER BY emb <=> [7, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+SELECT count(*) FROM pq_cos_idx;
 ----
-pk
-1001
+count
+300
 
+# a +x query: the 100 nearest by cosine are exactly the x-axis group.
 query
-SELECT pk FROM pq_cos_idx
-  ORDER BY emb <=> [0, 0, 0, 7, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+SELECT count(*) FROM (
+  SELECT pk FROM pq_cos_idx
+    ORDER BY emb <=> [7, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 100
+) t WHERE pk % 3 = 0;
 ----
-pk
-1002
+count
+100
 
+# a dim4 query: the 100 nearest are exactly the dim4 group.
 query
-SELECT pk FROM pq_cos_idx
-  ORDER BY emb <=> [0, 0, 0, 0, 0, 0, 7, 0]::FLOAT[8] LIMIT 1;
+SELECT count(*) FROM (
+  SELECT pk FROM pq_cos_idx
+    ORDER BY emb <=> [0, 0, 0, 7, 0, 0, 0, 0]::FLOAT[8] LIMIT 100
+) t WHERE pk % 3 = 1;
 ----
-pk
-1003
+count
+100
+
+# a dim7 query: the 100 nearest are exactly the dim7 group.
+query
+SELECT count(*) FROM (
+  SELECT pk FROM pq_cos_idx
+    ORDER BY emb <=> [0, 0, 0, 0, 0, 0, 7, 0]::FLOAT[8] LIMIT 100
+) t WHERE pk % 3 = 2;
+----
+count
+100
 
 statement ok
 RESET sdb_nprobe

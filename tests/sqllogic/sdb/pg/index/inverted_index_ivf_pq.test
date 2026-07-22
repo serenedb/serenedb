@@ -126,11 +126,17 @@ CREATE INDEX pq_bad_m ON pq_bad USING inverted(pk, emb ivf (metric = 'l2', quant
 ----
 db error: ERROR: Column 'emb': ivf option 'pq_m' (3) must divide the vector dimension 8
 
+
 # ===========================================================================
-# 3b. Cosine + PQ: folded into inner product over L2-normalized residuals.
-#     Filler sits in the positive octant; landmarks live on negative axes, so
-#     each landmark is angularly >= 90 degrees from every filler row and PQ
-#     loss cannot flip the rank-1 match for a query aimed down that axis.
+# 3b. Cosine + PQ: folded into inner product over L2-normalized residuals, so
+#     ranking is by angle regardless of magnitude. PQ residuals are only
+#     accurate where the codebook has training density, so each probe target
+#     is a pure-axis vector (pk 1001/1002/1003) that lives INSIDE a populated
+#     direction cluster -- its residual is small and PQ-representable, and it
+#     is strictly more axis-aligned than its cluster-mates, giving a
+#     deterministic rank-1 match for a query aimed down that axis. (A lone
+#     outlier far from every cluster centroid is not PQ-recallable and is not
+#     what this path is for; that is what the exact/raw metric is for.)
 # ===========================================================================
 
 statement ok
@@ -143,33 +149,43 @@ statement ok
 CREATE INDEX pq_cos_idx ON pq_cos
   USING inverted(pk, emb ivf (metric = 'cosine', quant = 'pq', pq_m = 4))
 
+# Three tight positive-octant direction groups (~100 rows each) on disjoint
+# axis triples, varying magnitude so cosine must normalize to rank them.
 statement ok
 INSERT INTO pq_cos
 SELECT g,
-  ARRAY[ (g % 37)::float, ((g * 7) % 37)::float, ((g * 11) % 37)::float,
-         ((g * 13) % 37)::float, ((g * 17) % 37)::float, ((g * 19) % 37)::float,
-         ((g * 23) % 37)::float, ((g * 29) % 37)::float ]::FLOAT[8]
+  CASE WHEN g % 3 = 0 THEN ARRAY[(g % 5) + 10.0, 2, 2, 0, 0, 0, 0, 0]
+       WHEN g % 3 = 1 THEN ARRAY[0, 0, 0, (g % 5) + 10.0, 2, 2, 0, 0]
+       ELSE                 ARRAY[0, 0, 0, 0, 0, 0, (g % 5) + 10.0, 2] END::FLOAT[8]
 FROM generate_series(1, 300) g
 
+# One pure-axis vector per group: strictly more aligned than its cluster-mates.
 statement count 3
 INSERT INTO pq_cos VALUES
-  (1001, [-1000, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
-  (1002, [0, -1000, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
-  (1003, [0, 0, 0, 0, 0, 0, 0, -1000]::FLOAT[8])
+  (1001, [50, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]),
+  (1002, [0, 0, 0, 50, 0, 0, 0, 0]::FLOAT[8]),
+  (1003, [0, 0, 0, 0, 0, 0, 50, 0]::FLOAT[8])
 
 statement ok
 VACUUM (REFRESH_TABLE) pq_cos
 
 query
 SELECT pk FROM pq_cos_idx
-  ORDER BY emb <=> [-5, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+  ORDER BY emb <=> [7, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
 ----
 pk
 1001
 
 query
 SELECT pk FROM pq_cos_idx
-  ORDER BY emb <=> [0, 0, 0, 0, 0, 0, 0, -2]::FLOAT[8] LIMIT 1;
+  ORDER BY emb <=> [0, 0, 0, 7, 0, 0, 0, 0]::FLOAT[8] LIMIT 1;
+----
+pk
+1002
+
+query
+SELECT pk FROM pq_cos_idx
+  ORDER BY emb <=> [0, 0, 0, 0, 0, 0, 7, 0]::FLOAT[8] LIMIT 1;
 ----
 pk
 1003

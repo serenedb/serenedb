@@ -1,8 +1,10 @@
 # Force-compression option on INCLUDE columns. The user-supplied
 # `compression` option bypasses the analyze tournament and pins the column
 # to one specific DuckDB codec; an unsupported codec for the column's
-# physical type must throw at flush time. The IVF opclass no longer accepts
-# `compression` (or `row_group_size`) -- vectors always use the auto codec.
+# physical type must throw at flush time. The IVF opclass takes its own
+# `compression` string (auto|alp|none) for the stored raw vectors -- a
+# separate, restricted vocabulary from the `included` opclass. The IVF
+# opclass no longer accepts `row_group_size`.
 
 hash-threshold 100
 
@@ -194,24 +196,195 @@ CREATE INDEX compr_mismatch_num ON compr_bad_num USING inverted(txt compr_englis
 
 # --- 9. IVF accepts the compression string option ----------------------
 # `compression` is a string IVF opclass option (auto|alp|none, default auto).
-# An unknown codec is rejected.
-statement ok
-CREATE TABLE ivf_comp (id INT PRIMARY KEY, emb FLOAT[3]);
 
-statement error unknown ivf compression 'zstd'
-CREATE INDEX ivf_comp_bad ON ivf_comp
-  USING inverted(emb ivf (metric = 'l2', compression = 'zstd'));
+# 9a. Each valid value is accepted (one index per table).
+statement ok
+CREATE TABLE ivf_c_none (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX ivf_comp_none ON ivf_comp
+CREATE INDEX ivf_c_none_idx ON ivf_c_none
   USING inverted(emb ivf (metric = 'l2', compression = 'none'));
 
 statement ok
-CREATE TABLE ivf_comp_alp (id INT PRIMARY KEY, emb FLOAT[3]);
+CREATE TABLE ivf_c_alp (id INT PRIMARY KEY, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX ivf_comp_alp_idx ON ivf_comp_alp
+CREATE INDEX ivf_c_alp_idx ON ivf_c_alp
   USING inverted(emb ivf (metric = 'l2', compression = 'alp'));
+
+statement ok
+CREATE TABLE ivf_c_auto (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_c_auto_idx ON ivf_c_auto
+  USING inverted(emb ivf (metric = 'l2', compression = 'auto'));
+
+# 9b. Omitting the option is allowed (defaults to auto).
+statement ok
+CREATE TABLE ivf_c_default (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_c_default_idx ON ivf_c_default
+  USING inverted(emb ivf (metric = 'l2'));
+
+# 9c. The value is case-insensitive.
+statement ok
+CREATE TABLE ivf_c_case (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_c_case_idx ON ivf_c_case
+  USING inverted(emb ivf (metric = 'l2', compression = 'NoNe'));
+
+# 9d. Codecs valid for `included` but outside the IVF vocabulary are rejected.
+statement ok
+CREATE TABLE ivf_c_bad (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement error unknown ivf compression 'zstd'
+CREATE INDEX ivf_c_zstd ON ivf_c_bad
+  USING inverted(emb ivf (metric = 'l2', compression = 'zstd'));
+
+# `uncompressed` is the `included` spelling; the IVF spelling is `none`.
+statement error unknown ivf compression 'uncompressed'
+CREATE INDEX ivf_c_unc ON ivf_c_bad
+  USING inverted(emb ivf (metric = 'l2', compression = 'uncompressed'));
+
+statement error unknown ivf compression 'rle'
+CREATE INDEX ivf_c_rle ON ivf_c_bad
+  USING inverted(emb ivf (metric = 'l2', compression = 'rle'));
+
+statement error unknown ivf compression 'bitpacking'
+CREATE INDEX ivf_c_bp ON ivf_c_bad
+  USING inverted(emb ivf (metric = 'l2', compression = 'bitpacking'));
+
+# 9e. A garbage codec name is rejected.
+statement error unknown ivf compression 'no_such_codec'
+CREATE INDEX ivf_c_garbage ON ivf_c_bad
+  USING inverted(emb ivf (metric = 'l2', compression = 'no_such_codec'));
+
+# 9f. Non-string values coerce to text and are then rejected as unknown.
+statement error unknown ivf compression 'true'
+CREATE INDEX ivf_c_bool ON ivf_c_bad
+  USING inverted(emb ivf (metric = 'l2', compression = true));
+
+statement error unknown ivf compression '1'
+CREATE INDEX ivf_c_int ON ivf_c_bad
+  USING inverted(emb ivf (metric = 'l2', compression = 1));
+
+# --- 9g. IVF compression combines with every quantization -------------------
+# `compression` (lossless codec on the stored raw vectors) is orthogonal to
+# `quant` (lossy ANN codes); the two coexist on the same column.
+statement ok
+CREATE TABLE ivf_cq_sq8 (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_cq_sq8_idx ON ivf_cq_sq8
+  USING inverted(emb ivf (metric = 'l2', quant = 'sq8', compression = 'alp'));
+
+statement ok
+CREATE TABLE ivf_cq_none (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_cq_none_idx ON ivf_cq_none
+  USING inverted(emb ivf (metric = 'l2', quant = 'none', compression = 'none'));
+
+statement ok
+CREATE TABLE ivf_cq_pq (id INT PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+CREATE INDEX ivf_cq_pq_idx ON ivf_cq_pq
+  USING inverted(emb ivf (metric = 'l2', quant = 'pq', compression = 'alp'));
+
+# --- 9h. Data survives the round-trip identically under every codec ---------
+# The storage codec is lossless, so the stored vectors and the kNN ordering
+# are identical whether the raw vectors are stored none/alp/auto.
+statement ok
+CREATE TABLE ivf_rt_none (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_rt_none_idx ON ivf_rt_none
+  USING inverted(emb ivf (metric = 'l2', compression = 'none'));
+
+statement ok
+INSERT INTO ivf_rt_none VALUES
+  (1, [1, 1, 1]), (2, [2, 2, 2]), (3, [3, 3, 3]),
+  (4, [10, 10, 10]), (5, [0.5, 0.5, 0.5]);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_rt_none;
+
+query
+SELECT id, emb FROM ivf_rt_none ORDER BY id;
+----
+id	emb
+1	{1,1,1}
+2	{2,2,2}
+3	{3,3,3}
+4	{10,10,10}
+5	{0.5,0.5,0.5}
+
+query
+SELECT id FROM ivf_rt_none ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+id
+5
+1
+2
+
+statement ok
+CREATE TABLE ivf_rt_alp (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_rt_alp_idx ON ivf_rt_alp
+  USING inverted(emb ivf (metric = 'l2', compression = 'alp'));
+
+statement ok
+INSERT INTO ivf_rt_alp VALUES
+  (1, [1, 1, 1]), (2, [2, 2, 2]), (3, [3, 3, 3]),
+  (4, [10, 10, 10]), (5, [0.5, 0.5, 0.5]);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_rt_alp;
+
+query
+SELECT id, emb FROM ivf_rt_alp ORDER BY id;
+----
+id	emb
+1	{1,1,1}
+2	{2,2,2}
+3	{3,3,3}
+4	{10,10,10}
+5	{0.5,0.5,0.5}
+
+query
+SELECT id FROM ivf_rt_alp ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+id
+5
+1
+2
+
+statement ok
+CREATE TABLE ivf_rt_auto (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_rt_auto_idx ON ivf_rt_auto
+  USING inverted(emb ivf (metric = 'l2', compression = 'auto'));
+
+statement ok
+INSERT INTO ivf_rt_auto VALUES
+  (1, [1, 1, 1]), (2, [2, 2, 2]), (3, [3, 3, 3]),
+  (4, [10, 10, 10]), (5, [0.5, 0.5, 0.5]);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_rt_auto;
+
+query
+SELECT id FROM ivf_rt_auto ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+id
+5
+1
+2
 
 # --- 10. IVF vector column visible to materialization ------------------
 # After auto-promoting ivf columns to store_values=true, the materializer

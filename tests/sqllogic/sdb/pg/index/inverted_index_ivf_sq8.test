@@ -393,6 +393,7 @@ CREATE INDEX sq8_bad_l1 ON sq8_bad USING inverted(pk, emb ivf (metric = 'l1', qu
 ----
 db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip', or 'cosine'
 
+
 # ===========================================================================
 # 7b. Cosine + SQ8: cosine is folded into the inner-product quantized path over
 #     L2-normalized vectors, so magnitude is ignored and ranking is by angle.

@@ -200,3 +200,37 @@ a	b
 
 statement ok
 DROP TABLE t3;
+
+# ON CONFLICT DO UPDATE on a TEXT key whose first 12 bytes equal a shorter key
+# present in the same transaction. String min/max stats truncate at 12 bytes; the
+# 12-byte key ('k'x12) stores an EXACT max and the 13-byte key ('k'x12 + 'g')
+# stores a TRUNCATED max with the same 12 bytes. Merging the two must keep the max
+# TRUNCATED -- otherwise the zonemap prunes the row group holding the 13-byte key
+# and the second upsert is misrouted to INSERT, throwing a spurious duplicate key.
+statement ok
+CREATE TABLE t4 (k TEXT PRIMARY KEY, v INT);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO t4 VALUES ('kkkkkkkkkkkk', 1) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v;
+
+statement ok
+INSERT INTO t4 VALUES ('kkkkkkkkkkkkg', 2) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v;
+
+statement ok
+INSERT INTO t4 VALUES ('kkkkkkkkkkkkg', 3) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v;
+
+statement ok
+COMMIT;
+
+query
+SELECT k, v FROM t4 ORDER BY k;
+----
+k	v
+kkkkkkkkkkkk	1
+kkkkkkkkkkkkg	3
+
+statement ok
+DROP TABLE t4;

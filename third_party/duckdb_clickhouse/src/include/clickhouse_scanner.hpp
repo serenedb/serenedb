@@ -28,9 +28,9 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	std::string database;
 	std::string table;
 	std::string sql;
-	//! Optional external-data table shipped with the query as a native binary
-	//! block: a STRUCT of equal-length LISTs, one per column, keyed by column
-	//! name; the query references it as `__sdb_keys`. NULL when unused.
+	//! Optional external-data tables shipped with the query as native binary
+	//! blocks: a STRUCT keyed by table name, each entry a STRUCT of
+	//! equal-length LISTs keyed by column name. NULL when unused.
 	Value external;
 	bool from_query = false;
 	//! MergeTree-family engine: pushed filters render as PREWHERE (legal only

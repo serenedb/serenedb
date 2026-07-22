@@ -468,9 +468,19 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 		}
 		ClickHouseConnection::LogQuery(sql);
 		if (!bind_data.external.IsNull()) {
-			const auto block = BuildExternalBlock(bind_data.external);
+			auto &table_names = StructType::GetChildTypes(bind_data.external.type());
+			auto &tables = StructValue::GetChildren(bind_data.external);
+			std::vector<std::pair<std::string, clickhouse::Block>> blocks;
+			blocks.reserve(tables.size());
+			for (idx_t t = 0; t < tables.size(); t++) {
+				blocks.emplace_back(table_names[t].first.GetIdentifierName(), BuildExternalBlock(tables[t]));
+			}
+			clickhouse::ExternalTables external_tables;
+			for (auto &block : blocks) {
+				external_tables.push_back({block.first, block.second});
+			}
 			result->Conn().GetClient().BeginSelectWithExternalData(ClickHouseConnection::MakeQuery(context, sql),
-			                                                       {{"__sdb_keys", block}});
+			                                                       external_tables);
 		} else {
 			result->Conn().GetClient().BeginSelect(ClickHouseConnection::MakeQuery(context, sql));
 		}

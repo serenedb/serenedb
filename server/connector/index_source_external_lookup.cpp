@@ -222,9 +222,10 @@ void ExternalLookupIndexSource::BuildClickHouseQuery(
     absl::StrAppend(&proj, ", ", bq(name));
     absl::StrAppend(&proj_joined, ", t.", bq(name));
   }
-  std::string inner =
-    absl::StrCat("SELECT toInt64(e.__sdb_ord) AS __sdb_ord", proj_joined,
-                 " FROM ", table, " AS t INNER JOIN __sdb_keys AS e ON ");
+  std::string inner = absl::StrCat(
+    "SELECT toInt64(e.__sdb_ord) AS __sdb_ord", proj_joined, " FROM ", table,
+    " AS t INNER JOIN (SELECT *, row_number() OVER () AS __sdb_ord FROM "
+    "__sdb_keys) AS e ON ");
   for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
     absl::StrAppend(&inner, k ? " AND " : "", "t.", bq(key_columns[k].name),
                     " = e.__sdb_a", k);
@@ -309,16 +310,12 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
     }
   }
   if (_dialect == Dialect::ClickHouse) {
-    duckdb::vector<duckdb::Value> ords;
-    ords.reserve(count);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      ords.emplace_back(static_cast<int64_t>(i + 1));
-    }
-    arrays.emplace_back(
-      "__sdb_ord",
-      duckdb::Value::LIST(duckdb::LogicalType::BIGINT, std::move(ords)));
+    duckdb::child_list_t<duckdb::Value> tables;
+    tables.emplace_back("__sdb_keys", duckdb::Value::STRUCT(std::move(arrays)));
+    params.emplace_back(duckdb::Value::STRUCT(std::move(tables)));
+  } else {
+    params.emplace_back(duckdb::Value::STRUCT(std::move(arrays)));
   }
-  params.emplace_back(duckdb::Value::STRUCT(std::move(arrays)));
 
   auto result = _stmt->Execute(params, /*allow_stream_result=*/false);
   if (result->HasError()) {

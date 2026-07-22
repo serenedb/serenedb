@@ -65,7 +65,11 @@
 #endif
 
 ABSL_FLAG(bool, ires_log_stack, false, "always log stack trace");
-ABSL_FLAG(bool, ires_output, false, "generate an XML report");
+// String (not bool): the CI passes --ires_output=xml:<path>, so the flag must
+// accept a value. Any non-empty value enables the XML report; the value itself
+// is ignored (the report path is derived internally from gResPath), matching
+// the historical cmdline behaviour.
+ABSL_FLAG(std::string, ires_output, "", "generate an XML report");
 ABSL_FLAG(std::string, ires_output_path, "", "output directory");
 ABSL_FLAG(std::string, ires_resource_dir, IRS_TEST_RESOURCE_DIR,
           "resource directory");
@@ -116,7 +120,7 @@ bool TestEnv::prepare() {
   // DuckDBEngine::Initialize() (default: INFO with HTTP+SSL muted). Adjust
   // via SET logging_level inside the engine if needed.
 
-  if (absl::GetFlag(FLAGS_ires_output)) {
+  if (!absl::GetFlag(FLAGS_ires_output).empty()) {
     std::unique_ptr<char*[]> argv(new char*[2 + gArgc]);
     std::memcpy(argv.get(), gArgv, sizeof(char*) * (gArgc));
     gArgvIresOutput.append("--gtest_output=xml:").append(gResPath.string());

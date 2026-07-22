@@ -21,7 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <cmdline.h>
+#include <absl/flags/flag.h>
+#include <absl/flags/parse.h>
 
 #include <type_traits>
 #include <utility>
@@ -63,6 +64,16 @@
     : nullptr
 #endif
 
+ABSL_FLAG(bool, ires_log_stack, false, "always log stack trace");
+// String (not bool): the CI passes --ires_output=xml:<path>, so the flag must
+// accept a value. Any non-empty value enables the XML report; the value itself
+// is ignored (the report path is derived internally from gResPath), matching
+// the historical cmdline behaviour.
+ABSL_FLAG(std::string, ires_output, "", "generate an XML report");
+ABSL_FLAG(std::string, ires_output_path, "", "output directory");
+ABSL_FLAG(std::string, ires_resource_dir, IRS_TEST_RESOURCE_DIR,
+          "resource directory");
+
 namespace {
 
 // Custom ICU data
@@ -76,9 +87,6 @@ struct IterationTracker final : ::testing::Environment {
 
 uint32_t IterationTracker::gSIteration = (std::numeric_limits<uint32_t>::max)();
 
-const std::string kIresHelp("help");
-const std::string kIresLogStack("ires_log_stack");
-const std::string kIresOutput("ires_output");
 const std::string kIresOutputPath("ires_output_path");
 const std::string kIresResourceDir("ires_resource_dir");
 
@@ -104,11 +112,7 @@ std::filesystem::path TestEnv::resource(const std::string& name) {
   return gResourceDir / name;
 }
 
-bool TestEnv::prepare(const cmdline::parser& parser) {
-  if (parser.exist(kIresHelp)) {
-    return true;
-  }
-
+bool TestEnv::prepare() {
   make_directories();
 
   // NOTE: --ires_log_level is parsed but currently has no effect: SDB_*
@@ -116,7 +120,7 @@ bool TestEnv::prepare(const cmdline::parser& parser) {
   // DuckDBEngine::Initialize() (default: INFO with HTTP+SSL muted). Adjust
   // via SET logging_level inside the engine if needed.
 
-  if (parser.exist(kIresOutput)) {
+  if (!absl::GetFlag(FLAGS_ires_output).empty()) {
     std::unique_ptr<char*[]> argv(new char*[2 + gArgc]);
     std::memcpy(argv.get(), gArgv, sizeof(char*) * (gArgc));
     gArgvIresOutput.append("--gtest_output=xml:").append(gResPath.string());
@@ -186,31 +190,23 @@ void TestEnv::make_directories() {
   (gResPath = gResDir) /= kTestResults;
 }
 
-void TestEnv::parse_command_line(cmdline::parser& cmd) {
-  cmd.add(kIresHelp, '?', "print this message");
-  cmd.add(kIresLogStack, 0, "always log stack trace", false, false);
-  cmd.add(kIresOutput, 0, "generate an XML report");
-  cmd.add(kIresOutputPath, 0, "output directory", false, gOutDir.string());
-  cmd.add(kIresResourceDir, 0, "resource directory", false,
-          std::filesystem::path(IRS_TEST_RESOURCE_DIR).string());
-  cmd.parse(gArgc, gArgv);
-
-  if (cmd.exist(kIresHelp)) {
-    std::cout << cmd.usage() << std::endl;
-    return;
-  }
-
-  gResourceDir = std::filesystem::path{cmd.get<std::string>(kIresResourceDir)};
-  gOutDir = std::filesystem::path{cmd.get<std::string>(kIresOutputPath)};
+void TestEnv::parse_command_line() {
+  gResourceDir = std::filesystem::path{absl::GetFlag(FLAGS_ires_resource_dir)};
+  gOutDir = std::filesystem::path{absl::GetFlag(FLAGS_ires_output_path)};
 }
 
 int TestEnv::initialize(int argc, char* argv[]) {
   gArgc = argc;
   gArgv = argv;
 
-  cmdline::parser cmd;
-  parse_command_line(cmd);
-  if (!prepare(cmd)) {
+  // Consume the --ires_* flags, leaving --gtest_* (and everything else)
+  // untouched in gArgv for InitGoogleTest below.
+  std::vector<char*> positional;
+  std::vector<absl::UnrecognizedFlag> unrecognized;
+  absl::ParseAbseilFlagsOnly(argc, argv, positional, unrecognized);
+
+  parse_command_line();
+  if (!prepare()) {
     return -1;
   }
 

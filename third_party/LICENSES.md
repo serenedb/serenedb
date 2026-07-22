@@ -36,19 +36,15 @@
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
 * [Boost](http://www.boost.org)
-* [function2](https://github.com/Naios/function2)
-* [immer](https://github.com/arximboldi/immer)
 * [Boost::Text](https://github.com/tzlaine/text)
 
 ### [MIT license](https://opensource.org/licenses/MIT)
 
-* [FakeIt](https://github.com/eranpeer/FakeIt)
 * [llhttp](https://github.com/nodejs/llhttp)
 * [FastText](https://github.com/facebookresearch/fastText)
 * [YACLib](https://github.com/YACLib/YACLib)
 * [magic_enum](https://github.com/Neargye/magic_enum)
 * [sse2neon](https://github.com/DLTcollab/sse2neon)
-* [geographiclib-c](https://github.com/geographiclib/geographiclib-c)
 * [liburing](https://github.com/axboe/liburing)
 * [DuckDB](https://github.com/duckdb/duckdb)
 * [duckdb-httpfs](https://github.com/duckdb/duckdb-httpfs)
@@ -93,7 +89,6 @@
 * [zlib-ng](https://github.com/zlib-ng/zlib-ng/blob/develop/LICENSE.md)
 * [minizip-ng](https://github.com/zlib-ng/minizip-ng/blob/develop/LICENSE)
 * [PostgreSQL](https://github.com/postgres/postgres), [PostgreSQL License](https://www.postgresql.org/about/licence/) (libpq, statically linked by the postgres_scanner extension)
-* [sdt](https://sourceware.org/git/?p=systemtap.git;a=blob;f=includes/sys/sdt.h), CC0 / public domain (USDT probe header)
 * [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/basics/wyhash.h`)
 
 ## Programs
@@ -129,8 +124,5 @@
 
 Libraries used only by the test suite, not shipped in the distribution.
 
-* [cmdline](https://github.com/tanakh/cmdline)
-* [RapidJSON](https://github.com/Tencent/rapidjson)
-* [utfcpp](https://github.com/nemtrif/utfcpp)
 * [sqllogictest-rs](https://github.com/risinglightdb/sqllogictest-rs)
 * [sqlite sqllogictest](https://github.com/gregrahn/sqllogictest/blob/master/COPYRIGHT.md)

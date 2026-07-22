@@ -7,13 +7,6 @@ add_library(
     wkb.cpp
 )
 
-target_link_libraries(
-    serene_geo
-    geographiclib-c
-    serene
-    boost_boost
-    s2
-    simdjson
-)
+target_link_libraries(serene_geo serene boost_boost s2 simdjson)
 
 add_subdirectory(s2)

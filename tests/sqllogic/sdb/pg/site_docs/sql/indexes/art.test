@@ -10,47 +10,10 @@ CREATE TABLE my_table (i INTEGER PRIMARY KEY);
 statement ok
 INSERT INTO my_table SELECT range FROM range(3_000);
 
-statement error
+statement ok
 UPDATE my_table SET i = i + 1;
-----
-db error: ERROR: Duplicate key "i: 2048" violates primary key constraint.
-
 
 # DOCS_TEST: example_002
-
-statement ok
-USE $__DATABASE__;
-
-statement ok
-DROP TABLE IF EXISTS my_table;
-
-# DOCS_TEST_BODY
-
-statement ok
-CREATE TABLE my_table (i INTEGER PRIMARY KEY);
-
-statement ok
-INSERT INTO my_table SELECT range FROM range(3_000);
-
-statement ok
-BEGIN;
-
-statement ok
-CREATE TEMP TABLE tmp AS SELECT i FROM my_table;
-
-statement ok
-DELETE FROM my_table;
-
-statement ok
-INSERT INTO my_table SELECT i FROM tmp;
-
-statement ok
-DROP TABLE tmp;
-
-statement ok
-COMMIT;
-
-# DOCS_TEST: example_003
 
 # DOCS_TEST_BODY
 

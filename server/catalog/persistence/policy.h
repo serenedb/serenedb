@@ -20,36 +20,39 @@
 
 #pragma once
 
-#include "pg/system_table.h"
+#include <cstdint>
+#include <string>
+#include <vector>
 
-namespace sdb::pg {
+#include "catalog/identifiers/object_id.h"
 
-// https://www.postgresql.org/docs/18/catalog-pg-policy.html
-// NOLINTBEGIN
-struct PgPolicy {
-  static constexpr uint64_t kId = 137;
-  static constexpr std::string_view kName = "pg_policy";
+namespace sdb::catalog::persistence {
 
-  enum class Polcmd : char {
-    Select = 'r',
-    Insert = 'a',
-    Update = 'w',
-    Delete = 'd',
-    All = '*',
-  };
-
-  Oid oid;
-  Name polname;
-  Oid polrelid;
-  Polcmd polcmd;
-  bool polpermissive;
-  Array<Oid> polroles;
-  PgNodeTree polqual;
-  PgNodeTree polwithcheck;
+enum class PolicyCommand : uint8_t {
+  All = 0,
+  Select = 1,
+  Insert = 2,
+  Update = 3,
+  Delete = 4,
 };
-// NOLINTEND
 
-template<>
-catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData();
+struct PolicyData {
+  std::string name;
+  PolicyCommand command = PolicyCommand::All;
+  bool permissive = true;
+  std::vector<ObjectId> roles;
+  bool has_using = false;
+  std::string using_text;
+  bool has_check = false;
+  std::string check_text;
+};
 
-}  // namespace sdb::pg
+// Per-table RLS enable/force flags, persisted as a standalone object parented
+// by the table id (at most one per table). Kept off TableData to avoid the
+// positional-serializer trap.
+struct RowSecurityData {
+  bool enabled = false;
+  bool forced = false;
+};
+
+}  // namespace sdb::catalog::persistence

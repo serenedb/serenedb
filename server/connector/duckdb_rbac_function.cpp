@@ -225,6 +225,51 @@ void GrantTablePragma(duckdb::ClientContext& context,
                   opts);
 }
 
+void CreatePolicyPragma(duckdb::ClientContext& context,
+                        const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  pg::CreatePolicyOptions opts;
+  opts.permissive = ArgBool(params, 2, "permissive");
+  opts.cmd = ArgStr(params, 3, "cmd");
+  opts.roles = ArgStrList(params, 4);
+  opts.has_using = ArgBool(params, 5, "has_using");
+  opts.using_text = ArgStr(params, 6, "using_text");
+  opts.has_check = ArgBool(params, 7, "has_check");
+  opts.check_text = ArgStr(params, 8, "check_text");
+  pg::CreatePolicy(conn_ctx, ArgStr(params, 0, "name"),
+                   ArgStr(params, 1, "table"), opts);
+}
+
+void AlterPolicyPragma(duckdb::ClientContext& context,
+                       const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  pg::AlterPolicyOptions opts;
+  opts.is_rename = ArgBool(params, 2, "is_rename");
+  opts.new_name = ArgStr(params, 3, "new_name");
+  opts.has_roles = ArgBool(params, 4, "has_roles");
+  opts.roles = ArgStrList(params, 5);
+  opts.has_using = ArgBool(params, 6, "has_using");
+  opts.using_text = ArgStr(params, 7, "using_text");
+  opts.has_check = ArgBool(params, 8, "has_check");
+  opts.check_text = ArgStr(params, 9, "check_text");
+  pg::AlterPolicy(conn_ctx, ArgStr(params, 0, "name"),
+                  ArgStr(params, 1, "table"), opts);
+}
+
+void DropPolicyPragma(duckdb::ClientContext& context,
+                      const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  pg::DropPolicy(conn_ctx, ArgStr(params, 0, "name"),
+                 ArgStr(params, 1, "table"), ArgBool(params, 2, "if_exists"));
+}
+
+void AlterTableRowSecurityPragma(duckdb::ClientContext& context,
+                                 const duckdb::FunctionParameters& params) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  pg::SetTableRowSecurity(conn_ctx, ArgStr(params, 0, "table"),
+                          ArgStr(params, 1, "action"));
+}
+
 void AlterOwnerPragma(duckdb::ClientContext& context,
                       const duckdb::FunctionParameters& params) {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -303,6 +348,28 @@ void RegisterRbacPragmas(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
     "serenedb_alter_owner", AlterOwnerPragma,
     {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_create_policy", CreatePolicyPragma,
+    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR),
+     LogicalType::BOOLEAN, LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_alter_policy", AlterPolicyPragma,
+    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::VARCHAR, LogicalType::BOOLEAN,
+     LogicalType::LIST(LogicalType::VARCHAR), LogicalType::BOOLEAN,
+     LogicalType::VARCHAR, LogicalType::BOOLEAN, LogicalType::VARCHAR}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_drop_policy", DropPolicyPragma,
+    {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BOOLEAN}));
+
+  loader.RegisterFunction(duckdb::PragmaFunction::PragmaCall(
+    "serenedb_alter_table_row_security", AlterTableRowSecurityPragma,
+    {LogicalType::VARCHAR, LogicalType::VARCHAR}));
 }
 
 }  // namespace sdb::connector

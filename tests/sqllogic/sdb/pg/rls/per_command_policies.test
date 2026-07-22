@@ -1,0 +1,74 @@
+# serenedb-only RLS: per-command policies. FOR SELECT / INSERT / UPDATE / DELETE
+# each gate only their verb; a SELECT policy does not filter an INSERT's WITH
+# CHECK and vice versa. ALL applies to every verb.
+#
+# Lore: the clickclack ledger lets vedernikoff read widely but write narrowly.
+
+statement ok
+DROP TABLE IF EXISTS pcp_t;
+
+
+statement ok
+DROP ROLE IF EXISTS pcp_r;
+
+
+statement ok
+CREATE TABLE pcp_t (owner text, amount int);
+
+
+statement ok
+INSERT INTO pcp_t VALUES ('pcp_r', 1), ('other', 2);
+
+
+statement ok
+CREATE ROLE pcp_r LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON pcp_t TO pcp_r;
+
+
+statement ok
+ALTER TABLE pcp_t ENABLE ROW LEVEL SECURITY;
+
+
+# SELECT policy: can read every row.
+statement ok
+CREATE POLICY p_read ON pcp_t FOR SELECT USING (true);
+
+
+# INSERT policy: may only insert rows it owns.
+statement ok
+CREATE POLICY p_write ON pcp_t FOR INSERT WITH CHECK (owner = current_user);
+
+
+# Reads see all rows (the permissive SELECT policy).
+connection c1 user=pcp_r password=pw
+query
+SELECT owner FROM pcp_t ORDER BY owner;
+----
+owner
+other
+pcp_r
+
+
+# Insert of own row: allowed.
+connection c2 user=pcp_r password=pw
+statement ok
+INSERT INTO pcp_t VALUES ('pcp_r', 3);
+
+
+# Insert of another owner: blocked by the INSERT WITH CHECK.
+connection c3 user=pcp_r password=pw
+statement error
+INSERT INTO pcp_t VALUES ('other', 4);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+statement ok
+DROP TABLE pcp_t;
+
+
+statement ok
+DROP ROLE pcp_r;

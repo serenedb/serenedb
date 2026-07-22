@@ -39,10 +39,12 @@ namespace sdb::connector {
 class InverterSink final : public irs::TokenConsumer {
  public:
   irs::TokenWriter& Bind(const irs::IndexWriter::Document& writer,
-                         irs::FieldInverter& slot,
+                         irs::FieldInverter& slot, bool unique, bool dense_pos,
                          irs::TokenConsumer* store = nullptr) {
     _document = &writer;
     _slot = &slot;
+    slot.SetUnique(unique);
+    slot.SetDensePos(dense_pos);
     if (!_writer) {
       _writer = std::make_unique<irs::TokenWriter>(*this, store);
     } else {

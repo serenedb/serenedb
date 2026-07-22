@@ -51,7 +51,7 @@ class TokenCollector final : public TokenConsumer {
   void Consume(TokenBatch& batch, std::span<const DocRun> /*runs*/) final {
     for (uint32_t i = 0; i < batch.count; ++i) {
       const auto& t = batch.terms[i];
-      const uint32_t pos = batch.dense_pos ? ++_dense_pos : batch.pos[i];
+      const uint32_t pos = writer.dense_pos ? ++_dense_pos : batch.pos[i];
       tokens.push_back(
         {bstring{reinterpret_cast<const byte_type*>(t.GetData()), t.GetSize()},
          pos, has_offs ? batch.offs_start[i] : 0,
@@ -155,10 +155,11 @@ class TokenAccumulator final : public TokenConsumer {
   explicit TokenAccumulator(duckdb::ArenaAllocator& arena) : _arena(&arena) {}
 
   void Bind(std::vector<duckdb::string_t>& terms, std::vector<uint32_t>& pos,
-            std::vector<uint32_t>* offs_start = nullptr,
+            bool dense, std::vector<uint32_t>* offs_start = nullptr,
             std::vector<uint32_t>* offs_end = nullptr) noexcept {
     _terms = &terms;
     _pos = &pos;
+    _dense = dense;
     _offs_start = offs_start;
     _offs_end = offs_end;
     _dense_pos = 0;
@@ -176,7 +177,7 @@ class TokenAccumulator final : public TokenConsumer {
           duckdb::string_t{reinterpret_cast<const char*>(mem), t.GetSize()};
       }
       _terms->push_back(stable);
-      _pos->push_back(batch.dense_pos ? ++_dense_pos : batch.pos[i]);
+      _pos->push_back(_dense ? ++_dense_pos : batch.pos[i]);
     }
     if (_offs_start != nullptr) {
       _offs_start->insert(_offs_start->end(), batch.offs_start,
@@ -193,6 +194,7 @@ class TokenAccumulator final : public TokenConsumer {
   std::vector<uint32_t>* _offs_start = nullptr;
   std::vector<uint32_t>* _offs_end = nullptr;
   uint32_t _dense_pos = 0;
+  bool _dense = false;
 };
 
 }  // namespace irs

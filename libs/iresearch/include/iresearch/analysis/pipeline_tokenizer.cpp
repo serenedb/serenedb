@@ -184,7 +184,7 @@ template<TokenLayout OutLayout, PipelineTokenizer::ChainSink::ExpandT Expand>
 void PipelineTokenizer::ChainSink::Emit(TokenBatch& batch) {
   auto& out = *_out;
   auto& obuf = out.buf;
-  const bool dense = batch.dense_pos;
+  const bool dense = writer.dense_pos;
   for (uint32_t i = 0, n = batch.count; i < n; ++i) {
     const auto& term = batch.terms[i];
     uint32_t inc = 1;

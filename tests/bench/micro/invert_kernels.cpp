@@ -171,7 +171,6 @@ void FillBatches(std::vector<FilledBatch>& batches, bool offs = false,
     uint32_t vpos = 0;
     while (i < doc_end) {
       auto batch = std::make_unique<TokenBatch>();
-      batch->dense_pos = !explicit_pos;
       const auto chunk_end = std::min(i + TokenBatch::kCapacity, doc_end);
       while (i < chunk_end) {
         const auto term = corpus.Term(i);
@@ -252,8 +251,6 @@ void BM_ColumnarOneToOne(benchmark::State& state) {
     auto& fb = batches.emplace_back();
     fb.batch = std::make_unique<TokenBatch>();
     fb.batch->count = n;
-    fb.batch->dense_pos = true;
-    fb.batch->unique = hint;
     for (uint32_t j = 0; j < n; ++j) {
       const auto term = corpus.Term((i + j) % card);
       fb.batch->terms[j] =
@@ -268,6 +265,7 @@ void BM_ColumnarOneToOne(benchmark::State& state) {
   for (auto _ : state) {
     FieldsInverter inv{mem};
     auto* field = inv.Emplace(1, kTermsFeatures);
+    field->SetUnique(hint);
     for (auto& fb : batches) {
       benchmark::DoNotOptimize(field->InvertBlock(*fb.batch, fb.runs));
     }
@@ -963,6 +961,7 @@ void RunColumnarMemory(benchmark::State& state, IndexFeatures features,
     InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
     FieldsInverter inv{mem};
     auto* field = inv.Emplace(1, features);
+    field->SetDensePos(!explicit_pos);
     DrainBatches(*field, batches,
                  [](bool ok) { benchmark::DoNotOptimize(ok); });
 

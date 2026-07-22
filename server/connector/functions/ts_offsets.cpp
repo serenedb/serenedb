@@ -225,7 +225,8 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
     const auto* data =
       duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-    auto& w = inverter_sink.Bind(doc, *slot);
+    const auto traits = field.tokens->Traits();
+    auto& w = inverter_sink.Bind(doc, *slot, traits.unique, traits.dense_pos);
     irs::doc_id_t d = doc.DocId();
     for (duckdb::idx_t r = 0; r < count; ++r, ++d) {
       const auto idx = fmt.sel->get_index(r);

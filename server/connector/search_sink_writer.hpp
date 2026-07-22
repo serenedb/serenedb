@@ -188,6 +188,8 @@ class SearchSinkInsertBaseImpl {
     irs::IndexFeatures index_features;
     bool keyword = false;
     bool has_store = false;
+    bool unique = false;
+    bool dense = false;
   };
 
   template<duckdb::LogicalTypeId Kind>

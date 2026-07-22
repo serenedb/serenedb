@@ -111,16 +111,6 @@ struct TokenBatch {
   uint32_t offs_start[kCapacity];
   uint32_t offs_end[kCapacity];
   uint32_t count = 0;
-  // Level-2 runtime hints describing the data in flight.
-  // How to read pos[]: dense = implicit ordinals (kernel never wrote the
-  // lane). Set from the kernel's traits by the fill dispatch; per-fill,
-  // persists across consume cycles.
-  bool dense_pos = true;
-  // Every batch token is one doc's whole value: runs[i] == {doc_i, 1}. Set
-  // by the tokenizer's fill dispatch from its traits (unique kernels),
-  // cleared when a value is rejected; per-fill like dense_pos. Consumers
-  // additionally check runs.size() == count before trusting it.
-  bool unique = false;
 
   bool Full() const noexcept { return count == kCapacity; }
 };
@@ -326,6 +316,11 @@ class TokenEmitter : util::Noncopyable {
 
  public:
   TokenBatch& buf;
+  // How to read buf.pos[]: dense = implicit ordinals (kernel never wrote the
+  // lane). Set from the producing kernel's traits by the fill dispatch;
+  // per-fill, persists across consume cycles. Lives on the writer, not the
+  // batch: it is a bind-time constant, not data in flight.
+  bool dense_pos = true;
 };
 
 // Driver-facing half: constructs and re-targets the stream, hands the final

@@ -64,7 +64,7 @@ void AssertBlockTokens(irs::analysis::Tokenizer& stream, std::string_view data,
   size_t tok = 0;
   const auto check = [&](irs::TokenBatch& batch,
                          std::span<const irs::DocRun> /*runs*/) {
-    ASSERT_TRUE(batch.dense_pos);
+    ASSERT_TRUE(stream.Traits().dense_pos);
     for (uint32_t i = 0; i < batch.count; ++i, ++tok) {
       SCOPED_TRACE(testing::Message() << "token=" << tok);
       ASSERT_LT(tok, expected.size());
@@ -220,7 +220,7 @@ void AssertFillsMatchPull(std::string_view delim,
     size_t tok = 0;
     const auto check = [&](irs::TokenBatch& batch,
                            std::span<const irs::DocRun> /*runs*/) {
-      ASSERT_TRUE(batch.dense_pos);
+      ASSERT_TRUE(stream.Traits().dense_pos);
       for (uint32_t i = 0; i < batch.count; ++i, ++tok) {
         SCOPED_TRACE(testing::Message() << "value=" << v << " token=" << tok);
         ASSERT_LT(tok, expected[v].size());

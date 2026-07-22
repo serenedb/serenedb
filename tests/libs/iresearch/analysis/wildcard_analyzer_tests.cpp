@@ -63,7 +63,7 @@ std::vector<irs::bstring> FillTokens(irs::analysis::WildcardAnalyzer& stream,
       }
       EXPECT_EQ(irs::TokenBatch::kCapacity, batch.count);
     }
-    EXPECT_TRUE(batch.dense_pos);
+    EXPECT_TRUE(stream.Traits().dense_pos);
     for (uint32_t i = 0; i < batch.count; ++i) {
       const auto& t = batch.terms[i];
       out.emplace_back(reinterpret_cast<const irs::byte_type*>(t.GetData()),

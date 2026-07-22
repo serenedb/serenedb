@@ -46,7 +46,6 @@ bool FillSplitBatch(std::string_view text, size_t& cursor, TokenLayout layout,
   auto alnum = [](char c) {
     return std::isalnum(static_cast<unsigned char>(c));
   };
-  out.dense_pos = true;
   while (cursor < text.size()) {
     while (cursor < text.size() && !alnum(text[cursor])) {
       ++cursor;
@@ -463,6 +462,9 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
       FieldsInverter inv_gen{mem};
       auto* fast = inv_fast.Emplace(1, features);
       auto* gen = inv_gen.Emplace(1, features);
+      fast->SetUnique(true);
+      fast->SetDensePos(dense);
+      gen->SetDensePos(dense);
 
       auto batch = std::make_unique<TokenBatch>();
       std::vector<DocRun> runs;
@@ -470,7 +472,6 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
       while (i < kDocs) {
         const size_t n = std::min(TokenBatch::kCapacity, kDocs - i);
         batch->count = static_cast<uint32_t>(n);
-        batch->dense_pos = dense;
         runs.clear();
         for (size_t j = 0; j < n; ++j) {
           const auto& v = vals[i + j];
@@ -483,9 +484,7 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
           batch->offs_end[j] = static_cast<uint32_t>(v.size());
           runs.push_back({doc_limits::min() + static_cast<doc_id_t>(i + j), 1});
         }
-        batch->unique = true;
         ASSERT_TRUE(fast->InvertBlock(*batch, runs));
-        batch->unique = false;
         ASSERT_TRUE(gen->InvertBlock(*batch, runs));
         i += n;
       }
@@ -686,13 +685,13 @@ TEST(InverterPipelineTest, DenseAfterExplicitDoc) {
   FieldsInverter inv{mem};
   const auto features = IndexFeatures::Freq | IndexFeatures::Pos;
   auto* field = inv.Emplace(1, features);
+  field->SetDensePos(false);
 
   const auto d = doc_limits::min();
 
   // Value 1: explicit positions (a non-dense batch), tokens "a","b" at pos 1,2.
   auto batch = std::make_unique<TokenBatch>();
   batch->count = 2;
-  batch->dense_pos = false;
   batch->terms[0] = duckdb::string_t{"a", 1};
   batch->pos[0] = 1;
   batch->terms[1] = duckdb::string_t{"b", 1};

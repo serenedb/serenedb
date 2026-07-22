@@ -212,7 +212,6 @@ bool NormalizingTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
     return true;
   }
   if (!Normalize(value)) {
-    sink.buf.unique = false;
     return false;
   }
   sink.EmitInterned<Layout>(

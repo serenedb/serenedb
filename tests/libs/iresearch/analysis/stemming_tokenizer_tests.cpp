@@ -45,7 +45,7 @@ void AssertStemBlock(irs::analysis::StemmingTokenizer& stream,
   ASSERT_FALSE(sink.flushed());
   auto& batch = sink.writer.buf;
   ASSERT_EQ(1, batch.count);
-  ASSERT_TRUE(batch.dense_pos);
+  ASSERT_TRUE(sink.writer.dense_pos);
   const auto& t = batch.terms[0];
   ASSERT_EQ(expected, std::string_view(t.GetData(), t.GetSize()));
   ASSERT_EQ(0, batch.offs_start[0]);

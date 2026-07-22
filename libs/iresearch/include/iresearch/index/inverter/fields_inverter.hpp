@@ -94,6 +94,8 @@ class FieldInverter : util::Noncopyable {
     _unique_terms = true;
   }
   bool UniqueTerms() const noexcept { return _unique_terms; }
+  void SetUnique(bool value) noexcept { _unique = value; }
+  void SetDensePos(bool value) noexcept { _dense_pos = value; }
   TokenLayout Layout() const noexcept {
     return static_cast<TokenLayout>(_log.index());
   }
@@ -181,7 +183,7 @@ class FieldInverter : util::Noncopyable {
       auto* ids = ResolveBlock(batch);
 
       const bool first_continues = _state.value_open;
-      if (batch.unique && !first_continues && !last_cut &&
+      if (_unique && !first_continues && !last_cut &&
           runs.size() == batch.count) {
         return InvertOneToOne(log, batch, runs, ids);
       }
@@ -207,9 +209,9 @@ class FieldInverter : util::Noncopyable {
 
   static constexpr uint32_t kDynTokens = 0;
 
-  // 1-1 fast path: every run is one distinct doc's single token (hint set by
-  // the writer, run/count equality re-checked at the call site); TokenRun<1>
-  // constant-folds the per-run scans.
+  // 1-1 fast path: every run is one distinct doc's single token (per-column
+  // hint set at bind, run/count equality re-checked at the call site);
+  // TokenRun<1> constant-folds the per-run scans.
   template<typename Log>
   IRS_NO_INLINE bool InvertOneToOne(Log& log, TokenBatch& batch,
                                     std::span<const DocRun> runs,
@@ -339,7 +341,7 @@ class FieldInverter : util::Noncopyable {
                                     uint32_t n, PosChecks& out) const {
     const uint32_t count = kN == kDynTokens ? n : kN;
     const auto* pos_arr = batch.pos + base;
-    const bool dense = batch.dense_pos;
+    const bool dense = _dense_pos;
     const uint32_t pos_base = dense ? _state.pos : _state.value_pos;
     uint32_t overlap = 0;
     uint32_t last_pos;
@@ -654,6 +656,8 @@ class FieldInverter : util::Noncopyable {
   FieldMeta _meta;
   IndexFeatures _requested_features{};
   bool _unique_terms = false;
+  bool _unique = false;
+  bool _dense_pos = true;
   DocState _state;
 };
 

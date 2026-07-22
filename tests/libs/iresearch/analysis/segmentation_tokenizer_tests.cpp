@@ -50,7 +50,7 @@ void AssertStream(irs::analysis::Tokenizer* pipe, std::string_view data,
   std::vector<uint32_t> ends;
   const auto collect = [&](irs::TokenBatch& batch,
                            std::span<const irs::DocRun> runs) {
-    ASSERT_TRUE(batch.dense_pos);
+    ASSERT_TRUE(pipe->Traits().dense_pos);
     ASSERT_TRUE(runs.empty());
     for (uint32_t i = 0; i < batch.count; ++i) {
       const auto& t = batch.terms[i];
@@ -366,7 +366,7 @@ TEST_P(SegmentationTokenizerTest, native_fills_match_pull) {
         std::vector<uint32_t> ends;
         const auto collect = [&](irs::TokenBatch& batch,
                                  std::span<const irs::DocRun> /*runs*/) {
-          ASSERT_TRUE(batch.dense_pos);
+          ASSERT_TRUE(fill_stream->Traits().dense_pos);
           for (uint32_t i = 0; i < batch.count; ++i) {
             const auto& t = batch.terms[i];
             terms.emplace_back(

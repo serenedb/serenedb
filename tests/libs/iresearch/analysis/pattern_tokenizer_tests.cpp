@@ -46,7 +46,7 @@ void AssertTokenStreamContents(
   size_t token_idx = 0;
   const auto check = [&](irs::TokenBatch& batch,
                          std::span<const irs::DocRun> /*runs*/) {
-    ASSERT_TRUE(batch.dense_pos);
+    ASSERT_TRUE(stream->Traits().dense_pos);
     for (uint32_t i = 0; i < batch.count; ++i, ++token_idx) {
       SCOPED_TRACE(testing::Message() << "token=" << token_idx);
       ASSERT_LT(token_idx, expected_tokens.size());

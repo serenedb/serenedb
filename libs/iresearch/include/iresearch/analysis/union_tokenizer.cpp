@@ -84,9 +84,9 @@ void UnionTokenizer::CollectSubs(std::string_view data) {
     acc.terms.clear();
     acc.pos.clear();
     acc.next = 0;
-    _scratch->accumulator.Bind(acc.terms, acc.pos);
-    if (_subs[k].GetMutableStream().Fill(data, _scratch->writer,
-                                         TokenLayout::TermsPos)) {
+    auto& stream = _subs[k].GetMutableStream();
+    _scratch->accumulator.Bind(acc.terms, acc.pos, stream.Traits().dense_pos);
+    if (stream.Fill(data, _scratch->writer, TokenLayout::TermsPos)) {
       _scratch->writer.Finish();
     }
   }
@@ -146,8 +146,7 @@ void UnionTokenizer::Fill(std::span<const duckdb::string_t> values,
     _scratch->subs.resize(_subs.size());
   }
   _scratch->arena.Reset();
-  sink.buf.dense_pos = Traits().dense_pos;
-  sink.buf.unique = false;
+  sink.dense_pos = Traits().dense_pos;
   ResolveLayout(layout, [&]<TokenLayout Layout>() {
     for (size_t v = 0; v < values.size(); ++v) {
       sink.BeginValue(docs[v]);

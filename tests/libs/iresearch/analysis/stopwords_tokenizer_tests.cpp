@@ -39,7 +39,7 @@ void AssertStopwordsBlock(irs::analysis::StopwordsTokenizer& stream,
   ASSERT_TRUE(stream.Fill(data, sink.writer, sink.layout));
   ASSERT_FALSE(sink.flushed());
   auto& batch = sink.writer.buf;
-  ASSERT_TRUE(batch.dense_pos);
+  ASSERT_TRUE(sink.writer.dense_pos);
   if (!expect_pass) {
     ASSERT_EQ(0, batch.count);
     return;

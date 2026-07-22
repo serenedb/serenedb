@@ -273,9 +273,11 @@ void SearchSinkInsertBaseImpl::WriteAnalyzedColumn(
   if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
     irs::analysis::GeoAnalyzer::Cast(_field.GetTokens()).SetWkbInput(true);
   }
-  _field.GetTokens().Fill(_term_scratch, _doc_scratch,
-                          _inverter_sink.Bind(*_document, *slot, store_sink),
-                          layout);
+  _field.GetTokens().Fill(
+    _term_scratch, _doc_scratch,
+    _inverter_sink.Bind(*_document, *slot, _field.unique, _field.dense,
+                        store_sink),
+    layout);
   _inverter_sink.Flush();
   FinishColumnBlocks(_null_field);
 }
@@ -437,7 +439,8 @@ void SearchSinkInsertBaseImpl::WriteListBatch(duckdb::idx_t count,
       auto* slot = _document->Field(_field.Id(), _field.GetIndexFeatures());
       SDB_ASSERT(slot);
       _inverter_sink.Reset();
-      auto& w = _inverter_sink.Bind(*_document, *slot);
+      auto& w = _inverter_sink.Bind(*_document, *slot, /*unique=*/false,
+                                    _field.dense);
       for_each_element([&](duckdb::idx_t child_idx, irs::doc_id_t doc) {
         w.BeginValue(doc);
         _field.string_analyzer->Fill(AsView(data[child_idx]), w, layout);
@@ -543,13 +546,12 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
                   _store_appender.Bind(*this, *store_writer);
                   leaf_store = &_store_appender;
                 }
-                auto& w =
-                  _inverter_sink.Bind(*_document, *str_slot, leaf_store);
+                auto& w = _inverter_sink.Bind(
+                  *_document, *str_slot, jpf.string_field.unique,
+                  jpf.string_field.dense, leaf_store);
                 w.BeginValue(doc);
                 bool ok = true;
                 if (jpf.string_field.keyword) {
-                  w.buf.dense_pos = true;
-                  w.buf.unique = true;
                   const auto i = w.Next();
                   w.buf.terms[i] =
                     w.Intern(irs::ViewCast<irs::byte_type>(value));
@@ -856,6 +858,8 @@ void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
   SDB_ASSERT(column_analyzer.analyzer);
   string_analyzer = column_analyzer.analyzer.get();
   const auto traits = string_analyzer->Traits();
+  unique = traits.unique;
+  dense = traits.dense_pos;
   if (auto* geo = irs::analysis::GeoAnalyzer::TryCast(*string_analyzer)) {
     geo->SetWkbInput(false);
   }

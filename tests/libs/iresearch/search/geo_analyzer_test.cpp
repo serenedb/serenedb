@@ -118,7 +118,7 @@ std::optional<std::vector<std::string>> CollectGeoTerms(
   const auto collect = [&](irs::TokenBatch& batch) {
     for (uint32_t i = 0; i < batch.count; ++i) {
       if (layout != irs::TokenLayout::Terms) {
-        const uint32_t p = batch.dense_pos ? pos + 1 : batch.pos[i];
+        const uint32_t p = batch.pos[i];
         EXPECT_EQ(pos + 1, p);
         pos = p;
       }

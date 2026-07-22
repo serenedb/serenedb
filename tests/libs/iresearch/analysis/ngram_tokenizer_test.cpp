@@ -201,7 +201,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       std::vector<uint32_t> ends;
       const auto collect = [&](irs::TokenBatch& batch,
                                std::span<const irs::DocRun> runs) {
-        ASSERT_FALSE(batch.dense_pos);
+        ASSERT_FALSE(stream.Traits().dense_pos);
         ASSERT_TRUE(runs.empty());
         for (uint32_t i = 0; i < batch.count; ++i) {
           const auto& t = batch.terms[i];
@@ -921,7 +921,7 @@ TEST(ngram_token_stream_test, next) {
       std::vector<uint32_t> ends;
       const auto collect = [&](irs::TokenBatch& batch,
                                std::span<const irs::DocRun> runs) {
-        ASSERT_FALSE(batch.dense_pos);
+        ASSERT_FALSE(stream.Traits().dense_pos);
         ASSERT_TRUE(runs.empty());
         for (uint32_t i = 0; i < batch.count; ++i) {
           const auto& t = batch.terms[i];
@@ -1390,7 +1390,7 @@ TEST(ngram_token_stream_test, test_out_of_range_pos_issue) {
     ASSERT_TRUE(stream->Fill(value, sink.writer, sink.layout));
     ASSERT_FALSE(sink.flushed());
     auto& batch = sink.writer.buf;
-    ASSERT_FALSE(batch.dense_pos);
+    ASSERT_FALSE(sink.writer.dense_pos);
     uint32_t last_pos = 0;
     for (uint32_t t = 0; t < batch.count; ++t) {
       ASSERT_GE(batch.pos[t], last_pos);
@@ -1563,7 +1563,7 @@ std::vector<PulledNgram> FillNgrams(
   std::vector<PulledNgram> out;
   const auto collect = [&](irs::TokenBatch& batch,
                            std::span<const irs::DocRun> runs) {
-    EXPECT_FALSE(batch.dense_pos);
+    EXPECT_FALSE(sink.writer.dense_pos);
     EXPECT_TRUE(runs.empty());
     for (uint32_t i = 0; i < batch.count; ++i) {
       const auto& t = batch.terms[i];

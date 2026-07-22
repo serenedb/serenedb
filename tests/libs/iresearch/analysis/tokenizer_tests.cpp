@@ -165,7 +165,7 @@ TEST(string_token_stream_tests, native_batch_fill) {
     ASSERT_FALSE(sink.flushed());
     auto& batch = sink.writer.buf;
     ASSERT_EQ(1, batch.count);
-    ASSERT_TRUE(batch.dense_pos);
+    ASSERT_TRUE(sink.writer.dense_pos);
     const auto& t = batch.terms[0];
     ASSERT_EQ(v, std::string_view(t.GetData(), t.GetSize()));
     ASSERT_EQ(0, batch.offs_start[0]);
@@ -197,7 +197,7 @@ TEST(string_token_stream_tests, native_column_fill) {
     ASSERT_EQ(1, runs[i].ntokens);
   }
   ASSERT_EQ(2, batch.count);
-  ASSERT_TRUE(batch.dense_pos);
+  ASSERT_TRUE(sink.writer.dense_pos);
   for (uint32_t i = 0; i < 2; ++i) {
     const auto& t = batch.terms[i];
     ASSERT_EQ(std::string_view(values[i].GetData(), values[i].GetSize()),
@@ -289,7 +289,6 @@ TEST(token_sink_tests, next_bulk_and_flag_preservation) {
                             std::span<const irs::DocRun> /*runs*/) {
     ++flushes;
     ASSERT_EQ(kCap, batch.count);
-    ASSERT_FALSE(batch.dense_pos);
   };
   tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, on_flush};
   auto& w = sink.writer;
@@ -300,13 +299,13 @@ TEST(token_sink_tests, next_bulk_and_flag_preservation) {
   ASSERT_TRUE(stream.Fill(bulk_value, w, sink.layout));
   ASSERT_EQ(1, flushes);
   ASSERT_EQ(100, batch.count);
-  ASSERT_FALSE(batch.dense_pos);
+  ASSERT_FALSE(w.dense_pos);
 
   const std::string exact_refill(kCap - 100 + 1, 'v');
   ASSERT_TRUE(stream.Fill(exact_refill, w, sink.layout));
   ASSERT_EQ(2, flushes);
   ASSERT_EQ(1, batch.count);
-  ASSERT_FALSE(batch.dense_pos);
+  ASSERT_FALSE(w.dense_pos);
   w.Discard();
 }
 
@@ -469,7 +468,6 @@ class OneTokenMockTokenizer final
   template<irs::TokenLayout Layout>
   bool DoFill(std::string_view value, irs::TokenEmitter& sink) {
     if (value == "!") {
-      sink.buf.unique = false;
       return false;
     }
     const auto size = static_cast<uint32_t>(value.size());
@@ -496,7 +494,6 @@ TEST(token_sink_tests, unique_hint) {
     tests::OneBatchSink sink{irs::TokenLayout::Terms};
     stream.Fill(vals, docs, sink.writer, sink.layout);
     ASSERT_FALSE(sink.flushed());
-    ASSERT_TRUE(sink.writer.buf.unique);
     ASSERT_EQ(sink.writer.buf.count, sink.writer.Runs().size());
   }
 
@@ -506,7 +503,6 @@ TEST(token_sink_tests, unique_hint) {
     const irs::doc_id_t docs[] = {1, 2, 3};
     tests::OneBatchSink sink{irs::TokenLayout::Terms};
     stream.Fill(vals, docs, sink.writer, sink.layout);
-    ASSERT_FALSE(sink.writer.buf.unique);
     ASSERT_EQ(3, sink.writer.Runs().size());
     ASSERT_EQ(2, sink.writer.buf.count);
   }
@@ -514,7 +510,6 @@ TEST(token_sink_tests, unique_hint) {
   {
     tests::OneBatchSink sink{irs::TokenLayout::Terms};
     ASSERT_TRUE(stream.Fill(a, sink.writer, sink.layout));
-    ASSERT_FALSE(sink.writer.buf.unique);
     ASSERT_TRUE(sink.writer.Runs().empty());
   }
 
@@ -524,7 +519,8 @@ TEST(token_sink_tests, unique_hint) {
     const irs::doc_id_t docs[] = {1};
     tests::OneBatchSink sink{irs::TokenLayout::Terms};
     empty.Fill(vals, docs, sink.writer, sink.layout);
-    ASSERT_FALSE(sink.writer.buf.unique);
+    ASSERT_EQ(0, sink.writer.buf.count);
+    ASSERT_EQ(1, sink.writer.Runs().size());
   }
 }
 

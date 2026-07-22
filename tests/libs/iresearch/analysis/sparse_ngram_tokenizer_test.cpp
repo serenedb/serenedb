@@ -41,7 +41,7 @@ std::set<std::string> Collect(std::string_view data, bool covering,
   std::set<std::string> out;
   const auto collect = [&](irs::TokenBatch& batch,
                            std::span<const irs::DocRun> /*runs*/) {
-    EXPECT_TRUE(batch.dense_pos);
+    EXPECT_TRUE(stream->Traits().dense_pos);
     for (uint32_t i = 0; i < batch.count; ++i) {
       const auto& t = batch.terms[i];
       out.emplace(t.GetData(), t.GetSize());

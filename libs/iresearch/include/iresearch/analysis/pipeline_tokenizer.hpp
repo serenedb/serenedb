@@ -111,7 +111,7 @@ class PipelineTokenizer final : public TypedTokenizer<PipelineTokenizer>,
       _pos.clear();
       _offs_start.clear();
       _offs_end.clear();
-      scratch.accumulator.Bind(_terms, _pos,
+      scratch.accumulator.Bind(_terms, _pos, _analyzer->Traits().dense_pos,
                                _track_offset ? &_offs_start : nullptr,
                                _track_offset ? &_offs_end : nullptr);
       if (!_analyzer->Fill(data, scratch.writer,

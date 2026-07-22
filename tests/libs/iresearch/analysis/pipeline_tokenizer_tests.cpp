@@ -778,7 +778,7 @@ ChainCollected CollectColumn(irs::analysis::PipelineTokenizer& pipe,
   ChainCollected out;
   const auto collect = [&](irs::TokenBatch& batch,
                            std::span<const irs::DocRun> runs) {
-    EXPECT_FALSE(batch.dense_pos);
+    EXPECT_FALSE(pipe.Traits().dense_pos);
     for (uint32_t i = 0; i < batch.count; ++i) {
       const auto& t = batch.terms[i];
       out.tokens.push_back({std::string{t.GetData(), t.GetSize()}, batch.pos[i],

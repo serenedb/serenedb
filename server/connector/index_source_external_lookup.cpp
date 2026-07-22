@@ -165,9 +165,9 @@ void ExternalLookupIndexSource::PrepareLookup(
   duckdb::vector<duckdb::LogicalType> in_types;
   duckdb::vector<duckdb::Identifier> in_names;
   duckdb::TableFunctionRef dummy_ref;
-  duckdb::TableFunctionBindInput bind_input(
-    inputs, named, in_types, in_names, _lookup_func.function_info.get(),
-    nullptr, _lookup_func, dummy_ref);
+  duckdb::TableFunctionBindInput bind_input(inputs, named, in_types, in_names,
+                                            _lookup_func.function_info.get(),
+                                            nullptr, _lookup_func, dummy_ref);
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<std::string> names;
   try {
@@ -177,8 +177,7 @@ void ExternalLookupIndexSource::PrepareLookup(
     bind_con.Commit();
     duckdb::vector<duckdb::column_t> column_ids(types.size());
     absl::c_iota(column_ids, duckdb::column_t{0});
-    duckdb::TableFunctionInitInput init(_bind_data.get(),
-                                        std::move(column_ids),
+    duckdb::TableFunctionInitInput init(_bind_data.get(), std::move(column_ids),
                                         /*projection_ids=*/{}, nullptr);
     _gstate = _lookup_func.init_global(context, init);
   } catch (const std::exception& e) {

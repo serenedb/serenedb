@@ -826,9 +826,19 @@ std::pair<duckdb::LogicalGet*, duckdb::LogicalFilter*> ImplicitTsDictTarget(
 // skip NULLs and work on any such column, view-backed indexes included;
 // list()/array_agg keeps a NULL element the term dictionary has none for, so it
 // converts only for a proven-NOT-NULL table column and otherwise stays a scan.
+FoundScanColumn ResolveColumnInScan(duckdb::LogicalOperator& root,
+                                    duckdb::ColumnBinding binding,
+                                    const FoundScan& target) {
+  const auto resolved = ResolveBindingThroughProjections(root, binding);
+  if (resolved.table_index != target.get->table_index) {
+    return {};
+  }
+  return {target, resolved};
+}
+
 std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
   duckdb::BoundAggregateExpression& agg, duckdb::LogicalOperator& root,
-  const duckdb::LogicalGet& target, const catalog::Snapshot& snapshot) {
+  const FoundScan& target, const catalog::Snapshot& snapshot) {
   const auto& name = agg.Function().GetName();
   std::string_view agg_name;
   if (name == "array_agg" || name == "list") {
@@ -857,13 +867,13 @@ std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
   if (col_ref.GetReturnType().id() != duckdb::LogicalTypeId::VARCHAR) {
     return std::nullopt;
   }
-  const auto resolved = ResolveIResearchScanColumn(root, col_ref.Binding());
-  if (!resolved || resolved->found.get != &target) {
+  const auto resolved = ResolveColumnInScan(root, col_ref.Binding(), target);
+  if (!resolved.found.get) {
     return std::nullopt;
   }
-  const auto& found = resolved->found;
+  const auto& found = resolved.found;
   const auto col_id =
-    ResolveColumnId(resolved->binding, *found.bind_data, *found.get);
+    ResolveColumnId(resolved.binding, *found.bind_data, *found.get);
   if (col_id == catalog::Column::kInvalidId) {
     return std::nullopt;
   }
@@ -883,10 +893,9 @@ std::optional<KeywordDictAgg> ClassifyKeywordDictAgg(
 
 duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
   const KeywordDictAgg& match, duckdb::LogicalOperator& root,
-  duckdb::ClientContext& context, const duckdb::Identifier& alias) {
-  auto resolved = ResolveIResearchScanColumn(root, match.binding);
-  SDB_ASSERT(resolved.has_value());
-  return MakeTsDictAggregate(root, context, resolved->found, match.field_id,
+  duckdb::ClientContext& context, const duckdb::Identifier& alias,
+  FoundScan& target) {
+  return MakeTsDictAggregate(root, context, target, match.field_id,
                              TsDictColKind::Term, match.agg,
                              match.binding.table_index, alias);
 }
@@ -1386,6 +1395,12 @@ void PushdownTsDictAggregates(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
                              binder, context)) {
     return;
   }
+  FoundScan target_scan{};
+  if (implicit_target) {
+    if (auto scan = AsSearchScan(*implicit_target)) {
+      target_scan = *scan;
+    }
+  }
   for (size_t i = 0; i < aggr.expressions.size(); ++i) {
     auto& expr = aggr.expressions[i];
     if (expr->GetExpressionClass() !=
@@ -1399,12 +1414,12 @@ void PushdownTsDictAggregates(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
       ts_dict_calls.push_back(i);
       continue;
     }
-    if (aggr.groups.empty() && implicit_target) {
+    if (aggr.groups.empty() && target_scan.get) {
       if (!snapshot) {
         snapshot = connector::GetSereneDBContext(context).CatalogSnapshot();
       }
       if (auto match =
-            ClassifyKeywordDictAgg(agg, root, *implicit_target, *snapshot)) {
+            ClassifyKeywordDictAgg(agg, root, target_scan, *snapshot)) {
         keyword_aggs.push_back({i, *match});
         continue;
       }
@@ -1456,7 +1471,7 @@ void PushdownTsDictAggregates(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     for (const auto& [i, match] : keyword_aggs) {
       const auto alias = aggr.expressions[i]->GetAlias();
       aggr.expressions[i] =
-        BuildKeywordTsDictAggregate(match, root, context, alias);
+        BuildKeywordTsDictAggregate(match, root, context, alias, target_scan);
     }
     converted = true;
   }

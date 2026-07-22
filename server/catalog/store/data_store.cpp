@@ -578,14 +578,18 @@ void DataStore::ResolvePendingAlter() {
 
 void DataStore::ValidateStoreTable(const StoreTableDef& def) {
 #ifdef SDB_DEV
+  // Own connection: validation runs from DDL operators that may hold table
+  // locks, so it must touch neither the shared store connection nor any
+  // mutex a data commit runs under.
+  auto conn = DuckDBEngine::Instance().CreateConnection();
   try {
-    _conn->BeginTransaction();
+    conn->BeginTransaction();
   } catch (const std::exception& e) {
     SDB_ASSERT(false, "store table validation: ", e.what());
     return;
   }
   try {
-    auto entry = GetStoreTableEntry(*_conn->context, def.table_id,
+    auto entry = GetStoreTableEntry(*conn->context, def.table_id,
                                     duckdb::OnEntryNotFound::RETURN_NULL);
     SDB_ASSERT(entry, "store table missing for ", def.name);
     if (entry) {
@@ -610,7 +614,7 @@ void DataStore::ValidateStoreTable(const StoreTableDef& def) {
     SDB_ASSERT(false, "store table validation: ", e.what());
   }
   try {
-    _conn->Rollback();
+    conn->Rollback();
   } catch (const std::exception&) {
   }
 #endif

@@ -332,6 +332,11 @@ class CatalogStore {
   std::string _directory;
 
   mutable absl::Mutex _mutex;
+  // Serializes store-side DDL: owns the data-DB connection and keeps the
+  // PendingAlter bracket exclusive. The data commit under it takes duckdb's
+  // WAL/table locks, so it must never nest inside _mutex (only the reverse:
+  // _store_mutex -> _mutex around appends).
+  absl::Mutex _store_mutex;
   DefMap _defs ABSL_GUARDED_BY(_mutex);
   uint64_t _live_records ABSL_GUARDED_BY(_mutex) = 0;
   uint64_t _dead_records ABSL_GUARDED_BY(_mutex) = 0;

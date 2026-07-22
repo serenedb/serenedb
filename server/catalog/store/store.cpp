@@ -916,13 +916,20 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
     store_ops.push_back(std::move(entry));
   }
 
-  absl::MutexLock lock{&_mutex};
   if (store_ops.empty()) {
+    absl::MutexLock lock{&_mutex};
     AppendBatch(records);
     MaybeCompact();
     return;
   }
 
+  // The data-DB commit takes duckdb's WAL and table locks, and DDL operators
+  // call in here while holding table locks -- so the commit must never run
+  // under _mutex (lock-order inversion against committing writers). Store-op
+  // batches serialize on _store_mutex instead: it owns the data connection
+  // and keeps the PendingAlter bracket exclusive, while _mutex is only taken
+  // around each append (frame order == map order stays intact).
+  absl::MutexLock store_lock{&_store_mutex};
   auto& data = GetDataStore();
   if (has_retype) {
     // Order-sensitive bracket: flag first, data commit, then the batch. The
@@ -935,12 +942,16 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
     flag.key = kPendingAlterKey;
     flag.def = std::string{reinterpret_cast<const char*>(payload.GetData()),
                            payload.GetPosition()};
-    AppendBatch({&flag, 1});
+    {
+      absl::MutexLock lock{&_mutex};
+      AppendBatch({&flag, 1});
+    }
     SDB_IF_FAILURE("crash_catalog_after_flag") { SDB_IMMEDIATE_ABORT(); }
     if (auto r = data.ApplyStoreOps(store_ops); !r.ok()) {
       Entry drop;
       drop.op = Op::DropDefinition;
       drop.key = kPendingAlterKey;
+      absl::MutexLock lock{&_mutex};
       AppendBatch({&drop, 1});
       THROW_SQL_ERROR(ERR_MSG(r.message()));
     }
@@ -951,7 +962,9 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
     drop.op = Op::DropDefinition;
     drop.key = kPendingAlterKey;
     records.push_back(std::move(drop));
+    absl::MutexLock lock{&_mutex};
     AppendBatch(records);
+    MaybeCompact();
   } else if (!has_destructive) {
     // Constructive: validate + commit on the data DB first; a crash before
     // the append leaves orphans the reconciler drops.
@@ -961,15 +974,21 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
     SDB_IF_FAILURE("crash_catalog_after_store_create") {
       SDB_IMMEDIATE_ABORT();
     }
+    absl::MutexLock lock{&_mutex};
     if (!records.empty()) {
       AppendBatch(records);
     }
+    MaybeCompact();
   } else {
     // Destructive (or mixed, all derivable from defs): the append is the ack
     // point; a crash before the data commit leaves leftovers the reconciler
     // finishes.
-    if (!records.empty()) {
-      AppendBatch(records);
+    {
+      absl::MutexLock lock{&_mutex};
+      if (!records.empty()) {
+        AppendBatch(records);
+      }
+      MaybeCompact();
     }
     SDB_IF_FAILURE("crash_catalog_before_store_drop") {
       SDB_IMMEDIATE_ABORT();
@@ -978,7 +997,6 @@ void CatalogStore::Write(absl::FunctionRef<void(WriteContext&)> fill) {
       THROW_SQL_ERROR(ERR_MSG(r.message()));
     }
   }
-  MaybeCompact();
 }
 
 void CatalogStore::CreateDefinition(ObjectId parent_id, ObjectType type,

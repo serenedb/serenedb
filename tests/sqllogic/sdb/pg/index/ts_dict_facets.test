@@ -1904,3 +1904,97 @@ query TI
 SELECT cat, count(*) AS n FROM fconst_idx WHERE false GROUP BY cat ORDER BY cat
 ----
 cat	n
+
+# --- A constant-false predicate declines the pushdown and stays restrictive:
+# it is a real conjunct (not folded away), so the scan runs and eliminates
+# every row.
+query
+EXPLAIN SELECT cat, count(*) AS n FROM fconst_idx WHERE false GROUP BY cat
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~0 rows                  │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+# The same folding applies on the GROUPING SETS path (multiple singleton
+# keyword keys): a constant-true WHERE is transparent and the multi-field term
+# scan is preserved; a constant-false WHERE still empties the result.
+
+statement ok
+CREATE TABLE fgs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, region VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX fgs_idx ON fgs USING inverted(cat fct_kw, region fct_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO fgs VALUES
+  (1,'red','north'),(2,'green','south'),(3,'red','north'),
+  (4,'blue','east'),(5,'red','south'),(6,'green','north')
+
+statement ok
+VACUUM (REFRESH_TABLE) fgs;
+
+query TTI
+SELECT cat, region, count(*) AS n FROM fgs_idx WHERE true
+  GROUP BY GROUPING SETS ((cat),(region)) ORDER BY cat NULLS LAST, region NULLS LAST
+----
+cat	region	n
+blue	NULL	1
+green	NULL	2
+red	NULL	3
+NULL	east	1
+NULL	north	3
+NULL	south	2
+
+query
+EXPLAIN SELECT cat, region, count(*) AS n FROM fgs_idx WHERE true
+  GROUP BY GROUPING SETS ((cat),(region))
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                       │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term$region, CAST(#2 AS BIGINT)    │
+│ ~5 rows                                                                            │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────┴─────────────────────────────────────────╮
+│ Groups: #0, #1                                                                     │
+│ Aggregates: sum(#2)                                                                │
+│ ~5 rows                                                                            │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────┴─────────────────────────────────────────╮
+│ Projections:                                                                       │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term$region,                       │
+│ COALESCE(sdb_inverted_index_term_count$cat, sdb_inverted_index_term_count$region)  │
+│ ~6 rows                                                                            │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────┴─────────────────────────────────────────╮
+│ Index: fgs_idx                                                                     │
+│ TsDict: cat, region                                                                │
+│ Projections:                                                                       │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term_count$cat,                    │
+│ sdb_inverted_index_term$region, sdb_inverted_index_term_count$region               │
+│ ~6 rows                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+
+query TTI
+SELECT cat, region, count(*) AS n FROM fgs_idx WHERE 1=1
+  GROUP BY GROUPING SETS ((cat),(region)) ORDER BY cat NULLS LAST, region NULLS LAST
+----
+cat	region	n
+blue	NULL	1
+green	NULL	2
+red	NULL	3
+NULL	east	1
+NULL	north	3
+NULL	south	2
+
+query TTI
+SELECT cat, region, count(*) AS n FROM fgs_idx WHERE false
+  GROUP BY GROUPING SETS ((cat),(region)) ORDER BY cat NULLS LAST, region NULLS LAST
+----
+cat	region	n

@@ -51,21 +51,9 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 	if (schema_it != input.named_parameters.end() && !schema_it->second.IsNull()) {
 		schema_sql = schema_it->second.GetValue<string>();
 	}
-	// external: temporary tables shipped with the query as native binary
-	// blocks -- a STRUCT keyed by table name, each entry a STRUCT of
-	// equal-length LISTs keyed by column name. Typed data, no SQL-text
-	// rendering; the query references the tables by the given names.
-	auto external_it = input.named_parameters.find("external");
-	if (external_it != input.named_parameters.end() && !external_it->second.IsNull()) {
-		if (external_it->second.type().id() != LogicalTypeId::STRUCT) {
-			throw BinderException("clickhouse_query external data must be a STRUCT of tables");
-		}
-		for (auto &table : StructValue::GetChildren(external_it->second)) {
-			if (table.type().id() != LogicalTypeId::STRUCT) {
-				throw BinderException("clickhouse_query external tables must be STRUCTs of LISTs");
-			}
-		}
-		bind_data->external = external_it->second;
+	auto lookup_it = input.named_parameters.find("lookup");
+	if (lookup_it != input.named_parameters.end() && !lookup_it->second.IsNull()) {
+		bind_data->lookup = BooleanValue::Get(lookup_it->second);
 	}
 	auto describe_sql = StringUtil::Format("DESCRIBE (%s)", schema_sql);
 
@@ -118,7 +106,7 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 ClickHouseQueryFunction::ClickHouseQueryFunction()
     : TableFunction("clickhouse_query", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, ClickHouseQueryBind) {
 	named_parameters["schema_query"] = LogicalType::VARCHAR;
-	named_parameters["external"] = LogicalType::ANY;
+	named_parameters["lookup"] = LogicalType::BOOLEAN;
 	ClickHouseScanFunction scan_function;
 	init_global = scan_function.init_global;
 	function = scan_function.function;

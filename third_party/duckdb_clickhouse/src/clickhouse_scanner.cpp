@@ -2,6 +2,7 @@
 
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -34,26 +35,34 @@ namespace duckdb {
 
 
 //===--------------------------------------------------------------------===//
-// External data: STRUCT of LISTs -> native binary Block
+// Lookup keys: duckdb Vector -> native binary Block column
 //===--------------------------------------------------------------------===//
 namespace {
 
-// One Nullable column of the external block from one LIST child. Values are
-// typed by the duckdb list child type; the server joins/compares through the
-// usual type-family supertypes.
-clickhouse::ColumnRef BuildExternalColumn(const LogicalType &child_type, const vector<Value> &rows) {
+// One Nullable column of the `lookup` external table, straight from the key
+// vector's data. The server joins/compares through the usual type-family
+// supertypes.
+clickhouse::ColumnRef BuildLookupColumn(Vector &vec, idx_t count) {
+	UnifiedVectorFormat fmt;
+	vec.ToUnifiedFormat(count, fmt);
 	auto nulls = std::make_shared<clickhouse::ColumnUInt8>();
-	for (auto &v : rows) {
-		nulls->Append(v.IsNull() ? 1 : 0);
+	for (idx_t i = 0; i < count; i++) {
+		nulls->Append(fmt.validity.RowIsValid(fmt.sel->get_index(i)) ? 0 : 1);
 	}
 	auto wrap = [&](clickhouse::ColumnRef nested) -> clickhouse::ColumnRef {
 		return std::make_shared<clickhouse::ColumnNullable>(std::move(nested), std::move(nulls));
 	};
-	switch (child_type.id()) {
+	auto valid = [&](idx_t i, idx_t &idx) {
+		idx = fmt.sel->get_index(i);
+		return fmt.validity.RowIsValid(idx);
+	};
+	const auto &type = vec.GetType();
+	switch (type.id()) {
 	case LogicalTypeId::BOOLEAN: {
 		auto col = std::make_shared<clickhouse::ColumnUInt8>();
-		for (auto &v : rows) {
-			col->Append(!v.IsNull() && BooleanValue::Get(v) ? 1 : 0);
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			col->Append(valid(i, idx) && UnifiedVectorFormat::GetData<bool>(fmt)[idx] ? 1 : 0);
 		}
 		return wrap(std::move(col));
 	}
@@ -62,8 +71,26 @@ clickhouse::ColumnRef BuildExternalColumn(const LogicalType &child_type, const v
 	case LogicalTypeId::INTEGER:
 	case LogicalTypeId::BIGINT: {
 		auto col = std::make_shared<clickhouse::ColumnInt64>();
-		for (auto &v : rows) {
-			col->Append(v.IsNull() ? 0 : BigIntValue::Get(v.DefaultCastAs(LogicalType::BIGINT)));
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			if (!valid(i, idx)) {
+				col->Append(0);
+				continue;
+			}
+			switch (type.InternalType()) {
+			case PhysicalType::INT8:
+				col->Append(UnifiedVectorFormat::GetData<int8_t>(fmt)[idx]);
+				break;
+			case PhysicalType::INT16:
+				col->Append(UnifiedVectorFormat::GetData<int16_t>(fmt)[idx]);
+				break;
+			case PhysicalType::INT32:
+				col->Append(UnifiedVectorFormat::GetData<int32_t>(fmt)[idx]);
+				break;
+			default:
+				col->Append(UnifiedVectorFormat::GetData<int64_t>(fmt)[idx]);
+				break;
+			}
 		}
 		return wrap(std::move(col));
 	}
@@ -72,93 +99,101 @@ clickhouse::ColumnRef BuildExternalColumn(const LogicalType &child_type, const v
 	case LogicalTypeId::UINTEGER:
 	case LogicalTypeId::UBIGINT: {
 		auto col = std::make_shared<clickhouse::ColumnUInt64>();
-		for (auto &v : rows) {
-			col->Append(v.IsNull() ? 0 : UBigIntValue::Get(v.DefaultCastAs(LogicalType::UBIGINT)));
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			if (!valid(i, idx)) {
+				col->Append(0);
+				continue;
+			}
+			switch (type.InternalType()) {
+			case PhysicalType::UINT8:
+				col->Append(UnifiedVectorFormat::GetData<uint8_t>(fmt)[idx]);
+				break;
+			case PhysicalType::UINT16:
+				col->Append(UnifiedVectorFormat::GetData<uint16_t>(fmt)[idx]);
+				break;
+			case PhysicalType::UINT32:
+				col->Append(UnifiedVectorFormat::GetData<uint32_t>(fmt)[idx]);
+				break;
+			default:
+				col->Append(UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx]);
+				break;
+			}
 		}
 		return wrap(std::move(col));
 	}
 	case LogicalTypeId::FLOAT: {
 		auto col = std::make_shared<clickhouse::ColumnFloat32>();
-		for (auto &v : rows) {
-			col->Append(v.IsNull() ? 0.0f : FloatValue::Get(v));
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			col->Append(valid(i, idx) ? UnifiedVectorFormat::GetData<float>(fmt)[idx] : 0.0f);
 		}
 		return wrap(std::move(col));
 	}
 	case LogicalTypeId::DOUBLE: {
 		auto col = std::make_shared<clickhouse::ColumnFloat64>();
-		for (auto &v : rows) {
-			col->Append(v.IsNull() ? 0.0 : DoubleValue::Get(v));
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			col->Append(valid(i, idx) ? UnifiedVectorFormat::GetData<double>(fmt)[idx] : 0.0);
 		}
 		return wrap(std::move(col));
 	}
 	case LogicalTypeId::VARCHAR: {
 		auto col = std::make_shared<clickhouse::ColumnString>();
-		for (auto &v : rows) {
-			col->Append(v.IsNull() ? std::string() : StringValue::Get(v));
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			if (!valid(i, idx)) {
+				col->Append(std::string());
+				continue;
+			}
+			const auto str = UnifiedVectorFormat::GetData<string_t>(fmt)[idx];
+			col->Append(std::string(str.GetData(), str.GetSize()));
 		}
 		return wrap(std::move(col));
 	}
 	case LogicalTypeId::DATE: {
 		auto col = std::make_shared<clickhouse::ColumnDate32>();
-		for (auto &v : rows) {
-			col->AppendRaw(v.IsNull() ? 0 : DateValue::Get(v).days);
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			col->AppendRaw(valid(i, idx) ? UnifiedVectorFormat::GetData<date_t>(fmt)[idx].days : 0);
 		}
 		return wrap(std::move(col));
 	}
 	case LogicalTypeId::TIMESTAMP:
 	case LogicalTypeId::TIMESTAMP_TZ: {
 		auto col = std::make_shared<clickhouse::ColumnDateTime64>(6);
-		for (auto &v : rows) {
-			col->Append(v.IsNull() ? 0 : v.DefaultCastAs(LogicalType::TIMESTAMP).GetValue<timestamp_t>().value);
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			col->Append(valid(i, idx) ? UnifiedVectorFormat::GetData<timestamp_t>(fmt)[idx].value : 0);
 		}
 		return wrap(std::move(col));
 	}
 	case LogicalTypeId::UUID: {
 		auto col = std::make_shared<clickhouse::ColumnUUID>();
-		for (auto &v : rows) {
-			if (v.IsNull()) {
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			if (!valid(i, idx)) {
 				col->Append(clickhouse::UUID {0, 0});
-			} else {
-				const auto h = v.GetValue<hugeint_t>();
-				col->Append(clickhouse::UUID {static_cast<uint64_t>(h.upper) ^ (uint64_t(1) << 63),
-				                               static_cast<uint64_t>(h.lower)});
+				continue;
 			}
+			const auto h = UnifiedVectorFormat::GetData<hugeint_t>(fmt)[idx];
+			col->Append(clickhouse::UUID {static_cast<uint64_t>(h.upper) ^ (uint64_t(1) << 63),
+			                              static_cast<uint64_t>(h.lower)});
 		}
 		return wrap(std::move(col));
 	}
 	case LogicalTypeId::DECIMAL: {
-		auto col = std::make_shared<clickhouse::ColumnDecimal>(DecimalType::GetWidth(child_type),
-		                                                       DecimalType::GetScale(child_type));
-		for (auto &v : rows) {
-			col->Append(v.IsNull() ? std::string("0") : v.ToString());
+		auto col = std::make_shared<clickhouse::ColumnDecimal>(DecimalType::GetWidth(type),
+		                                                       DecimalType::GetScale(type));
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx;
+			col->Append(valid(i, idx) ? vec.GetValue(i).ToString() : std::string("0"));
 		}
 		return wrap(std::move(col));
 	}
 	default:
-		throw BinderException("clickhouse external data column type %s is not supported",
-		                      child_type.ToString().c_str());
+		throw BinderException("clickhouse lookup key column type %s is not supported", type.ToString().c_str());
 	}
-}
-
-clickhouse::Block BuildExternalBlock(const Value &struct_val) {
-	auto &child_types = StructType::GetChildTypes(struct_val.type());
-	auto &children = StructValue::GetChildren(struct_val);
-	clickhouse::Block block;
-	idx_t rows = 0;
-	for (idx_t c = 0; c < children.size(); c++) {
-		if (children[c].type().id() != LogicalTypeId::LIST) {
-			throw BinderException("clickhouse external data expects a STRUCT of LISTs");
-		}
-		auto &list = ListValue::GetChildren(children[c]);
-		if (c == 0) {
-			rows = list.size();
-		} else if (list.size() != rows) {
-			throw BinderException("clickhouse external data lists must have equal lengths");
-		}
-		block.AppendColumn(child_types[c].first.GetIdentifierName(),
-		                   BuildExternalColumn(ListType::GetChildType(children[c].type()), list));
-	}
-	return block;
 }
 
 } // namespace
@@ -170,7 +205,7 @@ unique_ptr<FunctionData> ClickHouseBindData::Copy() const {
 	result->database = database;
 	result->table = table;
 	result->sql = sql;
-	result->external = external;
+	result->lookup = lookup;
 	result->from_query = from_query;
 	result->names = names;
 	result->types = types;
@@ -196,7 +231,7 @@ bool ClickHouseBindData::ColumnPushdownUnsafe(idx_t col) const {
 bool ClickHouseBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<ClickHouseBindData>();
 	return database == other.database && table == other.table && sql == other.sql &&
-	       from_query == other.from_query && names == other.names && external == other.external;
+	       from_query == other.from_query && names == other.names && lookup == other.lookup;
 }
 
 struct ClickHouseGlobalState : public GlobalTableFunctionState {
@@ -458,30 +493,26 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 		} else if (!bind_data.catalog_alias.empty()) {
 			auto db = DatabaseManager::Get(context).GetDatabase(context, Identifier(bind_data.catalog_alias));
 			if (db && db->GetCatalog().GetCatalogType() == "clickhouse") {
-				result->borrowed_tx = ClickHouseTransaction::Get(context, db->GetCatalog());
+				if (bind_data.lookup) {
+					// The lookup gstate outlives the binding transaction (the caller
+					// caches it for the scan's lifetime), so it pins its own pooled
+					// connection instead of borrowing the transaction's.
+					result->connection =
+					    db->GetCatalog().Cast<ClickHouseCatalog>().GetConnectionPool().GetConnection();
+				} else {
+					result->borrowed_tx = ClickHouseTransaction::Get(context, db->GetCatalog());
+				}
 			}
 		}
-		if (!result->borrowed_tx && !bind_data.table_entry) {
+		if (!result->borrowed_tx && !bind_data.table_entry && !result->connection) {
 			result->connection = ClickHousePoolConnection(
 			    nullptr, make_uniq<ClickHouseConnection>(ClickHouseConnection::Open(bind_data.params)),
 			    std::chrono::steady_clock::now());
 		}
-		ClickHouseConnection::LogQuery(sql);
-		if (!bind_data.external.IsNull()) {
-			auto &table_names = StructType::GetChildTypes(bind_data.external.type());
-			auto &tables = StructValue::GetChildren(bind_data.external);
-			std::vector<std::pair<std::string, clickhouse::Block>> blocks;
-			blocks.reserve(tables.size());
-			for (idx_t t = 0; t < tables.size(); t++) {
-				blocks.emplace_back(table_names[t].first.GetIdentifierName(), BuildExternalBlock(tables[t]));
-			}
-			clickhouse::ExternalTables external_tables;
-			for (auto &block : blocks) {
-				external_tables.push_back({block.first, block.second});
-			}
-			result->Conn().GetClient().BeginSelectWithExternalData(ClickHouseConnection::MakeQuery(context, sql),
-			                                                       external_tables);
+		if (bind_data.lookup) {
+			result->done = true;
 		} else {
+			ClickHouseConnection::LogQuery(sql);
 			result->Conn().GetClient().BeginSelect(ClickHouseConnection::MakeQuery(context, sql));
 		}
 	} catch (const clickhouse::Error &e) {
@@ -511,16 +542,39 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateFilterPushd
 static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<ClickHouseGlobalState>();
 	try {
+		if (data.lookup_keys) {
+			auto &keys = StructVector::GetEntries(*data.lookup_keys);
+			if (!gstate.done) {
+				while (gstate.Conn().GetClient().NextBlock()) {
+				}
+			}
+			clickhouse::Block block;
+			for (idx_t c = 0; c < keys.size(); c++) {
+				block.AppendColumn("k" + std::to_string(c), BuildLookupColumn(keys[c], data.lookup_count));
+			}
+			clickhouse::ExternalTables external_tables;
+			external_tables.push_back({"lookup", block});
+			ClickHouseConnection::LogQuery(gstate.remote_sql);
+			gstate.Conn().GetClient().BeginSelectWithExternalData(
+			    ClickHouseConnection::MakeQuery(context, gstate.remote_sql), external_tables);
+			gstate.done = false;
+			gstate.current_block.reset();
+			gstate.block_offset = 0;
+		}
 		while (true) {
 			if (gstate.done) {
-				output.SetChildCardinality(0);
+				if (output.size() == 0) {
+					output.SetChildCardinality(0);
+				}
 				return;
 			}
 			if (!gstate.current_block || gstate.block_offset >= gstate.current_block->GetRowCount()) {
 				auto block = gstate.Conn().GetClient().NextBlock();
 				if (!block) {
 					gstate.done = true;
-					output.SetChildCardinality(0);
+					if (output.size() == 0) {
+						output.SetChildCardinality(0);
+					}
 					return;
 				}
 				gstate.rows_seen.fetch_add(block->GetRowCount(), std::memory_order_relaxed);
@@ -529,12 +583,57 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 				continue;
 			}
 			auto &block = *gstate.current_block;
-			idx_t remaining = block.GetRowCount() - gstate.block_offset;
-			idx_t count = MinValue<idx_t>(remaining, STANDARD_VECTOR_SIZE);
-			for (idx_t c = 0; c < output.ColumnCount() && c < block.GetColumnCount(); c++) {
-				ClickHouseColumnToVector(*block[c], output.data[c], gstate.block_offset, count);
+			if (data.lookup_gate) {
+				// Gated lookup drain: consume rows through the per-row gate and
+				// materialize the survivors as maximal runs, so the bulk column
+				// copies stay intact. Never consume a row the output cannot hold.
+				auto ord_col = block[0]->As<clickhouse::ColumnInt64>();
+				if (!ord_col) {
+					throw BinderException("clickhouse lookup expects an Int64 first result column");
+				}
+				idx_t dst = output.size();
+				idx_t run_start = gstate.block_offset;
+				idx_t run_len = 0;
+				const idx_t block_rows = block.GetRowCount();
+				auto flush = [&]() {
+					if (run_len == 0) {
+						return;
+					}
+					for (idx_t c = 0; c < output.ColumnCount() && c < block.GetColumnCount(); c++) {
+						ClickHouseColumnToVector(*block[c], output.data[c], run_start, run_len, dst);
+					}
+					dst += run_len;
+					run_len = 0;
+				};
+				while (gstate.block_offset < block_rows && dst + run_len < STANDARD_VECTOR_SIZE) {
+					const auto row = gstate.block_offset;
+					if (data.lookup_gate(data.lookup_gate_state, ord_col->At(row))) {
+						if (run_len == 0) {
+							run_start = row;
+						}
+						run_len++;
+					} else {
+						flush();
+					}
+					gstate.block_offset++;
+				}
+				flush();
+				output.SetChildCardinality(dst);
+				if (output.size() == STANDARD_VECTOR_SIZE || gstate.block_offset < block_rows) {
+					return;
+				}
+				continue;
 			}
-			output.SetChildCardinality(count);
+			const idx_t base = output.size();
+			idx_t remaining = block.GetRowCount() - gstate.block_offset;
+			idx_t count = MinValue<idx_t>(remaining, STANDARD_VECTOR_SIZE - base);
+			if (count == 0) {
+				return;
+			}
+			for (idx_t c = 0; c < output.ColumnCount() && c < block.GetColumnCount(); c++) {
+				ClickHouseColumnToVector(*block[c], output.data[c], gstate.block_offset, count, base);
+			}
+			output.SetChildCardinality(base + count);
 			gstate.block_offset += count;
 			if (gstate.local_filter_executor && count > 0) {
 				SelectionVector sel(count);

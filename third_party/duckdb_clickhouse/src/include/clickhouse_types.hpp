@@ -18,7 +18,8 @@
 namespace duckdb {
 LogicalType ClickHouseTypeStringToLogicalType(const std::string &type_str);
 
-void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count);
+void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count,
+                              idx_t dst_offset = 0);
 
 //! Quote a ClickHouse identifier with backticks, backslash-escaping any embedded backtick or
 //! backslash (the shared renderer's BACKSLASH style). Behaviour is identical to raw `name`

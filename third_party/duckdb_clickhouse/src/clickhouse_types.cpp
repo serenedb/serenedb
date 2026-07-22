@@ -434,18 +434,20 @@ static Value ClickHouseColumnValueAt(const clickhouse::Column &col, idx_t row) {
 // physical layout for these types, so a single memcpy replaces a per-cell
 // dynamic_cast + Value box + SetValue.
 template <class CHColumn, class T>
-static void BulkCopyNumeric(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count) {
+static void BulkCopyNumeric(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count,
+                            idx_t dst_offset) {
   auto typed = col.As<CHColumn>();
   auto data = FlatVector::GetDataMutable<T>(out);
   if (count > 0) {
-    std::memcpy(data, &typed->At(src_offset), count * sizeof(T));
+    std::memcpy(data + dst_offset, &typed->At(src_offset), count * sizeof(T));
   }
 }
 
 // AddStringOrBlob, not AddString: with ch_binary_as_blob the target vector is
 // BLOB, which AddString rejects (and raw bytes need no UTF-8 check).
 template <class CHColumn>
-static void BulkCopyString(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count) {
+static void BulkCopyString(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count,
+                           idx_t dst_offset) {
   auto typed = col.As<CHColumn>();
   auto data = FlatVector::GetDataMutable<string_t>(out);
   const bool is_blob = out.GetType().id() == LogicalTypeId::BLOB;
@@ -454,18 +456,19 @@ static void BulkCopyString(const clickhouse::Column &col, Vector &out, idx_t src
     if (!is_blob) {
       VerifyStringUtf8(view.data(), view.size());
     }
-    data[row] = StringVector::AddStringOrBlob(out, view.data(), view.size());
+    data[dst_offset + row] = StringVector::AddStringOrBlob(out, view.data(), view.size());
   }
 }
 
-void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count) {
+void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count,
+                              idx_t dst_offset) {
   switch (col.Type()->GetCode()) {
   case clickhouse::Type::Nullable: {
     auto nullable = col.As<clickhouse::ColumnNullable>();
-    ClickHouseColumnToVector(*nullable->Nested(), out, src_offset, count);
+    ClickHouseColumnToVector(*nullable->Nested(), out, src_offset, count, dst_offset);
     for (idx_t row = 0; row < count; row++) {
       if (nullable->IsNull(src_offset + row)) {
-        FlatVector::SetNull(out, row, true);
+        FlatVector::SetNull(out, dst_offset + row, true);
       }
     }
     return;
@@ -474,34 +477,34 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
   // avoiding the per-cell dynamic_cast (col.As<>), Value boxing and SetValue
   // that dominated the scan profile.
   case clickhouse::Type::UInt8:
-    return BulkCopyNumeric<clickhouse::ColumnUInt8, uint8_t>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnUInt8, uint8_t>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::UInt16:
-    return BulkCopyNumeric<clickhouse::ColumnUInt16, uint16_t>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnUInt16, uint16_t>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::UInt32:
-    return BulkCopyNumeric<clickhouse::ColumnUInt32, uint32_t>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnUInt32, uint32_t>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::UInt64:
-    return BulkCopyNumeric<clickhouse::ColumnUInt64, uint64_t>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnUInt64, uint64_t>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::Int8:
-    return BulkCopyNumeric<clickhouse::ColumnInt8, int8_t>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnInt8, int8_t>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::Int16:
-    return BulkCopyNumeric<clickhouse::ColumnInt16, int16_t>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnInt16, int16_t>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::Int32:
-    return BulkCopyNumeric<clickhouse::ColumnInt32, int32_t>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnInt32, int32_t>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::Int64:
-    return BulkCopyNumeric<clickhouse::ColumnInt64, int64_t>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnInt64, int64_t>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::Float32:
-    return BulkCopyNumeric<clickhouse::ColumnFloat32, float>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnFloat32, float>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::Float64:
-    return BulkCopyNumeric<clickhouse::ColumnFloat64, double>(col, out, src_offset, count);
+    return BulkCopyNumeric<clickhouse::ColumnFloat64, double>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::String:
-    return BulkCopyString<clickhouse::ColumnString>(col, out, src_offset, count);
+    return BulkCopyString<clickhouse::ColumnString>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::FixedString:
-    return BulkCopyString<clickhouse::ColumnFixedString>(col, out, src_offset, count);
+    return BulkCopyString<clickhouse::ColumnFixedString>(col, out, src_offset, count, dst_offset);
   case clickhouse::Type::Date: {
     auto typed = col.As<clickhouse::ColumnDate>();
     auto data = FlatVector::GetDataMutable<date_t>(out);
     for (idx_t row = 0; row < count; row++) {
-      data[row] = date_t(static_cast<int32_t>(typed->RawAt(src_offset + row)));
+      data[dst_offset + row] = date_t(static_cast<int32_t>(typed->RawAt(src_offset + row)));
     }
     return;
   }
@@ -509,7 +512,7 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
     auto typed = col.As<clickhouse::ColumnDate32>();
     auto data = FlatVector::GetDataMutable<date_t>(out);
     for (idx_t row = 0; row < count; row++) {
-      data[row] = date_t(typed->RawAt(src_offset + row));
+      data[dst_offset + row] = date_t(typed->RawAt(src_offset + row));
     }
     return;
   }
@@ -517,7 +520,7 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
     auto typed = col.As<clickhouse::ColumnDateTime>();
     auto data = FlatVector::GetDataMutable<timestamp_t>(out);
     for (idx_t row = 0; row < count; row++) {
-      data[row] = Timestamp::FromEpochMicroSeconds(static_cast<int64_t>(typed->RawAt(src_offset + row)) * 1000000);
+      data[dst_offset + row] = Timestamp::FromEpochMicroSeconds(static_cast<int64_t>(typed->RawAt(src_offset + row)) * 1000000);
     }
     return;
   }
@@ -527,7 +530,7 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
     auto data = FlatVector::GetDataMutable<timestamp_t>(out);
     for (idx_t row = 0; row < count; row++) {
       auto ticks = typed->At(src_offset + row);
-      data[row] = Timestamp::FromEpochMicroSeconds(DateTime64TicksToMicros(ticks, precision));
+      data[dst_offset + row] = Timestamp::FromEpochMicroSeconds(DateTime64TicksToMicros(ticks, precision));
     }
     return;
   }
@@ -535,7 +538,7 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
     // Complex / long-tail types (Decimal, UUID, Enum, IP, Array, Map, Tuple,
     // LowCardinality, Int128/UInt128, ...) keep the per-cell Value path.
     for (idx_t row = 0; row < count; row++) {
-      out.SetValue(row, ClickHouseColumnValueAt(col, src_offset + row));
+      out.SetValue(dst_offset + row, ClickHouseColumnValueAt(col, src_offset + row));
     }
     return;
   }

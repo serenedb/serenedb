@@ -58,6 +58,7 @@
 #include "connector/inverted_index_options_util.h"
 #include "connector/inverted_store_index.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/pg_logical_types.h"
 #include "connector/view_fast_path.h"
 #include "connector/with_option_resolver.h"
 #include "pg/connection_context.h"
@@ -641,10 +642,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         duckdb::UnifiedVectorFormat fmt;
         rowid_vec.ToUnifiedFormat(num_rows, fmt);
         const auto* packed = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
-        pk_scratch =
-          std::make_unique<duckdb::Vector>(duckdb::LogicalType::STRUCT(
-            {{"page", duckdb::LogicalType::BIGINT},
-             {"tuple", duckdb::LogicalType::BIGINT}}));
+        pk_scratch = std::make_unique<duckdb::Vector>(pg::CTID());
         auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
         auto* pages = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
         auto* tuples = duckdb::FlatVector::GetDataMutable<int64_t>(entries[1]);

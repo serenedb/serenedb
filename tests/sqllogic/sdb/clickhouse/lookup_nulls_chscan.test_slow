@@ -1,0 +1,121 @@
+control substitution on
+
+# NULL projected values and duplicate keys through the ClickHouse external
+# lookup (native external-data key transport + per-row lookup gate).
+# Multi-batch coverage (>2048 matching docs): single-batch tests cannot
+# catch stale validity bits or cross-call drain bugs in reused chunks.
+#
+# Unique attach alias (chnul) and remote table names (nul_*) for parallel
+# safety.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chnul (TYPE clickhouse);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY chnul_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# Idempotent: the runner replays this file once per wire engine against the
+# same ClickHouse, so drop what a prior pass left behind.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.nul_docs');
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.nul_dups');
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'CREATE TABLE default.nul_docs (id Int64, body String, val Nullable(String)) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'INSERT INTO default.nul_docs SELECT number + 1, ''nulch doc '' || toString(number + 1), if((number + 1) % 2 = 1, NULL, ''v'' || toString(number + 1)) FROM numbers(4200)');
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'CREATE TABLE default.nul_dups (id Int64, body String, val String) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'INSERT INTO default.nul_dups SELECT number % 15 + 1, ''nulch dup '' || toString(number), ''w'' || toString(number % 15 + 1) FROM numbers(30)');
+----
+n
+1
+
+
+statement ok
+CREATE VIEW chnul_docs_v AS SELECT id, body, val FROM chnul.default.nul_docs;
+
+
+statement ok
+CREATE INDEX chnul_docs_idx ON chnul_docs_v
+  USING inverted(id, body chnul_en)
+  WITH (key_columns = 'id');
+
+
+query
+SELECT count(*) AS total, count(val) AS nonnull,
+       sum(CASE WHEN val IS NULL AND id % 2 = 0 THEN 1 ELSE 0 END) AS null_wrong,
+       sum(CASE WHEN val IS NOT NULL AND val <> 'v' || id THEN 1 ELSE 0 END) AS val_wrong
+FROM chnul_docs_idx WHERE body @@ ts_phrase('nulch');
+----
+total	nonnull	null_wrong	val_wrong
+4200	2100	0	0
+
+
+query
+SELECT id, val FROM chnul_docs_idx
+WHERE body @@ ts_phrase('nulch') AND id <= 4 ORDER BY id;
+----
+id	val
+1	NULL
+2	v2
+3	NULL
+4	v4
+
+
+# Duplicate keys: two remote rows per key with identical projected values;
+# the lookup keeps the first arrival per slot, so every index doc gets
+# exactly one output row and the values stay deterministic.
+statement ok
+CREATE VIEW chnul_dups_v AS SELECT id, body, val FROM chnul.default.nul_dups;
+
+
+statement ok
+CREATE INDEX chnul_dups_idx ON chnul_dups_v
+  USING inverted(id, body chnul_en)
+  WITH (key_columns = 'id');
+
+
+query
+SELECT count(*) AS total, count(DISTINCT val) AS distinct_vals,
+       sum(CASE WHEN val <> 'w' || id THEN 1 ELSE 0 END) AS wrong
+FROM chnul_dups_idx WHERE body @@ ts_phrase('nulch');
+----
+total	distinct_vals	wrong
+30	15	0

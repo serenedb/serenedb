@@ -1,0 +1,160 @@
+control substitution on
+
+# NULL projected values and duplicate keys through the external lookup.
+#
+# The lookup appends surviving rows densely into vectors that alias the
+# operator's output chunk, so NULL cells travel as validity bits through a
+# reference chain, and duplicate keys resolve first-wins through the per-row
+# lookup gate. Both need MULTI-BATCH coverage (>2048 matching docs): a
+# single-batch test cannot catch stale validity bits or cross-call drain
+# bugs in reused chunks.
+#
+# The docs table deliberately has NO PRIMARY KEY, so the index without
+# key_columns takes the ctid path (STRUCT{page,tuple} pk, alias "ctid") and
+# the key_columns index takes the explicit-key path -- the same data checks
+# both transports.
+#
+# Unique attach alias (pgn_*) and remote schema (pgnul_docs) for parallel
+# safety.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgn_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CREATE SCHEMA pgn_${__DATABASE__}.pgnul_docs;
+
+
+statement ok
+CREATE TABLE pgn_${__DATABASE__}.pgnul_docs.docs (
+  id   BIGINT,
+  body TEXT,
+  val  TEXT
+);
+
+
+statement ok
+INSERT INTO pgn_${__DATABASE__}.pgnul_docs.docs
+  SELECT g, 'nulzu doc ' || g,
+         CASE WHEN g % 2 = 1 THEN NULL ELSE 'v' || g END
+  FROM generate_series(1, 4200) t(g);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pgnul_en_${__DATABASE__}(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# =====================================================================
+# ctid transport: no key_columns, no remote PK -> ExternalPostgresCtid.
+# =====================================================================
+
+statement ok
+CREATE VIEW pgnul_ctid_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.pgnul_docs.docs;
+
+
+statement ok
+CREATE INDEX pgnul_ctid_idx ON pgnul_ctid_v USING inverted(body pgnul_en_${__DATABASE__});
+
+
+query
+SELECT count(*) AS total, count(val) AS nonnull,
+       sum(CASE WHEN val IS NULL AND id % 2 = 0 THEN 1 ELSE 0 END) AS null_wrong,
+       sum(CASE WHEN val IS NOT NULL AND val <> 'v' || id THEN 1 ELSE 0 END) AS val_wrong
+FROM pgnul_ctid_idx WHERE body @@ ts_phrase('nulzu');
+----
+total	nonnull	null_wrong	val_wrong
+4200	2100	0	0
+
+
+query
+SELECT id, val FROM pgnul_ctid_idx
+WHERE body @@ ts_phrase('nulzu') AND id <= 4 ORDER BY id;
+----
+id	val
+1	NULL
+2	v2
+3	NULL
+4	v4
+
+
+# =====================================================================
+# Explicit key_columns transport over the same data.
+# =====================================================================
+
+statement ok
+CREATE VIEW pgnul_key_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.pgnul_docs.docs;
+
+
+statement ok
+CREATE INDEX pgnul_key_idx ON pgnul_key_v
+  USING inverted(id, body pgnul_en_${__DATABASE__})
+  WITH (key_columns = 'id');
+
+
+query
+SELECT count(*) AS total, count(val) AS nonnull,
+       sum(CASE WHEN val IS NULL AND id % 2 = 0 THEN 1 ELSE 0 END) AS null_wrong,
+       sum(CASE WHEN val IS NOT NULL AND val <> 'v' || id THEN 1 ELSE 0 END) AS val_wrong
+FROM pgnul_key_idx WHERE body @@ ts_phrase('nulzu');
+----
+total	nonnull	null_wrong	val_wrong
+4200	2100	0	0
+
+
+query
+SELECT id, val FROM pgnul_key_idx
+WHERE body @@ ts_phrase('nulzu') AND id <= 4 ORDER BY id;
+----
+id	val
+1	NULL
+2	v2
+3	NULL
+4	v4
+
+
+# =====================================================================
+# Duplicate keys: two remote rows per key with identical projected values.
+# The remote join returns each key's rows against each of its ordinals; the
+# lookup keeps the first arrival per slot, so every index doc gets exactly
+# one output row and the values stay deterministic.
+# =====================================================================
+
+statement ok
+CREATE TABLE pgn_${__DATABASE__}.pgnul_docs.dups (
+  id   BIGINT,
+  body TEXT,
+  val  TEXT
+);
+
+
+statement ok
+INSERT INTO pgn_${__DATABASE__}.pgnul_docs.dups
+  SELECT g % 15 + 1, 'nulzu dup ' || g, 'w' || (g % 15 + 1)
+  FROM generate_series(0, 29) t(g);
+
+
+statement ok
+CREATE VIEW pgnul_dup_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.pgnul_docs.dups;
+
+
+statement ok
+CREATE INDEX pgnul_dup_idx ON pgnul_dup_v
+  USING inverted(id, body pgnul_en_${__DATABASE__})
+  WITH (key_columns = 'id');
+
+
+query
+SELECT count(*) AS total, count(DISTINCT val) AS distinct_vals,
+       sum(CASE WHEN val <> 'w' || id THEN 1 ELSE 0 END) AS wrong
+FROM pgnul_dup_idx WHERE body @@ ts_phrase('nulzu');
+----
+total	distinct_vals	wrong
+30	15	0

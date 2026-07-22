@@ -28,10 +28,11 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	std::string database;
 	std::string table;
 	std::string sql;
-	//! Optional external-data tables shipped with the query as native binary
-	//! blocks: a STRUCT keyed by table name, each entry a STRUCT of
-	//! equal-length LISTs keyed by column name. NULL when unused.
-	Value external;
+	//! Set by clickhouse_query's bind for lookup := true: the scan holds a
+	//! connection pinned for its lifetime and re-runs the statement per
+	//! TableFunctionInput::lookup_keys chunk, shipping the key columns as the
+	//! native external-data table `lookup` (columns k0..kN).
+	bool lookup = false;
 	bool from_query = false;
 	//! MergeTree-family engine: pushed filters render as PREWHERE (legal only
 	//! there), else WHERE. False for ad-hoc clickhouse_scan/query binds.

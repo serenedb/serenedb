@@ -27,6 +27,8 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector.hpp>
@@ -36,6 +38,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -115,26 +118,81 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   }
   SDB_ASSERT(!_postgres_ctid || _dialect == Dialect::Postgres);
 
-  _con = std::make_unique<duckdb::Connection>(*context.db);
-  BuildQuery(ref, select_names);
+  BuildQuery(context, ref, select_names);
 
   _filled.reserve(STANDARD_VECTOR_SIZE);
-  _take_sel.Initialize(STANDARD_VECTOR_SIZE);
   _sort_perm.resize(STANDARD_VECTOR_SIZE);
   absl::c_iota(_sort_perm, duckdb::idx_t{0});
 }
 
 void ExternalLookupIndexSource::BuildQuery(
-  const CatalogTableRef& ref, const std::vector<std::string>& select_names) {
+  duckdb::ClientContext& context, const CatalogTableRef& ref,
+  const std::vector<std::string>& select_names) {
   if (_dialect == Dialect::Postgres) {
-    BuildPostgresQuery(ref, select_names);
+    BuildPostgresQuery(context, ref, select_names);
   } else {
-    BuildClickHouseQuery(ref, select_names);
+    BuildClickHouseQuery(context, ref, select_names);
   }
 }
 
+void ExternalLookupIndexSource::PrepareLookup(
+  duckdb::ClientContext& context, const std::string& catalog,
+  const std::string& inner, duckdb::named_parameter_map_t named) {
+  const std::string_view func_name =
+    _dialect == Dialect::Postgres ? "postgres_query" : "clickhouse_query";
+  auto& sys = duckdb::Catalog::GetSystemCatalog(context);
+  auto tx = duckdb::CatalogTransaction::GetSystemTransaction(*context.db);
+  auto& schema = sys.GetSchema(tx, DEFAULT_SCHEMA);
+  auto entry = schema.GetEntry(tx, duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
+                               duckdb::Identifier{func_name});
+  SDB_ASSERT(entry);
+  auto& tf_entry = entry->Cast<duckdb::TableFunctionCatalogEntry>();
+  bool found = false;
+  for (duckdb::idx_t i = 0; i < tf_entry.functions.Size(); ++i) {
+    auto candidate = tf_entry.functions.GetFunctionByOffset(i);
+    if (candidate.arguments.size() == 2) {
+      _lookup_func = candidate;
+      found = true;
+      break;
+    }
+  }
+  SDB_ASSERT(found);
+
+  named.emplace("lookup", duckdb::Value::BOOLEAN(true));
+  duckdb::vector<duckdb::Value> inputs;
+  inputs.emplace_back(catalog);
+  inputs.emplace_back(inner);
+  duckdb::vector<duckdb::LogicalType> in_types;
+  duckdb::vector<duckdb::Identifier> in_names;
+  duckdb::TableFunctionRef dummy_ref;
+  duckdb::TableFunctionBindInput bind_input(
+    inputs, named, in_types, in_names, _lookup_func.function_info.get(),
+    nullptr, _lookup_func, dummy_ref);
+  duckdb::vector<duckdb::LogicalType> types;
+  duckdb::vector<std::string> names;
+  try {
+    duckdb::Connection bind_con(*context.db);
+    bind_con.BeginTransaction();
+    _bind_data = _lookup_func.bind(*bind_con.context, bind_input, types, names);
+    bind_con.Commit();
+    duckdb::vector<duckdb::column_t> column_ids(types.size());
+    absl::c_iota(column_ids, duckdb::column_t{0});
+    duckdb::TableFunctionInitInput init(_bind_data.get(),
+                                        std::move(column_ids),
+                                        /*projection_ids=*/{}, nullptr);
+    _gstate = _lookup_func.init_global(context, init);
+  } catch (const std::exception& e) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+                    ERR_MSG("external lookup prepare failed: ", e.what()));
+  }
+  SDB_ASSERT(types.size() == _num_proj_cols + 1);
+  _remote_chunk.Initialize(context, types);
+}
+
 void ExternalLookupIndexSource::BuildPostgresQuery(
-  const CatalogTableRef& ref, const std::vector<std::string>& select_names) {
+  duckdb::ClientContext& context, const CatalogTableRef& ref,
+  const std::vector<std::string>& select_names) {
+  duckdb::Connection meta_con(*context.db);
   std::vector<std::string> key_type_names;
   if (_postgres_ctid) {
     key_type_names = {"tid"};
@@ -149,9 +207,9 @@ void ExternalLookupIndexSource::BuildPostgresQuery(
       absl::StrAppend(&meta, k ? ", " : "", SingleQuote(key_columns[k].name));
     }
     meta += ")";
-    auto result = _con->Query(absl::StrCat("SELECT * FROM postgres_query(",
-                                           SingleQuote(ref.catalog), ", ",
-                                           SingleQuote(meta), ")"));
+    auto result = meta_con.Query(absl::StrCat("SELECT * FROM postgres_query(",
+                                              SingleQuote(ref.catalog), ", ",
+                                              SingleQuote(meta), ")"));
     if (result->HasError()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
                       ERR_MSG("external lookup key type resolution failed: ",
@@ -198,18 +256,12 @@ void ExternalLookupIndexSource::BuildPostgresQuery(
                                    : Quote(_fast_path.key_columns[k].name),
                     " = u.__sdb_a", k);
   }
-  _stmt = _con->Prepare(absl::StrCat("SELECT * FROM postgres_query(",
-                                     SingleQuote(ref.catalog), ", ",
-                                     SingleQuote(inner), ", params := $1)"));
-  if (_stmt->HasError()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-      ERR_MSG("external lookup prepare failed: ", _stmt->GetError()));
-  }
+  PrepareLookup(context, ref.catalog, inner, {});
 }
 
 void ExternalLookupIndexSource::BuildClickHouseQuery(
-  const CatalogTableRef& ref, const std::vector<std::string>& select_names) {
+  duckdb::ClientContext& context, const CatalogTableRef& ref,
+  const std::vector<std::string>& select_names) {
   const auto bq = [](const std::string& id) {
     return absl::StrCat("`", absl::StrReplaceAll(id, {{"`", "``"}}), "`");
   };
@@ -225,15 +277,15 @@ void ExternalLookupIndexSource::BuildClickHouseQuery(
   std::string inner = absl::StrCat(
     "SELECT toInt64(e.__sdb_ord) AS __sdb_ord", proj_joined, " FROM ", table,
     " AS t INNER JOIN (SELECT *, row_number() OVER () AS __sdb_ord FROM "
-    "__sdb_keys) AS e ON ");
+    "`lookup`) AS e ON ");
   for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
     absl::StrAppend(&inner, k ? " AND " : "", "t.", bq(key_columns[k].name),
-                    " = e.__sdb_a", k);
+                    " = e.k", k);
   }
   inner += " WHERE ";
   if (_num_key_cols == 1) {
     absl::StrAppend(&inner, "t.", bq(key_columns[0].name),
-                    " IN (SELECT __sdb_a0 FROM __sdb_keys)");
+                    " IN (SELECT k0 FROM `lookup`)");
   } else {
     inner += "(";
     for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
@@ -241,27 +293,21 @@ void ExternalLookupIndexSource::BuildClickHouseQuery(
     }
     inner += ") IN (SELECT ";
     for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      absl::StrAppend(&inner, k ? ", " : "", "__sdb_a", k);
+      absl::StrAppend(&inner, k ? ", " : "", "k", k);
     }
-    inner += " FROM __sdb_keys)";
+    inner += " FROM `lookup`)";
   }
 
   const std::string schema_inner = absl::StrCat(
     "SELECT toInt64(0) AS __sdb_ord", proj, " FROM ", table, " WHERE 0");
-  _stmt = _con->Prepare(absl::StrCat(
-    "SELECT * FROM clickhouse_query(", SingleQuote(ref.catalog), ", ",
-    SingleQuote(inner), ", schema_query := ", SingleQuote(schema_inner),
-    ", external := $1)"));
-  if (_stmt->HasError()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-      ERR_MSG("external lookup prepare failed: ", _stmt->GetError()));
-  }
+  duckdb::named_parameter_map_t named;
+  named.emplace("schema_query", duckdb::Value(schema_inner));
+  PrepareLookup(context, ref.catalog, inner, std::move(named));
 }
 
 duckdb::idx_t ExternalLookupIndexSource::Materialize(
-  duckdb::ClientContext& /*context*/, PrimaryKeyBatch& batch,
-  duckdb::idx_t start, duckdb::idx_t count, duckdb::DataChunk& output) {
+  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t count, duckdb::DataChunk& output) {
   if (count == 0) {
     return 0;
   }
@@ -270,98 +316,41 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
              count <= batch.struct_column_count);
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
 
-  auto& entries = duckdb::StructVector::GetEntries(*batch.struct_column);
-
-  duckdb::vector<duckdb::Value> params;
-
-  duckdb::child_list_t<duckdb::Value> arrays;
-  arrays.reserve(_num_key_cols + 1);
-  if (_postgres_ctid) {
-    duckdb::UnifiedVectorFormat page_fmt;
-    duckdb::UnifiedVectorFormat tuple_fmt;
-    entries[0].ToUnifiedFormat(count, page_fmt);
-    entries[1].ToUnifiedFormat(count, tuple_fmt);
-    const auto* pages = duckdb::UnifiedVectorFormat::GetData<int64_t>(page_fmt);
-    const auto* tuples =
-      duckdb::UnifiedVectorFormat::GetData<int64_t>(tuple_fmt);
-    const auto tid_type =
-      duckdb::LogicalType::STRUCT({{"block", duckdb::LogicalType::BIGINT},
-                                   {"offset", duckdb::LogicalType::BIGINT}});
-    duckdb::vector<duckdb::Value> keys;
-    keys.reserve(count);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      keys.push_back(duckdb::Value::STRUCT(
-        {{"block", duckdb::Value::BIGINT(pages[page_fmt.sel->get_index(i)])},
-         {"offset",
-          duckdb::Value::BIGINT(tuples[tuple_fmt.sel->get_index(i)])}}));
-    }
-    arrays.emplace_back("__sdb_a0",
-                        duckdb::Value::LIST(tid_type, std::move(keys)));
-  } else {
-    for (duckdb::idx_t k = 0; k < _num_key_cols; ++k) {
-      duckdb::vector<duckdb::Value> keys;
-      keys.reserve(count);
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        keys.push_back(entries[k].GetValue(i));
-      }
-      arrays.emplace_back(
-        absl::StrCat("__sdb_a", k),
-        duckdb::Value::LIST(entries[k].GetType(), std::move(keys)));
-    }
-  }
-  if (_dialect == Dialect::ClickHouse) {
-    duckdb::child_list_t<duckdb::Value> tables;
-    tables.emplace_back("__sdb_keys", duckdb::Value::STRUCT(std::move(arrays)));
-    params.emplace_back(duckdb::Value::STRUCT(std::move(tables)));
-  } else {
-    params.emplace_back(duckdb::Value::STRUCT(std::move(arrays)));
-  }
-
-  auto result = _stmt->Execute(params, /*allow_stream_result=*/false);
-  if (result->HasError()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-                    ERR_MSG("external lookup failed: ", result->GetError()));
-  }
-
   AliasOutput(output);
 
   _survivor_idx.resize(count);
   _filled.assign(count, 0);
-  duckdb::idx_t rows = 0;
+  _gate_count = 0;
+  _gate_limit = count;
 
-  duckdb::UnifiedVectorFormat ord_fmt;
-  while (rows < count) {
-    auto chunk = result->Fetch();
-    if (!chunk || chunk->size() == 0) {
-      break;
-    }
-    const auto n = chunk->size();
-    SDB_ASSERT(
-      chunk->data[0].GetType().InternalType() == duckdb::PhysicalType::INT64,
-      "the echoed ordinal column must be int64");
-    chunk->data[0].ToUnifiedFormat(n, ord_fmt);
-    const auto* ords = duckdb::UnifiedVectorFormat::GetData<int64_t>(ord_fmt);
-    duckdb::idx_t taken = 0;
-    for (duckdb::idx_t row = 0; row < n; ++row) {
-      const auto idx = ord_fmt.sel->get_index(row);
-      if (!ord_fmt.validity.RowIsValid(idx)) {
-        continue;
-      }
-      const auto ord = ords[idx];
-      if (ord < 1 || ord > static_cast<int64_t>(count) || _filled[ord - 1]) {
-        continue;
-      }
-      _filled[ord - 1] = 1;
-      _take_sel.set_index(taken, row);
-      _survivor_idx[rows + taken] = static_cast<duckdb::idx_t>(ord - 1);
-      ++taken;
-    }
-    for (duckdb::idx_t c = 0; taken > 0 && c < _num_proj_cols; ++c) {
-      duckdb::VectorOperations::Copy(chunk->data[c + 1], _tf_target.data[c],
-                                     _take_sel, taken, 0, rows);
-    }
-    rows += taken;
+  _remote_chunk.Reset();
+  for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
+    _remote_chunk.data[c + 1].Reference(_tf_target.data[c]);
   }
+
+  duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
+                                _gstate.get());
+  in.lookup_keys = batch.struct_column;
+  in.lookup_count = count;
+  in.lookup_gate = [](void* state, int64_t ord) {
+    auto& self = *static_cast<ExternalLookupIndexSource*>(state);
+    if (ord < 1 || ord > self._gate_limit || self._filled[ord - 1]) {
+      return false;
+    }
+    self._filled[ord - 1] = 1;
+    self._survivor_idx[self._gate_count++] = ord - 1;
+    return true;
+  };
+  in.lookup_gate_state = this;
+
+  duckdb::idx_t before;
+  do {
+    before = _remote_chunk.size();
+    _lookup_func.function(context, in, _remote_chunk);
+    in.lookup_keys = nullptr;
+  } while (_remote_chunk.size() != before);
+  const auto rows = _remote_chunk.size();
+  SDB_ASSERT(rows == _gate_count);
 
   _tf_target.SetCardinality(rows);
   RunCastPass(output, rows);

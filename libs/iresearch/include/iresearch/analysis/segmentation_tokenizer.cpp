@@ -26,12 +26,16 @@
 #include <absl/strings/ascii.h>
 #include <simdutf.h>
 
+#include <array>
 #include <boost/text/case_mapping.hpp>
 #include <boost/text/word_break.hpp>
 #include <string_view>
 
 #include "basics/misc.hpp"
 #include "basics/string_utils.h"
+#include "iresearch/analysis/batch/ascii_words.hpp"
+#include "iresearch/analysis/batch/term_view.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
 
@@ -75,72 +79,145 @@ struct DataState {
 };
 
 template<typename Separate, typename Accept, typename Convert>
-class UnicodeAnalyzerImpl final : public SegmentationTokenizer {
+class UnicodeAnalyzerImpl final
+  : public TypedTokenizer<UnicodeAnalyzerImpl<Separate, Accept, Convert>>,
+    public SegmentationTokenizer {
  public:
-  UnicodeAnalyzerImpl(Separate&& separate, Accept&& accept, Convert&& convert,
-                      bool use_ascii_optimization) noexcept
+  UnicodeAnalyzerImpl(const Options& opts, Separate&& separate, Accept&& accept,
+                      Convert&& convert, bool use_ascii_optimization) noexcept
     : _separate{std::move(separate)},
       _accept{std::move(accept)},
       _convert{std::move(convert)},
+      _opts{opts},
       _use_ascii_optimization{use_ascii_optimization} {}
 
-  bool reset(std::string_view data) final {
-    auto utf32 = as_utf32(data.begin(), data.end());
-    _begin = utf32.begin();
-    _end = utf32.end();
-    std::get<OffsAttr>(_attrs).end = 0;
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink) {
+    if (_opts.separate == Options::Separate::Word && !_force_unicode &&
+        simdutf::validate_ascii(value.data(), value.size())) {
+      AsciiFillValue<Layout>(sink, value);
+      return true;
+    }
+    auto utf32 = as_utf32(value.begin(), value.end());
+    FillValue<Layout>(sink, utf32.begin(), utf32.end());
     return true;
   }
 
-  bool next() final {
-    auto& offset = std::get<OffsAttr>(_attrs);
-    while (true) {
-      const auto begin = _begin;
-      _begin = _separate(_begin, _end);
+ private:
+  template<TokenLayout Layout>
+  void AsciiFillValue(TokenEmitter& sink, std::string_view value) {
+    auto& buf = sink.buf;
+    ScanAsciiWords(value, [&](const AsciiSegment& seg) {
+      switch (_opts.accept) {
+        case Options::Accept::Any:
+          break;
+        case Options::Accept::Graphic: {
+          const auto bytes = value.substr(seg.begin, seg.end - seg.begin);
+          if (!absl::c_any_of(bytes, absl::ascii_isgraph)) {
+            return;
+          }
+        } break;
+        case Options::Accept::AlphaNumeric:
+          if (!seg.has_alpha && !seg.has_digit) {
+            return;
+          }
+          break;
+        case Options::Accept::Alpha:
+          if (!seg.has_alpha) {
+            return;
+          }
+          break;
+      }
+      const uint32_t size = seg.end - seg.begin;
+      const auto i = sink.Next();
+      if (_opts.convert == Options::Convert::None) {
+        buf.terms[i] = MakeTermView(value.data() + seg.begin, size);
+      } else {
+        char inline_buf[duckdb::string_t::INLINE_LENGTH];
+        char* out = size <= duckdb::string_t::INLINE_LENGTH
+                      ? inline_buf
+                      : reinterpret_cast<char*>(sink.Reserve(size));
+        if (_opts.convert == Options::Convert::Lower) {
+          absl::ascii_internal::AsciiStrToLower(out, value.data() + seg.begin,
+                                                size);
+        } else {
+          absl::ascii_internal::AsciiStrToUpper(out, value.data() + seg.begin,
+                                                size);
+        }
+        buf.terms[i] = MakeTermView(out, size);
+      }
+      if constexpr (Layout == TokenLayout::TermsPosOffs) {
+        buf.offs_start[i] = seg.begin;
+        buf.offs_end[i] = seg.end;
+      }
+    });
+  }
 
-      const auto length = static_cast<size_t>(_begin.base() - begin.base());
+  template<TokenLayout Layout>
+  void FillValue(TokenEmitter& sink, DataIt begin, DataIt end) {
+    auto& buf = sink.buf;
+    uint32_t off_end = 0;
+    while (true) {
+      const auto tok_begin = begin;
+      begin = _separate(begin, end);
+
+      const auto length = static_cast<size_t>(begin.base() - tok_begin.base());
       if (length == 0) {
-        return false;
+        return;
       }
       SDB_ASSERT(length <= std::numeric_limits<uint32_t>::max());
-
-      offset.start = offset.end;
-      offset.end += static_cast<uint32_t>(length);
-      SDB_ASSERT(offset.start < offset.end);
+      const auto off_start = off_end;
+      off_end += static_cast<uint32_t>(length);
 
       const bool optimize_accept = length <= kMaxStringSizeToOptimizeAccept;
       DataState state{
+        tok_begin,
         begin,
-        _begin,
         _use_ascii_optimization && optimize_accept ? DataEncoding::Unknown
                                                    : DataEncoding::UTF32,
       };
-      if (_accept(state)) {
-        if (_use_ascii_optimization && !optimize_accept) {
-          state.data_encoding = DataEncoding::Unknown;
-        }
-        std::get<TermAttr>(_attrs).value =
-          ViewCast<byte_type>(_convert(state, _term_buf));
-        return true;
+      if (!_accept(state)) {
+        continue;
+      }
+      if (_use_ascii_optimization && !optimize_accept) {
+        state.data_encoding = DataEncoding::Unknown;
+      }
+      const auto term = ViewCast<byte_type>(_convert(state, _term_buf));
+      const auto i = sink.Next();
+      buf.terms[i] =
+        reinterpret_cast<const char*>(term.data()) == _term_buf.data()
+          ? sink.Intern(term)
+          : duckdb::string_t{reinterpret_cast<const char*>(term.data()),
+                             static_cast<uint32_t>(term.size())};
+      if constexpr (Layout == TokenLayout::TermsPosOffs) {
+        buf.offs_start[i] = off_start;
+        buf.offs_end[i] = off_end;
       }
     }
   }
 
- private:
   [[no_unique_address]] Separate _separate;
   [[no_unique_address]] Accept _accept;
   [[no_unique_address]] Convert _convert;
 
-  DataIt _begin;
-  DataIt _end;
+  Options _opts;
   bool _use_ascii_optimization;
 };
 
 }  // namespace
+}  // namespace irs::analysis
+namespace irs {
 
-Analyzer::ptr SegmentationTokenizer::Make(Options options) {
+template<typename Separate, typename Accept, typename Convert>
+struct Type<analysis::UnicodeAnalyzerImpl<Separate, Accept, Convert>>
+  : Type<analysis::SegmentationTokenizer> {};
+
+}  // namespace irs
+namespace irs::analysis {
+
+Tokenizer::ptr SegmentationTokenizer::Make(Options options) {
   auto make_analyzer = [&]<typename... Args>(Args&&... args) {
-    return Analyzer::ptr{new UnicodeAnalyzerImpl{std::move(args)...}};
+    return Tokenizer::ptr{new UnicodeAnalyzerImpl{options, std::move(args)...}};
   };
   auto make_convert = [&]<typename... Args>(Args&&... args) {
     switch (options.convert) {

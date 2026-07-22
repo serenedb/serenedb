@@ -25,7 +25,6 @@
 #include <utility>
 #include <variant>
 
-#include "analyzer.hpp"
 #include "basics/serializer.h"
 #include "classification_tokenizer.hpp"
 #include "collation_tokenizer.hpp"
@@ -42,9 +41,11 @@
 #include "segmentation_tokenizer.hpp"
 #include "solr_synonyms_tokenizer.hpp"
 #include "sparse_ngram_tokenizer.hpp"
+#include "split_by_non_alpha_tokenizer.hpp"
 #include "stemming_tokenizer.hpp"
 #include "stopwords_tokenizer.hpp"
 #include "text_tokenizer.hpp"
+#include "tokenizer.hpp"
 #include "tokenizers.hpp"
 #include "union_tokenizer.hpp"
 #include "wildcard_analyzer.hpp"
@@ -64,7 +65,8 @@ struct TokenizerConfig {
                NearestNeighborsTokenizer::Options, GeoPointAnalyzer::Options,
                GeoJsonAnalyzer::Options, WildcardAnalyzer::Options,
                MinHashTokenizer::Options, PipelineTokenizer::Options,
-               UnionTokenizer::Options, SparseNGramTokenizer::Options>
+               UnionTokenizer::Options, SparseNGramTokenizer::Options,
+               SplitByNonAlphaTokenizer::Options>
     config;
 };
 
@@ -123,9 +125,9 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
 }
 
 // Takes the config by value; callers preserving a stored config pass Clone().
-inline Analyzer::ptr CreateAnalyzer(TokenizerConfig cfg) {
+inline Tokenizer::ptr CreateTokenizer(TokenizerConfig cfg) {
   return std::visit(
-    [](auto&& opts) -> Analyzer::ptr {
+    [](auto&& opts) -> Tokenizer::ptr {
       using Options = std::decay_t<decltype(opts)>;
       return Options::Owner::Make(std::move(opts));
     },

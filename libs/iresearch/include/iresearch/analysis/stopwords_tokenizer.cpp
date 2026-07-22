@@ -25,34 +25,31 @@
 
 #include <string_view>
 
+#include "iresearch/analysis/batch/token_batch.hpp"
+
 namespace irs::analysis {
 
 StopwordsTokenizer::StopwordsTokenizer(
   StopwordsTokenizer::stopwords_set&& stopwords)
-  : _stopwords{std::move(stopwords)} {}
+  : _stopwords{std::move(stopwords)} {
+  for (const auto& w : _stopwords) {
+    _prefilter.Add(w);
+  }
+}
 
-Analyzer::ptr StopwordsTokenizer::Make(Options opts) {
+Tokenizer::ptr StopwordsTokenizer::Make(Options opts) {
   return std::make_unique<StopwordsTokenizer>(std::move(opts.mask));
 }
 
-bool StopwordsTokenizer::next() {
-  if (_term_eof) {
-    return false;
+template<TokenLayout Layout>
+bool StopwordsTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
+  if (!IsStopword(value)) {
+    const auto size = static_cast<uint32_t>(value.size());
+    sink.Emit<Layout>(duckdb::string_t{value.data(), size}, 0, size);
   }
-
-  _term_eof = true;
-
   return true;
 }
 
-bool StopwordsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = uint32_t(data.size());
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = ViewCast<byte_type>(data);
-  _term_eof = _stopwords.contains(data);
-  return true;
-}
+template class TypedTokenizer<StopwordsTokenizer>;
 
 }  // namespace irs::analysis

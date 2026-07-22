@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
@@ -152,16 +152,14 @@ void FromTokenizeListInAnyAllOf(
       tokens.emplace_back(bytes.begin(), bytes.end());
       continue;
     }
-    if (!analyzer->reset(raw)) {
+    irs::TermVectorSink sink{tokens};
+    if (!analyzer->Fill(raw, sink.writer, irs::TokenLayout::Terms)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Failed to analyse '", raw, "'"),
         ERR_HINT("The selected analyzer rejected this list element."));
     }
-    const auto* tok_attr = irs::get<irs::TermAttr>(*analyzer);
-    while (analyzer->next()) {
-      tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
-    }
+    sink.writer.Finish();
   }
 
   if (tokens.empty()) {

@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/phrase_query.hpp>
@@ -110,7 +111,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   auto* opts = phrase.mutable_options();
   auto& analyzer = ctx.tokenizer;
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
+  irs::TokenCollector collector{irs::TokenLayout::Terms};
 
   std::optional<PhraseGap> pending_gap;
 
@@ -124,17 +125,14 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR ||
         const_val->type().id() == duckdb::LogicalTypeId::BLOB) {
       auto text = duckdb::StringValue::Get(*const_val);
-      analyzer.reset(std::string_view{text});
-      while (analyzer.next()) {
+      irs::AnalyzeValue(analyzer, std::string_view{text}, collector);
+      for (const auto& tok : collector.tokens) {
         if (pending_gap) {
-          // First token of a new text pattern: apply pending gap.
           opts
             ->push_back<irs::ByTermOptions>(pending_gap->min, pending_gap->max)
-            .term.assign(token->value);
+            .term = tok.term;
         } else {
-          // No pending gap: first term or adjacent token within same
-          // pattern.
-          opts->push_back<irs::ByTermOptions>().term.assign(token->value);
+          opts->push_back<irs::ByTermOptions>().term = tok.term;
         }
         pending_gap.reset();
       }
@@ -187,17 +185,17 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       std::string_view text, PhraseGap base_gap) {
   auto& analyzer = ctx.tokenizer;
-  if (!analyzer.reset(text)) {
+  irs::TokenCollector collector{irs::TokenLayout::Terms};
+  if (!irs::AnalyzeValue(analyzer, text, collector)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  const auto* token = irs::get<irs::TermAttr>(analyzer);
   bool first = true;
-  while (analyzer.next()) {
+  for (const auto& tok : collector.tokens) {
     const PhraseGap g = first ? base_gap : PhraseGap{1, 1};
     auto& part = options.push_back<irs::ByTermOptions>(g.min, g.max);
-    part.term.assign(token->value);
+    part.term = tok.term;
     first = false;
   }
   if (first) {

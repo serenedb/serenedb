@@ -34,8 +34,8 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/parser/parser.hpp"
@@ -129,10 +129,9 @@ class DelimitedField : public tests::FieldBase {
 
   void Value(std::string_view val) { _value = val; }
 
-  irs::Tokenizer& GetTokens() const final {
-    _tokenizer->reset(_value);
-    return *_tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_tokenizer; }
+
+  std::string_view Value() const final { return _value; }
 
   bool Write(irs::DataOutput& o) const final {
     // TODO(gnusi): fix
@@ -171,22 +170,19 @@ void BlockScoringFieldFactory(tests::Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (data.is_number()) {
     // 'value' can be interpreted as a double
     doc.insert(std::make_shared<DoubleField>());

@@ -28,17 +28,15 @@
 #include <absl/container/flat_hash_set.h>
 #include <unicode/locid.h>
 
-#include "analyzer.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
-#include "token_attributes.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
 
 /// @note expects UTF-8 encoded input
-class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
+class TextTokenizer final : public TypedTokenizer<TextTokenizer>,
                             private util::Noncopyable {
  public:
   using stopwords_t = absl::flat_hash_set<std::string>;
@@ -79,25 +77,33 @@ class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
   static constexpr std::string_view type_name() noexcept { return "text"; }
 
   TextTokenizer(Options options, stopwords_t stopwords);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  TokenTraits Traits() const noexcept final { return {.dense_pos = false}; }
+
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
+
+  void ForceUnicodePath(bool force) noexcept { _force_unicode = force; }
 
  private:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
   struct StateDeleterT {
     void operator()(StateT*) const noexcept;
   };
 
   bool next_word();
-  bool next_ngram();
 
-  bstring _term_buf;  // buffer for value if value cannot be referenced directly
-  attributes _attrs;
+  template<TokenLayout Layout>
+  void FillValue(TokenEmitter& sink);
+  template<TokenLayout Layout>
+  void AsciiFillValue(TokenEmitter& sink, std::string_view value);
+  template<TokenLayout Layout>
+  void EmitWordNGrams(TokenEmitter& sink, uint32_t& pos);
+
   std::unique_ptr<StateT, StateDeleterT> _state;
+  bool _ascii_case_safe = false;
+  bool _force_unicode = false;
 };
+
+extern template class TypedTokenizer<TextTokenizer>;
 
 }  // namespace irs::analysis

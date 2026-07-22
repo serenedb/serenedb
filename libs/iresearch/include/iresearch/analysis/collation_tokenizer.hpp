@@ -24,17 +24,16 @@
 
 #include <unicode/locid.h>
 
-#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs::analysis {
 
 // an tokenizer capable of converting UTF-8 encoded input into a sortable
 // token as per specified locale
 // expects UTF-8 encoded input
-class CollationTokenizer final : public TypedAnalyzer<CollationTokenizer>,
+class CollationTokenizer final : public TypedTokenizer<CollationTokenizer>,
                                  private util::Noncopyable {
  public:
   struct Options {
@@ -48,28 +47,28 @@ class CollationTokenizer final : public TypedAnalyzer<CollationTokenizer>,
 
   explicit CollationTokenizer(Options options);
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  TokenTraits Traits() const noexcept final {
+    return {.output = duckdb::LogicalTypeId::BLOB,
+            .terms = TokenTraits::Terms::Normalized};
   }
-  bool next() noexcept final {
-    const auto eof = !_term_eof;
-    _term_eof = true;
-    return eof;
-  }
-  bool reset(std::string_view data) final;
+
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
 
  private:
+  bool Collate(std::string_view data);
+  bytes_view CollatedTerm() const noexcept;
+
   struct StateT;
   struct StateDeleterT {
     void operator()(StateT*) const noexcept;
   };
 
-  // token value with evaluated quotes
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  attributes _attrs;
   std::unique_ptr<StateT, StateDeleterT> _state;
-  bool _term_eof;
+  uint32_t _term_size = 0;
+  uint32_t _input_size = 0;
 };
+
+extern template class TypedTokenizer<CollationTokenizer>;
 
 }  // namespace irs::analysis

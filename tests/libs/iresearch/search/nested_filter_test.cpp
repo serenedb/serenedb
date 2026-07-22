@@ -21,6 +21,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "insert_field.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/all_filter.hpp"
@@ -254,12 +255,9 @@ auto MakeByNumericTerm(irs::field_id field, int32_t value) {
   auto filter = std::make_unique<irs::ByTerm>();
   *filter->mutable_field_id() = field;
 
-  irs::NumericTokenizer stream;
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-  stream.reset(value);
-  stream.next();
-
-  filter->mutable_options()->term = token->value;
+  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+  filter->mutable_options()->term =
+    irs::numeric_utils::EncodeNumericTerm(buf, value);
 
   return filter;
 }
@@ -279,10 +277,8 @@ auto MakeByTermAndRange(irs::field_id field, std::string_view value,
     auto& filter = root->add<irs::ByGranularRange>();
     *filter.mutable_field_id() = range_field;
 
-    irs::NumericTokenizer stream;
     auto& range = filter.mutable_options()->range;
-    stream.reset(upper_bound);
-    irs::SetGranularTerm(range.max, stream);
+    irs::SetGranularNumericTerm(range.max, upper_bound);
   }
   return root;
 }
@@ -387,13 +383,13 @@ class NestedFilterTestCase : public tests::FilterTestCaseBase {
     auto doc = trx.Insert();
     tests::StringField item_field{"item", item};
     item_field.id = kItem;
-    ASSERT_TRUE(doc.Insert(item_field));
+    ASSERT_TRUE(tests::InsertField(doc, item_field));
     tests::IntField price_field{"price", price};
     price_field.id = kPrice;
-    ASSERT_TRUE(doc.Insert(price_field));
+    ASSERT_TRUE(tests::InsertField(doc, price_field));
     tests::IntField count_field{"count", count};
     count_field.id = kCount;
-    ASSERT_TRUE(doc.Insert(count_field));
+    ASSERT_TRUE(tests::InsertField(doc, count_field));
     ASSERT_TRUE(doc);
   }
 
@@ -404,14 +400,14 @@ class NestedFilterTestCase : public tests::FilterTestCaseBase {
     if (!customer.empty()) {
       tests::StringField customer_field{"customer", customer};
       customer_field.id = kCustomer;
-      ASSERT_TRUE(doc.Insert(customer_field));
+      ASSERT_TRUE(tests::InsertField(doc, customer_field));
       auto* cs = doc.GetColWriter();
       ASSERT_NE(nullptr, cs);
       irs::tests::StoreFieldAt(*cs, kParent, doc.DocId(), customer_field);
     }
     tests::StringField date_field{"date", date};
     date_field.id = kDate;
-    ASSERT_TRUE(doc.Insert(date_field));
+    ASSERT_TRUE(tests::InsertField(doc, date_field));
     ASSERT_TRUE(doc);
   }
 

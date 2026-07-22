@@ -27,15 +27,16 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/utils/first_len_filter.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
-class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
-                                    private util::Noncopyable {
+class SolrSynonymsTokenizer final
+  : public TypedTokenizer<SolrSynonymsTokenizer>,
+    private util::Noncopyable {
  public:
   // synonyms_list represents either a full synonym line from Solr format,
   // or split halves (left/right side of '=>' for one-way mappings)
@@ -73,6 +74,7 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
     std::string text;
     SynonymsLines lines;
     SynonymsMap synonyms;
+    FirstLenFilter prefilter;
   };
 
   struct Options {
@@ -80,7 +82,7 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
     // Inline synonyms file content (Solr format).
     std::string synonyms_text;
   };
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept {
     return "solr_synonyms";
@@ -92,21 +94,29 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
 
   explicit SolrSynonymsTokenizer(std::shared_ptr<const State> state) noexcept;
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  TokenTraits Traits() const noexcept final { return {.dense_pos = false}; }
+
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
+
+  const SynonymsList* Lookup(std::string_view value) const noexcept {
+    if (!_state->prefilter.MayContain(value)) [[likely]] {
+      return nullptr;
+    }
+    const auto it = _state->synonyms.find(value);
+    return it == _state->synonyms.end() ? nullptr : it->second;
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
 
  private:
-  using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  bool Bind(std::string_view value);
 
   std::shared_ptr<const State> _state;
-  Attributes _attrs;
-  const std::string_view* _begin{};
   const std::string_view* _curr{};
   const std::string_view* _end{};
   std::string_view _holder{};
+  uint32_t _input_size = 0;
 };
+
+extern template class TypedTokenizer<SolrSynonymsTokenizer>;
 
 }  // namespace irs::analysis

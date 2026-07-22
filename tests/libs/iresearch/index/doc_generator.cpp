@@ -29,13 +29,14 @@
 
 #include <cassert>
 #include <iomanip>
+#include <iresearch/analysis/batch/numeric_terms.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <numeric>
 #include <sstream>
 
 #include "basics/file_utils_ext.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
-#include "iresearch/index/field_data.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "utf8proc_wrapper.hpp"
@@ -169,9 +170,24 @@ Document::Document(Document&& rhs) noexcept
     stored(std::move(rhs.stored)),
     sorted(std::move(rhs.sorted)) {}
 
-irs::Tokenizer& LongField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
+std::optional<std::vector<irs::bstring>> LongField::BlockTerms() const {
+  std::vector<irs::bstring> terms;
+  irs::numeric_utils::ForEachNumericTerm(
+    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
+  return terms;
+}
+
+bool LongField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+  auto* slot = doc.Field(id, index_features);
+  if (!slot) {
+    return false;
+  }
+  duckdb::string_t terms[irs::NumericTermCount<int64_t>()];
+  irs::AppendNumericTermsBlock(terms, std::span<const int64_t>{&_value, 1});
+  const auto doc_id = doc.DocId();
+  return doc.InsertBlock(*slot, std::span<const duckdb::string_t>{terms},
+                         std::span<const irs::doc_id_t>{&doc_id, 1},
+                         irs::NumericTermCount<int64_t>());
 }
 
 bool LongField::Write(irs::DataOutput& out) const {
@@ -179,9 +195,24 @@ bool LongField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& IntField::GetTokens() const {
-  _stream->reset(_value);
-  return *_stream;
+std::optional<std::vector<irs::bstring>> IntField::BlockTerms() const {
+  std::vector<irs::bstring> terms;
+  irs::numeric_utils::ForEachNumericTerm(
+    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
+  return terms;
+}
+
+bool IntField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+  auto* slot = doc.Field(id, index_features);
+  if (!slot) {
+    return false;
+  }
+  duckdb::string_t terms[irs::NumericTermCount<int32_t>()];
+  irs::AppendNumericTermsBlock(terms, std::span<const int32_t>{&_value, 1});
+  const auto doc_id = doc.DocId();
+  return doc.InsertBlock(*slot, std::span<const duckdb::string_t>{terms},
+                         std::span<const irs::doc_id_t>{&doc_id, 1},
+                         irs::NumericTermCount<int32_t>());
 }
 
 bool IntField::Write(irs::DataOutput& out) const {
@@ -189,9 +220,24 @@ bool IntField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& DoubleField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
+std::optional<std::vector<irs::bstring>> DoubleField::BlockTerms() const {
+  std::vector<irs::bstring> terms;
+  irs::numeric_utils::ForEachNumericTerm(
+    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
+  return terms;
+}
+
+bool DoubleField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+  auto* slot = doc.Field(id, index_features);
+  if (!slot) {
+    return false;
+  }
+  duckdb::string_t terms[irs::NumericTermCount<double_t>()];
+  irs::AppendNumericTermsBlock(terms, std::span<const double_t>{&_value, 1});
+  const auto doc_id = doc.DocId();
+  return doc.InsertBlock(*slot, std::span<const duckdb::string_t>{terms},
+                         std::span<const irs::doc_id_t>{&doc_id, 1},
+                         irs::NumericTermCount<double_t>());
 }
 
 bool DoubleField::Write(irs::DataOutput& out) const {
@@ -199,9 +245,24 @@ bool DoubleField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& FloatField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
+std::optional<std::vector<irs::bstring>> FloatField::BlockTerms() const {
+  std::vector<irs::bstring> terms;
+  irs::numeric_utils::ForEachNumericTerm(
+    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
+  return terms;
+}
+
+bool FloatField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
+  auto* slot = doc.Field(id, index_features);
+  if (!slot) {
+    return false;
+  }
+  duckdb::string_t terms[irs::NumericTermCount<float_t>()];
+  irs::AppendNumericTermsBlock(terms, std::span<const float_t>{&_value, 1});
+  const auto doc_id = doc.DocId();
+  return doc.InsertBlock(*slot, std::span<const duckdb::string_t>{terms},
+                         std::span<const irs::doc_id_t>{&doc_id, 1},
+                         irs::NumericTermCount<float_t>());
 }
 
 bool FloatField::Write(irs::DataOutput& out) const {
@@ -209,10 +270,7 @@ bool FloatField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& BinaryField::GetTokens() const {
-  _stream.reset(irs::ViewCast<char, irs::byte_type>(_value));
-  return _stream;
-}
+irs::analysis::Tokenizer& BinaryField::GetTokens() const { return _stream; }
 
 bool BinaryField::Write(irs::DataOutput& out) const {
   irs::WriteStr(out, _value);
@@ -328,14 +386,14 @@ const Document* CsvDocGenerator::next() {
     return nullptr;
   }
 
-  auto* term = irs::get<irs::TermAttr>(*_stream);
-
-  if (!term || !_stream->reset(_line)) {
+  irs::TokenCollector collector{irs::TokenLayout::Terms};
+  if (!irs::AnalyzeValue(*_stream, _line, collector)) {
     return nullptr;
   }
-
-  for (size_t i = 0; _stream->next(); ++i) {
-    _doc.value(i, irs::ViewCast<char>(term->value));
+  size_t i = 0;
+  for (const auto& tok : collector.tokens) {
+    _doc.value(i++,
+               irs::ViewCast<char, irs::byte_type>(irs::bytes_view{tok.term}));
   }
 
   return &_doc;
@@ -478,30 +536,6 @@ const Document* JsonDocGenerator::next() {
 
 void JsonDocGenerator::reset() { _next = _docs.begin(); }
 
-TokenizerPayload::TokenizerPayload(irs::Tokenizer* impl) : _impl(impl) {
-  SDB_ASSERT(_impl);
-  _term = irs::get<irs::TermAttr>(*_impl);
-  SDB_ASSERT(_term);
-}
-
-irs::Attribute* TokenizerPayload::GetMutable(
-  irs::TypeInfo::type_id type) noexcept {
-  if (irs::Type<irs::PayAttr>::id() == type) {
-    return &_pay;
-  }
-
-  return _impl->GetMutable(type);
-}
-
-bool TokenizerPayload::next() {
-  if (_impl->next()) {
-    _pay.value = _term->value;
-    return true;
-  }
-  _pay.value = {};
-  return false;
-}
-
 StringField::StringField(std::string_view name,
                          irs::IndexFeatures index_features) {
   this->index_features =
@@ -517,12 +551,12 @@ StringField::StringField(std::string_view name, std::string_view value,
   this->name = name;
 }
 
+constexpr size_t kLegacyTermCap = 32768;
+
 // reject too long terms
 void StringField::value(std::string_view str) {
-  const auto size_len =
-    irs::bytes_io<uint32_t>::vsize(irs::byte_block_pool::block_type::kSize);
-  const auto max_len = std::min<size_t>(
-    str.size(), irs::byte_block_pool::block_type::kSize - size_len);
+  const auto size_len = irs::bytes_io<uint32_t>::vsize(kLegacyTermCap);
+  const auto max_len = std::min<size_t>(str.size(), kLegacyTermCap - size_len);
   auto begin = str.begin();
   auto end = str.begin() + max_len;
   _value.assign(begin, end);
@@ -533,10 +567,7 @@ bool StringField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& StringField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
-}
+irs::analysis::Tokenizer& StringField::GetTokens() const { return _stream; }
 
 StringViewField::StringViewField(const std::string& name,
                                  irs::IndexFeatures index_features) {
@@ -554,10 +585,8 @@ StringViewField::StringViewField(const std::string& name,
 
 // truncate very long terms
 void StringViewField::value(std::string_view str) {
-  const auto size_len =
-    irs::bytes_io<uint32_t>::vsize(irs::byte_block_pool::block_type::kSize);
-  const auto max_len = std::min<size_t>(
-    str.size(), irs::byte_block_pool::block_type::kSize - size_len);
+  const auto size_len = irs::bytes_io<uint32_t>::vsize(kLegacyTermCap);
+  const auto max_len = std::min<size_t>(str.size(), kLegacyTermCap - size_len);
 
   _value = std::string_view(str.data(), max_len);
 }
@@ -567,10 +596,7 @@ bool StringViewField::Write(irs::DataOutput& out) const {
   return true;
 }
 
-irs::Tokenizer& StringViewField::GetTokens() const {
-  _stream.reset(_value);
-  return _stream;
-}
+irs::analysis::Tokenizer& StringViewField::GetTokens() const { return _stream; }
 
 void EuroparlDocTemplate::init() {
   clear();
@@ -693,22 +719,19 @@ void GenericJsonFieldFactory(Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_false()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kFalseTerm));
   } else if (data.is_number()) {
     // 'value' can be interpreted as a double
     doc.insert(std::make_shared<DoubleField>());
@@ -745,22 +768,19 @@ void PayloadedJsonFieldFactory(Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_true()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value_false()));
+    field.value(irs::ViewCast<irs::byte_type>(irs::kFalseTerm));
   } else if (data.is_number()) {
     // 'value' can be interpreted as a double
     doc.insert(std::make_shared<DoubleField>());

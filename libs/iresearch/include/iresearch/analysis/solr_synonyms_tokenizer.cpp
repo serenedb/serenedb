@@ -28,6 +28,7 @@
 #include <utility>
 
 #include "basics/log.h"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -123,44 +124,61 @@ SolrSynonymsTokenizer::MakeState(std::string text) {
   state->text = std::move(text);
   state->lines = ParseSynonymsLines(state->text);
   state->synonyms = Parse(state->lines);
+  for (const auto& [key, list] : state->synonyms) {
+    state->prefilter.Add(key);
+  }
 
   return state;
 }
 
-Analyzer::ptr SolrSynonymsTokenizer::Make(Options opts) {
+Tokenizer::ptr SolrSynonymsTokenizer::Make(Options opts) {
   return std::make_unique<SolrSynonymsTokenizer>(
     MakeState(std::move(opts.synonyms_text)));
 }
 
-bool SolrSynonymsTokenizer::next() {
-  if (_curr == _end) {
-    return false;
-  }
+bool SolrSynonymsTokenizer::Bind(std::string_view value) {
+  _input_size = static_cast<uint32_t>(value.size());
 
-  auto& inc = std::get<IncAttr>(_attrs);
-  inc.value = (_curr == _begin) ? 1 : 0;
-
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = ViewCast<byte_type>(*_curr++);
-  return true;
-}
-
-bool SolrSynonymsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = data.size();
-
-  const auto& synonyms = _state->synonyms;
-  if (const auto it = synonyms.find(data); it == synonyms.end()) {
-    _holder = data;
-    _begin = _curr = &_holder;
+  if (const auto* list = Lookup(value); list == nullptr) {
+    _holder = value;
+    _curr = &_holder;
     _end = _curr + 1;
   } else {
-    _begin = _curr = it->second->data();
-    _end = _curr + it->second->size();
+    _curr = list->data();
+    _end = _curr + list->size();
   }
 
   return true;
 }
+
+template<TokenLayout Layout>
+bool SolrSynonymsTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
+  if (!Bind(value)) {
+    return false;
+  }
+  auto& buf = sink.buf;
+  const auto input_end = _input_size;
+  size_t remaining = static_cast<size_t>(_end - _curr);
+  while (remaining != 0) {
+    const auto slots = sink.Next(remaining);
+    const auto first = static_cast<uint32_t>(slots.data() - buf.terms);
+    for (size_t j = 0; j < slots.size(); ++j) {
+      const auto& synonym = *_curr++;
+      slots[j] =
+        duckdb::string_t{synonym.data(), static_cast<uint32_t>(synonym.size())};
+      if constexpr (Layout != TokenLayout::Terms) {
+        buf.pos[first + j] = 1;
+      }
+      if constexpr (Layout == TokenLayout::TermsPosOffs) {
+        buf.offs_start[first + j] = 0;
+        buf.offs_end[first + j] = input_end;
+      }
+    }
+    remaining -= slots.size();
+  }
+  return true;
+}
+
+template class TypedTokenizer<SolrSynonymsTokenizer>;
 
 }  // namespace irs::analysis

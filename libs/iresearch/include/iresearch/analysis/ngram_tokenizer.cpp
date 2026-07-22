@@ -22,27 +22,30 @@
 
 #include "ngram_tokenizer.hpp"
 
+#include <simdutf.h>
+
 #include <string_view>
 
+#include "iresearch/analysis/batch/term_view.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
 template<NGramTokenizerBase::InputType StreamType>
-Analyzer::ptr NGramTokenizer<StreamType>::make(Options&& options) {
+Tokenizer::ptr NGramTokenizer<StreamType>::make(
+  NGramTokenizerBase::Options&& options) {
   return std::make_unique<NGramTokenizer<StreamType>>(std::move(options));
 }
 
 NGramTokenizerBase::NGramTokenizerBase(Options&& options)
-  : _options(std::move(options)),
-    _start_marker_empty(_options.start_marker.empty()),
-    _end_marker_empty(_options.end_marker.empty()) {
+  : _options(std::move(options)) {
   _options.min_gram = std::max<size_t>(_options.min_gram, 1);
   _options.max_gram = std::max(_options.max_gram, _options.min_gram);
 }
 
-Analyzer::ptr NGramTokenizerBase::Make(Options opts) {
+Tokenizer::ptr NGramTokenizerBase::Make(Options opts) {
   const auto stream_bytes_type = opts.stream_bytes_type;
   switch (stream_bytes_type) {
     case NGramTokenizerBase::InputType::Binary:
@@ -56,206 +59,276 @@ Analyzer::ptr NGramTokenizerBase::Make(Options opts) {
 }
 
 template<NGramTokenizerBase::InputType StreamType>
-NGramTokenizer<StreamType>::NGramTokenizer(Options&& options)
+NGramTokenizer<StreamType>::NGramTokenizer(
+  NGramTokenizerBase::Options&& options)
   : NGramTokenizerBase{std::move(options)} {
   SDB_ASSERT(StreamType == _options.stream_bytes_type);
 }
 
-void NGramTokenizerBase::emit_original() noexcept {
-  auto& term = std::get<TermAttr>(_attrs);
-  auto& offset = std::get<OffsAttr>(_attrs);
-  auto& inc = std::get<IncAttr>(_attrs);
-
-  switch (_emit_original) {
-    case EmitOriginal::WithoutMarkers:
-      term.value = _data;
-      SDB_ASSERT(_data.size() <= std::numeric_limits<uint32_t>::max());
-      offset.end = uint32_t(_data.size());
-      _emit_original = EmitOriginal::None;
-      inc.value = _next_inc_val;
-      break;
-    case EmitOriginal::WithEndMarker:
-      _marked_term_buffer.clear();
-      SDB_ASSERT(_marked_term_buffer.capacity() >=
-                 (_options.end_marker.size() + _data.size()));
-      _marked_term_buffer.append(_data.data(), _data_end);
-      _marked_term_buffer.append_range(_options.end_marker);
-      term.value = _marked_term_buffer;
-      SDB_ASSERT(_marked_term_buffer.size() <=
-                 std::numeric_limits<uint32_t>::max());
-      offset.start = 0;
-      offset.end = uint32_t(_data.size());
-      _emit_original = EmitOriginal::None;  // end marker is emitted last, so we
-                                            // are done emitting original
-      inc.value = _next_inc_val;
-      break;
-    case EmitOriginal::WithStartMarker:
-      _marked_term_buffer.clear();
-      SDB_ASSERT(_marked_term_buffer.capacity() >=
-                 (_options.start_marker.size() + _data.size()));
-      _marked_term_buffer.append_range(_options.start_marker);
-      _marked_term_buffer.append(_data.data(), _data_end);
-      term.value = _marked_term_buffer;
-      SDB_ASSERT(_marked_term_buffer.size() <=
-                 std::numeric_limits<uint32_t>::max());
-      offset.start = 0;
-      offset.end = uint32_t(_data.size());
-      _emit_original = _options.end_marker.empty()
-                         ? EmitOriginal::None
-                         : EmitOriginal::WithEndMarker;
-      inc.value = _next_inc_val;
-      break;
-    case EmitOriginal::None:
-      SDB_ASSERT(false);
-      break;
-  }
-  _next_inc_val = 0;
-}
-
-bool NGramTokenizerBase::reset(std::string_view value) noexcept {
+bool NGramTokenizerBase::Bind(std::string_view value) noexcept {
   if (value.size() > std::numeric_limits<uint32_t>::max()) {
-    // can't handle data which is longer than
-    // std::numeric_limits<uint32_t>::max()
     return false;
   }
-
-  auto& term = std::get<TermAttr>(_attrs);
-  auto& offset = std::get<OffsAttr>(_attrs);
-
-  // reset term attribute
-  term.value = {};
-
-  // reset offset attribute
-  offset.start = std::numeric_limits<uint32_t>::max();
-  offset.end = std::numeric_limits<uint32_t>::max();
-
-  // reset stream
   _data = ViewCast<byte_type>(value);
-  _begin = _data.data();
-  _ngram_end = _begin;
   _data_end = _data.data() + _data.size();
-  offset.start = 0;
-  _length = 0;
-  if (_options.preserve_original) {
-    if (!_start_marker_empty) {
-      _emit_original = EmitOriginal::WithStartMarker;
-    } else if (!_end_marker_empty) {
-      _emit_original = EmitOriginal::WithEndMarker;
-    } else {
-      _emit_original = EmitOriginal::WithoutMarkers;
-    }
-  } else {
-    _emit_original = EmitOriginal::None;
-  }
-  _next_inc_val = 1;
-  SDB_ASSERT(_length < _options.min_gram);
-  const size_t max_marker_size =
-    std::max(_options.start_marker.size(), _options.end_marker.size());
-  if (max_marker_size > 0) {
-    // we have at least one marker. As we need to append marker to ngram and
-    // provide term value as continious buffer, we can`t return pointer to some
-    // byte inside input stream but rather we return pointer to buffer with
-    // copied values of ngram and marker For sake of performance we allocate
-    // requested memory right now
-    size_t buffer_size = _options.preserve_original
-                           ? _data.size()
-                           : std::min(_data.size(), _options.max_gram);
-    buffer_size += max_marker_size;
-    _marked_term_buffer.reserve(buffer_size);
-  }
   return true;
 }
 
+namespace {
+
+template<typename Mask>
+Mask ClassifyBoundaryBlock(const byte_type* block) noexcept {
+  Mask bitmask = 0;
+  for (int i = 0; i < std::numeric_limits<Mask>::digits; ++i) {
+    bitmask |=
+      static_cast<Mask>(static_cast<Mask>((block[i] & 0xC0) != 0x80) << i);
+  }
+  return bitmask;
+}
+
+}  // namespace
+
+void NGramTokenizerBase::BuildBoundaries() {
+  _fill_bounds.clear();
+  const auto* base = _data.data();
+  const size_t size = _data.size();
+  if (simdutf::validate_utf8(reinterpret_cast<const char*>(base), size)) {
+    size_t offset = 0;
+    while (size - offset >= 32) {
+      auto mask = ClassifyBoundaryBlock<uint32_t>(base + offset);
+      while (mask != 0) {
+        _fill_bounds.push_back(
+          static_cast<uint32_t>(offset + std::countr_zero(mask)));
+        mask &= mask - 1;
+      }
+      offset += 32;
+    }
+    for (; offset < size; ++offset) {
+      if ((base[offset] & 0xC0) != 0x80) {
+        _fill_bounds.push_back(static_cast<uint32_t>(offset));
+      }
+    }
+  } else {
+    for (const auto* it = base; it != _data_end;
+         it = utf8_utils::Next(it, _data_end)) {
+      _fill_bounds.push_back(static_cast<uint32_t>(it - base));
+    }
+  }
+  _fill_bounds.push_back(static_cast<uint32_t>(size));
+}
+
+template<TokenLayout Layout, bool Identity>
+void NGramTokenizerBase::EmitGrams(TokenEmitter& sink, const uint32_t* bounds,
+                                   uint32_t nsym) {
+  auto& buf = sink.buf;
+  const auto* base = _data.data();
+  const auto data_size = static_cast<uint32_t>(_data.size());
+  const size_t min_gram = _options.min_gram;
+  const size_t max_gram = _options.max_gram;
+  const bytes_view start_marker = _options.start_marker;
+  const bytes_view end_marker = _options.end_marker;
+
+  const auto bnd = [&](uint32_t i) -> uint32_t {
+    if constexpr (Identity) {
+      return i;
+    } else {
+      return bounds[i];
+    }
+  };
+
+  const auto emit = [&](bytes_view term, uint32_t off_start, uint32_t off_end,
+                        uint32_t position, bool intern) {
+    const auto i = sink.Next();
+    buf.terms[i] = intern ? sink.Intern(term) : MakeTermView(term);
+    if constexpr (Layout != TokenLayout::Terms) {
+      buf.pos[i] = position;
+    }
+    if constexpr (Layout == TokenLayout::TermsPosOffs) {
+      buf.offs_start[i] = off_start;
+      buf.offs_end[i] = off_end;
+    }
+  };
+
+  const auto emit2 = [&](bytes_view prefix, bytes_view suffix,
+                         uint32_t off_start, uint32_t off_end,
+                         uint32_t position) {
+    const auto i = sink.Next();
+    buf.terms[i] = sink.Intern(prefix, suffix);
+    if constexpr (Layout != TokenLayout::Terms) {
+      buf.pos[i] = position;
+    }
+    if constexpr (Layout == TokenLayout::TermsPosOffs) {
+      buf.offs_start[i] = off_start;
+      buf.offs_end[i] = off_end;
+    }
+  };
+
+  EmitOriginal pending = EmitOriginal::None;
+  if (_options.preserve_original) {
+    pending = !start_marker.empty() ? EmitOriginal::WithStartMarker
+              : !end_marker.empty() ? EmitOriginal::WithEndMarker
+                                    : EmitOriginal::WithoutMarkers;
+  }
+
+  const auto emit_original_step = [&] {
+    switch (pending) {
+      case EmitOriginal::WithoutMarkers:
+        emit(_data, 0, data_size, 1, false);
+        pending = EmitOriginal::None;
+        break;
+      case EmitOriginal::WithEndMarker:
+        emit2(_data, end_marker, 0, data_size, 1);
+        pending = EmitOriginal::None;
+        break;
+      case EmitOriginal::WithStartMarker:
+        emit2(start_marker, _data, 0, data_size, 1);
+        pending =
+          end_marker.empty() ? EmitOriginal::None : EmitOriginal::WithEndMarker;
+        break;
+      case EmitOriginal::None:
+        SDB_ASSERT(false);
+        break;
+    }
+  };
+
+  if (nsym == 0) {
+    return;
+  }
+
+  // Position 0: marker and preserve-original interplay, general path.
+  {
+    const size_t max_sym = std::min<size_t>(max_gram, nsym);
+    for (size_t length = 1; length <= max_sym; ++length) {
+      if (length < min_gram) {
+        continue;
+      }
+      const uint32_t end_off = bnd(static_cast<uint32_t>(length));
+      if (pending == EmitOriginal::None || end_off != data_size) {
+        if (start_marker.empty() &&
+            (end_marker.empty() || end_off != data_size)) {
+          emit(bytes_view{base, end_off}, 0, end_off, 1, false);
+        } else if (!start_marker.empty()) {
+          emit2(start_marker, bytes_view{base, end_off}, 0, end_off, 1);
+          if (end_off == data_size && !end_marker.empty()) {
+            pending = EmitOriginal::WithEndMarker;
+          }
+        } else {
+          emit2(bytes_view{base, end_off}, end_marker, 0, end_off, 1);
+        }
+      } else {
+        emit_original_step();
+      }
+    }
+    while (pending != EmitOriginal::None) {
+      emit_original_step();
+    }
+  }
+
+  if (min_gram > nsym) {
+    return;
+  }
+  const auto mm = static_cast<uint32_t>(min_gram);
+
+  if (min_gram == max_gram) {
+    // Fixed-gram flat loop over positions 1..nsym-mm: one gram per
+    // position, ramp positions/offsets, bulk slot claims.
+    uint32_t count = nsym - mm;
+    const bool tail_marked = !end_marker.empty() && count > 0;
+    if (tail_marked) {
+      --count;
+    }
+    uint32_t done = 0;
+    while (done < count) {
+      const auto slots = sink.Next(count - done);
+      const auto first = static_cast<uint32_t>(slots.data() - buf.terms);
+      for (size_t j = 0; j < slots.size(); ++j) {
+        const auto s = static_cast<uint32_t>(1 + done + j);
+        const uint32_t off = bnd(s);
+        const uint32_t end = bnd(s + mm);
+        slots[j] =
+          MakeTermView(reinterpret_cast<const char*>(base + off), end - off);
+        if constexpr (Layout != TokenLayout::Terms) {
+          buf.pos[first + j] = s + 1;
+        }
+        if constexpr (Layout == TokenLayout::TermsPosOffs) {
+          buf.offs_start[first + j] = off;
+          buf.offs_end[first + j] = end;
+        }
+      }
+      done += static_cast<uint32_t>(slots.size());
+    }
+    if (tail_marked) {
+      const uint32_t s = 1 + count;
+      const uint32_t off = bnd(s);
+      emit2(bytes_view{base + off, data_size - off}, end_marker, off, data_size,
+            s + 1);
+    }
+    return;
+  }
+
+  // Variable gram lengths: bulk-claim the k grams of each position.
+  for (uint32_t s = 1; s + mm <= nsym; ++s) {
+    const auto max_sym =
+      static_cast<uint32_t>(std::min<size_t>(max_gram, nsym - s));
+    const uint32_t k = max_sym - mm + 1;
+    const uint32_t off_start = bnd(s);
+    const uint32_t position = s + 1;
+    const bool tail_marked = !end_marker.empty() && s + max_sym == nsym;
+    uint32_t emitted = 0;
+    while (emitted < k) {
+      const auto slots = sink.Next(k - emitted);
+      const auto first = static_cast<uint32_t>(slots.data() - buf.terms);
+      for (size_t j = 0; j < slots.size(); ++j) {
+        const auto len_sym = static_cast<uint32_t>(mm + emitted + j);
+        const uint32_t end_off = bnd(s + len_sym);
+        const uint32_t len = end_off - off_start;
+        if (tail_marked && len_sym == max_sym) [[unlikely]] {
+          slots[j] = sink.Intern(bytes_view{base + off_start, len}, end_marker);
+        } else {
+          slots[j] =
+            MakeTermView(reinterpret_cast<const char*>(base + off_start), len);
+        }
+        if constexpr (Layout != TokenLayout::Terms) {
+          buf.pos[first + j] = position;
+        }
+        if constexpr (Layout == TokenLayout::TermsPosOffs) {
+          buf.offs_start[first + j] = off_start;
+          buf.offs_end[first + j] = end_off;
+        }
+      }
+      emitted += static_cast<uint32_t>(slots.size());
+    }
+  }
+}
+
 template<NGramTokenizerBase::InputType StreamType>
-bool NGramTokenizer<StreamType>::NextSymbol(
-  const byte_type*& it) const noexcept {
-  SDB_ASSERT(it);
-  if (it == _data_end) [[unlikely]] {
+template<TokenLayout Layout>
+bool NGramTokenizer<StreamType>::DoFill(std::string_view value,
+                                        TokenEmitter& sink) {
+  if (!Bind(value)) {
     return false;
   }
   if constexpr (StreamType == InputType::Binary) {
-    ++it;
-  } else if constexpr (StreamType == InputType::UTF8) {
-    it = utf8_utils::Next(it, _data_end);
-  }
-  return true;
-}
-
-template<NGramTokenizerBase::InputType StreamType>
-bool NGramTokenizer<StreamType>::next() noexcept {
-  auto& term = std::get<TermAttr>(_attrs);
-  auto& offset = std::get<OffsAttr>(_attrs);
-  auto& inc = std::get<IncAttr>(_attrs);
-
-  while (_begin < _data_end) {
-    if (_length < _options.max_gram && NextSymbol(_ngram_end)) {
-      // we have next ngram from current position
-      ++_length;
-      if (_length >= _options.min_gram) {
-        SDB_ASSERT(_begin <= _ngram_end);
-        SDB_ASSERT(static_cast<size_t>(std::distance(_begin, _ngram_end)) <=
-                   std::numeric_limits<uint32_t>::max());
-        const auto ngram_byte_len =
-          static_cast<uint32_t>(std::distance(_begin, _ngram_end));
-        if (EmitOriginal::None == _emit_original || 0 != offset.start ||
-            ngram_byte_len != _data.size()) {
-          offset.end = offset.start + ngram_byte_len;
-          inc.value = _next_inc_val;
-          _next_inc_val = 0;
-          if ((0 != offset.start || _start_marker_empty) &&
-              (_end_marker_empty || _ngram_end != _data_end)) {
-            term.value = irs::bytes_view(_begin, ngram_byte_len);
-          } else if (0 == offset.start && !_start_marker_empty) {
-            _marked_term_buffer.clear();
-            SDB_ASSERT(_marked_term_buffer.capacity() >=
-                       (_options.start_marker.size() + ngram_byte_len));
-            _marked_term_buffer.append_range(_options.start_marker);
-            _marked_term_buffer.append(_begin, ngram_byte_len);
-            term.value = _marked_term_buffer;
-            SDB_ASSERT(_marked_term_buffer.size() <=
-                       std::numeric_limits<uint32_t>::max());
-            if (ngram_byte_len == _data.size() && !_end_marker_empty) {
-              // this term is whole original stream and we have end marker, so
-              // we need to emit this term again with end marker just like
-              // original, so pretend we need to emit original
-              _emit_original = EmitOriginal::WithEndMarker;
-            }
-          } else {
-            SDB_ASSERT(!_end_marker_empty && _ngram_end == _data_end);
-            _marked_term_buffer.clear();
-            SDB_ASSERT(_marked_term_buffer.capacity() >=
-                       (_options.end_marker.size() + ngram_byte_len));
-            _marked_term_buffer.append(_begin, ngram_byte_len);
-            _marked_term_buffer.append_range(_options.end_marker);
-            term.value = _marked_term_buffer;
-          }
-        } else {
-          // if ngram covers original stream we need to process it specially
-          emit_original();
-        }
-        return true;
-      }
-    } else if (EmitOriginal::None == _emit_original) {
-      // need to move to next position
-      if (!NextSymbol(_begin)) [[unlikely]] {
-        return false;  // stream exhausted
-      }
-      _next_inc_val = 1;
-      _length = 0;
-      _ngram_end = _begin;
-      offset.start = static_cast<uint32_t>(std::distance(_data.data(), _begin));
+    EmitGrams<Layout, true>(sink, nullptr, static_cast<uint32_t>(_data.size()));
+  } else {
+    if (simdutf::validate_ascii(reinterpret_cast<const char*>(_data.data()),
+                                _data.size())) {
+      EmitGrams<Layout, true>(sink, nullptr,
+                              static_cast<uint32_t>(_data.size()));
     } else {
-      // as stream has unsigned incremet attribute
-      // we cannot go back, so we must emit original before we leave start pos
-      // in stream (as it starts from pos=0 in stream)
-      emit_original();
-      return true;
+      BuildBoundaries();
+      EmitGrams<Layout, false>(sink, _fill_bounds.data(),
+                               static_cast<uint32_t>(_fill_bounds.size() - 1));
     }
   }
-  return false;
+  return true;
 }
 
 template class NGramTokenizer<NGramTokenizerBase::InputType::Binary>;
 template class NGramTokenizer<NGramTokenizerBase::InputType::UTF8>;
+template class TypedTokenizer<
+  NGramTokenizer<NGramTokenizerBase::InputType::Binary>>;
+template class TypedTokenizer<
+  NGramTokenizer<NGramTokenizerBase::InputType::UTF8>>;
 
 }  // namespace irs::analysis

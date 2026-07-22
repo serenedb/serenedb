@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/search/ngram_similarity_filter.hpp>
 #include <iresearch/search/ngram_similarity_query.hpp>
 #include <iresearch/utils/string.hpp>
@@ -78,11 +78,9 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
   ngram.mutable_options()->threshold = threshold;
   auto& analyzer = ctx.tokenizer;
-  analyzer.reset(std::string_view{target});
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
-  while (analyzer.next()) {
-    ngram.mutable_options()->ngrams.emplace_back(token->value);
-  }
+  irs::TermVectorSink sink{ngram.mutable_options()->ngrams};
+  analyzer.Fill(std::string_view{target}, sink.writer, irs::TokenLayout::Terms);
+  sink.writer.Finish();
 }
 
 }  // namespace sdb::connector

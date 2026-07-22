@@ -167,7 +167,7 @@ class GeoIterator : public DocIterator {
   bool Accept(doc_id_t doc) {
     // Per-doc point fetch via cached cursor: same row group as the
     // previous doc reuses its pinned ColumnSegment + ColumnFetchState.
-    // Empty span = row stored as null (analyzer didn't populate StoreAttr)
+    // Empty span = row stored as null (analyzer didn't populate the store)
     // OR analyzer wrote zero bytes -- either way nothing to match.
     const auto bytes = _cursor.FetchDoc(doc);
     if (bytes.empty()) {

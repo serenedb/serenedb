@@ -52,6 +52,7 @@
 #include "basics/duckdb_engine.h"
 #include "fst/arcsort.h"
 #include "fst/minimize.h"
+#include "insert_field.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/directory_reader.hpp"
@@ -74,10 +75,9 @@ constexpr irs::field_id kKwFieldId = 1;
 struct KeywordField {
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    stream.reset(value);
-    return stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return irs::IndexFeatures::Freq;
@@ -141,7 +141,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
     for (const auto& term : cached.terms) {
       field.value = term;
       auto doc = trx.Insert();
-      doc.Insert(field);
+      tests::InsertField(doc, field);
     }
     trx.Commit();
   }

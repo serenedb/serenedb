@@ -30,6 +30,7 @@
 #include <utility>
 
 #include "basics/log.h"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -131,47 +132,63 @@ WordnetSynonymsTokenizer::MakeState(std::string text) {
   // backing buffer is populated before parsing builds the views over it.
   state->text = std::move(text);
   state->mapping = Parse(state->text);
+  for (const auto& [key, groups] : state->mapping) {
+    state->prefilter.Add(key);
+  }
 
   return state;
 }
 
-Analyzer::ptr WordnetSynonymsTokenizer::Make(Options opts) {
+Tokenizer::ptr WordnetSynonymsTokenizer::Make(Options opts) {
   return std::make_unique<WordnetSynonymsTokenizer>(
     MakeState(std::move(opts.synonyms_text)));
 }
 
-bool WordnetSynonymsTokenizer::next() {
-  if (!_term_exists) {
-    return false;
-  }
+bool WordnetSynonymsTokenizer::Bind(const std::string_view value) {
+  _input_size = static_cast<uint32_t>(value.size());
 
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = ViewCast<byte_type>(*_curr);
-  _curr++;
-
-  if (_curr == _end) {
-    _term_exists = false;
-  }
-
-  return true;
-}
-
-bool WordnetSynonymsTokenizer::reset(const std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = data.size();
-
-  const auto& mapping = _state->mapping;
-  if (const auto it = mapping.find(data); it == mapping.end()) {
+  if (const auto* groups = Lookup(value); groups == nullptr) {
     _term_exists = false;
   } else {
-    _begin = _curr = it->second.data();
-    _end = _curr + it->second.size();
+    _curr = groups->data();
+    _end = _curr + groups->size();
 
     _term_exists = true;
   }
 
   return true;
 }
+
+template<TokenLayout Layout>
+bool WordnetSynonymsTokenizer::DoFill(std::string_view value,
+                                      TokenEmitter& sink) {
+  if (!Bind(value)) {
+    return false;
+  }
+  auto& buf = sink.buf;
+  if (!_term_exists) {
+    return true;
+  }
+  const auto input_end = _input_size;
+  size_t remaining = static_cast<size_t>(_end - _curr);
+  while (remaining != 0) {
+    const auto slots = sink.Next(remaining);
+    const auto first = static_cast<uint32_t>(slots.data() - buf.terms);
+    for (size_t j = 0; j < slots.size(); ++j) {
+      const auto& synonym = *_curr++;
+      slots[j] =
+        duckdb::string_t{synonym.data(), static_cast<uint32_t>(synonym.size())};
+      if constexpr (Layout == TokenLayout::TermsPosOffs) {
+        buf.offs_start[first + j] = 0;
+        buf.offs_end[first + j] = input_end;
+      }
+    }
+    remaining -= slots.size();
+  }
+  _term_exists = false;
+  return true;
+}
+
+template class TypedTokenizer<WordnetSynonymsTokenizer>;
 
 }  // namespace irs::analysis

@@ -21,12 +21,17 @@
 #include <s2/s2point_region.h>
 #include <simdjson.h>
 
+#include <algorithm>
 #include <bit>
 #include <cstring>
+#include <memory>
+#include <optional>
 
 #include "basics/down_cast.h"
 #include "geo/geo_json.h"
 #include "geo_test_helpers.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
+#include "iresearch/analysis/batch/token_sinks.hpp"
 #include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/search/geo_filter.hpp"
 #include "tests_shared.hpp"
@@ -38,14 +43,15 @@ using namespace sdb::geo;
 namespace irs::tests {
 
 template<typename Owner>
-inline irs::analysis::Analyzer::ptr MakeAnalyzer(typename Owner::Options opts) {
+inline irs::analysis::Tokenizer::ptr MakeAnalyzer(
+  typename Owner::Options opts) {
   return Owner::Make(std::move(opts));
 }
 
 }  // namespace irs::tests
 namespace {
 
-// Little-endian WKB builder for the resetWKB analyzer tests. Mirrors the
+// Little-endian WKB builder for the WKB-input analyzer tests. Mirrors the
 // builder in tests/libs/iresearch/utils/wkb_parser_test.cpp; kept local so
 // these tests stay self-contained.
 class WkbBuilder {
@@ -83,6 +89,77 @@ class WkbBuilder {
   std::string _buf;
 };
 
+template<typename Fn>
+class CollectFnSink final : public irs::TokenConsumer {
+ public:
+  explicit CollectFnSink(Fn fn) : writer{*this}, _fn(std::move(fn)) {}
+
+  void Consume(irs::TokenBatch& batch,
+               std::span<const irs::DocRun> /*runs*/) final {
+    _fn(batch);
+  }
+
+  void OnStore(irs::doc_id_t /*doc*/, irs::bytes_view blob) final {
+    store.assign(blob.data(), blob.size());
+  }
+
+  irs::TokenWriter writer;
+  irs::bstring store;
+
+ private:
+  Fn _fn;
+};
+
+template<typename FillFn>
+std::optional<std::vector<std::string>> CollectGeoTerms(
+  FillFn&& fill, irs::TokenLayout layout, irs::bstring* store_out = nullptr) {
+  std::vector<std::string> out;
+  uint32_t pos = 0;
+  const auto collect = [&](irs::TokenBatch& batch) {
+    for (uint32_t i = 0; i < batch.count; ++i) {
+      if (layout != irs::TokenLayout::Terms) {
+        const uint32_t p = batch.dense_pos ? pos + 1 : batch.pos[i];
+        EXPECT_EQ(pos + 1, p);
+        pos = p;
+      }
+      const auto& t = batch.terms[i];
+      out.emplace_back(t.GetData(), t.GetSize());
+    }
+  };
+  CollectFnSink sink{collect};
+  if (!fill(sink.writer)) {
+    return std::nullopt;
+  }
+  sink.writer.Finish();
+  if (store_out != nullptr) {
+    *store_out = sink.store;
+  }
+  return out;
+}
+
+std::optional<std::vector<std::string>> FillGeoTerms(
+  irs::analysis::Tokenizer& a, std::string_view value,
+  irs::TokenLayout layout = irs::TokenLayout::TermsPos) {
+  return CollectGeoTerms(
+    [&](irs::TokenWriter& sink) { return a.Fill(value, sink, layout); },
+    layout);
+}
+
+std::optional<std::vector<std::string>> FillGeoTermsWKB(
+  irs::analysis::GeoAnalyzer& a, irs::bytes_view wkb,
+  irs::TokenLayout layout = irs::TokenLayout::TermsPos,
+  irs::bstring* store_out = nullptr) {
+  a.SetWkbInput(true);
+  const std::string_view raw{reinterpret_cast<const char*>(wkb.data()),
+                             wkb.size()};
+  auto& tokens = dynamic_cast<irs::analysis::Tokenizer&>(a);
+  auto out = CollectGeoTerms(
+    [&](irs::TokenWriter& sink) { return tokens.Fill(raw, sink, layout); },
+    layout, store_out);
+  a.SetWkbInput(false);
+  return out;
+}
+
 }  // namespace
 
 TEST(GeoOptionsTest, default_options) {
@@ -103,10 +180,10 @@ TEST(GeoBench, sizes) {
   opts.coding = GeoJsonAnalyzer::Coding::S2LatLngU32;
   auto s2_analyzer = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
 
-  auto store_size = [](irs::analysis::Analyzer& a, std::string_view json) {
-    a.reset(json);
-    const auto* store = irs::get<irs::StoreAttr>(a);
-    return store ? store->value.size() : size_t{0};
+  auto store_size = [](irs::analysis::Tokenizer& a, std::string_view json) {
+    irs::TokenCollector sink{irs::TokenLayout::Terms};
+    return a.Fill(json, sink.writer, sink.layout) ? sink.store.size()
+                                                  : size_t{0};
   };
 
   auto bench = [&](std::string_view json) {
@@ -206,18 +283,10 @@ TEST(GeoPointAnalyzerTest, ctor) {
     GeoPointAnalyzer a(opts);
     ASSERT_TRUE(opts.latitude.empty());
     ASSERT_TRUE(opts.longitude.empty());
-    {
-      auto* inc = get<IncAttr>(a);
-      ASSERT_NE(nullptr, inc);
-      ASSERT_EQ(1U, inc->value);
-    }
-    {
-      auto* term = get<TermAttr>(a);
-      ASSERT_NE(nullptr, term);
-      ASSERT_TRUE(IsNull(term->value));
-    }
+    ASSERT_EQ(TokenTraits::Terms::GeoCells, a.Traits().terms);
+    ASSERT_FALSE(a.Traits().offsets);
+    ASSERT_TRUE(a.Traits().store);
     ASSERT_EQ(Type<GeoPointAnalyzer>::id(), a.type());
-    ASSERT_FALSE(a.next());
   }
 
   {
@@ -227,18 +296,10 @@ TEST(GeoPointAnalyzerTest, ctor) {
     GeoPointAnalyzer a(opts);
     ASSERT_EQ(std::vector<std::string>{"foo"}, a.latitude());
     ASSERT_EQ(std::vector<std::string>{"bar"}, a.longitude());
-    {
-      auto* inc = get<IncAttr>(a);
-      ASSERT_NE(nullptr, inc);
-      ASSERT_EQ(1, inc->value);
-    }
-    {
-      auto* term = get<TermAttr>(a);
-      ASSERT_NE(nullptr, term);
-      ASSERT_TRUE(IsNull(term->value));
-    }
+    ASSERT_EQ(TokenTraits::Terms::GeoCells, a.Traits().terms);
+    ASSERT_FALSE(a.Traits().offsets);
+    ASSERT_TRUE(a.Traits().store);
     ASSERT_EQ(Type<GeoPointAnalyzer>::id(), a.type());
-    ASSERT_FALSE(a.next());
   }
 }
 
@@ -263,22 +324,14 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromArray) {
     ASSERT_EQ(opts.options.max_cells, a.options().max_cells());
     ASSERT_TRUE(a.options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(json.text()));
+    const auto actual = FillGeoTerms(a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a.next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point, custom options
@@ -298,22 +351,14 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromArray) {
     EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
     EXPECT_TRUE(a.options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(json.text()));
+    const auto actual = FillGeoTerms(a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a.next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 }
 
@@ -342,22 +387,14 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObject) {
     EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
     EXPECT_TRUE(a.options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(json_object.text()));
+    const auto actual = FillGeoTerms(a, json_object.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a.next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point, custom options
@@ -379,22 +416,14 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObject) {
     EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
     EXPECT_TRUE(a.options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(json_object.text()));
+    const auto actual = FillGeoTerms(a, json_object.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a.next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 }
 
@@ -423,22 +452,14 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObjectComplexPath) {
     EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
     EXPECT_TRUE(a.options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(json_object.text()));
+    const auto actual = FillGeoTerms(a, json_object.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a.next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point, custom options
@@ -460,22 +481,14 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObjectComplexPath) {
     EXPECT_EQ(opts.options.max_cells, a.options().max_cells());
     EXPECT_TRUE(a.options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(json_object.text()));
+    const auto actual = FillGeoTerms(a, json_object.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a.next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 }
 
@@ -588,18 +601,10 @@ TEST(GeoJsonAnalyzerSourceTest, options) {
 
 TEST(GeoJsonAnalyzerSourceTest, ctor) {
   auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>({});
-  {
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    ASSERT_EQ(1, inc->value);
-  }
-  {
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(IsNull(term->value));
-  }
+  ASSERT_EQ(TokenTraits::Terms::GeoCells, a->Traits().terms);
+  ASSERT_FALSE(a->Traits().offsets);
+  ASSERT_TRUE(a->Traits().store);
   ASSERT_EQ(Type<GeoJsonAnalyzer>::id(), a->type());
-  ASSERT_FALSE(a->next());
 }
 
 TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
@@ -639,22 +644,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
   {
     GeoJsonAnalyzer::Options opts;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>({});
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize shape, custom options
@@ -664,22 +661,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
     opts.options.min_level = 3;
     opts.options.max_level = 22;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid
@@ -687,22 +676,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid, custom options
@@ -713,22 +694,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
     opts.options.max_level = 22;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point
@@ -736,12 +709,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLatLngRect) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Point;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(json.text()));
-    ASSERT_FALSE(a->next());
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
   }
 }
 
@@ -798,22 +766,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
   {
     GeoJsonAnalyzer::Options opts;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize shape, custom options
@@ -823,22 +783,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
     opts.options.min_level = 3;
     opts.options.max_level = 22;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid
@@ -846,22 +798,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid, custom options
@@ -872,22 +816,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
     opts.options.max_level = 22;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point
@@ -895,12 +831,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePolygon) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Point;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(json.text()));
-    ASSERT_FALSE(a->next());
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
   }
 }
 
@@ -959,25 +890,15 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
   {
     GeoJsonAnalyzer::Options opts;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    auto end = terms.end();
-    for (; a->next() && begin != end; ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, end);
-    while (a->next()) {  // centroid terms
-    }
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
   }
 
   // tokenize shape, custom options
@@ -987,25 +908,15 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
     opts.options.min_level = 3;
     opts.options.max_level = 22;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    auto end = terms.end();
-    for (; a->next() && begin != end; ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, end);
-    while (a->next()) {  // centroid terms
-    }
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
   }
 
   // tokenize centroid
@@ -1013,22 +924,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid, custom options
@@ -1039,22 +942,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
     opts.options.max_level = 22;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point
@@ -1062,12 +957,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeLineString) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Point;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(json.text()));
-    ASSERT_FALSE(a->next());
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
   }
 }
 
@@ -1134,25 +1024,15 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolygon) {
   {
     GeoJsonAnalyzer::Options opts;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    auto end = terms.end();
-    for (; a->next() && begin != end; ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, end);
-    while (a->next()) {  // centroid terms
-    }
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
   }
 
   // tokenize centroid
@@ -1160,22 +1040,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolygon) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point
@@ -1183,12 +1055,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolygon) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Point;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(json.text()));
-    ASSERT_FALSE(a->next());
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
   }
 }
 
@@ -1215,25 +1082,15 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
   {
     GeoJsonAnalyzer::Options opts;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    auto end = terms.end();
-    for (; a->next() && begin != end; ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, end);
-    while (a->next()) {  // centroid terms
-    }
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
   }
 
   // tokenize shape, custom options
@@ -1243,25 +1100,15 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
     opts.options.min_level = 3;
     opts.options.max_level = 22;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    auto end = terms.end();
-    for (; a->next() && begin != end; ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, end);
-    while (a->next()) {  // centroid terms
-    }
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
   }
 
   // tokenize centroid
@@ -1269,22 +1116,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid, custom options
@@ -1295,22 +1134,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
     opts.options.max_level = 22;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point
@@ -1318,12 +1149,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPoint) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Point;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(json.text()));
-    ASSERT_FALSE(a->next());
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
   }
 }
 
@@ -1422,25 +1248,15 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
   {
     GeoJsonAnalyzer::Options opts;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    auto end = terms.end();
-    for (; a->next() && begin != end; ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, end);
-    while (a->next()) {  // centroid terms
-    }
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
   }
 
   // tokenize shape, custom options
@@ -1450,25 +1266,15 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
     opts.options.min_level = 3;
     opts.options.max_level = 22;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(*shape.region(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    auto end = terms.end();
-    for (; a->next() && begin != end; ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, end);
-    while (a->next()) {  // centroid terms
-    }
+    ASSERT_LE(terms.size(), actual->size());
+    ASSERT_TRUE(std::equal(terms.begin(), terms.end(), actual->begin()));
   }
 
   // tokenize centroid
@@ -1476,22 +1282,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid, custom options
@@ -1502,22 +1300,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
     opts.options.max_level = 22;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point
@@ -1525,12 +1315,7 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizeMultiPolyLine) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Point;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(json.text()));
-    ASSERT_FALSE(a->next());
+    ASSERT_FALSE(FillGeoTerms(*a, json.text()).has_value());
   }
 }
 
@@ -1561,22 +1346,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_FALSE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize shape, custom options
@@ -1596,22 +1373,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_FALSE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid
@@ -1629,22 +1398,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_TRUE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid, custom options
@@ -1665,22 +1426,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_TRUE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point
@@ -1698,22 +1451,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_TRUE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point, custom options
@@ -1734,22 +1479,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePoint) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_TRUE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 }
 
@@ -1776,22 +1513,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     ASSERT_EQ(opts.options.max_cells, a->options().max_cells());
     ASSERT_FALSE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize shape, custom options
@@ -1811,22 +1540,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     ASSERT_EQ(opts.options.max_cells, a->options().max_cells());
     ASSERT_FALSE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid
@@ -1844,22 +1565,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_TRUE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize centroid, custom options
@@ -1880,22 +1593,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_TRUE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point
@@ -1913,22 +1618,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_TRUE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 
   // tokenize point, custom options
@@ -1949,22 +1646,14 @@ TEST(GeoJsonAnalyzerSourceTest, tokenizePointGeoJSONArray) {
     EXPECT_EQ(opts.options.max_cells, a->options().max_cells());
     EXPECT_TRUE(a->options().index_contains_points_only());
 
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a->reset(json.text()));
+    const auto actual = FillGeoTerms(*a, json.text());
+    ASSERT_TRUE(actual.has_value());
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
     ASSERT_FALSE(terms.empty());
 
-    auto begin = terms.begin();
-    for (; a->next(); ++begin) {
-      ASSERT_EQ(1, inc->value);
-      ASSERT_EQ(*begin, ViewCast<char>(term->value));
-    }
-    ASSERT_EQ(begin, terms.end());
+    ASSERT_EQ(terms, *actual);
   }
 }
 
@@ -1973,17 +1662,13 @@ TEST(GeoJsonAnalyzerSourceTest, invalidGeoJson) {
   {
     GeoJsonAnalyzer::Options opts;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(R"({})"));
-    ASSERT_FALSE(a->reset(R"([])"));
-    ASSERT_FALSE(a->reset(""));
-    ASSERT_FALSE(a->reset("false"));
-    ASSERT_FALSE(a->reset("true"));
-    ASSERT_FALSE(a->reset("0"));
-    ASSERT_FALSE(a->reset("null"));
+    ASSERT_FALSE(FillGeoTerms(*a, R"({})").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, R"([])").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "false").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "true").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "0").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "null").has_value());
   }
 
   // tokenize centroid
@@ -1991,17 +1676,13 @@ TEST(GeoJsonAnalyzerSourceTest, invalidGeoJson) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Centroid;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(R"({})"));
-    ASSERT_FALSE(a->reset(R"([])"));
-    ASSERT_FALSE(a->reset(""));
-    ASSERT_FALSE(a->reset("false"));
-    ASSERT_FALSE(a->reset("true"));
-    ASSERT_FALSE(a->reset("0"));
-    ASSERT_FALSE(a->reset("null"));
+    ASSERT_FALSE(FillGeoTerms(*a, R"({})").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, R"([])").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "false").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "true").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "0").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "null").has_value());
   }
 
   // tokenize point
@@ -2009,17 +1690,13 @@ TEST(GeoJsonAnalyzerSourceTest, invalidGeoJson) {
     GeoJsonAnalyzer::Options opts;
     opts.type = GeoJsonAnalyzer::Type::Point;
     auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonAnalyzer>(opts);
-    auto* inc = get<IncAttr>(*a);
-    ASSERT_NE(nullptr, inc);
-    auto* term = get<TermAttr>(*a);
-    ASSERT_NE(nullptr, term);
-    ASSERT_FALSE(a->reset(R"({})"));
-    ASSERT_FALSE(a->reset(R"([])"));
-    ASSERT_FALSE(a->reset(""));
-    ASSERT_FALSE(a->reset("false"));
-    ASSERT_FALSE(a->reset("true"));
-    ASSERT_FALSE(a->reset("0"));
-    ASSERT_FALSE(a->reset("null"));
+    ASSERT_FALSE(FillGeoTerms(*a, R"({})").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, R"([])").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "false").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "true").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "0").has_value());
+    ASSERT_FALSE(FillGeoTerms(*a, "null").has_value());
   }
 }
 
@@ -2223,7 +1900,7 @@ TEST(GeoJsonAnalyzerSourceTest, createFromOptions) {
   }
 }
 
-// resetWKB path: feed raw WKB bytes (simulates GEOMETRY column ingest where
+// WKB-input path: feed raw WKB bytes (simulates GEOMETRY column ingest where
 // the analyzer parses internally) and verify the analyzer produces the same
 // index terms as the JSON path would for an equivalent point.
 TEST(GeoJsonAnalyzerShapeTest, tokenizePoint) {
@@ -2238,19 +1915,14 @@ TEST(GeoJsonAnalyzerShapeTest, tokenizePoint) {
   WkbBuilder b;
   b.Header(1).PutXY(6.5, 50.3);
 
-  auto* term = irs::get<TermAttr>(*a);
-  ASSERT_NE(nullptr, term);
-  ASSERT_TRUE(geo->resetWKB(b.View()));
-  size_t term_count = 0;
-  while (a->next()) {
-    ++term_count;
-  }
-  EXPECT_GT(term_count, 0U);
+  irs::bstring store;
+  const auto terms =
+    FillGeoTermsWKB(*geo, b.View(), irs::TokenLayout::TermsPos, &store);
+  ASSERT_TRUE(terms.has_value());
+  EXPECT_GT(terms->size(), 0U);
 
-  // Store attr must carry encoded bytes (S2Point tag stripped for non-Shape).
-  auto* store = irs::get<irs::StoreAttr>(*a);
-  ASSERT_NE(nullptr, store);
-  EXPECT_FALSE(irs::IsNull(store->value));
+  // Store must carry encoded bytes (S2Point tag stripped for non-Shape).
+  EXPECT_FALSE(store.empty());
 }
 
 TEST(GeoJsonAnalyzerShapeTest, tokenizePolygon) {
@@ -2273,16 +1945,13 @@ TEST(GeoJsonAnalyzerShapeTest, tokenizePolygon) {
     .PutXY(0.0, 1.0)
     .PutXY(0.0, 0.0);
 
-  ASSERT_TRUE(geo->resetWKB(b.View()));
-  size_t term_count = 0;
-  while (a->next()) {
-    ++term_count;
-  }
-  EXPECT_GT(term_count, 0U);
+  irs::bstring store;
+  const auto terms =
+    FillGeoTermsWKB(*geo, b.View(), irs::TokenLayout::TermsPos, &store);
+  ASSERT_TRUE(terms.has_value());
+  EXPECT_GT(terms->size(), 0U);
 
-  auto* store = irs::get<irs::StoreAttr>(*a);
-  ASSERT_NE(nullptr, store);
-  EXPECT_FALSE(irs::IsNull(store->value));
+  EXPECT_FALSE(store.empty());
 }
 
 // Point-only analyzer must reject non-point shapes.
@@ -2303,7 +1972,7 @@ TEST(GeoJsonAnalyzerShapeTest, rejectsShapeVsTypeMismatch) {
     .PutXY(1.0, 1.0)
     .PutXY(0.0, 1.0)
     .PutXY(0.0, 0.0);
-  EXPECT_FALSE(geo->resetWKB(b.View()));
+  EXPECT_FALSE(FillGeoTermsWKB(*geo, b.View()).has_value());
 }
 
 TEST(GeoPointAnalyzerShapeTest, tokenizePoint) {
@@ -2312,21 +1981,16 @@ TEST(GeoPointAnalyzerShapeTest, tokenizePoint) {
 
   WkbBuilder b;
   b.Header(1).PutXY(6.5, 50.3);
-  ASSERT_TRUE(a.resetWKB(b.View()));
 
-  auto* term = irs::get<TermAttr>(a);
-  ASSERT_NE(nullptr, term);
-  size_t term_count = 0;
-  while (a.next()) {
-    ++term_count;
-  }
-  EXPECT_GT(term_count, 0U);
+  irs::bstring store;
+  const auto terms =
+    FillGeoTermsWKB(a, b.View(), irs::TokenLayout::TermsPos, &store);
+  ASSERT_TRUE(terms.has_value());
+  EXPECT_GT(terms->size(), 0U);
 
-  // GeoPoint uses Source coding: the analyzer writes no derived StoreAttr; the
+  // GeoPoint uses Source coding: the analyzer stores no derived blob; the
   // force-included source column is re-parsed at query time instead.
-  auto* store = irs::get<irs::StoreAttr>(a);
-  ASSERT_NE(nullptr, store);
-  EXPECT_TRUE(irs::IsNull(store->value));
+  EXPECT_TRUE(store.empty());
 }
 
 TEST(GeoPointAnalyzerShapeTest, rejectsNonPoint) {
@@ -2342,5 +2006,45 @@ TEST(GeoPointAnalyzerShapeTest, rejectsNonPoint) {
     .PutXY(1.0, 1.0)
     .PutXY(0.0, 1.0)
     .PutXY(0.0, 0.0);
-  EXPECT_FALSE(a.resetWKB(b.View()));
+  EXPECT_FALSE(FillGeoTermsWKB(a, b.View()).has_value());
+}
+
+TEST(GeoPointAnalyzerTest, native_fill_matches_pull) {
+  auto json = tests::FromJson(R"([ 63.57789956676574, 53.72314453125 ])");
+  GeoPointAnalyzer::Options opts;
+  GeoPointAnalyzer ref_a(opts);
+  const auto expected =
+    FillGeoTerms(ref_a, json.text(), irs::TokenLayout::Terms);
+  ASSERT_TRUE(expected.has_value());
+  ASSERT_FALSE(expected->empty());
+  for (const auto layout : {irs::TokenLayout::Terms, irs::TokenLayout::TermsPos,
+                            irs::TokenLayout::TermsPosOffs}) {
+    GeoPointAnalyzer fill_a(opts);
+    const auto filled = FillGeoTerms(fill_a, json.text(), layout);
+    ASSERT_TRUE(filled.has_value());
+    ASSERT_EQ(*expected, *filled);
+  }
+}
+
+TEST(GeoJsonAnalyzerTest, native_fill_matches_pull) {
+  const std::vector<std::string> inputs = {
+    R"({ "type": "Point", "coordinates": [ 63.57789, 53.72314 ] })",
+    R"({ "type": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]] })"};
+
+  for (const auto& text : inputs) {
+    SCOPED_TRACE(text);
+    GeoJsonAnalyzer::Options opts;
+    auto ref_a = tests::MakeAnalyzer<GeoJsonAnalyzer>(opts);
+    const auto expected = FillGeoTerms(*ref_a, text, irs::TokenLayout::Terms);
+    ASSERT_TRUE(expected.has_value());
+    ASSERT_FALSE(expected->empty());
+    for (const auto layout :
+         {irs::TokenLayout::Terms, irs::TokenLayout::TermsPos,
+          irs::TokenLayout::TermsPosOffs}) {
+      auto fill_a = tests::MakeAnalyzer<GeoJsonAnalyzer>(opts);
+      const auto filled = FillGeoTerms(*fill_a, text, layout);
+      ASSERT_TRUE(filled.has_value());
+      ASSERT_EQ(*expected, *filled);
+    }
+  }
 }

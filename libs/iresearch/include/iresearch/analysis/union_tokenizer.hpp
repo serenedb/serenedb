@@ -22,11 +22,11 @@
 
 #include <tuple>
 
+#include "basics/down_cast.h"
 #include "basics/serializer.h"
 #include "basics/shared.hpp"
-#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
-#include "token_attributes.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
@@ -45,28 +45,31 @@ struct TokenizerConfig;
 // OffsAttr is not exposed because interleaving tokens from independent
 // tokenizers over the same input violates the monotonic offset invariant
 // required by the indexer.
-class UnionTokenizer final : public TypedAnalyzer<UnionTokenizer>,
+class UnionTokenizer final : public TypedTokenizer<UnionTokenizer>,
                              private util::Noncopyable {
  public:
   struct Options {
     using Owner = UnionTokenizer;
     std::vector<std::unique_ptr<TokenizerConfig>> children;
   };
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "union"; }
 
-  explicit UnionTokenizer(std::vector<Analyzer::ptr> children);
+  explicit UnionTokenizer(std::vector<Tokenizer::ptr> children);
 
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    // Only return union-owned attributes. Do not delegate to sub-analyzers:
-    // the "active" sub changes on each next() call, so any delegated pointer
-    // would be unstable.
-    return irs::GetMutable(_attrs, id);
+  TokenTraits Traits() const noexcept final {
+    return {.dense_pos = false, .offsets = false};
   }
 
-  bool next() final;
-  bool reset(std::string_view data) final;
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
+
+  using TypedTokenizer<UnionTokenizer>::Fill;
+
+  void Fill(std::span<const duckdb::string_t> values,
+            std::span<const doc_id_t> docs, TokenWriter& sink,
+            TokenLayout layout) final;
 
   /// @brief calls visitor on union members in respective order.
   /// Visiting is interrupted on first visitor returning false.
@@ -90,40 +93,36 @@ class UnionTokenizer final : public TypedAnalyzer<UnionTokenizer>,
 
  private:
   struct SubAnalyzer {
-    explicit SubAnalyzer(Analyzer::ptr a);
+    explicit SubAnalyzer(Tokenizer::ptr a);
     SubAnalyzer();
 
-    bool DoReset(std::string_view data);
-    bool Advance();
-
-    const Analyzer& GetStream() const noexcept {
+    const Tokenizer& GetStream() const noexcept {
       SDB_ASSERT(_analyzer);
       return *_analyzer;
     }
 
-    const TermAttr* term{nullptr};
-    const IncAttr* inc{nullptr};
-    const PayAttr* pay{nullptr};  // nullptr if sub has no payload
-    bool has_token{false};
-    uint32_t position{0};
+    Tokenizer& GetMutableStream() noexcept {
+      SDB_ASSERT(_analyzer);
+      return *_analyzer;
+    }
 
    private:
-    Analyzer::ptr _analyzer;
+    Tokenizer::ptr _analyzer;
   };
 
-  uint32_t FindMinPosition() const noexcept;
+  void CollectSubs(std::string_view data);
+  template<TokenLayout Layout, bool Copy>
+  void EmitMerged(TokenEmitter& sink);
+
+  struct FillScratchT;
+  struct FillScratchDeleterT {
+    void operator()(FillScratchT* p) const noexcept;
+  };
 
   using SubAnalyzers = std::vector<SubAnalyzer>;
-  using Attributes = std::tuple<IncAttr, TermAttr, AttributePtr<PayAttr>>;
 
   SubAnalyzers _subs;
-  size_t _emit_index = 0;
-  uint32_t _current_min_pos = std::numeric_limits<uint32_t>::max();
-  uint32_t _last_emitted_pos = 0;
-  PayAttr _payload;
-  bstring _term_buf;
-  bstring _payload_buf;
-  Attributes _attrs;
+  std::unique_ptr<FillScratchT, FillScratchDeleterT> _scratch;
 };
 
 template<typename Context>
@@ -136,5 +135,7 @@ void SerdeRead(Context ctx, UnionTokenizer::Options& o) {
   auto refs = std::tie(o.children);
   sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
 }
+
+extern template class TypedTokenizer<UnionTokenizer>;
 
 }  // namespace irs::analysis

@@ -71,7 +71,7 @@ std::string TermToString(Term term) {
   return s;
 }
 
-// Decodes a NumericTokenizer term back to the number it encodes. The leading
+// Decodes a numeric trie term back to the number it encodes. The leading
 // byte is `shift + TYPE_MAGIC` with disjoint magic ranges per width, so the
 // value type is recovered from the term itself (which also disambiguates the
 // shared JSON-leaf numeric field).

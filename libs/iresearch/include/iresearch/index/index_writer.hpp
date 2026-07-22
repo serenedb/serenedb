@@ -325,7 +325,6 @@ class IndexWriter : private util::Noncopyable {
     // End of field batch for current document, move to next document in batch
     void NextDocument() noexcept {
       Finish();
-      _writer.ResetNorms();
       ++_doc_id;
     }
 
@@ -334,25 +333,47 @@ class IndexWriter : private util::Noncopyable {
     // will not take any effect
     explicit operator bool() const noexcept { return _writer.valid(); }
 
-    // Inserts a field into the document for inverted indexing.
-    template<typename Field>
-    bool Insert(Field&& field) const {
-      return _writer.insert(std::forward<Field>(field), _doc_id);
+    // Block ingest: the whole field-major column in one call (docs carried by
+    // the batch's runs or the docs span, so none of these use _doc_id).
+    bool InsertBlock(field_id id, IndexFeatures features, TokenBatch& batch,
+                     std::span<const DocRun> runs) const {
+      return _writer.InsertBlock(id, features, batch, runs);
     }
 
-    // Inserts the field denoted by `field` (must not be nullptr).
-    template<typename Field>
-    bool Insert(Field* field) const {
-      return _writer.insert(*field, _doc_id);
+    bool InsertKeywordBlock(field_id id, IndexFeatures features,
+                            std::span<const duckdb::string_t> values,
+                            std::span<const doc_id_t> docs) const {
+      return _writer.InsertKeywordBlock(id, features, values, docs);
     }
 
-    // Inserts the range of fields [begin; end) for inverted indexing.
-    template<typename Iterator>
-    bool Insert(Iterator begin, Iterator end) const {
-      for (; _writer.valid() && begin != end; ++begin) {
-        Insert(*begin);
-      }
-      return _writer.valid();
+    template<typename T>
+    bool InsertKeywordBlock(field_id id, IndexFeatures features,
+                            std::span<const T> values,
+                            doc_id_t first_doc) const {
+      return _writer.InsertKeywordBlock(id, features, values, first_doc);
+    }
+
+    bool InsertNullBlock(field_id id, IndexFeatures features,
+                         std::span<const doc_id_t> docs) const {
+      return _writer.InsertNullBlock(id, features, docs);
+    }
+
+    // Field slot for emit-time term resolution (id-mode token batches) and
+    // slot-direct block flushes.
+    FieldInverter* Field(field_id id, IndexFeatures features) const {
+      return _writer.Field(id, features);
+    }
+
+    bool InsertBlock(FieldInverter& slot, TokenBatch& batch,
+                     std::span<const DocRun> runs) const {
+      return _writer.InsertBlock(slot, batch, runs);
+    }
+
+    bool InsertBlock(FieldInverter& slot,
+                     std::span<const duckdb::string_t> terms,
+                     std::span<const doc_id_t> docs,
+                     uint32_t tokens_per_doc) const {
+      return _writer.InsertBlock(slot, terms, docs, tokens_per_doc);
     }
 #ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }
@@ -995,7 +1016,6 @@ class IndexWriter : private util::Noncopyable {
   // Abort transaction
   void Abort() noexcept;
 
-  IndexFeatures _wand_features{};  // Set of features required for wand
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
   // Fallback options (FunctionFieldOptions wrapping the provider callbacks),

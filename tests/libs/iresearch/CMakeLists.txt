@@ -15,11 +15,13 @@ set(iresearch-tests_sources
     ./analysis/stemming_tokenizer_tests.cpp
     ./analysis/stopwords_tokenizer_tests.cpp
     ./analysis/solr_synonyms_tokenizer_tests.cpp
+    ./analysis/split_by_non_alpha_tokenizer_tests.cpp
     ./analysis/wordnet_synonyms_tokenizer_tests.cpp
     ./analysis/path_hierarchy_tokenizer_test.cpp
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
+    ./analysis/wildcard_analyzer_tests.cpp
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
@@ -43,8 +45,9 @@ set(iresearch-tests_sources
     ./index/norm_test.cpp
     ./index/index_death_tests.cpp
     ./index/field_meta_test.cpp
+    ./index/inverter_oracle_test.cpp
+    ./index/inverter_tests.cpp
     ./index/merge_writer_tests.cpp
-    ./index/postings_tests.cpp
     ./index/segment_writer_tests.cpp
     ./index/sorted_index_tests.cpp
     ./index/compaction_policy_tests.cpp
@@ -104,7 +107,6 @@ set(iresearch-tests_sources
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp
     ./utils/bit_utils_tests.cpp
-    ./utils/block_pool_test.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
     ./utils/regexp_utils_test.cpp

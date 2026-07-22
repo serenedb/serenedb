@@ -548,18 +548,6 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
 
 }  // namespace
 
-// Sequential 'granularity_level' value, cannot use 'increment' since
-// it can be 0
-void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
-                     NumericTokenizer& term) {
-  boundary.clear();
-
-  for (const auto* term_attr = irs::get<TermAttr>(term); term.next();) {
-    SDB_ASSERT(term_attr);
-    boundary.emplace_back(term_attr->value);
-  }
-}
-
 QueryBuilder::ptr ByGranularRange::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   auto sub_ctx = ctx;

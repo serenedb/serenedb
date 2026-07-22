@@ -12,6 +12,7 @@ target_link_libraries(
 target_include_directories(
     search-benchmark-common
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    PUBLIC ${CMAKE_SOURCE_DIR}/tests/libs/iresearch
 )
 
 add_executable(search-benchmark-game-build build_index.cpp)

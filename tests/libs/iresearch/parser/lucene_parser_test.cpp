@@ -122,7 +122,7 @@ void AssertRange(const irs::Filter& f, irs::field_id field,
 class LuceneParserTest : public ::testing::Test {
  protected:
   irs::MixedBooleanFilter root;
-  irs::analysis::SegmentationTokenizer::ptr tokenizer{
+  irs::analysis::Tokenizer::ptr tokenizer{
     irs::analysis::SegmentationTokenizer::Make(
       irs::analysis::SegmentationTokenizer::Options{})};
 

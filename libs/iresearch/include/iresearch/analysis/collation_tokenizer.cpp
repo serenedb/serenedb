@@ -25,9 +25,13 @@
 #include <unicode/coll.h>
 #include <unicode/locid.h>
 
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
 #include <string_view>
 
 #include "collation_tokenizer_encoder.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
@@ -50,9 +54,9 @@ void CollationTokenizer::StateDeleterT::operator()(StateT* p) const noexcept {
 }
 
 CollationTokenizer::CollationTokenizer(Options options)
-  : _state{new StateT(std::move(options))}, _term_eof{true} {}
+  : _state{new StateT(std::move(options))} {}
 
-Analyzer::ptr CollationTokenizer::Make(Options opts) {
+Tokenizer::ptr CollationTokenizer::Make(Options opts) {
   if (opts.locale.isBogus()) {
     THROW_SQL_ERROR(ERR_MSG("collation: invalid locale"));
   }
@@ -66,7 +70,7 @@ Analyzer::ptr CollationTokenizer::Make(Options opts) {
   return std::make_unique<CollationTokenizer>(std::move(opts));
 }
 
-bool CollationTokenizer::reset(std::string_view data) {
+bool CollationTokenizer::Collate(std::string_view data) {
   if (!_state->collator) {
     auto err = UErrorCode::U_ZERO_ERROR;
     _state->collator.reset(
@@ -131,13 +135,26 @@ bool CollationTokenizer::reset(std::string_view data) {
     }
   }
 
-  std::get<TermAttr>(_attrs).value = {_state->term_buf, term_buf_idx};
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = static_cast<uint32_t>(data.size());
-  _term_eof = false;
+  _term_size = static_cast<uint32_t>(term_buf_idx);
+  _input_size = static_cast<uint32_t>(data.size());
 
   return true;
 }
+
+bytes_view CollationTokenizer::CollatedTerm() const noexcept {
+  return {_state->term_buf, _term_size};
+}
+
+template<TokenLayout Layout>
+bool CollationTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
+  if (!Collate(value)) {
+    sink.buf.one_to_one = false;
+    return false;
+  }
+  sink.EmitInterned<Layout>(CollatedTerm(), 0, _input_size);
+  return true;
+}
+
+template class TypedTokenizer<CollationTokenizer>;
 
 }  // namespace irs::analysis

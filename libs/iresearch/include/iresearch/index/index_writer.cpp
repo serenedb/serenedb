@@ -1137,9 +1137,6 @@ IndexWriter::IndexWriter(
   SDB_ASSERT(_codec);
 
   _topk_scorer = _committed_reader->Options().scorer;
-  if (_topk_scorer) {
-    _wand_features |= _topk_scorer->GetIndexFeatures();
-  }
 
   _flush_context.store(_flush_contexts.data());
 
@@ -1700,7 +1697,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // The merge passes its own view; a segment write installs its owning override
   // later via SetFieldOptions, so non-owning here.
   return {
-    .scorers_features = _wand_features,
     .scorer = _topk_scorer,
     .comparator = _comparator,
     .resource_manager = compaction ? *_dir.ResourceManager().compactions

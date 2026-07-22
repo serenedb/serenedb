@@ -25,15 +25,14 @@
 
 #include <string>
 
-#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs::analysis {
 
 // an analyzer capable of breaking up delimited text into tokens as per
 // RFC4180 (without starting new records on newlines)
-class DelimitedTokenizer final : public TypedAnalyzer<DelimitedTokenizer>,
+class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
                                  private util::Noncopyable {
  public:
   static constexpr std::string_view type_name() noexcept { return "delimiter"; }
@@ -45,21 +44,20 @@ class DelimitedTokenizer final : public TypedAnalyzer<DelimitedTokenizer>,
   static ptr Make(Options opts);
 
   explicit DelimitedTokenizer(std::string_view delimiter);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
 
  private:
-  // token value with evaluated quotes
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  template<TokenLayout Layout>
+  void FastFillValue(TokenEmitter& sink, bytes_view data);
+  template<TokenLayout Layout>
+  void SlowFillValue(TokenEmitter& sink, bytes_view data);
 
-  bytes_view _data;
   bytes_view _delim;
   bstring _delim_buf;
-  bstring _term_buf;  // buffer for the last evaluated term
-  attributes _attrs;
 };
+
+extern template class TypedTokenizer<DelimitedTokenizer>;
 
 }  // namespace irs::analysis

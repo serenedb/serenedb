@@ -23,7 +23,7 @@
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "absl/algorithm/container.h"
@@ -46,15 +46,22 @@ ColumnTokenizer BuildColumnTokenizer(
   search::Features features) {
   if (!text_dictionary.isSet()) {
     auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    return ColumnTokenizer{
+      .analyzer = Tokenizer::TokenizerWrapper{analyzer.release(),
+                                              Tokenizer::Deleter{nullptr}},
+      .features = features.GetIndexFeatures(),
+      .verbatim = true};
   }
   auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
   if (!dict) {
     THROW_SQL_ERROR(ERR_MSG("Dictionary for inverted index does not exists"));
   }
-  return ColumnTokenizer{.analyzer = dict->GetTokenizer(),
-                         .features = features.GetIndexFeatures()};
+  auto analyzer = dict->GetTokenizer();
+  const bool verbatim =
+    analyzer->Traits().terms == irs::TokenTraits::Terms::Keyword;
+  return ColumnTokenizer{.analyzer = std::move(analyzer),
+                         .features = features.GetIndexFeatures(),
+                         .verbatim = verbatim};
 }
 
 using persistence::EntryConfigSerialized;

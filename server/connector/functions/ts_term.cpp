@@ -21,7 +21,7 @@
 #include <absl/status/status.h>
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
@@ -64,15 +64,13 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   auto& analyzer = ctx.tokenizer;
   std::vector<irs::bstring> tokens;
-  if (!analyzer.reset(text)) {
+  irs::TermVectorSink sink{tokens};
+  if (!analyzer.Fill(text, sink.writer, irs::TokenLayout::Terms)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
-  const auto* tok_attr = irs::get<irs::TermAttr>(analyzer);
-  while (analyzer.next()) {
-    tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
-  }
+  sink.writer.Finish();
 
   if (tokens.empty()) {
     AddMaybeNegated<irs::Empty>(parent, ctx, column_info);

@@ -21,9 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "tests_shared.hpp"
+#include "token_sink_utils.hpp"
 
 namespace tests {
 
@@ -47,7 +48,7 @@ TEST_F(AnalyzerTest, test_load) {
       });
 
     ASSERT_NE(nullptr, analyzer);
-    ASSERT_TRUE(analyzer->reset("abc"));
+    ASSERT_TRUE(tests::Analyze(*analyzer, "abc").has_value());
   }
 
   // locale with provided ignored_words
@@ -62,7 +63,7 @@ TEST_F(AnalyzerTest, test_load) {
     auto analyzer = irs::analysis::TextTokenizer::Make(std::move(opts));
 
     ASSERT_NE(nullptr, analyzer);
-    ASSERT_TRUE(analyzer->reset("abc"));
+    ASSERT_TRUE(tests::Analyze(*analyzer, "abc").has_value());
   }
 
   // .........................................................................

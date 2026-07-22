@@ -35,6 +35,7 @@
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
+#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -153,6 +154,11 @@ inline constexpr OptionInfo kThreshold{
 
 inline constexpr OptionInfo kHex{"hex", false,
                                  "Treat stop words as hex-encoded strings"};
+
+// Split-by-non-alpha tokenizer
+
+inline constexpr OptionInfo kToLower{"tolower", false,
+                                     "Lowercase (ASCII) each emitted token"};
 
 // MinHash
 
@@ -276,6 +282,8 @@ inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
 
 inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 
+inline constexpr OptionInfo kSplitByNonAlphaOptions[] = {kToLower};
+
 inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
 
 inline constexpr OptionInfo kEdgeNGramOptions[] = {kMinGram, kMaxGram,
@@ -375,6 +383,11 @@ inline constexpr OptionGroup kNormGroup{
   kNormOptions,
   {},
 };
+inline constexpr OptionGroup kSplitByNonAlphaGroup{
+  irs::analysis::SplitByNonAlphaTokenizer::type_name(),
+  kSplitByNonAlphaOptions,
+  {},
+};
 inline constexpr OptionGroup kSegmentationGroup{
   irs::analysis::SegmentationTokenizer::type_name(),
   kSegmentationOptions,
@@ -417,18 +430,31 @@ inline constexpr OptionGroup kWordnetSynonymsGroup{
 };
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
-  kFeaturesGroup,       kTextGroup,
-  kNGramGroup,          kNearestNeighborsGroup,
-  kStemmingGroup,       kStopwordsGroup,
-  kClassificationGroup, kCollationGroup,
-  kDelimiterGroup,      kMultiDelimiterGroup,
-  kMinHashGroup,        kWildcardGroup,
-  kNormGroup,           kSegmentationGroup,
-  kPipelineGroup,       kPatternGroup,
-  kPathHierarchyGroup,  kUnionGroup,
-  kCopyFromGroup,       kGeoPointGroup,
-  kGeoJsonGroup,        kKeywordGroup,
-  kSolrSynonymsGroup,   kWordnetSynonymsGroup,
+  kFeaturesGroup,
+  kTextGroup,
+  kNGramGroup,
+  kNearestNeighborsGroup,
+  kStemmingGroup,
+  kStopwordsGroup,
+  kClassificationGroup,
+  kCollationGroup,
+  kDelimiterGroup,
+  kMultiDelimiterGroup,
+  kMinHashGroup,
+  kWildcardGroup,
+  kNormGroup,
+  kSegmentationGroup,
+  kSplitByNonAlphaGroup,
+  kPipelineGroup,
+  kPatternGroup,
+  kPathHierarchyGroup,
+  kUnionGroup,
+  kCopyFromGroup,
+  kGeoPointGroup,
+  kGeoJsonGroup,
+  kKeywordGroup,
+  kSolrSynonymsGroup,
+  kWordnetSynonymsGroup,
   kSparseNGramGroup,
 };
 

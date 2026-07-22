@@ -66,7 +66,6 @@ using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
 struct SegmentWriterOptions {
-  const IndexFeatures scorers_features;
   ScorerPtr scorer = nullptr;
   const Comparer* const comparator{};
   // TODO(mbkkt) Remove it from here? We could use directory

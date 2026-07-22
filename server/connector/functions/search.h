@@ -22,7 +22,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
-#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 
 #include "catalog/tokenizer.h"
 

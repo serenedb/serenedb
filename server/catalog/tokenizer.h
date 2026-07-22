@@ -23,11 +23,11 @@
 #include <absl/synchronization/mutex.h>
 
 #include <expected>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <memory>
 #include <string>
@@ -50,24 +50,24 @@ class Tokenizer : public Object {
   struct Deleter {
     Tokenizer* tokenizer{nullptr};
 
-    void operator()(irs::analysis::Analyzer* analyzer) {
+    void operator()(irs::analysis::Tokenizer* analyzer) {
       // TODO(mbkkt) Revert this when global identity will be available
       if (tokenizer) {
-        tokenizer->PushTokenizer(irs::analysis::Analyzer::ptr{analyzer});
+        tokenizer->PushTokenizer(irs::analysis::Tokenizer::ptr{analyzer});
       } else {
         delete analyzer;
       }
     }
   };
 
-  using TokenizerWrapper = std::unique_ptr<irs::analysis::Analyzer, Deleter>;
+  using TokenizerWrapper = std::unique_ptr<irs::analysis::Tokenizer, Deleter>;
 
   static std::shared_ptr<Tokenizer> Deserialize(duckdb::Deserializer& src,
                                                 ReadContext ctx);
 
   TokenizerWrapper GetTokenizer();
 
-  void PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept;
+  void PushTokenizer(irs::analysis::Tokenizer::ptr analyzer) noexcept;
 
   const auto& Config() const noexcept { return _config; }
 
@@ -84,10 +84,10 @@ class Tokenizer : public Object {
   uint32_t GetNormRowGroupSize() const noexcept { return _norm_row_group_size; }
 
  private:
-  irs::analysis::Analyzer::ptr CreateAnalyzer() const;
+  irs::analysis::Tokenizer::ptr CreateTokenizer() const;
 
   mutable absl::Mutex _m;
-  std::vector<irs::analysis::Analyzer::ptr> _pool;
+  std::vector<irs::analysis::Tokenizer::ptr> _pool;
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
   uint32_t _norm_row_group_size;

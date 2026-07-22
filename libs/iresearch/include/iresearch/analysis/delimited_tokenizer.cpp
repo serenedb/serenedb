@@ -23,42 +23,43 @@
 
 #include "delimited_tokenizer.hpp"
 
+#include <bit>
+#include <cstring>
+#include <limits>
 #include <string_view>
+
+#include "iresearch/analysis/batch/classify.hpp"
+#include "iresearch/analysis/batch/term_view.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 
 namespace irs::analysis {
 namespace {
 
-bytes_view EvalTerm(bstring& buf, bytes_view data) {
+// Unescapes a quoted term straight into caller-provided memory (single copy);
+// returns -1 when the term is identity (unquoted / mismatched quotes).
+int64_t UnescapeInto(byte_type* out, bytes_view data) {
   if (data.empty() || '"' != data[0]) {
-    return data;  // not a quoted term (even if quotes inside
+    return -1;
   }
-
-  buf.clear();
-
+  size_t out_n = 0;
   bool escaped = false;
   size_t start = 1;
-
   for (size_t i = 1, count = data.size(); i < count; ++i) {
     if ('"' == data[i]) {
-      if (escaped && start == i) {  // an escaped quote
+      if (escaped && start == i) {
         escaped = false;
-
         continue;
       }
-
       if (escaped) {
-        break;  // mismatched quote
+        break;
       }
-
-      buf.append(&data[start], i - start);
+      std::memcpy(out + out_n, &data[start], i - start);
+      out_n += i - start;
       escaped = true;
       start = i + 1;
     }
   }
-
-  return start != 1 && start == data.size()
-           ? bytes_view(buf)
-           : data;  // return identity for mismatched quotes
+  return start != 1 && start == data.size() ? static_cast<int64_t>(out_n) : -1;
 }
 
 size_t FindDelimiter(bytes_view data, bytes_view delim) {
@@ -104,50 +105,107 @@ DelimitedTokenizer::DelimitedTokenizer(std::string_view delimiter)
   }
 }
 
-Analyzer::ptr DelimitedTokenizer::Make(Options opts) {
+Tokenizer::ptr DelimitedTokenizer::Make(Options opts) {
   return std::make_unique<DelimitedTokenizer>(opts.delimiter);
 }
 
-bool DelimitedTokenizer::next() {
-  if (IsNull(_data)) {
-    return false;
+template<TokenLayout Layout>
+bool DelimitedTokenizer::DoFill(std::string_view value, TokenEmitter& sink) {
+  const auto data = ViewCast<byte_type>(value);
+  if (_delim.size() == 1 && memchr(data.data(), '"', data.size()) == nullptr) {
+    FastFillValue<Layout>(sink, data);
+  } else {
+    SlowFillValue<Layout>(sink, data);
   }
-
-  auto& offset = std::get<OffsAttr>(_attrs);
-
-  auto size = FindDelimiter(_data, _delim);
-  auto next = std::max<size_t>(1, size + _delim.size());
-  auto start = offset.end + static_cast<uint32_t>(_delim.size());
-  // value is allowed to overflow, will only produce invalid result
-  auto end = start + size;
-
-  if (std::numeric_limits<uint32_t>::max() < end) {
-    return false;  // cannot fit the next token into offset calculation
-  }
-
-  auto& term = std::get<TermAttr>(_attrs);
-
-  offset.start = start;
-  offset.end = static_cast<uint32_t>(end);
-  term.value = IsNull(_delim)
-                 ? bytes_view{_data.data(), size}
-                 : EvalTerm(_term_buf, bytes_view(_data.data(), size));
-  _data = size >= _data.size()
-            ? bytes_view{}
-            : bytes_view{_data.data() + next, _data.size() - next};
-
   return true;
 }
 
-bool DelimitedTokenizer::reset(std::string_view data) {
-  _data = ViewCast<byte_type>(data);
+// Single-byte delimiter over a quote-free value: block-classified bitmask
+// splitting (compare loop vectorizes), token views straight into the value.
+// Slots are claimed per mask (popcount) so the capacity check runs once per
+// block, not per token.
+template<TokenLayout Layout>
+void DelimitedTokenizer::FastFillValue(TokenEmitter& sink, bytes_view data) {
+  auto& buf = sink.buf;
+  const auto delim = _delim[0];
+  const auto* p = data.data();
+  const size_t size = data.size();
+  size_t tok_begin = 0;
 
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  // counterpart to computation in next() above
-  offset.end = 0 - static_cast<uint32_t>(_delim.size());
+  const auto drain = [&](uint32_t bitmask,
+                         size_t block_off) __attribute__((always_inline)) {
+    while (bitmask != 0) {
+      const auto slots = sink.Next(std::popcount(bitmask));
+      const auto first = static_cast<uint32_t>(slots.data() - buf.terms);
+      for (size_t k = 0; k < slots.size(); ++k) {
+        const size_t pos = block_off + std::countr_zero(bitmask);
+        bitmask &= bitmask - 1;
+        slots[k] =
+          MakeTermView(p + tok_begin, static_cast<uint32_t>(pos - tok_begin));
+        if constexpr (Layout == TokenLayout::TermsPosOffs) {
+          buf.offs_start[first + k] = static_cast<uint32_t>(tok_begin);
+          buf.offs_end[first + k] = static_cast<uint32_t>(pos);
+        }
+        tok_begin = pos + 1;
+      }
+    }
+  };
 
-  return true;
+  size_t offset = 0;
+  for (; size - offset >= kClassifyBlock; offset += kClassifyBlock) {
+    drain(ClassifyEqBlock(p + offset, delim), offset);
+  }
+  if (offset < size) {
+    uint32_t tail = 0;
+    for (size_t i = offset; i < size; ++i) {
+      tail |= static_cast<uint32_t>(p[i] == delim) << (i - offset);
+    }
+    drain(tail, offset);
+  }
+  sink.Emit<Layout>(MakeTermView(bytes_view{p + tok_begin, size - tok_begin}),
+                    static_cast<uint32_t>(tok_begin),
+                    static_cast<uint32_t>(size));
 }
+
+// General path (quotes / multi-byte or empty delimiter): legacy stepping.
+template<TokenLayout Layout>
+void DelimitedTokenizer::SlowFillValue(TokenEmitter& sink, bytes_view data) {
+  auto& buf = sink.buf;
+  uint32_t prev_end = 0 - static_cast<uint32_t>(_delim.size());
+  while (!IsNull(data)) {
+    const auto size = FindDelimiter(data, _delim);
+    const auto next = std::max<size_t>(1, size + _delim.size());
+    uint32_t start = 0;
+    uint32_t end = 0;
+    if constexpr (Layout == TokenLayout::TermsPosOffs) {
+      start = prev_end + static_cast<uint32_t>(_delim.size());
+      const auto end64 = static_cast<uint64_t>(start) + size;
+      if (std::numeric_limits<uint32_t>::max() < end64) {
+        return;
+      }
+      end = static_cast<uint32_t>(end64);
+      prev_end = end;
+    }
+    const bytes_view raw{data.data(), size};
+    const auto i = sink.Next();
+    bytes_view term = raw;
+    if (!IsNull(_delim) && !raw.empty() && raw[0] == '"') [[unlikely]] {
+      auto* mem = sink.Reserve(raw.size());
+      if (const auto n = UnescapeInto(mem, raw); n >= 0) {
+        term = bytes_view{mem, static_cast<size_t>(n)};
+      }
+    }
+    buf.terms[i] = MakeTermView(term);
+    if constexpr (Layout == TokenLayout::TermsPosOffs) {
+      buf.offs_start[i] = start;
+      buf.offs_end[i] = end;
+    }
+    data = size >= data.size()
+             ? bytes_view{}
+             : bytes_view{data.data() + next, data.size() - next};
+  }
+}
+
+template class TypedTokenizer<DelimitedTokenizer>;
 
 }  // namespace irs::analysis

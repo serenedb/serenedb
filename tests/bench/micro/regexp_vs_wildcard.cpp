@@ -25,8 +25,8 @@
 // is missing - silent fallback would produce misleading numbers.
 
 #include <benchmark/benchmark.h>
-#include <simdutf.h>
 #include <unicode/locid.h>
+#include <utf8.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -50,7 +50,7 @@
 #include <utility>
 #include <vector>
 
-#include "utf8proc_wrapper.hpp"
+#include "insert_field.hpp"
 
 namespace bench_regexp {
 
@@ -71,7 +71,8 @@ struct IField {
 
   virtual irs::field_id Id() const = 0;
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
-  virtual irs::Tokenizer& GetTokens() const = 0;
+  virtual irs::analysis::Tokenizer& GetTokens() const = 0;
+  virtual std::string_view Value() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
 
@@ -112,15 +113,14 @@ class TextField final : public FieldBase {
 
   void SetValue(std::string_view value) noexcept { _value = value; }
 
-  irs::Tokenizer& GetTokens() const final {
-    _stream->reset(_value);
-    return *_stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const final { return *_stream; }
+
+  std::string_view Value() const final { return _value; }
 
   bool Write(irs::DataOutput&) const final { return false; }
 
  private:
-  irs::analysis::Analyzer::ptr _stream;
+  irs::analysis::Tokenizer::ptr _stream;
   std::string_view _value;
 };
 
@@ -202,13 +202,15 @@ class EuroparlBodyTemplate {
   std::string _body;
 };
 
-// Splits a UTF-8 byte range on a delimiter rune, yielding string columns.
-// Copied from tests/libs/iresearch/index/doc_generator.cpp; iterates
-// codepoints via duckdb's utf8proc wrapper.
+// utf8::unchecked::BreakIterator, copied verbatim from
+// tests/libs/iresearch/index/doc_generator.cpp. Splits a UTF-8 byte
+// range on a delimiter rune, yielding string columns.
 template<typename OctetIterator>
 class BreakIterator {
  public:
-  BreakIterator(uint32_t delim, const OctetIterator& begin,
+  using Utf8Iterator = utf8::unchecked::iterator<OctetIterator>;
+
+  BreakIterator(utf8::uint32_t delim, const OctetIterator& begin,
                 const OctetIterator& end)
     : _delim{delim}, _wbegin{begin}, _wend{begin}, _end{end} {
     if (!Done()) {
@@ -236,27 +238,20 @@ class BreakIterator {
  private:
   void Next() {
     _wbegin = _wend;
-    OctetIterator it = _wbegin;
-    while (it != _end) {
-      const OctetIterator prev = it;
-      int sz = 0;
-      const auto cp = duckdb::Utf8Proc::UTF8ToCodepoint(&*it, sz);
-      it += sz > 0 ? sz : 1;
-      if (static_cast<uint32_t>(cp) == _delim) {
-        _res.assign(_wbegin, prev);
-        _wend = it;
-        return;
-      }
+    _wend = std::find(_wbegin, _end, _delim);
+    if (_wend != _end) {
+      _res.assign(_wbegin.base(), _wend.base());
+      ++_wend;
+    } else {
+      _res.assign(_wbegin.base(), _end.base());
     }
-    _wend = _end;
-    _res.assign(_wbegin, _end);
   }
 
-  uint32_t _delim;
+  utf8::uint32_t _delim;
   std::string _res;
-  OctetIterator _wbegin;
-  OctetIterator _wend;
-  OctetIterator _end;
+  Utf8Iterator _wbegin;
+  Utf8Iterator _wend;
+  Utf8Iterator _end;
 };
 
 // Tab-separated line reader.
@@ -272,7 +267,7 @@ class EuroparlReader {
     if (!std::getline(_ifs, _line)) {
       return nullptr;
     }
-    if (!simdutf::validate_utf8(_line.data(), _line.size())) {
+    if (utf8::find_invalid(_line.begin(), _line.end()) != _line.end()) {
       return nullptr;
     }
 
@@ -368,7 +363,8 @@ Corpus BuildIndex() {
     auto trx = writer->GetBatch();
     {
       auto inserter = trx.Insert();
-      if (!inserter.Insert(doc->indexed.begin(), doc->indexed.end())) {
+      if (!tests::InsertFields(inserter, doc->indexed.begin(),
+                               doc->indexed.end())) {
         Die("Insert returned false");
       }
     }

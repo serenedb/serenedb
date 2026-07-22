@@ -24,7 +24,7 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -38,7 +38,11 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/containers/node_hash_map.h"
+#include "catalog/tokenizer.h"
+#include "connector/common.h"
 #include "connector/search_filter_builder.hpp"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 
@@ -54,12 +58,12 @@ struct FilterContext {
   const ExpressionGetter* expr_getter = nullptr;
   duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
   containers::NodeHashMap<irs::field_id, SearchColumnInfo>& expr_cache;
-  irs::analysis::Analyzer& identity;
-  irs::analysis::Analyzer& tokenizer;
+  irs::analysis::Tokenizer& identity;
+  irs::analysis::Tokenizer& tokenizer;
   duckdb::ClientContext& client_context;
   size_t scored_terms_limit = 1024;
 
-  FilterContext WithTokenizer(irs::analysis::Analyzer& tokenizer) const {
+  FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
     return {
       .negated = negated,
       .boost = boost,
@@ -176,9 +180,39 @@ void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
 void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
 void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 
-void ResetNumericStream(irs::NumericTokenizer& stream,
-                        duckdb::LogicalTypeId type_id,
-                        const duckdb::Value& value);
+// Dispatches `value` as the numeric type the sink indexed for `type_id`
+// (TIME_TZ order-preserving remap, raw INT64 for types BIGINT casts can't
+// represent) and invokes `f` with it.
+template<typename F>
+void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
+                      F&& f) {
+  switch (catalog::term_dict::Classify(type_id)) {
+    case catalog::term_dict::Kind::NumericI32:
+      f(value.GetValue<int32_t>());
+      break;
+    case catalog::term_dict::Kind::NumericI64:
+      if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
+        f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
+      } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
+        f(value.GetValueUnsafe<int64_t>());
+      } else {
+        f(value.GetValue<int64_t>());
+      }
+      break;
+    case catalog::term_dict::Kind::NumericF32:
+      f(value.GetValue<float>());
+      break;
+    case catalog::term_dict::Kind::NumericF64:
+      f(value.GetValue<double>());
+      break;
+    default:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Expected a numeric value, got type id ",
+                static_cast<int>(type_id)),
+        ERR_HINT("The value's type must match the column's indexed type."));
+  }
+}
 
 // Throws THROW_SQL_ERROR on invalid arguments: ts_* syntax is only
 // reachable through the inverted index, so there is no fallback plan.

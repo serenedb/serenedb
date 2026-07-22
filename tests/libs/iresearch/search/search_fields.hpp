@@ -33,10 +33,9 @@ struct StringField final {
   std::string_view Name() const { return field_name; }
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    stream.reset(value);
-    return stream;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   bool Write(irs::DataOutput& out) const {
     irs::WriteStr(out, value);
@@ -57,12 +56,9 @@ struct GeoField final {
   std::string_view Name() const { return field_name; }
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    if (!value.empty()) {
-      static_cast<irs::analysis::GeoAnalyzer&>(*stream).reset(value);
-    }
-    return *stream.get();
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *stream; }
+
+  std::string_view Value() const noexcept { return value; }
 
   // Source coding force-includes the indexed source column, so the stored
   // value is the original GeoJSON text the filter re-parses at query time.
@@ -78,7 +74,7 @@ struct GeoField final {
     return irs::IndexFeatures::None;
   }
 
-  mutable irs::analysis::Analyzer::ptr stream{
+  mutable irs::analysis::Tokenizer::ptr stream{
     irs::analysis::GeoJsonAnalyzer::Make(
       irs::analysis::GeoJsonAnalyzer::Options{})};
   std::string_view value;

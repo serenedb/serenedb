@@ -24,17 +24,18 @@
 #pragma once
 
 #include <tuple>
+#include <vector>
 
 #include "basics/serializer.h"
-#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/batch/token_batch.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 
 namespace irs::analysis {
 
 struct TokenizerConfig;
 
-class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
+class WildcardAnalyzer final : public TypedTokenizer<WildcardAnalyzer>,
                                private util::Noncopyable {
   using Ngram = NGramTokenizer<NGramTokenizerBase::InputType::UTF8>;
 
@@ -44,18 +45,20 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
     std::unique_ptr<TokenizerConfig> base_analyzer;
     size_t ngram_size = 3;
   };
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "wildcard"; }
 
-  explicit WildcardAnalyzer(Analyzer::ptr base_analyzer,
+  explicit WildcardAnalyzer(Tokenizer::ptr base_analyzer,
                             size_t ngram_size) noexcept;
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
+  template<TokenLayout Layout>
+  bool DoFill(std::string_view value, TokenEmitter& sink);
 
-  bool reset(std::string_view data) final;
-
-  bool next() final;
+  TokenTraits Traits() const noexcept final {
+    return {
+      .terms = TokenTraits::Terms::Ngrams, .offsets = false, .store = true};
+  }
 
   auto& ngram() const noexcept {
     SDB_ASSERT(_ngram);
@@ -67,14 +70,31 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
     return reinterpret_cast<byte_type*>(_terms.data());
   }
 
-  Analyzer::ptr _analyzer;
+  void Emit(TokenEmitter& sink);
+  void AppendEncodedTerm(bytes_view term);
+  void BuildTermBounds(bytes_view term);
+  template<bool Identity>
+  void EmitTermGrams(TokenEmitter& sink, bytes_view term,
+                     const uint32_t* bounds, uint32_t nsym);
+
+  Tokenizer::ptr _analyzer;
   std::unique_ptr<Ngram> _ngram;
-  const TermAttr* _term{};
-  TermAttr* _ngram_term{};
-  StoreAttr _store;
   std::string _terms;
-  const byte_type* _terms_begin{};
-  const byte_type* _terms_end{};
+
+  uint32_t _ngram_size = 3;
+  std::vector<uint32_t> _fill_bounds;
+  std::unique_ptr<TokenWriter> _encode_writer;
+
+  friend class EncodeConsumerAccess;
+};
+
+extern template class TypedTokenizer<WildcardAnalyzer>;
+
+class EncodeConsumerAccess {
+ protected:
+  static void Append(WildcardAnalyzer& self, bytes_view term) {
+    self.AppendEncodedTerm(term);
+  }
 };
 
 template<typename Context>

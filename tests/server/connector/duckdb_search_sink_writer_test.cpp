@@ -25,7 +25,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
-#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -283,39 +283,30 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     auto big_terms = segment.field(catalog::Column::Id{5});
     ASSERT_NE(nullptr, big_terms);
 
-    irs::NumericTokenizer num_stream;
-    const auto* num_token = irs::get<irs::TermAttr>(num_stream);
-    ASSERT_TRUE(num_token);
-    irs::BooleanTokenizer bool_stream;
-    const auto* bool_token = irs::get<irs::TermAttr>(bool_stream);
-    ASSERT_TRUE(bool_token);
+    irs::byte_type num_buf[irs::numeric_utils::kNumericTermMaxSize];
     SCOPED_TRACE(absl::StrCat("validating pk=", pk));
     auto varchar_term_itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(varchar_term_itr->seek(irs::ViewCast<irs::byte_type>(col2)));
     auto varchar_postings =
       segment.mask(varchar_term_itr->postings(irs::IndexFeatures::None));
-    num_stream.reset(col1);
-    ASSERT_TRUE(num_stream.next());
     auto int32_term_itr = int32_terms->iterator(irs::SeekMode::NORMAL);
-    ASSERT_TRUE(int32_term_itr->seek(num_token->value));
+    ASSERT_TRUE(int32_term_itr->seek(
+      irs::numeric_utils::EncodeNumericTerm(num_buf, col1)));
     auto int32_postings =
       segment.mask(int32_term_itr->postings(irs::IndexFeatures::None));
-    num_stream.reset(col4);
-    ASSERT_TRUE(num_stream.next());
     auto real_term_itr = real_terms->iterator(irs::SeekMode::NORMAL);
-    ASSERT_TRUE(real_term_itr->seek(num_token->value));
+    ASSERT_TRUE(real_term_itr->seek(
+      irs::numeric_utils::EncodeNumericTerm(num_buf, col4)));
     auto real_postings =
       segment.mask(real_term_itr->postings(irs::IndexFeatures::None));
-    num_stream.reset(col5);
-    ASSERT_TRUE(num_stream.next());
     auto big_term_itr = big_terms->iterator(irs::SeekMode::NORMAL);
-    ASSERT_TRUE(big_term_itr->seek(num_token->value));
+    ASSERT_TRUE(
+      big_term_itr->seek(irs::numeric_utils::EncodeNumericTerm(num_buf, col5)));
     auto big_postings =
       segment.mask(big_term_itr->postings(irs::IndexFeatures::None));
-    bool_stream.reset(col3);
-    ASSERT_TRUE(bool_stream.next());
     auto bool_term_itr = bool_terms->iterator(irs::SeekMode::NORMAL);
-    ASSERT_TRUE(bool_term_itr->seek(bool_token->value));
+    ASSERT_TRUE(bool_term_itr->seek(
+      irs::ViewCast<irs::byte_type>(irs::BooleanTerm(col3))));
     auto bool_postings =
       segment.mask(bool_term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(int32_postings->advance()));

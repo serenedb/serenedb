@@ -18,7 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <vector>
+
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <iresearch/analysis/batch/token_sinks.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
@@ -143,18 +146,29 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     // bytes either way.
     auto text = duckdb::StringValue::Get(*bound_val);
     auto& analyzer = ctx.tokenizer;
-    if (!analyzer.reset(std::string_view{text})) {
+    std::vector<irs::bstring> tokens;
+    irs::TermVectorSink sink{tokens};
+    if (!analyzer.Fill(std::string_view{text}, sink.writer,
+                       irs::TokenLayout::Terms)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG(label, " failed to analyse '", text, "'"),
         ERR_HINT("The column's analyzer rejected the bound value."));
     }
-    const auto* token = irs::get<irs::TermAttr>(analyzer);
-    if (!analyzer.next()) {
+    sink.writer.Finish();
+    if (tokens.empty()) {
       // Zero tokens (e.g. all-stopword input) -> the comparison can't
       // match anything in the term dictionary.
       AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
       return;
+    }
+    if (tokens.size() > 1) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(label,
+                " produced multiple tokens; range comparison "
+                "requires a single token"),
+        ERR_HINT("Use ts_between(min, max, ...) for multi-component bounds."));
     }
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
@@ -163,19 +177,11 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
     if (is_lower) {
-      rng.min.assign(token->value);
+      rng.min.assign(tokens[0]);
       rng.min_type = bound_type;
     } else {
-      rng.max.assign(token->value);
+      rng.max.assign(tokens[0]);
       rng.max_type = bound_type;
-    }
-    if (analyzer.next()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(label,
-                " produced multiple tokens; range comparison "
-                "requires a single token"),
-        ERR_HINT("Use ts_between(min, max, ...) for multi-component bounds."));
     }
     return;
   }
@@ -188,7 +194,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
     auto bytes = irs::ViewCast<irs::byte_type>(
-      irs::BooleanTokenizer::value(bound_val->GetValue<bool>()));
+      irs::BooleanTerm(bound_val->GetValue<bool>()));
     if (is_lower) {
       rng.min.assign(bytes);
       rng.min_type = bound_type;
@@ -208,15 +214,15 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto cast = bound_val->type() == column_info.logical_type
                 ? *bound_val
                 : bound_val->DefaultCastAs(column_info.logical_type);
-  irs::NumericTokenizer stream;
-  ResetNumericStream(stream, col_type, cast);
-  if (is_lower) {
-    irs::SetGranularTerm(rng.min, stream);
-    rng.min_type = bound_type;
-  } else {
-    irs::SetGranularTerm(rng.max, stream);
-    rng.max_type = bound_type;
-  }
+  WithNumericValue(col_type, cast, [&](auto v) {
+    if (is_lower) {
+      irs::SetGranularNumericTerm(rng.min, v);
+      rng.min_type = bound_type;
+    } else {
+      irs::SetGranularNumericTerm(rng.max, v);
+      rng.max_type = bound_type;
+    }
+  });
 }
 
 void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
@@ -297,13 +303,13 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto& rng = options->range;
     if (args.min) {
       rng.min.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args.min->GetValue<bool>())));
+        irs::BooleanTerm(args.min->GetValue<bool>())));
       rng.min_type =
         args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
     if (args.max) {
       rng.max.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args.max->GetValue<bool>())));
+        irs::BooleanTerm(args.max->GetValue<bool>())));
       rng.max_type =
         args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
@@ -323,9 +329,9 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
       auto cast = v.type() == column_info.logical_type
                     ? v
                     : v.DefaultCastAs(column_info.logical_type);
-      irs::NumericTokenizer stream;
-      ResetNumericStream(stream, col_type, cast);
-      irs::SetGranularTerm(boundary, stream);
+      WithNumericValue(col_type, cast, [&](auto val) {
+        irs::SetGranularNumericTerm(boundary, val);
+      });
       bt = incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     };
     if (args.min) {

@@ -430,7 +430,7 @@ void ValidateInvertedIndexColumns(
 
 void ValidateTokenizerVsColumn(std::string_view column_name,
                                const duckdb::LogicalType& col_type,
-                               const irs::analysis::Analyzer& analyzer) {
+                               const irs::analysis::Tokenizer& analyzer) {
   const auto type_id = analyzer.type();
   const bool is_geojson =
     type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
@@ -606,7 +606,7 @@ std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
             "'"));
 }
 
-bool IsGeoSourceAnalyzer(const irs::analysis::Analyzer& analyzer) {
+bool IsGeoSourceAnalyzer(const irs::analysis::Tokenizer& analyzer) {
   const auto type_id = analyzer.type();
   if (type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
     return true;
@@ -618,20 +618,29 @@ bool IsGeoSourceAnalyzer(const irs::analysis::Analyzer& analyzer) {
   return false;
 }
 
-bool IsGeoAnalyzer(const irs::analysis::Analyzer& analyzer) {
+bool IsGeoAnalyzer(const irs::analysis::Tokenizer& analyzer) {
   const auto type_id = analyzer.type();
   return type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id() ||
          type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
 }
 
 void FillEntryFromTokenizer(const Tokenizer& dict,
-                            const irs::analysis::Analyzer& analyzer,
+                            const irs::analysis::Tokenizer& analyzer,
                             const duckdb::LogicalType& value_type,
                             InvertedIndexEntryInfo& entry) {
   entry.text_dictionary = dict.GetId();
   entry.features = dict.GetFeatures();
-  const bool wants_store = irs::get<irs::StoreAttr>(analyzer) != nullptr &&
-                           !IsGeoSourceAnalyzer(analyzer);
+  if (entry.features.HasFeatures(irs::IndexFeatures::Offs) &&
+      !analyzer.Traits().offsets) {
+    // Per-type capability is validated at analyzer creation; this catches
+    // instance-level configuration (e.g. a pipeline whose children cannot
+    // track offsets).
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("'offset' feature requires an analyzer that produces offsets"));
+  }
+  const bool wants_store =
+    analyzer.Traits().store && !IsGeoSourceAnalyzer(analyzer);
   const bool wants_norm = entry.features.HasFeatures(irs::IndexFeatures::Norm);
   SDB_ASSERT(!(wants_store && wants_norm),
              "tokenizer-store and norm should be mutually exclusive");

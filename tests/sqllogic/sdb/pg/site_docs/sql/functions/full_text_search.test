@@ -49,7 +49,7 @@ statement ok
 CREATE TABLE vecs (id INTEGER, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX vecs_l2 ON vecs USING inverted (id, emb ivf (metric = 'l2'));
+CREATE INDEX vecs_l2 ON vecs USING inverted (id, emb ivf (metric = 'l2', quant = 'none'));
 
 statement ok
 INSERT INTO vecs VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [0, 0, 1]::FLOAT[3]);
@@ -61,7 +61,7 @@ statement ok
 CREATE TABLE vecs_c (id INTEGER, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX vecs_cos ON vecs_c USING inverted (id, emb ivf (metric = 'cosine'));
+CREATE INDEX vecs_cos ON vecs_c USING inverted (id, emb ivf (metric = 'cosine', quant = 'none'));
 
 statement ok
 INSERT INTO vecs_c VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 1, 0]::FLOAT[3]), (3, [1, 1, 0]::FLOAT[3]);
@@ -85,7 +85,7 @@ statement ok
 CREATE TABLE vecs_i (id INTEGER, emb FLOAT[3]);
 
 statement ok
-CREATE INDEX vecs_ip ON vecs_i USING inverted (id, emb ivf (metric = 'ip'));
+CREATE INDEX vecs_ip ON vecs_i USING inverted (id, emb ivf (metric = 'ip', quant = 'none'));
 
 statement ok
 INSERT INTO vecs_i VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [2, 2, 2]::FLOAT[3]);

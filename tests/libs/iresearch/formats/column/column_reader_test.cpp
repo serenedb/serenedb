@@ -2311,9 +2311,9 @@ TEST_F(ColumnReaderTest, SparsePrefixEngineDbRepro) {
 
 // A stored FLOAT vector column is exactly what the IVF opclass writes for
 // `compression = true` (COMPRESSION_AUTO). DuckDB's analyze tournament must
-// compress the FLOAT element data with a floating-point codec -- ALP or ALPRD --
-// rather than leaving it uncompressed. The codec is recorded per row-group on
-// the array element child and survives flush + reopen.
+// compress the FLOAT element data with a floating-point codec -- ALP or ALPRD
+// -- rather than leaving it uncompressed. The codec is recorded per row-group
+// on the array element child and survives flush + reopen.
 TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
   constexpr uint64_t kRows = 5000;
   constexpr uint32_t kRgSize = 4096;  // multiple of STANDARD_VECTOR_SIZE
@@ -2392,9 +2392,8 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
   irs::MemoryDirectory dir{};
   {
     irs::ColWriter w{dir, "seg", Db()};
-    auto& cw =
-      w.OpenColumn(kV, vtype, /*skip_validity=*/false, kRgSize,
-                   duckdb::CompressionType::COMPRESSION_UNCOMPRESSED);
+    auto& cw = w.OpenColumn(kV, vtype, /*skip_validity=*/false, kRgSize,
+                            duckdb::CompressionType::COMPRESSION_UNCOMPRESSED);
     uint64_t pos = 0;
     while (pos < kRows) {
       const auto take =
@@ -2448,8 +2447,7 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
     for (duckdb::idx_t k = 0; k < take; ++k) {
       const auto g = pos + k;
       for (duckdb::idx_t i = 0; i < kDim; ++i) {
-        EXPECT_EQ(cd[k * kDim + i], elem_val(g, i))
-          << "elem " << g << ":" << i;
+        EXPECT_EQ(cd[k * kDim + i], elem_val(g, i)) << "elem " << g << ":" << i;
       }
     }
     pos += take;

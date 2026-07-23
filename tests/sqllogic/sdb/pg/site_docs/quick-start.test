@@ -104,7 +104,7 @@ CREATE TEXT SEARCH DICTIONARY english (
 
 statement ok
 CREATE INDEX movies_idx ON movies
-    USING inverted(id, title english, overview english, embedding ivf (metric = 'cosine'));
+    USING inverted(id, title english, overview english, embedding ivf (metric = 'cosine', quant = 'none'));
 
 statement ok
 VACUUM (REFRESH_TABLE) movies;

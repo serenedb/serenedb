@@ -243,6 +243,8 @@ enum PgTypeOID : int32_t {
   kVariantArray = id::kVariantArray.id(),
   kTsquery = id::kTsquery.id(),
   kTsqueryArray = id::kTsqueryArray.id(),
+  kUnion = id::kUnion.id(),
+  kUnionArray = id::kUnionArray.id(),
 };
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the

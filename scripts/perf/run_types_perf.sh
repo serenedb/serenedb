@@ -266,7 +266,15 @@ COPY (
            AS variant_nested,
          {'outer': {'mid': {'a': rnd(i, 11)::DOUBLE,
                             'b': 'n-' || (i % 100)::VARCHAR}}}::VARIANT
-           AS variant_nested_f64
+           AS variant_nested_f64,
+         CASE WHEN i % 2 = 0
+           THEN (i % 1000)::INTEGER::UNION(num INTEGER, str VARCHAR)
+           ELSE ('str-' || (i % 1024)::VARCHAR)::UNION(num INTEGER, str VARCHAR)
+         END AS union_is,
+         CASE WHEN i % 2 = 0
+           THEN rnd(i, 12)::DOUBLE::UNION(d DOUBLE, str VARCHAR)
+           ELSE ('s-' || (i % 100)::VARCHAR)::UNION(d DOUBLE, str VARCHAR)
+         END AS union_fs
   FROM range(${N}) t(i)
 ) TO '${PQ_SQL_PATH}' (FORMAT parquet);
 "
@@ -306,13 +314,19 @@ SET search_path TO public, native_db.main;
 if [[ "${NEED_DATA}" == "1" ]]; then
 	run_sql "create_view" "${BUILD_THREADS}" "
 CREATE OR REPLACE VIEW bench_view AS
-  SELECT * FROM read_parquet('${PQ_SQL_PATH}');
+  SELECT * REPLACE (
+    union_is::UNION(num INTEGER, str VARCHAR) AS union_is,
+    union_fs::UNION(d DOUBLE, str VARCHAR) AS union_fs
+  ) FROM read_parquet('${PQ_SQL_PATH}');
 "
 
 	run_sql "create_native_table" "${BUILD_THREADS}" "
 DROP TABLE IF EXISTS native_db.main.bench_native;
 CREATE TABLE native_db.main.bench_native AS
-SELECT * FROM read_parquet('${PQ_SQL_PATH}');
+SELECT * REPLACE (
+  union_is::UNION(num INTEGER, str VARCHAR) AS union_is,
+  union_fs::UNION(d DOUBLE, str VARCHAR) AS union_fs
+) FROM read_parquet('${PQ_SQL_PATH}');
 "
 
 	run_setup "checkpoint_native_db" "${BUILD_THREADS}" "CHECKPOINT native_db;"
@@ -337,7 +351,8 @@ INCLUDE (
   i8, i16, i32, i64, f32, f64, s, bool_col,
   arr_i32, arr_f64, lst_i32, struct_basic, struct_f64,
   map_i32, lst_struct, deep, variant_obj, variant_f64, variant_messy,
-  variant_nested, variant_nested_f64
+  variant_nested, variant_nested_f64,
+  union_is, union_fs
 );
 "
 fi
@@ -404,6 +419,8 @@ QUERIES=(
 	"variantMsg|SUM(variant_messy.a::DOUBLE)"
 	"variantNest|SUM(variant_nested.outer.mid.a::INTEGER) + SUM(length(variant_nested.outer.mid.b::VARCHAR))"
 	"variantNestF|SUM(variant_nested_f64.outer.mid.a::DOUBLE) + SUM(length(variant_nested_f64.outer.mid.b::VARCHAR))"
+	"unionGet|SUM(length(union_is::VARCHAR))"
+	"unionKey|SUM(union_extract(union_is, 'num'))"
 )
 
 # Three timing modes, picked by env.  In every mode the hot number is

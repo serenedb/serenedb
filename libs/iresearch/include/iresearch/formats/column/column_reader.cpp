@@ -657,6 +657,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
                                                   std::move(validity),
                                                   std::move(meta.variant_rgs));
       break;
+    case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT:
       col = std::make_unique<StructColumnReader>(meta.id, std::move(meta.type),
                                                  std::move(validity),

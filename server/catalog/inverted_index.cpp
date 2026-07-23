@@ -298,6 +298,7 @@ void Validate(std::string_view label, const duckdb::LogicalType& type) {
     case STRUCT:
     case MAP:
     case VARIANT:
+    case UNION:
       return;
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),

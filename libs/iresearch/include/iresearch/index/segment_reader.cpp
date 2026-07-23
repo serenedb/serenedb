@@ -43,7 +43,7 @@ const ColumnReader* SegmentReader::Column(field_id field) const {
   return _impl->Column(field);
 }
 
-const TwoLayerCentroids* SegmentReader::Ivf(field_id field) const {
+const CentroidsTree* SegmentReader::Ivf(field_id field) const {
   return _impl->Ivf(field);
 }
 

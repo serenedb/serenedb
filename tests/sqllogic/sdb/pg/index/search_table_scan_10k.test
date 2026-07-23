@@ -1,0 +1,250 @@
+# Search-table scans through the unified iresearch engine at 10k+ rows over
+# three segments with disjoint ranges: pushed `.col` filters (comparisons,
+# IS [NOT] NULL, LIKE, expressions, conjunctions), count-only shapes, rowid
+# projection, ORDER BY covered column LIMIT (segment ordering + TopN dynamic
+# filter), deletes, and the clean MERGE INTO / INSERT ON CONFLICT rejection.
+# `n` is NULL exactly in the first segment, so per-file statistics differ.
+
+statement ok
+CREATE TABLE stk (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT, n BIGINT)
+  WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+INSERT INTO stk SELECT i, i, 'r'||i, NULL FROM generate_series(0,7999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stk;
+
+
+statement ok
+INSERT INTO stk SELECT i, i, 'r'||i, i FROM generate_series(8000,15999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stk;
+
+
+statement ok
+INSERT INTO stk SELECT i, i, 'r'||i, i FROM generate_series(16000,23999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stk;
+
+
+query
+SELECT count(*) AS c FROM stk;
+----
+c
+24000
+
+
+# Range filter that statistics confine to the last segment. The filter column
+# is read only for the filter, so the scan stays count-only.
+query
+EXPLAIN SELECT count(*) FROM stk WHERE x >= 20000;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star()  │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: stk                │
+│ Lookup: search            │
+│ Output: row-count only    │
+│ Column Filter: x >= 20000 │
+│ ~4,800 rows               │
+╰───────────────────────────╯
+
+
+query
+SELECT count(*) AS c FROM stk WHERE x >= 20000;
+----
+c
+4000
+
+
+query
+SELECT count(*) AS c FROM stk WHERE x < 0;
+----
+c
+0
+
+
+query
+SELECT count(*) AS c FROM stk WHERE n IS NULL;
+----
+c
+8000
+
+
+query
+SELECT count(*) AS c FROM stk WHERE n IS NOT NULL;
+----
+c
+16000
+
+
+query
+SELECT sum(x) AS s FROM stk WHERE x BETWEEN 12000 AND 12099;
+----
+s
+1204950
+
+
+# Expression filter (generic pushdown) across all segments.
+query
+SELECT count(*) AS c FROM stk WHERE x % 4000 = 0;
+----
+c
+6
+
+
+# Conjunction of three pushed filters (adaptive chain).
+query
+SELECT count(*) AS c FROM stk WHERE x >= 8000 AND n IS NOT NULL AND x % 2 = 0;
+----
+c
+8000
+
+
+# LIKE lowers to a pushed prefix range.
+query
+SELECT count(*) AS c FROM stk WHERE s LIKE 'r777%';
+----
+c
+11
+
+
+# rowid projection: on a search table without a user PRIMARY KEY the rowid is
+# the generated PK, materialized from `.col` (a PK'd table has no rowid).
+statement ok
+CREATE TABLE stk_np (x BIGINT, s TEXT) WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+INSERT INTO stk_np SELECT i, 'r'||i FROM generate_series(0,5999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stk_np;
+
+
+statement ok
+INSERT INTO stk_np SELECT i, 'r'||i FROM generate_series(6000,11999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stk_np;
+
+
+query
+SELECT count(DISTINCT rowid) AS c FROM stk_np;
+----
+c
+12000
+
+
+query
+SELECT count(rowid) AS c FROM stk_np WHERE x >= 10000;
+----
+c
+2000
+
+
+query
+SELECT count(*) AS c FROM (SELECT rowid FROM stk_np WHERE x % 3 = 0) q;
+----
+c
+4000
+
+
+statement ok
+DROP TABLE stk_np;
+
+
+# ORDER BY covered column LIMIT: segment scheduling + the TopN dynamic filter.
+query
+SELECT x FROM stk ORDER BY x DESC LIMIT 3;
+----
+x
+23999
+23998
+23997
+
+
+query
+SELECT x FROM stk ORDER BY x ASC LIMIT 3;
+----
+x
+0
+1
+2
+
+
+query
+SELECT x FROM stk WHERE n IS NOT NULL ORDER BY x ASC LIMIT 2;
+----
+x
+8000
+8001
+
+
+# MERGE INTO and INSERT ... ON CONFLICT (lowered to MergeInto) are rejected
+# cleanly instead of corrupting the index through the store mirror.
+statement error
+MERGE INTO stk USING (SELECT 1::BIGINT AS pk) src ON stk.pk = src.pk
+  WHEN MATCHED THEN UPDATE SET x = 0;
+----
+db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on search-backed tables
+
+
+statement error
+INSERT INTO stk VALUES (1, 1, 'dup', 1) ON CONFLICT (pk) DO NOTHING;
+----
+db error: ERROR: MERGE INTO (and INSERT ... ON CONFLICT) is not yet supported on search-backed tables
+
+
+# Deletes: masked rows vanish from filtered scans, counts and top-k.
+statement ok
+DELETE FROM stk WHERE x < 4000;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stk;
+
+
+query
+SELECT count(*) AS c FROM stk;
+----
+c
+20000
+
+
+query
+SELECT count(*) AS c FROM stk WHERE n IS NULL;
+----
+c
+4000
+
+
+query
+SELECT sum(x) AS s FROM stk WHERE x < 8000;
+----
+s
+23998000
+
+
+query
+SELECT x FROM stk ORDER BY x ASC LIMIT 2;
+----
+x
+4000
+4001
+
+
+statement ok
+DROP TABLE stk;

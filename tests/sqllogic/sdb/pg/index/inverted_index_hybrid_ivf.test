@@ -1,0 +1,259 @@
+control substitution on
+
+# ============================================================================
+# Hybrid inverted index: text column(s) + IVF vector column(s) in one index.
+#
+# A text field with the 'offset' feature sets IndexFeatures::Offs; an IVF vector
+# field quantized with sq8 (the default) sets IndexFeatures::Pay. Both share the
+# same segment and the same ".pay" stream, so a hybrid index makes the segment
+# aggregate carry Offs|Pay at once. This exercises that the writer/reader handle
+# the mixed stream (the per-field Offs/Pay mutual-exclusion must not be asserted
+# at segment scope).
+# ============================================================================
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY hy_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE TABLE docs(
+    pk INTEGER PRIMARY KEY,
+    title VARCHAR,
+    body VARCHAR,
+    va FLOAT[3],
+    vb FLOAT[4]
+);
+
+# Two text columns (Offs) + two IVF vector columns defaulting to sq8 (Pay).
+statement ok
+CREATE INDEX docs_idx ON docs
+    USING inverted(pk, title hy_en, body hy_en,
+                       va ivf (metric = 'l2'), vb ivf (metric = 'cosine'));
+
+# Same layout but with a mix of an unquantized vector (no Pay) and a quantized
+# one (Pay) alongside the text Offs, all in the same segment.
+statement ok
+CREATE INDEX docs_idx_mix ON docs
+    USING inverted(pk, title hy_en,
+                       va ivf (metric = 'l2', quant = 'none'),
+                       vb ivf (metric = 'ip', quant = 'sq8'));
+
+statement ok
+INSERT INTO docs VALUES
+    (1, 'red running shoes',     'lightweight trail gear',   [100,0,0]::FLOAT[3], [10,0,0,0]::FLOAT[4]),
+    (2, 'blue swimming goggles', 'water sport equipment',    [0,100,0]::FLOAT[3], [0,10,0,0]::FLOAT[4]),
+    (3, 'green hiking boots',    'rugged trail gear',        [0,0,100]::FLOAT[3], [0,0,10,0]::FLOAT[4]),
+    (4, 'red trail shoes',       'lightweight running gear', [90,10,0]::FLOAT[3], [9,1,0,0]::FLOAT[4]),
+    (5, 'yellow tennis racket',  'indoor court equipment',   [50,50,0]::FLOAT[3], [0,0,0,10]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+# Exhaustive scan so the tiny-table kNN is exact (nprobe >= nlist).
+statement ok
+SET sdb_nprobe = 256;
+
+query
+SELECT count(*) FROM docs_idx;
+----
+count
+5
+
+# --- text search on each text column -----------------------------------------
+
+query
+SELECT pk FROM docs_idx WHERE title @@ 'red' ORDER BY pk;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM docs_idx WHERE title @@ 'shoes' ORDER BY pk;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM docs_idx WHERE body @@ 'gear' ORDER BY pk;
+----
+pk
+1
+3
+4
+
+query
+SELECT pk FROM docs_idx WHERE body @@ 'trail' ORDER BY pk;
+----
+pk
+1
+3
+
+# --- kNN on each vector column (index name and base-table rewrite) -----------
+
+query
+SELECT pk FROM docs_idx ORDER BY va <-> [100,0,0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM docs ORDER BY va <-> [100,0,0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM docs_idx ORDER BY va <-> [0,0,100]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+query
+SELECT pk FROM docs_idx ORDER BY vb <=> [1,0,0,0]::FLOAT[4] LIMIT 2;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM docs_idx ORDER BY vb <=> [0,0,1,0]::FLOAT[4] LIMIT 1;
+----
+pk
+3
+
+# --- hybrid: text filter + vector ordering -----------------------------------
+
+query
+SELECT pk FROM docs_idx
+WHERE title @@ 'shoes'
+ORDER BY va <-> [100,0,0]::FLOAT[3]
+LIMIT 2;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM docs_idx
+WHERE body @@ 'gear'
+ORDER BY va <-> [0,0,100]::FLOAT[3]
+LIMIT 1;
+----
+pk
+3
+
+# --- hybrid: two text predicates + vector ordering ---------------------------
+
+query
+SELECT pk FROM docs_idx
+WHERE title @@ 'red' AND body @@ 'gear'
+ORDER BY va <-> [100,0,0]::FLOAT[3];
+----
+pk
+1
+4
+
+# --- mixed-quant index (none vector + sq8 vector + text Offs) -----------------
+
+query
+SELECT count(*) FROM docs_idx_mix;
+----
+count
+5
+
+query
+SELECT pk FROM docs_idx_mix WHERE title @@ 'red' ORDER BY pk;
+----
+pk
+1
+4
+
+query
+SELECT pk FROM docs_idx_mix ORDER BY va <-> [0,0,100]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+query
+SELECT pk FROM docs_idx_mix ORDER BY vb <#> [10,0,0,0]::FLOAT[4] LIMIT 1;
+----
+pk
+1
+
+# --- merge: a second flushed batch + compaction, then re-query ---------------
+
+statement ok
+INSERT INTO docs VALUES
+    (6, 'red climbing rope',     'durable trail gear',       [80,20,0]::FLOAT[3], [8,2,0,0]::FLOAT[4]),
+    (7, 'black cycling helmet',  'road sport equipment',     [0,80,20]::FLOAT[3], [0,8,2,0]::FLOAT[4]),
+    (8, 'white golf gloves',     'course accessory',         [0,20,80]::FLOAT[3], [0,0,8,2]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+statement ok
+VACUUM (COMPACT_TABLE) docs;
+
+query
+SELECT count(*) FROM docs_idx;
+----
+count
+8
+
+# newly merged rows are searchable across text and both vectors
+query
+SELECT pk FROM docs_idx WHERE body @@ 'trail' ORDER BY pk;
+----
+pk
+1
+3
+6
+
+query
+SELECT pk FROM docs_idx WHERE title @@ 'red' ORDER BY pk;
+----
+pk
+1
+4
+6
+
+query
+SELECT pk FROM docs_idx ORDER BY va <-> [100,0,0]::FLOAT[3] LIMIT 1;
+----
+pk
+1
+
+query
+SELECT pk FROM docs_idx ORDER BY vb <=> [0,0,1,0]::FLOAT[4] LIMIT 1;
+----
+pk
+3
+
+query
+SELECT pk FROM docs_idx
+WHERE title @@ 'red'
+ORDER BY va <-> [100,0,0]::FLOAT[3]
+LIMIT 2;
+----
+pk
+1
+4
+
+statement ok
+RESET sdb_nprobe;
+
+# --- teardown ---------------------------------------------------------------
+
+statement ok
+DROP TABLE docs;

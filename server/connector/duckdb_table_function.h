@@ -24,6 +24,7 @@
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <functional>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
@@ -64,6 +65,24 @@ enum class ScoreEmit : uint8_t {
   OneMinus,  // 1 - score    (cosine_distance)
   Negate,    // -score       (l1, l2_sqr, negative_ip, l1_norm)
 };
+
+// Maps one raw "larger = nearer" score to its user-facing value. Single source
+// of truth: applied to the output scores at the emit boundary, and baked into
+// the pushed score-column filter so the predicate is evaluated in the same
+// (user-facing) space it was written in.
+inline float ApplyScoreEmit(ScoreEmit emit, float score) {
+  switch (emit) {
+    case ScoreEmit::Identity:
+      return score;
+    case ScoreEmit::SqrtNeg:
+      return std::sqrt(-score);
+    case ScoreEmit::OneMinus:
+      return 1.0F - score;
+    case ScoreEmit::Negate:
+      return -score;
+  }
+  SDB_UNREACHABLE();
+}
 
 struct VectorScorerOptions {
   irs::field_id field_id;
@@ -150,6 +169,25 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   std::optional<size_t> score_top_k;
   std::optional<duckdb::OrderType> score_order;
 
+  // Static score lower bound consumed at filter pushdown (Lucene min_score):
+  // a text score filter that IS a lower bound (`score > c` / `>= c`) is
+  // dropped from the plan and enforced by this floor instead -- the emitted
+  // scores are compacted with `score > floor`, the top-k collectors start at
+  // it, and it seeds the streaming WAND threshold. lowest() = no bound.
+  float score_static_floor = std::numeric_limits<float>::lowest();
+
+  // ORDER BY <covered .col column> LIMIT accepted via set_scan_order: segments
+  // are iterated best-first by the column's per-file statistics, the
+  // whole-file analogue of duckdb's RowGroupReorderer.
+  struct ScanOrder {
+    catalog::Column::Id column;
+    duckdb::OrderType order_type;
+    duckdb::OrderByNullType null_order;
+    duckdb::OrderByStatistics order_by;
+    duckdb::OrderByColumnType column_type;
+  };
+  std::optional<ScanOrder> scan_order;
+
   struct OffsetsRequest {
     catalog::Column::Id column_id;
     size_t limit = std::numeric_limits<size_t>::max();
@@ -160,8 +198,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   struct TsDictRequest {
     irs::field_id field_id = irs::field_limits::invalid();
-    // Valid only for a bare nullable facet: the scan appends a NULL-term row
-    // per segment counting the column's null-marker field.
+    // Valid for a nullable facet: the scan appends a per-segment NULL-term
+    // row counting the null-marker field under the claimed document filter.
     irs::field_id null_field_id = irs::field_limits::invalid();
     std::shared_ptr<irs::Filter> having_filter;
     duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
@@ -174,8 +212,6 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // One entry per enumerated field; multiple ts_dict aggregations over
   // different fields in one query each get their own request.
   std::vector<TsDictRequest> ts_dicts;
-
-  bool count_only = false;
 
   std::string lookup_label;
   // Whether the lookup source applies pushed table filters (native storage +
@@ -230,9 +266,13 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   virtual duckdb::LogicalType ColumnTypeById(
     catalog::Column::Id col_id) const = 0;
 
+  std::string DisplayColumnName(catalog::Column::Id col_id) const;
+
   using ColumnVisitor =
     std::function<void(catalog::Column::Id, const duckdb::LogicalType&)>;
   virtual void IterateColumns(const ColumnVisitor& cb) const = 0;
+
+  bool IsColumnNotNull(catalog::Column::Id col_id) const;
 
  protected:
   explicit SereneDBScanBindData(Kind k) : _kind{k} {}
@@ -292,7 +332,6 @@ uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
 
 duckdb::TableFunction CreateIResearchScanFunction();
 
-bool IsCountOnlyScan(const SereneDBScanBindData& bind_data,
-                     const duckdb::TableFunctionInitInput& input);
+void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

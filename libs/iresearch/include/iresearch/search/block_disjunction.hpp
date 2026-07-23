@@ -596,11 +596,15 @@ class BlockDisjunction : public DocIterator {
 
         auto value = it.value();
 
-        // disjunction is 1 step next behind, that may happen:
-        // - before the very first next()
-        // - after seek() in case of 'kSeekReadahead == false'
+        // The sub may sit behind the window: one step behind before the
+        // very first next() or after seek() ('kSeekReadahead == false'),
+        // arbitrarily far behind after a LazySeek probe. Recover with
+        // seek(), never advance(): a probe may have moved the sub's
+        // internals past value() (e.g. an exclusion's include), and
+        // advance() would skip that committed position while seek()
+        // re-settles on it. FillBlock requires value >= _doc_base.
         if (value < _doc_base) {
-          value = it.advance();
+          value = it.seek(_doc_base);
         }
 
         if (doc_limits::eof(value)) {

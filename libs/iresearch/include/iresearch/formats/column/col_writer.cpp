@@ -173,6 +173,14 @@ IvfWriter& ColWriter::AttachIVF(field_id column_id, IvfInfo info) {
   return *back.writer;
 }
 
+void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
+  for (auto& entry : _ivf_writers) {
+    if (entry->writer) {
+      entry->writer->SetIdxWriter(idx);
+    }
+  }
+}
+
 std::vector<std::unique_ptr<IvfWriter>> ColWriter::TakeIvfWriters() noexcept {
   std::vector<std::unique_ptr<IvfWriter>> out;
   out.reserve(_ivf_writers.size());

@@ -25,6 +25,8 @@ repos:
       - id: check-vcs-permalinks
       - id: check-xml
       - id: check-yaml
+        # Helm templates are Go templates, not YAML; helm lint validates them.
+        exclude: ^packages/helm/serenedb/templates/
       - id: destroyed-symlinks
       # TODO(mbkkt) - id: detect-aws-credentials
       # TODO(mbkkt) - id: detect-private-key

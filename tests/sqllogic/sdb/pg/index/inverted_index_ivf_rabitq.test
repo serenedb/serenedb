@@ -10,7 +10,7 @@ hash-threshold 100
 # below use rabitq_bits = 8 with well-separated vectors so exact row
 # order is deterministic; a dedicated section covers the default (1-bit)
 # quantizer with a coarser separation. quant='rabitq' supports only metric
-# l2 and ip, same as sq8/pq.
+# l2 and ip (unlike sq8/sq4/pq, which also support cosine).
 
 # Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
 statement ok
@@ -26,7 +26,7 @@ CREATE TABLE rabitq_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX rabitq_l2_idx ON rabitq_l2
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8, nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8))
   INCLUDE (label)
 
 statement count 6
@@ -75,7 +75,7 @@ CREATE TABLE rabitq_mc (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX rabitq_mc_idx ON rabitq_mc
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8, nlist = 3))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8))
 
 statement count 6
 INSERT INTO rabitq_mc VALUES
@@ -119,7 +119,7 @@ CREATE TABLE rabitq_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX rabitq_dml_idx ON rabitq_dml
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8, nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8))
   INCLUDE (label)
 
 statement count 4
@@ -225,7 +225,7 @@ CREATE TABLE rabitq_ip (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX rabitq_ip_idx ON rabitq_ip
-  USING inverted(pk, emb ivf (metric = 'ip', quant = 'rabitq', rabitq_bits = 8, nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'rabitq', rabitq_bits = 8))
 
 statement count 4
 INSERT INTO rabitq_ip VALUES
@@ -256,7 +256,7 @@ CREATE TABLE rabitq_hyb (pk INTEGER PRIMARY KEY, emb FLOAT[3], cat INTEGER)
 
 statement ok
 CREATE INDEX rabitq_hyb_idx ON rabitq_hyb
-  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8, nlist = 1))
+  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8))
 
 statement count 4
 INSERT INTO rabitq_hyb VALUES
@@ -304,7 +304,7 @@ CREATE TABLE rabitq_edge (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX rabitq_edge_idx ON rabitq_edge
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8, nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8))
 
 statement count 5
 INSERT INTO rabitq_edge VALUES
@@ -357,7 +357,7 @@ CREATE TABLE rabitq_default (pk INTEGER PRIMARY KEY, emb FLOAT[8])
 
 statement ok
 CREATE INDEX rabitq_default_idx ON rabitq_default
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq'))
 
 statement count 3
 INSERT INTO rabitq_default VALUES
@@ -388,13 +388,13 @@ CREATE TABLE rabitq_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 statement error
 CREATE INDEX rabitq_bad_cos ON rabitq_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'rabitq'));
 ----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf rabitq quantization does not support metric 'cosine'
 
 
 statement error
 CREATE INDEX rabitq_bad_l1 ON rabitq_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'rabitq'));
 ----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip', or 'cosine'
 
 
 statement error

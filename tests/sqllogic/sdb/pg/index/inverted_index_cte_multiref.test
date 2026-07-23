@@ -1,0 +1,159 @@
+hash-threshold 100000
+
+# Regression: a CTE that scans an index, referenced more than once and inlined
+# by the CTE_INLINING optimizer, was failing with "Table Function with name
+# iresearch_scan does not exist!". Inlining deep-copies the CTE body by round-
+# tripping the plan through serialize/deserialize; the IRESEARCH_SCAN table
+# function is attached to the LogicalGet on the fly and was never registered in
+# the catalog, so the copy failed the by-name lookup. Inlining only kicks in
+# when the CTE is referenced multiple times AND the query side has a LIMIT/TOP_N
+# (otherwise the CTE stays materialized), so every query below carries an outer
+# LIMIT. Fixed by registering the scan in the catalog and giving it a serialize
+# hook that reports NotImplemented, so inlining falls back to materialization.
+# Issues #962 and #753.
+
+statement ok
+CREATE TABLE t (id INT, body TEXT)
+
+
+statement ok
+INSERT INTO t VALUES
+  (1, 'mouse rodent vole'), (2, 'mouse'), (3, 'bat mouse mouse'),
+  (4, 'elephant'), (5, 'mouse mouse'), (6, 'computer mouse usb')
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY d
+  (template = 'delimiter', delimiter = ' ', frequency = true, position = true, norm = true)
+
+
+statement ok
+CREATE INDEX t_idx ON t USING inverted (id, body d)
+
+
+# #962: CTE with an inner ORDER BY ... LIMIT, referenced twice (main scan plus a
+# scalar subquery over the same CTE), ids ordered by BM25 norm (tie broken by id).
+query
+WITH lex AS (
+    SELECT id, s FROM (
+        SELECT id, BM25(t_idx.tableoid) AS s
+        FROM t_idx WHERE body @@ 'mouse' ORDER BY s DESC LIMIT 5) l)
+SELECT id FROM lex ORDER BY (s / NULLIF((SELECT max(s) FROM lex), 0)) DESC, id LIMIT 5;
+----
+id
+5
+2
+3
+1
+6
+
+
+# #753: two references combined by UNION ALL.
+query
+WITH c AS (SELECT id FROM t_idx WHERE body @@ 'mouse')
+SELECT id FROM (SELECT id FROM c UNION ALL SELECT id FROM c) u ORDER BY id LIMIT 4;
+----
+id
+1
+1
+2
+2
+
+
+# #753: self-join of the CTE.
+query
+WITH c AS (SELECT id FROM t_idx WHERE body @@ 'mouse')
+SELECT a.id FROM c a JOIN c b ON a.id <> b.id ORDER BY a.id LIMIT 4;
+----
+id
+1
+1
+1
+1
+
+
+# #753: comma-join of the CTE.
+query
+WITH c AS (SELECT id FROM t_idx WHERE body @@ 'mouse')
+SELECT a.id FROM c a, c b WHERE a.id < b.id ORDER BY a.id, b.id LIMIT 4;
+----
+id
+1
+1
+1
+1
+
+
+# #753: AS MATERIALIZED was the documented workaround; it stays materialized (no
+# inlining) and must keep working.
+query
+WITH c AS MATERIALIZED (SELECT id FROM t_idx WHERE body @@ 'mouse')
+SELECT id FROM (SELECT id FROM c UNION ALL SELECT id FROM c) u ORDER BY id LIMIT 4;
+----
+id
+1
+1
+2
+2
+
+
+# Vector (ANN) scans go through the same table function; #753 hit this too.
+statement ok
+CREATE TABLE v (id INT, emb FLOAT[3])
+
+
+statement ok
+CREATE INDEX v_idx ON v USING inverted (id, emb ivf (metric = 'l2'))
+
+
+statement ok
+INSERT INTO v VALUES
+  (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]),
+  (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3])
+
+
+statement ok
+VACUUM (REFRESH_TABLE) v
+
+
+# ANN CTE referenced twice via self-join.
+query
+WITH cand AS (SELECT id FROM v_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 3)
+SELECT a.id FROM cand a JOIN cand b ON a.id <> b.id ORDER BY a.id LIMIT 4;
+----
+id
+1
+1
+2
+2
+
+
+# ANN CTE referenced twice via a scalar subquery.
+query
+WITH cand AS (SELECT id FROM v_idx ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 3)
+SELECT id, (SELECT count(*) FROM cand) AS n FROM cand ORDER BY id LIMIT 3;
+----
+id	n
+1	3
+2	3
+3	3
+
+
+# The system-catalog scan (system_table_scan) had the identical defect: a system
+# table in a multiply-referenced, inlined CTE failed the same by-name lookup.
+query
+WITH c AS (SELECT relname FROM pg_class WHERE relname = 't_idx' LIMIT 5)
+SELECT relname FROM (SELECT relname FROM c UNION ALL SELECT relname FROM c) u ORDER BY relname LIMIT 2;
+----
+relname
+t_idx
+t_idx
+
+
+query
+WITH c AS (SELECT relname FROM pg_class WHERE relname IN ('t', 'v') LIMIT 10)
+SELECT a.relname FROM c a JOIN c b ON a.relname <> b.relname ORDER BY a.relname LIMIT 2;
+----
+relname
+t
+v

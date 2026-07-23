@@ -235,6 +235,15 @@ bool ColumnReader::NullsInData() const noexcept {
 void ColumnReader::FinishStats(duckdb::BaseStatistics stats) {
   if (_validity) {
     stats.Merge(_validity->MergedStatistics());
+  } else if (_row_count > 0 && !_children.empty()) {
+    // A nested parent rebuilds its stats from CreateEmpty (its own blocks are
+    // plumbing, e.g. list offsets), so the null flags only come from the
+    // validity child -- and its absence means the writer counted every row
+    // valid (ColumnWriter::SealValidity). Scalars need none of this: their
+    // data block stats already carry the flags.
+    SDB_ASSERT(!stats.CanHaveNull(),
+               "column without a validity payload carries null-bearing stats");
+    stats.SetHasNoNull();
   }
   _stats = stats.ToUnique();
 }
@@ -502,28 +511,48 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
   out.Slice(sel, hits);
 }
 
-duckdb::idx_t ColumnReader::GatherFilter(ScanState& s, uint64_t anchor,
-                                         duckdb::idx_t span,
-                                         duckdb::SelectionVector& sel,
-                                         duckdb::idx_t sel_count,
-                                         const duckdb::TableFilter& filter,
-                                         duckdb::TableFilterState& filter_state,
-                                         duckdb::Vector& result) const {
+duckdb::idx_t ColumnReader::GatherFilter(
+  ScanState& s, uint64_t anchor, duckdb::idx_t span,
+  duckdb::SelectionVector& sel, duckdb::idx_t sel_count,
+  const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
+  NullCheckKind null_check, duckdb::Vector& result) const {
   const uint64_t cur = ColumnReader::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherFilter requires ascending rows");
   if (anchor > cur) {
     ColumnReader::Skip(s, anchor - cur);
   }
   BeginScanVector(s);
-  SDB_ASSERT((s.window.end - s.window.begin) - s.st.offset_in_column >= span,
-             "GatherFilter span must lie within one segment");
   auto& seg = *s.segments.back();
   const auto& codec = seg.GetCompressionFunction();
   duckdb::idx_t approved = sel_count;
-  if (codec.filter != nullptr &&
-      codec.validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED) {
-    // The codec self-describes nulls, so the data segment alone is
-    // validity-complete: apply the codec filter (dict-level) over `sel`.
+  // The codec filter operates on one segment; a span that crosses the block
+  // boundary (blocks are not vector-aligned, e.g. dictionary-full splits on
+  // string columns) takes the decode path below -- ScanVector walks segments.
+  const bool within_segment =
+    (s.window.end - s.window.begin) - s.st.offset_in_column >= span;
+  const bool self_valid =
+    codec.validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+  // The codec filter needs the data segment alone to be validity-complete for
+  // the span: either the codec self-describes nulls (dict_fsst evaluates its
+  // dictionary once and filters rows by code), or the span's validity block is
+  // the all-valid EMPTY codec (rle evaluates its run values once and filters
+  // rows by run flag). Bare null checks keep the validity-only arm below, and
+  // null-bearing spans keep the decode arm.
+  const bool codec_filter =
+    within_segment && codec.filter &&
+    (self_valid || (null_check == NullCheckKind::None &&
+                    ValiditySpanAllValid(s, anchor, span)));
+  if (codec_filter) {
+    if (!self_valid) {
+      result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+      // The codec filter's evaluation reads the mask: reset it if an earlier
+      // null-bearing window dirtied it. A buffer-less mask is already
+      // all-valid.
+      auto& mask = duckdb::FlatVector::ValidityMutable(result);
+      if (!mask.AllValid()) {
+        mask.SetAllValid(span);
+      }
+    }
     seg.Filter(s.st, span, result, sel, approved, filter, filter_state);
     s.st.offset_in_column += span;
     s.st.internal_index = s.st.offset_in_column;
@@ -534,16 +563,60 @@ duckdb::idx_t ColumnReader::GatherFilter(ScanState& s, uint64_t anchor,
       SDB_ASSERT(!s.child_states.empty());
       _validity->SkipRows(s.child_states[0], span);
     }
+  } else if (within_segment && null_check != NullCheckKind::None &&
+             !self_valid) {
+    // Bare IS [NOT] NULL: the validity child alone answers it -- skip the
+    // data decode entirely (the data cursor still advances to stay in step).
+    SkipRows(s, span);
+    result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+    auto& mask = duckdb::FlatVector::ValidityMutable(result);
+    mask.SetAllValid(span);
+    if (_validity) {
+      SDB_ASSERT(!s.child_states.empty());
+      _validity->ScanVector(s.child_states[0], result, span,
+                            duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+    }
+    const bool want_valid = null_check == NullCheckKind::IsNotNull;
+    duckdb::idx_t kept = 0;
+    for (duckdb::idx_t k = 0; k < sel_count; ++k) {
+      const auto idx = sel.get_index(k);
+      if (mask.RowIsValid(idx) == want_valid) {
+        sel.set_index(kept++, idx);
+      }
+    }
+    approved = kept;
   } else {
-    // Separate validity (or no codec filter): decode the span with validity
-    // into `scratch`, then narrow the selection natively.
+    // Decode the span into `scratch`, then narrow the selection natively.
+    // When the span's validity block is the all-valid EMPTY codec, decoding
+    // the validity child would AND-combine nothing: scan the data alone and
+    // keep the validity cursor in step.
+    const bool all_valid = ValiditySpanAllValid(s, anchor, span);
     result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
     duckdb::FlatVector::ValidityMutable(result).SetAllValid(span);
-    ColumnReader::ScanCount(s, result, span, 0);
+    if (all_valid) {
+      ScanVector(s, result, span, duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+      if (_validity) {
+        SDB_ASSERT(!s.child_states.empty());
+        _validity->SkipRows(s.child_states[0], span);
+      }
+    } else {
+      ColumnReader::ScanCount(s, result, span, 0);
+    }
     duckdb::ColumnSegment::FilterSelection(sel, result, filter_state, span,
                                            approved);
   }
   return approved;
+}
+
+bool ColumnReader::ValiditySpanAllValid(ScanState& s, uint64_t anchor,
+                                        duckdb::idx_t span) const {
+  if (!_validity) {
+    return true;
+  }
+  SDB_ASSERT(!s.child_states.empty());
+  const auto w = _validity->Locate(anchor, s.child_states[0].window);
+  return anchor + span <= w.end && _validity->_segments[w.block].codec->type ==
+                                     duckdb::CompressionType::COMPRESSION_EMPTY;
 }
 
 void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {

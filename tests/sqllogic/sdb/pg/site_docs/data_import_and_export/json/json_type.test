@@ -15,7 +15,7 @@ json
 query error
 SELECT 'unquoted'::JSON;
 ----
-db error: ERROR: Malformed JSON at byte 0 of input: unexpected character.  Input: "unquoted"
+db error: ERROR: Malformed JSON at byte 0 of input: unexpected character, expected a JSON value.  Input: "unquoted"
 
 
 # DOCS_TEST: example_003

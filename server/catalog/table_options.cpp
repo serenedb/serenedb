@@ -28,8 +28,8 @@
 
 namespace sdb::catalog {
 
-std::optional<size_t> CheckConstraint::IsNotNull(
-  std::span<const Column> columns) const noexcept {
+std::optional<std::string_view> CheckConstraint::NotNullColumnName()
+  const noexcept {
   SDB_ASSERT(expr);
   if (!expr->HasExpr()) {
     return std::nullopt;
@@ -46,12 +46,20 @@ std::optional<size_t> CheckConstraint::IsNotNull(
         duckdb::ExpressionType::COLUMN_REF) {
     return std::nullopt;
   }
-  const auto& name = op.GetChildren()[0]
-                       ->Cast<duckdb::ColumnRefExpression>()
-                       .GetColumnName()
-                       .GetIdentifierName();
+  return op.GetChildren()[0]
+    ->Cast<duckdb::ColumnRefExpression>()
+    .GetColumnName()
+    .GetIdentifierName();
+}
+
+std::optional<size_t> CheckConstraint::IsNotNull(
+  std::span<const Column> columns) const noexcept {
+  const auto name = NotNullColumnName();
+  if (!name) {
+    return std::nullopt;
+  }
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].GetName() == name) {
+    if (columns[i].GetName() == *name) {
       return i;
     }
   }

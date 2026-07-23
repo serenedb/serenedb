@@ -21,7 +21,6 @@
 
 #include "geo/shape_container.h"
 
-#include <geodesic.h>
 #include <s2/s1angle.h>
 #include <s2/s2latlng.h>
 #include <s2/s2point_region.h>

@@ -1,0 +1,85 @@
+# Bulk `.col` filters over blocks that are not vector-aligned. String
+# dictionary blocks split when the dictionary fills, so a block boundary can
+# land mid-vector; the bulk scan's 2048-row windows then cross it and
+# GatherFilter must take the decode path (the codec filter path covers one
+# segment). 100k unique short strings split the first dictionary block at an
+# unaligned row.
+
+statement ok
+CREATE TABLE stbb (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stbb SELECT i, i, 'r' || i FROM generate_series(0, 99999) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stbb;
+
+
+# i = 0 plus every i whose decimal form starts with '1'.
+query
+SELECT count(*) AS n FROM stbb WHERE s < 'r2';
+----
+n
+11112
+
+
+# The same predicates made non-pushable (`s || ''`) as the reference: the
+# pushed filter must select exactly the same rows.
+query
+SELECT count(*) AS n FROM (
+  SELECT pk FROM stbb WHERE s < 'r2'
+  EXCEPT
+  SELECT pk FROM stbb WHERE s || '' < 'r2'
+) t;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM (
+  SELECT pk FROM stbb WHERE s BETWEEN 'r30000' AND 'r31000'
+  EXCEPT
+  SELECT pk FROM stbb WHERE s || '' BETWEEN 'r30000' AND 'r31000'
+) t;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM (
+  SELECT pk FROM stbb WHERE s || '' BETWEEN 'r30000' AND 'r31000'
+  EXCEPT
+  SELECT pk FROM stbb WHERE s BETWEEN 'r30000' AND 'r31000'
+) t;
+----
+n
+0
+
+
+# Two pushed filters whose columns have different block layouts: the window is
+# capped by one column's blocks and must still evaluate cleanly on the other.
+# i % 1000 in {0, 1} intersected with s < 'r2': 0, 1, 1000, 1001, then
+# 1x000/1x001 for each thousand within 10000..19999.
+query
+SELECT count(*) AS n FROM stbb WHERE (x % 1000) < 2 AND s < 'r2';
+----
+n
+24
+
+
+# Projected filter column across the same boundary.
+query
+SELECT min(s) AS lo, max(s) AS hi, count(*) AS n
+FROM stbb WHERE s BETWEEN 'r99995' AND 'r99999';
+----
+lo hi n
+r99995 r99999 5
+
+
+statement ok
+DROP TABLE stbb;

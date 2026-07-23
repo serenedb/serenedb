@@ -1,0 +1,218 @@
+hash-threshold 100
+
+# Scalar ts_dict aggregates (min / max / count(DISTINCT)) combined with a
+# residual filter on a covered (INCLUDE'd) column. Unlike the GROUP BY facet
+# path, the scalar-aggregate path does not push a covered-column residual into
+# the term dictionary -- it declines to a document scan (Lookup: table).
+# Results stay correct; these tests pin that behaviour and the contrast with an
+# indexed @@ predicate, which does keep the term-dictionary scan. Each query has
+# an EXPLAIN plan and is checked against the same query over the base table.
+
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY akw(template = 'keyword', frequency = true)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY atx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE abase(id INTEGER PRIMARY KEY, brand VARCHAR NOT NULL,
+                   svc VARCHAR NOT NULL, body VARCHAR NOT NULL)
+
+statement ok
+INSERT INTO abase VALUES
+  (1, 'acme',    'frontend', 'disk failed'),
+  (2, 'globex',  'frontend', 'all ok'),
+  (3, 'initech', 'backend',  'net failed'),
+  (4, 'acme',    'frontend', 'failed retry'),
+  (5, 'globex',  'backend',  'failed once')
+
+statement ok
+CREATE INDEX abase_idx ON abase USING inverted(brand akw, body atx)
+    INCLUDE (svc) WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) abase;
+
+# ===========================================================================
+# Covered-column residual: scalar aggregates decline to a document scan
+# ===========================================================================
+
+# --- min() over a covered residual.
+query
+EXPLAIN SELECT min(brand) FROM abase_idx WHERE svc = 'frontend'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ───────────╮
+│ Aggregates: min(#0)             │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: abase_idx                │
+│ Lookup: table                   │
+│ Projections: brand              │
+│ Column Filter: svc = 'frontend' │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+query T
+SELECT min(brand) FROM abase_idx WHERE svc = 'frontend'
+----
+min
+acme
+
+query T
+SELECT min(brand) FROM abase WHERE svc = 'frontend'
+----
+min
+acme
+
+# --- max() over a covered residual.
+query T
+SELECT max(brand) FROM abase_idx WHERE svc = 'frontend'
+----
+max
+globex
+
+query T
+SELECT max(brand) FROM abase WHERE svc = 'frontend'
+----
+max
+globex
+
+# --- min() and max() together.
+query TT
+SELECT min(brand), max(brand) FROM abase_idx WHERE svc = 'frontend'
+----
+min	max
+acme	globex
+
+query TT
+SELECT min(brand), max(brand) FROM abase WHERE svc = 'frontend'
+----
+min	max
+acme	globex
+
+# --- count(DISTINCT) over a covered residual.
+query
+EXPLAIN SELECT count(DISTINCT brand) FROM abase_idx WHERE svc = 'frontend'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ───────────╮
+│ Aggregates: count(DISTINCT #0)  │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: abase_idx                │
+│ Lookup: table                   │
+│ Projections: brand              │
+│ Column Filter: svc = 'frontend' │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+query I
+SELECT count(DISTINCT brand) FROM abase_idx WHERE svc = 'frontend'
+----
+count
+2
+
+query I
+SELECT count(DISTINCT brand) FROM abase WHERE svc = 'frontend'
+----
+count
+2
+
+# --- covered residual AND an indexed @@ predicate: still declines (the covered
+# --- residual is the disqualifier).
+query T
+SELECT min(brand) FROM abase_idx WHERE svc = 'frontend' AND body @@ 'failed'
+----
+min
+acme
+
+query T
+SELECT min(brand) FROM abase WHERE svc = 'frontend' AND body LIKE '%failed%'
+----
+min
+acme
+
+# ===========================================================================
+# Baseline: an indexed @@ predicate (no covered residual) keeps the TsDict scan
+# ===========================================================================
+
+query
+EXPLAIN SELECT min(brand) FROM abase_idx WHERE body @@ 'failed'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────╮
+│ Aggregates: min(#0)            │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: abase_idx               │
+│ Index Filter:                  │
+│ ╭─ Term ──────────────╮        │
+│ │ Field: body(string) │        │
+│ │ Value: failed       │        │
+│ ╰─────────────────────╯        │
+│ TsDict: brand                  │
+│ Projections:                   │
+│ sdb_inverted_index_term$brand  │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+query T
+SELECT min(brand) FROM abase_idx WHERE body @@ 'failed'
+----
+min
+acme
+
+query T
+SELECT min(brand) FROM abase WHERE body LIKE '%failed%'
+----
+min
+acme
+
+query
+EXPLAIN SELECT count(DISTINCT brand) FROM abase_idx WHERE body @@ 'failed'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────╮
+│ Aggregates: count(#0)          │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ HASH_GROUP_BY ┴───────────────╮
+│ Groups: #0                     │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: abase_idx               │
+│ Index Filter:                  │
+│ ╭─ Term ──────────────╮        │
+│ │ Field: body(string) │        │
+│ │ Value: failed       │        │
+│ ╰─────────────────────╯        │
+│ TsDict: brand                  │
+│ Projections:                   │
+│ sdb_inverted_index_term$brand  │
+│ ~3 rows                        │
+╰────────────────────────────────╯
+
+query I
+SELECT count(DISTINCT brand) FROM abase_idx WHERE body @@ 'failed'
+----
+count
+3
+
+query I
+SELECT count(DISTINCT brand) FROM abase WHERE body LIKE '%failed%'
+----
+count
+3

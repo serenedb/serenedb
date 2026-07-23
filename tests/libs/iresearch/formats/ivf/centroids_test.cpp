@@ -18,11 +18,26 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <faiss/utils/utils.h>
+
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <duckdb.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
+#include <limits>
+#include <numeric>
+#include <random>
 #include <span>
+#include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
+#include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
@@ -31,320 +46,912 @@ using namespace irs;
 
 namespace {
 
-// One Layer-2 body: sub-centroids and the global fine ids they map to.
-struct L2BodySpec {
-  std::vector<float> centroids;    // n_l2 * d row-major
-  std::vector<uint32_t> fine_ids;  // n_l2
-};
-
-// Serializes a full two-layer centroid entry (bodies first, resident trailer
-// last) exactly as IvfBuilder::Build does, returning the resident offset/size.
-struct Serialized {
-  uint64_t resident_offset = 0;
-  uint64_t resident_size = 0;
-};
-
-Serialized WriteEntry(
-  IndexOutput& out, VectorMetric metric, uint32_t d,
-  const std::vector<float>& l1_centroids, const std::vector<L2BodySpec>& bodies,
-  CentroidShapeKind shape_kind = CentroidShapeKind::TwoLayer) {
-  const auto n_l1 = static_cast<uint32_t>(bodies.size());
-  std::vector<uint64_t> body_offsets;
-  body_offsets.reserve(n_l1);
-  for (const auto& b : bodies) {
-    body_offsets.push_back(out.Position());
-    const auto n_l2 = static_cast<uint32_t>(b.fine_ids.size());
-    out.WriteU32(n_l2);
-    out.WriteData(reinterpret_cast<const byte_type*>(b.centroids.data()),
-                  static_cast<size_t>(n_l2) * d * sizeof(float));
-    out.WriteData(reinterpret_cast<const byte_type*>(b.fine_ids.data()),
-                  static_cast<size_t>(n_l2) * sizeof(uint32_t));
-    const std::vector<float> radii(n_l2, 0.f);
-    out.WriteData(reinterpret_cast<const byte_type*>(radii.data()),
-                  static_cast<size_t>(n_l2) * sizeof(float));
+// Writes [IVFHeader][root level][layer blobs...] exactly as
+// CentroidsBuilder::Serialize does: nodes coarsest-first, each layer's
+// centroids followed by its child_offsets (size+1, absolute) unless it is the
+// leaf layer.
+uint64_t WriteTree(IndexOutput& out, VectorMetric metric, uint32_t d,
+                   std::span<const CentroidsNode> nodes) {
+  const uint64_t offset = out.Position();
+  IVFHeader{.metric = metric, .d = d}.Serialize(out);
+  out.WriteU64(nodes.front().level);
+  for (const auto& node : nodes) {
+    node.Serialize(out);
   }
-  Serialized s;
-  s.resident_offset = out.Position();
-  TwoLayerCentroids::WriteFooter(
-    out, metric, shape_kind, d, n_l1, std::span<const float>{l1_centroids},
-    std::span<const uint64_t>{body_offsets}, std::span<const byte_type>{});
-  s.resident_size = out.Position() - s.resident_offset;
-  return s;
+  return offset;
+}
+
+// n_clusters well-separated blobs on a lattice, per_cluster points each with a
+// tiny deterministic jitter. Returns row-major [n_clusters*per_cluster, d].
+std::vector<float> MakeClusters(uint32_t d, size_t n_clusters,
+                                size_t per_cluster) {
+  std::mt19937 rng{123};
+  std::uniform_real_distribution<float> jitter{-0.05f, 0.05f};
+  std::vector<float> data;
+  data.reserve(n_clusters * per_cluster * d);
+  for (size_t c = 0; c < n_clusters; ++c) {
+    for (size_t p = 0; p < per_cluster; ++p) {
+      for (uint32_t j = 0; j < d; ++j) {
+        // Clusters 1000 apart per dim-slot so routing is unambiguous.
+        const float center = static_cast<float>((c >> j) & 0xf) * 1000.f;
+        data.push_back(center + jitter(rng));
+      }
+    }
+  }
+  return data;
+}
+
+// n_clusters (<= d) direction-separated blobs: cluster c is dominant along axis
+// c (value 100) with tiny positive noise, so every vector is far from the
+// origin and normalizes to a distinct, well-separated direction -- the cosine
+// analogue of MakeClusters (which places a blob at the origin, degenerate under
+// cosine).
+std::vector<float> MakeDirClusters(uint32_t d, size_t n_clusters,
+                                   size_t per_cluster) {
+  std::mt19937 rng{123};
+  std::uniform_real_distribution<float> noise{0.f, 0.5f};
+  std::vector<float> data;
+  data.reserve(n_clusters * per_cluster * d);
+  for (size_t c = 0; c < n_clusters; ++c) {
+    for (size_t p = 0; p < per_cluster; ++p) {
+      for (uint32_t j = 0; j < d; ++j) {
+        data.push_back((j == c % d ? 100.f : 0.f) + noise(rng));
+      }
+    }
+  }
+  return data;
+}
+
+CentroidsBuildParams DeepParams() {
+  return {.posting_size = 4, .max_fanout = 4};
+}
+
+void WriteVectorColumn(Directory& dir, duckdb::DatabaseInstance& db,
+                       field_id id, uint32_t d, std::span<const float> data) {
+  const uint64_t n = data.size() / d;
+  const auto atype = duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, d);
+  ColWriter w{dir, "seg", db};
+  auto& cw = w.OpenColumn(id, atype, /*skip_validity=*/false, /*rg_size=*/4096);
+  uint64_t pos = 0;
+  while (pos < n) {
+    const auto take = std::min<duckdb::idx_t>(n - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector v{atype, STANDARD_VECTOR_SIZE};
+    auto& child = duckdb::ArrayVector::GetChildMutable(v);
+    auto* cd = duckdb::FlatVector::GetDataMutable<float>(child);
+    auto& av = duckdb::FlatVector::ValidityMutable(v);
+    auto& cv = duckdb::FlatVector::ValidityMutable(child);
+    av.Reset(STANDARD_VECTOR_SIZE);
+    cv.Reset(STANDARD_VECTOR_SIZE * d);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      const uint64_t g = pos + k;
+      for (uint32_t i = 0; i < d; ++i) {
+        cd[k * d + i] = data[g * d + i];
+      }
+    }
+    duckdb::FlatVector::SetSize(v, take);
+    cw.Append(v, take);
+    pos += take;
+  }
+  w.Commit(0);
+}
+
+std::vector<float> MakeRowMajor(uint32_t d, uint64_t n) {
+  std::vector<float> data(n * d);
+  for (uint64_t g = 0; g < n; ++g) {
+    for (uint32_t i = 0; i < d; ++i) {
+      data[g * d + i] = static_cast<float>(g * d + i);
+    }
+  }
+  return data;
+}
+
+size_t BuiltRootSize(const CentroidsBuilder& builder) {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  return CentroidsTree::Deserialize(in, byte_size).RootSize();
+}
+
+void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
+                                std::span<const float> data, uint32_t d) {
+  const size_t n = data.size() / d;
+
+  std::vector<float> reordered(data.begin(), data.end());
+  auto assigned =
+    builder.AssignCentroids({reordered.data(), reordered.size()}, d);
+  ASSERT_EQ(assigned.ids.size(), n);
+  ASSERT_EQ(assigned.perm.size(), n);
+  std::vector<size_t> row_cluster(n);
+  for (size_t j = 0; j < n; ++j) {
+    row_cluster[assigned.perm[j]] = assigned.ids[j];
+  }
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+
+  for (size_t q = 0; q < n; ++q) {
+    const std::span<const float> query{data.data() + q * d, d};
+
+    size_t nn = 0;
+    float best = std::numeric_limits<float>::max();
+    for (size_t r = 0; r < n; ++r) {
+      float dist = 0.f;
+      for (uint32_t i = 0; i < d; ++i) {
+        const float diff = data[r * d + i] - query[i];
+        dist += diff * diff;
+      }
+      if (dist < best) {
+        best = dist;
+        nn = r;
+      }
+    }
+
+    std::vector<uint32_t> ids;
+    tree.Search(query, in, /*nprobe=*/8, ids, nullptr);
+    ASSERT_FALSE(ids.empty()) << "query " << q;
+    const bool hit =
+      std::find(ids.begin(), ids.end(),
+                static_cast<uint32_t>(row_cluster[nn])) != ids.end();
+    EXPECT_TRUE(hit) << "query " << q << " nn " << nn;
+  }
+}
+
+// Build a genuine multi-level tree from an in-memory sample, then assert that
+// the on-disk tree (Serialize -> Deserialize -> Search) routes every training
+// vector to the exact same leaf id that the build-side AssignCentroids does.
+TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
+  constexpr uint32_t d = 4;
+  // per_cluster (3) <= posting_size (4): each well-separated blob lands in its
+  // own leaf, so greedy build-descent and beam search route identically.
+  const auto data = MakeClusters(d, /*n_clusters=*/64, /*per_cluster=*/3);
+  const size_t n = data.size() / d;
+
+  auto builder = CentroidsBuilder::CreateFromSample(
+    data, d, VectorMetric::L2Sqr, DeepParams());
+  const size_t n_clusters = builder.NumClusters();
+
+  // Build-side assignment (reorders a copy; perm maps back to original rows).
+  auto reordered = data;
+  auto assigned =
+    builder.AssignCentroids({reordered.data(), reordered.size()}, d);
+  ASSERT_EQ(assigned.ids.size(), n);
+  ASSERT_EQ(assigned.perm.size(), n);
+  for (const size_t id : assigned.ids) {
+    EXPECT_LT(id, n_clusters);
+  }
+  // perm is a permutation, and reordered row j is the original row perm[j].
+  std::vector<char> seen(n, 0);
+  for (size_t j = 0; j < n; ++j) {
+    ASSERT_LT(assigned.perm[j], n);
+    EXPECT_EQ(seen[assigned.perm[j]], 0);
+    seen[assigned.perm[j]] = 1;
+    const float* orig = data.data() + assigned.perm[j] * d;
+    const float* row = reordered.data() + j * d;
+    EXPECT_EQ(0, std::memcmp(orig, row, d * sizeof(float)));
+  }
+
+  // Map original row -> build-side leaf id.
+  std::vector<size_t> build_id(n);
+  for (size_t j = 0; j < n; ++j) {
+    build_id[assigned.perm[j]] = assigned.ids[j];
+  }
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+
+  for (size_t i = 0; i < n; ++i) {
+    const std::span<const float> q{data.data() + i * d, d};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
+    ASSERT_EQ(ids.size(), 1u) << "row " << i;
+    EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
+  }
+}
+
+// The optional gathered-centroid span returns, per vector, the same centroid
+// Search reports for that vector's leaf.
+TEST(centroids_builder_test, gathered_centroid_matches_search) {
+  constexpr uint32_t d = 4;
+  const auto data = MakeClusters(d, /*n_clusters=*/32, /*per_cluster=*/3);
+  const size_t n = data.size() / d;
+
+  auto builder = CentroidsBuilder::CreateFromSample(
+    data, d, VectorMetric::L2Sqr, DeepParams());
+
+  auto reordered = data;
+  std::vector<std::span<const float>> gathered(n);
+  auto assigned =
+    builder.AssignCentroids({reordered.data(), reordered.size()}, d, gathered);
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+
+  for (size_t j = 0; j < n; ++j) {
+    ASSERT_EQ(gathered[j].size(), d);
+    const std::span<const float> q{data.data() + assigned.perm[j] * d, d};
+    std::vector<uint32_t> ids;
+    std::vector<float> cens;
+    tree.Search(q, in, /*nprobe=*/1, ids, &cens);
+    ASSERT_EQ(ids.size(), 1u);
+    ASSERT_EQ(cens.size(), d);
+    EXPECT_EQ(0,
+              std::memcmp(cens.data(), gathered[j].data(), d * sizeof(float)));
+  }
+}
+
+// A leaf hanging directly off an interior layer is encoded as a zero-size child
+// window (child_offsets[i+1] == child_offsets[i]); Search must emit it as a
+// leaf candidate with the correct global id instead of descending.
+TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+
+  constexpr uint32_t d = 1;
+  // Root row 0 is a leaf (window [0,0)); row 1 has two children in the leaf
+  // layer. Global ids: root layer base 0 (rows 0,1), leaf layer base 2.
+  CentroidsNode root{1, d};
+  root.centroids = {0.f, 10.5f};
+  root.child_offsets = {0, 0, 2};
+  root.size = 2;
+  CentroidsNode leaf{0, d};
+  leaf.centroids = {10.f, 11.f};
+  leaf.size = 2;
+
+  std::vector<CentroidsNode> nodes;
+  nodes.emplace_back(std::move(root));
+  nodes.emplace_back(std::move(leaf));
+
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    offset = WriteTree(out, VectorMetric::L2Sqr, d, nodes);
+    byte_size = out.Position() - offset;
+    out.Flush();
+  }
+
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+
+  // Query near the early leaf (root row 0) -> its global id 0.
+  {
+    const std::vector<float> q{0.2f};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
+    ASSERT_EQ(ids.size(), 1u);
+    EXPECT_EQ(ids[0], 0u);
+  }
+  // Query near the leaf-layer cells -> ids 2 / 3, never the early leaf.
+  {
+    const std::vector<float> q{10.1f};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
+    ASSERT_EQ(ids.size(), 1u);
+    EXPECT_EQ(ids[0], 2u);
+  }
+  {
+    const std::vector<float> q{11.1f};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
+    ASSERT_EQ(ids.size(), 1u);
+    EXPECT_EQ(ids[0], 3u);
+  }
+  // Large nprobe surfaces every leaf (early leaf included).
+  {
+    const std::vector<float> q{5.f};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, /*nprobe=*/100, ids, nullptr);
+    EXPECT_EQ(ids.size(), 3u);
+  }
+}
+
+// A dataset too small to split builds a single real centroids node (the mean),
+// not an empty tree: NumClusters()==1, every vector routes to cluster 0 with
+// the mean as its gathered centroid, and the on-disk tree searches back to id
+// 0. This is the centroid residual quantizers (PQ/RaBitQ) rely on.
+TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
+  constexpr uint32_t d = 4;
+  // 10 vectors << posting_size -> root is a leaf.
+  std::vector<float> data;
+  for (size_t i = 0; i < 10; ++i) {
+    for (uint32_t j = 0; j < d; ++j) {
+      data.push_back(static_cast<float>(i * d + j));
+    }
+  }
+  const size_t n = data.size() / d;
+
+  std::vector<float> mean(d, 0.f);
+  for (size_t i = 0; i < n; ++i) {
+    for (uint32_t j = 0; j < d; ++j) {
+      mean[j] += data[i * d + j];
+    }
+  }
+  for (float& m : mean) {
+    m /= static_cast<float>(n);
+  }
+
+  auto builder = CentroidsBuilder::CreateFromSample(
+    data, d, VectorMetric::L2Sqr, {.posting_size = 1024});
+  EXPECT_EQ(builder.NumClusters(), 1u);
+
+  auto reordered = data;
+  std::vector<std::span<const float>> cents(n);
+  auto assigned =
+    builder.AssignCentroids({reordered.data(), reordered.size()}, d, cents);
+  for (size_t j = 0; j < n; ++j) {
+    EXPECT_EQ(assigned.ids[j], 0u);
+    ASSERT_EQ(cents[j].size(), d);
+    for (uint32_t k = 0; k < d; ++k) {
+      EXPECT_NEAR(cents[j][k], mean[k], 1e-3f) << "row " << j << " dim " << k;
+    }
+  }
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  const std::span<const float> q{data.data(), d};
+  std::vector<uint32_t> ids;
+  tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
+  ASSERT_EQ(ids.size(), 1u);
+  EXPECT_EQ(ids[0], 0u);
+}
+
+TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
+  constexpr uint32_t d = 4;
+  constexpr uint64_t n = 8;
+  constexpr field_id kVec = 1;
+  const auto data = MakeRowMajor(d, n);
+
+  duckdb::DuckDB db;
+  MemoryDirectory dir;
+  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+
+  ColReader r{dir, "seg", *db.instance};
+  const auto* col = r.Column(kVec);
+  ASSERT_NE(col, nullptr);
+
+  auto builder = CentroidsBuilder::Create(*col, r.Ctx(), n, VectorMetric::L2Sqr,
+                                          d, {.posting_size = 1024});
+  EXPECT_EQ(builder.NumClusters(), 1u);
+  EXPECT_EQ(BuiltRootSize(builder), 0u);
+  ExpectQueriesRouteToTrueNn(builder, data, d);
+}
+
+TEST(centroids_builder_test,
+     create_small_dataset_min_train_sample_one_centroid) {
+  constexpr uint32_t d = 4;
+  constexpr uint64_t n = 8;
+  constexpr field_id kVec = 1;
+  const auto data = MakeRowMajor(d, n);
+
+  duckdb::DuckDB db;
+  MemoryDirectory dir;
+  WriteVectorColumn(dir, *db.instance, kVec, d, data);
+
+  ColReader r{dir, "seg", *db.instance};
+  const auto* col = r.Column(kVec);
+  ASSERT_NE(col, nullptr);
+
+  auto builder =
+    CentroidsBuilder::Create(*col, r.Ctx(), n, VectorMetric::L2Sqr, d,
+                             {.posting_size = 1024, .min_train_sample = 256});
+  EXPECT_EQ(builder.NumClusters(), 1u);
+  EXPECT_GE(BuiltRootSize(builder), 1u);
+  ExpectQueriesRouteToTrueNn(builder, data, d);
+}
+
+// Cosine build must route consistently after the "normalize the sample once in
+// the builder" change: the tree is trained/assigned on unit-normalized vectors
+// while AssignCentroids/Search operate on the raw vectors (direction-only
+// routing against unit centroids), and both must pick the same leaf.
+TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
+  constexpr uint32_t d = 16;
+  const auto data = MakeDirClusters(d, /*n_clusters=*/16, /*per_cluster=*/3);
+  const size_t n = data.size() / d;
+
+  auto builder = CentroidsBuilder::CreateFromSample(
+    data, d, VectorMetric::Cosine, DeepParams());
+  const size_t n_clusters = builder.NumClusters();
+
+  auto reordered = data;
+  auto assigned =
+    builder.AssignCentroids({reordered.data(), reordered.size()}, d);
+  ASSERT_EQ(assigned.ids.size(), n);
+  std::vector<size_t> build_id(n);
+  for (size_t j = 0; j < n; ++j) {
+    ASSERT_LT(assigned.ids[j], n_clusters);
+    build_id[assigned.perm[j]] = assigned.ids[j];
+  }
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+
+  for (size_t i = 0; i < n; ++i) {
+    const std::span<const float> q{data.data() + i * d, d};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
+    ASSERT_EQ(ids.size(), 1u) << "row " << i;
+    EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
+  }
+}
+
+// Cosine at k >= 4096 takes the SuperKMeans branch (on already-normalized
+// input) and re-normalizes the centroids; below that it uses spherical
+// Clustering. Both must yield unit-norm centroids (empty clusters may stay
+// zero).
+TEST(clustering_test, cosine_centroids_are_unit_norm) {
+  constexpr uint32_t d = 64;
+  std::mt19937 rng{7};
+  std::normal_distribution<float> g{0.f, 1.f};
+
+  const auto train = [&](size_t n, uint32_t k) {
+    std::vector<float> data(n * d);
+    for (auto& x : data) {
+      x = g(rng);
+    }
+    NormalizeRows(data.data(), n, d);
+    auto centroids = TrainCentroids(VectorMetric::Cosine, data.data(), n, k, d,
+                                    /*seed=*/1, /*niter=*/2);
+    ASSERT_EQ(centroids.size(), static_cast<size_t>(k) * d);
+    for (uint32_t c = 0; c < k; ++c) {
+      float sum = 0.f;
+      for (uint32_t j = 0; j < d; ++j) {
+        const float v = centroids[c * d + j];
+        sum += v * v;
+      }
+      const float norm = std::sqrt(sum);
+      EXPECT_TRUE(norm < 1e-3f || std::abs(norm - 1.f) < 1e-3f)
+        << "k=" << k << " centroid " << c << " norm " << norm;
+    }
+  };
+
+  train(/*n=*/2000, /*k=*/64);     // spherical Clustering path
+  train(/*n=*/16384, /*k=*/4096);  // SuperKMeans path (k >= threshold)
+}
+
+// Regression: a genuine >=3-layer tree must route every vector to the same leaf
+// id on the deserialized tree as the build-side AssignCentroids. A small
+// max_fanout square-roots the leaf count down over several layers, exercising
+// the descent leaf-id numbering across >=3 layers (the 2-layer case is covered
+// by multilevel_build_search_id_consistency).
+TEST(centroids_builder_test, three_level_build_search_id_consistency) {
+  constexpr uint32_t d = 8;
+  const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
+  const size_t n = data.size() / d;
+
+  const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
+  auto builder =
+    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+  const size_t n_clusters = builder.NumClusters();
+
+  auto reordered = data;
+  auto assigned =
+    builder.AssignCentroids({reordered.data(), reordered.size()}, d);
+  ASSERT_EQ(assigned.ids.size(), n);
+  std::vector<size_t> build_id(n);
+  for (size_t j = 0; j < n; ++j) {
+    ASSERT_LT(assigned.ids[j], n_clusters);
+    build_id[assigned.perm[j]] = assigned.ids[j];
+  }
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  EXPECT_GE(tree.Levels(), 3u);
+  EXPECT_LE(tree.RootSize(), 4u);
+
+  for (size_t i = 0; i < n; ++i) {
+    const std::span<const float> q{data.data() + i * d, d};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
+    ASSERT_EQ(ids.size(), 1u) << "row " << i;
+    EXPECT_EQ(ids[0], build_id[i]) << "row " << i;
+  }
+}
+
+// Recall regression for the depth-independent search beam. On a genuine
+// multi-level (>=3-layer) tree, Search(q, nprobe) must recover the true
+// top-nprobe leaves ranked by exact centroid distance. The previous beam
+// (3*nprobe^(1/L)) collapsed as the tree deepened and greedily pruned true
+// leaves; the depth-independent beam (ceil(3*sqrt(nprobe)), floored to nprobe
+// on >=3-layer trees) keeps recall exact here.
+TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
+  constexpr uint32_t d = 8;
+  // posting_size=1 with a small max_fanout forces a deep tree whose every
+  // internal layer stays below the query nprobe, so a correct beam visits every
+  // node and Search is exact.
+  const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
+  const size_t n = data.size() / d;
+
+  const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
+  auto builder =
+    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+
+  // Enumerate every leaf id + centroid via an all-covering probe.
+  std::vector<uint32_t> leaf_ids;
+  std::vector<float> leaf_cens;
+  tree.Search(std::span<const float>{data.data(), d}, in,
+              static_cast<uint32_t>(n), leaf_ids, &leaf_cens);
+  const size_t n_leaves = leaf_ids.size();
+  ASSERT_GT(n_leaves, 1u);
+  ASSERT_EQ(leaf_cens.size(), n_leaves * d);
+
+  const auto l2 = [&](const float* a, const float* b) {
+    float s = 0.f;
+    for (uint32_t j = 0; j < d; ++j) {
+      const float e = a[j] - b[j];
+      s += e * e;
+    }
+    return s;
+  };
+
+  const uint32_t nprobe = 128;
+  const uint32_t k =
+    std::min<uint32_t>(nprobe, static_cast<uint32_t>(n_leaves));
+  size_t hit = 0;
+  size_t total = 0;
+  for (size_t i = 0; i < n; ++i) {
+    const float* q = data.data() + i * d;
+    std::vector<std::pair<float, uint32_t>> scored;
+    scored.reserve(n_leaves);
+    for (size_t l = 0; l < n_leaves; ++l) {
+      scored.emplace_back(l2(q, leaf_cens.data() + l * d), leaf_ids[l]);
+    }
+    std::partial_sort(scored.begin(), scored.begin() + k, scored.end());
+
+    std::vector<uint32_t> got;
+    tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr);
+    for (uint32_t t = 0; t < k; ++t) {
+      if (std::find(got.begin(), got.end(), scored[t].second) != got.end()) {
+        ++hit;
+      }
+    }
+    total += k;
+  }
+  const double recall = static_cast<double>(hit) / static_cast<double>(total);
+  EXPECT_GE(recall, 0.999) << "multi-level Search recall vs brute force";
+}
+
+TEST(matrix_qr_test, blocked_qr_orthonormal_and_spanning) {
+  std::mt19937 rng{7};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  const std::vector<std::pair<int, int>> shapes = {
+    {4, 4}, {9, 5}, {33, 17}, {64, 64}, {96, 64}, {256, 200}};
+  for (const auto [m, n] : shapes) {
+    std::vector<float> a(static_cast<size_t>(m) * n);
+    for (auto& x : a) {
+      x = nd(rng);
+    }
+    std::vector<float> q = a;
+    faiss::matrix_qr(m, n, q.data());
+
+    for (int i = 0; i < n; ++i) {
+      for (int j = i; j < n; ++j) {
+        double dot = 0.0;
+        for (int r = 0; r < m; ++r) {
+          dot += static_cast<double>(q[r + static_cast<size_t>(i) * m]) *
+                 q[r + static_cast<size_t>(j) * m];
+        }
+        ASSERT_NEAR(dot, i == j ? 1.0 : 0.0, 2e-3)
+          << "m=" << m << " n=" << n << " i=" << i << " j=" << j;
+      }
+    }
+
+    for (int col = 0; col < n; col += std::max(1, n / 8)) {
+      std::vector<double> coef(n, 0.0);
+      for (int i = 0; i < n; ++i) {
+        double c = 0.0;
+        for (int r = 0; r < m; ++r) {
+          c += static_cast<double>(q[r + static_cast<size_t>(i) * m]) *
+               a[r + static_cast<size_t>(col) * m];
+        }
+        coef[i] = c;
+      }
+      for (int r = 0; r < m; ++r) {
+        double p = 0.0;
+        for (int i = 0; i < n; ++i) {
+          p += coef[i] * q[r + static_cast<size_t>(i) * m];
+        }
+        const double want = a[r + static_cast<size_t>(col) * m];
+        ASSERT_NEAR(p, want, 2e-3 * (1.0 + std::fabs(want)))
+          << "m=" << m << " n=" << n << " col=" << col << " r=" << r;
+      }
+    }
+  }
+}
+
+double KMeansObjective(const float* data, size_t n, const float* c, uint32_t k,
+                       uint32_t d) {
+  double total = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    const float* x = data + i * d;
+    double best = 0.0;
+    for (uint32_t j = 0; j < k; ++j) {
+      const float* cj = c + static_cast<size_t>(j) * d;
+      double s = 0.0;
+      for (uint32_t t = 0; t < d; ++t) {
+        const double diff = static_cast<double>(x[t]) - cj[t];
+        s += diff * diff;
+      }
+      if (j == 0 || s < best) {
+        best = s;
+      }
+    }
+    total += best;
+  }
+  return total;
+}
+
+TEST(clustering_test, superkmeans_matches_kmeans_quality_and_is_deterministic) {
+  const uint32_t d = 64;
+  const size_t nclusters = 64, per = 20;
+  auto data = MakeClusters(d, nclusters, per);
+  const size_t n = nclusters * per;
+  const uint32_t k = 64;
+
+  auto skm = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d,
+                            /*seed=*/1234, /*niter=*/8, /*nredo=*/1,
+                            ClusteringAlgo::FlatSuperKMeans);
+  auto lloyd = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d,
+                              /*seed=*/1234, /*niter=*/8, /*nredo=*/1,
+                              ClusteringAlgo::Lloyd);
+
+  ASSERT_EQ(skm.size(), static_cast<size_t>(k) * d);
+  for (float x : skm) {
+    ASSERT_TRUE(std::isfinite(x));
+  }
+
+  const double obj_skm = KMeansObjective(data.data(), n, skm.data(), k, d);
+  const double obj_lloyd = KMeansObjective(data.data(), n, lloyd.data(), k, d);
+  EXPECT_LE(obj_skm, 1.5 * obj_lloyd)
+    << "skm=" << obj_skm << " lloyd=" << obj_lloyd;
+
+  auto skm2 = TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, 1234, 8,
+                             1, ClusteringAlgo::FlatSuperKMeans);
+  ASSERT_EQ(skm.size(), skm2.size());
+  EXPECT_EQ(0,
+            std::memcmp(skm.data(), skm2.data(), skm.size() * sizeof(float)));
+}
+
+TEST(clustering_test, superkmeans_injected_rotation_matches_self_init) {
+  const uint32_t d = 64;
+  const size_t nclusters = 64, per = 20;
+  auto data = MakeClusters(d, nclusters, per);
+  const size_t n = nclusters * per;
+  const uint32_t k = 64;
+  const uint32_t seed = 1234;
+
+  auto rotation = MakeRotation(d, seed);
+  ASSERT_EQ(rotation.size(), static_cast<size_t>(d) * d);
+
+  auto injected = TrainCentroids(
+    VectorMetric::L2Sqr, data.data(), n, k, d, seed,
+    /*niter=*/8, /*nredo=*/1, ClusteringAlgo::FlatSuperKMeans, rotation.data());
+  auto self_init =
+    TrainCentroids(VectorMetric::L2Sqr, data.data(), n, k, d, seed,
+                   /*niter=*/8, /*nredo=*/1, ClusteringAlgo::FlatSuperKMeans,
+                   /*rotation=*/nullptr);
+
+  ASSERT_EQ(injected.size(), static_cast<size_t>(k) * d);
+  ASSERT_EQ(injected.size(), self_init.size());
+  EXPECT_EQ(0, std::memcmp(injected.data(), self_init.data(),
+                           injected.size() * sizeof(float)));
+}
+
+// A d>=32 build (SuperKMeans path) with a max_fanout below the leaf count
+// yields a genuine multi-level tree whose deserialized Search routes every
+// training vector to the same leaf id as build-side AssignCentroids.
+// Well-separated blobs make greedy descent and beam search agree.
+TEST(centroids_builder_test,
+     superkmeans_multilevel_build_search_id_consistency) {
+  constexpr uint32_t d = 32;
+  const auto data = MakeClusters(d, /*n_clusters=*/1024, /*per_cluster=*/4);
+  const size_t n = data.size() / d;
+  const size_t target_leaves = 1024;  // ceil(n / posting_size)
+
+  const CentroidsBuildParams params{.posting_size = 4, .max_fanout = 32};
+  auto builder =
+    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+  const size_t n_clusters = builder.NumClusters();
+  // A flat build would have exactly `target_leaves` centroids; the extra rows
+  // are the interior layers, so this confirms the tree really went multi-level.
+  EXPECT_GT(n_clusters, target_leaves);
+
+  auto reordered = data;
+  auto assigned =
+    builder.AssignCentroids({reordered.data(), reordered.size()}, d);
+  ASSERT_EQ(assigned.ids.size(), n);
+  std::vector<size_t> build_id(n);
+  for (size_t j = 0; j < n; ++j) {
+    ASSERT_LT(assigned.ids[j], n_clusters);
+    build_id[assigned.perm[j]] = assigned.ids[j];
+  }
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t offset;
+  uint64_t byte_size;
+  {
+    MemoryIndexOutput out{file};
+    const auto span = builder.Serialize(out);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    out.Flush();
+  }
+  MemoryIndexInput in{file};
+  in.Seek(offset);
+  auto tree = CentroidsTree::Deserialize(in, byte_size);
+
+  size_t matches = 0;
+  for (size_t i = 0; i < n; ++i) {
+    const std::span<const float> q{data.data() + i * d, d};
+    std::vector<uint32_t> ids;
+    tree.Search(q, in, /*nprobe=*/1, ids, nullptr);
+    ASSERT_EQ(ids.size(), 1u) << "row " << i;
+    ASSERT_LT(ids[0], n_clusters) << "row " << i;
+    matches += (ids[0] == build_id[i]);
+  }
+  // Greedy build-descent and beam Search agree for all but a few near-boundary
+  // points (interior cells don't align exactly with leaf cells). A leaf-
+  // numbering or child-offset bug would instead break nearly every row.
+  EXPECT_GE(matches, static_cast<size_t>(0.99 * static_cast<double>(n)));
+}
+
+TEST(clustering_test, superkmeans_angular_centroids_unit_norm) {
+  const uint32_t d = 64;
+  auto data = MakeClusters(d, 40, 20);
+  const size_t n = 40 * 20;
+  NormalizeRows(data.data(), n, d);
+  const uint32_t k = 32;
+  auto c = TrainCentroids(VectorMetric::Cosine, data.data(), n, k, d,
+                          /*seed=*/7, /*niter=*/8, /*nredo=*/1,
+                          ClusteringAlgo::FlatSuperKMeans);
+  ASSERT_EQ(c.size(), static_cast<size_t>(k) * d);
+  for (uint32_t j = 0; j < k; ++j) {
+    double s = 0.0;
+    for (uint32_t t = 0; t < d; ++t) {
+      const double v = c[static_cast<size_t>(j) * d + t];
+      s += v * v;
+    }
+    EXPECT_NEAR(std::sqrt(s), 1.0, 1e-3) << "centroid " << j;
+  }
+}
+
+// No node ever fans out past max_fanout, so the root is bounded by it: a large
+// cap lets the root fan wide toward the leaf count (shallow), a small cap
+// square-roots the leaf count down over extra layers (deep).
+TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
+  constexpr uint32_t d = 8;
+  const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/4);
+
+  const auto build = [&](size_t max_fanout) {
+    const CentroidsBuildParams params{.posting_size = 4,
+                                      .max_fanout = max_fanout};
+    auto builder =
+      CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+    SimpleMemoryAccounter memory;
+    MemoryFile file{memory};
+    uint64_t offset;
+    uint64_t byte_size;
+    {
+      MemoryIndexOutput out{file};
+      const auto span = builder.Serialize(out);
+      offset = span.offset;
+      byte_size = span.byte_size;
+      out.Flush();
+    }
+    MemoryIndexInput in{file};
+    in.Seek(offset);
+    auto tree = CentroidsTree::Deserialize(in, byte_size);
+    return std::pair{tree.Levels(), tree.RootSize()};
+  };
+
+  // 256 leaves <= cap -> root fans wide in one shot.
+  const auto [levels_hi, root_hi] = build(/*max_fanout=*/4096);
+  EXPECT_LE(root_hi, 4096u);
+  EXPECT_GT(root_hi, 8u);
+  // 256 leaves > cap -> root bounded by the cap, tree goes multi-level.
+  const auto [levels_lo, root_lo] = build(/*max_fanout=*/8);
+  EXPECT_LE(root_lo, 8u);
+  EXPECT_GE(levels_lo, 2u);
+  EXPECT_GE(levels_lo, levels_hi);
 }
 
 }  // namespace
-
-TEST(two_layer_centroids_test, roundtrip_and_search) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
-
-  constexpr uint32_t d = 2;
-  const std::vector<float> l1{/*c0*/ 0.f, 0.f, /*c1*/ 10.f, 10.f};
-  const std::vector<L2BodySpec> bodies{
-    // cell 0: two fine clusters near origin
-    L2BodySpec{.centroids = {0.f, 0.f, 1.f, 1.f}, .fine_ids = {0, 1}},
-    // cell 1: two fine clusters near (10,10)
-    L2BodySpec{.centroids = {10.f, 10.f, 11.f, 11.f}, .fine_ids = {2, 3}},
-  };
-
-  Serialized s;
-  {
-    MemoryIndexOutput out{file};
-    s = WriteEntry(out, VectorMetric::L2Sqr, d, l1, bodies);
-    out.Flush();
-  }
-  ASSERT_EQ(s.resident_size,
-            TwoLayerCentroids::FooterSize(d, 2, /*stats_len=*/0));
-
-  MemoryIndexInput in{file};
-  in.Seek(s.resident_offset);
-  auto centroids = TwoLayerCentroids::Deserialize(in, s.resident_size);
-
-  // Resident layer-1 deserialized correctly; no layer-2 bytes were read.
-  EXPECT_EQ(centroids.Dimension(), d);
-  EXPECT_EQ(centroids.L1Count(), 2u);
-  EXPECT_EQ(centroids.Metric(), VectorMetric::L2Sqr);
-  EXPECT_EQ(centroids.ShapeKind(), CentroidShapeKind::TwoLayer);
-  EXPECT_FALSE(centroids.Empty());
-
-  // Layer-1 selection.
-  {
-    const std::vector<float> q{0.2f, 0.2f};
-    std::vector<uint32_t> l1_ids;
-    centroids.SearchL1(q, /*n1=*/1, l1_ids);
-    ASSERT_EQ(l1_ids.size(), 1u);
-    EXPECT_EQ(l1_ids[0], 0u);  // nearest L1 is c0
-  }
-  {
-    const std::vector<float> q{9.5f, 9.5f};
-    std::vector<uint32_t> l1_ids;
-    centroids.SearchL1(q, /*n1=*/1, l1_ids);
-    ASSERT_EQ(l1_ids.size(), 1u);
-    EXPECT_EQ(l1_ids[0], 1u);  // nearest L1 is c1
-  }
-  {
-    const std::vector<float> q{0.2f, 0.2f};
-    std::vector<uint32_t> l1_ids;
-    centroids.SearchL1(q, /*n1=*/5, l1_ids);  // clamped to L1Count()
-    ASSERT_EQ(l1_ids.size(), 2u);
-  }
-
-  // Lazy layer-2 reads match what was written.
-  L2BodyView body;
-  centroids.ReadL2Body(in, /*l1_id=*/0, body);
-  ASSERT_EQ(body.n_l2, 2u);
-  ASSERT_EQ(body.fine_ids.size(), 2u);
-  EXPECT_EQ(body.fine_ids[0], 0u);
-  EXPECT_EQ(body.fine_ids[1], 1u);
-  {
-    std::vector<float> c(body.n_l2 * d);
-    std::memcpy(c.data(), body.l2_centroids, c.size() * sizeof(float));
-    EXPECT_EQ(c, (std::vector<float>{0.f, 0.f, 1.f, 1.f}));
-  }
-}
-
-TEST(two_layer_centroids_test, search_global_picks_global_topk) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
-
-  constexpr uint32_t d = 2;
-  const std::vector<float> l1{/*c0*/ 0.f, 0.f, /*c1*/ 10.f, 10.f};
-  const std::vector<L2BodySpec> bodies{
-    L2BodySpec{.centroids = {0.f, 0.f, 1.f, 1.f}, .fine_ids = {0, 1}},
-    L2BodySpec{.centroids = {10.f, 10.f, 11.f, 11.f}, .fine_ids = {2, 3}},
-  };
-
-  Serialized s;
-  {
-    MemoryIndexOutput out{file};
-    s = WriteEntry(out, VectorMetric::L2Sqr, d, l1, bodies);
-    out.Flush();
-  }
-
-  MemoryIndexInput in{file};
-  in.Seek(s.resident_offset);
-  auto centroids = TwoLayerCentroids::Deserialize(in, s.resident_size);
-
-  const std::vector<float> q{0.4f, 0.4f};
-  std::vector<uint32_t> ids;
-  std::vector<float> cens;
-  centroids.SearchGlobal(q, in, /*n1=*/2, /*nprobe=*/2, ids, &cens);
-  ASSERT_EQ(ids.size(), 2u);
-  EXPECT_EQ(ids[0], 0u);
-  EXPECT_EQ(ids[1], 1u);
-  ASSERT_EQ(cens.size(), 2u * d);
-  EXPECT_EQ((std::vector<float>(cens.begin(), cens.begin() + d)),
-            (std::vector<float>{0.f, 0.f}));
-  EXPECT_EQ((std::vector<float>(cens.begin() + d, cens.end())),
-            (std::vector<float>{1.f, 1.f}));
-
-  centroids.SearchGlobal(q, in, /*n1=*/2, /*nprobe=*/100, ids, nullptr);
-  EXPECT_EQ(ids.size(), 4u);
-
-  std::vector<uint32_t> one;
-  centroids.SearchGlobal({std::vector<float>{10.9f, 10.9f}}, in, /*n1=*/2,
-                         /*nprobe=*/1, one, nullptr);
-  ASSERT_EQ(one.size(), 1u);
-  EXPECT_EQ(one[0], 3u);
-
-  centroids.SearchGlobal(q, in, /*n1=*/2, /*nprobe=*/0, ids, nullptr);
-  EXPECT_TRUE(ids.empty());
-}
-
-TEST(two_layer_centroids_test, brute_force_shape_roundtrip_and_search) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
-
-  constexpr uint32_t d = 2;
-  const std::vector<float> l1{5.f, 5.f};
-  const std::vector<L2BodySpec> bodies{
-    L2BodySpec{.centroids = {5.f, 5.f}, .fine_ids = {0}},
-  };
-
-  Serialized s;
-  {
-    MemoryIndexOutput out{file};
-    s = WriteEntry(out, VectorMetric::L2Sqr, d, l1, bodies,
-                   CentroidShapeKind::BruteForce);
-    out.Flush();
-  }
-  ASSERT_EQ(s.resident_size,
-            TwoLayerCentroids::FooterSize(d, 1, /*stats_len=*/0));
-
-  MemoryIndexInput in{file};
-  in.Seek(s.resident_offset);
-  auto centroids = TwoLayerCentroids::Deserialize(in, s.resident_size);
-
-  EXPECT_EQ(centroids.Dimension(), d);
-  EXPECT_EQ(centroids.L1Count(), 1u);
-  EXPECT_EQ(centroids.Metric(), VectorMetric::L2Sqr);
-  EXPECT_EQ(centroids.ShapeKind(), CentroidShapeKind::BruteForce);
-  EXPECT_FALSE(centroids.Empty());
-
-  // A single L1 cell: SearchL1 always returns it, regardless of how many
-  // candidates are requested.
-  {
-    const std::vector<float> q{5.1f, 5.1f};
-    std::vector<uint32_t> l1_ids;
-    centroids.SearchL1(q, /*n1=*/5, l1_ids);
-    ASSERT_EQ(l1_ids.size(), 1u);
-    EXPECT_EQ(l1_ids[0], 0u);
-  }
-
-  L2BodyView body;
-  centroids.ReadL2Body(in, /*l1_id=*/0, body);
-  ASSERT_EQ(body.n_l2, 1u);
-  ASSERT_EQ(body.fine_ids.size(), 1u);
-  EXPECT_EQ(body.fine_ids[0], 0u);
-
-  const std::vector<float> q{5.1f, 5.1f};
-  std::vector<uint32_t> ids;
-  centroids.SearchGlobal(q, in, /*n1=*/1, /*nprobe=*/1, ids, nullptr);
-  ASSERT_EQ(ids.size(), 1u);
-  EXPECT_EQ(ids[0], 0u);
-}
-
-TEST(two_layer_centroids_test, flat_shape_roundtrip_and_search) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
-
-  constexpr uint32_t d = 2;
-  const std::vector<float> l1{0.f, 0.f};
-  const std::vector<L2BodySpec> bodies{
-    L2BodySpec{.centroids = {0.f, 0.f, 10.f, 10.f, 20.f, 20.f, -10.f, -10.f},
-               .fine_ids = {0, 1, 2, 3}},
-  };
-
-  Serialized s;
-  {
-    MemoryIndexOutput out{file};
-    s = WriteEntry(out, VectorMetric::L2Sqr, d, l1, bodies,
-                   CentroidShapeKind::Flat);
-    out.Flush();
-  }
-  ASSERT_EQ(s.resident_size,
-            TwoLayerCentroids::FooterSize(d, 1, /*stats_len=*/0));
-
-  MemoryIndexInput in{file};
-  in.Seek(s.resident_offset);
-  auto centroids = TwoLayerCentroids::Deserialize(in, s.resident_size);
-
-  EXPECT_EQ(centroids.Dimension(), d);
-  EXPECT_EQ(centroids.L1Count(), 1u);
-  EXPECT_EQ(centroids.Metric(), VectorMetric::L2Sqr);
-  EXPECT_EQ(centroids.ShapeKind(), CentroidShapeKind::Flat);
-  EXPECT_FALSE(centroids.Empty());
-
-  // A single L1 cell holding every fine cluster: SearchL1 always returns
-  // that one cell, no matter how many candidates are requested.
-  {
-    std::vector<uint32_t> l1_ids;
-    centroids.SearchL1(std::vector<float>{9.f, 9.f}, /*n1=*/10, l1_ids);
-    ASSERT_EQ(l1_ids.size(), 1u);
-    EXPECT_EQ(l1_ids[0], 0u);
-  }
-
-  L2BodyView body;
-  centroids.ReadL2Body(in, /*l1_id=*/0, body);
-  ASSERT_EQ(body.n_l2, 4u);
-  ASSERT_EQ(body.fine_ids.size(), 4u);
-  for (uint32_t i = 0; i < 4; ++i) {
-    EXPECT_EQ(body.fine_ids[i], i);
-  }
-
-  // Flat IVF: nprobe picks the exact top-k fine clusters across the whole
-  // (single) L1 cell -- q=(9,9) is nearest to c1=(10,10), then c0=(0,0),
-  // then c2=(20,20), then c3=(-10,-10).
-  const std::vector<float> q{9.f, 9.f};
-  std::vector<uint32_t> ids;
-  std::vector<float> cens;
-
-  centroids.SearchGlobal(q, in, /*n1=*/1, /*nprobe=*/1, ids, &cens);
-  ASSERT_EQ(ids.size(), 1u);
-  EXPECT_EQ(ids[0], 1u);
-  ASSERT_EQ(cens.size(), d);
-  EXPECT_EQ(cens, (std::vector<float>{10.f, 10.f}));
-
-  // Results are sorted ascending by fine id, not by distance.
-  centroids.SearchGlobal(q, in, /*n1=*/1, /*nprobe=*/2, ids, nullptr);
-  ASSERT_EQ(ids.size(), 2u);
-  EXPECT_EQ(ids[0], 0u);
-  EXPECT_EQ(ids[1], 1u);
-
-  centroids.SearchGlobal(q, in, /*n1=*/1, /*nprobe=*/4, ids, nullptr);
-  ASSERT_EQ(ids.size(), 4u);
-  for (uint32_t i = 0; i < 4; ++i) {
-    EXPECT_EQ(ids[i], i);
-  }
-}
-
-TEST(two_layer_centroids_test, inner_product_nearest_is_largest) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
-
-  constexpr uint32_t d = 2;
-  const std::vector<float> l1{/*c0*/ 1.f, 0.f, /*c1*/ 0.f, 1.f};
-  const std::vector<L2BodySpec> bodies{
-    L2BodySpec{.centroids = {1.f, 0.f}, .fine_ids = {0}},
-    L2BodySpec{.centroids = {0.f, 1.f}, .fine_ids = {1}},
-  };
-
-  Serialized s;
-  {
-    MemoryIndexOutput out{file};
-    s = WriteEntry(out, VectorMetric::InnerProduct, d, l1, bodies);
-    out.Flush();
-  }
-
-  MemoryIndexInput in{file};
-  in.Seek(s.resident_offset);
-  auto centroids = TwoLayerCentroids::Deserialize(in, s.resident_size);
-  EXPECT_EQ(centroids.Metric(), VectorMetric::InnerProduct);
-
-  // Query aligned with c1 -> largest inner product picks L1 cell 1.
-  const std::vector<float> q{0.f, 5.f};
-  std::vector<uint32_t> l1_ids;
-  centroids.SearchL1(q, /*n1=*/1, l1_ids);
-  ASSERT_EQ(l1_ids.size(), 1u);
-  EXPECT_EQ(l1_ids[0], 1u);
-}

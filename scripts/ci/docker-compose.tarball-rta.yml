@@ -24,6 +24,7 @@ services:
     environment:
       - HOME=/tmp
       - TARBALL_NAME
+      - POSTGRES_PASSWORD=postgres
     networks:
       - rta-network
     command: >
@@ -33,6 +34,7 @@ services:
         exec /tmp/serenedb/usr/bin/serened \
           --flagfile=/tmp/serenedb/etc/serenedb/serened.conf \
           --listen postgres://0.0.0.0:7890 \
+          --auth_timeout=600s \
       '
 
   # HBA network tests: the mask test launches its OWN serened (from its own

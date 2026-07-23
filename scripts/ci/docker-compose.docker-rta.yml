@@ -14,7 +14,9 @@ services:
     depends_on:
       test-tmp-init:
         condition: service_completed_successfully
-    command: serened
+    command: serened --auth_timeout=600s
+    environment:
+      - POSTGRES_PASSWORD=postgres
     volumes:
       - "sdb-test-tmp:/test-tmp"
     networks:

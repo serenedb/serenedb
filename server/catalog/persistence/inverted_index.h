@@ -42,12 +42,11 @@ struct IVFColumnConfig {
   int d = 0;
   irs::VectorMetric metric = irs::VectorMetric::L2Sqr;
   irs::VectorQuantization quant = irs::VectorQuantization::None;
-  uint32_t nlist = 0;
-  uint32_t train_sample = 0;
-  uint32_t cluster_iters = 0;
   uint32_t pq_m = 0;
   uint32_t rabitq_bits = 0;
-  float nlist_factor = 0;
+  float sample_factor = 0;
+  uint32_t posting_size = 0;
+  bool compression = true;
 };
 
 // Persisted per-field iresearch config, keyed by field_id in InvertedIndexData.

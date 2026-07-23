@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/types/vector_cache.hpp>
 #include <memory>
 #include <vector>
 
@@ -46,21 +47,9 @@ inline void EncodeCentroidTerm(uint32_t id, byte_type* out) noexcept {
 using VectorDistanceFn = float (*)(const byte_type*, const byte_type*,
                                    uint16_t);
 
-VectorDistanceFn ResolveVectorDistance(VectorMetric metric);
-
-// Like ResolveVectorDistance, but distance metrics (L1/L2Sqr) are negated so
-// every metric scores "larger = nearer". Used on the collector-facing scoring
-// path; ResolveVectorDistance stays natural for IVF geometry and radius.
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric);
 
-bool VectorMetricNearestIsLargest(VectorMetric metric) noexcept;
-
 bool VectorMetricIsAngular(VectorMetric metric) noexcept;
-
-inline constexpr bool Better(bool nearest_is_largest, float candidate,
-                             float best) noexcept {
-  return nearest_is_largest ? candidate > best : candidate < best;
-}
 
 class IvfVectorReader {
  public:
@@ -71,14 +60,14 @@ class IvfVectorReader {
   const float* ReadDocBatch(doc_id_t first, size_t count);
 
  private:
-  void ReadInto(uint64_t start, uint64_t count);
+  void Seek(uint64_t row);
 
   uint32_t _d;
-  const ColumnReader* _child;
+  const ColumnReader* _reader;
   ReadContext* _ctx;
   ColumnReader::ScanState _scan;
-  uint64_t _pos = 0;
-  duckdb::Vector _buf;
+  duckdb::VectorCache _cache;
+  size_t _cap = 0;
 };
 
 }  // namespace irs

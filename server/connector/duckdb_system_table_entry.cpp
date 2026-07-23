@@ -115,6 +115,19 @@ void SystemTableScan(duckdb::ClientContext& context,
   state.offset += count;
 }
 
+void SystemTableScanSerialize(duckdb::Serializer&,
+                              const duckdb::optional_ptr<duckdb::FunctionData>,
+                              const duckdb::TableFunction&) {
+  throw duckdb::NotImplementedException(
+    "system_table_scan serialization not implemented");
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> SystemTableScanDeserialize(
+  duckdb::Deserializer&, duckdb::TableFunction&) {
+  throw duckdb::NotImplementedException(
+    "system_table_scan deserialization not implemented");
+}
+
 }  // namespace
 
 SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
@@ -159,6 +172,8 @@ duckdb::TableFunction SystemTableEntry::GetScanFunction(
                              nullptr /* bind */, SystemTableInit);
   func.projection_pushdown = true;
   func.get_bind_info = SystemTableGetBindInfo;
+  func.serialize = SystemTableScanSerialize;
+  func.deserialize = SystemTableScanDeserialize;
   return func;
 }
 

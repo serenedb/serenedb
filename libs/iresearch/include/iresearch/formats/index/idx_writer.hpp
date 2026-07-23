@@ -39,7 +39,6 @@ namespace irs {
 
 class Directory;
 class IndexOutput;
-struct BuiltIvf;
 
 class IdxWriter final {
  public:
@@ -52,8 +51,7 @@ class IdxWriter final {
 
   IndexOutput& BlocksOut();
 
-  void AddIvf(field_id id, VectorMetric metric,
-              std::shared_ptr<const BuiltIvf> built);
+  void AddIvf(field_id id, IvfCentroidMeta meta);
 
   void AddTermDictEntry(field_id id, TermDictMeta meta);
 

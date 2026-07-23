@@ -43,8 +43,7 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                     ERR_HINT("Example: ts_starts_with('pre'). ts_starts_with "
                              "requires a VARCHAR column."));
   }
-  auto& filter = ctx.negated ? Negate<irs::ByPrefix>(parent)
-                             : AddFilter<irs::ByPrefix>(parent);
+  auto& filter = AddMaybeNegated<irs::ByPrefix>(parent, ctx, column_info);
   filter.boost(ctx.boost);
   *filter.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);

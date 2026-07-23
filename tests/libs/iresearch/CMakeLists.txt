@@ -23,10 +23,8 @@ set(iresearch-tests_sources
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
-    ./formats/ivf/centroids_test.cpp
-    ./formats/ivf/clustering_test.cpp
     ./formats/ivf/quantizer_test.cpp
-    ./formats/ivf/ivf_writer_test.cpp
+    ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_test_case_base.cpp
     ./formats/skip_list_test.cpp
@@ -80,7 +78,6 @@ set(iresearch-tests_sources
     ./search/prefix_filter_test.cpp
     ./search/range_filter_test.cpp
     ./search/phrase_filter_tests.cpp
-    ./search/column_existence_filter_test.cpp
     ./search/same_position_filter_tests.cpp
     ./search/ngram_similarity_filter_tests.cpp
     ./search/top_terms_selector_test.cpp
@@ -173,8 +170,8 @@ target_link_libraries(
     iresearch-static
     search-benchmark-common
     gtest
-    rapidjson
     simdjson
+    simdutf
 )
 
 # setup CRT
@@ -193,9 +190,8 @@ target_include_directories(
         ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         ${FROZEN_INCLUDE_DIR}
-        $<TARGET_PROPERTY:iresearch-cmdline,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
-        $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
 # Standalone iresearch-load binary -- split out so CI doesn't have to compile and
@@ -216,8 +212,8 @@ target_link_libraries(
     iresearch-static
     search-benchmark-common
     gtest
-    rapidjson
     simdjson
+    simdutf
 )
 
 target_include_directories(
@@ -231,7 +227,6 @@ target_include_directories(
         ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         ${FROZEN_INCLUDE_DIR}
-        $<TARGET_PROPERTY:iresearch-cmdline,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
-        $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )

@@ -20,7 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <utf8/core.h>
+#include <simdutf.h>
 
 #include "basics/containers/small_vector.h"
 #include "index/index_tests.hpp"
@@ -70,9 +70,9 @@ class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
             continue;
           }
 
-          const auto pos =
-            utf8::find_invalid(expected_term.begin(), expected_term.end());
-          if (pos != expected_term.end()) {
+          if (!simdutf::validate_utf8(
+                reinterpret_cast<const char*>(expected_term.data()),
+                expected_term.size())) {
             // invalid utf8 sequence
             continue;
           }

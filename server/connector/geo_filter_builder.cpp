@@ -209,8 +209,8 @@ std::pair<irs::GeoDistanceFilter*, double> PrepareGeoDistanceFilter(
                     ERR_MSG("Geo distance: field has no analyzer attached"));
   }
 
-  auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(parent)
-                                 : AddFilter<irs::GeoDistanceFilter>(parent);
+  auto& geo_filter =
+    AddMaybeNegated<irs::GeoDistanceFilter>(parent, ctx, *column_info);
   geo_filter.boost(ctx.boost);
   *geo_filter.mutable_field_id() = column_info->field_id;
 
@@ -309,8 +309,8 @@ void FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
       ERR_MSG("ST_Distance_Between field has no analyzer attached"));
   }
 
-  auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(filter)
-                                 : AddFilter<irs::GeoDistanceFilter>(filter);
+  auto& geo_filter =
+    AddMaybeNegated<irs::GeoDistanceFilter>(filter, ctx, *column_info);
   geo_filter.boost(ctx.boost);
   *geo_filter.mutable_field_id() = column_info->field_id;
 
@@ -388,8 +388,7 @@ void FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
                             ": field has no analyzer attached"));
   }
 
-  auto& geo_filter = ctx.negated ? Negate<irs::GeoFilter>(filter)
-                                 : AddFilter<irs::GeoFilter>(filter);
+  auto& geo_filter = AddMaybeNegated<irs::GeoFilter>(filter, ctx, *column_info);
   geo_filter.boost(ctx.boost);
   *geo_filter.mutable_field_id() = column_info->field_id;
 

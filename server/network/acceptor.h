@@ -179,7 +179,11 @@ class Acceptor final : public AcceptorBase,
         const int fd = connection->Lowest().native_handle();
         if (_opts.keepidle) {
           const int v = static_cast<int>(*_opts.keepidle);
+#ifdef TCP_KEEPIDLE
           ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &v, sizeof(v));
+#elif defined(TCP_KEEPALIVE)
+          ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &v, sizeof(v));
+#endif
         }
         if (_opts.keepintvl) {
           const int v = static_cast<int>(*_opts.keepintvl);

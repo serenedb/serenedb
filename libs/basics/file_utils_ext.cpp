@@ -835,7 +835,7 @@ handle_t Open(void* file, OpenMode mode, int advice) noexcept {
   // file descriptor being dup()'ed therefore try to get the original file name
   // from the existing descriptor and reopen it
   // FIXME TODO assume that the file has not moved and was not deleted
-  auto fd = handle_cast(file);
+  auto fd = HANDLE_CAST(file);
   char path[MAXPATHLEN + 1];  // F_GETPATH requires a buffer of size at least
                               // MAXPATHLEN, +1 for \0
 
@@ -845,7 +845,7 @@ handle_t Open(void* file, OpenMode mode, int advice) noexcept {
     return nullptr;
   }
 
-  return open(path, mode, advice);
+  return Open(path, mode, advice);
 #else
   // posix approach is to open the original file via the file descriptor link
   // under /proc/self/fd the link is guaranteed to point to the original inode

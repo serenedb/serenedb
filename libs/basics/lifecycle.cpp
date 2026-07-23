@@ -20,7 +20,11 @@
 
 #include "basics/lifecycle.h"
 
+#ifdef __APPLE__
+#include <fcntl.h>
+#else
 #include <sys/eventfd.h>
+#endif
 #include <unistd.h>
 
 #include <atomic>
@@ -40,7 +44,24 @@ std::string gDataDirArg;
 // to it safely. write(2) on an eventfd is async-signal-safe per POSIX,
 // and the 8-byte semantic counter coalesces repeated writes -- a
 // single read() in WaitForShutdown drains them.
+int gShutdownWriteFd = -1;
+
 int OpenShutdownFd() noexcept {
+#ifdef __APPLE__
+  int fds[2];
+  if (::pipe(fds) < 0) {
+    static constexpr char msg[] =
+      "fatal: pipe() failed during lifecycle init\n";
+    ssize_t unused = ::write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    (void)unused;
+    ::_exit(EXIT_FAILURE);
+  }
+  ::fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+  ::fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+  ::fcntl(fds[1], F_SETFL, ::fcntl(fds[1], F_GETFL) | O_NONBLOCK);
+  gShutdownWriteFd = fds[1];
+  return fds[0];
+#else
   int fd = ::eventfd(0, EFD_CLOEXEC);
   if (fd < 0) {
     // No logger yet at static-init; abort via stderr write -- this is
@@ -51,7 +72,9 @@ int OpenShutdownFd() noexcept {
     (void)unused;
     ::_exit(EXIT_FAILURE);
   }
+  gShutdownWriteFd = fd;
   return fd;
+#endif
 }
 
 // Initialized before main() so the signal-handler write is always
@@ -74,7 +97,7 @@ void BeginShutdown() noexcept {
   // practice for an 8-byte write that always fits, but loop on it
   // defensively.
   const uint64_t v = 1;
-  while (::write(gShutdownFd, &v, sizeof(v)) < 0 && errno == EINTR) {
+  while (::write(gShutdownWriteFd, &v, sizeof(v)) < 0 && errno == EINTR) {
   }
 }
 

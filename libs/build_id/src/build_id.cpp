@@ -21,19 +21,22 @@
 
 #include "build_id/build_id.h"
 
+#include <string>
+
+#ifndef __APPLE__
 #include <elf.h>
 #include <link.h>
 
-#include <string>
-
 extern char build_id_start[];  // NOLINT
 extern char build_id_end;      // NOLINT
+#endif
 
 namespace sdb::build_id {
 
 constexpr const char* kBuildIdFailed = "";
 
 std::string_view GetBuildId() {
+#ifndef __APPLE__
   const auto* note_memory = reinterpret_cast<const char*>(&build_id_start);
   const auto* note_header = reinterpret_cast<ElfW(Nhdr) const*>(note_memory);
 
@@ -42,6 +45,7 @@ std::string_view GetBuildId() {
       note_memory + sizeof(ElfW(Nhdr)) + note_header->n_namesz);
     return std::string_view{build_id_memory, note_header->n_descsz};
   }
+#endif
   return std::string_view{kBuildIdFailed};
 }
 

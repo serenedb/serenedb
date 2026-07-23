@@ -1,5 +1,15 @@
 #!/bin/bash
 
+if ((BASH_VERSINFO[0] < 4)); then
+	for _sdb_bash in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+		if [[ -x $_sdb_bash ]]; then
+			exec "$_sdb_bash" "$0" "$@"
+		fi
+	done
+	echo "run.sh requires bash >= 4 (macOS ships 3.2); install via 'brew install bash'" >&2
+	exit 1
+fi
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 : "${RESOURCES:=$(realpath "$SCRIPT_DIR/../../resources")}"
@@ -80,7 +90,7 @@ declare -A defaults=(
 	[test]='./tests/sqllogic/sdb/**/*.test*'
 	[junit]='./out/sqllogic-tests'
 	[runner]="$SCRIPT_DIR/../../third_party/sqllogictest-rs"
-	[jobs]=$(nproc)
+	[jobs]=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 	[debug]=false
 	[override]=false
 	[force_override]=false

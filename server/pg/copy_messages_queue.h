@@ -139,7 +139,7 @@ class CopyMessagesQueueIterator {
         SDB_ASSERT(_cur_msg_data.size() >= 5);
         _cur_msg_data.remove_prefix(5);  // skip message type and length
       }
-      const auto to_copy = std::min(length - bytes_read, _cur_msg_data.size());
+      const auto to_copy = std::min<size_t>(length - bytes_read, _cur_msg_data.size());
       std::memcpy(pos, _cur_msg_data.data(), to_copy);
       pos += to_copy;
       bytes_read += to_copy;

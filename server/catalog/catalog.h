@@ -224,6 +224,8 @@ struct Snapshot {
   bool HasIndexes(ObjectId relation_id) const;
   std::shared_ptr<Object> GetObject(ObjectId id) const;
 
+  std::vector<PgDependEdge> CollectPgDependEdges(ObjectId db_id) const;
+
   ObjectId GetDatabaseId(const Object& obj) const {
     if (obj.GetType() == ObjectType::Database) {
       return obj.GetId();
@@ -294,6 +296,9 @@ struct Snapshot {
 
   // Cross-tree fixups for DROP seed. Composition cleanup is async.
   DropPlan ComputeDropPlan(ObjectId seed) const;
+  DropPlan ComputeDropPlanRestrict(ObjectId seed, bool cascade,
+                                   std::string_view kind,
+                                   std::string_view name) const;
   // Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
   // column and cascade-drop every index covering it (PG column->index cascade).
   DropPlan ComputeColumnDropPlan(ObjectId table_id, ObjectId col_id) const;

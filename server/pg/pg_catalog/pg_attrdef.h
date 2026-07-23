@@ -37,4 +37,13 @@ struct PgAttrdef {
 };
 // NOLINTEND
 
+inline constexpr uint64_t kAttrdefBit = uint64_t{1} << 59;
+
+inline constexpr Oid AttrdefOid(uint64_t column_oid) {
+  return Oid{column_oid | kAttrdefBit};
+}
+
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData();
+
 }  // namespace sdb::pg

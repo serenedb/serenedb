@@ -82,7 +82,7 @@ std::string RowIdKey(duckdb::row_t row) {
 // reuse), per-segment ticks stay monotone, and the pending state is a WAL
 // prefix at every moment -- a background refresh mid-feed durably banks the
 // finished prefix with a matching cursor point.
-struct InvertedStoreIndex::ReplaySession {
+struct InvertedStoreIndex::ReplaySession : public query::ParallelInvertedFeed {
   // One scan for a ROW_GROUP_DATA entry, shared by every index of the table:
   // the first range job to run scans (and, with siblings attached, stores the
   // chunks); the rest consume.
@@ -131,6 +131,9 @@ struct InvertedStoreIndex::ReplaySession {
     duckdb::shared_ptr<RangeShare> share;
     uint64_t query_count = 1;
     std::atomic<bool> done{false};
+    // Recovery jobs self-retire on completion (WAL-ordered tick commit); live
+    // jobs are committed together at CommitSearch, so they only mark done.
+    bool self_retire = true;
   };
 
   struct RunTask final : duckdb::BaseExecutorTask {
@@ -148,21 +151,34 @@ struct InvertedStoreIndex::ReplaySession {
   // per-connection and writer construction is not per-chunk cheap, so tasks
   // check bundles out of a pool that never exceeds the prefetch depth.
   struct Bundle {
-    Bundle(ReplaySession& session, irs::IndexWriter::Transaction& trx)
-      : expr_conn{session.instance} {
-      expr_conn.BeginTransaction();
+    Bundle(ReplaySession& session, irs::IndexWriter::Transaction& trx) {
+      // Live feeds tokenize as pure index work: expressions are pre-computed
+      // on the committing thread (see DispatchLive) and fed via SwitchExpression,
+      // so the workers open no duckdb connection/transaction (which would race
+      // the in-flight store commit). Recovery keeps a connection: it evaluates
+      // expressions inline and its range jobs scan the store table.
+      std::vector<IndexedExpression> exprs;
+      if (!session.live_mode) {
+        expr_conn.emplace(session.instance);
+        expr_conn->BeginTransaction();
+        exprs = MakeIndexedExpressions(*session.index, *expr_conn->context);
+      }
       insert_writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
         trx, MakeTokenizerProvider(session.snapshot, *session.index),
         session.index->GetColumns(), MakeEntryInfoProvider(*session.index),
-        MakeIndexedExpressions(*session.index, *expr_conn.context),
+        std::move(exprs),
         PkPolicy{.index_term = session.index->GetOptions().pk_term,
                  .column = session.index->GetOptions().pk_column});
       delete_writer = std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
     }
 
-    ~Bundle() { expr_conn.Rollback(); }
+    ~Bundle() {
+      if (expr_conn) {
+        expr_conn->Rollback();
+      }
+    }
 
-    duckdb::Connection expr_conn;
+    std::optional<duckdb::Connection> expr_conn;
     std::unique_ptr<DuckDBSearchSinkInsertWriter> insert_writer;
     std::unique_ptr<DuckDBSearchSinkDeleteWriter> delete_writer;
   };
@@ -177,9 +193,7 @@ struct InvertedStoreIndex::ReplaySession {
   std::shared_ptr<const catalog::InvertedIndex> index;
   std::shared_ptr<const catalog::Table> table;
   std::vector<catalog::Column::Id> chunk_column_ids;
-  std::vector<duckdb::idx_t> ref_positions;
-  std::vector<catalog::Column::Id> ref_col_ids;
-  duckdb::vector<duckdb::LogicalType> ref_types;
+  std::vector<FeedColumn> ref_columns;
   duckdb::DatabaseInstance& instance;
   duckdb::AttachedDatabase& attached;
   duckdb::TaskExecutor executor;
@@ -194,6 +208,29 @@ struct InvertedStoreIndex::ReplaySession {
   uint64_t committed_below = 0;
   std::atomic<uint64_t> scheduled{0};
   std::atomic<uint64_t> retired{0};
+
+  // Live commit-window feed (persistent session reused after recovery): jobs
+  // tokenize in parallel into their own segments; CommitSearch commits them
+  // all at the commit's tick. Only touched on the committing thread + its
+  // workers; commits are serialized DB-wide by the store WAL lock.
+  std::vector<std::unique_ptr<Job>> live_jobs;
+  std::atomic<uint64_t> live_scheduled{0};
+  std::atomic<uint64_t> live_done{0};
+  // A worker tokenization error surfaces at drain, after the store commit is
+  // already durable; the index is marked out-of-sync (rebuilt on boot) rather
+  // than throwing out of the noexcept commit path.
+  bool live_failed = false;
+
+  // Indexed-expression evaluation for the live feed. The workers must not open
+  // duckdb connections (that races the in-flight store commit), so one shared
+  // eval connection + transaction is opened on the committing thread and the
+  // expressions bound once; the workers evaluate them in parallel over that
+  // shared context (duckdb's own parallel-projection pattern: per-thread
+  // ExpressionExecutors, one shared ClientContext).
+  bool live_mode = false;
+  std::optional<duckdb::Connection> live_expr_conn;
+  bool live_expr_txn_open = false;
+  std::vector<IndexedExpression> live_exprs;
 
   std::mutex bundle_mu;
   std::vector<std::unique_ptr<Bundle>> bundles;
@@ -219,9 +256,7 @@ struct InvertedStoreIndex::ReplaySession {
       if (!col) {
         continue;
       }
-      ref_positions.push_back(pos);
-      ref_col_ids.push_back(chunk_column_ids[pos]);
-      ref_types.push_back(col->type);
+      ref_columns.push_back({pos, {chunk_column_ids[pos], col->type}});
     }
     depth = ConfiguredReplayDepth(instance);
     if (depth == 0) {
@@ -349,7 +384,11 @@ struct InvertedStoreIndex::ReplaySession {
       Insert(*bundle, task);
     }
     task.done.store(true, std::memory_order_release);
-    Retire();
+    if (task.self_retire) {
+      Retire();
+    } else {
+      live_done.fetch_add(1, std::memory_order_release);
+    }
   }
 
   void RunRange(Bundle& bundle, Job& task) {
@@ -371,7 +410,7 @@ struct InvertedStoreIndex::ReplaySession {
 
   void ScanRange(Bundle& bundle, Job& task) {
     auto& transaction =
-      duckdb::DuckTransaction::Get(*bundle.expr_conn.context, attached);
+      duckdb::DuckTransaction::Get(*bundle.expr_conn->context, attached);
     // Siblings attached to the share consume stored copies; alone, tokenize
     // straight out of the scan callback and store nothing.
     const bool store_copies = task.share.use_count() > 1;
@@ -411,18 +450,10 @@ struct InvertedStoreIndex::ReplaySession {
       duckdb::LogicalType::ROW_TYPE,
       reinterpret_cast<duckdb::data_ptr_t>(rowids.data()), count};
 
-    auto& ins = *bundle.insert_writer;
-    ins.Init(count, PkChunk{.keys = key_views, .column = &rowid_vec});
-    for (size_t k = 0; k < ref_positions.size(); ++k) {
-      const ColumnDescriptor desc{ref_col_ids[k], ref_types[k]};
-      ins.SwitchColumn(desc, chunk.data[ref_positions[k]], count);
-    }
-    if (auto indexed_exprs = ins.IndexedExpressions(); !indexed_exprs.empty()) {
-      EvaluateAndWriteIndexedExpressions(ins, indexed_exprs, chunk,
-                                         table->GetId(), chunk_column_ids,
-                                         *bundle.expr_conn.context, count);
-    }
-    ins.Finish();
+    FeedChunk(*bundle.insert_writer, count,
+              PkChunk{.keys = key_views, .column = &rowid_vec}, chunk,
+              ref_columns, table->GetId(), chunk_column_ids,
+              &*bundle.expr_conn->context);
     task.trx.AdvanceQueries(1);
     if (task.trx.ActiveMemory() >= kReplayFlushBytes) {
       task.trx.Flush();
@@ -463,18 +494,21 @@ struct InvertedStoreIndex::ReplaySession {
       duckdb::LogicalType::ROW_TYPE,
       reinterpret_cast<duckdb::data_ptr_t>(task.rowids.data()), count};
 
-    auto& ins = *bundle.insert_writer;
-    ins.Init(count, PkChunk{.keys = key_views, .column = &rowid_vec});
-    for (size_t k = 0; k < ref_positions.size(); ++k) {
-      const ColumnDescriptor desc{ref_col_ids[k], ref_types[k]};
-      ins.SwitchColumn(desc, task.chunk->data[ref_positions[k]], count);
+    // Recovery evaluates its writer's expressions against the bundle's own
+    // connection; live workers evaluate the session's shared expressions in
+    // parallel over the shared eval context (no per-worker connection).
+    if (task.self_retire) {
+      FeedChunk(*bundle.insert_writer, count,
+                PkChunk{.keys = key_views, .column = &rowid_vec}, *task.chunk,
+                ref_columns, table->GetId(), chunk_column_ids,
+                &*bundle.expr_conn->context);
+    } else {
+      FeedChunk(*bundle.insert_writer, count,
+                PkChunk{.keys = key_views, .column = &rowid_vec}, *task.chunk,
+                ref_columns, table->GetId(), chunk_column_ids,
+                live_expr_conn ? &*live_expr_conn->context : nullptr,
+                live_exprs);
     }
-    if (auto indexed_exprs = ins.IndexedExpressions(); !indexed_exprs.empty()) {
-      EvaluateAndWriteIndexedExpressions(ins, indexed_exprs, *task.chunk,
-                                         table->GetId(), chunk_column_ids,
-                                         *bundle.expr_conn.context, count);
-    }
-    ins.Finish();
     task.trx.AdvanceQueries(1);
     if (task.trx.ActiveMemory() >= kReplayFlushBytes) {
       task.trx.Flush();
@@ -540,6 +574,153 @@ struct InvertedStoreIndex::ReplaySession {
     FlushCursorsLocked();
     SDB_ASSERT(pending_cursors.empty());
   }
+
+  // --- Live commit-window feed (post-recovery reuse of the pool/executor) ---
+
+  // Bind the indexed expressions once, lazily, on the committing thread. The
+  // eval needs a transaction, so a private connection is opened here (safe on
+  // the committing thread -- the inline path does the same; only a worker
+  // opening one would race the store commit). The transaction stays open for
+  // the commit and is rolled back in ResetLive.
+  void EnsureLiveExprs() {
+    if (index->ExpressionKeys().empty() || !live_exprs.empty()) {
+      if (!live_expr_txn_open && !index->ExpressionKeys().empty()) {
+        live_expr_conn->BeginTransaction();
+        live_expr_txn_open = true;
+      }
+      return;
+    }
+    if (!live_expr_conn) {
+      live_expr_conn.emplace(instance);
+    }
+    live_expr_conn->BeginTransaction();
+    live_expr_txn_open = true;
+    live_exprs = MakeIndexedExpressions(*index, *live_expr_conn->context);
+  }
+
+  // Deep-copy the committing chunk (its vectors reference scan block pins that
+  // the feed loop recycles) and dispatch a tokenize job into its own segment.
+  // Only the indexed columns are populated in the commit-time table chunk, so
+  // copy exactly those (ref_columns positions). Indexed expressions are
+  // evaluated on the workers in parallel over the session's shared eval
+  // context (opened here on the committing thread by EnsureLiveExprs), so no
+  // worker opens its own connection.
+  void DispatchLive(duckdb::DataChunk& source, std::vector<int64_t> rowids) {
+    const auto count = source.size();
+    EnsureLiveExprs();
+    auto owned = duckdb::make_shared_ptr<duckdb::DataChunk>();
+    owned->Initialize(duckdb::Allocator::DefaultAllocator(), source.GetTypes());
+    for (const auto& col : ref_columns) {
+      duckdb::VectorOperations::Copy(source.data[col.slot],
+                                     owned->data[col.slot], count, 0, 0);
+    }
+    owned->SetCardinality(count);
+    auto job = std::make_unique<Job>(*this, /*is_delete=*/false,
+                                     std::move(owned), std::move(rowids),
+                                     /*wal_offset=*/0);
+    job->self_retire = false;
+    auto* raw = job.get();
+    live_jobs.push_back(std::move(job));
+    live_scheduled.fetch_add(1, std::memory_order_relaxed);
+    executor.ScheduleTask(duckdb::make_uniq<RunTask>(executor, *raw));
+    BackpressureLive();
+  }
+
+  void BackpressureLive() {
+    while (live_scheduled.load(std::memory_order_relaxed) -
+             live_done.load(std::memory_order_acquire) >=
+           depth) {
+      if (executor.HasError()) {
+        return;
+      }
+      duckdb::shared_ptr<duckdb::Task> help;
+      if (executor.GetTask(help)) {
+        help->Execute(duckdb::TaskExecutionMode::PROCESS_ALL);
+        help.reset();
+      } else {
+        std::this_thread::yield();
+      }
+    }
+  }
+
+  // Drain every scheduled live job. A worker error is captured (not rethrown):
+  // the store commit is already durable here, so the index is marked
+  // out-of-sync at finish rather than aborting the noexcept commit.
+  void DrainLive() {
+    try {
+      executor.WorkOnTasks();
+    } catch (const std::exception&) {
+      live_failed = true;
+    }
+  }
+
+  bool HasLiveJobs() const { return !live_jobs.empty(); }
+
+  // Phase 1 of the live commit, BEFORE the tick is allocated: finish
+  // tokenization and pin every segment onto the flush context. RegisterFlush
+  // must precede TickDomain::Advance -- otherwise a refresh whose tick
+  // snapshot lands between the Advance and the pin could advance its committed
+  // tick past an unpinned segment (lost insert / FlushPending assert).
+  // Returns the max per-segment query count for tick-range sizing.
+  uint64_t Prepare() override {
+    DrainLive();
+    if (live_failed) {
+      return 0;
+    }
+    uint64_t queries = 0;
+    for (auto& job : live_jobs) {
+      job->trx.RegisterFlush();
+      queries = std::max(queries, job->trx.GetQueries());
+    }
+    return queries;
+  }
+
+  // Phase 2, AFTER the tick is allocated: record the durable cursor (before
+  // the segments become flushable) then commit every segment at the commit
+  // tick. Mirrors the inline path's record-cursor-then-commit ordering. On a
+  // tokenization failure the segments are dropped and the index marked
+  // out-of-sync (rebuilt on boot) -- the store commit is already durable.
+  void Finish(uint64_t last_tick,
+              std::optional<search::WalCursor> cursor) override {
+    if (live_failed) {
+      if (storage) {
+        storage->MarkOutOfSync();
+      }
+      for (auto& job : live_jobs) {
+        job->trx.Abort();
+      }
+      ResetLive();
+      return;
+    }
+    if (storage && cursor) {
+      storage->RecordFlushCursor(last_tick, *cursor);
+    }
+    for (auto& job : live_jobs) {
+      SDB_ENSURE(job->trx.Commit(last_tick),
+                 "inverted index live feed: commit failed for index ",
+                 index->GetId().id());
+    }
+    ResetLive();
+  }
+
+  void Abort() override {
+    DrainLive();
+    for (auto& job : live_jobs) {
+      job->trx.Abort();
+    }
+    ResetLive();
+  }
+
+  void ResetLive() {
+    live_jobs.clear();
+    live_scheduled.store(0, std::memory_order_relaxed);
+    live_done.store(0, std::memory_order_relaxed);
+    live_failed = false;
+    if (live_expr_txn_open) {
+      live_expr_conn->Rollback();
+      live_expr_txn_open = false;
+    }
+  }
 };
 
 InvertedStoreIndex::InvertedStoreIndex(
@@ -554,7 +735,8 @@ InvertedStoreIndex::InvertedStoreIndex(
 
 InvertedStoreIndex::~InvertedStoreIndex() = default;
 
-InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
+InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession(
+  bool live) {
   if (_replay) {
     return *_replay;
   }
@@ -578,6 +760,9 @@ InvertedStoreIndex::ReplaySession& InvertedStoreIndex::EnsureReplaySession() {
     std::move(table), db);
   _replay->durable_offset = durable_offset;
   _replay->generation = block_manager.GetCheckpointIteration();
+  // Set once, before any job is dispatched, so tokenizing workers read a
+  // stable value (a per-chunk write would race their Bundle construction).
+  _replay->live_mode = live;
   return *_replay;
 }
 
@@ -612,7 +797,7 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   if (count == 0) {
     return;
   }
-  auto& session = EnsureReplaySession();
+  auto& session = EnsureReplaySession(/*live=*/false);
   const auto commit_offset = ReplayCommitOffset();
   if (commit_offset != 0 && commit_offset < session.durable_offset) {
     return;
@@ -631,7 +816,7 @@ void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
   if (count == 0) {
     return;
   }
-  auto& session = EnsureReplaySession();
+  auto& session = EnsureReplaySession(/*live=*/false);
   const auto commit_offset = ReplayCommitOffset();
   if (commit_offset != 0 && commit_offset < session.durable_offset) {
     return;
@@ -647,7 +832,7 @@ void InvertedStoreIndex::ReplayAppendRange(duckdb::DataTable& table,
   if (count == 0) {
     return;
   }
-  auto& session = EnsureReplaySession();
+  auto& session = EnsureReplaySession(/*live=*/false);
   const auto commit_offset = ReplayCommitOffset();
   if (commit_offset != 0 && commit_offset < session.durable_offset) {
     return;
@@ -678,6 +863,19 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
   auto* conn = CurrentCommittingContext();
   if (!conn) {
     ReplayAppend(chunk, row_ids);
+    return {};
+  }
+  const auto count = chunk.size();
+  if (count == 0) {
+    return {};
+  }
+  // Past the fan-out gate a bulk commit tokenizes on workers instead of inline
+  // on the committing thread; small commits stay on the inline path below.
+  if (conn->ClassifyInvertedFeed(_index_id) ==
+      query::Transaction::InvertedFeedMode::Parallel) {
+    auto& session = EnsureReplaySession(/*live=*/true);
+    conn->EngageParallelInvertedFeed(_index_id, &session);
+    session.DispatchLive(chunk, ExtractRowIds(row_ids, count));
     return {};
   }
   auto snapshot = conn->CatalogSnapshot();
@@ -720,7 +918,8 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
     key_views[i] = keys[i];
   }
 
-  writer->Init(count, PkChunk{.keys = key_views, .column = &row_ids});
+  std::vector<FeedColumn> columns;
+  columns.reserve(chunk.ColumnCount());
   for (duckdb::idx_t pos = 0;
        pos < chunk.ColumnCount() && pos < chunk_column_ids.size(); ++pos) {
     auto col_id = chunk_column_ids[pos];
@@ -728,16 +927,10 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
     if (!col) {
       continue;
     }
-    const ColumnDescriptor desc{col_id, col->type};
-    writer->SwitchColumn(desc, chunk.data[pos], count);
+    columns.push_back({pos, {col_id, col->type}});
   }
-  if (auto indexed_exprs = writer->IndexedExpressions();
-      !indexed_exprs.empty()) {
-    EvaluateAndWriteIndexedExpressions(*writer, indexed_exprs, chunk, _table_id,
-                                       chunk_column_ids, *expr_conn.context,
-                                       count);
-  }
-  writer->Finish();
+  FeedChunk(*writer, count, PkChunk{.keys = key_views, .column = &row_ids},
+            chunk, columns, _table_id, chunk_column_ids, *expr_conn.context);
   conn.RegisterSearchFlush();
   return {};
 }

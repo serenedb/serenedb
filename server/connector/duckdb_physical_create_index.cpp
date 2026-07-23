@@ -723,29 +723,18 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     pk.keys = key_views;
   }
 
-  uint64_t committed = 0;
-  writer->InitImpl(num_rows, pk, &committed);
-
+  std::vector<FeedColumn> columns;
+  std::vector<catalog::Column::Id> slot_to_col_ids;
+  columns.reserve(gstate.columns.size());
+  slot_to_col_ids.reserve(gstate.columns.size());
   for (const auto& col : gstate.columns) {
-    if (col.input_col_idx >= chunk.ColumnCount()) {
-      continue;
-    }
-
-    const ColumnDescriptor desc{col.id, col.duckdb_type};
-    writer->SwitchColumn(desc, chunk.data[col.input_col_idx], num_rows);
+    columns.push_back({col.input_col_idx, {col.id, col.duckdb_type}});
+    slot_to_col_ids.push_back(col.id);
   }
 
-  if (auto indexed_exprs = writer->IndexedExpressions();
-      !indexed_exprs.empty()) {
-    auto slot_to_col_ids = gstate.columns |
-                           std::views::transform(&InsertColumnMeta::id) |
-                           std::ranges::to<std::vector<catalog::Column::Id>>();
-    EvaluateAndWriteIndexedExpressions(*writer, indexed_exprs, chunk,
-                                       gstate.table_id, slot_to_col_ids,
-                                       context.client, num_rows);
-  }
-
-  writer->Finish();
+  uint64_t committed = 0;
+  FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.table_id,
+            slot_to_col_ids, &context.client, /*inline_exprs=*/{}, &committed);
 
   if (committed &&
       lstate->uncommitted_min_slot != std::numeric_limits<size_t>::max()) {

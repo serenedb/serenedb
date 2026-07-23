@@ -133,7 +133,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   // + rowid reuse), so no dedup is needed. Built lazily on the first replayed
   // operation.
   struct ReplaySession;
-  ReplaySession& EnsureReplaySession();
+  ReplaySession& EnsureReplaySession(bool live);
   duckdb::idx_t ReplayCommitOffset() const;
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);

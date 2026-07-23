@@ -166,4 +166,28 @@ void EvaluateAndWriteIndexedExpressions(
   }
 }
 
+void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
+               const PkChunk& pk, duckdb::DataChunk& chunk,
+               std::span<const FeedColumn> columns, ObjectId table_id,
+               std::span<const catalog::Column::Id> slot_to_col_id,
+               duckdb::optional_ptr<duckdb::ClientContext> expr_context,
+               std::span<const IndexedExpression> inline_exprs,
+               uint64_t* commit_on_flush) {
+  writer.Init(count, pk, commit_on_flush);
+  for (const auto& column : columns) {
+    if (column.slot >= chunk.ColumnCount()) {
+      continue;
+    }
+    writer.SwitchColumn(column.desc, chunk.data[column.slot], count);
+  }
+  auto exprs =
+    inline_exprs.empty() ? writer.IndexedExpressions() : inline_exprs;
+  if (!exprs.empty()) {
+    SDB_ASSERT(expr_context);
+    EvaluateAndWriteIndexedExpressions(writer, exprs, chunk, table_id,
+                                       slot_to_col_id, *expr_context, count);
+  }
+  writer.Finish();
+}
+
 }  // namespace sdb::connector

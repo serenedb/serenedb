@@ -21,6 +21,7 @@
 #pragma once
 
 #include <iresearch/index/index_writer.hpp>
+#include <functional>
 #include <optional>
 #include <vector>
 #include <yaclib/async/future.hpp>
@@ -34,6 +35,23 @@
 
 namespace sdb::query {
 
+// Commit-time driver for one index's parallel inverted feed. Implemented
+// connector-side by the per-index feed session; the Transaction holds a
+// non-owning pointer (the session outlives the commit) and drives it at
+// CommitSearch without a connector dependency.
+class ParallelInvertedFeed {
+ public:
+  virtual ~ParallelInvertedFeed() = default;
+  // Drain + pin the segments; returns the max per-segment query count. Called
+  // before the commit tick is allocated.
+  virtual uint64_t Prepare() = 0;
+  // Record the cursor and commit every segment at the tick.
+  virtual void Finish(uint64_t last_tick,
+                      std::optional<search::WalCursor> cursor) = 0;
+  // Drop the segments (rollback / teardown).
+  virtual void Abort() = 0;
+};
+
 class Transaction : public Config {
  public:
   using Config::Config;
@@ -44,6 +62,7 @@ class Transaction : public Config {
     // reasons) So if we get here explicit Commit/Rollback should be already
     // called. Otherwise we might have some unexpected data
     SDB_ASSERT(_search_transactions.empty());
+    SDB_ASSERT(_inverted_feeds.empty());
     SDB_ASSERT(!_search_txn || _search_txn->Empty());
   }
 #endif
@@ -192,6 +211,27 @@ class Transaction : public Config {
     visit(*entry.transaction, *inverted);
   }
 
+  enum class InvertedFeedMode { Inline, Parallel };
+
+  // Commit-time feed classification for one inverted index. The first
+  // kInlineFeedChunkGate chunks of a commit feed the inline single-segment
+  // path; past that, a bulk commit fans its remaining chunks out to parallel
+  // segments. Small/OLTP commits never cross the gate, so they never pay the
+  // fan-out (deep-copy + scheduler) cost. Called once per fed chunk.
+  InvertedFeedMode ClassifyInvertedFeed(ObjectId index_id) {
+    return ++_inverted_feeds[index_id].fed_chunks > kInlineFeedChunkGate
+             ? InvertedFeedMode::Parallel
+             : InvertedFeedMode::Inline;
+  }
+
+  // Register the per-index parallel feed the first time it engages this commit
+  // (idempotent). `feed` is the connector-side session, non-owning (it
+  // outlives the commit).
+  void EngageParallelInvertedFeed(ObjectId index_id,
+                                  ParallelInvertedFeed* feed) {
+    _inverted_feeds[index_id].feed = feed;
+  }
+
  private:
   // The cases a single snapshot serves a whole transaction: an explicit
   // REPEATABLE READ transaction, or any transaction that has performed
@@ -203,7 +243,28 @@ class Transaction : public Config {
     std::shared_ptr<search::InvertedIndexStorage> storage;
   };
 
+  // Per-commit inverted feed state per index: the gate counter plus, once the
+  // index crosses the gate, a non-owning pointer to its parallel session.
+  struct InvertedFeedState {
+    uint32_t fed_chunks = 0;
+    ParallelInvertedFeed* feed = nullptr;
+  };
+
+  // First N chunks of a commit stay on the inline path; a bulk commit fans out
+  // past this. ~16k rows, mirroring recovery's fan-out gate.
+  static constexpr uint32_t kInlineFeedChunkGate = 8;
+
+  void AbortParallelInvertedFeeds() noexcept {
+    for (auto& [index_id, state] : _inverted_feeds) {
+      if (state.feed) {
+        state.feed->Abort();
+      }
+    }
+    _inverted_feeds.clear();
+  }
+
   containers::FlatHashMap<ObjectId, SearchTransaction> _search_transactions;
+  containers::FlatHashMap<ObjectId, InvertedFeedState> _inverted_feeds;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged

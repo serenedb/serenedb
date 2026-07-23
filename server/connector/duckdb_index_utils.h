@@ -55,4 +55,31 @@ void EvaluateAndWriteIndexedExpressions(
   std::span<const catalog::Column::Id> slot_to_col_id,
   duckdb::ClientContext& client_context, duckdb::idx_t num_rows);
 
+// One indexed base column of a feed chunk: its position in the chunk and the
+// (column id, type) the sink needs to tokenize it.
+struct FeedColumn {
+  duckdb::idx_t slot;
+  ColumnDescriptor desc;
+};
+
+
+// The single feed path shared by every caller that tokenizes a chunk into an
+// inverted index (CREATE INDEX backfill, live insert, recovery replay): open
+// the batch, hand each indexed column to the sink, feed the indexed
+// expressions, close. `writer` already holds the target iresearch transaction.
+// Indexed expressions are evaluated over the chunk and tokenized. By default
+// the writer's own expressions are used; `inline_exprs`, when non-empty,
+// overrides them with a caller-owned set (the live parallel feed passes the
+// session's shared expressions so its workers evaluate in parallel over one
+// shared context instead of per-worker connections). `expr_context` is the
+// evaluation context (may be null when nothing needs evaluation).
+// `commit_on_flush` reaches the online build's delete-log tracking.
+void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
+               const PkChunk& pk, duckdb::DataChunk& chunk,
+               std::span<const FeedColumn> columns, ObjectId table_id,
+               std::span<const catalog::Column::Id> slot_to_col_id,
+               duckdb::optional_ptr<duckdb::ClientContext> expr_context,
+               std::span<const IndexedExpression> inline_exprs = {},
+               uint64_t* commit_on_flush = nullptr);
+
 }  // namespace sdb::connector

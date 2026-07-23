@@ -175,7 +175,7 @@ void Transaction::PreRollback() noexcept { RollbackVariables(); }
 
 void Transaction::CommitSearch(
   std::optional<search::WalCursor> cursor) noexcept {
-  if (_search_transactions.empty()) {
+  if (_search_transactions.empty() && _inverted_feeds.empty()) {
     return;
   }
   for (auto& search_transaction : _search_transactions) {
@@ -189,6 +189,7 @@ void Transaction::CommitSearch(
       search_transaction.second.transaction->Abort();
     }
     _search_transactions.clear();
+    AbortParallelInvertedFeeds();
   };
 
   // Reserve a tick range covering every writer's query (Remove/Replace)
@@ -198,6 +199,15 @@ void Transaction::CommitSearch(
   for (const auto& [id, entry] : _search_transactions) {
     max_queries =
       std::max<uint64_t>(max_queries, entry.transaction->GetQueries());
+  }
+  // Parallel feeds: drain + pin their segments and fold in their query counts
+  // BEFORE the tick is allocated (RegisterFlush must precede Advance so a
+  // concurrent refresh can never step its committed tick past an unpinned
+  // segment).
+  for (auto& [index_id, state] : _inverted_feeds) {
+    if (state.feed) {
+      max_queries = std::max<uint64_t>(max_queries, state.feed->Prepare());
+    }
   }
   SDB_IF_FAILURE("long_waited_advance") {
     static std::atomic<uint32_t> gSeedCounter{0};
@@ -240,7 +250,16 @@ void Transaction::CommitSearch(
     }
   }
 
+  // Commit the parallel segments at the same tick (records their cursor
+  // first, mirroring the inline ordering above).
+  for (auto& [index_id, state] : _inverted_feeds) {
+    if (state.feed) {
+      state.feed->Finish(last_tick, cursor);
+    }
+  }
+
   _search_transactions.clear();
+  _inverted_feeds.clear();
 }
 
 void Transaction::Commit() {
@@ -300,6 +319,9 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
 
 void Transaction::Destroy() noexcept {
   DropCatalogSnapshot();
+  // Commit clears these in CommitSearch; on the rollback/teardown path the
+  // parallel sessions still hold uncommitted live jobs -- drain and drop them.
+  AbortParallelInvertedFeeds();
   _search_transactions.clear();
   _search_snapshots.clear();
   _search_txn.reset();

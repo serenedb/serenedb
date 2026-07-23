@@ -1942,17 +1942,10 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
       clone->RegisterObject(index, index->GetRelationId(), false);
 
       if (operation_options.create_with_tombstone) {
-        _engine->WriteTombstone(index->GetRelationId(), index->GetId());
         index->SetTombstoned(true);
       }
       SDB_IF_FAILURE("unable_to_create") {
         THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-      duckdb::MemoryStream stream;
-      {  // Write index definition
-        auto bytes = catalog::SerializeObject(*index, stream);
-        _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
-                                  index->GetId(), bytes);
       }
       // The inverted index's mutable iresearch storage hangs off the metadata
       // object itself, so the CREATE INDEX build (GetGlobalSinkState) reaches
@@ -1962,17 +1955,24 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
         inverted.SetData(search::InvertedIndexStorage::Create(
           inverted.GetId(), inverted, /*is_new=*/true));
       }
-      {
-        auto table = clone->template GetObject<Table>(index->GetRelationId());
-        if (table) {
-          if (auto def = MakeStoreIndexDef(*table, *index)) {
-            def->defer_injection = operation_options.defer_injection;
-            _engine->Write([&](auto& ctx) {
-              ctx.CreateStoreIndex(std::move(*def), table, index);
-            });
-          }
+      // One batch -- tombstone, definition, store op -- so the create pays a
+      // single catalog append (one fsync) instead of three, and lands
+      // atomically.
+      auto table = clone->template GetObject<Table>(index->GetRelationId());
+      auto def = table ? MakeStoreIndexDef(*table, *index) : std::nullopt;
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*index, stream);
+      _engine->Write([&](auto& ctx) {
+        if (operation_options.create_with_tombstone) {
+          ctx.WriteTombstone(index->GetRelationId(), index->GetId());
         }
-      }
+        ctx.PutDefinition(index->GetRelationId(), index->GetType(),
+                          index->GetId(), bytes);
+        if (def) {
+          def->defer_injection = operation_options.defer_injection;
+          ctx.CreateStoreIndex(std::move(*def), table, index);
+        }
+      });
     },
     [&](auto& clone) {
       // Unregistering drops the index (and its just-bound storage) from the

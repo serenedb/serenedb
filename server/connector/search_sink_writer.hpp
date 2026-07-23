@@ -320,8 +320,9 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                std::move(indexed_exprs), pk_policy},
       _indexed{indexed_columns.begin(), indexed_columns.end()} {}
 
-  void Init(duckdb::idx_t batch_size, const PkChunk& pk) final {
-    InitImpl(batch_size, pk);
+  void Init(duckdb::idx_t batch_size, const PkChunk& pk,
+            uint64_t* commit_on_flush = nullptr) final {
+    InitImpl(batch_size, pk, commit_on_flush);
   }
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
@@ -355,7 +356,8 @@ class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
   explicit DuckDBSearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
     : SearchSinkDeleteBaseImpl{trx} {}
 
-  void Init(duckdb::idx_t batch_size, const PkChunk& /*pk*/) final {
+  void Init(duckdb::idx_t batch_size, const PkChunk& /*pk*/,
+            uint64_t* /*commit_on_flush*/ = nullptr) final {
     InitImpl(batch_size);
   }
 

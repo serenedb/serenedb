@@ -154,15 +154,6 @@ pk
 4
 
 
-# The cases above put all rows into ONE index segment (single refresh), so the
-# segment always contains a row-level NULL and carries a validity payload. The
-# sections below pin the multi-segment layouts (VACUUM between insert groups
-# forces the segment split -- in production the background refresh loop can
-# split anywhere). A segment whose rows are all row-level valid writes NO
-# validity payload; its column statistics must still say "has non-null values",
-# otherwise IS [NOT] NULL wrongly kills the segment (runtime classification) or
-# the whole query (plan-time folding).
-
 # Layout 1: an all-valid segment (incl. NULL element and empty list -- both
 # row-level valid) next to a mixed segment. The per-segment IS [NOT] NULL
 # classification must not drop the all-valid segment.

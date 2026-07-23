@@ -40,12 +40,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: wal_ivf_idx                     │
 │ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ─╮                       │
-│ │ Field: emb   │                       │
-│ │ Metric: l2   │                       │
-│ │ Dims: 3      │                       │
-│ ╰──────────────╯                       │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 1                                 │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │

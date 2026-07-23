@@ -148,12 +148,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vecs_pq_idx                     │
 │ Lookup: parquet                        │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ─╮                       │
-│ │ Field: emb   │                       │
-│ │ Metric: l2   │                       │
-│ │ Dims: 8      │                       │
-│ ╰──────────────╯                       │
+│ Score: l2_distance(emb, FLOAT[8])      │
 │ Top: 10                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
@@ -186,16 +181,11 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vecs_pq_idx                     │
 │ Lookup: parquet                        │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ─╮                       │
-│ │ Field: emb   │                       │
-│ │ Metric: l2   │                       │
-│ │ Dims: 8      │                       │
-│ ╰──────────────╯                       │
-│ Column Filter: id > 25000              │
+│ Score: l2_distance(emb, FLOAT[8])      │
 │ Top: 10                                │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
+│ Column Filter: id > 25000              │
 │ ~10,000 rows                           │
 ╰────────────────────────────────────────╯
 

@@ -27,6 +27,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/variant.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/column_lifetime_analyzer.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -51,6 +52,7 @@
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/duckdb_table_entry.h"
+#include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
 #include "pg/errcodes.h"
@@ -518,6 +520,20 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
   };
 }
 
+std::string_view VectorMetricFunctionName(irs::VectorMetric metric) {
+  switch (metric) {
+    case irs::VectorMetric::L2Sqr:
+      return kL2Distance;
+    case irs::VectorMetric::L1:
+      return kL1Distance;
+    case irs::VectorMetric::Cosine:
+      return kCosineDistance;
+    case irs::VectorMetric::InnerProduct:
+      return kIP;
+  }
+  SDB_UNREACHABLE();
+}
+
 }  // namespace
 
 void SereneDBScanBindData::AppendSummary(
@@ -539,7 +555,10 @@ void SereneDBScanBindData::AppendSummary(
   if (bind.inverted_index) {
     const auto name_of = MakeFieldNameResolver(bind, *bind.inverted_index);
     const auto kind_of = MakeFieldKindResolver(bind, *bind.inverted_index);
-    if (vector_scorer) {
+    const bool vector_is_range =
+      vector_scorer &&
+      vector_scorer->radius != std::numeric_limits<float>::max();
+    if (vector_is_range) {
       const auto display =
         MakeVectorFilter(*vector_scorer, stored_filter, vector_scorer->radius);
       out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
@@ -562,6 +581,21 @@ void SereneDBScanBindData::AppendSummary(
               ")");
       out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
                                    *req.having_filter, name_of, kind_of)));
+    }
+    if (vector_scorer && !vector_is_range) {
+      const auto col_id =
+        static_cast<catalog::Column::Id>(vector_scorer->field_id);
+      const auto fname = name_of(col_id);
+      auto ctype = bind.ColumnTypeById(col_id);
+      if (ctype.id() == duckdb::LogicalTypeId::INVALID) {
+        if (const auto* expr = bind.inverted_index->ExpressionByFieldId(
+              vector_scorer->field_id)) {
+          ctype = expr->return_type;
+        }
+      }
+      out.insert("Score",
+                 absl::StrCat(VectorMetricFunctionName(vector_scorer->metric),
+                              "(", fname, ", ", ctype.ToString(), ")"));
     }
   }
   if (text_scorer) {
@@ -1124,6 +1158,19 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   return nullptr;
 }
 
+void IResearchScanSerialize(duckdb::Serializer&,
+                            const duckdb::optional_ptr<duckdb::FunctionData>,
+                            const duckdb::TableFunction&) {
+  throw duckdb::NotImplementedException(
+    "iresearch_scan serialization not implemented");
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> IResearchScanDeserialize(
+  duckdb::Deserializer&, duckdb::TableFunction&) {
+  throw duckdb::NotImplementedException(
+    "iresearch_scan deserialization not implemented");
+}
+
 }  // namespace
 
 duckdb::TableFunction CreateIResearchScanFunction() {
@@ -1154,6 +1201,8 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
   func.statistics_extended = &IResearchScanStatistics;
+  func.serialize = IResearchScanSerialize;
+  func.deserialize = IResearchScanDeserialize;
   func.verify_serialization = false;
   func.projection_pushdown = true;
   func.filter_pushdown = true;
@@ -1165,6 +1214,11 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   // could be made to preserve index order if we implement set_scan_order
   func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   return func;
+}
+
+void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db) {
+  duckdb::ExtensionLoader loader(db, "serenedb");
+  loader.RegisterFunction(CreateIResearchScanFunction());
 }
 
 }  // namespace sdb::connector

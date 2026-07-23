@@ -81,7 +81,8 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     std::span<const uint64_t> cluster_offsets, QuantizerWriter* qw,
     const ColumnReader* vectors, ReadContext* ctx, uint32_t d,
     const sdb::containers::FlatHashMap<uint32_t, std::span<const float>>*
-      cluster_centroids);
+      cluster_centroids,
+    bool normalize);
   ~IvfTermReader() final;
 
   TermIterator::ptr iterator() const final;
@@ -107,6 +108,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   uint32_t _d;
   const sdb::containers::FlatHashMap<uint32_t, std::span<const float>>*
     _cluster_centroids;
+  bool _normalize;
   size_t _count;
   size_t _term_idx = 0;
   FieldMeta _meta;

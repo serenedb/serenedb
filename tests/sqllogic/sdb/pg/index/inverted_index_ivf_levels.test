@@ -23,7 +23,7 @@ statement ok
 CREATE TABLE lvl3 (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
 
 statement ok
-CREATE INDEX lvl3_idx ON lvl3 USING inverted(pk, emb ivf (metric = 'l2'));
+CREATE INDEX lvl3_idx ON lvl3 USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
 
 statement ok
 INSERT INTO lvl3 SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
@@ -85,7 +85,7 @@ statement ok
 CREATE TABLE samp (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
 
 statement ok
-CREATE INDEX samp_idx ON samp USING inverted(pk, emb ivf (metric = 'l2'));
+CREATE INDEX samp_idx ON samp USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
 
 statement ok
 INSERT INTO samp SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(2000) t(i);
@@ -127,7 +127,7 @@ statement ok
 CREATE TABLE mrg (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
 
 statement ok
-CREATE INDEX mrg_idx ON mrg USING inverted(pk, emb ivf (metric = 'l2'));
+CREATE INDEX mrg_idx ON mrg USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
 
 # batch 1 -> first segment, built with the captured posting_size (2)
 statement ok

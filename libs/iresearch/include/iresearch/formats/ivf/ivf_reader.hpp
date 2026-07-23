@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/types/vector_cache.hpp>
 #include <memory>
 #include <vector>
 
@@ -65,7 +66,7 @@ class IvfVectorReader {
   const ColumnReader* _reader;
   ReadContext* _ctx;
   ColumnReader::ScanState _scan;
-  std::unique_ptr<duckdb::Vector> _out;
+  duckdb::VectorCache _cache;
   size_t _cap = 0;
 };
 

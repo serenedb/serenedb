@@ -21,8 +21,8 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 
 #include <cstring>
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
-#include <memory>
 #include <span>
 #include <vector>
 
@@ -67,13 +67,15 @@ const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
   const uint64_t row0 = static_cast<uint64_t>(first) - doc_limits::min();
   if (count > _cap) {
     _cap = count;
-    _out = std::make_unique<duckdb::Vector>(_reader->Type(),
-                                            static_cast<duckdb::idx_t>(_cap));
+    _cache =
+      duckdb::VectorCache(duckdb::Allocator::DefaultAllocator(),
+                          _reader->Type(), static_cast<duckdb::idx_t>(_cap));
   }
+  duckdb::Vector out{_cache};
   Seek(row0);
-  _reader->Scan(_scan, *_out, static_cast<duckdb::idx_t>(count));
+  _reader->Scan(_scan, out, static_cast<duckdb::idx_t>(count));
   return duckdb::FlatVector::GetData<float>(
-    duckdb::ArrayVector::GetChildMutable(*_out));
+    duckdb::ArrayVector::GetChildMutable(out));
 }
 
 }  // namespace irs

@@ -2309,4 +2309,151 @@ TEST_F(ColumnReaderTest, SparsePrefixEngineDbRepro) {
             "abcde");
 }
 
+// A stored FLOAT vector column is exactly what the IVF opclass writes for
+// `compression = true` (COMPRESSION_AUTO). DuckDB's analyze tournament must
+// compress the FLOAT element data with a floating-point codec -- ALP or ALPRD --
+// rather than leaving it uncompressed. The codec is recorded per row-group on
+// the array element child and survives flush + reopen.
+TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
+  constexpr uint64_t kRows = 5000;
+  constexpr uint32_t kRgSize = 4096;  // multiple of STANDARD_VECTOR_SIZE
+  constexpr irs::field_id kV = 20;
+  constexpr duckdb::idx_t kDim = 8;
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+
+  // Low-precision decimals (multiples of 0.25) are highly ALP-friendly.
+  auto elem_val = [](uint64_t g, uint64_t i) {
+    return static_cast<float>((g * kDim + i) % 997) * 0.25f;
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    // Default compression arg == COMPRESSION_AUTO (the analyze tournament).
+    auto& cw = w.OpenColumn(kV, vtype, /*skip_validity=*/false, kRgSize);
+    uint64_t pos = 0;
+    while (pos < kRows) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{vtype, STANDARD_VECTOR_SIZE};
+      auto& child = duckdb::ArrayVector::GetChildMutable(v);
+      auto* cd = duckdb::FlatVector::GetDataMutable<float>(child);
+      auto& av = duckdb::FlatVector::ValidityMutable(v);
+      auto& cv = duckdb::FlatVector::ValidityMutable(child);
+      av.Reset(STANDARD_VECTOR_SIZE);
+      cv.Reset(STANDARD_VECTOR_SIZE * kDim);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto g = pos + k;
+        for (duckdb::idx_t i = 0; i < kDim; ++i) {
+          cd[k * kDim + i] = elem_val(g, i);
+        }
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "seg", Db()};
+  const auto* cv = r.Column(kV);
+  ASSERT_NE(cv, nullptr);
+  ASSERT_EQ(cv->RowCount(), kRows);
+  const auto* child = cv->Child();
+  ASSERT_NE(child, nullptr);
+  const auto blocks = child->DataBlocks();
+  ASSERT_FALSE(blocks.empty());
+  for (size_t rg = 0; rg < blocks.size(); ++rg) {
+    ASSERT_NE(blocks[rg].codec, nullptr) << "row-group " << rg;
+    const auto codec = blocks[rg].codec->type;
+    EXPECT_TRUE(codec == duckdb::CompressionType::COMPRESSION_ALP ||
+                codec == duckdb::CompressionType::COMPRESSION_ALPRD)
+      << "row-group " << rg
+      << " codec=" << duckdb::CompressionTypeToString(codec);
+  }
+}
+
+// `compression = false` maps to COMPRESSION_UNCOMPRESSED: forcing that codec on
+// the stored FLOAT vector column keeps the raw bytes (every row-group reports
+// UNCOMPRESSED) and the values round-trip exactly.
+TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
+  constexpr uint64_t kRows = 5000;
+  constexpr uint32_t kRgSize = 4096;
+  constexpr irs::field_id kV = 21;
+  constexpr duckdb::idx_t kDim = 8;
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+
+  auto elem_val = [](uint64_t g, uint64_t i) {
+    return static_cast<float>((g * kDim + i) % 997) * 0.25f;
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cw =
+      w.OpenColumn(kV, vtype, /*skip_validity=*/false, kRgSize,
+                   duckdb::CompressionType::COMPRESSION_UNCOMPRESSED);
+    uint64_t pos = 0;
+    while (pos < kRows) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{vtype, STANDARD_VECTOR_SIZE};
+      auto& child = duckdb::ArrayVector::GetChildMutable(v);
+      auto* cd = duckdb::FlatVector::GetDataMutable<float>(child);
+      auto& av = duckdb::FlatVector::ValidityMutable(v);
+      auto& cv = duckdb::FlatVector::ValidityMutable(child);
+      av.Reset(STANDARD_VECTOR_SIZE);
+      cv.Reset(STANDARD_VECTOR_SIZE * kDim);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto g = pos + k;
+        for (duckdb::idx_t i = 0; i < kDim; ++i) {
+          cd[k * kDim + i] = elem_val(g, i);
+        }
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "seg", Db()};
+  const auto* cv = r.Column(kV);
+  ASSERT_NE(cv, nullptr);
+  ASSERT_EQ(cv->RowCount(), kRows);
+  const auto* child = cv->Child();
+  ASSERT_NE(child, nullptr);
+  const auto blocks = child->DataBlocks();
+  ASSERT_FALSE(blocks.empty());
+  for (size_t rg = 0; rg < blocks.size(); ++rg) {
+    ASSERT_NE(blocks[rg].codec, nullptr) << "row-group " << rg;
+    EXPECT_EQ(blocks[rg].codec->type,
+              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED)
+      << "row-group " << rg;
+  }
+
+  // Values round-trip exactly under the uncompressed codec.
+  auto state = cv->InitScan(r.Ctx());
+  uint64_t pos = 0;
+  while (pos < kRows) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector result{vtype, STANDARD_VECTOR_SIZE};
+    cv->Scan(state, result, take);
+    result.Flatten(take);
+    const auto& child_out = duckdb::ArrayVector::GetChild(result);
+    const auto* cd = duckdb::FlatVector::GetData<float>(child_out);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      const auto g = pos + k;
+      for (duckdb::idx_t i = 0; i < kDim; ++i) {
+        EXPECT_EQ(cd[k * kDim + i], elem_val(g, i))
+          << "elem " << g << ":" << i;
+      }
+    }
+    pos += take;
+  }
+}
+
 }  // namespace

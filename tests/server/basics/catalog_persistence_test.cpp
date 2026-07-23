@@ -231,7 +231,7 @@ TEST(CatalogPersistence, entry_config_serialized_ivf) {
           .rabitq_bits = 0,
           .sample_factor = 0.5f,
           .posting_size = 2048,
-          .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+          .compression = false,
         },
       .synthetic_column = irs::field_limits::invalid(),
       .row_group_size = 100,

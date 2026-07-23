@@ -253,7 +253,9 @@ std::string DescribeIVFOptions() {
     kPQQuant, "' only, default auto ~d/2), ", "rabitq_bits (int ",
     irs::kRaBitQMinBits, "-", irs::kRaBitQMaxBits, ", quant='", kRaBitQQuant,
     "' only, default ", irs::kRaBitQMinBits, "), ",
-    "compression (string: auto|alp|none, default auto)");
+    "compression (bool, default true; false stores the index vectors "
+    "uncompressed (increases the search performance and the disk "
+    "consumption))");
 }
 
 irs::VectorMetric ParseIVFMetric(std::string_view column_name,
@@ -300,27 +302,6 @@ irs::VectorQuantization ParseIVFQuant(std::string_view column_name,
                           " ", kPQQuant, " ", kRaBitQQuant, " ", kNoneQuant));
 }
 
-duckdb::CompressionType ParseIVFCompression(std::string_view column_name,
-                                            std::string_view name) {
-  std::string n{name};
-  absl::AsciiStrToLower(&n);
-  static constexpr std::pair<std::string_view, duckdb::CompressionType> kMap[] =
-    {
-      {"auto", duckdb::CompressionType::COMPRESSION_AUTO},
-      {"alp", duckdb::CompressionType::COMPRESSION_ALP},
-      {"none", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED},
-    };
-  for (const auto& [k, v] : kMap) {
-    if (n == k) {
-      return v;
-    }
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-    ERR_MSG("Column '", column_name, "': unknown ivf compression '", name,
-            "'. Accepted: auto, alp, none"));
-}
-
 void ApplyIVFOptions(std::string_view column_name,
                      const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
                      IVFColumnConfig& cfg) {
@@ -339,9 +320,7 @@ void ApplyIVFOptions(std::string_view column_name,
       cfg.rabitq_bits =
         ParsePositiveUintOption(kIVFKind, column_name, key, raw_val);
     } else if (key == kCompressionField) {
-      auto compression =
-        GetIndexStringOption(kIVFKind, column_name, key, raw_val);
-      cfg.compression = ParseIVFCompression(column_name, compression);
+      cfg.compression = GetIndexBoolOption(kIVFKind, column_name, key, raw_val);
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -588,7 +567,9 @@ void ApplyIVFOpclass(
   cfg.sample_factor = ReadIVFSampleFactor(context);
   cfg.posting_size = ReadIVFPostingSize(context);
   entry.ivf_config = cfg;
-  entry.compression = cfg.compression;
+  entry.compression = cfg.compression
+                        ? duckdb::CompressionType::COMPRESSION_AUTO
+                        : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
   entry.row_group_size = 0;
   entry.store_values = true;
 }

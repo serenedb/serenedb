@@ -46,7 +46,7 @@ struct IVFColumnConfig {
   uint32_t rabitq_bits = 0;
   float sample_factor = 0;
   uint32_t posting_size = 0;
-  duckdb::CompressionType compression;
+  bool compression = true;
 };
 
 // Persisted per-field iresearch config, keyed by field_id in InvertedIndexData.

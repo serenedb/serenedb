@@ -314,4 +314,6 @@ uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
 
 duckdb::TableFunction CreateIResearchScanFunction();
 
+void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);
+
 }  // namespace sdb::connector

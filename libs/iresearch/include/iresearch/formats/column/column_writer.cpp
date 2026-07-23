@@ -247,6 +247,8 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     std::move(flush_internal_fn),
     ctx,
   };
+  // The iresearch .col columnstore is serenedb-owned storage: allow the serenedb-only FSST+ dict_fsst modes.
+  ckp.allow_serenedb_compression = true;
   auto comp_state = picked.init_compression(ckp, std::move(state));
   for (auto& c : chunks) {
     picked.compress(*comp_state, c.data);

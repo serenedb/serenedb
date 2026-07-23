@@ -1,0 +1,209 @@
+# dict_fsst serenedb-only FSST+ modes (DICT_FSST_PLUS / FSST_PLUS)
+# and the native-write gate. Two duckdb databases are attached: one marked
+# SERENEDB_OWNED_STORAGE (the same flag __sdb_store + the .col columnstore use),
+# one plain native. force_compression pins dict_fsst so the per-segment mode is
+# observable via pragma_storage_info(..., include_segment_info=true), which
+# reports "mode: <NAME>". Contract: on serenedb-owned storage an FSST-worthy
+# dictionary is cleaved into a _PLUS mode; native storage never writes mode >= 3
+# (so it stays readable by vanilla duckdb). Every dataset is copied from one
+# shared source into both databases and read back to prove byte-identical
+# round-trip through the new compress/decompress paths.
+
+control substitution on
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfp_owned.db' AS own (TYPE duckdb, STORAGE_VERSION 'latest', SERENEDB_OWNED_STORAGE true);
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfp_native.db' AS nat (TYPE duckdb, STORAGE_VERSION 'latest');
+
+
+# --- 1. FSST-worthy low-cardinality dictionary -> owned picks a _PLUS mode ----
+statement ok
+CREATE TABLE src_dup AS
+  SELECT i, 'https://example.com/path/segment/subpath/page/' || (i % 4000)::VARCHAR AS s FROM range(200000) t(i);
+
+
+statement ok
+CREATE TABLE own.dup AS SELECT * FROM src_dup;
+
+
+statement ok
+CREATE TABLE nat.dup AS SELECT * FROM src_dup;
+
+
+statement ok
+CHECKPOINT own;
+
+
+statement ok
+CHECKPOINT nat;
+
+
+query
+SELECT count(*) AS n, count(DISTINCT s) AS d FROM own.dup;
+----
+n	d
+200000	4000
+
+
+# byte-identical round-trip: owned vs source
+query
+SELECT count(*) AS n FROM own.dup o JOIN src_dup s USING (i) WHERE o.s IS DISTINCT FROM s.s;
+----
+n
+0
+
+
+# owned uses a _PLUS mode (at least one dict_fsst plus segment, and no non-plus dict_fsst segment)
+query
+SELECT (SELECT count(*) FROM pragma_storage_info('own.dup', include_segment_info=true)
+          WHERE compression='DICT_FSST' AND segment_info LIKE '%PLUS%') > 0 AS has_plus,
+       (SELECT count(*) FROM pragma_storage_info('own.dup', include_segment_info=true)
+          WHERE compression='DICT_FSST' AND segment_info NOT LIKE '%PLUS%') AS non_plus;
+----
+has_plus	non_plus
+t	0
+
+
+# native never uses a _PLUS mode (stays readable by vanilla duckdb)
+query
+SELECT count(*) AS n FROM pragma_storage_info('nat.dup', include_segment_info=true) WHERE segment_info LIKE '%PLUS%';
+----
+n
+0
+
+
+# filter pushdown over a _PLUS segment
+query
+SELECT count(*) AS n FROM own.dup WHERE s = 'https://example.com/path/segment/subpath/page/7';
+----
+n
+50
+
+
+query
+SELECT count(*) AS n FROM own.dup WHERE s LIKE 'https://example.com/path/segment/subpath/page/1';
+----
+n
+50
+
+
+# --- 2. High-cardinality / all-unique -> FSST_ONLY, round-trip on both --------
+statement ok
+CREATE TABLE src_uniq AS SELECT i, 'https://u.example/' || i::VARCHAR AS s FROM range(20000) t(i);
+
+
+statement ok
+CREATE TABLE own.uniq AS SELECT * FROM src_uniq;
+
+
+statement ok
+CREATE TABLE nat.uniq AS SELECT * FROM src_uniq;
+
+
+statement ok
+CHECKPOINT own;
+
+
+statement ok
+CHECKPOINT nat;
+
+
+query
+SELECT count(*) AS n FROM own.uniq o JOIN src_uniq s USING (i) WHERE o.s IS DISTINCT FROM s.s;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pragma_storage_info('nat.uniq', include_segment_info=true) WHERE segment_info LIKE '%PLUS%';
+----
+n
+0
+
+
+# --- 3. NULLs + empty strings + unicode, FSST-worthy dictionary ---------------
+statement ok
+CREATE TABLE src_mixed AS
+  SELECT i, CASE WHEN i % 5 = 0 THEN NULL
+                 WHEN i % 5 = 1 THEN ''
+                 WHEN i % 5 = 2 THEN 'café ☕ 日本 /' || (i % 3000)::VARCHAR
+                 ELSE 'https://example.com/article/category/' || (i % 3000)::VARCHAR END AS s
+  FROM range(200000) t(i);
+
+
+statement ok
+CREATE TABLE own.mixed AS SELECT * FROM src_mixed;
+
+
+statement ok
+CREATE TABLE nat.mixed AS SELECT * FROM src_mixed;
+
+
+statement ok
+CHECKPOINT own;
+
+
+statement ok
+CHECKPOINT nat;
+
+
+query
+SELECT count(*) AS n, count(s) AS nn, count(*) FILTER (WHERE s='') AS e FROM own.mixed;
+----
+n	nn	e
+200000	160000	40000
+
+
+# owned == source == native (byte-identical, incl NULL/empty/unicode)
+query
+SELECT count(*) AS n FROM own.mixed o JOIN src_mixed s USING (i) WHERE o.s IS DISTINCT FROM s.s;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM nat.mixed o JOIN src_mixed s USING (i) WHERE o.s IS DISTINCT FROM s.s;
+----
+n
+0
+
+
+# --- 4. String > 16384 bytes -> dict_fsst opts out (fallback), still round-trips
+statement ok
+CREATE TABLE own.big AS SELECT repeat('x', 20000) AS s FROM range(100) t(i);
+
+
+statement ok
+CHECKPOINT own;
+
+
+query
+SELECT count(*) AS n, max(length(s)) AS mx FROM own.big;
+----
+n	mx
+100	20000
+
+
+query
+SELECT count(*) FILTER (WHERE compression='DICT_FSST') AS n FROM pragma_storage_info('own.big', include_segment_info=true);
+----
+n
+0
+
+
+statement ok
+DETACH own;
+
+
+statement ok
+DETACH nat;

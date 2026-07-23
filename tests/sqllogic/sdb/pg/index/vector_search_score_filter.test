@@ -1,0 +1,113 @@
+hash-threshold 100000
+
+# Regression: a score-threshold predicate in a vector scan's WHERE was evaluated
+# against the raw "larger = nearer" score, not the user-facing (emit-mapped)
+# score, so any non-identity emit (`<#>` -> Negate, l2_distance -> SqrtNeg, ...)
+# silently returned the wrong rows. Fixed by baking the score emit into the
+# pushed score-column filter, so it is evaluated in the space the predicate was
+# written in. Issue #964.
+
+# --- inner product: `<#>` returns -IP, mapped to the user value via Negate ---
+statement ok
+CREATE TABLE t (id VARCHAR PRIMARY KEY, v FLOAT[4])
+
+
+statement ok
+CREATE INDEX t_idx ON t USING inverted (id, v ivf (metric = 'ip', quant = 'sq8'))
+
+
+statement ok
+INSERT INTO t VALUES
+  ('r0', '{1,0,0,0}'), ('r1', '{0.9,0.1,0,0}'),
+  ('r2', '{0,1,0,0}'), ('r3', '{0,0,1,0}')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) t
+
+
+# #964: similarity = -(v <#> q) >= 0 keeps every non-negative-IP row; the top-2
+# by distance are r0, r1. Returned [] before the fix.
+query
+SELECT id FROM t_idx
+WHERE -(v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4]) >= 0.0
+ORDER BY v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4] LIMIT 2;
+----
+id
+r0
+r1
+
+
+# A threshold keeping only the low-IP rows: IP < 0.5 selects r2, r3 (IP 0), which
+# the ORDER BY then returns. Returned r0, r1 (raw-space) before the fix.
+query
+SELECT id FROM t_idx
+WHERE (v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4]) > -0.5
+ORDER BY v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4] LIMIT 2;
+----
+id
+r2
+r3
+
+
+# Higher similarity floor keeps r0, r1 (IP 1, 0.9 >= 0.5).
+query
+SELECT id FROM t_idx
+WHERE -(v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4]) >= 0.5
+ORDER BY v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4] LIMIT 4;
+----
+id
+r0
+r1
+
+
+# A bare distance bound (claimed as a vector radius, a separate path) still works.
+query
+SELECT id FROM t_idx
+WHERE (v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4]) <= -0.95
+ORDER BY v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4] LIMIT 4;
+----
+id
+r0
+
+
+# --- l2 distance: emitted via SqrtNeg ---
+statement ok
+CREATE TABLE l2t (id INT, emb FLOAT[3])
+
+
+statement ok
+CREATE INDEX l2t_idx ON l2t USING inverted (id, emb ivf (metric = 'l2'))
+
+
+statement ok
+INSERT INTO l2t VALUES
+  (1, [0, 0, 0]::FLOAT[3]), (2, [3, 0, 0]::FLOAT[3]),
+  (3, [10, 0, 0]::FLOAT[3]), (4, [100, 0, 0]::FLOAT[3])
+
+
+statement ok
+VACUUM (REFRESH_TABLE) l2t
+
+
+# A lower bound on distance (a residual score filter, not a radius): keep the
+# rows farther than 5 -> ids 3, 4. Wrong (raw-space) before the fix.
+query
+SELECT id FROM l2t_idx
+WHERE l2_distance(emb, [0.0, 0, 0]::FLOAT[3]) > 5.0
+ORDER BY emb <-> [0.0, 0, 0]::FLOAT[3] LIMIT 5;
+----
+id
+3
+4
+
+
+# Bare distance radius still works.
+query
+SELECT id FROM l2t_idx
+WHERE l2_distance(emb, [0.0, 0, 0]::FLOAT[3]) <= 5.0
+ORDER BY emb <-> [0.0, 0, 0]::FLOAT[3] LIMIT 5;
+----
+id
+1
+2

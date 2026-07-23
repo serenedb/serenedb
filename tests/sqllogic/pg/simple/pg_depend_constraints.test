@@ -1,0 +1,28 @@
+statement ok
+CREATE TABLE parent (id int PRIMARY KEY);
+
+statement ok
+CREATE SEQUENCE sq;
+
+statement ok
+CREATE TABLE child (pid int REFERENCES parent(id), n int DEFAULT nextval('sq'));
+
+query
+SELECT d.classid::regclass::text AS dep_class,
+       COALESCE(con1.conname, 'attrdef') AS dependent,
+       d.refclassid::regclass::text AS ref_class,
+       COALESCE(c2.relname, n2.nspname) AS referenced,
+       d.refobjsubid AS refobjsubid,
+       d.deptype AS deptype
+FROM pg_depend d
+LEFT JOIN pg_constraint con1 ON con1.oid = d.objid
+LEFT JOIN pg_class c2 ON c2.oid = d.refobjid
+LEFT JOIN pg_namespace n2 ON n2.oid = d.refobjid
+WHERE d.classid::regclass::text IN ('pg_constraint', 'pg_attrdef')
+  AND d.deptype = 'n'
+  AND c2.relname IN ('parent', 'sq')
+ORDER BY 1, 2, 3, 4, 5, 6;
+----
+dep_class	dependent	ref_class	referenced	refobjsubid	deptype
+pg_attrdef	attrdef	pg_class	sq	0	n
+pg_constraint	child_pid_fkey	pg_class	parent	1	n

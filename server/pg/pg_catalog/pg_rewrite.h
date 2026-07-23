@@ -55,4 +55,13 @@ struct PgRewrite {
 };
 // NOLINTEND
 
+inline constexpr uint64_t kViewRuleBit = uint64_t{1} << 60;
+
+inline constexpr Oid ViewRuleOid(uint64_t view_oid) {
+  return Oid{view_oid | kViewRuleBit};
+}
+
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData();
+
 }  // namespace sdb::pg

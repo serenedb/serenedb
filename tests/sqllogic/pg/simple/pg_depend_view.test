@@ -1,0 +1,29 @@
+statement ok
+CREATE TABLE t (a int, b int);
+
+statement ok
+CREATE VIEW v AS SELECT a, b FROM t;
+
+query
+SELECT r.rulename, c.relname AS ev_class, r.ev_type, r.ev_enabled, r.is_instead
+FROM pg_rewrite r
+JOIN pg_class c ON c.oid = r.ev_class
+WHERE c.relname = 'v';
+----
+rulename	ev_class	ev_type	ev_enabled	is_instead
+_RETURN	v	1	O	t
+
+query
+SELECT d.classid::regclass::text AS dep_class,
+       d.refclassid::regclass::text AS ref_class,
+       c2.relname AS referenced,
+       d.deptype AS deptype
+FROM pg_depend d
+JOIN pg_rewrite r ON r.oid = d.objid
+JOIN pg_class vc ON vc.oid = r.ev_class AND vc.relname = 'v'
+JOIN pg_class c2 ON c2.oid = d.refobjid
+WHERE d.deptype = 'i'
+ORDER BY 1, 2, 3, 4;
+----
+dep_class	ref_class	referenced	deptype
+pg_rewrite	pg_class	v	i

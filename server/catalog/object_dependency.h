@@ -24,6 +24,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <algorithm>
+#include <array>
 #include <concepts>
 #include <memory>
 #include <string>
@@ -41,6 +42,28 @@
 namespace sdb::catalog {
 
 struct Snapshot;
+
+enum class DependType : char { Normal = 'n', Auto = 'a', Internal = 'i' };
+
+enum class DependClass : uint8_t {
+  Relation,
+  Type,
+  Proc,
+  Namespace,
+  Constraint,
+  Rewrite,
+  Attrdef,
+};
+
+struct PgDependEdge {
+  ObjectId dependent;
+  int32_t dependent_sub;
+  DependClass dependent_class;
+  ObjectId referenced;
+  int32_t referenced_sub;
+  DependClass referenced_class;
+  DependType deptype;
+};
 
 // One per external table that needs a column/CHECK mutation.
 struct TableRewrite {
@@ -68,6 +91,17 @@ struct DropPlan {
 };
 
 struct ObjectDependencyBase;
+
+enum class CascadeVerb : uint8_t {
+  AutoDrop,
+  CascadeView,
+  CascadeFunction,
+  CascadeIndex,
+  ForeignKey,
+  CheckConstraint,
+  ColumnDefault,
+  ColumnDrop,
+};
 
 class DropEmitter {
  public:
@@ -174,6 +208,35 @@ class DropEmitter {
     slot.table = slot.table->DropCheckConstraint(constraint_id);
   }
 
+  void Apply(CascadeVerb verb, ObjectId edge, ObjectId self) {
+    switch (verb) {
+      case CascadeVerb::AutoDrop:
+        EmitAutoDrop(edge);
+        return;
+      case CascadeVerb::CascadeView:
+        EmitCascadeViewDrop(edge);
+        return;
+      case CascadeVerb::CascadeFunction:
+        EmitCascadeFunctionDrop(edge);
+        return;
+      case CascadeVerb::CascadeIndex:
+        EmitCascadeIndexDrop(edge);
+        return;
+      case CascadeVerb::ForeignKey:
+        EmitCascadeForeignKeyDrop(edge, self);
+        return;
+      case CascadeVerb::CheckConstraint:
+        EmitCascadeCheckConstraintDrop(edge);
+        return;
+      case CascadeVerb::ColumnDefault:
+        EmitCascadeColumnDefaultValueDrop(edge);
+        return;
+      case CascadeVerb::ColumnDrop:
+        EmitCascadeColumnDrop(edge);
+        return;
+    }
+  }
+
  private:
   template<typename Mutate>
   void RewriteOwningTable(ObjectId col_id, Mutate&& mutate) {
@@ -208,11 +271,31 @@ class DropEmitter {
   containers::FlatHashSet<ObjectId> _visited;  // push-dedup
 };
 
+template<typename Self>
+struct Edge {
+  containers::FlatHashSet<ObjectId> Self::* bucket;
+  CascadeVerb verb;
+};
+
 // Per-object reverse-edges. Emit routes each edge to the right callback.
 struct ObjectDependencyBase {
   virtual ~ObjectDependencyBase() = default;
   virtual std::shared_ptr<ObjectDependencyBase> Clone() const = 0;
   virtual void Emit(DropEmitter&, ObjectId self) const = 0;
+};
+
+template<typename Self, typename Base = ObjectDependencyBase>
+struct DependencyMixin : Base {
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<Self>(static_cast<const Self&>(*this));
+  }
+  void Emit(DropEmitter& emitter, ObjectId self) const final {
+    for (const auto& row : Self::kEdges) {
+      for (ObjectId id : static_cast<const Self&>(*this).*(row.bucket)) {
+        emitter.Apply(row.verb, id, self);
+      }
+    }
+  }
 };
 
 struct RelationDependency : ObjectDependencyBase {
@@ -221,133 +304,91 @@ struct RelationDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> functions;
 };
 
-struct TableDependency : RelationDependency {
+struct TableDependency : DependencyMixin<TableDependency, RelationDependency> {
   containers::FlatHashSet<ObjectId> owned_sequences;
   containers::FlatHashSet<ObjectId> fk_referencing_tables;
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<TableDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto id : owned_sequences) {
-      e.EmitAutoDrop(id);
-    }
-    for (auto id : fk_referencing_tables) {
-      e.EmitCascadeForeignKeyDrop(id, self);
-    }
-    for (auto id : indexes) {
-      e.EmitAutoDrop(id);
-    }
-    for (auto id : views) {
-      e.EmitCascadeViewDrop(id);
-    }
-    for (auto id : functions) {
-      e.EmitCascadeFunctionDrop(id);
-    }
-  }
+  static constexpr std::array kEdges = {
+    Edge<TableDependency>{&TableDependency::owned_sequences,
+                          CascadeVerb::AutoDrop},
+    Edge<TableDependency>{&TableDependency::fk_referencing_tables,
+                          CascadeVerb::ForeignKey},
+    Edge<TableDependency>{&TableDependency::indexes, CascadeVerb::AutoDrop},
+    Edge<TableDependency>{&TableDependency::views, CascadeVerb::CascadeView},
+    Edge<TableDependency>{&TableDependency::functions,
+                          CascadeVerb::CascadeFunction},
+  };
 };
 
-struct ViewDependency : RelationDependency {
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<ViewDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto id : views) {
-      e.EmitCascadeViewDrop(id);
-    }
-    for (auto id : functions) {
-      e.EmitCascadeFunctionDrop(id);
-    }
-  }
+struct ViewDependency : DependencyMixin<ViewDependency, RelationDependency> {
+  static constexpr std::array kEdges = {
+    Edge<ViewDependency>{&ViewDependency::views, CascadeVerb::CascadeView},
+    Edge<ViewDependency>{&ViewDependency::functions,
+                         CascadeVerb::CascadeFunction},
+  };
 };
 
-struct SequenceDependency : ObjectDependencyBase {
+struct SequenceDependency : DependencyMixin<SequenceDependency> {
   containers::FlatHashSet<ObjectId> column_defaults;
   containers::FlatHashSet<ObjectId> constraints;
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> functions;
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<SequenceDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto col_id : column_defaults) {
-      e.EmitCascadeColumnDefaultValueDrop(col_id);
-    }
-    for (auto id : constraints) {
-      e.EmitCascadeCheckConstraintDrop(id);
-    }
-    for (auto id : views) {
-      e.EmitCascadeViewDrop(id);
-    }
-    for (auto id : functions) {
-      e.EmitCascadeFunctionDrop(id);
-    }
-  }
+  static constexpr std::array kEdges = {
+    Edge<SequenceDependency>{&SequenceDependency::column_defaults,
+                             CascadeVerb::ColumnDefault},
+    Edge<SequenceDependency>{&SequenceDependency::constraints,
+                             CascadeVerb::CheckConstraint},
+    Edge<SequenceDependency>{&SequenceDependency::views,
+                             CascadeVerb::CascadeView},
+    Edge<SequenceDependency>{&SequenceDependency::functions,
+                             CascadeVerb::CascadeFunction},
+  };
 };
 
-struct PgSqlTypeDependency : ObjectDependencyBase {
+struct PgSqlTypeDependency : DependencyMixin<PgSqlTypeDependency> {
   containers::FlatHashSet<ObjectId> column_types;
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> constraints;
   containers::FlatHashSet<ObjectId> column_defaults;
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<PgSqlTypeDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto col_id : column_types) {
-      e.EmitCascadeColumnDrop(col_id);
-    }
-    for (auto id : views) {
-      e.EmitCascadeViewDrop(id);
-    }
-    for (auto id : functions) {
-      e.EmitCascadeFunctionDrop(id);
-    }
-    for (auto id : constraints) {
-      e.EmitCascadeCheckConstraintDrop(id);
-    }
-    for (auto id : column_defaults) {
-      e.EmitCascadeColumnDefaultValueDrop(id);
-    }
-  }
+  static constexpr std::array kEdges = {
+    Edge<PgSqlTypeDependency>{&PgSqlTypeDependency::column_types,
+                              CascadeVerb::ColumnDrop},
+    Edge<PgSqlTypeDependency>{&PgSqlTypeDependency::views,
+                              CascadeVerb::CascadeView},
+    Edge<PgSqlTypeDependency>{&PgSqlTypeDependency::functions,
+                              CascadeVerb::CascadeFunction},
+    Edge<PgSqlTypeDependency>{&PgSqlTypeDependency::constraints,
+                              CascadeVerb::CheckConstraint},
+    Edge<PgSqlTypeDependency>{&PgSqlTypeDependency::column_defaults,
+                              CascadeVerb::ColumnDefault},
+  };
 };
 
-struct PgSqlFunctionDependency : ObjectDependencyBase {
+struct PgSqlFunctionDependency : DependencyMixin<PgSqlFunctionDependency> {
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> indexes;
   containers::FlatHashSet<ObjectId> constraints;
   containers::FlatHashSet<ObjectId> column_defaults;
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<PgSqlFunctionDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto id : views) {
-      e.EmitCascadeViewDrop(id);
-    }
-    for (auto id : functions) {
-      e.EmitCascadeFunctionDrop(id);
-    }
-    for (auto id : indexes) {
-      e.EmitCascadeIndexDrop(id);
-    }
-    for (auto id : constraints) {
-      e.EmitCascadeCheckConstraintDrop(id);
-    }
-    for (auto id : column_defaults) {
-      e.EmitCascadeColumnDefaultValueDrop(id);
-    }
-  }
+  static constexpr std::array kEdges = {
+    Edge<PgSqlFunctionDependency>{&PgSqlFunctionDependency::views,
+                                  CascadeVerb::CascadeView},
+    Edge<PgSqlFunctionDependency>{&PgSqlFunctionDependency::functions,
+                                  CascadeVerb::CascadeFunction},
+    Edge<PgSqlFunctionDependency>{&PgSqlFunctionDependency::indexes,
+                                  CascadeVerb::CascadeIndex},
+    Edge<PgSqlFunctionDependency>{&PgSqlFunctionDependency::constraints,
+                                  CascadeVerb::CheckConstraint},
+    Edge<PgSqlFunctionDependency>{&PgSqlFunctionDependency::column_defaults,
+                                  CascadeVerb::ColumnDefault},
+  };
 };
 
-struct IndexDependency : ObjectDependencyBase {
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<IndexDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {}
+struct IndexDependency : DependencyMixin<IndexDependency> {
+  static constexpr std::array<Edge<IndexDependency>, 0> kEdges{};
 };
 
-struct SchemaDependency : ObjectDependencyBase {
+struct SchemaDependency : DependencyMixin<SchemaDependency> {
   containers::FlatHashSet<ObjectId> tables;
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
@@ -358,61 +399,36 @@ struct SchemaDependency : ObjectDependencyBase {
     return tables.empty() && functions.empty() && views.empty() &&
            tokenizers.empty() && types.empty() && sequences.empty();
   }
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<SchemaDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto id : tables) {
-      e.EmitAutoDrop(id);
-    }
-    for (auto id : views) {
-      e.EmitAutoDrop(id);
-    }
-    for (auto id : functions) {
-      e.EmitAutoDrop(id);
-    }
-    for (auto id : types) {
-      e.EmitAutoDrop(id);
-    }
-    for (auto id : sequences) {
-      e.EmitAutoDrop(id);
-    }
-    for (auto id : tokenizers) {
-      e.EmitAutoDrop(id);
-    }
-  }
+  static constexpr std::array kEdges = {
+    Edge<SchemaDependency>{&SchemaDependency::tables, CascadeVerb::AutoDrop},
+    Edge<SchemaDependency>{&SchemaDependency::views, CascadeVerb::AutoDrop},
+    Edge<SchemaDependency>{&SchemaDependency::functions, CascadeVerb::AutoDrop},
+    Edge<SchemaDependency>{&SchemaDependency::types, CascadeVerb::AutoDrop},
+    Edge<SchemaDependency>{&SchemaDependency::sequences, CascadeVerb::AutoDrop},
+    Edge<SchemaDependency>{&SchemaDependency::tokenizers,
+                           CascadeVerb::AutoDrop},
+  };
 };
 
-struct DatabaseDependency : ObjectDependencyBase {
+struct DatabaseDependency : DependencyMixin<DatabaseDependency> {
   containers::FlatHashSet<ObjectId> schemas;
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<DatabaseDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto id : schemas) {
-      e.EmitAutoDrop(id);
-    }
-  }
+  static constexpr std::array kEdges = {
+    Edge<DatabaseDependency>{&DatabaseDependency::schemas,
+                             CascadeVerb::AutoDrop},
+  };
 };
 
-struct TokenizerDependency : ObjectDependencyBase {
+struct TokenizerDependency : DependencyMixin<TokenizerDependency> {
   containers::FlatHashSet<ObjectId> indexes;
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<TokenizerDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {
-    for (auto id : indexes) {
-      e.EmitCascadeIndexDrop(id);
-    }
-  }
+  static constexpr std::array kEdges = {
+    Edge<TokenizerDependency>{&TokenizerDependency::indexes,
+                              CascadeVerb::CascadeIndex},
+  };
 };
 
-struct RoleDependency : ObjectDependencyBase {
+struct RoleDependency : DependencyMixin<RoleDependency> {
   containers::FlatHashSet<ObjectId> referencing_objects;
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<RoleDependency>(*this);
-  }
-  void Emit(DropEmitter&, ObjectId) const final {}
+  static constexpr std::array<Edge<RoleDependency>, 0> kEdges{};
 };
 
 inline DropPlan DropEmitter::ComputePlan() && {

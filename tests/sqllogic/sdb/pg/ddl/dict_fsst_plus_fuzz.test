@@ -1,0 +1,92 @@
+# Deterministic fuzz round-trip for the dict_fsst FSST+ modes. A single source
+# table of pseudo-random strings (hash-driven lengths + byte content, shared
+# prefix families, embedded control bytes via chr(), multi-byte unicode, NULLs,
+# empty strings, and near-limit long strings) is copied into both a
+# serenedb-owned database (which may pick a _PLUS mode) and a native database
+# (restricted to modes 0-2). The two must read back byte-identical, which proves
+# the new compress + decompress paths are lossless on adversarial input.
+
+control substitution on
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfp_fuzz_owned.db' AS fown (TYPE duckdb, STORAGE_VERSION 'latest', SERENEDB_OWNED_STORAGE true);
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfp_fuzz_native.db' AS fnat (TYPE duckdb, STORAGE_VERSION 'latest');
+
+
+# One deterministic source so both copies hold identical bytes.
+statement ok
+CREATE TABLE src AS
+SELECT i,
+  CASE
+    WHEN i % 17 = 0 THEN NULL
+    WHEN i % 17 = 1 THEN ''
+    ELSE
+      (ARRAY['https://example.com/', 'ftp://host/path/', 'shared/prefix/family/',
+             'café/☕/', '日本語/テスト/', 'x'])[((hash(i) % 6) + 1)::INT]
+      || repeat(chr(32 + (hash(i * 3) % 94)::INT), (hash(i * 7) % 60)::INT)
+      || repeat('日', (hash(i * 11) % 8)::INT)
+      || (i % 2000)::VARCHAR
+  END AS s
+FROM range(60000) t(i);
+
+
+# a handful of near-limit long strings (still < 16384) mixed in
+statement ok
+INSERT INTO src SELECT 100000 + i, repeat('long/', 3000) || i::VARCHAR FROM range(20) t(i);
+
+
+statement ok
+CREATE TABLE fown.t AS SELECT * FROM src;
+
+
+statement ok
+CREATE TABLE fnat.t AS SELECT * FROM src;
+
+
+statement ok
+CHECKPOINT fown;
+
+
+statement ok
+CHECKPOINT fnat;
+
+
+# byte-identical round-trip: owned vs source
+query
+SELECT count(*) AS n FROM fown.t o JOIN src s USING (i) WHERE o.s IS DISTINCT FROM s.s;
+----
+n
+0
+
+
+# byte-identical round-trip: native vs source
+query
+SELECT count(*) AS n FROM fnat.t o JOIN src s USING (i) WHERE o.s IS DISTINCT FROM s.s;
+----
+n
+0
+
+
+# owned storage exercised at least one _PLUS mode; native never did
+query
+SELECT (SELECT count(*) FROM pragma_storage_info('fown.t', include_segment_info=true) WHERE segment_info LIKE '%PLUS%') > 0 AS owned_has_plus,
+       (SELECT count(*) FROM pragma_storage_info('fnat.t', include_segment_info=true) WHERE segment_info LIKE '%PLUS%') AS native_plus;
+----
+owned_has_plus	native_plus
+t	0
+
+
+statement ok
+DETACH fown;
+
+
+statement ok
+DETACH fnat;

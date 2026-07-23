@@ -601,8 +601,10 @@ void CatalogStore::Initialize(std::string_view database_directory) {
     // duckdb_tables/databases, GetAllSchemas); qualified name lookups
     // ("__sdb_store".main.x) still resolve.
     ExecOrFatal(
-      *_conn, absl::StrCat("ATTACH '", absl::StrReplaceAll(file, {{"'", "''"}}),
-                           "' AS \"", kStoreAlias, "\" (HIDDEN true)"));
+      *_conn,
+      absl::StrCat("ATTACH '", absl::StrReplaceAll(file, {{"'", "''"}}),
+                   "' AS \"", kStoreAlias,
+                   "\" (HIDDEN true, SERENEDB_OWNED_STORAGE true)"));
     ExecOrFatal(*_conn,
                 absl::StrCat("CREATE TABLE IF NOT EXISTS ", kCatalogTable,
                              " (parent_id UBIGINT, type UTINYINT, id UBIGINT, "

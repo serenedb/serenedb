@@ -39,6 +39,8 @@ bool NeedsClientCast(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       return true;
+    case duckdb::LogicalTypeId::UNION:
+      return true;
     case duckdb::LogicalTypeId::SQLNULL:
       return true;
     case duckdb::LogicalTypeId::LIST:
@@ -64,6 +66,8 @@ duckdb::LogicalType ClientCastTarget(const duckdb::LogicalType& type) {
   switch (type.id()) {
     case duckdb::LogicalTypeId::VARIANT:
       return duckdb::LogicalType::JSON();
+    case duckdb::LogicalTypeId::UNION:
+      return duckdb::LogicalType::VARCHAR;
     case duckdb::LogicalTypeId::SQLNULL:
       return duckdb::LogicalType::VARCHAR;
     case duckdb::LogicalTypeId::LIST:

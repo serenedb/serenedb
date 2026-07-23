@@ -15,17 +15,22 @@ sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_
 ## JEMALLOC
 ################################################################################
 if("${SDB_ALLOC}" MATCHES "JE")
-    # TODO(mbkkt) make it submodule
-    add_subdirectory(jemalloc)
-    file(MAKE_DIRECTORY "${JEMALLOC_HOME}/include")
+    # jemalloc source is the third_party/jemalloc submodule; jemalloc-cmake
+    # compiles it natively (no autotools) into the `jemalloc_native` target.
+    add_subdirectory(jemalloc-cmake)
+    # Expose it as an IMPORTED target: it is linked globally, so it ends up in
+    # the link interface of vendored libs that export() their targets (croaring),
+    # and export() tolerates IMPORTED but not in-tree targets.
     add_library(jemalloc STATIC IMPORTED GLOBAL)
     set_target_properties(
         jemalloc
         PROPERTIES
-            IMPORTED_LOCATION "${JEMALLOC_HOME}/lib/libjemalloc.a"
-            INTERFACE_INCLUDE_DIRECTORIES "${JEMALLOC_HOME}/include"
+            IMPORTED_LOCATION
+                "${CMAKE_CURRENT_BINARY_DIR}/jemalloc-cmake/libjemalloc_native.a"
+            INTERFACE_INCLUDE_DIRECTORIES
+                "${CMAKE_CURRENT_SOURCE_DIR}/jemalloc-cmake/include"
     )
-    add_dependencies(jemalloc jemalloc_build)
+    add_dependencies(jemalloc jemalloc_native)
     link_libraries(jemalloc)
     set(FOLLY_USE_JEMALLOC ON)
 else()
@@ -59,16 +64,6 @@ set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(simdjson)
-
-################################################################################
-## geographiclib-c
-################################################################################
-
-# TODO(mbkkt) make it submodule
-add_subdirectory(geographiclib-c)
-if(USE_DTRACE)
-    set(SDT_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sdt PARENT_SCOPE)
-endif()
 
 ################################################################################
 ## YACLib
@@ -149,12 +144,13 @@ set(WITH_RUNTIME_CPU_DETECTION ON CACHE BOOL "" FORCE)
 set(WITH_INFLATE_STRICT OFF CACHE BOOL "" FORCE)
 set(WITH_INFLATE_ALLOW_INVALID_DIST OFF CACHE BOOL "" FORCE)
 set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+set(WITH_SANITIZER "OFF" CACHE STRING "" FORCE)
 
 sdb_update_module(${GIT_EXECUTABLE} "zlib-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(zlib-ng)
 
 # Create ZLIB::ZLIB alias for velox compatibility
-add_library(ZLIB::ZLIB ALIAS zlib)
+add_library(ZLIB::ZLIB ALIAS zlib-ng)
 
 ################################################################################
 ## MINIZIP-NG
@@ -173,11 +169,12 @@ set(MZ_WZAES OFF CACHE BOOL "" FORCE)
 set(MZ_OPENSSL OFF CACHE BOOL "" FORCE)
 set(MZ_LIBBSD OFF CACHE BOOL "" FORCE)
 set(MZ_ICONV OFF CACHE BOOL "" FORCE)
+set(MZ_SANITIZER "OFF" CACHE STRING "" FORCE)
 
 sdb_update_module(${GIT_EXECUTABLE} "minizip-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(minizip-ng)
 
-target_link_libraries(minizip PUBLIC zlib)
+target_link_libraries(minizip PUBLIC zlib-ng)
 
 ################################################################################
 ## BOOST
@@ -452,9 +449,6 @@ add_subdirectory(lz4/build/cmake)
 
 get_target_property(LZ4_INCLUDE_DIR lz4_static INTERFACE_INCLUDE_DIRECTORIES)
 
-# Create lz4::lz4 alias for velox compatibility
-add_library(lz4::lz4 ALIAS lz4_static)
-
 ################################################################################
 ## ZSTD
 ################################################################################
@@ -468,7 +462,6 @@ set(ZSTD_INSTALL OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(zstd/build/cmake)
 
-# Create zstd::zstd alias for velox compatibility
 add_library(zstd::zstd ALIAS libzstd_static)
 
 ################################################################################
@@ -481,6 +474,17 @@ set(SNAPPY_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(SNAPPY_INSTALL OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(snappy)
+
+################################################################################
+## BROTLI
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "brotli" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+set(BROTLI_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(BROTLI_DISABLE_TESTS ON CACHE BOOL "" FORCE)
+set(BROTLI_BUNDLED_MODE ON CACHE BOOL "" FORCE)
+
+add_subdirectory(brotli)
 
 ################################################################################
 ## Google S2
@@ -572,18 +576,6 @@ set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
 set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
 
 ################################################################################
-## IMMER
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "immer" ${CMAKE_CURRENT_SOURCE_DIR} "README.rst")
-
-set(immer_BUILD_EXAMPLES OFF CACHE BOOL "don't build examples")
-set(immer_BUILD_EXTRAS OFF CACHE BOOL "don't build extras")
-set(immer_BUILD_TESTS OFF CACHE BOOL "don't build tests")
-set(immer_BUILD_DOCS OFF CACHE BOOL "don't docs")
-add_subdirectory(immer)
-
-################################################################################
 ## LINK_DIRECTORIES
 ################################################################################
 
@@ -608,12 +600,6 @@ set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "croaring" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(croaring)
-
-################################################################################
-### tests only library
-################################################################################
-
-add_subdirectory(tests)
 
 ################################################################################
 ## fmt

@@ -302,7 +302,7 @@ db error: ERROR: Failed to commit: JSON expression indexed by an inverted index 
 statement error
 INSERT INTO prim_types VALUES (10, 'this is not json at all'::json);
 ----
-db error: ERROR: Malformed JSON at byte 0 of input: invalid literal.  Input: "this is not json at all"
+db error: ERROR: Malformed JSON at byte 0 of input: invalid literal, expected 'true'.  Input: "this is not json at all"
 
 
 # All seven primitive/null/missing rows were committed; the two compound

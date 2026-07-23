@@ -170,8 +170,8 @@ target_link_libraries(
     iresearch-static
     search-benchmark-common
     gtest
-    rapidjson
     simdjson
+    simdutf
 )
 
 # setup CRT
@@ -190,9 +190,8 @@ target_include_directories(
         ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         ${FROZEN_INCLUDE_DIR}
-        $<TARGET_PROPERTY:iresearch-cmdline,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
-        $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
 # Standalone iresearch-load binary -- split out so CI doesn't have to compile and
@@ -213,8 +212,8 @@ target_link_libraries(
     iresearch-static
     search-benchmark-common
     gtest
-    rapidjson
     simdjson
+    simdutf
 )
 
 target_include_directories(
@@ -228,7 +227,6 @@ target_include_directories(
         ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         ${FROZEN_INCLUDE_DIR}
-        $<TARGET_PROPERTY:iresearch-cmdline,INTERFACE_INCLUDE_DIRECTORIES>
         $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
-        $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )

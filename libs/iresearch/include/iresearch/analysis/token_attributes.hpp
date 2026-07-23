@@ -24,6 +24,7 @@
 
 #include <functional>
 
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/attributes.hpp"

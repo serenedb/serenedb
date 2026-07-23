@@ -22,11 +22,11 @@
 
 #pragma once
 
-#include "iresearch/index/iterators.hpp"
-#include "iresearch/store/data_input.hpp"
+#include <functional>
+
+#include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/attributes.hpp"
-#include "iresearch/utils/iterator.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -43,13 +43,6 @@ struct OffsAttr final : Attribute {
 
   uint32_t start{0};
   uint32_t end{0};
-};
-
-// Represents token increment in a stream
-struct IncAttr final : Attribute {
-  static constexpr std::string_view type_name() noexcept { return "increment"; }
-
-  uint32_t value{1};
 };
 
 // Represents term value in a stream

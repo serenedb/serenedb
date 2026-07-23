@@ -32,13 +32,6 @@ TEST(token_attributes_test, offset) {
   ASSERT_EQ(0, offs.end);
 }
 
-TEST(token_attributes_test, increment) {
-  static_assert("increment" == irs::Type<irs::IncAttr>::name());
-
-  irs::IncAttr inc;
-  ASSERT_EQ(1, inc.value);
-}
-
 TEST(token_attributes_test, TermAttr) {
   static_assert("term" == irs::Type<irs::TermAttr>::name());
 

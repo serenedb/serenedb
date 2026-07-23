@@ -222,8 +222,8 @@ void SearchSinkInsertBaseImpl::InsertNumericColumn(
   for (size_t i = 0; i < values.size();) {
     const size_t n = std::min(kMaxValues, values.size() - i);
     irs::AppendNumericTermsBlock(terms, values.subspan(i, n));
-    if (!_document->InsertBlock(slot, {terms, n * kTerms}, docs.subspan(i, n),
-                                kTerms)) {
+    if (!_document->InsertStrided(slot, {terms, n * kTerms}, docs.subspan(i, n),
+                                  kTerms)) {
       THROW_SQL_ERROR(
         ERR_MSG("Failed to insert field into IResearch document"));
     }
@@ -273,11 +273,10 @@ void SearchSinkInsertBaseImpl::WriteAnalyzedColumn(
   if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
     irs::analysis::GeoAnalyzer::Cast(_field.GetTokens()).SetWkbInput(true);
   }
-  _field.GetTokens().Fill(
-    _term_scratch, _doc_scratch,
-    _inverter_sink.Bind(*_document, *slot, _field.unique, _field.dense,
-                        store_sink),
-    layout);
+  _field.GetTokens().Fill(_term_scratch, _doc_scratch,
+                          _inverter_sink.Bind(*_document, *slot, _field.unique,
+                                              _field.dense, store_sink),
+                          layout);
   _inverter_sink.Flush();
   FinishColumnBlocks(_null_field);
 }
@@ -439,8 +438,8 @@ void SearchSinkInsertBaseImpl::WriteListBatch(duckdb::idx_t count,
       auto* slot = _document->Field(_field.Id(), _field.GetIndexFeatures());
       SDB_ASSERT(slot);
       _inverter_sink.Reset();
-      auto& w = _inverter_sink.Bind(*_document, *slot, /*unique=*/false,
-                                    _field.dense);
+      auto& w =
+        _inverter_sink.Bind(*_document, *slot, /*unique=*/false, _field.dense);
       for_each_element([&](duckdb::idx_t child_idx, irs::doc_id_t doc) {
         w.BeginValue(doc);
         _field.string_analyzer->Fill(AsView(data[child_idx]), w, layout);

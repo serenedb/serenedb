@@ -110,11 +110,6 @@ void ScatteredField::Reset(const FieldInverter& field) {
   const auto nocc = PrefixSums();
   SDB_ASSERT(nocc == field.Log().Size() + ninline);
 
-  _s->term_starts.clear();
-  if (field.UniqueTerms()) {
-    FoldDuplicateTerms(field.Dictionary().Entries());
-  }
-
   field.VisitLog([&](const auto& log) { Scatter(log, nocc); });
 }
 
@@ -186,30 +181,6 @@ uint64_t ScatteredField::RankLiveTerms(
     lo = hi;
   }
   return ninline;
-}
-
-void ScatteredField::FoldDuplicateTerms(
-  std::span<const TermDictionary::Entry> entries) {
-  const auto& ranked = _s->ranked;
-  size_t first_dup = 0;
-  for (size_t r = 1; r < ranked.size(); ++r) {
-    if (entries[ranked[r].id].term == entries[ranked[r - 1].id].term) {
-      first_dup = r;
-      break;
-    }
-  }
-  if (!first_dup) {
-    return;
-  }
-  auto& starts = _s->term_starts;
-  starts.reserve(ranked.size() + 1);
-  for (size_t r = 0; r < ranked.size(); ++r) {
-    if (r == 0 ||
-        entries[ranked[r].id].term != entries[ranked[r - 1].id].term) {
-      starts.push_back(static_cast<uint32_t>(r));
-    }
-  }
-  starts.push_back(static_cast<uint32_t>(ranked.size()));
 }
 
 uint64_t ScatteredField::PrefixSums() {

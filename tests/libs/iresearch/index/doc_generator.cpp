@@ -185,9 +185,9 @@ bool LongField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
   duckdb::string_t terms[irs::NumericTermCount<int64_t>()];
   irs::AppendNumericTermsBlock(terms, std::span<const int64_t>{&_value, 1});
   const auto doc_id = doc.DocId();
-  return doc.InsertBlock(*slot, std::span<const duckdb::string_t>{terms},
-                         std::span<const irs::doc_id_t>{&doc_id, 1},
-                         irs::NumericTermCount<int64_t>());
+  return doc.InsertStrided(*slot, std::span<const duckdb::string_t>{terms},
+                           std::span<const irs::doc_id_t>{&doc_id, 1},
+                           irs::NumericTermCount<int64_t>());
 }
 
 bool LongField::Write(irs::DataOutput& out) const {
@@ -210,9 +210,9 @@ bool IntField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
   duckdb::string_t terms[irs::NumericTermCount<int32_t>()];
   irs::AppendNumericTermsBlock(terms, std::span<const int32_t>{&_value, 1});
   const auto doc_id = doc.DocId();
-  return doc.InsertBlock(*slot, std::span<const duckdb::string_t>{terms},
-                         std::span<const irs::doc_id_t>{&doc_id, 1},
-                         irs::NumericTermCount<int32_t>());
+  return doc.InsertStrided(*slot, std::span<const duckdb::string_t>{terms},
+                           std::span<const irs::doc_id_t>{&doc_id, 1},
+                           irs::NumericTermCount<int32_t>());
 }
 
 bool IntField::Write(irs::DataOutput& out) const {
@@ -235,9 +235,9 @@ bool DoubleField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
   duckdb::string_t terms[irs::NumericTermCount<double_t>()];
   irs::AppendNumericTermsBlock(terms, std::span<const double_t>{&_value, 1});
   const auto doc_id = doc.DocId();
-  return doc.InsertBlock(*slot, std::span<const duckdb::string_t>{terms},
-                         std::span<const irs::doc_id_t>{&doc_id, 1},
-                         irs::NumericTermCount<double_t>());
+  return doc.InsertStrided(*slot, std::span<const duckdb::string_t>{terms},
+                           std::span<const irs::doc_id_t>{&doc_id, 1},
+                           irs::NumericTermCount<double_t>());
 }
 
 bool DoubleField::Write(irs::DataOutput& out) const {
@@ -260,9 +260,9 @@ bool FloatField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
   duckdb::string_t terms[irs::NumericTermCount<float_t>()];
   irs::AppendNumericTermsBlock(terms, std::span<const float_t>{&_value, 1});
   const auto doc_id = doc.DocId();
-  return doc.InsertBlock(*slot, std::span<const duckdb::string_t>{terms},
-                         std::span<const irs::doc_id_t>{&doc_id, 1},
-                         irs::NumericTermCount<float_t>());
+  return doc.InsertStrided(*slot, std::span<const duckdb::string_t>{terms},
+                           std::span<const irs::doc_id_t>{&doc_id, 1},
+                           irs::NumericTermCount<float_t>());
 }
 
 bool FloatField::Write(irs::DataOutput& out) const {

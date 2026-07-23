@@ -373,11 +373,11 @@ class IndexWriter : private util::Noncopyable {
       return _writer.InsertBlock(slot, batch, runs);
     }
 
-    bool InsertBlock(FieldInverter& slot,
-                     std::span<const duckdb::string_t> terms,
-                     std::span<const doc_id_t> docs,
-                     uint32_t tokens_per_doc) const {
-      return _writer.InsertBlock(slot, terms, docs, tokens_per_doc);
+    bool InsertStrided(FieldInverter& slot,
+                       std::span<const duckdb::string_t> terms,
+                       std::span<const doc_id_t> docs,
+                       uint32_t tokens_per_doc) const {
+      return _writer.InsertStrided(slot, terms, docs, tokens_per_doc);
     }
 #ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }

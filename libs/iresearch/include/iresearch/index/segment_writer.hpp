@@ -132,11 +132,12 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return InsertBlock(*slot, batch, runs);
   }
 
-  bool InsertBlock(FieldInverter& slot, std::span<const duckdb::string_t> terms,
-                   std::span<const doc_id_t> docs, uint32_t tokens_per_doc) {
+  bool InsertStrided(FieldInverter& slot,
+                     std::span<const duckdb::string_t> terms,
+                     std::span<const doc_id_t> docs, uint32_t tokens_per_doc) {
     AssertDocRange(docs);
     return InvertChecked(
-      [&] { return slot.InvertBlock(terms, docs, tokens_per_doc); });
+      [&] { return slot.InvertStrided(terms, docs, tokens_per_doc); });
   }
 
   // Slot-direct flush for column-based writers: the slot comes from Field()

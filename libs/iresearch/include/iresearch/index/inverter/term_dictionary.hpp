@@ -107,16 +107,6 @@ class TermDictionary : util::Noncopyable {
     return ResolveHashed({ProbeTerm(term), hash});
   }
 
-  template<typename T>
-  void Append(const T& term, doc_id_t doc) {
-    const auto probe = ProbeTerm(term);
-    auto& entry = _entries.emplace_back(
-      Intern(
-        {reinterpret_cast<const byte_type*>(probe.GetData()), probe.GetSize()}),
-      size_t{0});
-    entry.inline_docs[0] = doc;
-  }
-
   bool TryInline(uint32_t id, doc_id_t doc) noexcept {
     SDB_ASSERT(id < _entries.size());
     for (auto& slot : _entries[id].inline_docs) {

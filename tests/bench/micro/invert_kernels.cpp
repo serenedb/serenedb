@@ -527,7 +527,7 @@ void BM_NumericBlockGather(benchmark::State& state) {
         const size_t m = std::min(kMaxValues, n - i);
         AppendNumericTermsBlock(terms.get(),
                                 std::span<const int64_t>{&gathered[i], m});
-        benchmark::DoNotOptimize(field->InvertBlock(
+        benchmark::DoNotOptimize(field->InvertStrided(
           std::span<const duckdb::string_t>{terms.get(), m * kMaxTerms},
           std::span<const doc_id_t>{&docs[i], m}, kMaxTerms));
         i += m;

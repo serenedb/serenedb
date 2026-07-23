@@ -59,7 +59,7 @@ struct ResolveScratch {
 //   verbatim keyword / PK blocks  -> InvertKeywordBlock (docs span / ramp)
 //   constant term (null, bool)    -> InvertConstantBlock
 //   analyzed columns (runs)       -> InvertBlock(batch, runs)
-//   numeric trie slabs (strided)  -> InvertBlock(terms, docs, tokens_per_doc)
+//   numeric trie slabs (strided)  -> InvertStrided(terms, docs, tokens_per_doc)
 // Everything else in this class is machinery below those four.
 class FieldInverter : util::Noncopyable {
  public:
@@ -88,12 +88,6 @@ class FieldInverter : util::Noncopyable {
   const TermDictionary& Dictionary() const noexcept { return _dict; }
   TermDictionary& Dictionary() noexcept { return _dict; }
   void ReserveTerms(size_t expected_terms) { _dict.Reserve(expected_terms); }
-  void MarkUniqueTerms() noexcept {
-    SDB_ASSERT(Layout() == TokenLayout::Terms);
-    SDB_ASSERT(!_col_writer);
-    _unique_terms = true;
-  }
-  bool UniqueTerms() const noexcept { return _unique_terms; }
   void SetUnique(bool value) noexcept { _unique = value; }
   void SetDensePos(bool value) noexcept { _dense_pos = value; }
   TokenLayout Layout() const noexcept {
@@ -147,8 +141,8 @@ class FieldInverter : util::Noncopyable {
 
   // Terms-layout strided ingest straight from a terms array -- no TokenBatch:
   // tokens [k*tokens_per_doc, (k+1)*tokens_per_doc) belong to docs[k].
-  bool InvertBlock(std::span<const duckdb::string_t> terms,
-                   std::span<const doc_id_t> docs, uint32_t tokens_per_doc) {
+  bool InvertStrided(std::span<const duckdb::string_t> terms,
+                     std::span<const doc_id_t> docs, uint32_t tokens_per_doc) {
     SDB_ASSERT(tokens_per_doc != 0);
     SDB_ASSERT(terms.size() == docs.size() * tokens_per_doc);
     SDB_ASSERT(terms.size() <= TokenBatch::kCapacity);
@@ -483,20 +477,6 @@ class FieldInverter : util::Noncopyable {
 
   template<typename T, typename DocAt>
   bool InvertKeywordImpl(std::span<const T> values, DocAt doc_at) {
-    if (_unique_terms) {
-      for (size_t k = 0; k < values.size(); ++k) {
-        SDB_ASSERT(doc_at(k) < doc_limits::eof());
-        SDB_ASSERT(doc_at(k) >= _state.last_doc);
-        _dict.Append(values[k], doc_at(k));
-      }
-      if (!values.empty()) {
-        Reset(doc_at(values.size() - 1));
-        _state.pos = 1;
-        _state.last_pos = 1;
-        _state.stats.len = 1;
-      }
-      return true;
-    }
     return VisitLog([&](auto& log) {
       auto* const ids = _resolve->ids;
       for (size_t base = 0; base < values.size();
@@ -655,7 +635,6 @@ class FieldInverter : util::Noncopyable {
   uint32_t _norm_row_group_size = 0;
   FieldMeta _meta;
   IndexFeatures _requested_features{};
-  bool _unique_terms = false;
   bool _unique = false;
   bool _dense_pos = true;
   DocState _state;

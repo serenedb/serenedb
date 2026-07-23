@@ -43,46 +43,27 @@ constexpr TokenLayout LayoutFromFeatures(IndexFeatures features) noexcept {
   return TokenLayout::TermsPosOffs;
 }
 
-// Per-field occurrence log. The sink writes column-by-column (field-major per
-// chunk, docs ascending within a field), so per-field ownership keeps token
-// columns contiguous per field and lets runs extend across chunk boundaries;
-// a run only breaks on a doc gap. PostingLog<L> owns exactly the columns
-// its layout indexes.
-class PostingLogBase : util::Noncopyable {
+// Doc<->occurrence mapping for one field's log. Occurrences are stored in doc
+// order with no doc id per occurrence; instead Run headers over the doc-id
+// space plus a per-doc token count map occurrence positions back to docs.
+// RunLog owns the doc-ordinal timeline: DocCount() is the number of docs
+// recorded so far and the domain of every per-doc structure layered on top
+// (the explicit-position bitmap in PostingLogPosBase). Runs and per-doc counts
+// advance together in BeginDoc, so the two can never desync.
+class RunLog {
  public:
   struct Run {
     doc_id_t first_doc;
     uint32_t ndocs;
   };
 
-  // A short gap (docs skipped entirely -- e.g. their occurrences were captured
-  // inline in the dictionary) is cheaper to bridge with zero-count doc slots
-  // (4B each) than to break the run over (16B header). Breakeven at 4.
-  static constexpr doc_id_t kMaxBridgedGap = 3;
+  RunLog(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
+    : _runs{ManagedTypedAllocator<Run>{rm}}, _doc_tokens{blocks} {}
 
-  void TouchDoc(doc_id_t doc) { BeginDoc(doc); }
-
-  uint64_t Size() const noexcept { return _term_ids.Size(); }
-
-  std::span<const Run> Runs() const noexcept {
-    return {_runs.data(), _runs.size()};
-  }
-  const LogColumn& DocTokens() const noexcept { return _doc_tokens; }
-  const LogColumn& TermIds() const noexcept { return _term_ids; }
-
-  // Per-doc/per-run bookkeeping only. The SoA columns live in the shared
-  // block arena and are accounted by FieldsInverter via arena size, so they
-  // are deliberately excluded here to avoid double counting.
-  size_t BookkeepingMemory() const noexcept {
-    return _runs.capacity() * sizeof(Run);
-  }
-
- protected:
-  PostingLogBase(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
-    : _term_ids{blocks},
-      _runs{ManagedTypedAllocator<Run>{rm}},
-      _doc_tokens{blocks} {}
-
+  // Opens `doc` as the current doc: extends the open run when consecutive,
+  // bridges a short gap with zero-count doc slots (4B each -- cheaper than a
+  // 16B run header, breakeven at 4), else starts a new run. A repeated doc
+  // (multi-value continuation) is a no-op.
   void BeginDoc(doc_id_t doc) {
     if (!_runs.empty()) {
       auto& run = _runs.back();
@@ -104,9 +85,54 @@ class PostingLogBase : util::Noncopyable {
     _doc_tokens.Push(0);
   }
 
-  LogColumn _term_ids;
+  // Adds `n` tokens to the current (open) doc.
+  void AddTokens(uint32_t n) { _doc_tokens.IncBack(n); }
+
+  // Number of docs recorded so far -- the ordinal domain shared by every
+  // per-doc structure layered on the log.
+  size_t DocCount() const noexcept { return _doc_tokens.Size(); }
+  // Token count of the current (open) doc.
+  uint32_t LastTokens() const noexcept { return _doc_tokens.Back(); }
+
+  std::span<const Run> Runs() const noexcept {
+    return {_runs.data(), _runs.size()};
+  }
+  const LogColumn& DocTokens() const noexcept { return _doc_tokens; }
+
+  // Only the run headers are counted: _doc_tokens lives in the shared block
+  // arena, accounted by FieldsInverter via arena size (avoids double count).
+  size_t Memory() const noexcept { return _runs.capacity() * sizeof(Run); }
+
+ private:
+  static constexpr doc_id_t kMaxBridgedGap = 3;
+
   ManagedVector<Run> _runs;
   LogColumn _doc_tokens;
+};
+
+// Per-field occurrence log. The sink writes column-by-column (field-major per
+// chunk, docs ascending within a field), so per-field ownership keeps token
+// columns contiguous per field and lets runs extend across chunk boundaries;
+// a run only breaks on a doc gap. PostingLog<L> owns exactly the columns
+// its layout indexes.
+class PostingLogBase : util::Noncopyable {
+ public:
+  void TouchDoc(doc_id_t doc) { _runlog.BeginDoc(doc); }
+
+  uint64_t Size() const noexcept { return _term_ids.Size(); }
+
+  std::span<const RunLog::Run> Runs() const noexcept { return _runlog.Runs(); }
+  const LogColumn& DocTokens() const noexcept { return _runlog.DocTokens(); }
+  const LogColumn& TermIds() const noexcept { return _term_ids; }
+
+  size_t BookkeepingMemory() const noexcept { return _runlog.Memory(); }
+
+ protected:
+  PostingLogBase(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
+    : _term_ids{blocks}, _runlog{blocks, rm} {}
+
+  LogColumn _term_ids;
+  RunLog _runlog;
 };
 
 // Positions: almost all tokenizers emit increment 1, making a position equal
@@ -128,7 +154,7 @@ class PostingLogPosBase : public PostingLogBase {
   // within-doc ordinal only holds for an all-dense doc), so the caller routes
   // through the explicit Push instead.
   bool CurrentDocExplicit() const noexcept {
-    return _doc_tokens.Size() && DocExplicit(_doc_tokens.Size() - 1);
+    return _runlog.DocCount() && DocExplicit(_runlog.DocCount() - 1);
   }
 
   const LogColumn& Pos() const noexcept { return _pos; }
@@ -145,7 +171,7 @@ class PostingLogPosBase : public PostingLogBase {
       _explicit_words{ManagedTypedAllocator<uint64_t>{rm}} {}
 
   void PromoteCurrentDoc() {
-    const size_t ord = _doc_tokens.Size() - 1;
+    const size_t ord = _runlog.DocCount() - 1;
     const auto word = ord >> 6;
     if (word >= _explicit_words.size()) {
       _explicit_words.resize(word + 1, 0);
@@ -155,7 +181,7 @@ class PostingLogPosBase : public PostingLogBase {
       return;
     }
     _explicit_words[word] |= bit;
-    for (uint32_t i = 1, k = _doc_tokens.Back(); i <= k; ++i) {
+    for (uint32_t i = 1, k = _runlog.LastTokens(); i <= k; ++i) {
       _pos.Push(i);
     }
   }
@@ -176,13 +202,13 @@ class PostingLogPosBase : public PostingLogBase {
   void PushBatchTermsPos(doc_id_t doc, std::span<const uint32_t> term_ids,
                          bool dense, std::span<const uint32_t> pos,
                          uint32_t pos_base) {
-    BeginDoc(doc);
+    _runlog.BeginDoc(doc);
     _term_ids.PushN(term_ids.data(), term_ids.size());
     if (RoutePos(dense, pos_base, term_ids.size())) {
       SDB_ASSERT(pos.size() == term_ids.size());
       _pos.PushNAdd(pos.data(), pos.size(), pos_base);
     }
-    _doc_tokens.IncBack(static_cast<uint32_t>(term_ids.size()));
+    _runlog.AddTokens(static_cast<uint32_t>(term_ids.size()));
   }
 
   LogColumn _pos;
@@ -201,15 +227,15 @@ class PostingLog<TokenLayout::Terms> final : public PostingLogBase {
     : PostingLogBase{blocks, rm} {}
 
   IRS_FORCE_INLINE void Push(doc_id_t doc, uint32_t term_id) {
-    BeginDoc(doc);
+    _runlog.BeginDoc(doc);
     _term_ids.Push(term_id);
-    _doc_tokens.IncBack(1);
+    _runlog.AddTokens(1);
   }
 
   void PushBatch(doc_id_t doc, std::span<const uint32_t> term_ids) {
-    BeginDoc(doc);
+    _runlog.BeginDoc(doc);
     _term_ids.PushN(term_ids.data(), term_ids.size());
-    _doc_tokens.IncBack(static_cast<uint32_t>(term_ids.size()));
+    _runlog.AddTokens(static_cast<uint32_t>(term_ids.size()));
   }
 };
 
@@ -229,10 +255,10 @@ class PostingLog<TokenLayout::TermsPos> final : public PostingLogPosBase {
   // One dense-intent token; the log owns the promoted-doc decision (an
   // explicit doc keeps explicit positions).
   IRS_FORCE_INLINE void PushOne(doc_id_t doc, uint32_t term_id, uint32_t pos) {
-    BeginDoc(doc);
+    _runlog.BeginDoc(doc);
     _term_ids.Push(term_id);
     RoutePos(true, pos - 1, 1);
-    _doc_tokens.IncBack(1);
+    _runlog.AddTokens(1);
   }
 };
 
@@ -263,12 +289,12 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
   IRS_FORCE_INLINE void PushOne(doc_id_t doc, uint32_t term_id, uint32_t pos,
                                 uint32_t offs_start, uint32_t offs_end) {
     SDB_ASSERT(offs_end >= offs_start);
-    BeginDoc(doc);
+    _runlog.BeginDoc(doc);
     _term_ids.Push(term_id);
     RoutePos(true, pos - 1, 1);
     _offs_start.Push(offs_start);
     _offs_len.Push(offs_end - offs_start);
-    _doc_tokens.IncBack(1);
+    _runlog.AddTokens(1);
   }
 
   const LogColumn& OffsStart() const noexcept { return _offs_start; }

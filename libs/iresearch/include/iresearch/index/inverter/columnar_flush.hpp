@@ -56,7 +56,6 @@ struct ScatterScratch {
     blocks = ManagedVector<duckdb::AllocatedData>{blocks.get_allocator()};
     cursors = ManagedVector<uint32_t>{cursors.get_allocator()};
     bounds = ManagedVector<uint64_t>{bounds.get_allocator()};
-    term_starts = ManagedVector<uint32_t>{term_starts.get_allocator()};
     ranked = ManagedVector<RankedTerm>{ranked.get_allocator()};
     ranked_alt = ManagedVector<RankedTerm>{ranked_alt.get_allocator()};
     radix_counts = ManagedVector<uint32_t>{radix_counts.get_allocator()};
@@ -69,7 +68,6 @@ struct ScatterScratch {
   ManagedVector<duckdb::AllocatedData> blocks;
   ManagedVector<uint32_t> cursors;
   ManagedVector<uint64_t> bounds;
-  ManagedVector<uint32_t> term_starts;
   ManagedVector<RankedTerm> ranked;
   ManagedVector<RankedTerm> ranked_alt;
   ManagedVector<uint32_t> radix_counts;
@@ -111,27 +109,15 @@ class ScatteredField : util::Noncopyable {
 
   const FieldInverter& Field() const noexcept { return *_field; }
   TokenLayout Layout() const noexcept { return _layout; }
-  size_t TermCount() const noexcept {
-    return _s->term_starts.empty() ? _s->ranked.size()
-                                   : _s->term_starts.size() - 1;
-  }
+  size_t TermCount() const noexcept { return _s->ranked.size(); }
 
   bytes_view TermAt(size_t rank) const noexcept {
-    return _field->Dictionary()
-      .Entries()[_s->ranked[RankAt(rank)].id]
-      .TermBytes();
+    return _field->Dictionary().Entries()[_s->ranked[rank].id].TermBytes();
   }
 
   // Region bounds are materialized per rank: [bounds[rank], bounds[rank+1]).
-  // Unique-terms fields may hold the same term in several entries (same PK
-  // re-inserted within a segment); their ranks sort adjacent with regions
-  // already contiguous, so term_starts folds each group into one term.
-  uint64_t TermBegin(size_t rank) const noexcept {
-    return _s->bounds[RankAt(rank)];
-  }
-  uint64_t TermEnd(size_t rank) const noexcept {
-    return _s->bounds[RankAt(rank + 1)];
-  }
+  uint64_t TermBegin(size_t rank) const noexcept { return _s->bounds[rank]; }
+  uint64_t TermEnd(size_t rank) const noexcept { return _s->bounds[rank + 1]; }
 
   ScatterView Docs() const noexcept { return ScatterView{_s->docs.data()}; }
   ScatterView Pos() const noexcept { return ScatterView{_s->pos.data()}; }
@@ -143,12 +129,7 @@ class ScatteredField : util::Noncopyable {
   }
 
  private:
-  size_t RankAt(size_t rank) const noexcept {
-    return _s->term_starts.empty() ? rank : _s->term_starts[rank];
-  }
-
   void BuildHistogram(const LogColumn& term_ids, size_t vocab);
-  void FoldDuplicateTerms(std::span<const TermDictionary::Entry> entries);
   uint64_t RankLiveTerms(std::span<const TermDictionary::Entry> entries);
   uint64_t PrefixSums();
   // Fixed-size blocks from a grow-only pool, reused across fields; a column

@@ -26,7 +26,7 @@ three
 # DOCS_TEST_BODY
 
 query
-SELECT unsion_extract(u, 'str') AS str
+SELECT union_extract(u, 'str') AS str
 FROM tbl1;
 ----
 str

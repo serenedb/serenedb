@@ -34,8 +34,6 @@ add_bench(consecutive_run_length)
 add_bench(parse_query)
 add_bench(literal_lookup)
 add_bench(ci_hash)
-add_bench(ci_lower)
-add_bench(ci_fold128)
 add_bench(ci_compare)
 add_bench(socket_write)
 add_bench(duckdb_collector)
@@ -45,7 +43,12 @@ add_bench(clustering)
 add_bench(simd_base64)
 add_bench(simd_json_validate)
 add_bench(simd_utf8_validate)
-add_bench(frozen_vs_alternatives)
+
+if(ARCH_AMD64)
+    add_bench(ci_lower)
+    add_bench(ci_fold128)
+    add_bench(frozen_vs_alternatives)
+endif()
 
 # SIMD string-encoding benches: link the candidate libraries directly.
 target_link_libraries(serenedb-bench-micro-simd_base64 PRIVATE simdutf)
@@ -69,16 +72,18 @@ target_include_directories(
 
 # frozen_vs_alternatives measures the boost::text frozen::set use-cases against
 # what we already vendor; needs frozen headers + the boost::text data tables.
-target_link_libraries(serenedb-bench-micro-frozen_vs_alternatives PRIVATE text)
-target_compile_definitions(
-    serenedb-bench-micro-frozen_vs_alternatives
-    PRIVATE BOOST_TEXT_DISABLE_CONCEPTS
-)
-target_include_directories(
-    serenedb-bench-micro-frozen_vs_alternatives
-    SYSTEM
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include
-)
+if(ARCH_AMD64)
+    target_link_libraries(serenedb-bench-micro-frozen_vs_alternatives PRIVATE text)
+    target_compile_definitions(
+        serenedb-bench-micro-frozen_vs_alternatives
+        PRIVATE BOOST_TEXT_DISABLE_CONCEPTS
+    )
+    target_include_directories(
+        serenedb-bench-micro-frozen_vs_alternatives
+        SYSTEM
+        PRIVATE ${CMAKE_SOURCE_DIR}/third_party/frozen/include
+    )
+endif()
 
 # regexp_vs_wildcard splits UTF-8 via duckdb's vendored utf8proc + simdutf.
 target_link_libraries(serenedb-bench-micro-regexp_vs_wildcard PRIVATE simdutf)

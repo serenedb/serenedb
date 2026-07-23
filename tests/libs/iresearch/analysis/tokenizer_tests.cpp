@@ -25,6 +25,7 @@
 
 #include "iresearch/analysis/batch/numeric_terms.hpp"
 #include "iresearch/analysis/batch/token_sinks.hpp"
+#include "iresearch/analysis/batch/token_list_sink.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizers.hpp"

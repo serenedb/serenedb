@@ -28,7 +28,7 @@
 #include "basics/down_cast.h"
 #include "basics/serializer.h"
 #include "basics/shared.hpp"
-#include "iresearch/analysis/batch/token_sinks.hpp"
+#include "iresearch/analysis/batch/token_accumulator.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "tokenizer.hpp"

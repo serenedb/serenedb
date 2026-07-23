@@ -23,7 +23,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <string_view>
 
-#include "iresearch/analysis/batch/token_sinks.hpp"
+#include "iresearch/analysis/batch/token_accumulator.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "pg/sql_exception_macro.h"
 

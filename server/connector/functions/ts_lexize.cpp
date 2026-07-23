@@ -29,7 +29,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/analysis/batch/token_sinks.hpp>
+#include <iresearch/analysis/batch/token_list_sink.hpp>
 #include <iresearch/utils/string.hpp>
 #include <variant>
 

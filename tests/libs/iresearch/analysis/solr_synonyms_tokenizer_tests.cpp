@@ -438,7 +438,7 @@ TEST(solr_synonyms_tokenizer_tests, native_fills_match_pull) {
   ASSERT_FALSE(sink.flushed());
   auto& batch = sink.writer.buf;
   const auto runs = sink.writer.Runs();
-  ASSERT_FALSE(sink.writer.dense_pos);
+  ASSERT_FALSE(sink.writer.DensePos());
 
   ASSERT_EQ(values.size(), runs.size());
   uint32_t token_idx = 0;

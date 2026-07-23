@@ -213,7 +213,7 @@ TEST(MinHashTokenizerTest, NativeFillsMatchPull) {
       ASSERT_FALSE(sink.flushed());
       auto& batch = sink.writer.buf;
       const auto runs = sink.writer.Runs();
-      EXPECT_FALSE(sink.writer.dense_pos);
+      EXPECT_FALSE(sink.writer.DensePos());
       ASSERT_EQ(1U, runs.size());
       ASSERT_EQ(doc, runs[0].doc);
 

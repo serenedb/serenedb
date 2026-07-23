@@ -1390,7 +1390,7 @@ TEST(ngram_token_stream_test, test_out_of_range_pos_issue) {
     ASSERT_TRUE(stream->Fill(value, sink.writer, sink.layout));
     ASSERT_FALSE(sink.flushed());
     auto& batch = sink.writer.buf;
-    ASSERT_FALSE(sink.writer.dense_pos);
+    ASSERT_FALSE(sink.writer.DensePos());
     uint32_t last_pos = 0;
     for (uint32_t t = 0; t < batch.count; ++t) {
       ASSERT_GE(batch.pos[t], last_pos);

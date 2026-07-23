@@ -50,7 +50,7 @@ void AssertBlockTerm(irs::analysis::NormalizingTokenizer::Options options,
   ASSERT_FALSE(sink.flushed());
   auto& batch = sink.writer.buf;
   ASSERT_EQ(1, batch.count);
-  ASSERT_TRUE(sink.writer.dense_pos);
+  ASSERT_TRUE(sink.writer.DensePos());
   const auto& t = batch.terms[0];
   ASSERT_EQ(expected, std::string_view(t.GetData(), t.GetSize()));
   ASSERT_EQ(0, batch.offs_start[0]);
@@ -242,7 +242,7 @@ TEST_F(NormalizingTokenizerTests, native_fills_match_pull) {
     ASSERT_FALSE(sink.flushed());
     auto& batch = sink.writer.buf;
     ASSERT_EQ(1, batch.count);
-    ASSERT_TRUE(sink.writer.dense_pos);
+    ASSERT_TRUE(sink.writer.DensePos());
     const auto& t = batch.terms[0];
     ASSERT_EQ(expected[i],
               irs::bstring(reinterpret_cast<const irs::byte_type*>(t.GetData()),

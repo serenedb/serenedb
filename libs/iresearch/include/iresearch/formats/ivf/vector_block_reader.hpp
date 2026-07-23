@@ -40,7 +40,7 @@ class VectorBlockReader {
   const byte_type* Read(size_t index, size_t count) {
     const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
     const size_t bytes = count * size_t{_record_size};
-    if (const byte_type* p = _in.ReadStable(offset, bytes)) {
+    if (const byte_type* p = _in.ReadVolatile(offset, bytes)) {
       return p;
     }
     _buf.resize(bytes);

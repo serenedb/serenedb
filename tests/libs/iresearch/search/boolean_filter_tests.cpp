@@ -17281,7 +17281,7 @@ TEST(AndRangeMerge_test, keeps_scored) {
   }
 
   irs::Filter::ptr filter = std::move(root);
-  irs::Optimize(filter, {.scored = true});
+  irs::Optimize(filter, {.scored = true, .analyzed_fields = {kFieldTestField}});
 
   ASSERT_EQ(irs::Type<irs::And>::id(), filter->type());
   EXPECT_EQ(2, filter->GetChildren().size());

@@ -77,6 +77,11 @@ enum class VectorQuantization : uint8_t {
 inline constexpr uint32_t kRaBitQMinBits = 1;
 inline constexpr uint32_t kRaBitQMaxBits = 9;
 
+inline constexpr VectorMetric EffectiveQuantMetric(
+  VectorMetric metric) noexcept {
+  return metric == VectorMetric::Cosine ? VectorMetric::InnerProduct : metric;
+}
+
 struct IvfInfo {
   struct Quantizer {
     VectorQuantization kind = VectorQuantization::None;

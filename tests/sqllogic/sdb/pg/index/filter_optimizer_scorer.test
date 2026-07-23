@@ -306,21 +306,20 @@ query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE n @@ ts_gt(1) AND n @@ ts_lt(4);
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────╮
-│ Index: fo_score_idx                          │
-│ Lookup: table                                │
-│ Index Filter:                                │
-│ ╭─ And ─────────────╮                        │
-│ ╰─────────┬─────────╯                        │
-│           ├──────────────────────╮           │
-│ ╭─ Granular Range ──╮  ╭─ Granular Range ──╮ │
-│ │ Field: n(numeric) │  │ Field: n(numeric) │ │
-│ │ Range: >1         │  │ Range: <4         │ │
-│ ╰───────────────────╯  ╰───────────────────╯ │
-│ Score: bm25(k1=1.2, b=0.75)                  │
-│ Projections: id, sdb_inverted_index_score    │
-│ ~1 row                                       │
-╰──────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: fo_score_idx                    │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Granular Range ──╮                  │
+│ │ Field: n(numeric) │                  │
+│ │ Range: >1, <4     │                  │
+│ │ Boost: 2          │                  │
+│ ╰───────────────────╯                  │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT id FROM fo_score_idx WHERE t @@ ts_all([ts_phrase('alpha'), ts_between(NULL, NULL, true, true)]);
@@ -381,6 +380,26 @@ query
 EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx WHERE n @@ ts_all([ts_gt(1), ts_lt(4)]);
 ----
 QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: fo_score_idx                    │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Granular Range ──╮                  │
+│ │ Field: n(numeric) │                  │
+│ │ Range: >1, <4     │                  │
+│ │ Boost: 2          │                  │
+│ ╰───────────────────╯                  │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx
+    WHERE n BETWEEN 1 AND 4 AND s @@ ts_between('aa', 'gogo', false, false);
+----
+QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────╮
 │ Index: fo_score_idx                          │
 │ Lookup: table                                │
@@ -388,11 +407,56 @@ QUERY PLAN
 │ ╭─ And ─────────────╮                        │
 │ ╰─────────┬─────────╯                        │
 │           ├──────────────────────╮           │
-│ ╭─ Granular Range ──╮  ╭─ Granular Range ──╮ │
-│ │ Field: n(numeric) │  │ Field: n(numeric) │ │
-│ │ Range: >1         │  │ Range: <4         │ │
-│ ╰───────────────────╯  ╰───────────────────╯ │
+│ ╭─ Range ─┴─────────╮  ╭─ Granular Range ──╮ │
+│ │ Field: s(string)  │  │ Field: n(numeric) │ │
+│ │ Range: >aa, <gogo │  │ Range: >=1, <=4   │ │
+│ ╰───────────────────╯  │ Boost: 2          │ │
+│                        ╰───────────────────╯ │
 │ Score: bm25(k1=1.2, b=0.75)                  │
 │ Projections: id, sdb_inverted_index_score    │
 │ ~1 row                                       │
 ╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx
+    WHERE n BETWEEN 1 AND 4 AND s @@ ts_le('gogo') AND s @@ ts_gt('aa');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────╮
+│ Index: fo_score_idx                           │
+│ Lookup: table                                 │
+│ Index Filter:                                 │
+│ ╭─ And ─────────────╮                         │
+│ ╰─────────┬─────────╯                         │
+│           ├───────────────────────╮           │
+│ ╭─ Granular Range ──╮  ╭─ Range ──┴─────────╮ │
+│ │ Field: n(numeric) │  │ Field: s(string)   │ │
+│ │ Range: >=1, <=4   │  │ Range: >aa, <=gogo │ │
+│ │ Boost: 2          │  │ Boost: 2           │ │
+│ ╰───────────────────╯  ╰────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                   │
+│ Projections: id, sdb_inverted_index_score     │
+│ ~1 row                                        │
+╰───────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, BM25(fo_score_idx.tableoid) FROM fo_score_idx
+    WHERE n BETWEEN 1 AND 4 AND t @@ ts_le('gogo') AND s @@ ts_gt('aa');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────╮
+│ Index: fo_score_idx                                               │
+│ Lookup: table                                                     │
+│ Index Filter:                                                     │
+│ ╭─ And ────────────╮                                              │
+│ ╰─────────┬────────╯                                              │
+│           ├─────────────────────┬──────────────────────╮          │
+│ ╭─ Range ─┴────────╮  ╭─ Granular Range ──╮  ╭─ Range ─┴────────╮ │
+│ │ Field: t(string) │  │ Field: n(numeric) │  │ Field: s(string) │ │
+│ │ Range: <=gogo    │  │ Range: >=1, <=4   │  │ Range: >aa       │ │
+│ ╰──────────────────╯  │ Boost: 2          │  ╰──────────────────╯ │
+│                       ╰───────────────────╯                       │
+│ Score: bm25(k1=1.2, b=0.75)                                       │
+│ Projections: id, sdb_inverted_index_score                         │
+│ ~1 row                                                            │
+╰───────────────────────────────────────────────────────────────────╯

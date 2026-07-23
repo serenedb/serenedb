@@ -28,7 +28,9 @@
 #include <duckdb/common/projection_index.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
+#include <duckdb/function/scalar_function.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -36,6 +38,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
@@ -560,6 +563,62 @@ irs::NullCheckKind DetectNullCheck(const duckdb::Expression& expr) {
            : irs::NullCheckKind::IsNotNull;
 }
 
+namespace {
+
+// Vectorized score-emit op for the pushed score filter -- maps a FLOAT column
+// of raw "larger = nearer" scores to the user-facing value for `E`.
+template<ScoreEmit E>
+void EmitScoreFilterExec(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                         duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<float, float>(
+    args.data[0], result, args.size(),
+    [](float score) { return ApplyScoreEmit(E, score); });
+}
+
+// Wraps a raw score reference in the emit op, so a predicate written in the
+// user-facing score evaluates correctly against the raw score vector.
+duckdb::unique_ptr<duckdb::Expression> WrapScoreEmit(
+  duckdb::unique_ptr<duckdb::Expression> score_ref, ScoreEmit emit) {
+  duckdb::scalar_function_t exec;
+  switch (emit) {
+    case ScoreEmit::SqrtNeg:
+      exec = EmitScoreFilterExec<ScoreEmit::SqrtNeg>;
+      break;
+    case ScoreEmit::OneMinus:
+      exec = EmitScoreFilterExec<ScoreEmit::OneMinus>;
+      break;
+    case ScoreEmit::Negate:
+      exec = EmitScoreFilterExec<ScoreEmit::Negate>;
+      break;
+    case ScoreEmit::Identity:
+      return score_ref;
+  }
+  duckdb::ScalarFunction fn(duckdb::Identifier{"sdb_score_emit"},
+                            {duckdb::LogicalType::FLOAT},
+                            duckdb::LogicalType::FLOAT, std::move(exec));
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
+  children.push_back(std::move(score_ref));
+  return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+    duckdb::BoundScalarFunction(fn), std::move(children), nullptr);
+}
+
+// A pushed score-column filter references the (single) score column via
+// BoundReferenceExpression; wrap each such reference so `emit` is baked into
+// the predicate.
+void WrapScoreRefsWithEmit(duckdb::unique_ptr<duckdb::Expression>& expr,
+                           ScoreEmit emit) {
+  if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF) {
+    expr = WrapScoreEmit(std::move(expr), emit);
+    return;
+  }
+  duckdb::ExpressionIterator::EnumerateChildren(
+    *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
+      WrapScoreRefsWithEmit(child, emit);
+    });
+}
+
+}  // namespace
+
 // Classifies the pushed filters: score-column filters and covered `.col`
 // filters are applied in-scan (`col_filters`); a filter on a lookup
 // (source-only) column sets `has_lookup_filter` -- it is forwarded to the
@@ -575,12 +634,30 @@ void BuildTableFilter(IResearchScanGlobalState& state,
   // were stripped; the floor was recorded on the bind data there). The
   // dynamic TOP_N boundary's shared runtime bound is captured for WAND
   // seeding -- it may sit alone or AND-combined with other score predicates.
+  const auto score_emit = bind_data.vector_scorer
+                            ? bind_data.vector_scorer->score_emit
+                            : ScoreEmit::Identity;
   const auto push_score_filter = [&](const duckdb::TableFilter& filter) {
+    // The scan holds raw "larger = nearer" scores, but a score predicate is
+    // written in the user-facing score. For a non-identity emit, bake the emit
+    // into a copy of the predicate so FilterScores evaluates it in the right
+    // space -- the raw scores stay intact for the collector's ranking.
+    const duckdb::TableFilter* pushed = &filter;
+    if (score_emit != ScoreEmit::Identity) {
+      auto adjusted = duckdb::ExpressionFilter::GetExpressionFilter(
+                        filter, "BuildTableFilter")
+                        .expr->Copy();
+      WrapScoreRefsWithEmit(adjusted, score_emit);
+      auto owned =
+        duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(adjusted));
+      pushed = owned.get();
+      state.emit_score_filters.push_back(std::move(owned));
+    }
     state.col_filters.push_back(
-      {.field = 0, .filter = &filter, .is_score = true});
-    const auto& expr =
-      *duckdb::ExpressionFilter::GetExpressionFilter(filter, "BuildTableFilter")
-         .expr;
+      {.field = 0, .filter = pushed, .is_score = true});
+    const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
+                          *pushed, "BuildTableFilter")
+                          .expr;
     if (auto dyn =
           duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
       state.score_dynamic_filter = std::move(dyn);
@@ -785,32 +862,17 @@ void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
 
 void ApplyScoreEmit(const IResearchScanGlobalState& gstate, float* scores,
                     duckdb::idx_t n) {
-  if (!gstate.vector_scorer) {
-    // Text scores are already the user-facing value (Identity).
+  // Map in place at the emit boundary so the output vector sees the user-facing
+  // value. Text scores are already user-facing (no vector scorer).
+  if (gstate.vector_scorer == nullptr) {
     return;
   }
-  // The raw score is "larger = nearer" (ResolveScoringDistance negates distance
-  // kernels); map it in place to the user value at the emit boundary, so the
-  // score-column filter, the output vector (and any WAND threshold) all see the
-  // one user-facing value.
-  switch (gstate.vector_scorer->score_emit) {
-    case ScoreEmit::Identity:
-      break;
-    case ScoreEmit::SqrtNeg:
-      for (duckdb::idx_t i = 0; i < n; ++i) {
-        scores[i] = std::sqrt(-scores[i]);
-      }
-      break;
-    case ScoreEmit::OneMinus:
-      for (duckdb::idx_t i = 0; i < n; ++i) {
-        scores[i] = 1.0f - scores[i];
-      }
-      break;
-    case ScoreEmit::Negate:
-      for (duckdb::idx_t i = 0; i < n; ++i) {
-        scores[i] = -scores[i];
-      }
-      break;
+  const auto emit = gstate.vector_scorer->score_emit;
+  if (emit == ScoreEmit::Identity) {
+    return;
+  }
+  for (duckdb::idx_t i = 0; i < n; ++i) {
+    scores[i] = ApplyScoreEmit(emit, scores[i]);
   }
 }
 
@@ -1965,6 +2027,17 @@ void ColScanLocalState::StartUnit(
     bulk_doc_in_seg = unit.begin;
     bulk_seg_doc_count = unit.begin + unit.count;
     streaming_doc.reset();
+    // A scan order can hand out a segment's bulk units out of row order, so a
+    // unit may start behind the reused per-segment scanner, whose column
+    // cursors only move forward (GatherFilter/Skip never rewind). Only then
+    // drop the scanner so OpenScanner rebuilds it fresh at `unit.begin`;
+    // ascending units keep reusing it.
+    if (current_seg_idx < full_scanners.size()) {
+      auto& scanner = full_scanners[current_seg_idx];
+      if (scanner && bulk_doc_in_seg < scanner->ScannedEnd()) {
+        scanner.reset();
+      }
+    }
     return;
   }
   bulk_doc_in_seg = 0;

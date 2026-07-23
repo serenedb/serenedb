@@ -27,6 +27,7 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/variant.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/column_lifetime_analyzer.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -1157,6 +1158,19 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   return nullptr;
 }
 
+void IResearchScanSerialize(duckdb::Serializer&,
+                            const duckdb::optional_ptr<duckdb::FunctionData>,
+                            const duckdb::TableFunction&) {
+  throw duckdb::NotImplementedException(
+    "iresearch_scan serialization not implemented");
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> IResearchScanDeserialize(
+  duckdb::Deserializer&, duckdb::TableFunction&) {
+  throw duckdb::NotImplementedException(
+    "iresearch_scan deserialization not implemented");
+}
+
 }  // namespace
 
 duckdb::TableFunction CreateIResearchScanFunction() {
@@ -1187,6 +1201,8 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
   func.statistics_extended = &IResearchScanStatistics;
+  func.serialize = IResearchScanSerialize;
+  func.deserialize = IResearchScanDeserialize;
   func.verify_serialization = false;
   func.projection_pushdown = true;
   func.filter_pushdown = true;
@@ -1198,6 +1214,11 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   // could be made to preserve index order if we implement set_scan_order
   func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   return func;
+}
+
+void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db) {
+  duckdb::ExtensionLoader loader(db, "serenedb");
+  loader.RegisterFunction(CreateIResearchScanFunction());
 }
 
 }  // namespace sdb::connector

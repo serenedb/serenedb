@@ -894,12 +894,30 @@ void RewriteIResearchExpressions(
   }
 }
 
-std::optional<duckdb::ColumnBinding> CastFreeColumnRefBinding(
-  const duckdb::Expression* e) {
-  while (e && e->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    e = &e->Cast<duckdb::BoundCastExpression>().Child();
+// Resolves the column reference on one side of a comparison, under an optional
+// cast and an optional unary negation (`-(col)`). `negated` reports whether the
+// negation was present -- the caller folds it into the comparison.
+std::optional<duckdb::ColumnBinding> ScoreSideBinding(
+  const duckdb::Expression* e, bool& negated) {
+  negated = false;
+  const auto strip_casts = [](const duckdb::Expression* x) {
+    while (x &&
+           x->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
+      x = &x->Cast<duckdb::BoundCastExpression>().Child();
+    }
+    return x;
+  };
+  e = strip_casts(e);
+  if (e != nullptr &&
+      e->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& fn = e->Cast<duckdb::BoundFunctionExpression>();
+    if (fn.Function().GetName().GetIdentifierName() == "-" &&
+        fn.GetChildren().size() == 1) {
+      negated = true;
+      e = strip_casts(fn.GetChildren()[0].get());
+    }
   }
-  if (!e ||
+  if (e == nullptr ||
       e->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return std::nullopt;
   }
@@ -923,48 +941,72 @@ bool TryClaimAnnRange(
       continue;
     }
     auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
+    auto op = cmp.GetExpressionType();
+    if (op != duckdb::ExpressionType::COMPARE_LESSTHAN &&
+        op != duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO &&
+        op != duckdb::ExpressionType::COMPARE_GREATERTHAN &&
+        op != duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
+      continue;
+    }
     auto& cmp_left = duckdb::BoundComparisonExpression::LeftMutable(cmp);
     auto& cmp_right = duckdb::BoundComparisonExpression::RightMutable(cmp);
-    const auto [score_side, const_side] =
-      [&] -> std::pair<duckdb::Expression*, duckdb::Expression*> {
-      switch (cmp.GetExpressionType()) {
-        case duckdb::ExpressionType::COMPARE_LESSTHAN:
-        case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
-          return {cmp_left.get(), cmp_right.get()};
-        case duckdb::ExpressionType::COMPARE_GREATERTHAN:
-        case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-          return {cmp_right.get(), cmp_left.get()};
-        default:
-          return {nullptr, nullptr};
+
+    // Find the side that resolves to the score column (bare or `-(score)`); the
+    // other side is the bound.
+    const auto is_score = [&](const std::optional<duckdb::ColumnBinding>& b) {
+      return b && ResolveColumnId(*b, bind_data, get) ==
+                    catalog::Column::kInvertedIndexScoreId;
+    };
+    bool negated = false;
+    bool score_on_left = true;
+    duckdb::Expression* const_side = cmp_right.get();
+    auto binding = ScoreSideBinding(cmp_left.get(), negated);
+    if (!is_score(binding)) {
+      score_on_left = false;
+      const_side = cmp_left.get();
+      binding = ScoreSideBinding(cmp_right.get(), negated);
+      if (!is_score(binding)) {
+        continue;
       }
-    }();
-    const auto score_binding = CastFreeColumnRefBinding(score_side);
-    if (!score_binding || ResolveColumnId(*score_binding, bind_data, get) !=
-                            catalog::Column::kInvertedIndexScoreId) {
+    }
+
+    duckdb::Value bound_value;
+    if (!TryFoldExpression(context, *const_side, bound_value)) {
       continue;
     }
-    duckdb::Value radius_value;
-    if (!TryFoldExpression(context, *const_side, radius_value)) {
-      continue;
-    }
-    const auto radius = [&] -> std::optional<float> {
-      switch (radius_value.type().id()) {
+    const auto bound = [&] -> std::optional<float> {
+      switch (bound_value.type().id()) {
         case duckdb::LogicalTypeId::FLOAT:
-          return radius_value.GetValue<float>();
+          return bound_value.GetValue<float>();
         case duckdb::LogicalTypeId::DOUBLE:
-          return static_cast<float>(radius_value.GetValue<double>());
+          return static_cast<float>(bound_value.GetValue<double>());
         default:
           return std::nullopt;
       }
     }();
-    if (!radius) {
+    if (!bound) {
       continue;
     }
-    const auto cmp_type = cmp.GetExpressionType();
-    scan.vector_scorer->radius = *radius;
-    scan.vector_scorer->radius_inclusive =
-      cmp_type == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO ||
-      cmp_type == duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO;
+
+    // Normalize to `score <op> radius` (score = the raw vector distance): put
+    // the score on the left, then fold away a `-(score)` wrapper. A radius is
+    // an upper bound on the distance; a lower bound stays a residual filter
+    // (the scan evaluates it in user-facing space).
+    float radius = *bound;
+    if (!score_on_left) {
+      op = duckdb::FlipComparisonExpression(op);
+    }
+    if (negated) {
+      op = duckdb::FlipComparisonExpression(op);
+      radius = -radius;
+    }
+    const bool inclusive =
+      op == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO;
+    if (op != duckdb::ExpressionType::COMPARE_LESSTHAN && !inclusive) {
+      continue;
+    }
+    scan.vector_scorer->radius = radius;
+    scan.vector_scorer->radius_inclusive = inclusive;
     filters.erase(filters.begin() + i);
     return true;
   }

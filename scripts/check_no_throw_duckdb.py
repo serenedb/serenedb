@@ -7,9 +7,15 @@ flattened through DuckExceptionToErrcode's lossy per-type mapping (e.g. every
 InvalidInputException becomes 22023). Server code must throw THROW_SQL_ERROR
 with the PG-correct ERRCODE_* instead.
 
-The one sanctioned exception is duckdb::TransactionException: the commit /
-rollback seam speaks to DuckDB's own transaction machinery and the wire layer
-special-cases ExceptionType::TRANSACTION, so those throws must stay duckdb-typed.
+Two throws are sanctioned:
+
+- duckdb::TransactionException: the commit / rollback seam speaks to DuckDB's
+  own transaction machinery and the wire layer special-cases
+  ExceptionType::TRANSACTION, so those throws must stay duckdb-typed.
+- duckdb::NotImplementedException: the plan serialize / deserialize callbacks
+  on DuckDB TableFunctions that serenedb never invokes (single-process, no plan
+  serialization) are unreachable placeholders, and NotImplementedException is
+  the idiomatic DuckDB marker there -- no wire mapping is ever exercised.
 """
 import os
 import re
@@ -17,7 +23,9 @@ import sys
 
 ROOT = "server"
 EXTENSIONS = (".cpp", ".cc", ".c", ".hpp", ".hh", ".h", ".ipp", ".tpp")
-THROW_RE = re.compile(r"throw duckdb::(?!TransactionException)")
+THROW_RE = re.compile(
+    r"throw duckdb::(?!(?:TransactionException|NotImplementedException)\b)"
+)
 
 
 def is_target(path: str) -> bool:
@@ -55,7 +63,8 @@ def main() -> int:
             "\nRaw duckdb exception thrown in server code. Use "
             "THROW_SQL_ERROR(ERR_CODE(ERRCODE_...), ERR_MSG(...)) so the "
             "PG sqlstate survives to the client (pg/sql_exception_macro.h); "
-            "only duckdb::TransactionException is allowed.",
+            "only duckdb::TransactionException and "
+            "duckdb::NotImplementedException are allowed.",
             file=sys.stderr,
         )
     return 1 if failed else 0

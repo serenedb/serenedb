@@ -66,6 +66,24 @@ enum class ScoreEmit : uint8_t {
   Negate,    // -score       (l1, l2_sqr, negative_ip, l1_norm)
 };
 
+// Maps one raw "larger = nearer" score to its user-facing value. Single source
+// of truth: applied to the output scores at the emit boundary, and baked into
+// the pushed score-column filter so the predicate is evaluated in the same
+// (user-facing) space it was written in.
+inline float ApplyScoreEmit(ScoreEmit emit, float score) {
+  switch (emit) {
+    case ScoreEmit::Identity:
+      return score;
+    case ScoreEmit::SqrtNeg:
+      return std::sqrt(-score);
+    case ScoreEmit::OneMinus:
+      return 1.0F - score;
+    case ScoreEmit::Negate:
+      return -score;
+  }
+  SDB_UNREACHABLE();
+}
+
 struct VectorScorerOptions {
   irs::field_id field_id;
   std::vector<float> query_vector;
@@ -313,5 +331,7 @@ uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
                                uint32_t default_value);
 
 duckdb::TableFunction CreateIResearchScanFunction();
+
+void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

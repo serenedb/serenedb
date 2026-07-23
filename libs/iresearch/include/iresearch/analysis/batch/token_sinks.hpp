@@ -51,7 +51,7 @@ class TokenCollector final : public TokenConsumer {
   void Consume(TokenBatch& batch, std::span<const DocRun> /*runs*/) final {
     for (uint32_t i = 0; i < batch.count; ++i) {
       const auto& t = batch.terms[i];
-      const uint32_t pos = writer.dense_pos ? ++_dense_pos : batch.pos[i];
+      const uint32_t pos = writer.DensePos() ? ++_dense_pos : batch.pos[i];
       tokens.push_back(
         {bstring{reinterpret_cast<const byte_type*>(t.GetData()), t.GetSize()},
          pos, has_offs ? batch.offs_start[i] : 0,

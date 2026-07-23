@@ -321,14 +321,16 @@ class TokenEmitter : util::Noncopyable {
   uint32_t _nruns = 0;
   uint32_t _run_start = 0;
   bool _in_value = false;
+  // How to read buf.pos[]: dense = implicit ordinals (kernel never wrote the
+  // lane). Set from the producing kernel's traits by the fill dispatch
+  // (TokenWriter::SetDensePos); per-fill, persists across consume cycles.
+  // Lives on the writer, not the batch: a bind-time constant, not data in
+  // flight. Consumers read it via DensePos(); only the driver half sets it.
+  bool _dense_pos = true;
 
  public:
   TokenBatch& buf;
-  // How to read buf.pos[]: dense = implicit ordinals (kernel never wrote the
-  // lane). Set from the producing kernel's traits by the fill dispatch;
-  // per-fill, persists across consume cycles. Lives on the writer, not the
-  // batch: it is a bind-time constant, not data in flight.
-  bool dense_pos = true;
+  bool DensePos() const noexcept { return _dense_pos; }
 };
 
 // Driver-facing half: constructs and re-targets the stream, hands the final
@@ -357,6 +359,10 @@ class TokenWriter final : public TokenEmitter {
     _consumer = &consumer;
     _store_consumer = store;
   }
+
+  // The fill dispatch sets this once per Fill from the producing kernel's
+  // traits; consumers read it back via DensePos().
+  void SetDensePos(bool value) noexcept { _dense_pos = value; }
 
   // Value bracketing: everything between BeginValue(doc) and EndValue() is
   // one value of `doc`. EndValue records the DocRun (the doc<->token mapping),

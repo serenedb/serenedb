@@ -86,7 +86,7 @@ class TypedTokenizer : public Tokenizer {
   bool Fill(std::string_view value, TokenWriter& sink,
             TokenLayout layout) override {
     auto* impl = static_cast<Impl*>(this);
-    sink.dense_pos = impl->Impl::Traits().dense_pos;
+    sink.SetDensePos(impl->Impl::Traits().dense_pos);
     return ResolveLayout(layout, [&]<TokenLayout L>() {
       return impl->template DoFill<L>(value, sink);
     });
@@ -98,7 +98,7 @@ class TypedTokenizer : public Tokenizer {
     SDB_ASSERT(values.size() == docs.size());
     auto* impl = static_cast<Impl*>(this);
     const auto traits = impl->Impl::Traits();
-    sink.dense_pos = traits.dense_pos;
+    sink.SetDensePos(traits.dense_pos);
     ResolveLayout(layout, [&]<TokenLayout L>() {
       for (size_t v = 0; v < values.size(); ++v) {
         sink.BeginValue(docs[v]);

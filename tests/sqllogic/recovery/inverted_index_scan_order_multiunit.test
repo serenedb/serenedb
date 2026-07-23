@@ -1,0 +1,96 @@
+# Regression: a segment larger than one row group (122880 rows) splits into
+# multiple bulk scan units; under a scan order (ORDER BY a covered column LIMIT)
+# those units are reordered best-first, so a single worker can scan a lower-row
+# unit after a higher-row one. The per-segment columnstore scanner's cursor only
+# moves forward (GatherFilter/Skip never rewind), so the out-of-order unit
+# tripped `GatherFilter requires ascending rows` (and, on the no-filter path,
+# `cursor <= start_row`). Fixed by rebuilding the scanner when a unit starts
+# behind its ScannedEnd. `threads = 1` forces the one-worker interleaving that
+# makes the backward scan deterministic; hosted under recovery/ (not sdb/)
+# because each recovery test runs against its own instance, so the global
+# thread-count mutation is isolated from parallel test sessions.
+
+onlyif serenedb
+statement ok
+SET threads = 1
+
+
+onlyif serenedb
+statement ok
+CREATE TEXT SEARCH DICTIONARY en
+  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+
+
+onlyif serenedb
+statement ok
+CREATE TABLE big (rk INT, cat INT, body TEXT)
+
+
+onlyif serenedb
+statement ok
+CREATE INDEX big_idx ON big USING inverted (body en) INCLUDE (rk, cat)
+
+
+# One INSERT -> one segment; 200000 > 122880 -> two bulk units.
+onlyif serenedb
+statement ok
+INSERT INTO big SELECT i, i % 100, 'x' FROM generate_series(1, 200000) s(i)
+
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) big
+
+
+# Covered `.col` filter + scan order: the best-first reorder scans the second
+# unit behind the first. cat <= 50 keeps 51 of every 100 rows = 102000.
+onlyif serenedb
+query
+SELECT count(*) FROM (
+  SELECT rk FROM big_idx WHERE cat <= 50 ORDER BY rk DESC LIMIT 150000) t;
+----
+count
+102000
+
+
+onlyif serenedb
+query
+SELECT rk FROM big_idx WHERE cat <= 50 ORDER BY rk DESC LIMIT 5;
+----
+rk
+200000
+199950
+199949
+199948
+199947
+
+
+onlyif serenedb
+query
+SELECT rk FROM big_idx WHERE cat <= 50 ORDER BY rk ASC LIMIT 5;
+----
+rk
+1
+2
+3
+4
+5
+
+
+# Same reordering on the no-filter ColScan path (`cursor <= start_row`).
+onlyif serenedb
+query
+SELECT count(*) FROM (SELECT rk FROM big_idx ORDER BY rk DESC LIMIT 150000) t;
+----
+count
+150000
+
+
+onlyif serenedb
+query
+SELECT rk FROM big_idx ORDER BY rk DESC LIMIT 3;
+----
+rk
+200000
+199999
+199998

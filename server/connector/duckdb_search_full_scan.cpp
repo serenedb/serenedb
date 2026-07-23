@@ -2027,6 +2027,17 @@ void ColScanLocalState::StartUnit(
     bulk_doc_in_seg = unit.begin;
     bulk_seg_doc_count = unit.begin + unit.count;
     streaming_doc.reset();
+    // A scan order can hand out a segment's bulk units out of row order, so a
+    // unit may start behind the reused per-segment scanner, whose column
+    // cursors only move forward (GatherFilter/Skip never rewind). Only then
+    // drop the scanner so OpenScanner rebuilds it fresh at `unit.begin`;
+    // ascending units keep reusing it.
+    if (current_seg_idx < full_scanners.size()) {
+      auto& scanner = full_scanners[current_seg_idx];
+      if (scanner && bulk_doc_in_seg < scanner->ScannedEnd()) {
+        scanner.reset();
+      }
+    }
     return;
   }
   bulk_doc_in_seg = 0;

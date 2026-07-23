@@ -215,7 +215,7 @@ uint32_t EncryptedInput::Checksum(uint64_t offset) const {
   byte_type buf[kDefaultEncryptionBufferSize];
 
   for (auto pos = begin; pos < end;) {
-    const auto to_read = (std::min)(end - pos, sizeof buf);
+    const auto to_read = (std::min<size_t>)(end - pos, sizeof buf);
     pos += const_cast<EncryptedInput*>(this)->ReadInternal(buf, to_read);
     crc.process_bytes(buf, to_read);
   }

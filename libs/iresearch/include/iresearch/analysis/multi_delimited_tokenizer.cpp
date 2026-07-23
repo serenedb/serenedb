@@ -351,9 +351,9 @@ class MultiDelimitedTokenizerSingle final
     : delim(std::move(delimiters[0])) {}
 
   auto FindNextDelim() {
-    auto next = data.end();
-    if (auto pos = this->data.find(delim); pos != bstring::npos) {
-      next = this->data.begin() + pos;
+    auto next = _data.end();
+    if (auto pos = this->_data.find(delim); pos != bstring::npos) {
+      next = this->_data.begin() + pos;
     }
     return std::make_pair(next, delim.size());
   }

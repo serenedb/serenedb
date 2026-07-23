@@ -359,6 +359,9 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
       value = src.ReadSignedInt64();
     } else if constexpr (std::is_same_v<T, uint64_t>) {
       value = src.ReadUnsignedInt64();
+    } else if constexpr (std::is_same_v<T, size_t> &&
+                         !detail::kIsSerializableArithmetic<size_t>) {
+      value = static_cast<size_t>(src.ReadUnsignedInt64());
     } else if constexpr (std::is_same_v<T, float>) {
       value = src.ReadFloat();
     } else if constexpr (std::is_same_v<T, double>) {
@@ -510,7 +513,7 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       }
       b.OnNullableEnd();
     } else if constexpr (kIsVariant<T>) {
-      self(value.index());
+      self(static_cast<uint64_t>(value.index()));
       std::visit([&](const auto& v) { self(v); }, value);
     } else if constexpr (detail::IsRange<T>) {
       const size_t count = std::ranges::size(value);
@@ -541,12 +544,15 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       b.WriteValue(static_cast<uint8_t>(value));
     } else if constexpr (detail::kIsSerializableArithmetic<T>) {
       b.WriteValue(value);
+    } else if constexpr (std::is_same_v<T, size_t> &&
+                         !detail::kIsSerializableArithmetic<size_t>) {
+      b.WriteValue(static_cast<uint64_t>(value));
     } else if constexpr (kIsString<T>) {
       detail::WriteString(
         b, std::string_view{reinterpret_cast<const char*>(value.data()),
                             value.size()});
     } else {
-      static_assert(false, "Other types are not supported");
+      static_assert(!std::is_same_v<T, T>, "Other types are not supported");
     }
   };
 
@@ -581,6 +587,9 @@ void ReadObject(Source& src, U& out, const A& arg = {}) {
       } else {
         value = static_cast<T>(src.ReadUnsignedInt64());
       }
+    } else if constexpr (std::is_same_v<T, size_t> &&
+                         !detail::kIsSerializableArithmetic<size_t>) {
+      value = static_cast<size_t>(src.ReadUnsignedInt64());
     } else if constexpr (kIsString<T>) {
       detail::ReadString(src, value);
     } else if constexpr (kIsOptional<T>) {
@@ -817,7 +826,8 @@ void WriteObject(Sink& b, const U& in, const A& arg = {}) {
     } else if constexpr (std::is_same_v<T, bool>) {
       b.WriteValue(value);
     } else if constexpr (std::is_arithmetic_v<T>) {
-      static_assert(detail::kIsSerializableArithmetic<T>);
+      static_assert(detail::kIsSerializableArithmetic<T> ||
+                    std::is_same_v<T, size_t>);
       if constexpr (std::is_floating_point_v<T>) {
         b.WriteValue(static_cast<double>(value));
       } else if constexpr (std::is_signed_v<T>) {

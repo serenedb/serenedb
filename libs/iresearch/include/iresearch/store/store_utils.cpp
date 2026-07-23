@@ -56,7 +56,7 @@ uint32_t BytesViewInput::Checksum(uint64_t offset) const {
   Crc32c crc;
 
   crc.process_bytes(_pos,
-                    std::min((_pos - _data.data()) + offset, _data.size()));
+                    std::min<size_t>((_pos - _data.data()) + offset, _data.size()));
 
   return crc.checksum();
 }

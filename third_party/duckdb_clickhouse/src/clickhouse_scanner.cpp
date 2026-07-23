@@ -584,8 +584,9 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 			}
 			auto &block = *gstate.current_block;
 			if (data.lookup_gate) {
-				// Gated lookup drain: consume rows through the per-row gate and
-				// materialize the survivors as maximal runs, so the bulk column
+				// Gated lookup drain: block column 0 is the gate key (consumed per
+				// row, never emitted); the survivors of columns [1, N] materialize
+				// into output columns [0, N-1] as maximal runs, so the bulk column
 				// copies stay intact. Never consume a row the output cannot hold.
 				auto ord_col = block[0]->As<clickhouse::ColumnInt64>();
 				if (!ord_col) {
@@ -599,8 +600,8 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 					if (run_len == 0) {
 						return;
 					}
-					for (idx_t c = 0; c < output.ColumnCount() && c < block.GetColumnCount(); c++) {
-						ClickHouseColumnToVector(*block[c], output.data[c], run_start, run_len, dst);
+					for (idx_t c = 0; c < output.ColumnCount() && c + 1 < block.GetColumnCount(); c++) {
+						ClickHouseColumnToVector(*block[c + 1], output.data[c], run_start, run_len, dst);
 					}
 					dst += run_len;
 					run_len = 0;

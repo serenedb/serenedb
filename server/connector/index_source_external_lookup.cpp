@@ -170,22 +170,16 @@ void ExternalLookupIndexSource::PrepareLookup(
                                             nullptr, _lookup_func, dummy_ref);
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<std::string> names;
-  try {
-    duckdb::Connection bind_con(*context.db);
-    bind_con.BeginTransaction();
-    _bind_data = _lookup_func.bind(*bind_con.context, bind_input, types, names);
-    bind_con.Commit();
-    duckdb::vector<duckdb::column_t> column_ids(types.size());
-    absl::c_iota(column_ids, duckdb::column_t{0});
-    duckdb::TableFunctionInitInput init(_bind_data.get(), std::move(column_ids),
-                                        /*projection_ids=*/{}, nullptr);
-    _gstate = _lookup_func.init_global(context, init);
-  } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-                    ERR_MSG("external lookup prepare failed: ", e.what()));
-  }
+  duckdb::Connection bind_con(*context.db);
+  bind_con.BeginTransaction();
+  _bind_data = _lookup_func.bind(*bind_con.context, bind_input, types, names);
+  bind_con.Commit();
+  duckdb::vector<duckdb::column_t> column_ids(types.size());
+  absl::c_iota(column_ids, duckdb::column_t{0});
+  duckdb::TableFunctionInitInput init(_bind_data.get(), std::move(column_ids),
+                                      /*projection_ids=*/{}, nullptr);
+  _gstate = _lookup_func.init_global(context, init);
   SDB_ASSERT(types.size() == _num_proj_cols + 1);
-  _remote_chunk.Initialize(context, types);
 }
 
 void ExternalLookupIndexSource::BuildPostgresQuery(
@@ -322,11 +316,6 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
   _gate_count = 0;
   _gate_limit = count;
 
-  _remote_chunk.Reset();
-  for (duckdb::idx_t c = 0; c < _num_proj_cols; ++c) {
-    _remote_chunk.data[c + 1].Reference(_tf_target.data[c]);
-  }
-
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _gstate.get());
   in.lookup_keys = batch.struct_column;
@@ -344,14 +333,13 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
 
   duckdb::idx_t before;
   do {
-    before = _remote_chunk.size();
-    _lookup_func.function(context, in, _remote_chunk);
+    before = _tf_target.size();
+    _lookup_func.function(context, in, _tf_target);
     in.lookup_keys = nullptr;
-  } while (_remote_chunk.size() != before);
-  const auto rows = _remote_chunk.size();
+  } while (_tf_target.size() != before);
+  const auto rows = _tf_target.size();
   SDB_ASSERT(rows == _gate_count);
 
-  _tf_target.SetCardinality(rows);
   RunCastPass(output, rows);
   GatherNonLookupColumns(output, rows, _survivor_idx.data());
   return rows;

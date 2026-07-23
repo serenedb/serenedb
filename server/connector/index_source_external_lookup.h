@@ -76,7 +76,6 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
   duckdb::TableFunction _lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> _bind_data;
   duckdb::unique_ptr<duckdb::GlobalTableFunctionState> _gstate;
-  duckdb::DataChunk _remote_chunk;
 
   std::vector<uint8_t> _filled;
   duckdb::idx_t _gate_count = 0;

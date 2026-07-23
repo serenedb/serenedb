@@ -670,6 +670,7 @@ class FieldsInverter : util::Noncopyable {
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept {
     _field_options = field_options;
   }
+  duckdb::Allocator& Allocator() const noexcept { return _mem.allocator; }
 
   FieldInverter* Emplace(field_id id, IndexFeatures index_features) {
     auto& slot = _fields_map.try_emplace(id).first->second;

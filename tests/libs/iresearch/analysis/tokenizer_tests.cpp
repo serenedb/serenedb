@@ -524,6 +524,36 @@ TEST(token_sink_tests, unique_hint) {
   }
 }
 
+TEST(token_sink_tests, interned_spike_survives_arena_reclaim) {
+  std::vector<std::string> seen;
+  const auto on_flush = [&](irs::TokenBatch& batch,
+                            std::span<const irs::DocRun> /*runs*/) {
+    for (uint32_t i = 0; i < batch.count; ++i) {
+      const auto& t = batch.terms[i];
+      seen.emplace_back(t.GetData(), t.GetSize());
+    }
+  };
+  tests::FnTokenSink sink{irs::TokenLayout::Terms, on_flush};
+  auto& w = sink.writer;
+
+  const std::string big(100 * 1024, 'x');
+  const std::string small(64, 's');
+  const std::string_view values[] = {big, small, big};
+  irs::doc_id_t doc = 1;
+  for (const auto v : values) {
+    w.BeginValue(doc++);
+    const auto i = w.Next();
+    w.buf.terms[i] = w.Intern(irs::ViewCast<irs::byte_type>(v));
+    w.EndValue();
+    w.Finish();
+  }
+
+  ASSERT_EQ(3, seen.size());
+  ASSERT_EQ(big, seen[0]);
+  ASSERT_EQ(small, seen[1]);
+  ASSERT_EQ(big, seen[2]);
+}
+
 TEST(token_sink_tests, run_capacity_forced_cycle) {
   constexpr auto kCap = irs::TokenBatch::kCapacity;
   std::vector<std::vector<irs::DocRun>> flushed;

@@ -46,7 +46,8 @@ class InverterSink final : public irs::TokenConsumer {
     slot.SetUnique(unique);
     slot.SetDensePos(dense_pos);
     if (!_writer) {
-      _writer = std::make_unique<irs::TokenWriter>(*this, store);
+      _writer =
+        std::make_unique<irs::TokenWriter>(*this, store, writer.Allocator());
     } else {
       _writer->Bind(*this, store);
     }

@@ -364,6 +364,10 @@ class IndexWriter : private util::Noncopyable {
       return _writer.Field(id, features);
     }
 
+    duckdb::Allocator& Allocator() const noexcept {
+      return _writer.Allocator();
+    }
+
     bool InsertBlock(FieldInverter& slot, TokenBatch& batch,
                      std::span<const DocRun> runs) const {
       return _writer.InsertBlock(slot, batch, runs);

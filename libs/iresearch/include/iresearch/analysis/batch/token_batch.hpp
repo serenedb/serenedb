@@ -267,8 +267,9 @@ class TokenEmitter : util::Noncopyable {
   }
 
  protected:
-  explicit TokenEmitter(TokenConsumer& consumer)
+  TokenEmitter(TokenConsumer& consumer, duckdb::Allocator& alloc)
     : _staging{std::make_unique<StagingT>()},
+      _alloc{&alloc},
       _consumer{&consumer},
       buf{_staging->batch} {}
 
@@ -276,8 +277,7 @@ class TokenEmitter : util::Noncopyable {
 
   duckdb::ArenaAllocator& Arena() {
     if (!_arena) {
-      _arena = std::make_unique<duckdb::ArenaAllocator>(
-        duckdb::Allocator::DefaultAllocator());
+      _arena = std::make_unique<duckdb::ArenaAllocator>(*_alloc);
     }
     return *_arena;
   }
@@ -296,9 +296,16 @@ class TokenEmitter : util::Noncopyable {
     _nruns = 0;
     if (_arena) {
       _arena->Reset();
+      const auto* head = _arena->GetHead();
+      if (head != nullptr && head->maximum_size > kMaxRetainedArenaBytes)
+        [[unlikely]] {
+        _arena.reset();
+      }
     }
     _run_start = 0;
   }
+
+  static constexpr size_t kMaxRetainedArenaBytes = 64 * 1024;
 
   struct StagingT {
     TokenBatch batch;
@@ -307,6 +314,7 @@ class TokenEmitter : util::Noncopyable {
 
   std::unique_ptr<StagingT> _staging;
   std::unique_ptr<duckdb::ArenaAllocator> _arena;
+  duckdb::Allocator* _alloc;
   TokenConsumer* _consumer;
   TokenConsumer* _store_consumer = nullptr;
   doc_id_t _doc = 0;
@@ -333,8 +341,9 @@ class TokenWriter final : public TokenEmitter {
   // sink (nullptr = discard).
   explicit TokenWriter(TokenConsumer& consumer)
     : TokenWriter{consumer, &consumer} {}
-  TokenWriter(TokenConsumer& consumer, TokenConsumer* store)
-    : TokenEmitter{consumer} {
+  TokenWriter(TokenConsumer& consumer, TokenConsumer* store,
+              duckdb::Allocator& alloc = duckdb::Allocator::DefaultAllocator())
+    : TokenEmitter{consumer, alloc} {
     _store_consumer = store;
   }
 

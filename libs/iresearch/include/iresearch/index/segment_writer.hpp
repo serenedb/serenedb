@@ -157,6 +157,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
                                                                  : nullptr;
   }
 
+  duckdb::Allocator& Allocator() const noexcept { return _fields.Allocator(); }
+
   void commit() {
     if (!_valid) {
       rollback();

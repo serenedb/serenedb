@@ -928,6 +928,7 @@ TEST(InverterDriverTest, SynonymOverlapsExactPostings) {
   auto* field = inv.Emplace(1, features);
 
   WhitespaceSyn analyzer;
+  field->SetDensePos(analyzer.Traits().dense_pos);
   const auto invert = [&](TokenBatch& batch, std::span<const DocRun> runs) {
     ASSERT_TRUE(field->InvertBlock(batch, runs));
   };

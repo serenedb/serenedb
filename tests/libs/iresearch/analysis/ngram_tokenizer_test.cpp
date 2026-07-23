@@ -1563,7 +1563,7 @@ std::vector<PulledNgram> FillNgrams(
   std::vector<PulledNgram> out;
   const auto collect = [&](irs::TokenBatch& batch,
                            std::span<const irs::DocRun> runs) {
-    EXPECT_FALSE(sink.writer.dense_pos);
+    EXPECT_FALSE(stream.Traits().dense_pos);
     EXPECT_TRUE(runs.empty());
     for (uint32_t i = 0; i < batch.count; ++i) {
       const auto& t = batch.terms[i];

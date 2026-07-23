@@ -235,6 +235,15 @@ bool ColumnReader::NullsInData() const noexcept {
 void ColumnReader::FinishStats(duckdb::BaseStatistics stats) {
   if (_validity) {
     stats.Merge(_validity->MergedStatistics());
+  } else if (_row_count > 0 && _type.id() != duckdb::LogicalTypeId::VALIDITY &&
+             (!_children.empty() || !NullsInData())) {
+    // No validity payload means the writer counted every row valid
+    // (ColumnWriter::SealValidity): the column has non-null values. A nested
+    // parent's row validity never hides in its data codec; a scalar's can
+    // (dict_fsst), and there the data block stats already carry the flags.
+    SDB_ASSERT(!stats.CanHaveNull(),
+               "column without a validity payload carries null-bearing stats");
+    stats.SetHasNoNull();
   }
   _stats = stats.ToUnique();
 }

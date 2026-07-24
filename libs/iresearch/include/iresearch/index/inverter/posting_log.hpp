@@ -268,12 +268,14 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
   static constexpr TokenLayout kLayout = TokenLayout::TermsPosOffs;
 
   PostingLog(duckdb::ArenaAllocator& blocks, IResourceManager& rm)
-    : PostingLogPosBase{blocks, rm}, _offs_start{blocks}, _offs_len{blocks} {}
+    : PostingLogPosBase{blocks, rm}, _offs_delta{blocks}, _offs_len{blocks} {}
 
-  // Ends are taken absolute but stored as span LENGTHS (end - start):
-  // lengths are small and rebase-invariant, so min-FOR packs them to a few
-  // bits where absolute ends need the full offset width. The scatter
-  // reconstructs end = start + len.
+  // Offsets are per-doc monotonic (each doc's text starts at 0), so the start
+  // is stored as a within-doc DELTA from the previous occurrence's start,
+  // reset at each new doc: deltas are token strides (a few bits) where
+  // absolute starts span the whole document. Ends ride as span LENGTHS
+  // (end - start), also small and rebase-invariant. The scatter reconstructs
+  // the absolute start (per-doc running sum) and end = start + len.
   void PushBatch(doc_id_t doc, std::span<const uint32_t> term_ids, bool dense,
                  std::span<const uint32_t> pos, uint32_t pos_base,
                  std::span<const uint32_t> offs_start,
@@ -282,7 +284,12 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
     const auto n = term_ids.size();
     SDB_ASSERT(offs_start.size() == n);
     SDB_ASSERT(offs_end.size() == n);
-    _offs_start.PushNAdd(offs_start.data(), n, offs_base);
+    OpenOffsDoc(doc);
+    for (size_t i = 0; i < n; ++i) {
+      const uint32_t start = offs_base + offs_start[i];
+      _offs_delta.Push(start - _offs_prev);
+      _offs_prev = start;
+    }
     _offs_len.PushNSub(offs_end.data(), offs_start.data(), n);
   }
 
@@ -292,17 +299,30 @@ class PostingLog<TokenLayout::TermsPosOffs> final : public PostingLogPosBase {
     _runlog.BeginDoc(doc);
     _term_ids.Push(term_id);
     RoutePos(true, pos - 1, 1);
-    _offs_start.Push(offs_start);
+    OpenOffsDoc(doc);
+    _offs_delta.Push(offs_start - _offs_prev);
+    _offs_prev = offs_start;
     _offs_len.Push(offs_end - offs_start);
     _runlog.AddTokens(1);
   }
 
-  const LogColumn& OffsStart() const noexcept { return _offs_start; }
+  const LogColumn& OffsDelta() const noexcept { return _offs_delta; }
   const LogColumn& OffsLen() const noexcept { return _offs_len; }
 
  private:
-  LogColumn _offs_start;
+  // Offset starts are monotonic only within a doc (they reset to 0 across
+  // docs), so the delta base resets whenever a new doc opens.
+  void OpenOffsDoc(doc_id_t doc) noexcept {
+    if (doc != _offs_doc) {
+      _offs_prev = 0;
+      _offs_doc = doc;
+    }
+  }
+
+  LogColumn _offs_delta;
   LogColumn _offs_len;
+  doc_id_t _offs_doc{doc_limits::invalid()};
+  uint32_t _offs_prev = 0;
 };
 
 using PostingLogVariant = std::variant<PostingLog<TokenLayout::Terms>,

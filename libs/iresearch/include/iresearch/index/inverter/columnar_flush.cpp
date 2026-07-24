@@ -60,6 +60,18 @@ struct NoColumn {
   IRS_FORCE_INLINE uint32_t Read() noexcept { return 0; }
 };
 
+// Write side of the term-major scatter output: a column is a flat array of
+// fixed 64K-value block pointers (consumers are doc-at-a-time iterators, so
+// contiguity is never needed). A null column is a layout the field does not
+// index -- its Set is never reached (guarded by the same `if constexpr`).
+struct OutColumn {
+  uint32_t** blocks = nullptr;
+
+  IRS_FORCE_INLINE void Set(uint64_t i, uint32_t value) noexcept {
+    blocks[i >> ScatterView::kBlockShift][i & ScatterView::kBlockMask] = value;
+  }
+};
+
 }  // namespace
 
 void ScatteredField::RadixSortByKey() {
@@ -216,6 +228,9 @@ uint32_t** ScatteredField::AssignBlocks(ManagedVector<uint32_t*>& col,
 template<typename Log>
 void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
   constexpr auto kLayout = Log::kLayout;
+  constexpr bool kPos = kLayout != TokenLayout::Terms;
+  constexpr bool kOffs = kLayout == TokenLayout::TermsPosOffs;
+
   _s->docs.clear();
   _s->pos.clear();
   _s->offs_start.clear();
@@ -223,95 +238,97 @@ void ScatteredField::Scatter(const Log& log, uint64_t nocc) {
   if (!nocc) {
     return;
   }
+
+  // Carve one block-column per indexed lane from the shared pool.
   const size_t nblocks =
     (nocc + ScatterView::kBlockMask) >> ScatterView::kBlockShift;
   size_t next = 0;
-  auto* const cursors = _s->cursors.data();
-  auto* const out_docs = AssignBlocks(_s->docs, nblocks, next);
-  uint32_t** out_pos = nullptr;
-  uint32_t** out_os = nullptr;
-  uint32_t** out_oe = nullptr;
-  if constexpr (kLayout != TokenLayout::Terms) {
-    out_pos = AssignBlocks(_s->pos, nblocks, next);
+  OutColumn docs{AssignBlocks(_s->docs, nblocks, next)};
+  OutColumn positions;
+  OutColumn offs_start;
+  OutColumn offs_end;
+  if constexpr (kPos) {
+    positions.blocks = AssignBlocks(_s->pos, nblocks, next);
   }
-  if constexpr (kLayout == TokenLayout::TermsPosOffs) {
-    out_os = AssignBlocks(_s->offs_start, nblocks, next);
-    out_oe = AssignBlocks(_s->offs_end, nblocks, next);
+  if constexpr (kOffs) {
+    offs_start.blocks = AssignBlocks(_s->offs_start, nblocks, next);
+    offs_end.blocks = AssignBlocks(_s->offs_end, nblocks, next);
   }
 
+  // Log readers; absent lanes read as a zero stub so the token loop stays
+  // branch-free (guarded by the same `if constexpr` that skips their output).
+  auto* const cursors = _s->cursors.data();
   LogColumnReader term_ids{log.TermIds()};
-  auto pos = [&] {
-    if constexpr (kLayout != TokenLayout::Terms) {
+  auto pos_col = [&] {
+    if constexpr (kPos) {
       return LogColumnReader{log.Pos()};
     } else {
       return NoColumn{};
     }
   }();
-  auto offs_start = [&] {
-    if constexpr (kLayout == TokenLayout::TermsPosOffs) {
-      return LogColumnReader{log.OffsStart()};
+  auto delta_col = [&] {
+    if constexpr (kOffs) {
+      return LogColumnReader{log.OffsDelta()};
     } else {
       return NoColumn{};
     }
   }();
-  auto offs_len = [&] {
-    if constexpr (kLayout == TokenLayout::TermsPosOffs) {
+  auto len_col = [&] {
+    if constexpr (kOffs) {
       return LogColumnReader{log.OffsLen()};
     } else {
       return NoColumn{};
     }
   }();
 
-  if constexpr (kLayout == TokenLayout::Terms) {
+  // Inline first occurrences (Terms only) scatter ahead of the log's, so one
+  // contiguous region per term serves every consumer.
+  if constexpr (!kPos) {
     const auto entries = _field->Dictionary().Entries();
     for (const auto& term : _s->ranked) {
       for (const auto doc : entries[term.id].inline_docs) {
         if (!doc) {
           break;
         }
-        const auto c = cursors[term.id]++;
-        out_docs[c >> ScatterView::kBlockShift][c & ScatterView::kBlockMask] =
-          doc;
+        docs.Set(cursors[term.id]++, doc);
       }
     }
   }
 
+  // Walk the log doc-major (runs + per-doc token counts) and scatter each
+  // occurrence into its term's region. `pos_of` is chosen once per doc (its
+  // source is doc-invariant): dense docs reconstruct the within-doc ordinal,
+  // promoted docs read the pos column. Offset starts are a within-doc delta
+  // stream summed per doc.
   LogColumnReader doc_tokens{log.DocTokens()};
   size_t doc_idx = 0;
   for (const auto& run : log.Runs()) {
-    for (uint32_t k = 0; k < run.ndocs; ++k) {
+    for (uint32_t k = 0; k < run.ndocs; ++k, ++doc_idx) {
       const doc_id_t doc = run.first_doc + k;
       const uint32_t ntokens = doc_tokens.Read();
-      ++doc_idx;
-      if constexpr (kLayout == TokenLayout::Terms) {
+      [[maybe_unused]] uint32_t offs = 0;
+      const auto emit = [&](auto&& pos_of) {
         for (uint32_t j = 0; j < ntokens; ++j) {
           const auto c = cursors[term_ids.Read()]++;
-          out_docs[c >> ScatterView::kBlockShift][c & ScatterView::kBlockMask] =
-            doc;
+          docs.Set(c, doc);
+          if constexpr (kPos) {
+            positions.Set(c, pos_of(j));
+          }
+          if constexpr (kOffs) {
+            offs += delta_col.Read();
+            offs_start.Set(c, offs);
+            offs_end.Set(c, offs + len_col.Read());
+          }
+        }
+      };
+      if constexpr (kPos) {
+        if (log.DocExplicit(doc_idx)) {
+          emit([&](uint32_t) { return pos_col.Read(); });
+        } else {
+          emit([](uint32_t j) { return j + 1; });
         }
       } else {
-        // The position source is doc-invariant: split the loop instead of
-        // branching per occurrence (dense docs reconstruct the within-doc
-        // ordinal, promoted docs read the pos column).
-        const auto scatter = [&](auto&& pos_of) {
-          for (uint32_t j = 0; j < ntokens; ++j) {
-            const auto c = cursors[term_ids.Read()]++;
-            const auto hi = c >> ScatterView::kBlockShift;
-            const auto lo = c & ScatterView::kBlockMask;
-            out_docs[hi][lo] = doc;
-            out_pos[hi][lo] = pos_of(j);
-            if constexpr (kLayout == TokenLayout::TermsPosOffs) {
-              const auto os = offs_start.Read();
-              out_os[hi][lo] = os;
-              out_oe[hi][lo] = os + offs_len.Read();
-            }
-          }
-        };
-        if (log.DocExplicit(doc_idx - 1)) {
-          scatter([&](uint32_t) { return pos.Read(); });
-        } else {
-          scatter([](uint32_t j) { return j + 1; });
-        }
+        emit([](uint32_t) { return uint32_t{0}; });
       }
     }
   }

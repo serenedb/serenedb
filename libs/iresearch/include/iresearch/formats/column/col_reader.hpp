@@ -53,6 +53,7 @@ inline constexpr std::string_view kFormatExt = "col";
 
 inline constexpr duckdb::field_id_t kFooterSlotColumns = 100;
 inline constexpr duckdb::field_id_t kFooterSlotNormColumns = 101;
+inline constexpr duckdb::field_id_t kFooterSlotBlockOffsets = 102;
 
 inline std::string FileName(std::string_view segment_name) {
   return absl::StrCat(segment_name, ".", kFormatExt);
@@ -76,6 +77,9 @@ class ColReader final {
   bool HasNormColumn(field_id id) const noexcept;
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
+  std::span<const uint64_t> BlockOffsets() const noexcept {
+    return _block_offsets;
+  }
 
   IndexInput::ptr ReopenIn() const {
     return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
@@ -85,6 +89,7 @@ class ColReader final {
  private:
   duckdb::DatabaseInstance* _db;
   ReadContext _ctx;
+  std::vector<uint64_t> _block_offsets;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   sdb::containers::FlatHashMap<field_id, ColumnReader*> _by_id;
   std::vector<std::unique_ptr<NormColumnReader>> _norm_readers;

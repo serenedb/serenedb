@@ -33,18 +33,15 @@ WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out)
 WriteContext::~WriteContext() = default;
 
 duckdb::block_id_t WriteContext::GetFreeBlockId() {
-  const auto cursor = static_cast<duckdb::block_id_t>(_out->Position());
-  if (_next_id < cursor) {
-    _next_id = cursor;
-  }
-  const auto id = _next_id;
-  _next_id += static_cast<duckdb::block_id_t>(GetBlockAllocSize());
+  const auto id =
+    kColBlockIdBias + static_cast<duckdb::block_id_t>(_block_offsets.size());
+  _block_offsets.push_back(kColBlockUnwritten);
   return id;
 }
 
 duckdb::block_id_t WriteContext::PeekFreeBlockId() {
-  const auto cursor = static_cast<duckdb::block_id_t>(_out->Position());
-  return _next_id < cursor ? cursor : _next_id;
+  return kColBlockIdBias +
+         static_cast<duckdb::block_id_t>(_block_offsets.size());
 }
 
 void WriteContext::Write(duckdb::FileBuffer& block,
@@ -55,10 +52,18 @@ void WriteContext::Write(duckdb::FileBuffer& block,
 void WriteContext::Write(duckdb::QueryContext /*context*/,
                          duckdb::FileBuffer& block,
                          duckdb::block_id_t block_id) {
-  const auto cursor = static_cast<duckdb::block_id_t>(_out->Position());
-  SDB_ENSURE(cursor == block_id,
-             "WriteContext::Write out-of-order: cursor=", cursor,
-             " expected=", block_id);
+  SDB_ENSURE(block_id >= kColBlockIdBias,
+             "WriteContext::Write: foreign block id ", block_id);
+  const auto idx = static_cast<uint64_t>(block_id - kColBlockIdBias);
+  SDB_ENSURE(idx < _block_offsets.size(),
+             "WriteContext::Write: unallocated block id ", block_id);
+  SDB_ENSURE(_block_offsets[idx] == kColBlockUnwritten,
+             "WriteContext::Write: block ", block_id, " written twice");
+  if (const uint64_t misalign = _out->Position() % 8; misalign != 0) {
+    static constexpr byte_type kPad[8]{};
+    _out->WriteData(kPad, 8 - misalign);
+  }
+  _block_offsets[idx] = _out->Position();
   _out->WriteData(reinterpret_cast<const byte_type*>(block.InternalBuffer()),
                   block.AllocSize());
 }
@@ -89,7 +94,7 @@ void WriteContext::WriteHeader(duckdb::QueryContext /*context*/,
 }
 
 duckdb::idx_t WriteContext::TotalBlocks() {
-  return static_cast<duckdb::idx_t>(_next_id / GetBlockAllocSize());
+  return static_cast<duckdb::idx_t>(_block_offsets.size());
 }
 
 }  // namespace irs

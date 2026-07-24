@@ -20,7 +20,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/memory_mapped_file.hpp>
+#include <span>
 #include <vector>
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
@@ -53,6 +55,10 @@ class ReadContext final : public BlockManager {
   const IndexInput& In() const noexcept { return *_in; }
   bool HasIn() const noexcept { return _in != nullptr; }
 
+  void SetBlockOffsets(std::span<const uint64_t> offsets) noexcept {
+    _block_offsets = offsets;
+  }
+
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
                                                            uint64_t size);
 
@@ -82,6 +88,7 @@ class ReadContext final : public BlockManager {
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
+  std::span<const uint64_t> _block_offsets;
   size_t _live_handles = 0;
 };
 

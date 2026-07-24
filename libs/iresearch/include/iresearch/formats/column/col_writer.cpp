@@ -232,6 +232,15 @@ void ColWriter::Commit(uint64_t target_row) {
                            SerializeNormColumn(obj, *norm_columns[i]);
                          });
                        });
+  if (const auto block_offsets =
+        _write_ctx ? _write_ctx->BlockOffsets() : std::span<const uint64_t>{};
+      !block_offsets.empty()) {
+    serializer.WriteList(kFooterSlotBlockOffsets, "block_offsets",
+                         block_offsets.size(),
+                         [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+                           list.WriteElement(block_offsets[i]);
+                         });
+  }
   serializer.End();
   _out->WriteU64(footer_offset);
   format_utils::WriteFooter(*_out);

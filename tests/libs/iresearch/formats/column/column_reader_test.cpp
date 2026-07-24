@@ -2454,4 +2454,75 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
   }
 }
 
+// zstd streams a row group across many 256KiB overflow pages and flushes them
+// out of allocation order (a page holding a vector's string-length metadata is
+// held back until the vector completes while later data pages flush first).
+// Regression for github issue #970: the writer asserted on the out-of-order
+// flush and CREATE INDEX ... INCLUDE crashed on code-sized VARCHAR corpora.
+TEST_F(ColumnReaderTest, ZstdMultiPageOverflowBlocks) {
+  constexpr uint64_t kRows = 6000;
+  constexpr uint32_t kRgSize = 8192;
+  constexpr irs::field_id kS = 3;
+
+  auto s_val = [](uint64_t g) {
+    std::string out;
+    out.reserve(2100);
+    uint64_t x = g * 6364136223846793005ULL + 1442695040888963407ULL;
+    while (out.size() < 2048) {
+      x ^= x >> 33;
+      x *= 0xff51afd7ed558ccdULL;
+      x ^= x >> 33;
+      out += std::to_string(x);
+      out += ' ';
+    }
+    return out;
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
+                             /*skip_validity=*/false, kRgSize,
+                             duckdb::CompressionType::COMPRESSION_ZSTD);
+    uint64_t pos = 0;
+    while (pos < kRows) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* d = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        d[k] = duckdb::StringVector::AddString(v, s_val(pos + k));
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cwS.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "seg", Db()};
+  ASSERT_FALSE(r.BlockOffsets().empty());
+  const auto* cs = r.Column(kS);
+  ASSERT_NE(cs, nullptr);
+  ASSERT_EQ(cs->RowCount(), kRows);
+
+  auto state = cs->InitScan(r.Ctx());
+  uint64_t pos = 0;
+  while (pos < kRows) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector result{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    cs->Scan(state, result, take);
+    result.Flatten(take);
+    const auto* rd = duckdb::FlatVector::GetData<duckdb::string_t>(result);
+    const auto& rv = duckdb::FlatVector::Validity(result);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      const auto g = pos + k;
+      ASSERT_TRUE(rv.RowIsValid(k)) << "row " << g;
+      EXPECT_EQ(rd[k].GetString(), s_val(g)) << "row " << g;
+    }
+    pos += take;
+  }
+}
+
 }  // namespace

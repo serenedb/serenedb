@@ -63,11 +63,12 @@ void AdviseWillNeed(const duckdb::MemoryMappedFile& mapping, uint64_t offset,
 }  // namespace
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : BlockManager{db, /*block_header_size=*/0} {}
+  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE} {}
 
 ReadContext::ReadContext(const ColReader& reader)
   : ReadContext{reader.Database()} {
   _in = reader.ReopenIn();
+  _block_offsets = reader.BlockOffsets();
   ResetMapping();
 }
 
@@ -87,6 +88,7 @@ void ReadContext::Reset(const ColReader& reader) {
              "ReadContext::Reset: Database mismatch");
   SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
   _in = reader.ReopenIn();
+  _block_offsets = reader.BlockOffsets();
   ResetMapping();
 }
 
@@ -113,8 +115,10 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
 }
 
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
-  SDB_ASSERT(_live_handles != 0);
-  --_live_handles;
+  if (id < kColBlockIdBias) {
+    SDB_ASSERT(_live_handles != 0);
+    --_live_handles;
+  }
   duckdb::BlockManager::UnregisterBlock(id);
 }
 
@@ -131,6 +135,23 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
 }
 
 void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
+  if (block.id >= kColBlockIdBias) {
+    const auto idx = static_cast<size_t>(block.id - kColBlockIdBias);
+    SDB_ENSURE(idx < _block_offsets.size() && _in,
+               "ReadContext::Read: unregistered overflow block ", block.id);
+    const auto offset = _block_offsets[idx];
+    SDB_ENSURE(offset != kColBlockUnwritten,
+               "ReadContext::Read: overflow block ", block.id,
+               " was never written");
+    const auto size = block.AllocSize();
+    if (_mapping && offset + size <= _mapping->Size()) {
+      block.Read(context, *_mapping, offset);
+      AdviseWillNeed(*_mapping, offset, size);
+      return;
+    }
+    _in->ReadData(offset, block.InternalBuffer(), size);
+    return;
+  }
   const auto id = static_cast<size_t>(block.id);
   SDB_ENSURE(id < _ranges.size() && _in,
              "ReadContext::Read: unregistered block ", block.id);

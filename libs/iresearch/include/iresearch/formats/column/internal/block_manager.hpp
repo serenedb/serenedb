@@ -20,12 +20,14 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/storage/block.hpp>
 #include <duckdb/storage/block_allocator.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/metadata/metadata_manager.hpp>
 #include <duckdb/storage/storage_info.hpp>
+#include <limits>
 
 namespace duckdb {
 
@@ -33,6 +35,14 @@ class DatabaseInstance;
 
 }  // namespace duckdb
 namespace irs {
+
+// Overflow-block ids are logical handles resolved through a footer id->offset
+// table (compressors flush blocks out of allocation order); the bias keeps
+// them disjoint from ReadContext's dense RegisterColBlock ids.
+inline constexpr duckdb::block_id_t kColBlockIdBias = duckdb::block_id_t{1}
+                                                      << 40;
+inline constexpr uint64_t kColBlockUnwritten =
+  std::numeric_limits<uint64_t>::max();
 
 class BlockManager : public duckdb::BlockManager {
  public:

@@ -1,0 +1,59 @@
+# Regression for github issue #970: CREATE INDEX ... INCLUDE crashed the
+# server on code-sized VARCHAR corpora when the included column compressed
+# with zstd.
+#
+# zstd streams a row group across many 256KiB overflow pages through the
+# BlockManager and flushes them out of allocation order: a page holding a
+# vector's string-length metadata is held back until the vector completes
+# while later data pages flush first. The columnstore WriteContext asserted
+# on the out-of-order flush ("WriteContext::Write out-of-order") -- an
+# InternalError on release builds and an abort on debug builds. Overflow
+# block ids are now logical handles resolved through a footer id->offset
+# table, so flush order no longer matters.
+#
+# The bodies must be large (multi-KB) and poorly compressible so one zstd
+# vector (2048 rows) spans several 256KiB pages: md5 hex garbage, ~2KB per
+# row, >2048 rows so at least one vector's string-length metadata lands on
+# an overflow page rather than the segment page.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY zstd_mp_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE zstd_mp_src AS
+SELECT 'src/file_' || i || '.c' AS path,
+       (SELECT string_agg(md5((i * 100 + j)::VARCHAR), ' ')
+        FROM generate_series(1, 60) g(j)) AS content
+FROM generate_series(1, 3000) t(i);
+
+statement ok
+CREATE INDEX zstd_mp_idx ON zstd_mp_src USING inverted(content zstd_mp_dict)
+  INCLUDE (path, content included (compression = 'zstd'));
+
+# Whole corpus is indexed.
+query
+SELECT count(*) AS n FROM zstd_mp_idx;
+----
+n
+3000
+
+# The included content materialises byte-for-byte from the index columnstore.
+query
+SELECT count(*) AS mismatches
+FROM zstd_mp_idx i
+JOIN zstd_mp_src s ON i.path = s.path
+WHERE i.content IS DISTINCT FROM s.content;
+----
+mismatches
+0
+
+# Full-text search still resolves and returns the covering columns.
+query
+SELECT path, length(content) AS len FROM zstd_mp_idx
+WHERE content @@ md5('101');
+----
+path	len
+src/file_1.c	1979

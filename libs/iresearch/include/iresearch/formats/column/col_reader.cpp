@@ -179,7 +179,19 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         _norm_readers.push_back(std::move(nr));
       });
     });
+  deserializer.ReadOptionalList(
+    kFooterSlotBlockOffsets, "block_offsets",
+    [&](duckdb::Deserializer::List& list, duckdb::idx_t /*i*/) {
+      const auto offset = list.ReadElement<uint64_t>();
+      SDB_ENSURE(offset == kColBlockUnwritten ||
+                   (offset % 8 == 0 &&
+                    offset + _ctx.GetBlockAllocSize() <= footer_offset),
+                 ".col reader: overflow block offset ", offset,
+                 " out of range");
+      _block_offsets.push_back(offset);
+    });
   deserializer.End();
+  _ctx.SetBlockOffsets(_block_offsets);
 }
 
 ColReader::~ColReader() = default;

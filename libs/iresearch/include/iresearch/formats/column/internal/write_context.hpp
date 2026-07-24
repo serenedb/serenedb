@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <cstdint>
+#include <span>
+#include <vector>
+
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
@@ -43,6 +47,10 @@ class WriteContext final : public BlockManager {
 
   IndexOutput& Out() noexcept { return *_out; }
 
+  std::span<const uint64_t> BlockOffsets() const noexcept {
+    return _block_offsets;
+  }
+
   duckdb::block_id_t GetFreeBlockId() final;
   duckdb::block_id_t PeekFreeBlockId() final;
   void Write(duckdb::FileBuffer& block, duckdb::block_id_t block_id) final;
@@ -62,7 +70,7 @@ class WriteContext final : public BlockManager {
 
  private:
   IndexOutput* _out;
-  duckdb::block_id_t _next_id = 0;
+  std::vector<uint64_t> _block_offsets;
 };
 
 }  // namespace irs

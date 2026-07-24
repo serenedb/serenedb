@@ -354,7 +354,6 @@ include(OptimizeForArchitecture)
 
 if(APPLE)
     set(OS_DARWIN 1)
-    set(CMAKE_AR "${CMAKE_CXX_COMPILER_AR}" CACHE FILEPATH "" FORCE)
     set(SDB_IOURING OFF CACHE BOOL "" FORCE)
 else()
     set(OS_LINUX 1)

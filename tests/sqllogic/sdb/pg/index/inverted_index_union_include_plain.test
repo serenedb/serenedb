@@ -1,0 +1,74 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE union_inc_plain (
+  id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  payload UNION(num INTEGER, str VARCHAR) NOT NULL,
+  PRIMARY KEY (id)
+);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_inc_plain_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE INDEX union_inc_plain_idx
+  ON union_inc_plain USING inverted(body union_inc_plain_en)
+  INCLUDE (payload);
+
+
+statement ok
+INSERT INTO union_inc_plain VALUES
+  (1, 'alpha cat', union_value(num := 42)),
+  (2, 'beta dog', 'hello'),
+  (3, 'gamma cat', union_value(str := 'world')),
+  (4, 'delta horse', 7);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) union_inc_plain;
+
+
+query
+SELECT id, payload FROM union_inc_plain_idx WHERE body @@ ts_phrase('alpha')
+ORDER BY id;
+----
+id	payload
+1	42
+
+
+query
+SELECT id, payload FROM union_inc_plain_idx WHERE body @@ ts_phrase('cat')
+ORDER BY id;
+----
+id	payload
+1	42
+3	world
+
+
+query
+SELECT id, payload FROM union_inc_plain_idx WHERE body @@ ts_phrase('delta')
+ORDER BY id;
+----
+id	payload
+4	7
+
+
+query
+SELECT id, payload FROM union_inc_plain ORDER BY id;
+----
+id	payload
+1	42
+2	hello
+3	world
+4	7

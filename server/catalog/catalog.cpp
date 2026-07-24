@@ -1389,6 +1389,21 @@ DropPlan Snapshot::ComputeDropPlan(ObjectId seed) const {
   return DropEmitter{seed, lookup, indexes_using_col, dep_lookup}.ComputePlan();
 }
 
+DropPlan Snapshot::ComputeDropPlanRestrict(ObjectId seed, bool cascade,
+                                           std::string_view kind,
+                                           std::string_view name) const {
+  auto plan = ComputeDropPlan(seed);
+  if (!cascade && plan.IsCascade()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+      ERR_MSG("cannot drop ", kind, " ", name,
+              " because other objects depend on it"),
+      ERR_DETAIL(plan.FormatDependentsDetail(*this, kind, name)),
+      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+  }
+  return plan;
+}
+
 // Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
 // column and cascade-drop every index covering it (PG column->index cascade).
 // The column has no dependency edges of its own, so this is built directly
@@ -1410,6 +1425,188 @@ DropPlan Snapshot::ComputeColumnDropPlan(ObjectId table_id,
     }
   }
   return plan;
+}
+
+std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
+  std::vector<PgDependEdge> edges;
+  auto attnum = [](const Table& t, Column::Id col) -> int32_t {
+    auto pos = t.ColumnPosById(col);
+    return pos == t.Columns().size() ? 0 : static_cast<int32_t>(pos) + 1;
+  };
+  auto attnum_of = [&](ObjectId col_id) -> int32_t {
+    auto col = GetObject(col_id);
+    if (!col) {
+      return 0;
+    }
+    auto table = GetObject<Table>(col->GetParentId());
+    return table ? attnum(*table, col_id) : 0;
+  };
+  auto emit = [&](ObjectId dependent, int32_t dependent_sub,
+                  DependClass dependent_class, ObjectId referenced,
+                  int32_t referenced_sub, DependClass referenced_class,
+                  DependType deptype) {
+    edges.push_back({dependent, dependent_sub, dependent_class, referenced,
+                     referenced_sub, referenced_class, deptype});
+  };
+  for (const auto& obj : _objects) {
+    if (GetDatabaseId(*obj) != db_id) {
+      continue;
+    }
+    auto ref = obj->GetId();
+    switch (obj->GetType()) {
+      case ObjectType::Table:
+      case ObjectType::PgSqlView:
+        emit(ref, 0, DependClass::Relation, obj->GetParentId(), 0,
+             DependClass::Namespace, DependType::Normal);
+        break;
+      case ObjectType::Sequence:
+        if (!basics::downCast<const Sequence>(*obj).GetOwnerTableId().isSet()) {
+          emit(ref, 0, DependClass::Relation, obj->GetParentId(), 0,
+               DependClass::Namespace, DependType::Normal);
+        }
+        break;
+      case ObjectType::PgSqlFunction:
+        emit(ref, 0, DependClass::Proc, obj->GetParentId(), 0,
+             DependClass::Namespace, DependType::Normal);
+        break;
+      case ObjectType::PgSqlType:
+        emit(ref, 0, DependClass::Type, obj->GetParentId(), 0,
+             DependClass::Namespace, DependType::Normal);
+        break;
+      default:
+        break;
+    }
+    auto dep = _deps.TryGetDependency(ref);
+    if (!dep) {
+      continue;
+    }
+    switch (obj->GetType()) {
+      case ObjectType::Table:
+      case ObjectType::PgSqlView: {
+        const auto& rel = basics::downCast<const RelationDependency>(*dep);
+        const Table* table = obj->GetType() == ObjectType::Table
+                               ? &basics::downCast<const Table>(*obj)
+                               : nullptr;
+        ObjectId pk_index = table ? table->PKIndexId() : ObjectId{};
+        for (auto idx : rel.indexes) {
+          if (idx == pk_index) {
+            continue;
+          }
+          auto index = GetObject<Index>(idx);
+          if (index && index->ReferencesColumn(Column::kGeneratedPKId)) {
+            continue;
+          }
+          bool emitted = false;
+          if (table && index) {
+            for (auto col : index->GetColumns()) {
+              if (auto sub = attnum(*table, col)) {
+                emit(idx, 0, DependClass::Relation, ref, sub,
+                     DependClass::Relation, DependType::Auto);
+                emitted = true;
+              }
+            }
+          }
+          if (!emitted) {
+            emit(idx, 0, DependClass::Relation, ref, 0, DependClass::Relation,
+                 DependType::Auto);
+          }
+        }
+        for (auto fn : rel.functions) {
+          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+        if (table) {
+          for (const auto& fk : table->ForeignKeys()) {
+            if (!fk.referenced_table.isSet()) {
+              continue;
+            }
+            auto reft = GetObject<Table>(fk.referenced_table);
+            for (auto rc : fk.referenced_columns) {
+              emit(fk.id, 0, DependClass::Constraint, fk.referenced_table,
+                   reft ? attnum(*reft, rc) : 0, DependClass::Relation,
+                   DependType::Normal);
+            }
+          }
+          for (const auto& col : table->Columns()) {
+            if (col.GetId() == Column::kGeneratedPKId) {
+              continue;
+            }
+            if (!(col.expr && col.expr->HasExpr())) {
+              continue;
+            }
+            if (auto sub = attnum(*table, col.GetId())) {
+              emit(col.GetId(), 0, DependClass::Attrdef, ref, sub,
+                   DependClass::Relation, DependType::Auto);
+            }
+          }
+        }
+        for (auto view : rel.views) {
+          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+        if (obj->GetType() == ObjectType::PgSqlView) {
+          emit(ref, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
+               DependType::Internal);
+        }
+      } break;
+      case ObjectType::Sequence: {
+        const auto& sd = basics::downCast<const SequenceDependency>(*dep);
+        for (auto fn : sd.functions) {
+          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+        for (auto view : sd.views) {
+          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+        for (auto col : sd.column_defaults) {
+          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+      } break;
+      case ObjectType::PgSqlType: {
+        const auto& ty = basics::downCast<const PgSqlTypeDependency>(*dep);
+        for (auto col : ty.column_types) {
+          auto c = GetObject(col);
+          if (!c) {
+            continue;
+          }
+          emit(c->GetParentId(), attnum_of(col), DependClass::Relation, ref, 0,
+               DependClass::Type, DependType::Normal);
+        }
+        for (auto fn : ty.functions) {
+          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Type,
+               DependType::Normal);
+        }
+        for (auto view : ty.views) {
+          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Type,
+               DependType::Normal);
+        }
+        for (auto col : ty.column_defaults) {
+          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Type,
+               DependType::Normal);
+        }
+      } break;
+      case ObjectType::PgSqlFunction: {
+        const auto& fnd = basics::downCast<const PgSqlFunctionDependency>(*dep);
+        for (auto fn : fnd.functions) {
+          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Proc,
+               DependType::Normal);
+        }
+        for (auto view : fnd.views) {
+          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Proc,
+               DependType::Normal);
+        }
+        for (auto col : fnd.column_defaults) {
+          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Proc,
+               DependType::Normal);
+        }
+      } break;
+      default:
+        break;
+    }
+  }
+  return edges;
 }
 
 void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
@@ -3859,15 +4056,8 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
   }
   RequireObjectOwner(*_snapshot, ax.role, *table_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*table_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop table ", name,
-              " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "table", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan =
+    _snapshot->ComputeDropPlanRestrict(*table_id, cascade, "table", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -4206,14 +4396,8 @@ bool Catalog::DropView(const AccessContext& ax, std::string_view database,
   }
   RequireObjectOwner(*_snapshot, ax.role, *view_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*view_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop view ", name, " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "view", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan =
+    _snapshot->ComputeDropPlanRestrict(*view_id, cascade, "view", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -4333,14 +4517,8 @@ bool Catalog::DropType(const AccessContext& ax, std::string_view database,
   }
   RequireObjectOwner(*_snapshot, ax.role, *type_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*type_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop type ", name, " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "type", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan =
+    _snapshot->ComputeDropPlanRestrict(*type_id, cascade, "type", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -4395,15 +4573,8 @@ bool Catalog::DropFunction(const AccessContext& ax, std::string_view database,
   }
   RequireObjectOwner(*_snapshot, ax.role, *function_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*function_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop function ", name,
-              " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "function", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan =
+    _snapshot->ComputeDropPlanRestrict(*function_id, cascade, "function", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -4456,16 +4627,8 @@ bool Catalog::DropTokenizer(std::string_view database, std::string_view schema,
       ERR_MSG("text search dictionary \"", name, "\" does not exist"));
   }
 
-  auto plan = _snapshot->ComputeDropPlan(*tokenizer_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop text search dictionary ", name,
-              " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot,
-                                             "text search dictionary", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan = _snapshot->ComputeDropPlanRestrict(
+    *tokenizer_id, cascade, "text search dictionary", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);

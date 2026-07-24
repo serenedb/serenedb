@@ -73,7 +73,10 @@ target_include_directories(
 # frozen_vs_alternatives measures the boost::text frozen::set use-cases against
 # what we already vendor; needs frozen headers + the boost::text data tables.
 if(ARCH_AMD64)
-    target_link_libraries(serenedb-bench-micro-frozen_vs_alternatives PRIVATE text)
+    target_link_libraries(
+        serenedb-bench-micro-frozen_vs_alternatives
+        PRIVATE text
+    )
     target_compile_definitions(
         serenedb-bench-micro-frozen_vs_alternatives
         PRIVATE BOOST_TEXT_DISABLE_CONCEPTS

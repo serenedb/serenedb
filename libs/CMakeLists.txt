@@ -76,7 +76,6 @@ target_link_libraries(
         icu
         lz4_static
         zstd::zstd # basics/zstd_context.cpp (reusable zstd contexts)
-        serene_build_id
         # The SDB_* logger hot path forwards directly to duckdb::Logger
         # virtuals; we need duckdb's headers (and the Logger vtable) at
         # link time. Pulled in PUBLICly so any target that uses
@@ -136,4 +135,3 @@ target_include_directories(serene SYSTEM PUBLIC ${OPENSSL_INCLUDE_DIR})
 add_dependencies(serene exitcodefiles)
 
 add_subdirectory(geo)
-add_subdirectory(build_id)

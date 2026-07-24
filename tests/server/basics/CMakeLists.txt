@@ -8,7 +8,6 @@ add_executable(
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
     assertions_tests.cpp
-    build_id_test.cpp
     metrics_test.cpp
     number_of_cores_test.cpp
     random_test.cpp

@@ -545,7 +545,9 @@ set(PROFILE_DEBUG_INFO "${COLUMNS_DEBUG_INFO} -fdebug-info-for-profiling")
 if(APPLE)
     set(FULL_DEBUG_INFO "${BASE_DEBUG_INFO} -g3 -fstandalone-debug")
 else()
-    set(FULL_DEBUG_INFO "${BASE_DEBUG_INFO} -g3 -fstandalone-debug -fdebug-macro")
+    set(FULL_DEBUG_INFO
+        "${BASE_DEBUG_INFO} -g3 -fstandalone-debug -fdebug-macro"
+    )
 endif()
 set(LLDB_DEBUG_INFO "${FULL_DEBUG_INFO} -glldb")
 set(GDB_DEBUG_INFO "${FULL_DEBUG_INFO} -ggdb")

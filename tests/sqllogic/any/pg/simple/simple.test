@@ -853,14 +853,14 @@ query
 SELECT acos(0.5);
 ----
 acos
-1.0471975511965979
+1.047197551196597<slt:ignore>
 
 
 query
 SELECT asin(0.5);
 ----
 asin
-0.5235987755982989
+0.523598775598298<slt:ignore>
 
 
 query

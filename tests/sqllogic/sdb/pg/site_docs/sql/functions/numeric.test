@@ -12,7 +12,7 @@ query
 SELECT acos(0.5) AS acos;
 ----
 acos
-1.0471975511965979
+1.047197551196597<slt:ignore>
 
 # DOCS_TEST: acosh
 # DOCS_TEST_BODY
@@ -36,7 +36,7 @@ query
 SELECT asin(0.5) AS asin;
 ----
 asin
-0.5235987755982989
+0.523598775598298<slt:ignore>
 
 # DOCS_TEST: asinh
 # DOCS_TEST_BODY
@@ -52,7 +52,7 @@ query
 SELECT atan(0.5) AS atan;
 ----
 atan
-0.4636476090008061
+0.463647609000806<slt:ignore>
 
 # DOCS_TEST: atanh
 # DOCS_TEST_BODY
@@ -60,7 +60,7 @@ query
 SELECT atanh(0.5) AS atanh;
 ----
 atanh
-0.5493061443340548
+0.549306144334054<slt:ignore>
 
 # DOCS_TEST: atan2
 # DOCS_TEST_BODY

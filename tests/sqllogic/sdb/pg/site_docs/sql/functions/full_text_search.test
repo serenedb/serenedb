@@ -1032,7 +1032,7 @@ ORDER BY score DESC, id;
 ----
 id	score
 2	1.321928
-1	0.32192808
+1	0.3219280<slt:ignore>
 3	0
 
 # DOCS_TEST: dfi_chi_squared

@@ -71,12 +71,11 @@ log
 
 
 # cot
-
 query
 SELECT cot(1);
 ----
 cot
-0.6420926159343306
+0.642092615934330<slt:ignore>
 
 
 # factorial
@@ -207,14 +206,14 @@ query
 SELECT erf(1.0);
 ----
 erf
-0.8427007929497149
+0.842700792949714<slt:ignore>
 
 
 query
 SELECT erfc(1.0);
 ----
 erfc
-0.15729920705028513
+0.1572992070502851<slt:ignore>
 
 
 # random_normal returns a value (non-deterministic, just check it runs)

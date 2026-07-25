@@ -14,6 +14,16 @@ add_definitions(-DUNICODE -D_UNICODE)
 
 add_subdirectory(include/iresearch)
 
-if(NOT SDB_BUILD_IRESEARCH_ONLY)
+if(SDB_BUILD_IRESEARCH_ONLY)
+    add_executable(
+        iresearch-embedded-smoke
+        EXCLUDE_FROM_ALL
+        examples/embedded_smoke.cpp
+    )
+    target_link_libraries(
+        iresearch-embedded-smoke
+        PRIVATE iresearch::embedded
+    )
+else()
     add_subdirectory(examples)
 endif()

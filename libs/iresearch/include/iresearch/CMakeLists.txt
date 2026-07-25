@@ -289,6 +289,7 @@ if(SDB_BUILD_IRESEARCH_ONLY)
             absl::flat_hash_map
             absl::flat_hash_set
             absl::crc32c
+            absl::random_random
             iresearch-embedded-support
             simdjson
             iresearch-ofst

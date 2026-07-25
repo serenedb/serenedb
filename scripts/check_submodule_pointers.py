@@ -2,10 +2,13 @@
 """Pre-commit hook: validate third_party submodule gitlinks.
 
 For each checked submodule the staged gitlink must
-  1. descend from the gitlink recorded on origin/main (a bump must never
-     roll the submodule back or jump to a stale lineage), and
-  2. be reachable from one of the fork's version branches (v2026.07.05,
-     ...), i.e. the fork-side PR is merged -- not a feature-branch head.
+  1. be reachable from one of the fork's version branches (vYYYY.MM.DD),
+     i.e. the fork-side PR is merged -- not a feature-branch head, and
+  2. not be older than origin/main's gitlink: its newest containing
+     version branch must compare >= main's (branch names order by date),
+     and within the same branch it must descend from main's gitlink.
+     Switching to a newer version branch is fine even though rebased
+     lineages share no ancestry.
 
 Validation prefers the local submodule clone (pure git, works offline);
 without one (CI checks out with submodules: false) it falls back to the
@@ -69,6 +72,32 @@ def version_branches(url: str, pattern: re.Pattern) -> dict[str, str] | None:
     return heads
 
 
+def verdict(
+    heads: dict[str, str],
+    gitlink: str,
+    main_sha: str,
+    contains,
+    main_is_ancestor,
+) -> tuple[bool, str]:
+    """Shared decision; `contains(branch, sha)` and `main_is_ancestor()`
+    abstract over the local-git and GitHub-API backends."""
+    names = sorted(heads, reverse=True)
+    ver_new = next((n for n in names if contains(n, gitlink)), None)
+    if ver_new is None:
+        return False, "not reachable from any version branch"
+    ver_main = next((n for n in names if contains(n, main_sha)), None)
+    if ver_main is None or ver_new > ver_main:
+        return True, f"on {ver_new}"
+    if ver_new < ver_main:
+        return (
+            False,
+            f"on {ver_new}, older than main's gitlink branch {ver_main}",
+        )
+    if main_is_ancestor():
+        return True, f"on {ver_new}"
+    return False, f"on {ver_new} but behind main's gitlink {main_sha}"
+
+
 def local_has_commit(path: str, sha: str) -> bool:
     return git("cat-file", "-e", f"{sha}^{{commit}}", cwd=path) is not None
 
@@ -93,12 +122,13 @@ def validate_local(
         git("fetch", "--quiet", "origin", cwd=path)
         if not all(local_has_commit(path, s) for s in needed):
             return None
-    if not is_local_ancestor(path, main_sha, gitlink):
-        return False, f"does not descend from origin/main's gitlink {main_sha}"
-    for name, head in sorted(heads.items(), reverse=True):
-        if is_local_ancestor(path, gitlink, head):
-            return True, f"on {name}"
-    return False, "not reachable from any version branch"
+    return verdict(
+        heads,
+        gitlink,
+        main_sha,
+        lambda name, sha: is_local_ancestor(path, sha, heads[name]),
+        lambda: is_local_ancestor(path, main_sha, gitlink),
+    )
 
 
 def github_repo(url: str) -> str | None:
@@ -130,23 +160,30 @@ def validate_api(
     repo = github_repo(url)
     if repo is None:
         return None
-    status = api_compare(repo, main_sha, gitlink)
-    if status is None:
+    probe = api_compare(repo, main_sha, gitlink)
+    if probe is None:
         return None
-    if status == "unknown":
+    if probe == "unknown":
         return False, f"is unknown to {repo} (unpushed or dangling commit?)"
-    if status not in ("identical", "ahead"):
-        return False, f"does not descend from origin/main's gitlink {main_sha}"
-    decided = False
-    for name in sorted(heads, reverse=True):
-        status = api_compare(repo, name, gitlink)
-        if status in ("identical", "behind"):
-            return True, f"on {name}"
-        if status is not None:
-            decided = True
-    if not decided:
+    indeterminate = False
+
+    def contains(name: str, sha: str) -> bool:
+        nonlocal indeterminate
+        status = api_compare(repo, name, sha)
+        if status is None:
+            indeterminate = True
+        return status in ("identical", "behind")
+
+    result = verdict(
+        heads,
+        gitlink,
+        main_sha,
+        contains,
+        lambda: probe in ("identical", "ahead"),
+    )
+    if not result[0] and indeterminate:
         return None
-    return False, "not reachable from any version branch"
+    return result
 
 
 def check(path: str, pattern: re.Pattern, override_sha: str | None) -> bool:

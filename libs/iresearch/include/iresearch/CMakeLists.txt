@@ -233,15 +233,86 @@ set(IRESEARCH_EXTERNAL_INCLUDES
 
 include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 
-add_library(iresearch-static STATIC ${IResearch_core_sources})
-
 set_source_files_properties(
     search/bm25.cpp
     search/tfidf.cpp
     PROPERTIES
         COMPILE_OPTIONS
-            "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"
+            "-fapprox-func;-fno-math-errno;-fassociative-math;-freciprocal-math;-fno-signed-zeros;-fno-trapping-math;-fno-rounding-math;-ffp-contract=fast"
 )
+
+if(SDB_BUILD_IRESEARCH_ONLY)
+    set(IResearch_embedded_sources ${IResearch_core_sources})
+    list(
+        REMOVE_ITEM
+        IResearch_embedded_sources
+        ./analysis/classification_tokenizer.cpp
+        ./analysis/fast_text_model.cpp
+        ./analysis/geo_analyzer.cpp
+        ./analysis/nearest_neighbors_tokenizer.cpp
+        ./index/column_extract.cpp
+        ./index/hit_batcher.cpp
+        ./index/table_filter_iterator.cpp
+        ./search/geo_filter.cpp
+    )
+
+    add_library(iresearch-embedded-static STATIC ${IResearch_embedded_sources})
+    add_library(iresearch::embedded ALIAS iresearch-embedded-static)
+
+    target_compile_definitions(
+        iresearch-embedded-static
+        PUBLIC IRESEARCH_EMBEDDED
+    )
+
+    target_include_directories(
+        iresearch-embedded-static
+        SYSTEM
+        PUBLIC ${IResearch_INCLUDE_DIR}
+        PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
+        PRIVATE ${SNOWBALL_INCLUDE_DIR}
+        PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+        PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+    )
+
+    if(MSVC)
+        target_compile_options(
+            iresearch-embedded-static
+            PRIVATE "$<$<CONFIG:Debug>:/bigobj>"
+            PRIVATE "/EHa"
+        )
+    endif()
+
+    target_link_libraries(
+        iresearch-embedded-static
+        PUBLIC
+            icu
+            absl::flat_hash_map
+            absl::flat_hash_set
+            absl::crc32c
+            absl::random_random
+            iresearch-embedded-support
+            simdjson
+            iresearch-ofst
+            ${SIMD_LIBRARY_STATIC}
+            ${FAISS_LIB}
+            re2
+            streamvbyte
+            duckdb_static
+            yaclib
+        PRIVATE lz4_static text stemmer-static
+    )
+
+    if(uring_FOUND)
+        target_link_libraries(
+            iresearch-embedded-static
+            PRIVATE uring::uring
+        )
+    endif()
+
+    return()
+endif()
+
+add_library(iresearch-static STATIC ${IResearch_core_sources})
 
 target_include_directories(
     iresearch-static

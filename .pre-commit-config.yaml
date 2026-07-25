@@ -113,3 +113,17 @@ repos:
         language: python
         entry: python3 scripts/check_api_keys.py
         exclude_types: [binary]
+      - id: format-duckdb
+        name: Format duckdb-family C++ (clang-format 11, docker)
+        # The duckdb-style extensions (duckdb, duckdb_postgres, duckdb_clickhouse,
+        # ...) are excluded from the standard clang-format hook above (global
+        # `exclude: third_party/.*/.*`) and need clang-format 11 in duckdb's own
+        # style, so they are formatted by scripts/format_duckdb.sh (docker-based).
+        # always_run + pass_filenames because the global exclude filters every
+        # third_party path out of the hook's file list; the script self-discovers
+        # the staged duckdb-family files (--staged) and exits without launching
+        # docker when none changed.
+        language: script
+        entry: scripts/format_duckdb.sh --staged
+        pass_filenames: false
+        always_run: true

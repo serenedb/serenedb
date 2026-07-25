@@ -634,9 +634,10 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       const auto base = gstate.pk_hi_col_idx;
       SDB_ASSERT(base < chunk.ColumnCount());
       if (gstate.postgres_ctid) {
-        // Split the duckdb rowid back into the ctid's STRUCT{page, tuple}: the
-        // page half is run-heavy (RLE) and the tuple half is a small sawtooth
-        // (bitpacked), ~2x smaller than the packed int64 as one column.
+        // Split the duckdb rowid back into the ctid's
+        // STRUCT{block_number, tuple_offset}: the block half is run-heavy (RLE)
+        // and the offset half is a small sawtooth (bitpacked), far smaller than
+        // the packed int64 as one column.
         SDB_ASSERT(base + 1 == chunk.ColumnCount());
         auto& rowid_vec = chunk.data[base];
         duckdb::UnifiedVectorFormat fmt;
@@ -644,12 +645,12 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         const auto* packed = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
         pk_scratch = std::make_unique<duckdb::Vector>(pg::CTID());
         auto& entries = duckdb::StructVector::GetEntries(*pk_scratch);
-        auto* pages = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
-        auto* tuples = duckdb::FlatVector::GetDataMutable<int64_t>(entries[1]);
+        auto* blocks = duckdb::FlatVector::GetDataMutable<uint32_t>(entries[0]);
+        auto* offsets = duckdb::FlatVector::GetDataMutable<uint16_t>(entries[1]);
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
           const auto v = packed[fmt.sel->get_index(row)];
-          pages[row] = v >> 16;
-          tuples[row] = v & 0xFFFF;
+          blocks[row] = v >> 16;
+          offsets[row] = v & 0xFFFF;
         }
         pk.column = pk_scratch.get();
         break;

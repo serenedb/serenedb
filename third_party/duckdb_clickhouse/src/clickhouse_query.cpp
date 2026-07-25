@@ -16,12 +16,12 @@
 
 namespace duckdb {
 
-void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::string &describe_sql,
-                               vector<LogicalType> &return_types, vector<std::string> &names, bool binary_as_blob,
-                               vector<bool> &stringified, vector<std::string> &clickhouse_types);
+void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const string &describe_sql,
+                               vector<LogicalType> &return_types, vector<string> &names, bool binary_as_blob,
+                               vector<bool> &stringified, vector<string> &clickhouse_types);
 
 static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, TableFunctionBindInput &input,
-                                                    vector<LogicalType> &return_types, vector<std::string> &names) {
+                                                    vector<LogicalType> &return_types, vector<string> &names) {
 	auto bind_data = make_uniq<ClickHouseBindData>();
 
 	auto connection_string = input.inputs[0].GetValue<string>();
@@ -121,11 +121,11 @@ ClickHouseQueryFunction::ClickHouseQueryFunction()
 //===--------------------------------------------------------------------===//
 struct ClickHouseExecuteBindData : public TableFunctionData {
 	ClickHouseConnectionParams params;
-	std::string sql;
+	string sql;
 };
 
 static unique_ptr<FunctionData> ClickHouseExecuteBind(ClientContext &context, TableFunctionBindInput &input,
-                                                      vector<LogicalType> &return_types, vector<std::string> &names) {
+                                                      vector<LogicalType> &return_types, vector<string> &names) {
 	auto bind_data = make_uniq<ClickHouseExecuteBindData>();
 	bind_data->params = ClickHouseConnectionParams::FromConnectionString(input.inputs[0].GetValue<string>());
 	auto sql = input.inputs[1].GetValue<string>();
@@ -184,7 +184,7 @@ struct ClickHouseClearCacheData : public TableFunctionData {
 };
 
 static unique_ptr<FunctionData> ClickHouseClearCacheBind(ClientContext &context, TableFunctionBindInput &input,
-                                                         vector<LogicalType> &return_types, vector<std::string> &names) {
+                                                         vector<LogicalType> &return_types, vector<string> &names) {
 	return_types.push_back(LogicalType::BOOLEAN);
 	names.emplace_back("Success");
 	return make_uniq<ClickHouseClearCacheData>();

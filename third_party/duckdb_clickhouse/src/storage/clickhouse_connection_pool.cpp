@@ -97,7 +97,7 @@ void ClickHouseConnectionPool::ValidatePoolAcquireMode(ClientContext &context, S
 		if (context.TryGetCurrentSetting("ch_pool_max_connections", pool_size_val)) {
 			auto pool_size = pool_size_val.GetValue<uint64_t>();
 			if (pool_size == 0) {
-				std::string mode_str = dbconnector::pool::AcquireModeHelpers::ToString(mode);
+				string mode_str = dbconnector::pool::AcquireModeHelpers::ToString(mode);
 				throw InvalidInputException(
 				    "ch_pool_acquire_mode='%s' requires ch_pool_max_connections > 0 (pooling enabled)", mode_str);
 			}

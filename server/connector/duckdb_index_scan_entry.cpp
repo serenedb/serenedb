@@ -139,10 +139,8 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   data->table_entry = this;
   data->entry_kind = ScanEntryKind::InvertedIndex;
   data->inverted_index = _inverted_index;
-  std::span<const std::string> key_cols;
-  if (_inverted_index) {
-    key_cols = _inverted_index->GetOptions().key_columns;
-  }
+  std::span<const std::string> key_cols =
+    _inverted_index->GetOptions().key_columns;
   data->fast_path = ResolveViewFastPath(context, *_sdb_view, key_cols);
   if (data->fast_path) {
     data->lookup_label = FormatLookupLabel(*data->fast_path);

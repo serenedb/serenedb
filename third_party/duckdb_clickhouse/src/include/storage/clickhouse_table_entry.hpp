@@ -12,7 +12,7 @@
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "clickhouse_connection.hpp"
 
-#include <mutex>
+#include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
 
@@ -47,7 +47,7 @@ private:
 	//! scan and cached for the entry's lifetime (clickhouse_clear_cache rebuilds it).
 	//! row_count_known is false when the server reports NULL (non-MergeTree engines).
 	//! Guarded by row_count_lock: concurrent binds of the same entry race otherwise.
-	std::mutex row_count_lock;
+	mutex row_count_lock;
 	idx_t cached_row_count = 0;
 	bool cached_row_count_known = false;
 	bool row_count_fetched = false;

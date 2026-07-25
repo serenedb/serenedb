@@ -159,7 +159,7 @@ static LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
     auto &item_names = tuple_type.GetItemNames();
     child_list_t<LogicalType> children;
     for (idx_t i = 0; i < item_types.size(); i++) {
-      std::string name = i < item_names.size() ? item_names[i] : "entry_" + std::to_string(i);
+      string name = i < item_names.size() ? item_names[i] : "entry_" + std::to_string(i);
       children.push_back(make_pair(Identifier(std::move(name)), ClickHouseToLogicalType(*item_types[i])));
     }
     return LogicalType::STRUCT(std::move(children));
@@ -181,14 +181,14 @@ static LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
   }
 }
 
-LogicalType ClickHouseTypeStringToLogicalType(const std::string &type_str) {
+LogicalType ClickHouseTypeStringToLogicalType(const string &type_str) {
   // LowCardinality is a storage-only wrapper that maps to the same LogicalType as its
   // inner type, so strip it before constructing a column. CreateColumnByType on a
   // top-level LowCardinality(Nullable(<numeric>)) throws while building its
   // null-placeholder dictionary (GetNullItemForDictionary constructs a zero-byte
   // numeric ItemView) -- a clickhouse-cpp quirk -- and would make every column of a
   // table that has such a column unreadable at bind time.
-  static const std::string lc_prefix = "LowCardinality(";
+  static const string lc_prefix = "LowCardinality(";
   if (type_str.rfind(lc_prefix, 0) == 0 && type_str.back() == ')') {
     return ClickHouseTypeStringToLogicalType(
         type_str.substr(lc_prefix.size(), type_str.size() - lc_prefix.size() - 1));
@@ -206,7 +206,7 @@ template <class CHColumn>
 static Value StringValueAt(const clickhouse::Column &col, idx_t row) {
   auto view = col.As<CHColumn>()->At(row);
   VerifyStringUtf8(view.data(), view.size());
-  return Value(std::string(view.data(), view.size()));
+  return Value(string(view.data(), view.size()));
 }
 
 // NameAt() does std::map::at on the ordinal -> throws (aborting the whole scan)
@@ -217,7 +217,7 @@ static Value EnumValueAt(const clickhouse::Column &col, idx_t row) {
   int16_t ordinal = col.As<CHColumn>()->At(row);
   auto enum_type = col.Type()->As<clickhouse::EnumType>();
   if (enum_type && enum_type->HasEnumValue(ordinal)) {
-    return Value(std::string(enum_type->GetEnumName(ordinal)));
+    return Value(string(enum_type->GetEnumName(ordinal)));
   }
   return Value(std::to_string(ordinal));
 }
@@ -298,7 +298,7 @@ static Value ClickHouseScalarValueAt(const clickhouse::Column &col, idx_t row) {
   case clickhouse::Type::JSON:
     // ColumnJSON is a sibling of ColumnString (both derive from Column), not a
     // subclass, so As<ColumnString>() would return nullptr and ->At() segfault.
-    return Value(std::string(col.As<clickhouse::ColumnJSON>()->At(row)));
+    return Value(string(col.As<clickhouse::ColumnJSON>()->At(row)));
   case clickhouse::Type::Void:
     return Value();
   default:
@@ -337,7 +337,7 @@ static Value ClickHouseColumnValueAt(const clickhouse::Column &col, idx_t row) {
         return Value(ClickHouseToLogicalType(*nested_type));
       }
       VerifyStringUtf8(view.data(), view.size());
-      return Value(std::string(view.data(), view.size()));
+      return Value(string(view.data(), view.size()));
     }
     default:
       break;
@@ -400,7 +400,7 @@ static Value ClickHouseColumnValueAt(const clickhouse::Column &col, idx_t row) {
     auto &item_names = tuple_type.GetItemNames();
     child_list_t<Value> children;
     for (idx_t i = 0; i < tuple->TupleSize(); i++) {
-      std::string name = i < item_names.size() ? item_names[i] : "entry_" + std::to_string(i);
+      string name = i < item_names.size() ? item_names[i] : "entry_" + std::to_string(i);
       children.push_back(make_pair(Identifier(std::move(name)), ClickHouseColumnValueAt(*tuple->At(i), row)));
     }
     return Value::STRUCT(std::move(children));
@@ -551,19 +551,19 @@ void ClickHouseColumnToVector(const clickhouse::Column &col, Vector &out, idx_t 
 // identifiers and single-quoted string literals, both backslash-escaped -- the
 // exact configs the shared filter pushdown and order-by optimizer already use,
 // so the SELECT list, WHERE clause and DDL render an identifier identically.
-std::string ClickHouseQuoteIdentifier(const std::string &name) {
+string ClickHouseQuoteIdentifier(const string &name) {
   auto config = dbconnector::query::QueryWriter::CreateConfig(
       '`', dbconnector::query::QuoteEscapeStyle::BACKSLASH);
   return dbconnector::query::QueryWriter::WriteQuotedAndEscaped(config, name);
 }
 
-std::string ClickHouseStringLiteral(const std::string &value) {
+string ClickHouseStringLiteral(const string &value) {
   auto config = dbconnector::query::QueryWriter::CreateConfig(
       '\'', dbconnector::query::QuoteEscapeStyle::BACKSLASH);
   return dbconnector::query::QueryWriter::WriteQuotedAndEscaped(config, value);
 }
 
-std::string ClickHouseValueLiteral(const Value &value) {
+string ClickHouseValueLiteral(const Value &value) {
   if (value.IsNull()) {
     return "NULL";
   }
@@ -642,8 +642,8 @@ static bool ChildTypeNullable(const LogicalType &child) {
          child.id() != LogicalTypeId::MAP;
 }
 
-std::string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) {
-  std::string base;
+string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) {
+  string base;
   switch (type.id()) {
   case LogicalTypeId::BOOLEAN:
     base = "Bool";
@@ -741,7 +741,7 @@ std::string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) 
     // DuckDB STRUCT -> ClickHouse named Tuple. Like arrays, ClickHouse forbids
     // Nullable(Tuple(...)), so the tuple is returned directly; scalar fields are
     // made Nullable (nested Array/Struct/Map fields cannot be).
-    std::string s = "Tuple(";
+    string s = "Tuple(";
     auto field_count = StructType::GetChildCount(type);
     for (idx_t i = 0; i < field_count; i++) {
       if (i > 0) {
@@ -830,7 +830,7 @@ static void AppendEnumColumn(const clickhouse::ColumnRef &col, Vector &vec, idx_
       typed->Append(static_cast<ORDINAL>(0), /*checkValue=*/false);
       continue;
     }
-    std::string label(data[row].GetData(), data[row].GetSize());
+    string label(data[row].GetData(), data[row].GetSize());
     if (!enum_type || !enum_type->HasEnumName(label)) {
       throw InvalidInputException("Unknown label \"%s\" for a ClickHouse Enum column", label);
     }
@@ -1063,7 +1063,7 @@ static void AppendScalarColumn(const clickhouse::ColumnRef &col, Vector &vec, id
     // physically Array(Tuple(K,V)). Build that array one map-row at a time from
     // the key/value child vectors, then wrap it in a ColumnMap and append.
     auto map_type = col->Type()->As<clickhouse::MapType>();
-    std::string tuple_type =
+    string tuple_type =
         "Tuple(" + map_type->GetKeyType()->GetName() + ", " + map_type->GetValueType()->GetName() + ")";
     auto array_col = clickhouse::CreateColumnByType("Array(" + tuple_type + ")");
     // Parse the tuple type string once; per-row sub-columns are cheap empty clones.
@@ -1111,7 +1111,7 @@ static void AppendColumnFromVector(const clickhouse::ColumnRef &col, Vector &vec
   AppendScalarColumn(col, vec, count);
 }
 
-clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vector &vec, idx_t count) {
+clickhouse::ColumnRef ClickHouseColumnFromVector(const string &ch_type, Vector &vec, idx_t count) {
   auto col = clickhouse::CreateColumnByType(ch_type);
   if (!col) {
     throw NotImplementedException("Unsupported ClickHouse column type for INSERT: %s", ch_type);
@@ -1125,11 +1125,11 @@ clickhouse::ColumnRef ClickHouseColumnFromVector(const std::string &ch_type, Vec
 // (compares as an address), and the schemaless JSON family. Matched by substring
 // so wrappers -- Nullable(Enum8(...)), LowCardinality(...), Array(IPv4) -- are
 // caught too; a plain String/FixedString type string contains none of these.
-static bool ClickHouseTypeTextDiverges(const std::string &ch_type) {
-  return ch_type.find("Enum8(") != std::string::npos || ch_type.find("Enum16(") != std::string::npos ||
-         ch_type.find("IPv4") != std::string::npos || ch_type.find("IPv6") != std::string::npos ||
-         ch_type.find("JSON") != std::string::npos || ch_type.find("Variant(") != std::string::npos ||
-         ch_type.find("Dynamic") != std::string::npos;
+static bool ClickHouseTypeTextDiverges(const string &ch_type) {
+  return ch_type.find("Enum8(") != string::npos || ch_type.find("Enum16(") != string::npos ||
+         ch_type.find("IPv4") != string::npos || ch_type.find("IPv6") != string::npos ||
+         ch_type.find("JSON") != string::npos || ch_type.find("Variant(") != string::npos ||
+         ch_type.find("Dynamic") != string::npos;
 }
 
 // The type-id switch below only sees the TOP-LEVEL DuckDB type, so a divergent
@@ -1139,9 +1139,9 @@ static bool ClickHouseTypeTextDiverges(const std::string &ch_type) {
 // Matched by substring on the original CH type string: floats (NaN placement),
 // UUID (half-swapped byte order) and the date family ("Date" also covers
 // Date32/DateTime/DateTime64: literals parse in the server's time zone).
-static bool ClickHouseInnerComparisonDiverges(const std::string &ch_type) {
-  return ch_type.find("Float32") != std::string::npos || ch_type.find("Float64") != std::string::npos ||
-         ch_type.find("UUID") != std::string::npos || ch_type.find("Date") != std::string::npos;
+static bool ClickHouseInnerComparisonDiverges(const string &ch_type) {
+  return ch_type.find("Float32") != string::npos || ch_type.find("Float64") != string::npos ||
+         ch_type.find("UUID") != string::npos || ch_type.find("Date") != string::npos;
 }
 
 static bool IsCompoundType(const LogicalType &duckdb_type) {
@@ -1156,7 +1156,7 @@ static bool IsCompoundType(const LogicalType &duckdb_type) {
   }
 }
 
-bool ClickHouseComparisonUnsafe(const LogicalType &duckdb_type, const std::string &ch_type) {
+bool ClickHouseComparisonUnsafe(const LogicalType &duckdb_type, const string &ch_type) {
   switch (duckdb_type.id()) {
   case LogicalTypeId::FLOAT:
   case LogicalTypeId::DOUBLE:

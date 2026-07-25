@@ -100,6 +100,9 @@ constexpr catalog::ObjectType FromPgObjectTypeName(
   if (word == "FOREIGN SERVER") {
     return ForeignServer;
   }
+  if (word == "USER MAPPING") {
+    return UserMapping;
+  }
   return Invalid;
 }
 

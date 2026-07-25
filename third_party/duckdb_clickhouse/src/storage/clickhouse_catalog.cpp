@@ -62,7 +62,7 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 		connection.Invalidate();
 		throw;
 		}
-	std::lock_guard<std::mutex> l(schema_lock);
+	lock_guard<mutex> l(schema_lock);
 	auto entry = schemas.find(info.GetQualifiedName().Schema().GetIdentifierName());
 	if (entry == schemas.end()) {
 		auto schema_entry = make_uniq<ClickHouseSchemaEntry>(*this, info, info.GetQualifiedName().Schema().GetIdentifierName());
@@ -87,7 +87,7 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 		connection.Invalidate();
 		throw;
 		}
-	std::lock_guard<std::mutex> l(schema_lock);
+	lock_guard<mutex> l(schema_lock);
 	auto it = schemas.find(info.GetQualifiedName().Name().GetIdentifierName());
 	if (it != schemas.end()) {
 		// Retire (do not destroy) the entry: a concurrently-bound statement may
@@ -99,10 +99,10 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 
 void ClickHouseCatalog::ClearCache() {
 	{
-		std::lock_guard<std::mutex> guard(describe_cache_lock);
+		lock_guard<mutex> guard(describe_cache_lock);
 		describe_cache.clear();
 	}
-	std::lock_guard<std::mutex> l(schema_lock);
+	lock_guard<mutex> l(schema_lock);
 	// Retire every cached schema (and its cached table metadata) rather than
 	// freeing it, so bound statements keep working; the next lookup rebuilds a
 	// fresh entry from the server.
@@ -148,7 +148,7 @@ void ClickHouseCatalog::ScanSchemas(ClientContext &context, std::function<void(S
 		throw;
 		}
 	for (auto &schema_name : schema_names) {
-		std::lock_guard<std::mutex> l(schema_lock);
+		lock_guard<mutex> l(schema_lock);
 		auto entry = schemas.find(schema_name);
 		if (entry == schemas.end()) {
 			CreateSchemaInfo info;
@@ -192,7 +192,7 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 		}
 		throw BinderException("Schema with name \"%s\" not found", schema_name);
 	}
-	std::lock_guard<std::mutex> l(schema_lock);
+	lock_guard<mutex> l(schema_lock);
 	auto entry = schemas.find(schema_name);
 	if (entry == schemas.end()) {
 		CreateSchemaInfo info;

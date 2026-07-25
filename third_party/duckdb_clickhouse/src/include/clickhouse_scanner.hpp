@@ -24,10 +24,10 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	//! through; empty for raw-connection-string binds. Execution re-resolves it
 	//! and rides the transaction's pooled connection (like postgres_query)
 	//! instead of opening a detached connection per query.
-	std::string catalog_alias;
-	std::string database;
-	std::string table;
-	std::string sql;
+	string catalog_alias;
+	string database;
+	string table;
+	string sql;
 	//! Set by clickhouse_query's bind for lookup := true: the scan holds a
 	//! connection pinned for its lifetime and re-runs the statement per
 	//! TableFunctionInput::lookup_keys chunk, shipping the key columns as the
@@ -37,7 +37,7 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	//! MergeTree-family engine: pushed filters render as PREWHERE (legal only
 	//! there), else WHERE. False for ad-hoc clickhouse_scan/query binds.
 	bool is_merge_tree = false;
-	vector<std::string> names;
+	vector<string> names;
 	//! DuckDB types per table column (parallel to names); used to build the local
 	//! re-apply expressions for filters the remote WHERE cannot express exactly.
 	vector<LogicalType> types;
@@ -49,7 +49,7 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	//! Lets pushdown detect types whose remote comparison/ordering diverges from
 	//! DuckDB's (Enum/IPv4/IPv6/JSON), which the VARCHAR-mapped DuckDB type hides.
 	//! May be empty (older bind paths); callers must bounds-check.
-	vector<std::string> clickhouse_types;
+	vector<string> clickhouse_types;
 	//! Remote ORDER BY / LIMIT clauses folded in by the shared dbconnector
 	//! OrderByAndLimitOptimizer (the folded plan node is removed).
 	dbconnector::optimizer::OrderByAndLimitBindData order_by_and_limit;
@@ -58,7 +58,7 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	dbconnector::optimizer::AggregateBindData aggregate;
 	//! Column to emit (cast to Int64) for COLUMN_IDENTIFIER_ROW_ID, enabling UPDATE/DELETE.
 	//! Empty when the table has no integer primary key usable as a row identifier.
-	std::string rowid_column;
+	string rowid_column;
 	//! The catalog table this scan resolves to (null for ad-hoc clickhouse_scan/clickhouse_query).
 	//! Exposed through get_bind_info so the binder recognises it as a base table for UPDATE/DELETE.
 	optional_ptr<TableCatalogEntry> table_entry;

@@ -9,12 +9,12 @@
 #pragma once
 
 #include <memory>
-#include <mutex>
-#include <unordered_map>
 #include <vector>
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/mutex.hpp"
+#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/enums/access_mode.hpp"
 #include "clickhouse_connection.hpp"
 #include "storage/clickhouse_connection_pool.hpp"
@@ -91,13 +91,13 @@ public:
 	//! schema_query skips one server round trip per bind; cleared with the rest
 	//! of the metadata cache.
 	struct DescribeCacheEntry {
-		vector<std::string> names;
+		vector<string> names;
 		vector<LogicalType> types;
 		vector<bool> stringified;
-		vector<std::string> clickhouse_types;
+		vector<string> clickhouse_types;
 	};
 	bool TryGetDescribe(const string &key, DescribeCacheEntry &out) {
-		std::lock_guard<std::mutex> guard(describe_cache_lock);
+		lock_guard<mutex> guard(describe_cache_lock);
 		auto it = describe_cache.find(key);
 		if (it == describe_cache.end()) {
 			return false;
@@ -106,7 +106,7 @@ public:
 		return true;
 	}
 	void StoreDescribe(const string &key, DescribeCacheEntry entry) {
-		std::lock_guard<std::mutex> guard(describe_cache_lock);
+		lock_guard<mutex> guard(describe_cache_lock);
 		describe_cache.emplace(key, std::move(entry));
 	}
 
@@ -125,7 +125,7 @@ private:
 
 private:
 	string default_schema;
-	std::mutex schema_lock;
+	mutex schema_lock;
 	case_insensitive_map_t<unique_ptr<ClickHouseSchemaEntry>> schemas;
 	// Dropped schema entries are parked here (not destroyed) for the catalog's
 	// lifetime, so a concurrently-bound statement holding a raw pointer into a
@@ -134,8 +134,8 @@ private:
 
 	shared_ptr<ClickHouseConnectionPool> connection_pool;
 
-	std::mutex describe_cache_lock;
-	std::unordered_map<string, DescribeCacheEntry> describe_cache;
+	mutex describe_cache_lock;
+	unordered_map<string, DescribeCacheEntry> describe_cache;
 };
 
 } // namespace duckdb

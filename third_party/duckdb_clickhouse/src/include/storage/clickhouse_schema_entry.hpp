@@ -10,6 +10,7 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
 class ClickHouseCatalog;
@@ -53,7 +54,7 @@ private:
 
 private:
 	string database;
-	std::mutex tables_lock;
+	mutex tables_lock;
 	case_insensitive_map_t<unique_ptr<ClickHouseTableEntry>> tables;
 	//! Entries removed from `tables` by DROP/ALTER/CREATE-OR-REPLACE, kept alive so
 	//! concurrently-bound statements that captured a pointer don't dangle.

@@ -11,7 +11,7 @@
 #include <clickhouse/client.h>
 #include <clickhouse/exceptions.h>
 
-#include <unordered_map>
+#include "duckdb/common/unordered_map.hpp"
 
 namespace duckdb {
 

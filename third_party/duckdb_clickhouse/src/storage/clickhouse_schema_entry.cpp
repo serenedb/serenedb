@@ -187,7 +187,7 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateTable(CatalogTransaction
 	RunClickHouseDDL(GetClickHouseCatalog(), GetCreateTableSQL(database, base));
 
 	{
-		std::lock_guard<std::mutex> l(tables_lock);
+		lock_guard<mutex> l(tables_lock);
 		RetireTableLocked(base.GetTableName().GetIdentifierName());
 	}
 	return &GetOrCreateTableEntry(transaction.context, base.GetTableName().GetIdentifierName());
@@ -289,7 +289,7 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateView(CatalogTransaction 
 	RunClickHouseDDL(GetClickHouseCatalog(),
 	                 GetCreateViewSQL(GetClickHouseCatalog().GetName().GetIdentifierName(), database, info));
 	{
-		std::lock_guard<std::mutex> l(tables_lock);
+		lock_guard<mutex> l(tables_lock);
 		RetireTableLocked(info.GetViewName().GetIdentifierName());
 	}
 	return &GetOrCreateTableEntry(transaction.context, info.GetViewName().GetIdentifierName());
@@ -361,7 +361,7 @@ void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &inf
 	}
 
 	RunClickHouseDDL(GetClickHouseCatalog(), sql);
-	std::lock_guard<std::mutex> l(tables_lock);
+	lock_guard<mutex> l(tables_lock);
 	RetireTableLocked(alter.GetQualifiedName().Name().GetIdentifierName());
 }
 
@@ -492,7 +492,7 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(optional_ptr<ClientC
 
 ClickHouseTableEntry &ClickHouseSchemaEntry::GetOrCreateTableEntry(optional_ptr<ClientContext> context,
                                                                    const string &table_name) {
-	std::lock_guard<std::mutex> l(tables_lock);
+	lock_guard<mutex> l(tables_lock);
 	auto entry = tables.find(table_name);
 	if (entry != tables.end()) {
 		return *entry->second;
@@ -573,7 +573,7 @@ void ClickHouseSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 	const char *kind = info.type == CatalogType::VIEW_ENTRY ? "VIEW" : "TABLE";
 	string sql = string("DROP ") + kind + " IF EXISTS " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
 	RunClickHouseDDL(GetClickHouseCatalog(), sql);
-	std::lock_guard<std::mutex> l(tables_lock);
+	lock_guard<mutex> l(tables_lock);
 	RetireTableLocked(info.GetQualifiedName().Name().GetIdentifierName());
 }
 
@@ -585,7 +585,7 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::LookupEntry(CatalogTransaction
 	auto &table_name = lookup_info.GetEntryName();
 
 	{
-		std::lock_guard<std::mutex> l(tables_lock);
+		lock_guard<mutex> l(tables_lock);
 		auto entry = tables.find(table_name);
 		if (entry != tables.end()) {
 			return entry->second.get();

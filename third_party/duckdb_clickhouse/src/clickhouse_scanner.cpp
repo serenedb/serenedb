@@ -143,11 +143,11 @@ clickhouse::ColumnRef BuildLookupColumn(Vector &vec, idx_t count) {
 		for (idx_t i = 0; i < count; i++) {
 			idx_t idx;
 			if (!valid(i, idx)) {
-				col->Append(std::string());
+				col->Append(string());
 				continue;
 			}
 			const auto str = UnifiedVectorFormat::GetData<string_t>(fmt)[idx];
-			col->Append(std::string(str.GetData(), str.GetSize()));
+			col->Append(string(str.GetData(), str.GetSize()));
 		}
 		return wrap(std::move(col));
 	}
@@ -187,7 +187,7 @@ clickhouse::ColumnRef BuildLookupColumn(Vector &vec, idx_t count) {
 		                                                       DecimalType::GetScale(type));
 		for (idx_t i = 0; i < count; i++) {
 			idx_t idx;
-			col->Append(valid(i, idx) ? vec.GetValue(i).ToString() : std::string("0"));
+			col->Append(valid(i, idx) ? vec.GetValue(i).ToString() : string("0"));
 		}
 		return wrap(std::move(col));
 	}
@@ -224,7 +224,7 @@ bool ClickHouseBindData::ColumnPushdownUnsafe(idx_t col) const {
 	if (col < stringified.size() && stringified[col]) {
 		return true;
 	}
-	const auto ch_type = col < clickhouse_types.size() ? clickhouse_types[col] : std::string();
+	const auto ch_type = col < clickhouse_types.size() ? clickhouse_types[col] : string();
 	return ClickHouseComparisonUnsafe(types[col], ch_type);
 }
 
@@ -279,7 +279,7 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 	unique_ptr<Expression> local_filter;
 	unique_ptr<ExpressionExecutor> local_filter_executor;
 	//! The remote SQL this scan streams, kept for error messages.
-	std::string remote_sql;
+	string remote_sql;
 
 	// One Select cursor (NextBlock) per scan; ClickHouse parallelises server-side.
 	idx_t MaxThreads() const override {
@@ -287,9 +287,9 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::string &describe_sql,
-                               vector<LogicalType> &return_types, vector<std::string> &names, bool binary_as_blob,
-                               vector<bool> &stringified, vector<std::string> &clickhouse_types) {
+void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const string &describe_sql,
+                               vector<LogicalType> &return_types, vector<string> &names, bool binary_as_blob,
+                               vector<bool> &stringified, vector<string> &clickhouse_types) {
 	auto &client = connection.GetClient();
 	ClickHouseConnection::LogQuery(describe_sql);
 	client.BeginSelect(describe_sql);
@@ -312,8 +312,8 @@ void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::stri
 			continue;
 		}
 		for (idx_t row = 0; row < block->GetRowCount(); row++) {
-			std::string col_name(name_col->At(row));
-			std::string col_type(type_col->At(row));
+			string col_name(name_col->At(row));
+			string col_type(type_col->At(row));
 			names.push_back(col_name);
 			LogicalType logical_type;
 			bool needs_to_string = false;
@@ -339,7 +339,7 @@ void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const std::stri
 }
 
 static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunctionBindInput &input,
-                                               vector<LogicalType> &return_types, vector<std::string> &names) {
+                                               vector<LogicalType> &return_types, vector<string> &names) {
 	auto bind_data = make_uniq<ClickHouseBindData>();
 
 	auto connection_string = input.inputs[0].GetValue<string>();
@@ -390,10 +390,10 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 	return std::move(bind_data);
 }
 
-static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vector<column_t> &column_ids,
+static string BuildScanSQL(const ClickHouseBindData &bind_data, const vector<column_t> &column_ids,
                                 optional_ptr<TableFilterSet> filters, bool filter_pushdown,
                                 vector<idx_t> &inexact_filters) {
-	std::string col_names;
+	string col_names;
 	for (auto &column_id : column_ids) {
 		if (!col_names.empty()) {
 			col_names += ", ";
@@ -419,7 +419,7 @@ static std::string BuildScanSQL(const ClickHouseBindData &bind_data, const vecto
 		col_names = "NULL";
 	}
 
-	std::string query;
+	string query;
 	if (bind_data.from_query) {
 		query = StringUtil::Format("SELECT %s FROM (%s)", col_names, bind_data.sql);
 	} else {
@@ -716,9 +716,9 @@ static InsertionOrderPreservingMap<string> ClickHouseScanToString(TableFunctionT
 	if (!bind_data.from_query) {
 		result["Table"] = bind_data.database + "." + bind_data.table;
 	}
-	auto trim_leading = [](const std::string &s) {
+	auto trim_leading = [](const string &s) {
 		auto pos = s.find_first_not_of(' ');
-		return pos == std::string::npos ? s : s.substr(pos);
+		return pos == string::npos ? s : s.substr(pos);
 	};
 	if (!bind_data.order_by_and_limit.order_by_clause.empty()) {
 		result["Pushed Order"] = trim_leading(bind_data.order_by_and_limit.order_by_clause);

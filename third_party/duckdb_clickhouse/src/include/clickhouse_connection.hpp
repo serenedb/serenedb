@@ -19,15 +19,15 @@
 namespace duckdb {
 
 struct ClickHouseConnectionParams {
-	std::string host;
+	string host;
 	uint16_t port = 9000;
-	std::string user = "default";
-	std::string password;
-	std::string database = "default";
+	string user = "default";
+	string password;
+	string database = "default";
 	bool secure = false;
 	clickhouse::CompressionMethod compression = clickhouse::CompressionMethod::LZ4;
 
-	static ClickHouseConnectionParams FromConnectionString(const std::string &connection_string);
+	static ClickHouseConnectionParams FromConnectionString(const string &connection_string);
 	clickhouse::ClientOptions ToClientOptions() const;
 };
 
@@ -52,16 +52,16 @@ public:
 	//! bound is in fractional seconds). The postgres analog is the SET
 	//! statement_timeout applied to scan connections. Used on the scan and execute
 	//! paths (not catalog-metadata queries, matching postgres).
-	static clickhouse::Query MakeQuery(duckdb::ClientContext &context, const std::string &sql);
+	static clickhouse::Query MakeQuery(duckdb::ClientContext &context, const string &sql);
 
 	//! Print `sql` to stdout when ch_debug_show_queries is enabled. Called at every
 	//! query-emit site (the postgres pg_debug_show_queries analog; there is no single
 	//! choke point because callers drive clickhouse::Client directly).
-	static void LogQuery(const std::string &sql);
+	static void LogQuery(const string &sql);
 	//! Uniform error translation: throw an IOException naming the failed operation and
 	//! carrying the SQL that failed (so errors are debuggable without re-running under
 	//! ch_debug_show_queries).
-	[[noreturn]] static void ThrowError(const char *op, const std::string &sql, const std::exception &error);
+	[[noreturn]] static void ThrowError(const char *op, const string &sql, const std::exception &error);
 	static void DebugSetPrintQueries(bool print);
 
 	//! Whether idle connections are cached for reuse across transactions/scans

@@ -2,12 +2,12 @@
 
 #include <algorithm>
 #include <vector>
-#include <unordered_map>
+#include "duckdb/common/unordered_map.hpp"
 
 namespace duckdb {
 
 // clang-format off
-static const std::vector<std::string> connection_option_names = {
+static const vector<string> connection_option_names = {
   "host",
   "port",
   "user",
@@ -16,19 +16,19 @@ static const std::vector<std::string> connection_option_names = {
   "secure"
 };
 
-static const std::unordered_map<std::string, std::string> connection_option_aliases = {
+static const unordered_map<string, string> connection_option_aliases = {
   {"username", "user"},
   {"dbname", "database"},
   {"db", "database"},
   {"hostname", "host"}
 };
 
-static const std::vector<std::string> other_option_names = {
+static const vector<string> other_option_names = {
   "uri"
 };
 // clang-format on
 
-static const std::string &ResolveAlias(const std::string &input_name) {
+static const string &ResolveAlias(const string &input_name) {
 	auto it = connection_option_aliases.find(input_name);
 	if (it == connection_option_aliases.end()) {
 		return input_name;
@@ -55,14 +55,14 @@ unique_ptr<BaseSecret> ClickHouseSecrets::CreateFunction(ClientContext &context,
 		    std::find(other_option_names.begin(), other_option_names.end(), name) == other_option_names.end()) {
 			throw InternalException("Unknown named parameter for a ClickHouse secret: '" + named_param.first + "'");
 		}
-		result->secret_map[Identifier(std::string(name))] = named_param.second.ToString();
+		result->secret_map[Identifier(string(name))] = named_param.second.ToString();
 	}
 	result->redact_keys = {"password", "uri"};
 	return std::move(result);
 }
 
 void ClickHouseSecrets::SetSecretParameters(CreateSecretFunction &function) {
-	for (const std::string &name : connection_option_names) {
+	for (const string &name : connection_option_names) {
 		function.named_parameters[Identifier(name)] = LogicalType::VARCHAR;
 	}
 	for (auto &en : connection_option_aliases) {

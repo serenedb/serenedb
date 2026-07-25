@@ -42,7 +42,6 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
     std::span<const catalog::Column::Id> bind_column_ids);
-  ~ExternalLookupIndexSource() final = default;
 
   PrimaryKeyBatch::Kind PkKind() const final {
     return PrimaryKeyBatch::Kind::Struct;
@@ -54,7 +53,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
                             duckdb::DataChunk& output) final;
 
  private:
-  enum class Dialect : uint8_t { Postgres, ClickHouse };
+  enum class Dialect : uint8_t { Postgres, ClickHouse, };
 
   void BuildQuery(duckdb::ClientContext& context, const CatalogTableRef& ref,
                   const std::vector<std::string>& select_names);

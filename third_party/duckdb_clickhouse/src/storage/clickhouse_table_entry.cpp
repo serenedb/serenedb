@@ -87,7 +87,7 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 	// Lazily capture an approximate row count for the optimizer's cardinality estimate.
 	// ifNull(...) keeps the count as a non-null UInt64; the second column flags whether
 	// the server actually knows it (NULL for View / Distributed engines).
-	std::lock_guard<std::mutex> row_count_guard(row_count_lock);
+	lock_guard<mutex> row_count_guard(row_count_lock);
 	if (!row_count_fetched) {
 		row_count_fetched = true;
 		auto &ch_catalog = catalog.Cast<ClickHouseCatalog>();

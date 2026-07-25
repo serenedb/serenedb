@@ -7,7 +7,7 @@ using namespace duckdb;
 
 class ClickhouseScannerExtension : public Extension {
 public:
-	std::string Name() override {
+	string Name() override {
 		return "clickhouse_scanner";
 	}
 	void Load(ExtensionLoader &loader) override;

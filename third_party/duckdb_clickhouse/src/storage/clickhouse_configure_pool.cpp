@@ -19,7 +19,7 @@ namespace {
 enum class ExecState { UNINITIALIZED, EXHAUSTED };
 
 struct ConfigurePoolBindData : public TableFunctionData {
-	std::pair<std::string, bool> catalog_name;
+	std::pair<string, bool> catalog_name;
 	std::pair<dbconnector::pool::AcquireMode, bool> acquire_mode;
 	std::pair<uint64_t, bool> max_connections;
 	std::pair<uint64_t, bool> wait_timeout_millis;
@@ -28,7 +28,7 @@ struct ConfigurePoolBindData : public TableFunctionData {
 	std::pair<uint64_t, bool> idle_timeout_millis;
 	std::pair<bool, bool> enable_reaper_thread;
 
-	static Value Lookup(const named_parameter_map_t &map, const std::string &key) {
+	static Value Lookup(const named_parameter_map_t &map, const string &key) {
 		auto it = map.find(Identifier(key));
 		if (it == map.end()) {
 			return Value();
@@ -36,16 +36,16 @@ struct ConfigurePoolBindData : public TableFunctionData {
 		return it->second;
 	}
 
-	static std::pair<std::string, bool> LookupString(const named_parameter_map_t &map, const std::string &key) {
+	static std::pair<string, bool> LookupString(const named_parameter_map_t &map, const string &key) {
 		Value val = Lookup(map, key);
 		if (val.IsNull()) {
 			return std::make_pair("", true);
 		}
-		std::string str = StringValue::Get(val);
+		string str = StringValue::Get(val);
 		return std::make_pair(std::move(str), false);
 	}
 
-	static std::pair<uint64_t, bool> LookupUBigInt(const named_parameter_map_t &map, const std::string &key) {
+	static std::pair<uint64_t, bool> LookupUBigInt(const named_parameter_map_t &map, const string &key) {
 		Value val = Lookup(map, key);
 		if (val.IsNull()) {
 			return std::make_pair(0, true);
@@ -53,7 +53,7 @@ struct ConfigurePoolBindData : public TableFunctionData {
 		return std::make_pair(UBigIntValue::Get(val), false);
 	}
 
-	static std::pair<bool, bool> LookupBool(const named_parameter_map_t &map, const std::string &key) {
+	static std::pair<bool, bool> LookupBool(const named_parameter_map_t &map, const string &key) {
 		Value val = Lookup(map, key);
 		if (val.IsNull()) {
 			return std::make_pair(false, true);
@@ -62,8 +62,8 @@ struct ConfigurePoolBindData : public TableFunctionData {
 	}
 
 	static std::pair<dbconnector::pool::AcquireMode, bool> LookupAcquireMode(const named_parameter_map_t &map,
-	                                                                         const std::string &key) {
-		std::pair<std::string, bool> st_pair = LookupString(map, key);
+	                                                                         const string &key) {
+		std::pair<string, bool> st_pair = LookupString(map, key);
 		if (st_pair.second) {
 			return std::make_pair(dbconnector::pool::AcquireMode::FORCE, true);
 		}
@@ -101,7 +101,7 @@ struct LocalState : public LocalTableFunctionState {
 
 } // namespace
 
-static void AddColumn(vector<LogicalType> &return_types, vector<string> &names, const std::string &col_name,
+static void AddColumn(vector<LogicalType> &return_types, vector<string> &names, const string &col_name,
                       LogicalType col_type) {
 	names.emplace_back(col_name);
 	return_types.emplace_back(col_type);
@@ -147,8 +147,8 @@ static void ConfigurePoolFunction(ClientContext &context, TableFunctionInput &in
 	}
 
 	// collect pools
-	std::vector<std::string> cat_names;
-	std::vector<shared_ptr<ClickHouseConnectionPool>> pools;
+	vector<string> cat_names;
+	vector<shared_ptr<ClickHouseConnectionPool>> pools;
 	auto databases = DatabaseManager::Get(context).GetDatabases(context);
 	for (auto &db_ref : databases) {
 		auto &db = *db_ref;
@@ -226,7 +226,7 @@ static void ConfigurePoolFunction(ClientContext &context, TableFunctionInput &in
 }
 
 ClickHouseConfigurePoolFunction::ClickHouseConfigurePoolFunction()
-    : TableFunction("clickhouse_configure_pool", std::vector<LogicalType>(), ConfigurePoolFunction, ConfigurePoolBind,
+    : TableFunction("clickhouse_configure_pool", vector<LogicalType>(), ConfigurePoolFunction, ConfigurePoolBind,
                     ConfigurePoolInitGlobalState, ConfigurePoolInitLocalState) {
 	named_parameters["catalog_name"] = LogicalType::VARCHAR;
 	named_parameters["acquire_mode"] = LogicalType::VARCHAR;

@@ -27,7 +27,7 @@ struct ClickHouseFilterPushdown {
 	//! required filter is otherwise applied nowhere and returns wrong results.
 	//! Filters that are optional by design (zonemap/TopN/join advisory prunes) are
 	//! never reported: dropping them only loses pruning, not correctness.
-	static std::string TransformFilters(const vector<column_t> &column_ids, optional_ptr<TableFilterSet> filters,
+	static string TransformFilters(const vector<column_t> &column_ids, optional_ptr<TableFilterSet> filters,
 	                                    const ClickHouseBindData &bind_data, vector<idx_t> &inexact_filters);
 };
 

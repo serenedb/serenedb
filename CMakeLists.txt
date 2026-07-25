@@ -349,11 +349,7 @@ endif()
 
 set(CMAKE_CXX_STANDARD 26 CACHE STRING "" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-if(SDB_BUILD_IRESEARCH_ONLY AND NOT APPLE)
-    set(CMAKE_CXX_EXTENSIONS ON)
-else()
-    set(CMAKE_CXX_EXTENSIONS OFF)
-endif()
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
@@ -631,7 +627,10 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${EXTRA_FLAGS} ${EXTRA_CXX_FLAGS}")
 ################################################################################
 ## Runtime
 ################################################################################
-if(NOT SDB_BUILD_IRESEARCH_ONLY)
+if(
+    NOT SDB_BUILD_IRESEARCH_ONLY
+    OR CMAKE_SYSTEM_NAME STREQUAL "Linux"
+)
 option(STATIC_EXECUTABLES "produce static executables" OFF)
 
 execute_process(

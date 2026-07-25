@@ -690,7 +690,6 @@ set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
 set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
-# Keep builtin extensions (core_functions, parquet, json, etc.)
 set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
 set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
 # No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set). Drops
@@ -708,7 +707,7 @@ set(LATEST_STORAGE TRUE CACHE BOOL "" FORCE)
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 if(SDB_BUILD_IRESEARCH_ONLY)
     set(BUILD_EXTENSIONS "icu" CACHE STRING "" FORCE)
-    set(SKIP_EXTENSIONS "parquet" CACHE STRING "" FORCE)
+    set(SKIP_EXTENSIONS "core_functions;parquet" CACHE STRING "" FORCE)
 else()
     set(BUILD_EXTENSIONS
         "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet"
@@ -754,7 +753,6 @@ if(SDB_BUILD_IRESEARCH_ONLY)
         duckdb_static
         PUBLIC
             duckdb_generated_extension_loader
-            core_functions_extension
             icu_extension
             simdutf
     )

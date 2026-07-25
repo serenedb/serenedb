@@ -46,7 +46,7 @@ struct PgForeignServer {
   Text srvtype;
   Text srvversion;
   AclColumn srvacl;
-  std::vector<std::string> srvoptions;
+  Array<Text> srvoptions;
 };
 // NOLINTEND
 

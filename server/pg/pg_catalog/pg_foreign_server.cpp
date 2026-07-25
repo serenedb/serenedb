@@ -45,10 +45,24 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
   auto catalog = _config.CatalogSnapshot();
   const auto database_id = GetDatabaseId();
 
+  // srvoptions is an Array<Text> spanning opt_views, whose Text elements point
+  // into the owned "key=value" strings in opt_bytes; both outlive the WriteData
+  // loop and must not reallocate (hence the reserves). Rendered verbatim (unlike
+  // PG's world-readable pg_foreign_server): our options may carry credentials,
+  // so this whole catalog is superuser-only instead of redacting values.
+  const auto servers = catalog->GetForeignServers(database_id);
+  std::vector<std::vector<std::string>> opt_bytes;
+  std::vector<std::vector<Text>> opt_views;
   std::vector<PgForeignServer> values;
+  opt_bytes.reserve(servers.size());
+  opt_views.reserve(servers.size());
+  values.reserve(servers.size());
 
-  for (const auto& server : catalog->GetForeignServers(database_id)) {
-    PgForeignServer row{
+  for (const auto& server : servers) {
+    opt_bytes.push_back(server->GetStringOptions());
+    const auto& bytes = opt_bytes.back();
+    opt_views.emplace_back(bytes.begin(), bytes.end());
+    values.push_back(PgForeignServer{
       .oid = server->GetId().id(),
       .srvname = server->GetName(),
       .srvowner = server->GetOwner().id(),
@@ -56,12 +70,8 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
       .srvtype = {},
       .srvversion = {},
       .srvacl = {server->GetAcl()},
-      // Rendered verbatim (unlike PG's world-readable pg_foreign_server): our
-      // server options may carry credentials, so this whole catalog is
-      // superuser-only instead of redacting values.
-      .srvoptions = server->GetStringOptions(),
-    };
-    values.push_back(std::move(row));
+      .srvoptions = opt_views.back(),
+    });
   }
 
   auto result = CreateColumns<PgForeignServer>(values.size());

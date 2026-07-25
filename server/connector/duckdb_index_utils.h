@@ -38,7 +38,10 @@ class ConnectionContext;
 
 namespace sdb::connector {
 
-enum class DuckDBWriteKind { Insert, Delete };
+enum class DuckDBWriteKind {
+  Insert,
+  Delete,
+};
 
 template<DuckDBWriteKind Kind>
 std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(

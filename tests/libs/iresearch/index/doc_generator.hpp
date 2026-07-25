@@ -680,7 +680,7 @@ class JsonDocGenerator : public DocGeneratorBase {
     UINT64,
     DBL,
     STRING,
-    RAWNUM
+    RAWNUM,
   };
 
   // an std::string_view for union inclusion without a user-defined constructor

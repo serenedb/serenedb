@@ -111,7 +111,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     std::vector<std::span<const float>> cents(
       needs_centroid ? STANDARD_VECTOR_SIZE : 0);
     size_t gathered = 0;
-    const auto flush = [&]() {
+    const auto flush = [&] {
       if (gathered == 0) {
         return;
       }

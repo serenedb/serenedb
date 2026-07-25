@@ -182,7 +182,10 @@ DrainStats DrainOnce(duckdb::ClientContext& ctx, const std::string& sql) {
   return stats;
 }
 
-enum class Order { Plain, OrderBy };
+enum class Order {
+  Plain,
+  OrderBy,
+};
 enum class Mode {
   // preserve_insertion_order=false: plain SELECT becomes a NO_ORDER plan ->
   // BufferedCollector(parallel=true). (ORDER BY still forces FIXED_ORDER.)

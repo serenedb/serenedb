@@ -27,7 +27,10 @@
 
 namespace sdb::network {
 
-enum class TlsMinVersion : uint8_t { Tls12, Tls13 };
+enum class TlsMinVersion : uint8_t {
+  Tls12,
+  Tls13,
+};
 
 struct TlsOptions {
   std::string cert_file;

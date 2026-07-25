@@ -149,7 +149,10 @@ enum class ScanEntryKind : uint8_t {
 constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
-  enum class Kind : uint8_t { Table, View };
+  enum class Kind : uint8_t {
+    Table,
+    View,
+  };
 
   std::vector<catalog::Column::Id> column_ids;
   std::vector<duckdb::LogicalType> column_types;

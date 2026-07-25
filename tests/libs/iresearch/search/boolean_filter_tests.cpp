@@ -12135,7 +12135,7 @@ TEST(disjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = [&]() {
+    auto it_ptr = [&] {
       using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
       using Adapter = irs::ScoreAdapter;
 

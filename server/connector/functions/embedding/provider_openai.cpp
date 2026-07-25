@@ -223,7 +223,7 @@ void EmbedBatchOpenAI(duckdb::DatabaseInstance& db, const ProviderConfig& cfg,
   std::array<const duckdb::string_t*, kMaxBatch> batch{};
   size_t batch_n = 0;
   size_t valid_in_batch = 0;
-  auto flush = [&]() {
+  auto flush = [&] {
     if (valid_in_batch == 0) {
       batch_n = 0;
       return;

@@ -92,7 +92,7 @@ class FailingDirectory : public tests::DirectoryMock {
     REOPEN,
     ReopenNull,  // return nullptr from index_input::reopen
     DUP,
-    DupNull  // return nullptr from index_input::dup
+    DupNull,  // return nullptr from index_input::dup
   };
 
  private:
@@ -1869,7 +1869,7 @@ TEST(index_death_test_formats_15,
 
     dir.intermediate_commits_lock.lock();
 
-    std::thread compaction_thread([&writer]() {
+    std::thread compaction_thread([&writer] {
       const irs::index_utils::CompactionCount compact_all;
       ASSERT_THROW(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
                    irs::IoError);
@@ -1934,7 +1934,7 @@ TEST(index_death_test_formats_15,
 
     dir.intermediate_commits_lock.lock();
 
-    std::thread compaction_thread([&writer]() {
+    std::thread compaction_thread([&writer] {
       const irs::index_utils::CompactionCount compact_all;
       ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
     });

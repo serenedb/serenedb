@@ -207,7 +207,7 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
   duckdb::ColumnDataCheckpointData::OverflowStringWriterFactory
     overflow_factory;
   if (codec_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
-    overflow_factory = [&out]() {
+    overflow_factory = [&out] {
       return duckdb::make_uniq<IndexOutputOverflowWriter>(out);
     };
   }

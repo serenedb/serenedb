@@ -43,7 +43,11 @@ namespace sdb::catalog {
 
 struct Snapshot;
 
-enum class DependType : char { Normal = 'n', Auto = 'a', Internal = 'i' };
+enum class DependType : char {
+  Normal = 'n',
+  Auto = 'a',
+  Internal = 'i',
+};
 
 enum class DependClass : uint8_t {
   Relation,

@@ -206,7 +206,11 @@ class ClosingPending {
 //   Unstarted -> planned + executed exactly once
 //   Paging    -> executing, fetched in batches (the paged wire ctx is retained)
 //   Exhausted -> result fully drained; must never be fetched again
-enum class PortalState : uint8_t { Unstarted, Paging, Exhausted };
+enum class PortalState : uint8_t {
+  Unstarted,
+  Paging,
+  Exhausted,
+};
 
 // A portal's execution progress: filled in when Execute first drives the plan,
 // then advanced across re-Executes. Kept apart from the portal's identity (the

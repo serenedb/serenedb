@@ -231,7 +231,11 @@ struct TsDictLocalState : public IResearchScanLocalState {
     const irs::Filter* having_filter = nullptr;
   };
 
-  enum class CountMode { Meta, Masked, Where };
+  enum class CountMode {
+    Meta,
+    Masked,
+    Where,
+  };
 
   std::vector<FieldState> fields;
   CountMode count_mode = CountMode::Meta;

@@ -110,7 +110,11 @@ inline bool IsExtended(char type) {
 // COPY direction over a stdin/stdout pipe. The patched parser rewrites STDIN /
 // STDOUT to /dev/stdin / /dev/stdout; a COPY to/from a real file classifies as
 // None (it runs through the normal Prepare/Execute path).
-enum class CopyDir : uint8_t { None, FromStdin, ToStdout };
+enum class CopyDir : uint8_t {
+  None,
+  FromStdin,
+  ToStdout,
+};
 
 struct CopyKind {
   CopyDir dir = CopyDir::None;

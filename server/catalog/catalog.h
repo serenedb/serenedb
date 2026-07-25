@@ -269,7 +269,10 @@ struct Snapshot {
  private:
   friend class Catalog;
 
-  enum class EdgeAction : uint8_t { Add, Delete };
+  enum class EdgeAction : uint8_t {
+    Add,
+    Delete,
+  };
 
   template<typename T>
   std::shared_ptr<T> EnforceRead(const AccessContext& ax,

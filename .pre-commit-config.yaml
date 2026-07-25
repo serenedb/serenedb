@@ -41,6 +41,21 @@ repos:
       - id: gersemi
         name: CMake formatter
 
+  # Rewriting fixers -- must run before clang-format so it reflows their
+  # output in the same pass.
+  - repo: local
+    hooks:
+      - id: fix-enum-trailing-comma
+        name: Fix enum trailing comma
+        language: python
+        entry: python3 scripts/fix_enum_trailing_comma.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: fix-lambda-empty-parens
+        name: Fix lambda empty parameter list
+        language: python
+        entry: python3 scripts/fix_lambda_empty_parens.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v21.1.8
     hooks:

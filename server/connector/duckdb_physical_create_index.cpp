@@ -348,7 +348,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       }
     }
     const bool table_backed = IsDuckDBTable();
-    enum class KeyShape { Single, Two, Synth };
+    enum class KeyShape {
+      Single,
+      Two,
+      Synth,
+    };
     auto shape = KeyShape::Synth;
     if (table_backed) {
       shape = KeyShape::Single;

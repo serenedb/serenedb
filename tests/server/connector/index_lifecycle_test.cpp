@@ -49,7 +49,10 @@ namespace sdb::connector {
 namespace {
 
 struct ProbeEvent {
-  enum Kind : uint8_t { Append, Delete } kind;
+  enum Kind : uint8_t {
+    Append,
+    Delete,
+  } kind;
   std::vector<int64_t> row_ids;
   std::vector<int32_t> values;
 };

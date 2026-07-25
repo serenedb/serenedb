@@ -107,11 +107,22 @@ struct Box {
   bool operator==(const Box&) const = default;
 };
 
-enum class Color : uint8_t { Red, Green, Blue };
-enum class Signed : int16_t { Neg = -3, Zero = 0, Pos = 7 };
+enum class Color : uint8_t {
+  Red,
+  Green,
+  Blue,
+};
+enum class Signed : int16_t {
+  Neg = -3,
+  Zero = 0,
+  Pos = 7,
+};
 // int64 underlying type, but enumerators stay inside magic_enum's reflectable
 // range -- the wide underlying type is what is exercised on the wire.
-enum class Wide : int64_t { Lo = -100, Hi = 100 };
+enum class Wide : int64_t {
+  Lo = -100,
+  Hi = 100,
+};
 
 struct Inner {
   int32_t x{};
@@ -508,9 +519,17 @@ TEST(BinFailCount, nested_struct_field_count_mismatch) {
 // FAILURE MODES: out-of-range enum values.
 // ===========================================================================
 
-enum class EI32 : int32_t { A = 1, B = 2 };
-enum class EU8 : uint8_t { X = 1, Y = 2 };
-enum class EI64 : int64_t { L = 1 };
+enum class EI32 : int32_t {
+  A = 1,
+  B = 2,
+};
+enum class EU8 : uint8_t {
+  X = 1,
+  Y = 2,
+};
+enum class EI64 : int64_t {
+  L = 1,
+};
 
 TEST(BinFailEnum, int32_underlying_out_of_range) {
   const std::string m = ReadError<Box<EI32>>(Box<int32_t>{999});

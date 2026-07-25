@@ -183,7 +183,12 @@ class NumericTokenizer final : public BasicTokenizer,
     }
 
    private:
-    enum NumericType { kNtLong = 0, kNtDbl, kNtInt, kNtFloat };
+    enum NumericType {
+      kNtLong = 0,
+      kNtDbl,
+      kNtInt,
+      kNtFloat,
+    };
 
     union ValueT {
       uint64_t i64;

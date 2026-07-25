@@ -120,7 +120,11 @@ struct WithVar {
   bool operator==(const WithVar&) const = default;
 };
 
-enum class Color { Red, Green, Blue };
+enum class Color {
+  Red,
+  Green,
+  Blue,
+};
 
 struct WithColor {
   Color c{};

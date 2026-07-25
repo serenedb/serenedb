@@ -115,7 +115,11 @@ class HitBatcher {
     std::array<std::unique_ptr<irs::ColumnReader::VectorScratch>, 2> scratch;
   };
 
-  enum class Pending : uint8_t { None, Dense, Scratch };
+  enum class Pending : uint8_t {
+    None,
+    Dense,
+    Scratch,
+  };
 
   bool HasFilters() const noexcept {
     return !_filters.Empty() || _score_filter != nullptr;

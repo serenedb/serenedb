@@ -14,4 +14,6 @@ add_definitions(-DUNICODE -D_UNICODE)
 
 add_subdirectory(include/iresearch)
 
-add_subdirectory(examples)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    add_subdirectory(examples)
+endif()

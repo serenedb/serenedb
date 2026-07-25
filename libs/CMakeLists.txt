@@ -1,5 +1,41 @@
 add_compile_warnings_flags()
 
+if(SDB_BUILD_IRESEARCH_ONLY)
+    add_library(
+        iresearch-embedded-support
+        STATIC
+        basics/async_utils.cpp
+        basics/crash_handler.cpp
+        basics/file_utils_ext.cpp
+        basics/log.cpp
+        basics/network_utils.cpp
+    )
+
+    target_include_directories(
+        iresearch-embedded-support
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_link_libraries(
+        iresearch-embedded-support
+        PUBLIC
+            absl::failure_signal_handler
+            absl::flat_hash_set
+            absl::strings
+            absl::synchronization
+            duckdb_static
+    )
+
+    set(IRESEARCH_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/iresearch")
+    set(IRESEARCH_BUILD_DIR "${CMAKE_BINARY_DIR}/iresearch")
+    add_subdirectory(iresearch "${IRESEARCH_BUILD_DIR}" EXCLUDE_FROM_ALL)
+    target_compile_definitions(
+        iresearch-embedded-static
+        PRIVATE DISABLE_EXECINFO
+    )
+    return()
+endif()
+
 ################################################################################
 ## LIB_SERENE
 ################################################################################

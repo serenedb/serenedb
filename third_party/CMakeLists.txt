@@ -9,7 +9,9 @@ set(CMAKE_CXX_FLAGS
 include(ExternalProject)
 include(UpdateModule)
 
-sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
+endif()
 
 ################################################################################
 ## JEMALLOC
@@ -82,10 +84,11 @@ add_subdirectory(yaclib)
 ## openssl
 ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "openssl" ${CMAKE_CURRENT_SOURCE_DIR} "README")
-add_subdirectory(openssl-cmake)
-set(OPENSSL_INCLUDE_DIR ${OPENSSL_INCLUDE_DIR} PARENT_SCOPE)
-set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "openssl" ${CMAKE_CURRENT_SOURCE_DIR} "README")
+    add_subdirectory(openssl-cmake)
+    set(OPENSSL_INCLUDE_DIR ${OPENSSL_INCLUDE_DIR} PARENT_SCOPE)
+    set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
 
 # Repeating the trick done by NuRaft that helped our build survive folly.
 # Pre-seed the cache variables that cmake's FindOpenSSL.cmake consumes so any
@@ -115,6 +118,7 @@ set(OPENSSL_SSL_LIBRARY
 set(_sdb_expected_OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}")
 set(_sdb_expected_OPENSSL_CRYPTO_LIBRARY "${OPENSSL_CRYPTO_LIBRARY}")
 set(_sdb_expected_OPENSSL_SSL_LIBRARY "${OPENSSL_SSL_LIBRARY}")
+endif()
 
 ################################################################################
 ## liburing
@@ -152,6 +156,7 @@ add_subdirectory(zlib-ng)
 # Create ZLIB::ZLIB alias for velox compatibility
 add_library(ZLIB::ZLIB ALIAS zlib-ng)
 
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
 ################################################################################
 ## MINIZIP-NG
 ################################################################################
@@ -175,6 +180,7 @@ sdb_update_module(${GIT_EXECUTABLE} "minizip-ng" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 add_subdirectory(minizip-ng)
 
 target_link_libraries(minizip PUBLIC zlib-ng)
+endif()
 
 ################################################################################
 ## BOOST
@@ -249,6 +255,7 @@ endif()
 ### googletest library
 ################################################################################
 
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
 sdb_update_module(${GIT_EXECUTABLE} "googletest" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(GTEST_HAS_ABSL ON CACHE BOOL "" FORCE)
@@ -263,6 +270,7 @@ set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 add_subdirectory(benchmark)
+endif()
 
 ################################################################################
 ### streamvbyte library
@@ -365,8 +373,9 @@ target_compile_definitions(
 ### fastText library
 ################################################################################
 
-# TODO(mbkkt) make it submodule
-add_subdirectory(fastText)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    add_subdirectory(fastText)
+endif()
 
 ################################################################################
 ### BLAS
@@ -464,6 +473,7 @@ add_subdirectory(zstd/build/cmake)
 
 add_library(zstd::zstd ALIAS libzstd_static)
 
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
 ################################################################################
 ## SNAPPY
 ################################################################################
@@ -574,6 +584,7 @@ set(CURL_INCLUDE_DIRS
 )
 set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
 set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
+endif()
 
 ################################################################################
 ## LINK_DIRECTORIES
@@ -592,6 +603,7 @@ set(ADA_USE_SIMDUTF ON CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "ada" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(ada)
 
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
 ###############################################################################
 ## croaring
 ################################################################################
@@ -600,6 +612,7 @@ set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "croaring" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(croaring)
+endif()
 
 ################################################################################
 ## fmt
@@ -608,6 +621,7 @@ add_subdirectory(croaring)
 sdb_update_module(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
 add_subdirectory(fmt)
 
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
 ################################################################################
 ## jansson
 ################################################################################
@@ -653,13 +667,19 @@ add_subdirectory(aws-cmake)
 set(AWSSDK_FOUND ON CACHE BOOL "" FORCE)
 set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
 set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
+endif()
 
 ################################################################################
 ## duckdb
 ################################################################################
 
 set(BUILD_SHELL FALSE CACHE BOOL "" FORCE)
-set(BUILD_SHELL_STATIC_LIB TRUE CACHE BOOL "" FORCE)
+if(SDB_BUILD_IRESEARCH_ONLY)
+    set(BUILD_SHELL_STATIC_LIB FALSE CACHE BOOL "" FORCE)
+    set(SDB_BUILD_DUCKDB_UNITTESTS OFF CACHE BOOL "" FORCE)
+else()
+    set(BUILD_SHELL_STATIC_LIB TRUE CACHE BOOL "" FORCE)
+endif()
 option(
     SDB_BUILD_DUCKDB_UNITTESTS
     "Build DuckDB's unittest binary for vendored-extension test suites"
@@ -686,20 +706,27 @@ set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
 set(LATEST_STORAGE TRUE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
-set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet"
-    CACHE STRING
-    ""
-    FORCE
-)
+if(SDB_BUILD_IRESEARCH_ONLY)
+    set(BUILD_EXTENSIONS "icu" CACHE STRING "" FORCE)
+    set(SKIP_EXTENSIONS "parquet" CACHE STRING "" FORCE)
+else()
+    set(BUILD_EXTENSIONS
+        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet"
+        CACHE STRING
+        ""
+        FORCE
+    )
+endif()
 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+endif()
 
 # duckdb's in-tree extensions resolve their includes from directory scope (not from duckdb_static's
 # INTERFACE), so expose simdutf's header to the whole duckdb subtree here. The duckdb_static PUBLIC link
@@ -708,10 +735,12 @@ include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
 
 add_subdirectory(duckdb)
 
-target_compile_definitions(
-    duckdb_shell_static
-    PRIVATE SERENEDB_SHELL_VERSION="${SERENEDB_VERSION}"
-)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    target_compile_definitions(
+        duckdb_shell_static
+        PRIVATE SERENEDB_SHELL_VERSION="${SERENEDB_VERSION}"
+    )
+endif()
 
 target_include_directories(
     duckdb_static
@@ -720,27 +749,35 @@ target_include_directories(
 )
 
 # Link extension objects that aren't automatically included in duckdb_static
-target_link_libraries(
-    duckdb_static
-    PUBLIC
-        duckdb_generated_extension_loader
-        core_functions_extension
-        parquet_extension
-        tpch_extension
-        tpcds_extension
-        json_extension
-        httpfs_extension
-        avro_extension
-        iceberg_extension
-        postgres_scanner_extension
-        autocomplete_extension
-        icu_extension
-        inet_extension
-        # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
-        # one PUBLIC edge propagates the simdutf include to duckdb core and to
-        # every static extension (they each link duckdb_static).
-        simdutf
-)
+if(SDB_BUILD_IRESEARCH_ONLY)
+    target_link_libraries(
+        duckdb_static
+        PUBLIC
+            duckdb_generated_extension_loader
+            core_functions_extension
+            icu_extension
+            simdutf
+    )
+else()
+    target_link_libraries(
+        duckdb_static
+        PUBLIC
+            duckdb_generated_extension_loader
+            core_functions_extension
+            parquet_extension
+            tpch_extension
+            tpcds_extension
+            json_extension
+            httpfs_extension
+            avro_extension
+            iceberg_extension
+            postgres_scanner_extension
+            autocomplete_extension
+            icu_extension
+            inet_extension
+            simdutf
+    )
+endif()
 
 # !!! KEEP THIS LAST !!!
 # Guard against a future add_subdirectory() in this file re-pointing OpenSSL at
@@ -751,16 +788,18 @@ target_link_libraries(
 # if this starts breaking  - most likely someone in third_party is playing
 # with FORCE setting variables. Then maybe dependency provider will help,
 # but looks like overkill for now.
-foreach(_var OPENSSL_INCLUDE_DIR OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY)
-    if(NOT "${${_var}}" STREQUAL "${_sdb_expected_${_var}}")
-        message(
-            FATAL_ERROR
-            "${_var} drifted from the vendored pre-seed.\n"
-            "  expected: ${_sdb_expected_${_var}}\n"
-            "  actual:   ${${_var}}\n"
-            "Something added in third_party/ changed this cache variable. "
-            "Re-point it at the vendored tree or rework the pre-seed at the "
-            "top of third_party/CMakeLists.txt."
-        )
-    endif()
-endforeach()
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    foreach(_var OPENSSL_INCLUDE_DIR OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY)
+        if(NOT "${${_var}}" STREQUAL "${_sdb_expected_${_var}}")
+            message(
+                FATAL_ERROR
+                "${_var} drifted from the vendored pre-seed.\n"
+                "  expected: ${_sdb_expected_${_var}}\n"
+                "  actual:   ${${_var}}\n"
+                "Something added in third_party/ changed this cache variable. "
+                "Re-point it at the vendored tree or rework the pre-seed at the "
+                "top of third_party/CMakeLists.txt."
+            )
+        endif()
+    endforeach()
+endif()

@@ -37,6 +37,16 @@ option(AUTO_UPDATE_MODULES "automatically update git modules" ON)
 
 option(SDB_IOURING "allow to use iouring" ON)
 
+option(
+    SDB_BUILD_IRESEARCH_ONLY
+    "build the embeddable IResearch target without SereneDB"
+    OFF
+)
+
+if(SDB_BUILD_IRESEARCH_ONLY)
+    set(SDB_IOURING OFF CACHE BOOL "" FORCE)
+endif()
+
 find_package(Git 1.5.3 REQUIRED)
 
 # ------------------------------------------------------------------------------
@@ -617,6 +627,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${EXTRA_FLAGS} ${EXTRA_CXX_FLAGS}")
 ################################################################################
 ## Runtime
 ################################################################################
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
 option(STATIC_EXECUTABLES "produce static executables" OFF)
 
 execute_process(
@@ -746,6 +757,7 @@ else()
         $<BUILD_LOCAL_INTERFACE:cxx_static>
     )
 endif()
+endif()
 
 ################################################################################
 ## VTUNE Symbols for profiling our build.
@@ -811,6 +823,7 @@ include(SereneDBInstall)
 # If "make clean" removes these files, afterwards neither "make" nor "cmake" work any more.
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
 
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
 set(EXIT_CODE_FILES libs/basics/exitcodes.h js/common/bootstrap/exitcodes.js)
 
 set(EXIT_CODE_FILES_GEN)
@@ -842,16 +855,23 @@ foreach(m IN LISTS EXIT_CODE_FILES)
 endforeach()
 
 add_custom_target(exitcodefiles ALL DEPENDS ${EXIT_CODE_FILES_GEN})
+endif()
 
 ################################################################################
 ## SUB-PROJECTS
 ################################################################################
 
-list(INSERT SYSTEM_LIBRARIES 0 ${OPENSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+if(SDB_BUILD_IRESEARCH_ONLY)
+    list(APPEND SYSTEM_LIBRARIES Threads::Threads)
+else()
+    list(INSERT SYSTEM_LIBRARIES 0 ${OPENSSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+endif()
 
 add_subdirectory(libs)
-add_subdirectory(server)
-add_subdirectory(tests)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    add_subdirectory(server)
+    add_subdirectory(tests)
+endif()
 
 add_custom_target(packages DEPENDS ${PACKAGES_LIST})
 
@@ -866,4 +886,6 @@ add_custom_target(
 
 message(STATUS "building for git revision: ${SERENEDB_BUILD_REPOSITORY}")
 
-add_custom_target(serenedb DEPENDS serened)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    add_custom_target(serenedb DEPENDS serened)
+endif()

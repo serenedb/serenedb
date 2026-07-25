@@ -94,6 +94,9 @@ class Index : public Object {
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 
+  std::string_view Comment() const noexcept { return _comment; }
+  void SetComment(std::string_view comment) { _comment = comment; }
+
   virtual ~Index() = default;
 
  protected:
@@ -140,6 +143,7 @@ class Index : public Object {
   std::vector<Column::Id> _columns;
   std::vector<Column::Id> _referenced_columns;
   containers::FlatHashSet<Column::Id> _referenced_columns_set;
+  std::string _comment;
 };
 
 std::shared_ptr<SecondaryIndex> CreateSecondaryIndex(

@@ -63,6 +63,21 @@ std::shared_ptr<Object> Sequence::Clone() const {
   return std::make_shared<Sequence>(GetParentId(), GetId(), std::move(opts));
 }
 
+std::shared_ptr<Sequence> Sequence::CloneWithComment(
+  std::string_view comment) const {
+  auto opts = _options;
+  opts.perm = GetPermissions();
+  opts.comment = std::string{comment};
+  auto seq =
+    std::make_shared<Sequence>(GetParentId(), GetId(), std::move(opts));
+  absl::MutexLock lock{&_cnt_mtx};
+  const auto cur = _cnt.load(std::memory_order_acquire);
+  seq->_cnt.store(cur, std::memory_order_release);
+  seq->_cache_begin.store(cur + 1, std::memory_order_release);
+  seq->_cache_end.store(cur, std::memory_order_release);
+  return seq;
+}
+
 uint64_t Sequence::LoadFromDb() const {
   auto& store = GetCatalogStore();
   uint64_t value = 0;

@@ -45,10 +45,12 @@ std::shared_ptr<SecondaryIndex> SecondaryIndex::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
   persistence::SecondaryIndexData data;
   basics::ReadTuple(src, data);
-  return std::make_shared<SecondaryIndex>(
+  auto index = std::make_shared<SecondaryIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
     std::move(data.name), std::move(data.columns), std::move(data.expressions),
     data.unique);
+  index->SetComment(data.comment);
+  return index;
 }
 
 void SecondaryIndex::Serialize(duckdb::Serializer& sink) const {
@@ -57,13 +59,16 @@ void SecondaryIndex::Serialize(duckdb::Serializer& sink) const {
                              .unique = _unique,
                              .columns = Columns(),
                              .expressions = Expressions(),
+                             .comment = std::string{Comment()},
                            });
 }
 
 std::shared_ptr<Object> SecondaryIndex::Clone() const {
-  return std::make_shared<SecondaryIndex>(GetDatabaseId(), GetParentId(),
-                                          GetId(), GetRelationId(), GetName(),
-                                          Columns(), Expressions(), _unique);
+  auto index = std::make_shared<SecondaryIndex>(
+    GetDatabaseId(), GetParentId(), GetId(), GetRelationId(), GetName(),
+    Columns(), Expressions(), _unique);
+  index->SetComment(Comment());
+  return index;
 }
 
 }  // namespace sdb::catalog

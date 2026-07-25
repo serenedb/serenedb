@@ -49,6 +49,8 @@ namespace sdb::catalog {
 struct StoreTableColumn {
   std::string name;
   duckdb::LogicalType type;
+  duckdb::CompressionType compression =
+    duckdb::CompressionType::COMPRESSION_AUTO;
 };
 
 struct StoreForeignKey {
@@ -161,7 +163,8 @@ class CatalogStore {
     // Adds a column. `type_sql` is the SQL type text; `default_sql` is the
     // DEFAULT expression text (empty for none) used to backfill existing rows.
     void AddStoreColumn(std::string table, std::string name,
-                        std::string type_sql, std::string default_sql);
+                        std::string type_sql, std::string default_sql,
+                        duckdb::CompressionType compression);
     // Changes a column's type. `using_sql` is the USING cast text (empty for
     // the implicit cast).
     void ChangeStoreColumnType(std::string table, std::string name,
@@ -224,6 +227,8 @@ class CatalogStore {
       StoreIndexDef store_index;
       std::string name_a;
       std::string name_b;
+      duckdb::CompressionType compression =
+        duckdb::CompressionType::COMPRESSION_AUTO;
     };
 
     WriteContext() = default;

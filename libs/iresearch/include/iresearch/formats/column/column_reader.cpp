@@ -56,7 +56,6 @@
 #include "iresearch/formats/column/array_column_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
-#include "iresearch/formats/column/internal/overflow_string_io.hpp"
 #include "iresearch/formats/column/list_column_reader.hpp"
 #include "iresearch/formats/column/struct_column_reader.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
@@ -312,9 +311,10 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(
     /*block_id=*/0, /*offset=*/0, byte_size, /*segment_state=*/nullptr);
   if (_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
     if (auto seg_state = segment->GetSegmentState()) {
-      seg_state->Cast<duckdb::UncompressedStringSegmentState>()
-        .overflow_reader =
-        duckdb::make_uniq<IndexInputOverflowReader>(ctx.In());
+      auto& str_state =
+        seg_state->Cast<duckdb::UncompressedStringSegmentState>();
+      str_state.overflow_reader = &ctx;
+      str_state.stream_reader = &ctx;
     }
   }
   return segment;

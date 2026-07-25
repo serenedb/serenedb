@@ -26,7 +26,9 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/operator/persistent/physical_batch_insert.hpp>
 #include <duckdb/execution/operator/persistent/physical_delete.hpp>
@@ -62,13 +64,21 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_simple.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
+#include <duckdb/storage/block_manager.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/database_size.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table_io_manager.hpp>
 #include <ranges>
 
+#include "basics/containers/flat_hash_set.h"
+#include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/inverted_index.h"
 #include "catalog/pk_spec.h"
 #include "catalog/schema.h"
+#include "catalog/secondary_index.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
@@ -91,6 +101,9 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "search/inverted_index_storage.h"
+#include "search/search_table.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {
@@ -1036,6 +1049,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                         ERR_MSG("unrecognized parameter \"", option, "\""));
       }
     }
+  } else if (!create_index_info->options.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized parameter \"",
+                            create_index_info->options.begin()->first, "\""));
   }
 
   if (create_index_info->where_clause &&
@@ -1294,16 +1311,212 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   return result;
 }
 
-duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
-  duckdb::ClientContext& context) {
-  // Facade tables hold no row data themselves -- it lives in the hidden store
-  // database. Report the store's size (the user never names the store).
+namespace {
+
+duckdb::optional_ptr<duckdb::TableCatalogEntry> ResolveStoreTableEntry(
+  duckdb::ClientContext& context, const catalog::Snapshot& snapshot,
+  const catalog::Table& table) {
+  auto schema = snapshot.GetObject<catalog::Schema>(table.GetParentId());
+  if (!schema) {
+    return nullptr;
+  }
+  auto database = snapshot.GetDatabase(schema->GetParentId());
+  if (!database) {
+    return nullptr;
+  }
+  auto store_name = catalog::StoreTableName(database->GetName(),
+                                            schema->GetName(), table.GetName());
+  duckdb::EntryLookupInfo lookup(
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},
+                          "main", duckdb::Identifier{store_name}));
+  auto entry = duckdb::Catalog::GetEntry(context, lookup,
+                                         duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry) {
+    return nullptr;
+  }
+  return &entry->Cast<duckdb::TableCatalogEntry>();
+}
+
+}  // namespace
+
+RelationStorageSize StoreTableDataSize(duckdb::ClientContext& context,
+                                       const catalog::Snapshot& snapshot,
+                                       const catalog::Table& table) {
+  RelationStorageSize result;
+  if (table.GetEngine() != catalog::TableEngine::Transactional ||
+      table.Tombstoned()) {
+    return result;
+  }
+  auto entry = ResolveStoreTableEntry(context, snapshot, table);
+  if (!entry) {
+    return result;
+  }
+  auto& storage = entry->GetStorage();
+  duckdb::QueryContext query_context(context);
+  containers::FlatHashSet<duckdb::block_id_t> blocks;
+  int64_t transient_bytes = 0;
+  for (const auto& info : storage.GetColumnSegmentInfo(query_context)) {
+    if (info.persistent) {
+      blocks.insert(info.block_id);
+      blocks.insert(info.additional_blocks.begin(),
+                    info.additional_blocks.end());
+    } else {
+      transient_bytes += static_cast<int64_t>(info.segment_size);
+    }
+  }
+  const auto block_size =
+    storage.GetTableIOManager().GetBlockManagerForRowData().GetBlockSize();
+  result.persistent_blocks = static_cast<int64_t>(blocks.size());
+  result.bytes = result.persistent_blocks * static_cast<int64_t>(block_size) +
+                 transient_bytes;
+  return result;
+}
+
+int64_t StoreTableIndexBytes(duckdb::ClientContext& context,
+                             const catalog::Snapshot& snapshot,
+                             const catalog::Table& table) {
+  if (table.GetEngine() != catalog::TableEngine::Transactional ||
+      table.Tombstoned()) {
+    return 0;
+  }
+  auto entry = ResolveStoreTableEntry(context, snapshot, table);
+  if (!entry) {
+    return 0;
+  }
+  auto& info = *entry->GetStorage().GetDataTableInfo();
+  info.BindIndexes(context);
+  int64_t total = 0;
+  for (auto& index : info.GetIndexes().Indexes()) {
+    if (!index.IsBound()) {
+      continue;
+    }
+    total += static_cast<int64_t>(
+      index.Cast<duckdb::BoundIndex>().GetAllocationSize());
+  }
+  return total;
+}
+
+int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
+                               const catalog::Snapshot& snapshot,
+                               const catalog::Table& table) {
+  int64_t total = StoreTableIndexBytes(context, snapshot, table);
+  auto schema = snapshot.GetObject<catalog::Schema>(table.GetParentId());
+  if (!schema) {
+    return total;
+  }
+  for (const auto& rel :
+       snapshot.GetRelations(schema->GetParentId(), schema->GetName())) {
+    if (rel->GetType() != catalog::ObjectType::InvertedIndex) {
+      continue;
+    }
+    const auto& index = basics::downCast<const catalog::InvertedIndex>(*rel);
+    if (index.GetRelationId() == table.GetId()) {
+      total += InvertedIndexBytes(index);
+    }
+  }
+  return total;
+}
+
+int64_t SecondaryIndexBytes(duckdb::ClientContext& context,
+                            const catalog::Snapshot& snapshot,
+                            const catalog::SecondaryIndex& index) {
+  auto table = snapshot.GetObject<catalog::Table>(index.GetRelationId());
+  if (!table || table->GetEngine() != catalog::TableEngine::Transactional ||
+      table->Tombstoned()) {
+    return 0;
+  }
+  auto entry = ResolveStoreTableEntry(context, snapshot, *table);
+  if (!entry) {
+    return 0;
+  }
+  auto& info = *entry->GetStorage().GetDataTableInfo();
+  info.BindIndexes(context);
+  auto bound = info.GetIndexes().Find(
+    duckdb::Identifier{catalog::StoreIndexName(index.GetId())});
+  return bound ? static_cast<int64_t>(bound->GetAllocationSize()) : 0;
+}
+
+int64_t SearchTableBytes(const catalog::Table& table) {
+  if (table.GetEngine() != catalog::TableEngine::Search) {
+    return 0;
+  }
+  const auto& data = table.GetData();
+  if (!data) {
+    return 0;
+  }
+  auto reader = data->GetDirectoryReader();
+  if (!reader) {
+    return 0;
+  }
+  int64_t total = 0;
+  for (const auto& segment : reader.Meta().index_meta.segments) {
+    total += static_cast<int64_t>(segment.meta.byte_size);
+  }
+  return total;
+}
+
+int64_t InvertedIndexBytes(const catalog::InvertedIndex& index) {
+  const auto& data = index.GetData();
+  if (!data) {
+    return 0;
+  }
+  return static_cast<int64_t>(data->GetStats().indexSize);
+}
+
+duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
+                                         const catalog::Snapshot& snapshot,
+                                         ObjectId database_id,
+                                         std::string_view only_schema) {
+  duckdb::DatabaseSize result;
   auto store = duckdb::DatabaseManager::Get(context).GetDatabase(
     context, duckdb::Identifier{catalog::kStoreDatabaseName});
   if (store) {
-    return store->GetCatalog().GetDatabaseSize(context);
+    result.block_size = store->GetCatalog().GetDatabaseSize(context).block_size;
   }
-  return {};
+  int64_t bytes = 0;
+  int64_t blocks = 0;
+  for (const auto& schema : snapshot.GetSchemas(database_id)) {
+    if (!only_schema.empty() && schema->GetName() != only_schema) {
+      continue;
+    }
+    for (const auto& rel :
+         snapshot.GetRelations(database_id, schema->GetName())) {
+      switch (rel->GetType()) {
+        case catalog::ObjectType::Table: {
+          auto table = snapshot.GetObject<catalog::Table>(rel->GetId());
+          if (!table || table->Tombstoned()) {
+            break;
+          }
+          if (table->GetEngine() == catalog::TableEngine::Search) {
+            bytes += SearchTableBytes(*table);
+            break;
+          }
+          const auto data = StoreTableDataSize(context, snapshot, *table);
+          bytes += data.bytes + StoreTableIndexBytes(context, snapshot, *table);
+          blocks += data.persistent_blocks;
+        } break;
+        case catalog::ObjectType::InvertedIndex: {
+          if (auto index =
+                snapshot.GetObject<catalog::InvertedIndex>(rel->GetId())) {
+            bytes += InvertedIndexBytes(*index);
+          }
+        } break;
+        default:
+          break;
+      }
+    }
+  }
+  result.bytes = static_cast<duckdb::idx_t>(bytes);
+  result.total_blocks = static_cast<duckdb::idx_t>(blocks);
+  result.used_blocks = result.total_blocks;
+  return result;
+}
+
+duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
+  duckdb::ClientContext& context) {
+  auto snapshot = GetSereneDBContext(context).CatalogSnapshot();
+  return DatabaseStorageSize(context, *snapshot, _database_id);
 }
 
 }  // namespace sdb::connector

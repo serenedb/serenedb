@@ -1,0 +1,70 @@
+# zstd segments must publish real statistics: the codec accumulates min/max
+# and null info in a StatsWriter per segment, and FlushSegment has to merge it
+# into the segment statistics (like every other codec does). Without the merge
+# a zstd segment ships BaseStatistics::CreateEmpty -- inverted min/max
+# sentinels that claim "no value can match" -- so zonemap checks on a pushed
+# constant filter prune row groups that do contain matches and silently drop
+# rows.
+#
+# Covers both zstd layouts. Block layout: a serenedb table whose store-side
+# duckdb table carries the per-column USING COMPRESSION attribute; CHECKPOINT
+# rewrites the appended rows into zstd segments and replaces the column
+# statistics with the merge of the segment statistics. Stream layout: an
+# inverted-index INCLUDE column, whose zonemaps are the per-segment statistics
+# serialized into the .col footer.
+
+# --- 1. serenedb table (duckdb block layout in the store) ------------------
+statement ok
+CREATE TABLE zstat_tbl(pk INT, v VARCHAR USING COMPRESSION zstd);
+
+statement ok
+INSERT INTO zstat_tbl SELECT i, md5(i::VARCHAR) FROM generate_series(1, 5000) t(i);
+
+# Compress the appended rows into zstd segments.
+statement ok
+CHECKPOINT;
+
+# USING COMPRESSION reached the store table and pragma_storage_info resolves
+# through the facade; without zstd here the probe below tests nothing.
+query
+SELECT DISTINCT compression FROM pragma_storage_info('zstat_tbl')
+WHERE segment_type = 'VARCHAR';
+----
+compression
+ZSTD
+
+query
+SELECT count(*) AS n FROM zstat_tbl WHERE v = md5('42');
+----
+n
+1
+
+# --- 2. Inverted-index INCLUDE column (.col stream layout) ----------------
+statement ok
+CREATE TEXT SEARCH DICTIONARY zstat_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true
+);
+
+statement ok
+CREATE TABLE zstat_src(body VARCHAR, v VARCHAR);
+
+statement ok
+INSERT INTO zstat_src SELECT 'fox', md5(i::VARCHAR) FROM generate_series(1, 5000) t(i);
+
+statement ok
+CREATE INDEX zstat_idx ON zstat_src USING inverted(body zstat_dict)
+  INCLUDE (v included (compression = 'zstd'));
+
+query
+SELECT count(*) AS n FROM zstat_idx WHERE body @@ 'fox' AND v = md5('42');
+----
+n
+1
+
+# Filter-only pushdown (no FTS term) prunes through the same zonemaps.
+query
+SELECT count(*) AS n FROM zstat_idx WHERE v = md5('42');
+----
+n
+1

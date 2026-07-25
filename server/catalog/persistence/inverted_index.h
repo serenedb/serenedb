@@ -90,6 +90,7 @@ struct InvertedIndexData {
   // maintained only when it evaluates to true. An empty serialized_expr
   // means a full index. return_type is BOOLEAN.
   ExpressionData predicate;
+  std::string comment;
 };
 
 }  // namespace sdb::catalog::persistence

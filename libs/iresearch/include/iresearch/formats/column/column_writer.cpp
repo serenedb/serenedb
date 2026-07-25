@@ -43,7 +43,6 @@
 
 #include "basics/assert.h"
 #include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/column/internal/overflow_string_io.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
@@ -204,12 +203,11 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
   auto& out = Out();
   auto& bm = db.GetBufferManager();
 
-  duckdb::ColumnDataCheckpointData::OverflowStringWriterFactory
-    overflow_factory;
+  duckdb::optional_ptr<duckdb::OverflowStringWriter> overflow_writer;
+  duckdb::optional_ptr<duckdb::ColumnStreamWriter> stream_writer;
   if (codec_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
-    overflow_factory = [&out] {
-      return duckdb::make_uniq<IndexOutputOverflowWriter>(out);
-    };
+    overflow_writer = &ctx;
+    stream_writer = &ctx;
   }
 
   auto capture = [&](duckdb::ColumnSegment& seg, duckdb::idx_t size,
@@ -242,7 +240,8 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     codec_type,
     db,
     kStorageVersion,
-    std::move(overflow_factory),
+    overflow_writer,
+    stream_writer,
     std::move(flush_fn),
     std::move(flush_internal_fn),
     ctx,

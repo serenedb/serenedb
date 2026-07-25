@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/types.hpp"
 
 namespace duckdb {
 
@@ -31,7 +32,9 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace irs {
 
-class WriteContext final : public BlockManager {
+class WriteContext final : public BlockManager,
+                           public duckdb::OverflowStringWriter,
+                           public duckdb::ColumnStreamWriter {
  public:
   WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out);
   ~WriteContext() final;
@@ -42,6 +45,14 @@ class WriteContext final : public BlockManager {
   WriteContext& operator=(WriteContext&&) = delete;
 
   IndexOutput& Out() noexcept { return *_out; }
+
+  void WriteString(duckdb::UncompressedStringSegmentState& state,
+                   duckdb::string_t string, duckdb::block_id_t& result_block,
+                   int32_t& result_offset) final;
+  void Flush() final {}
+
+  duckdb::idx_t Position() const final;
+  void Append(duckdb::const_data_ptr_t data, duckdb::idx_t size) final;
 
   duckdb::block_id_t GetFreeBlockId() final;
   duckdb::block_id_t PeekFreeBlockId() final;
@@ -62,7 +73,6 @@ class WriteContext final : public BlockManager {
 
  private:
   IndexOutput* _out;
-  duckdb::block_id_t _next_id = 0;
 };
 
 }  // namespace irs

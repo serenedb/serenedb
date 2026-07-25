@@ -511,6 +511,14 @@ class Catalog final {
     const AccessContext& ax, ObjectId database_id, std::string_view schema,
     std::string_view name,
     absl::FunctionRef<void(InvertedIndexOptions&)> mutate, bool missing_ok);
+  void SetObjectComment(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema, std::string_view name,
+                        ObjectType type, std::string_view comment,
+                        bool missing_ok);
+  void SetViewColumnComment(const AccessContext& ax, ObjectId database_id,
+                            std::string_view schema, std::string_view name,
+                            std::string_view column, std::string_view comment,
+                            bool missing_ok);
   void ChangeRole(const AccessContext& ax, std::string_view name,
                   std::string_view verb, bool allow_self,
                   ChangeCallback<Role> callback);

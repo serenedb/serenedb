@@ -270,6 +270,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     auto& sdb_col =
       options.columns.emplace_back(ObjectId{}, catalog::NextId(),
                                    col.Name().GetIdentifierName(), col.Type());
+    sdb_col.compression = col.CompressionType();
 
     bool is_smallserial = pg::IsSmallserial(sdb_col.type);
     bool is_serial = pg::IsSerial(sdb_col.type);
@@ -624,6 +625,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       info.GetIndexName().GetIdentifierName(), std::move(idx_columns),
       std::move(options), {}, {.if_not_exists = if_not_exists});
   } else {
+    if (!info.options.empty()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("unrecognized parameter \"",
+                              info.options.begin()->first, "\""));
+    }
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     created = catalog_impl.CreateSecondaryIndex(
       catalog::ActingAs(context), database_id, name.GetIdentifierName(),
@@ -884,9 +890,10 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
   }
 
   // COMMENT ON TABLE/COLUMN are top-level AlterTypes (not inside ALTER_TABLE),
-  // so intercept them before the ALTER_TABLE guard. Both route through
-  // ChangeTable copy-on-write; the comment surfaces in duckdb_tables()/
-  // duckdb_columns(). NULL clears the comment (empty string).
+  // so intercept them before the ALTER_TABLE guard. The comment surfaces in
+  // duckdb_tables()/duckdb_columns()/duckdb_views()/duckdb_indexes()/
+  // duckdb_sequences()/duckdb_types()/duckdb_functions(). NULL clears the
+  // comment (empty string).
   if (info.type == duckdb::AlterType::SET_COMMENT) {
     auto& comment_info = info.Cast<duckdb::SetCommentInfo>();
     std::string comment =
@@ -894,16 +901,66 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         ? std::string{}
         : comment_info.comment_value.DefaultCastAs(duckdb::LogicalType::VARCHAR)
             .GetValue<std::string>();
-    catalog_impl.ChangeTable(
-      ax, db, name.GetIdentifierName(),
-      info.GetQualifiedName().Name().GetIdentifierName(),
-      [&](const catalog::Table& table,
-          std::shared_ptr<catalog::Table>& updated) {
-        table.SetComment(updated, comment);
-      },
-      {.missing_ok =
-         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL});
-    return;
+    const bool missing_ok =
+      info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
+    switch (comment_info.entry_catalog_type) {
+      case duckdb::CatalogType::TABLE_ENTRY: {
+        auto relation = catalog_impl.GetCatalogSnapshot()->GetRelation(
+          catalog::NoAccessCheck(), db, name.GetIdentifierName(),
+          info.GetQualifiedName().Name().GetIdentifierName());
+        if (relation && relation->GetType() == catalog::ObjectType::PgSqlView) {
+          catalog_impl.SetObjectComment(
+            ax, db, name.GetIdentifierName(),
+            info.GetQualifiedName().Name().GetIdentifierName(),
+            catalog::ObjectType::PgSqlView, comment, missing_ok);
+          return;
+        }
+        catalog_impl.ChangeTable(
+          ax, db, name.GetIdentifierName(),
+          info.GetQualifiedName().Name().GetIdentifierName(),
+          [&](const catalog::Table& table,
+              std::shared_ptr<catalog::Table>& updated) {
+            table.SetComment(updated, comment);
+          },
+          {.missing_ok = missing_ok});
+        return;
+      }
+      case duckdb::CatalogType::VIEW_ENTRY:
+        catalog_impl.SetObjectComment(
+          ax, db, name.GetIdentifierName(),
+          info.GetQualifiedName().Name().GetIdentifierName(),
+          catalog::ObjectType::PgSqlView, comment, missing_ok);
+        return;
+      case duckdb::CatalogType::SEQUENCE_ENTRY:
+        catalog_impl.SetObjectComment(
+          ax, db, name.GetIdentifierName(),
+          info.GetQualifiedName().Name().GetIdentifierName(),
+          catalog::ObjectType::Sequence, comment, missing_ok);
+        return;
+      case duckdb::CatalogType::INDEX_ENTRY:
+        catalog_impl.SetObjectComment(
+          ax, db, name.GetIdentifierName(),
+          info.GetQualifiedName().Name().GetIdentifierName(),
+          catalog::ObjectType::SecondaryIndex, comment, missing_ok);
+        return;
+      case duckdb::CatalogType::TYPE_ENTRY:
+        catalog_impl.SetObjectComment(
+          ax, db, name.GetIdentifierName(),
+          info.GetQualifiedName().Name().GetIdentifierName(),
+          catalog::ObjectType::PgSqlType, comment, missing_ok);
+        return;
+      case duckdb::CatalogType::MACRO_ENTRY:
+      case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+        catalog_impl.SetObjectComment(
+          ax, db, name.GetIdentifierName(),
+          info.GetQualifiedName().Name().GetIdentifierName(),
+          catalog::ObjectType::PgSqlFunction, comment, missing_ok);
+        return;
+      default:
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("COMMENT ON is not supported for this object type"));
+    }
   }
 
   if (info.type == duckdb::AlterType::SET_COLUMN_COMMENT) {
@@ -913,6 +970,15 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         ? std::string{}
         : comment_info.comment_value.DefaultCastAs(duckdb::LogicalType::VARCHAR)
             .GetValue<std::string>();
+    const bool missing_ok =
+      info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
+    if (comment_info.catalog_entry_type == duckdb::CatalogType::VIEW_ENTRY) {
+      catalog_impl.SetViewColumnComment(
+        ax, db, name.GetIdentifierName(),
+        info.GetQualifiedName().Name().GetIdentifierName(),
+        comment_info.column_name.GetIdentifierName(), comment, missing_ok);
+      return;
+    }
     catalog_impl.ChangeTable(
       ax, db, name.GetIdentifierName(),
       info.GetQualifiedName().Name().GetIdentifierName(),
@@ -921,8 +987,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         table.SetColumnComment(
           updated, comment_info.column_name.GetIdentifierName(), comment);
       },
-      {.missing_ok =
-         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL});
+      {.missing_ok = missing_ok});
     return;
   }
 
@@ -1259,6 +1324,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       }
       catalog::Column column{ObjectId{}, catalog::NextId(),
                              cd.Name().GetIdentifierName(), cd.Type()};
+      column.compression = cd.CompressionType();
       if (cd.HasDefaultValue()) {
         column.expr = std::make_shared<ColumnExpr>(cd.DefaultValue().Copy());
       }

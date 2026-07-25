@@ -61,6 +61,9 @@ class Sequence final : public Object {
 
   const SequenceOptions& Options() const noexcept { return _options; }
 
+  std::string_view Comment() const noexcept { return _options.comment; }
+  std::shared_ptr<Sequence> CloneWithComment(std::string_view comment) const;
+
   // Set for SERIAL implicit sequences (and the auto-PK Sequence). Wires the
   // sequence into TableDependency::owned_sequences for PG OWNED BY cascade.
   ObjectId GetOwnerTableId() const noexcept {

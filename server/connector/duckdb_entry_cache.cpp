@@ -152,6 +152,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeMacroEntry(
 
 bool ScanTypeAcceptsEntry(duckdb::CatalogType scan, duckdb::CatalogType entry) {
   using enum duckdb::CatalogType;
+  if (scan == TABLE_ENTRY) {
+    return entry == TABLE_ENTRY || entry == VIEW_ENTRY;
+  }
   auto group = [](duckdb::CatalogType t) {
     switch (t) {
       case SCALAR_FUNCTION_ENTRY:
@@ -246,6 +249,7 @@ TableInfoAndIndices BuildTableInfoAndIndices(
     }
     auto cd =
       duckdb::ColumnDefinition(duckdb::Identifier{col.GetName()}, col.type);
+    cd.SetCompressionType(col.compression);
     if (!col.comment.empty()) {
       cd.SetComment(duckdb::Value(col.comment));
     }
@@ -709,6 +713,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntryObject(
           info->constraint_type = is_unique
                                     ? duckdb::IndexConstraintType::UNIQUE
                                     : duckdb::IndexConstraintType::NONE;
+          if (!index.Comment().empty()) {
+            info->comment = duckdb::Value(std::string{index.Comment()});
+          }
           return duckdb::make_uniq<SereneDBIndexEntry>(
             catalog, entry, *info, info->table.GetIdentifierName());
         }
@@ -768,6 +775,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntryObject(
       info.max_value = seq->Options().max_value;
       info.cycle = seq->Options().cycle;
       info.usage_count = 0;
+      if (!seq->Comment().empty()) {
+        info.comment = duckdb::Value(std::string{seq->Comment()});
+      }
       return duckdb::make_uniq<duckdb::SequenceCatalogEntry>(catalog, entry,
                                                              info);
     }

@@ -118,11 +118,13 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
                                 .numeric_field_id = cfg.numeric_field_id,
                               });
   }
-  return std::make_shared<InvertedIndex>(
+  auto index = std::make_shared<InvertedIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
     std::move(data.name), std::move(data.columns),
     std::move(data.expression_keys), std::move(entries),
     std::move(data.options), std::move(data.predicate));
+  index->SetComment(data.comment);
+  return index;
 }
 
 }  // namespace
@@ -137,6 +139,7 @@ std::shared_ptr<InvertedIndex> InvertedIndex::Deserialize(
 void InvertedIndex::Serialize(duckdb::Serializer& sink) const {
   auto data = PackEntries(GetName(), GetColumns(), _expression_keys, _entries,
                           _options, _predicate);
+  data.comment = Comment();
   basics::WriteTuple(sink, data);
 }
 

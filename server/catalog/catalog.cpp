@@ -3649,6 +3649,183 @@ void Catalog::AlterInvertedIndexOptions(
   }
 }
 
+namespace {
+
+duckdb::Value CommentValue(std::string_view comment) {
+  return comment.empty() ? duckdb::Value{} : duckdb::Value{comment};
+}
+
+}  // namespace
+
+void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
+                               std::string_view schema, std::string_view name,
+                               ObjectType type, std::string_view comment,
+                               bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  std::shared_ptr<Object> obj;
+  if (schema_id) {
+    std::optional<ObjectId> object_id;
+    if (type == ObjectType::PgSqlFunction) {
+      object_id =
+        _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
+    } else if (type == ObjectType::PgSqlType) {
+      object_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
+    } else {
+      object_id =
+        _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+    }
+    if (object_id) {
+      obj = _snapshot->GetObject(*object_id);
+    }
+  }
+  if (!obj) {
+    if (missing_ok) {
+      return;
+    }
+    switch (type) {
+      case ObjectType::PgSqlFunction:
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", name, "\""));
+      case ObjectType::PgSqlType:
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("type \"", name, "\" does not exist"));
+      default:
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", name, "\" does not exist"));
+    }
+  }
+  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
+  const bool matches =
+    IsIndex(type) ? IsIndex(obj->GetType()) : obj->GetType() == type;
+  if (!matches) {
+    std::string_view what = [&] {
+      switch (type) {
+        case ObjectType::PgSqlView:
+          return "a view";
+        case ObjectType::Sequence:
+          return "a sequence";
+        default:
+          SDB_ASSERT(IsIndex(type));
+          return "an index";
+      }
+    }();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not ", what));
+  }
+
+  std::shared_ptr<Object> updated;
+  ObjectId parent = *schema_id;
+  switch (obj->GetType()) {
+    case ObjectType::PgSqlView: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlView>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    case ObjectType::Sequence: {
+      updated = basics::downCast<Sequence>(*obj).CloneWithComment(comment);
+    } break;
+    case ObjectType::SecondaryIndex:
+    case ObjectType::InvertedIndex: {
+      updated = obj->Clone();
+      auto& index = basics::downCast<Index>(*updated);
+      index.SetComment(comment);
+      parent = index.GetRelationId();
+    } break;
+    case ObjectType::PgSqlType: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlType>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    case ObjectType::PgSqlFunction: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlFunction>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    default:
+      SDB_UNREACHABLE();
+  }
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    if (type == ObjectType::PgSqlFunction) {
+      clone->ReplaceObject<ResolveType::Function>(*schema_id, name, updated);
+    } else if (type == ObjectType::PgSqlType) {
+      clone->ReplaceObject<ResolveType::Type>(*schema_id, name, updated);
+    } else {
+      clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
+    }
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->Write([&](auto& ctx) {
+      ctx.PutDefinition(parent, updated->GetType(), updated->GetId(), bytes);
+    });
+  });
+}
+
+void Catalog::SetViewColumnComment(const AccessContext& ax,
+                                   ObjectId database_id,
+                                   std::string_view schema,
+                                   std::string_view name,
+                                   std::string_view column,
+                                   std::string_view comment, bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  std::shared_ptr<Object> obj;
+  if (schema_id) {
+    if (auto object_id =
+          _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
+      obj = _snapshot->GetObject(*object_id);
+    }
+  }
+  if (!obj) {
+    if (missing_ok) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", name, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
+  if (obj->GetType() != ObjectType::PgSqlView) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not a view"));
+  }
+
+  auto updated = std::static_pointer_cast<PgSqlView>(obj->Clone());
+  auto& info = updated->GetInfo();
+  duckdb::Identifier resolved{column};
+  const auto name_it = absl::c_find(info.names, resolved);
+  if (name_it == info.names.end()) {
+    const auto alias_it = absl::c_find(info.aliases, resolved);
+    if (alias_it == info.aliases.end()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", column, "\" of relation \"", name,
+                              "\" does not exist"));
+    }
+    const auto alias_index =
+      static_cast<size_t>(std::distance(info.aliases.begin(), alias_it));
+    SDB_ASSERT(alias_index < info.names.size());
+    resolved = info.names[alias_index];
+  }
+  if (comment.empty()) {
+    info.column_comments_map.erase(resolved);
+  } else {
+    info.column_comments_map[resolved] = duckdb::Value(std::string{comment});
+  }
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->Write([&](auto& ctx) {
+      ctx.PutDefinition(*schema_id, ObjectType::PgSqlView, updated->GetId(),
+                        bytes);
+    });
+  });
+}
+
 void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
                           std::string_view schema, std::string_view name,
                           ChangeCallback<Table> new_table,
@@ -3742,7 +3919,8 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
             default_sql = new_col.expr->GetExpr().ToString();
           }
           ctx.AddStoreColumn(store_name, std::string{new_col.GetName()},
-                             new_col.type.ToString(), std::move(default_sql));
+                             new_col.type.ToString(), std::move(default_sql),
+                             new_col.compression);
         }
         if (renamed_columns) {
           // Mirrored index definitions embed column names;

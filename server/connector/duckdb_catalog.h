@@ -23,7 +23,9 @@
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <string_view>
 
+#include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
 
 namespace sdb::connector {
@@ -104,5 +106,29 @@ class SereneDBCatalog final : public duckdb::Catalog {
  private:
   ObjectId _database_id;
 };
+
+struct RelationStorageSize {
+  int64_t bytes = 0;
+  int64_t persistent_blocks = 0;
+};
+
+RelationStorageSize StoreTableDataSize(duckdb::ClientContext& context,
+                                       const catalog::Snapshot& snapshot,
+                                       const catalog::Table& table);
+int64_t StoreTableIndexBytes(duckdb::ClientContext& context,
+                             const catalog::Snapshot& snapshot,
+                             const catalog::Table& table);
+int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
+                               const catalog::Snapshot& snapshot,
+                               const catalog::Table& table);
+int64_t SecondaryIndexBytes(duckdb::ClientContext& context,
+                            const catalog::Snapshot& snapshot,
+                            const catalog::SecondaryIndex& index);
+int64_t SearchTableBytes(const catalog::Table& table);
+int64_t InvertedIndexBytes(const catalog::InvertedIndex& index);
+duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
+                                         const catalog::Snapshot& snapshot,
+                                         ObjectId database_id,
+                                         std::string_view only_schema = {});
 
 }  // namespace sdb::connector

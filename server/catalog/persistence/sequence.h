@@ -38,6 +38,7 @@ struct SequenceOptions {
   uint64_t owner_table_id = 0;
   bool cycle = false;
   Permissions perm;
+  std::string comment;
 
   uint64_t Seed() const noexcept { return start_value - increment; }
 };

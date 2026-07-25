@@ -31,6 +31,10 @@ struct ClickHouseConnectionParams {
 	clickhouse::ClientOptions ToClientOptions() const;
 };
 
+//! Parse a decimal port string strictly (no locale, no partial parse),
+//! throwing InvalidInputException on failure. Replaces std::stoul.
+uint16_t ParseClickHousePort(const string &value);
+
 class ClickHouseConnection {
 public:
 	ClickHouseConnection() = default;

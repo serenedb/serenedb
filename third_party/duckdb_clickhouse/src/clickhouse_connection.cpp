@@ -9,16 +9,27 @@
 
 #include <cctype>
 
+#include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
+
 #include "clickhouse_connection.hpp"
 
 namespace duckdb {
+
+uint16_t ParseClickHousePort(const string &value) {
+	uint32_t port;
+	if (!absl::SimpleAtoi(value, &port)) {
+		throw InvalidInputException("Invalid ClickHouse port: '%s'", value);
+	}
+	return NumericCast<uint16_t>(port);
+}
 
 static void ApplyParam(ClickHouseConnectionParams &result, const string &key, const string &value) {
 	auto lkey = StringUtil::Lower(key);
 	if (lkey == "host" || lkey == "hostname") {
 		result.host = value;
 	} else if (lkey == "port") {
-		result.port = NumericCast<uint16_t>(std::stoul(value));
+		result.port = ParseClickHousePort(value);
 	} else if (lkey == "user" || lkey == "username") {
 		result.user = value;
 	} else if (lkey == "password" || lkey == "passwd") {
@@ -93,7 +104,7 @@ static ClickHouseConnectionParams ParseURI(const string &connection_string) {
 			result.host = rest.substr(1, close - 1);
 			auto after = rest.substr(close + 1);
 			if (!after.empty() && after.front() == ':') {
-				result.port = NumericCast<uint16_t>(std::stoul(after.substr(1)));
+				result.port = ParseClickHousePort(after.substr(1));
 				explicit_port = true;
 			}
 		}
@@ -110,7 +121,7 @@ static ClickHouseConnectionParams ParseURI(const string &connection_string) {
 		} else if (ncolon == 1) {
 			auto colon_pos = rest.rfind(':');
 			result.host = rest.substr(0, colon_pos);
-			result.port = NumericCast<uint16_t>(std::stoul(rest.substr(colon_pos + 1)));
+			result.port = ParseClickHousePort(rest.substr(colon_pos + 1));
 			explicit_port = true;
 		} else {
 			result.host = rest;
@@ -275,7 +286,7 @@ clickhouse::Query ClickHouseConnection::MakeQuery(duckdb::ClientContext &context
 			// ClickHouse's max_execution_time is in (fractional) seconds; a per-query
 			// SETTINGS keeps it off the pooled connection (no sticky session GUC).
 			double seconds = static_cast<double>(ms) / 1000.0;
-			query.SetSetting("max_execution_time", clickhouse::QuerySettingsField{std::to_string(seconds), 0});
+			query.SetSetting("max_execution_time", clickhouse::QuerySettingsField{absl::StrCat(seconds), 0});
 		}
 	}
 	return query;

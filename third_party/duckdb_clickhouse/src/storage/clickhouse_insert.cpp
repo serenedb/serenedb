@@ -11,6 +11,7 @@
 #include "duckdb/planner/operator/logical_create_table.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 
+#include <absl/strings/str_cat.h>
 #include <clickhouse/client.h>
 #include <clickhouse/block.h>
 #include <clickhouse/exceptions.h>
@@ -136,8 +137,8 @@ SinkResultType ClickHouseInsert::Sink(ExecutionContext &context, DataChunk &chun
 	block.RefreshRowCount();
 
 	try {
-		ClickHouseConnection::LogQuery("INSERT INTO " + gstate.qualified_table + " (" + std::to_string(block.GetRowCount()) +
-		                               " rows)");
+		ClickHouseConnection::LogQuery(
+		    absl::StrCat("INSERT INTO ", gstate.qualified_table, " (", block.GetRowCount(), " rows)"));
 		connection.GetClient().Insert(gstate.qualified_table, block);
 	} catch (const clickhouse::Error &e) {
 		throw IOException("ClickHouse error during INSERT into %s: %s", gstate.qualified_table, e.what());

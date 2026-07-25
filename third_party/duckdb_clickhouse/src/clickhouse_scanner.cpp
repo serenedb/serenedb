@@ -1,5 +1,7 @@
 #include "duckdb.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
@@ -550,7 +552,7 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 			}
 			clickhouse::Block block;
 			for (idx_t c = 0; c < keys.size(); c++) {
-				block.AppendColumn("k" + std::to_string(c), BuildLookupColumn(keys[c], data.lookup_count));
+				block.AppendColumn(absl::StrCat("k", c), BuildLookupColumn(keys[c], data.lookup_count));
 			}
 			clickhouse::ExternalTables external_tables;
 			external_tables.push_back({"lookup", block});

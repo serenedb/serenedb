@@ -1,5 +1,7 @@
 #include "duckdb.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include "dbconnector/query/query_writer.hpp"
 
 #include "duckdb/common/exception.hpp"
@@ -159,7 +161,7 @@ static LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
     auto &item_names = tuple_type.GetItemNames();
     child_list_t<LogicalType> children;
     for (idx_t i = 0; i < item_types.size(); i++) {
-      string name = i < item_names.size() ? item_names[i] : "entry_" + std::to_string(i);
+      string name = i < item_names.size() ? item_names[i] : absl::StrCat("entry_", i);
       children.push_back(make_pair(Identifier(std::move(name)), ClickHouseToLogicalType(*item_types[i])));
     }
     return LogicalType::STRUCT(std::move(children));
@@ -219,7 +221,7 @@ static Value EnumValueAt(const clickhouse::Column &col, idx_t row) {
   if (enum_type && enum_type->HasEnumValue(ordinal)) {
     return Value(string(enum_type->GetEnumName(ordinal)));
   }
-  return Value(std::to_string(ordinal));
+  return Value(absl::StrCat(ordinal));
 }
 
 static Value ClickHouseScalarValueAt(const clickhouse::Column &col, idx_t row) {
@@ -400,7 +402,7 @@ static Value ClickHouseColumnValueAt(const clickhouse::Column &col, idx_t row) {
     auto &item_names = tuple_type.GetItemNames();
     child_list_t<Value> children;
     for (idx_t i = 0; i < tuple->TupleSize(); i++) {
-      string name = i < item_names.size() ? item_names[i] : "entry_" + std::to_string(i);
+      string name = i < item_names.size() ? item_names[i] : absl::StrCat("entry_", i);
       children.push_back(make_pair(Identifier(std::move(name)), ClickHouseColumnValueAt(*tuple->At(i), row)));
     }
     return Value::STRUCT(std::move(children));
@@ -603,7 +605,7 @@ string ClickHouseValueLiteral(const Value &value) {
       throw InvalidInputException(
           "Date value out of range for a ClickHouse Date32 cast (representable: 1900-01-01..2299-12-31)");
     }
-    return "toDate32(" + std::to_string(days) + ")";
+    return absl::StrCat("toDate32(", days, ")");
   }
   case LogicalTypeId::TIMESTAMP_SEC:
   case LogicalTypeId::TIMESTAMP_MS:
@@ -618,7 +620,7 @@ string ClickHouseValueLiteral(const Value &value) {
     if (!ts.IsFinite()) {
       throw InvalidInputException("Infinite TIMESTAMP is not representable as a ClickHouse DateTime64");
     }
-    return "fromUnixTimestamp64Micro(" + std::to_string(ts.value) + ")";
+    return absl::StrCat("fromUnixTimestamp64Micro(", ts.value, ")");
   }
   case LogicalTypeId::UUID:
     return "toUUID(" + ClickHouseStringLiteral(value.ToString()) + ")";
@@ -707,8 +709,7 @@ string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) {
     base = "UUID";
     break;
   case LogicalTypeId::DECIMAL:
-    base = "Decimal(" + std::to_string(DecimalType::GetWidth(type)) + ", " +
-           std::to_string(DecimalType::GetScale(type)) + ")";
+    base = absl::StrCat("Decimal(", DecimalType::GetWidth(type), ", ", DecimalType::GetScale(type), ")");
     break;
   case LogicalTypeId::ENUM: {
     // ClickHouse Enum8 values are int8 (fits <=127 positive ordinals), Enum16 are
@@ -724,7 +725,7 @@ string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) {
       if (i > 0) {
         base += ", ";
       }
-      base += ClickHouseStringLiteral(EnumType::GetString(type, i).GetString()) + " = " + std::to_string(i + 1);
+      base += absl::StrCat(ClickHouseStringLiteral(EnumType::GetString(type, i).GetString()), " = ", i + 1);
     }
     base += ")";
     break;

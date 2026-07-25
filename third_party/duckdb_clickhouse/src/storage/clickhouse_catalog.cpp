@@ -1,5 +1,7 @@
 #include "duckdb.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include "duckdb/storage/database_size.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
@@ -239,7 +241,7 @@ bool ClickHouseCatalog::InMemory() {
 }
 
 string ClickHouseCatalog::GetDBPath() {
-	return params.host + ":" + std::to_string(params.port) + "/" + params.database;
+	return absl::StrCat(params.host, ":", params.port, "/", params.database);
 }
 
 } // namespace duckdb

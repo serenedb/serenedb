@@ -60,7 +60,7 @@ static void OverlaySecretParams(optional_ptr<SecretEntry> secret_entry, ClickHou
 	}
 	Value port_val = kv_secret.TryGetValue("port");
 	if (!port_val.IsNull()) {
-		params.port = NumericCast<uint16_t>(std::stoul(port_val.ToString()));
+		params.port = ParseClickHousePort(port_val.ToString());
 	}
 	Value user_val = kv_secret.TryGetValue("user");
 	if (!user_val.IsNull()) {

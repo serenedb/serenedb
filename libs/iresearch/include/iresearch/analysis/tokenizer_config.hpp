@@ -27,13 +27,19 @@
 
 #include "analyzer.hpp"
 #include "basics/serializer.h"
+#ifndef IRESEARCH_EMBEDDED
 #include "classification_tokenizer.hpp"
+#endif
 #include "collation_tokenizer.hpp"
 #include "delimited_tokenizer.hpp"
+#ifndef IRESEARCH_EMBEDDED
 #include "geo_analyzer.hpp"
+#endif
 #include "minhash_tokenizer.hpp"
 #include "multi_delimited_tokenizer.hpp"
+#ifndef IRESEARCH_EMBEDDED
 #include "nearest_neighbors_tokenizer.hpp"
+#endif
 #include "ngram_tokenizer.hpp"
 #include "normalizing_tokenizer.hpp"
 #include "path_hierarchy_tokenizer.hpp"
@@ -58,11 +64,17 @@ struct TokenizerConfig {
                MultiDelimitedTokenizer::Options, PatternTokenizer::Options,
                PathHierarchyTokenizer::Options, NGramTokenizerBase::Options,
                NormalizingTokenizer::Options, SegmentationTokenizer::Options,
-               StopwordsTokenizer::Options, ClassificationTokenizer::Options,
+               StopwordsTokenizer::Options,
+#ifndef IRESEARCH_EMBEDDED
+               ClassificationTokenizer::Options,
+#endif
                CollationTokenizer::Options, SolrSynonymsTokenizer::Options,
                WordnetSynonymsTokenizer::Options,
+#ifndef IRESEARCH_EMBEDDED
                NearestNeighborsTokenizer::Options, GeoPointAnalyzer::Options,
-               GeoJsonAnalyzer::Options, WildcardAnalyzer::Options,
+               GeoJsonAnalyzer::Options,
+#endif
+               WildcardAnalyzer::Options,
                MinHashTokenizer::Options, PipelineTokenizer::Options,
                UnionTokenizer::Options, SparseNGramTokenizer::Options>
     config;

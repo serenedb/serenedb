@@ -13,7 +13,9 @@ if(SDB_BUILD_IRESEARCH_ONLY)
 
     target_include_directories(
         iresearch-embedded-support
-        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_SOURCE_DIR}/third_party/magic_enum
     )
 
     target_link_libraries(

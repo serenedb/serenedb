@@ -238,7 +238,7 @@ set_source_files_properties(
     search/tfidf.cpp
     PROPERTIES
         COMPILE_OPTIONS
-            "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"
+            "-fapprox-func;-fno-math-errno;-fassociative-math;-freciprocal-math;-fno-signed-zeros;-fno-trapping-math;-fno-rounding-math;-ffp-contract=fast"
 )
 
 if(SDB_BUILD_IRESEARCH_ONLY)
@@ -258,6 +258,11 @@ if(SDB_BUILD_IRESEARCH_ONLY)
 
     add_library(iresearch-embedded-static STATIC ${IResearch_embedded_sources})
     add_library(iresearch::embedded ALIAS iresearch-embedded-static)
+
+    target_compile_definitions(
+        iresearch-embedded-static
+        PUBLIC IRESEARCH_EMBEDDED
+    )
 
     target_include_directories(
         iresearch-embedded-static
@@ -292,6 +297,7 @@ if(SDB_BUILD_IRESEARCH_ONLY)
             re2
             streamvbyte
             duckdb_static
+            yaclib
         PRIVATE lz4_static text stemmer-static
     )
 

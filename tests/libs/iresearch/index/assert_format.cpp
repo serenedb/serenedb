@@ -662,7 +662,7 @@ void AssertTerm(size_t segment_index, size_t field_index, size_t term_index,
 
   AssertDocs(segment_index, field_index, term_index,
              expected_term.postings(requested_features),
-             [&]() { return actual_term.postings(requested_features); });
+             [&] { return actual_term.postings(requested_features); });
 }
 
 void AssertTermsNext(size_t segment_index, size_t field_index,

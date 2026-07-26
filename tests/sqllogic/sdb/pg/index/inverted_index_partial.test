@@ -1,0 +1,463 @@
+# Partial inverted indexes: CREATE INDEX ... WHERE <predicate>. Only rows
+# matching the predicate are indexed by the backfill and maintained by DML;
+# rows migrate in/out of the index when updates cross the predicate boundary.
+# NULL predicate results count as false (PG semantics).
+
+statement ok
+CREATE TABLE goshandr_subscribers(x bigint, label text, live boolean);
+
+
+statement ok
+INSERT INTO goshandr_subscribers SELECT g, md5(g::text), g % 2 = 0 FROM generate_series(1, 10000) g;
+
+
+# The predicate is a WHERE filter in the backfill plan (pushed down into the
+# scan as a Column Filter), not evaluated in the create-index sink.
+query
+EXPLAIN CREATE INDEX pt_live ON goshandr_subscribers USING inverted(label) WHERE live;
+----
+QUERY PLAN
+╭─ EXTENSION ─────────────────╮
+╰──────────────┬──────────────╯
+╭─ SEQ_SCAN ───┴──────────────╮
+│ Table: goshandr_subscribers │
+│ Type: Sequential Scan       │
+│ Column Filter: live         │
+│ ~2,000 rows                 │
+╰─────────────────────────────╯
+
+
+# A full index scans every row -- no Column Filter in the plan.
+query
+EXPLAIN CREATE INDEX pt_full ON goshandr_subscribers USING inverted(label);
+----
+QUERY PLAN
+╭─ EXTENSION ─────────────────╮
+╰──────────────┬──────────────╯
+╭─ SEQ_SCAN ───┴──────────────╮
+│ Table: goshandr_subscribers │
+│ Type: Sequential Scan       │
+│ ~10,000 rows                │
+╰─────────────────────────────╯
+
+
+statement ok
+CREATE INDEX pt_live ON goshandr_subscribers USING inverted(label) WHERE live;
+
+
+# The backfill indexed only the matching (even x) half.
+query
+SELECT count(*) FROM pt_live;
+----
+count
+5000
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = md5('2'::text)) AS hit, (SELECT count(*) FROM pt_live WHERE label = md5('3'::text)) AS miss;
+----
+hit	miss
+1	0
+
+
+# DML maintenance filters inserts by the predicate.
+statement ok
+INSERT INTO goshandr_subscribers VALUES (10001, 'fresh_live', true), (10002, 'fresh_dead', false);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = 'fresh_live') AS live_row, (SELECT count(*) FROM pt_live WHERE label = 'fresh_dead') AS dead_row;
+----
+live_row	dead_row
+1	0
+
+
+# UPDATE moves rows across the predicate boundary in both directions.
+statement ok
+UPDATE goshandr_subscribers SET live = false WHERE x = 10001;
+
+
+statement ok
+UPDATE goshandr_subscribers SET live = true WHERE x = 10002;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = 'fresh_live') AS demoted, (SELECT count(*) FROM pt_live WHERE label = 'fresh_dead') AS promoted;
+----
+demoted	promoted
+0	1
+
+
+# DELETE covers indexed and non-indexed rows alike.
+statement ok
+DELETE FROM goshandr_subscribers WHERE x >= 9999;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT count(*) FROM pt_live;
+----
+count
+4999
+
+
+# Updating an indexed column of a matching row replaces its terms.
+statement ok
+UPDATE goshandr_subscribers SET label = 'renamed' WHERE x = 4;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = 'renamed') AS renamed, (SELECT count(*) FROM pt_live WHERE label = md5('4'::text)) AS old_term;
+----
+renamed	old_term
+1	0
+
+
+# Predicate over a column that is not among the indexed ones, with an
+# expression. Rows now: x in 1..9998; matching = odd x above 9000.
+statement ok
+CREATE INDEX pt_high ON goshandr_subscribers USING inverted(label) WHERE x > 9000 AND NOT live;
+
+
+query
+SELECT count(*) FROM pt_high;
+----
+count
+499
+
+
+# NULL predicate result = not indexed (PG WHERE semantics): the row joins
+# neither pt_live (live is NULL) nor pt_high (NOT NULL is NULL).
+statement ok
+INSERT INTO goshandr_subscribers VALUES (20001, 'null_live', NULL);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = 'null_live') AS in_live, (SELECT count(*) FROM pt_high WHERE label = 'null_live') AS in_high;
+----
+in_live	in_high
+0	0
+
+
+# NULL -> true enters pt_live (and stays out of pt_high: NOT true = false).
+statement ok
+UPDATE goshandr_subscribers SET live = true WHERE x = 20001;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = 'null_live') AS in_live, (SELECT count(*) FROM pt_high WHERE label = 'null_live') AS in_high;
+----
+in_live	in_high
+1	0
+
+
+# Arithmetic expression predicate: x % 1000 = 0 over x in 1..9998.
+statement ok
+CREATE INDEX pt_mod ON goshandr_subscribers USING inverted(label) WHERE x % 1000 = 0;
+
+
+query
+SELECT count(*) FROM pt_mod;
+----
+count
+9
+
+
+# Partial index over an indexed EXPRESSION key combined with a predicate.
+statement ok
+CREATE INDEX pt_expr ON goshandr_subscribers USING inverted((upper(label))) WHERE live;
+
+
+query
+SELECT count(*) FROM pt_expr;
+----
+count
+5000
+
+
+query
+SELECT count(*) FROM pt_expr WHERE upper(label) = 'RENAMED';
+----
+count
+1
+
+
+# Mixed multi-row batch: every third row matches, the rest feed pt_high
+# (x > 9000, not live).
+statement ok
+INSERT INTO goshandr_subscribers SELECT 30000 + g, 'batch' || g::text, g % 3 = 0 FROM generate_series(1, 300) g;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = 'batch3') AS hit, (SELECT count(*) FROM pt_live WHERE label = 'batch4') AS miss;
+----
+hit	miss
+1	0
+
+
+query
+SELECT (SELECT count(*) FROM pt_live) AS live_total, (SELECT count(*) FROM pt_high) AS high_total;
+----
+live_total	high_total
+5100	699
+
+
+# Bulk update of the predicate column drops the affected rows from the index.
+statement ok
+UPDATE goshandr_subscribers SET live = false WHERE x <= 100;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT count(*) FROM pt_live;
+----
+count
+5050
+
+
+# ALTER INDEX SET clones the catalog object; the predicate must survive the
+# round-trip and keep filtering DML.
+statement ok
+ALTER INDEX pt_live SET (refresh_interval = 200);
+
+
+statement ok
+INSERT INTO goshandr_subscribers VALUES (40001, 'post_alter_live', true), (40002, 'post_alter_dead', false);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = 'post_alter_live') AS live_row, (SELECT count(*) FROM pt_live WHERE label = 'post_alter_dead') AS dead_row;
+----
+live_row	dead_row
+1	0
+
+
+# Predicate over the indexed column itself (no extra scan column), with a
+# pattern-match function. Only the 300 batch rows qualify.
+statement ok
+CREATE INDEX pt_self ON goshandr_subscribers USING inverted(label) WHERE label LIKE 'batch%';
+
+
+query
+SELECT (SELECT count(*) FROM pt_self) AS total, (SELECT count(*) FROM pt_self WHERE label = 'batch7') AS probe;
+----
+total	probe
+300	1
+
+
+# true -> NULL leaves the index (NULL predicate = false).
+statement ok
+UPDATE goshandr_subscribers SET live = NULL WHERE x = 20001;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT count(*) FROM pt_live WHERE label = 'null_live';
+----
+count
+0
+
+
+# Rolled-back DML never reaches the index; committed DML does.
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO goshandr_subscribers VALUES (50001, 'rolled_back', true);
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO goshandr_subscribers VALUES (50002, 'committed_live', true), (50003, 'committed_dead', false);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) goshandr_subscribers;
+
+
+query
+SELECT (SELECT count(*) FROM pt_live WHERE label = 'rolled_back') AS rolled, (SELECT count(*) FROM pt_live WHERE label = 'committed_live') AS committed, (SELECT count(*) FROM pt_live WHERE label = 'committed_dead') AS dead;
+----
+rolled	committed	dead
+0	1	0
+
+
+# DROP + recreate under the same name with a different predicate rebuilds
+# from the new condition.
+statement ok
+DROP INDEX pt_mod;
+
+
+statement ok
+CREATE INDEX pt_mod ON goshandr_subscribers USING inverted(label) WHERE x % 2000 = 0;
+
+
+query
+SELECT count(*) FROM pt_mod;
+----
+count
+4
+
+
+# IF NOT EXISTS keeps the existing partial index untouched.
+statement ok
+CREATE INDEX IF NOT EXISTS pt_mod ON goshandr_subscribers USING inverted(label) WHERE x % 5 = 0;
+
+
+query
+SELECT count(*) FROM pt_mod;
+----
+count
+4
+
+
+# Partial indexes surface through the PG catalog like full ones.
+query
+SELECT c.relname, a.amname, i.indisvalid FROM pg_class c JOIN pg_am a ON a.oid = c.relam JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname IN ('pt_live', 'pt_self') ORDER BY c.relname;
+----
+relname	amname	indisvalid
+pt_live	inverted	t
+pt_self	inverted	t
+
+
+# Cross-index totals: every partial index maintained the same DML stream
+# through its own predicate.
+query
+SELECT (SELECT count(*) FROM pt_live) AS live_t, (SELECT count(*) FROM pt_high) AS high_t, (SELECT count(*) FROM pt_self) AS self_t, (SELECT count(*) FROM pt_expr) AS expr_t;
+----
+live_t	high_t	self_t	expr_t
+5051	701	300	5051
+
+
+# Partial indexes on views are static (built once, no DML maintenance): the
+# predicate filters the backfill via a plan filter over the view's scan. The
+# backfill projects the view's columns for the filter to bind onto.
+statement ok
+CREATE TABLE vsub(x bigint, label text, live boolean);
+
+
+statement ok
+INSERT INTO vsub SELECT g, md5(g::text), g % 2 = 0 FROM generate_series(1, 1000) g;
+
+
+statement ok
+CREATE VIEW vsub_v AS SELECT x, label, live FROM vsub;
+
+
+# Predicate on a column (live) the index (label) does not use -- the backfill
+# narrows the view, dropping the unused x column.
+statement ok
+CREATE INDEX vsub_live ON vsub_v USING inverted(label) WHERE live;
+
+
+query
+SELECT (SELECT count(*) FROM vsub_live) AS indexed, (SELECT count(*) FROM vsub_live WHERE label = md5('2'::text)) AS hit, (SELECT count(*) FROM vsub_live WHERE label = md5('3'::text)) AS miss;
+----
+indexed	hit	miss
+500	1	0
+
+
+# Predicate references every remaining view column (x and live) -- no narrowing,
+# but the backfill still projects the columns so the filter binds.
+statement ok
+CREATE INDEX vsub_all ON vsub_v USING inverted(label) WHERE x > 500 AND live;
+
+
+query
+SELECT (SELECT count(*) FROM vsub_all) AS indexed, (SELECT count(*) FROM vsub_all WHERE label = md5('502'::text)) AS hit, (SELECT count(*) FROM vsub_all WHERE label = md5('501'::text)) AS odd_miss, (SELECT count(*) FROM vsub_all WHERE label = md5('2'::text)) AS low_miss;
+----
+indexed	hit	odd_miss	low_miss
+250	1	0	0
+
+
+# A minimal view exposing exactly the index and predicate columns.
+statement ok
+CREATE VIEW vmin AS SELECT label, live FROM vsub;
+
+
+statement ok
+CREATE INDEX vmin_idx ON vmin USING inverted(label) WHERE live;
+
+
+query
+SELECT count(*) FROM vmin_idx;
+----
+count
+500
+
+
+statement error
+CREATE INDEX p_art ON goshandr_subscribers(x) WHERE live;
+----
+db error: ERROR: partial indexes are only supported for inverted indexes
+
+
+statement error
+CREATE INDEX p_bad ON goshandr_subscribers USING inverted(label) WHERE label;
+----
+db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+
+
+statement ok
+DROP VIEW vsub_v;
+
+
+statement ok
+DROP VIEW vmin;
+
+
+statement ok
+DROP TABLE vsub;
+
+
+statement ok
+DROP TABLE goshandr_subscribers CASCADE;

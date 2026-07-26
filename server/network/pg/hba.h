@@ -70,7 +70,11 @@ enum class Method : uint8_t {
 //  DeferredPeerIdent -- parses; enforcement not yet built (unix SO_PEERCRED).
 //  RejectAtConnect   -- parses; a matched connection is refused (SDB can't do
 //  it).
-enum class MethodClass : uint8_t { Native, DeferredPeerIdent, RejectAtConnect };
+enum class MethodClass : uint8_t {
+  Native,
+  DeferredPeerIdent,
+  RejectAtConnect,
+};
 
 MethodClass MethodExecutability(Method method);
 
@@ -112,7 +116,10 @@ struct ClientInfo {
 // evaluated in order (first token to match wins), with per-token semantics
 // decided at match time exactly as PG's check_db / check_role do.
 struct NameMatcher {
-  enum class Field : uint8_t { Database, Role };
+  enum class Field : uint8_t {
+    Database,
+    Role,
+  };
   Field field = Field::Database;
   std::vector<AuthToken> tokens;
 
@@ -123,7 +130,13 @@ struct NameMatcher {
 // (mask may be non-contiguous); matching ANDs both sides. samehost/samenet/
 // hostname parse but are not evaluated (reject-at-connect).
 struct AddrMatcher {
-  enum class Kind : uint8_t { All, Mask, SameHost, SameNet, Hostname };
+  enum class Kind : uint8_t {
+    All,
+    Mask,
+    SameHost,
+    SameNet,
+    Hostname,
+  };
   Kind kind = Kind::All;
   int family = 0;                  // AF_INET / AF_INET6 for Mask
   std::array<uint8_t, 16> addr{};  // raw (NOT pre-masked)

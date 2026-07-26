@@ -1,0 +1,57 @@
+statement ok
+CREATE TABLE t (a int PRIMARY KEY, b int, c int);
+
+statement ok
+CREATE INDEX ix1 ON t (b);
+
+statement ok
+CREATE INDEX ix2 ON t (b, c);
+
+statement ok
+CREATE TYPE mood AS ENUM ('x', 'y');
+
+statement ok
+CREATE TABLE tt (m mood);
+
+statement ok
+CREATE VIEW v AS SELECT a FROM t;
+
+statement ok
+CREATE SEQUENCE s;
+
+statement ok
+CREATE FUNCTION f() RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+query
+SELECT d.classid::regclass::text AS dep_class,
+       COALESCE(c1.relname, p1.proname, ty1.typname) AS dependent,
+       d.objsubid AS objsubid,
+       d.refclassid::regclass::text AS ref_class,
+       COALESCE(c2.relname, p2.proname, ty2.typname, n2.nspname) AS referenced,
+       d.refobjsubid AS refobjsubid,
+       d.deptype AS deptype
+FROM pg_depend d
+LEFT JOIN pg_class c1 ON c1.oid = d.objid
+LEFT JOIN pg_proc p1 ON p1.oid = d.objid
+LEFT JOIN pg_type ty1 ON ty1.oid = d.objid
+LEFT JOIN pg_class c2 ON c2.oid = d.refobjid
+LEFT JOIN pg_proc p2 ON p2.oid = d.refobjid
+LEFT JOIN pg_type ty2 ON ty2.oid = d.refobjid
+LEFT JOIN pg_namespace n2 ON n2.oid = d.refobjid
+WHERE d.deptype IN ('n', 'a')
+  AND d.classid::regclass::text IN ('pg_class', 'pg_proc', 'pg_type')
+  AND COALESCE(c1.relname, p1.proname, ty1.typname) IN
+      ('t', 'tt', 'v', 's', 'ix1', 'ix2', 'mood', 'f')
+ORDER BY 1, 2, 3, 4, 5, 6, 7;
+----
+dep_class	dependent	objsubid	ref_class	referenced	refobjsubid	deptype
+pg_class	ix1	0	pg_class	t	2	a
+pg_class	ix2	0	pg_class	t	2	a
+pg_class	ix2	0	pg_class	t	3	a
+pg_class	s	0	pg_namespace	public	0	n
+pg_class	t	0	pg_namespace	public	0	n
+pg_class	tt	0	pg_namespace	public	0	n
+pg_class	tt	1	pg_type	mood	0	n
+pg_class	v	0	pg_namespace	public	0	n
+pg_proc	f	0	pg_namespace	public	0	n
+pg_type	mood	0	pg_namespace	public	0	n

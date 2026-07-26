@@ -43,7 +43,11 @@ bool ColumnGrants(const catalog::Column& column, ObjectId owner,
                         closure, need, PrivMatch::All);
 }
 
-enum class EdgeFilter { All, Inherit, Set };
+enum class EdgeFilter {
+  All,
+  Inherit,
+  Set,
+};
 
 bool EdgePasses(const catalog::Membership& edge, EdgeFilter filter) {
   switch (filter) {

@@ -306,3 +306,15 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/send_notification.bash
+
+  helm-chart:
+    name: Helm chart release
+    needs: [resolve-version, release]
+    # Only when the new serened image was actually pushed: the chart pins that
+    # image version as appVersion, so it must not ship ahead of the image.
+    if: needs.release.result == 'success' && inputs.PUSH_IMAGES_2_REGISTRY
+    uses: ./.github/workflows/helm-release.yml
+    with:
+      SERENEDB_VERSION: "${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}.${{ needs.resolve-version.outputs.patch }}"
+      PUBLISH: true
+    secrets: inherit

@@ -20,97 +20,231 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <span>
 #include <vector>
 
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 
-class IndexInput;
 class IndexOutput;
+class ColumnReader;
+class ReadContext;
 
-struct L2BodyView {
-  const byte_type* l2_centroids = nullptr;
-  std::span<const uint32_t> fine_ids;
-  std::span<const float> radii;
-  bstring buf;
-  uint32_t n_l2 = 0;
+struct IVFHeader {
+  VectorMetric metric;
+  uint32_t d;
+
+  static IVFHeader Deserialize(IndexInput& in);
+  void Serialize(IndexOutput& out) const;
 };
 
-enum class CentroidShapeKind : uint8_t { BruteForce, Flat, TwoLayer };
+struct CentroidsNodeView {
+  std::span<const float> centroids;
+  std::span<const size_t> child_offsets;
+  size_t base;
+  size_t size;
+};
 
-class TwoLayerCentroids {
+struct LayerBuffers {
+  std::vector<std::vector<float>> centroids;
+  std::vector<std::vector<size_t>> child_offsets;
+};
+
+struct CentroidsNode {
+  std::vector<float> centroids;
+  std::vector<size_t> child_offsets;
+  size_t size;
+  size_t level;
+  size_t d;
+
+  CentroidsNode(size_t level, size_t d) : level{level}, d{d} {}
+
+  struct Candidate {
+    float dist;
+    size_t id;
+    std::vector<float> centroid;
+  };
+
+  static std::vector<CentroidsNode> Deserialize(IndexInput& in, size_t level,
+                                                size_t d,
+                                                std::span<const size_t> starts,
+                                                std::span<const size_t> sizes);
+  void Serialize(IndexOutput& out) const;
+
+  static std::vector<CentroidsNodeView> ReadLayer(
+    IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
+    std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total);
+
+  template<VectorMetric Metric>
+  static void Search(std::span<const float> query, IndexInput& in,
+                     uint32_t beam, bool want_centroids, size_t level,
+                     std::span<const CentroidsNodeView> nodes,
+                     size_t layer_base, size_t layer_total,
+                     std::vector<Candidate>& leaves) {
+    SDB_ASSERT(!nodes.empty());
+    const uint16_t d = query.size();
+    const float* q = query.data();
+
+    struct Scored {
+      float dist;
+      size_t start;
+      size_t count;
+    };
+    std::vector<size_t> starts, sizes;
+    std::vector<Scored> scored;
+    for (const auto& node : nodes) {
+      scored.clear();
+      for (size_t i = 0; i < node.size; ++i) {
+        const auto centroid = node.centroids.subspan(i * d, d);
+        const float dist = ComputeDistance<Metric>(q, centroid.data(), d);
+        const bool is_leaf =
+          level == 0 || node.child_offsets[i + 1] == node.child_offsets[i];
+        if (is_leaf) {
+          auto& cand = leaves.emplace_back(dist, layer_base + node.base + i);
+          if (want_centroids) {
+            cand.centroid.assign(centroid.begin(), centroid.end());
+          }
+        } else {
+          scored.push_back({dist, node.child_offsets[i],
+                            node.child_offsets[i + 1] - node.child_offsets[i]});
+        }
+      }
+      const auto k = std::min<size_t>(beam, scored.size());
+      const auto mid = scored.begin() + k;
+      std::ranges::nth_element(scored, mid, std::greater{}, &Scored::dist);
+      std::ranges::sort(scored.begin(), mid, std::greater{}, &Scored::dist);
+      for (auto it = scored.begin(); it != mid; ++it) {
+        starts.emplace_back(it->start);
+        sizes.emplace_back(it->count);
+      }
+    }
+    if (level == 0 || starts.empty()) {
+      return;
+    }
+    LayerBuffers bufs;
+    size_t n_total = 0;
+    auto next =
+      CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes, bufs, n_total);
+    Search<Metric>(query, in, beam, want_centroids, level - 1, next,
+                   layer_base + layer_total, n_total, leaves);
+  }
+};
+
+class CentroidsBuilder;
+
+class CentroidsTree {
  public:
-  TwoLayerCentroids() = default;
-  TwoLayerCentroids(const TwoLayerCentroids&) = delete;
-  TwoLayerCentroids& operator=(const TwoLayerCentroids&) = delete;
-  TwoLayerCentroids(TwoLayerCentroids&& rhs) noexcept = default;
-  TwoLayerCentroids& operator=(TwoLayerCentroids&& rhs) noexcept = default;
-  ~TwoLayerCentroids() = default;
+  CentroidsTree(IVFHeader&& head, CentroidsNode&& root,
+                size_t next_level_offset)
+    : _head{std::move(head)},
+      _root{std::move(root)},
+      _next_level_offset{next_level_offset} {}
 
-  static TwoLayerCentroids Deserialize(IndexInput& in, uint64_t byte_size);
+  CentroidsTree(const CentroidsTree&) = delete;
+  CentroidsTree(CentroidsTree&&) = default;
 
-  void SearchL1(std::span<const float> query, uint32_t n1,
-                std::vector<uint32_t>& out) const;
+  CentroidsTree& operator=(const CentroidsTree&) = delete;
+  CentroidsTree& operator=(CentroidsTree&&) = default;
 
-  void ReadL2Body(IndexInput& in, uint32_t l1_id, L2BodyView& view) const;
+  static CentroidsTree Deserialize(IndexInput& in, uint64_t byte_size);
 
-  using FineClusterVisitor =
-    std::function<void(uint32_t, const byte_type*, float)>;
-  void ForEachFineCluster(IndexInput& in, const FineClusterVisitor& fn) const;
+  void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
+              std::vector<uint32_t>& out_ids,
+              std::vector<float>* out_centroids) const;
 
-  void SearchL2(std::span<const float> query, uint32_t nprobe,
-                std::span<uint32_t> l1_ids, IndexInput& in,
-                std::vector<uint32_t>& out,
-                std::vector<float>* out_centroids) const;
+  size_t Dim() const noexcept { return _head.d; }
+  VectorMetric Metric() const noexcept { return _head.metric; }
+  bool Empty() const noexcept { return _head.d == 0; }
+  size_t Levels() const noexcept { return _root.level + 1; }
+  size_t RootSize() const noexcept { return _root.size; }
 
-  void SearchGlobal(std::span<const float> query, IndexInput& in, uint32_t n1,
-                    uint32_t nprobe, std::vector<uint32_t>& out_ids,
-                    std::vector<float>* out_centroids) const;
-
-  uint32_t Dimension() const noexcept { return _d; }
-  uint32_t L1Count() const noexcept { return _n_l1; }
-  VectorMetric Metric() const noexcept { return _metric; }
-  CentroidShapeKind ShapeKind() const noexcept { return _shape_kind; }
-  bool Empty() const noexcept { return _n_l1 == 0; }
-
-  std::span<const byte_type> QuantStats() const noexcept {
-    return {_quant_stats.data(), _quant_stats.size()};
+  void SetQuantStatsLocation(uint64_t offset, uint64_t byte_size) noexcept {
+    _stats_offset = offset;
+    _stats_byte_size = byte_size;
   }
-
-  static void WriteFooter(IndexOutput& out, VectorMetric metric,
-                          CentroidShapeKind shape_kind, uint32_t d,
-                          uint32_t n_l1, std::span<const float> l1_centroids,
-                          std::span<const uint64_t> body_offsets,
-                          std::span<const byte_type> quant_stats);
-
-  static inline constexpr uint64_t FooterSize(uint32_t d, uint32_t n_l1,
-                                              uint64_t stats_len) noexcept {
-    return kHeaderSize + static_cast<uint64_t>(n_l1) * d * sizeof(float) +
-           static_cast<uint64_t>(n_l1) * sizeof(uint64_t) + sizeof(uint64_t) +
-           stats_len;
-  }
+  bool HasQuantStats() const noexcept { return _stats_byte_size != 0; }
+  uint64_t QuantStatsOffset() const noexcept { return _stats_offset; }
 
  private:
-  static constexpr uint64_t kHeaderSize =
-    2 * sizeof(uint8_t) + 2 * sizeof(uint32_t);
+  IVFHeader _head;
+  CentroidsNode _root;
+  size_t _next_level_offset;
+  uint64_t _stats_offset = 0;
+  uint64_t _stats_byte_size = 0;
+};
 
-  const float* L1Centroid(uint32_t i) const noexcept {
-    return _l1_centroids.data() + static_cast<size_t>(i) * _d;
-  }
+struct CentroidsSpan {
+  size_t offset = 0;
+  size_t byte_size = 0;
+};
 
+struct AssignedCentroids {
+  std::vector<size_t> ids;
+  std::vector<size_t> perm;
+};
+
+struct CentroidsBuildParams {
+  size_t posting_size = 0;
+  size_t max_fanout = 0;
+  double sample_factor = 0;
+  uint64_t min_train_sample = 0;
+};
+
+class CentroidsBuilder {
+ public:
+  struct Node {
+    std::vector<float> centroids;
+    std::vector<size_t> children;
+    size_t leafs = 0;
+
+    size_t Rows(size_t d) const noexcept { return centroids.size() / d; }
+  };
+
+  CentroidsBuilder() = default;
+
+  static CentroidsBuilder Create(const ColumnReader& vector_column,
+                                 ReadContext& ctx, size_t rows,
+                                 VectorMetric metric, uint32_t d,
+                                 const CentroidsBuildParams& params = {});
+
+  static CentroidsBuilder CreateFromSample(
+    std::vector<float> sample, uint32_t d, VectorMetric metric,
+    const CentroidsBuildParams& params = {});
+
+  CentroidsSpan Serialize(IndexOutput& out) const;
+
+  AssignedCentroids AssignCentroids(
+    std::span<float> data, size_t d,
+    std::span<std::span<const float>> centroids_out = {}) const;
+
+  size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
+
+ private:
+  static CentroidsBuilder BuildFromSample(std::vector<float> sample, uint32_t d,
+                                          VectorMetric metric, size_t leaf_size,
+                                          size_t max_fanout);
+
+  void BuildTree(std::vector<float> sample, size_t leaf_size,
+                 size_t max_fanout);
+
+  void AssignCentroidsImpl(
+    size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,
+    std::span<size_t> perm,
+    std::span<std::span<const float>> centroids_out) const;
+
+  std::vector<Node> _nodes;
+  std::vector<size_t> _row_bases;
   VectorMetric _metric = VectorMetric::L2Sqr;
-  CentroidShapeKind _shape_kind = CentroidShapeKind::TwoLayer;
   uint32_t _d = 0;
-  uint32_t _n_l1 = 0;
-  std::vector<float> _l1_centroids;
-  std::vector<uint64_t> _offsets;
-  bstring _quant_stats;
+  size_t _n_rows = 0;
 };
 
 }  // namespace irs

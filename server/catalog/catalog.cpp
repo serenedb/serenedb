@@ -1438,6 +1438,21 @@ DropPlan Snapshot::ComputeDropPlan(ObjectId seed) const {
   return DropEmitter{seed, lookup, indexes_using_col, dep_lookup}.ComputePlan();
 }
 
+DropPlan Snapshot::ComputeDropPlanRestrict(ObjectId seed, bool cascade,
+                                           std::string_view kind,
+                                           std::string_view name) const {
+  auto plan = ComputeDropPlan(seed);
+  if (!cascade && plan.IsCascade()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+      ERR_MSG("cannot drop ", kind, " ", name,
+              " because other objects depend on it"),
+      ERR_DETAIL(plan.FormatDependentsDetail(*this, kind, name)),
+      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+  }
+  return plan;
+}
+
 // Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
 // column and cascade-drop every index covering it (PG column->index cascade).
 // The column has no dependency edges of its own, so this is built directly
@@ -1459,6 +1474,188 @@ DropPlan Snapshot::ComputeColumnDropPlan(ObjectId table_id,
     }
   }
   return plan;
+}
+
+std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
+  std::vector<PgDependEdge> edges;
+  auto attnum = [](const Table& t, Column::Id col) -> int32_t {
+    auto pos = t.ColumnPosById(col);
+    return pos == t.Columns().size() ? 0 : static_cast<int32_t>(pos) + 1;
+  };
+  auto attnum_of = [&](ObjectId col_id) -> int32_t {
+    auto col = GetObject(col_id);
+    if (!col) {
+      return 0;
+    }
+    auto table = GetObject<Table>(col->GetParentId());
+    return table ? attnum(*table, col_id) : 0;
+  };
+  auto emit = [&](ObjectId dependent, int32_t dependent_sub,
+                  DependClass dependent_class, ObjectId referenced,
+                  int32_t referenced_sub, DependClass referenced_class,
+                  DependType deptype) {
+    edges.push_back({dependent, dependent_sub, dependent_class, referenced,
+                     referenced_sub, referenced_class, deptype});
+  };
+  for (const auto& obj : _objects) {
+    if (GetDatabaseId(*obj) != db_id) {
+      continue;
+    }
+    auto ref = obj->GetId();
+    switch (obj->GetType()) {
+      case ObjectType::Table:
+      case ObjectType::PgSqlView:
+        emit(ref, 0, DependClass::Relation, obj->GetParentId(), 0,
+             DependClass::Namespace, DependType::Normal);
+        break;
+      case ObjectType::Sequence:
+        if (!basics::downCast<const Sequence>(*obj).GetOwnerTableId().isSet()) {
+          emit(ref, 0, DependClass::Relation, obj->GetParentId(), 0,
+               DependClass::Namespace, DependType::Normal);
+        }
+        break;
+      case ObjectType::PgSqlFunction:
+        emit(ref, 0, DependClass::Proc, obj->GetParentId(), 0,
+             DependClass::Namespace, DependType::Normal);
+        break;
+      case ObjectType::PgSqlType:
+        emit(ref, 0, DependClass::Type, obj->GetParentId(), 0,
+             DependClass::Namespace, DependType::Normal);
+        break;
+      default:
+        break;
+    }
+    auto dep = _deps.TryGetDependency(ref);
+    if (!dep) {
+      continue;
+    }
+    switch (obj->GetType()) {
+      case ObjectType::Table:
+      case ObjectType::PgSqlView: {
+        const auto& rel = basics::downCast<const RelationDependency>(*dep);
+        const Table* table = obj->GetType() == ObjectType::Table
+                               ? &basics::downCast<const Table>(*obj)
+                               : nullptr;
+        ObjectId pk_index = table ? table->PKIndexId() : ObjectId{};
+        for (auto idx : rel.indexes) {
+          if (idx == pk_index) {
+            continue;
+          }
+          auto index = GetObject<Index>(idx);
+          if (index && index->ReferencesColumn(Column::kGeneratedPKId)) {
+            continue;
+          }
+          bool emitted = false;
+          if (table && index) {
+            for (auto col : index->GetColumns()) {
+              if (auto sub = attnum(*table, col)) {
+                emit(idx, 0, DependClass::Relation, ref, sub,
+                     DependClass::Relation, DependType::Auto);
+                emitted = true;
+              }
+            }
+          }
+          if (!emitted) {
+            emit(idx, 0, DependClass::Relation, ref, 0, DependClass::Relation,
+                 DependType::Auto);
+          }
+        }
+        for (auto fn : rel.functions) {
+          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+        if (table) {
+          for (const auto& fk : table->ForeignKeys()) {
+            if (!fk.referenced_table.isSet()) {
+              continue;
+            }
+            auto reft = GetObject<Table>(fk.referenced_table);
+            for (auto rc : fk.referenced_columns) {
+              emit(fk.id, 0, DependClass::Constraint, fk.referenced_table,
+                   reft ? attnum(*reft, rc) : 0, DependClass::Relation,
+                   DependType::Normal);
+            }
+          }
+          for (const auto& col : table->Columns()) {
+            if (col.GetId() == Column::kGeneratedPKId) {
+              continue;
+            }
+            if (!(col.expr && col.expr->HasExpr())) {
+              continue;
+            }
+            if (auto sub = attnum(*table, col.GetId())) {
+              emit(col.GetId(), 0, DependClass::Attrdef, ref, sub,
+                   DependClass::Relation, DependType::Auto);
+            }
+          }
+        }
+        for (auto view : rel.views) {
+          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+        if (obj->GetType() == ObjectType::PgSqlView) {
+          emit(ref, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
+               DependType::Internal);
+        }
+      } break;
+      case ObjectType::Sequence: {
+        const auto& sd = basics::downCast<const SequenceDependency>(*dep);
+        for (auto fn : sd.functions) {
+          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+        for (auto view : sd.views) {
+          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+        for (auto col : sd.column_defaults) {
+          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Relation,
+               DependType::Normal);
+        }
+      } break;
+      case ObjectType::PgSqlType: {
+        const auto& ty = basics::downCast<const PgSqlTypeDependency>(*dep);
+        for (auto col : ty.column_types) {
+          auto c = GetObject(col);
+          if (!c) {
+            continue;
+          }
+          emit(c->GetParentId(), attnum_of(col), DependClass::Relation, ref, 0,
+               DependClass::Type, DependType::Normal);
+        }
+        for (auto fn : ty.functions) {
+          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Type,
+               DependType::Normal);
+        }
+        for (auto view : ty.views) {
+          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Type,
+               DependType::Normal);
+        }
+        for (auto col : ty.column_defaults) {
+          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Type,
+               DependType::Normal);
+        }
+      } break;
+      case ObjectType::PgSqlFunction: {
+        const auto& fnd = basics::downCast<const PgSqlFunctionDependency>(*dep);
+        for (auto fn : fnd.functions) {
+          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Proc,
+               DependType::Normal);
+        }
+        for (auto view : fnd.views) {
+          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Proc,
+               DependType::Normal);
+        }
+        for (auto col : fnd.column_defaults) {
+          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Proc,
+               DependType::Normal);
+        }
+      } break;
+      default:
+        break;
+    }
+  }
+  return edges;
 }
 
 void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
@@ -2299,7 +2496,7 @@ bool Catalog::CreateInvertedIndex(
   const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
   std::string_view schema, std::string_view relation, std::string name,
   std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
-  CreateIndexOperationOptions operation_options) {
+  ExpressionData predicate, CreateIndexOperationOptions operation_options) {
   if (columns.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Cannot create index without columns"));
@@ -2340,7 +2537,8 @@ bool Catalog::CreateInvertedIndex(
   }
   auto index = catalog::CreateInvertedIndex(
     context, database_id, schema, *schema_id, ObjectId{0}, resolved.relation_id,
-    std::move(name), std::move(columns), _snapshot, std::move(options));
+    std::move(name), std::move(columns), _snapshot, std::move(options),
+    std::move(predicate));
   CreateIndexImpl(schema, std::move(index), operation_options);
   return true;
 }
@@ -3590,6 +3788,183 @@ void Catalog::AlterInvertedIndexOptions(
   }
 }
 
+namespace {
+
+duckdb::Value CommentValue(std::string_view comment) {
+  return comment.empty() ? duckdb::Value{} : duckdb::Value{comment};
+}
+
+}  // namespace
+
+void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
+                               std::string_view schema, std::string_view name,
+                               ObjectType type, std::string_view comment,
+                               bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  std::shared_ptr<Object> obj;
+  if (schema_id) {
+    std::optional<ObjectId> object_id;
+    if (type == ObjectType::PgSqlFunction) {
+      object_id =
+        _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
+    } else if (type == ObjectType::PgSqlType) {
+      object_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
+    } else {
+      object_id =
+        _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+    }
+    if (object_id) {
+      obj = _snapshot->GetObject(*object_id);
+    }
+  }
+  if (!obj) {
+    if (missing_ok) {
+      return;
+    }
+    switch (type) {
+      case ObjectType::PgSqlFunction:
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", name, "\""));
+      case ObjectType::PgSqlType:
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("type \"", name, "\" does not exist"));
+      default:
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", name, "\" does not exist"));
+    }
+  }
+  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
+  const bool matches =
+    IsIndex(type) ? IsIndex(obj->GetType()) : obj->GetType() == type;
+  if (!matches) {
+    std::string_view what = [&] {
+      switch (type) {
+        case ObjectType::PgSqlView:
+          return "a view";
+        case ObjectType::Sequence:
+          return "a sequence";
+        default:
+          SDB_ASSERT(IsIndex(type));
+          return "an index";
+      }
+    }();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not ", what));
+  }
+
+  std::shared_ptr<Object> updated;
+  ObjectId parent = *schema_id;
+  switch (obj->GetType()) {
+    case ObjectType::PgSqlView: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlView>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    case ObjectType::Sequence: {
+      updated = basics::downCast<Sequence>(*obj).CloneWithComment(comment);
+    } break;
+    case ObjectType::SecondaryIndex:
+    case ObjectType::InvertedIndex: {
+      updated = obj->Clone();
+      auto& index = basics::downCast<Index>(*updated);
+      index.SetComment(comment);
+      parent = index.GetRelationId();
+    } break;
+    case ObjectType::PgSqlType: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlType>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    case ObjectType::PgSqlFunction: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlFunction>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    default:
+      SDB_UNREACHABLE();
+  }
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    if (type == ObjectType::PgSqlFunction) {
+      clone->ReplaceObject<ResolveType::Function>(*schema_id, name, updated);
+    } else if (type == ObjectType::PgSqlType) {
+      clone->ReplaceObject<ResolveType::Type>(*schema_id, name, updated);
+    } else {
+      clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
+    }
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->Write([&](auto& ctx) {
+      ctx.PutDefinition(parent, updated->GetType(), updated->GetId(), bytes);
+    });
+  });
+}
+
+void Catalog::SetViewColumnComment(const AccessContext& ax,
+                                   ObjectId database_id,
+                                   std::string_view schema,
+                                   std::string_view name,
+                                   std::string_view column,
+                                   std::string_view comment, bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  std::shared_ptr<Object> obj;
+  if (schema_id) {
+    if (auto object_id =
+          _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
+      obj = _snapshot->GetObject(*object_id);
+    }
+  }
+  if (!obj) {
+    if (missing_ok) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", name, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
+  if (obj->GetType() != ObjectType::PgSqlView) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not a view"));
+  }
+
+  auto updated = std::static_pointer_cast<PgSqlView>(obj->Clone());
+  auto& info = updated->GetInfo();
+  duckdb::Identifier resolved{column};
+  const auto name_it = absl::c_find(info.names, resolved);
+  if (name_it == info.names.end()) {
+    const auto alias_it = absl::c_find(info.aliases, resolved);
+    if (alias_it == info.aliases.end()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", column, "\" of relation \"", name,
+                              "\" does not exist"));
+    }
+    const auto alias_index =
+      static_cast<size_t>(std::distance(info.aliases.begin(), alias_it));
+    SDB_ASSERT(alias_index < info.names.size());
+    resolved = info.names[alias_index];
+  }
+  if (comment.empty()) {
+    info.column_comments_map.erase(resolved);
+  } else {
+    info.column_comments_map[resolved] = duckdb::Value(std::string{comment});
+  }
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->Write([&](auto& ctx) {
+      ctx.PutDefinition(*schema_id, ObjectType::PgSqlView, updated->GetId(),
+                        bytes);
+    });
+  });
+}
+
 void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
                           std::string_view schema, std::string_view name,
                           ChangeCallback<Table> new_table,
@@ -3683,7 +4058,8 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
             default_sql = new_col.expr->GetExpr().ToString();
           }
           ctx.AddStoreColumn(store_name, std::string{new_col.GetName()},
-                             new_col.type.ToString(), std::move(default_sql));
+                             new_col.type.ToString(), std::move(default_sql),
+                             new_col.compression);
         }
         if (renamed_columns) {
           // Mirrored index definitions embed column names;
@@ -4008,15 +4384,8 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
   }
   RequireObjectOwner(*_snapshot, ax.role, *table_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*table_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop table ", name,
-              " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "table", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan =
+    _snapshot->ComputeDropPlanRestrict(*table_id, cascade, "table", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -4355,14 +4724,8 @@ bool Catalog::DropView(const AccessContext& ax, std::string_view database,
   }
   RequireObjectOwner(*_snapshot, ax.role, *view_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*view_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop view ", name, " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "view", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan =
+    _snapshot->ComputeDropPlanRestrict(*view_id, cascade, "view", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -4482,14 +4845,8 @@ bool Catalog::DropType(const AccessContext& ax, std::string_view database,
   }
   RequireObjectOwner(*_snapshot, ax.role, *type_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*type_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop type ", name, " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "type", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan =
+    _snapshot->ComputeDropPlanRestrict(*type_id, cascade, "type", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -4544,15 +4901,8 @@ bool Catalog::DropFunction(const AccessContext& ax, std::string_view database,
   }
   RequireObjectOwner(*_snapshot, ax.role, *function_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*function_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop function ", name,
-              " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "function", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan =
+    _snapshot->ComputeDropPlanRestrict(*function_id, cascade, "function", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);
@@ -4605,16 +4955,8 @@ bool Catalog::DropTokenizer(std::string_view database, std::string_view schema,
       ERR_MSG("text search dictionary \"", name, "\" does not exist"));
   }
 
-  auto plan = _snapshot->ComputeDropPlan(*tokenizer_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop text search dictionary ", name,
-              " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot,
-                                             "text search dictionary", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
-  }
+  auto plan = _snapshot->ComputeDropPlanRestrict(
+    *tokenizer_id, cascade, "text search dictionary", name);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     SDB_ASSERT(clone);

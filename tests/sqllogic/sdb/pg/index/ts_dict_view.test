@@ -1,0 +1,475 @@
+hash-threshold 100
+
+# ts_dict_* pushdown over a VIEW-backed inverted index. A view has no catalog
+# table, so no column can be proven NOT NULL: every key is treated as nullable
+# (rides the field's null-marker for the synthesized NULL group), count/min/max
+# stay NULL-safe, and array_agg -- which keeps a NULL element the dictionary has
+# none for -- falls back to a document scan. Otherwise a view-backed index
+# behaves exactly like a table-backed one. Each result is checked against the
+# same query over the base table (the oracle). Background maintenance is off.
+
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vkw(template = 'keyword', frequency = true)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vtx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+# brand is nullable; status is NOT NULL in the base but a view cannot carry that
+# proof; tags is a VARCHAR[] keyword facet; body feeds a tokenized field and an
+# indexed ts_split_by_non_alpha expression.
+statement ok
+CREATE TABLE vbase(id INTEGER PRIMARY KEY, brand VARCHAR, status VARCHAR NOT NULL,
+                   tags VARCHAR[], body VARCHAR NOT NULL)
+
+statement ok
+INSERT INTO vbase VALUES
+  (1, 'FENDT', 'open', ['red', 'fast'],  'disk error alpha'),
+  (2, 'CLAAS', 'open', ['green'],        'all ok'),
+  (3, NULL,    'done', ['red'],          'net error'),
+  (4, 'FENDT', 'done', ['blue', 'fast'], 'error retry beta'),
+  (5, 'FENDT', 'open', NULL,             'ok gamma')
+
+statement ok
+CREATE VIEW vlog AS
+SELECT id, brand AS Brand, status AS Status, tags AS Tags, body AS Body
+FROM vbase
+
+statement ok
+CREATE INDEX vlog_idx ON vlog USING inverted(
+    Brand vkw, Status vkw, Tags vkw, Body vtx,
+    (ts_split_by_non_alpha(Body, true)) vkw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) vbase;
+
+# --- Facet on a nullable keyword column: converts, with the NULL group
+# --- synthesized from the null-marker.
+query TI
+SELECT Brand AS b, count(*) AS n FROM vlog_idx
+GROUP BY Brand ORDER BY n DESC, b
+----
+b	n
+FENDT	3
+CLAAS	1
+NULL	1
+
+query
+EXPLAIN SELECT Brand, count(*) FROM vlog_idx GROUP BY Brand
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────╮
+│ Projections:                         │
+│ sdb_inverted_index_term$brand,       │
+│ CAST(#1 AS BIGINT)                   │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ Aggregates: sum(#1)                  │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: vlog_idx                      │
+│ TsDict: brand                        │
+│ Projections:                         │
+│ sdb_inverted_index_term$brand,       │
+│ sdb_inverted_index_term_count$brand  │
+│ ~2 rows                              │
+╰──────────────────────────────────────╯
+
+query TI
+SELECT brand AS b, count(*) AS n FROM vbase GROUP BY brand ORDER BY n DESC, b
+----
+b	n
+FENDT	3
+CLAAS	1
+NULL	1
+
+# --- Facet on a NOT-NULL-in-base column exposed through the view: still
+# --- converts; the synthesized NULL group is empty (no null rows) so it
+# --- vanishes.
+query TI
+SELECT Status AS s, count(*) AS n FROM vlog_idx
+GROUP BY Status ORDER BY n DESC, s
+----
+s	n
+open	3
+done	2
+
+query
+EXPLAIN SELECT Status, count(*) FROM vlog_idx GROUP BY Status
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────╮
+│ Projections:                          │
+│ sdb_inverted_index_term$status,       │
+│ CAST(#1 AS BIGINT)                    │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ HASH_GROUP_BY ───┴───────────────────╮
+│ Groups: #0                            │
+│ Aggregates: sum(#1)                   │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: vlog_idx                       │
+│ TsDict: status                        │
+│ Projections:                          │
+│ sdb_inverted_index_term$status,       │
+│ sdb_inverted_index_term_count$status  │
+│ ~2 rows                               │
+╰───────────────────────────────────────╯
+
+# --- Filtered facet: a tokenized-field @@ WHERE claims into the document
+# --- filter, and the facet counts survive over that restriction.
+query TI
+SELECT Brand AS b, count(*) AS n FROM vlog_idx
+WHERE Body @@ 'error'
+GROUP BY Brand ORDER BY n DESC, b
+----
+b	n
+FENDT	2
+NULL	1
+
+query
+EXPLAIN SELECT Brand, count(*) FROM vlog_idx WHERE Body @@ 'error' GROUP BY Brand
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────╮
+│ Projections:                         │
+│ sdb_inverted_index_term$brand,       │
+│ CAST(#1 AS BIGINT)                   │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ Aggregates: sum(#1)                  │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: vlog_idx                      │
+│ Index Filter:                        │
+│ ╭─ Term ──────────────╮              │
+│ │ Field: body(string) │              │
+│ │ Value: error        │              │
+│ ╰─────────────────────╯              │
+│ TsDict: brand                        │
+│ Projections:                         │
+│ sdb_inverted_index_term$brand,       │
+│ sdb_inverted_index_term_count$brand  │
+│ ~2 rows                              │
+╰──────────────────────────────────────╯
+
+# --- Filtered facet with an indexed-expression @@ (multi-term ts_any).
+query TI
+SELECT Status AS s, count(*) AS n FROM vlog_idx
+WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['alpha', 'beta'])
+GROUP BY Status ORDER BY n DESC, s
+----
+s	n
+done	1
+open	1
+
+query
+EXPLAIN SELECT Status, count(*) FROM vlog_idx
+WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['alpha', 'beta'])
+GROUP BY Status
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections:                                 │
+│ sdb_inverted_index_term$status,              │
+│ CAST(#1 AS BIGINT)                           │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ HASH_GROUP_BY ───────┴──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: sum(#1)                          │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: vlog_idx                              │
+│ Index Filter:                                │
+│ ╭─ Terms ──────────────────────────────────╮ │
+│ │ Field: ts_split_by_non_alpha(body, true) │ │
+│ │ Values: 'alpha', 'beta'                  │ │
+│ │ Min Match: 1                             │ │
+│ ╰──────────────────────────────────────────╯ │
+│ TsDict: status                               │
+│ Projections:                                 │
+│ sdb_inverted_index_term$status,              │
+│ sdb_inverted_index_term_count$status         │
+│ ~2 rows                                      │
+╰──────────────────────────────────────────────╯
+
+# --- GROUPING SETS over two view keys: marginal counts for each dimension in
+# --- one query.
+query TI
+SELECT coalesce(Brand, Status) AS v, count(*) AS n FROM vlog_idx
+GROUP BY GROUPING SETS ((Brand), (Status)) ORDER BY v NULLS FIRST
+----
+v	n
+NULL	1
+CLAAS	1
+FENDT	3
+done	2
+open	3
+
+query
+EXPLAIN SELECT Brand, Status, count(*) FROM vlog_idx
+GROUP BY GROUPING SETS ((Brand), (Status))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0, #1           │
+│ Aggregates: count_star() │
+│ ~3 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: vlog_idx          │
+│ Projections: brand,      │
+│              status      │
+│ ~5 rows                  │
+╰──────────────────────────╯
+
+query TI
+SELECT coalesce(brand, status) AS v, count(*) AS n FROM vbase
+GROUP BY GROUPING SETS ((brand), (status)) ORDER BY v NULLS FIRST
+----
+v	n
+NULL	1
+CLAAS	1
+FENDT	3
+done	2
+open	3
+
+# --- count(DISTINCT) / min / max: NULL-safe, push down to the dictionary.
+query II
+SELECT count(DISTINCT Brand) AS b, count(DISTINCT Status) AS s FROM vlog_idx
+----
+b	s
+2	2
+
+query
+EXPLAIN SELECT count(DISTINCT Brand) FROM vlog_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────╮
+│ Aggregates: count(#0)          │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ HASH_GROUP_BY ┴───────────────╮
+│ Groups: #0                     │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: vlog_idx                │
+│ TsDict: brand                  │
+│ Projections:                   │
+│ sdb_inverted_index_term$brand  │
+│ ~2 rows                        │
+╰────────────────────────────────╯
+
+query TT
+SELECT min(Brand) AS lo, max(Brand) AS hi FROM vlog_idx
+----
+lo	hi
+CLAAS	FENDT
+
+query
+EXPLAIN SELECT min(Brand), max(Brand) FROM vlog_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────╮
+│ Aggregates: min(#0), max(#0)   │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: vlog_idx                │
+│ TsDict: brand                  │
+│ Projections:                   │
+│ sdb_inverted_index_term$brand  │
+│ ~2 rows                        │
+╰────────────────────────────────╯
+
+# --- array_agg keeps a NULL element the term dictionary has none for, and the
+# --- view cannot prove NOT NULL, so it stays a document scan (result correct).
+query T
+SELECT array_agg(DISTINCT Brand ORDER BY Brand) AS lst FROM vlog_idx
+----
+lst
+{CLAAS,FENDT,NULL}
+
+query
+EXPLAIN SELECT array_agg(DISTINCT Brand) FROM vlog_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: array_agg(DISTINCT #0) │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Index: vlog_idx                    │
+│ Projections: brand                 │
+│ ~5 rows                            │
+╰────────────────────────────────────╯
+
+query T
+SELECT array_agg(DISTINCT brand ORDER BY brand) AS lst FROM vbase
+----
+lst
+{CLAAS,FENDT,NULL}
+
+# --- array_agg over the NOT-NULL-in-base column: no null rows, so no NULL
+# --- element -- still a document scan on the view.
+query T
+SELECT array_agg(DISTINCT Status ORDER BY Status) AS lst FROM vlog_idx
+----
+lst
+{done,open}
+
+# --- Explicit ts_dict_* over the view: aggregate the dictionary directly (no
+# --- NULL element -- these read terms, not documents).
+query T
+SELECT list_sort(ts_dict_agg(Brand)) AS terms FROM vlog_idx
+----
+terms
+{CLAAS,FENDT}
+
+query
+EXPLAIN SELECT ts_dict_agg(Brand) FROM vlog_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────────╮
+│ Aggregates:                                │
+│ list(#0) FILTER (WHERE #1) Filter: #1      │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ PROJECTION ─────────┴─────────────────────╮
+│ Projections:                               │
+│ sdb_inverted_index_term$brand,             │
+│ sdb_inverted_index_term$brand IS NOT NULL  │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ──────┴─────────────────────╮
+│ Groups: #0                                 │
+│ ~1 row                                     │
+╰──────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+│ Index: vlog_idx                            │
+│ TsDict: brand                              │
+│ Projections:                               │
+│ sdb_inverted_index_term$brand              │
+│ ~2 rows                                    │
+╰────────────────────────────────────────────╯
+
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(Brand)) AS t, unnest(ts_dict_count(Brand)) AS c
+      FROM vlog_idx) s ORDER BY t
+----
+term	docs
+CLAAS	1
+FENDT	3
+
+query TI
+SELECT t AS term, f AS freq
+FROM (SELECT unnest(ts_dict_agg(Brand)) AS t, unnest(ts_dict_freq(Brand)) AS f
+      FROM vlog_idx) s ORDER BY t
+----
+term	freq
+CLAAS	1
+FENDT	3
+
+query TT
+SELECT ts_dict_min(Status) AS lo, ts_dict_max(Status) AS hi FROM vlog_idx
+----
+lo	hi
+done	open
+
+# --- ts_dict_* over a VARCHAR[] keyword column on the view: array elements are
+# --- the field's terms; per-term doc counts dedup within a row.
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(Tags)) AS t, unnest(ts_dict_count(Tags)) AS c
+      FROM vlog_idx) s ORDER BY t
+----
+term	docs
+blue	1
+fast	2
+green	1
+red	2
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(Tags)), unnest(ts_dict_count(Tags))
+FROM vlog_idx
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────╮
+│ Projections:                                         │
+│ sdb_inverted_index_term$tags,                        │
+│ CAST(sdb_inverted_index_term_count$tags AS INTEGER)  │
+│ ~2 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ HASH_GROUP_BY ───────────┴──────────────────────────╮
+│ Groups: #0                                           │
+│ Aggregates: sum(#1)                                  │
+│ ~2 rows                                              │
+╰───────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────┴──────────────────────────╮
+│ Index: vlog_idx                                      │
+│ TsDict: tags                                         │
+│ Projections:                                         │
+│ sdb_inverted_index_term$tags,                        │
+│ sdb_inverted_index_term_count$tags                   │
+│ ~4 rows                                              │
+╰──────────────────────────────────────────────────────╯
+
+# --- Same-field @@ membership WHERE on the facet key.
+query TI
+SELECT Status AS s, count(*) AS n FROM vlog_idx
+WHERE Brand @@ 'FENDT'
+GROUP BY Status ORDER BY n DESC, s
+----
+s	n
+open	2
+done	1
+
+query
+EXPLAIN SELECT Status, count(*) FROM vlog_idx
+WHERE Brand @@ 'FENDT' GROUP BY Status
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────╮
+│ Projections:                          │
+│ sdb_inverted_index_term$status,       │
+│ CAST(#1 AS BIGINT)                    │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ HASH_GROUP_BY ───┴───────────────────╮
+│ Groups: #0                            │
+│ Aggregates: sum(#1)                   │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: vlog_idx                       │
+│ Index Filter:                         │
+│ ╭─ Term ───────────────╮              │
+│ │ Field: brand(string) │              │
+│ │ Value: FENDT         │              │
+│ ╰──────────────────────╯              │
+│ TsDict: status                        │
+│ Projections:                          │
+│ sdb_inverted_index_term$status,       │
+│ sdb_inverted_index_term_count$status  │
+│ ~2 rows                               │
+╰───────────────────────────────────────╯

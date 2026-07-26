@@ -8,7 +8,8 @@ hash-threshold 100
 # with a WHERE filter and any range query fall back to the exact raw reranker.
 # SQ8 is lossy and IVF is approximate, so determinism comes from well-separated
 # vectors plus an exhaustive nprobe; assertions check row identity/order only,
-# never the distance score. quant='sq8' supports only metric l2 and ip.
+# never the distance score. quant='sq8' supports metric l2, ip, and cosine
+# (cosine is encoded as inner product over L2-normalized vectors).
 
 # Exhaustive search: probe every cluster so kNN can't miss a true neighbour.
 statement ok
@@ -24,7 +25,7 @@ CREATE TABLE sq8_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX sq8_l2_idx ON sq8_l2
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
   INCLUDE (label)
 
 statement count 6
@@ -75,7 +76,7 @@ CREATE TABLE sq8_rerank_run (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_rerank_run_idx ON sq8_rerank_run
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 6
 INSERT INTO sq8_rerank_run VALUES
@@ -110,7 +111,7 @@ CREATE TABLE sq8_mc (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_mc_idx ON sq8_mc
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 3))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 6
 INSERT INTO sq8_mc VALUES
@@ -154,7 +155,7 @@ CREATE TABLE sq8_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX sq8_dml_idx ON sq8_dml
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
   INCLUDE (label)
 
 statement count 4
@@ -260,7 +261,7 @@ CREATE TABLE sq8_ip (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_ip_idx ON sq8_ip
-  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq8'))
 
 statement count 4
 INSERT INTO sq8_ip VALUES
@@ -291,7 +292,7 @@ CREATE TABLE sq8_hyb (pk INTEGER PRIMARY KEY, emb FLOAT[3], cat INTEGER)
 
 statement ok
 CREATE INDEX sq8_hyb_idx ON sq8_hyb
-  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 4
 INSERT INTO sq8_hyb VALUES
@@ -339,7 +340,7 @@ CREATE TABLE sq8_edge (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_edge_idx ON sq8_edge
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 5
 INSERT INTO sq8_edge VALUES
@@ -380,7 +381,7 @@ statement ok
 RESET sdb_nprobe
 
 # ===========================================================================
-# 7. Guard: SQ8 is only valid with metric l2 or ip; cosine/l1 + sq8 must be
+# 7. Guard: SQ8 is valid with metric l2, ip, or cosine; l1 + sq8 must be
 #    rejected at CREATE INDEX rather than crashing at query time.
 # ===========================================================================
 
@@ -388,15 +389,61 @@ statement ok
 CREATE TABLE sq8_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement error
-CREATE INDEX sq8_bad_cos ON sq8_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'sq8'));
-----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
-
-
-statement error
 CREATE INDEX sq8_bad_l1 ON sq8_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'sq8'));
 ----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip', or 'cosine'
+
+
+# ===========================================================================
+# 7b. Cosine + SQ8: cosine is folded into the inner-product quantized path over
+#     L2-normalized vectors, so magnitude is ignored and ranking is by angle.
+#     Vectors deliberately vary in magnitude to prove normalization happens.
+# ===========================================================================
+
+statement ok
+SET sdb_nprobe = 1000
+
+statement ok
+CREATE TABLE sq8_cos (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX sq8_cos_idx ON sq8_cos
+  USING inverted(pk, emb ivf (metric = 'cosine', quant = 'sq8'))
+
+statement count 4
+INSERT INTO sq8_cos VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [1, 1, 0]::FLOAT[3]),
+  (3, [0, 5, 0]::FLOAT[3]),
+  (4, [0, 0, 3]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) sq8_cos
+
+# nearest by angle to [2,0,0] (a scaled +x): pk=1 (aligned), then pk=2 (45deg).
+query
+SELECT pk FROM sq8_cos_idx ORDER BY emb <=> [2, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+# nearest by angle to +y: pk=3 (aligned), then pk=2 (45deg).
+query
+SELECT pk FROM sq8_cos_idx ORDER BY emb <=> [0, 100, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+3
+2
+
+query
+SELECT count(*) FROM sq8_cos_idx;
+----
+count
+4
+
+statement ok
+RESET sdb_nprobe
 
 
 # ===========================================================================
@@ -416,7 +463,7 @@ CREATE TABLE sq8_mc_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX sq8_mc_dml_idx ON sq8_mc_dml
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
   INCLUDE (label)
 
 statement count 8
@@ -539,7 +586,7 @@ CREATE TABLE sq8_del_mask (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq8_del_mask_idx ON sq8_del_mask
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 6
 INSERT INTO sq8_del_mask VALUES

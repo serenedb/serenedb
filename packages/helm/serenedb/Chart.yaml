@@ -1,0 +1,24 @@
+apiVersion: v2
+name: serenedb
+description: SereneDB single-node database server
+type: application
+# version/appVersion are placeholders: real values are stamped at release time
+# by CI (helm-release.yml) -- chart version derived from the last published
+# helm-chart-v* GitHub release, appVersion from the SereneDB release being
+# shipped. appVersion "latest" keeps `helm install` from a source checkout
+# working (image.tag defaults to appVersion).
+version: 0.0.0
+appVersion: "latest"
+kubeVersion: ">=1.25.0-0"
+home: https://serenedb.com
+sources:
+  - https://github.com/serenedb/serenedb
+keywords:
+  - database
+  - sql
+  - postgres
+  - analytics
+  - search
+maintainers:
+  - name: SereneDB GmbH
+    email: support@serenedb.com

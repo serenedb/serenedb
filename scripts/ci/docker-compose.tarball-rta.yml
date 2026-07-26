@@ -24,6 +24,7 @@ services:
     environment:
       - HOME=/tmp
       - TARBALL_NAME
+      - POSTGRES_PASSWORD=postgres
     networks:
       - rta-network
     command: >

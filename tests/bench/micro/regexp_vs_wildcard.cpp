@@ -25,8 +25,8 @@
 // is missing - silent fallback would produce misleading numbers.
 
 #include <benchmark/benchmark.h>
+#include <simdutf.h>
 #include <unicode/locid.h>
-#include <utf8.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -49,6 +49,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "utf8proc_wrapper.hpp"
 
 namespace bench_regexp {
 
@@ -200,15 +202,13 @@ class EuroparlBodyTemplate {
   std::string _body;
 };
 
-// utf8::unchecked::BreakIterator, copied verbatim from
-// tests/libs/iresearch/index/doc_generator.cpp. Splits a UTF-8 byte
-// range on a delimiter rune, yielding string columns.
+// Splits a UTF-8 byte range on a delimiter rune, yielding string columns.
+// Copied from tests/libs/iresearch/index/doc_generator.cpp; iterates
+// codepoints via duckdb's utf8proc wrapper.
 template<typename OctetIterator>
 class BreakIterator {
  public:
-  using Utf8Iterator = utf8::unchecked::iterator<OctetIterator>;
-
-  BreakIterator(utf8::uint32_t delim, const OctetIterator& begin,
+  BreakIterator(uint32_t delim, const OctetIterator& begin,
                 const OctetIterator& end)
     : _delim{delim}, _wbegin{begin}, _wend{begin}, _end{end} {
     if (!Done()) {
@@ -236,20 +236,27 @@ class BreakIterator {
  private:
   void Next() {
     _wbegin = _wend;
-    _wend = std::find(_wbegin, _end, _delim);
-    if (_wend != _end) {
-      _res.assign(_wbegin.base(), _wend.base());
-      ++_wend;
-    } else {
-      _res.assign(_wbegin.base(), _end.base());
+    OctetIterator it = _wbegin;
+    while (it != _end) {
+      const OctetIterator prev = it;
+      int sz = 0;
+      const auto cp = duckdb::Utf8Proc::UTF8ToCodepoint(&*it, sz);
+      it += sz > 0 ? sz : 1;
+      if (static_cast<uint32_t>(cp) == _delim) {
+        _res.assign(_wbegin, prev);
+        _wend = it;
+        return;
+      }
     }
+    _wend = _end;
+    _res.assign(_wbegin, _end);
   }
 
-  utf8::uint32_t _delim;
+  uint32_t _delim;
   std::string _res;
-  Utf8Iterator _wbegin;
-  Utf8Iterator _wend;
-  Utf8Iterator _end;
+  OctetIterator _wbegin;
+  OctetIterator _wend;
+  OctetIterator _end;
 };
 
 // Tab-separated line reader.
@@ -265,7 +272,7 @@ class EuroparlReader {
     if (!std::getline(_ifs, _line)) {
       return nullptr;
     }
-    if (utf8::find_invalid(_line.begin(), _line.end()) != _line.end()) {
+    if (!simdutf::validate_utf8(_line.data(), _line.size())) {
       return nullptr;
     }
 

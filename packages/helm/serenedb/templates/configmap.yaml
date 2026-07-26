@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "serenedb.fullname" . }}
+  labels:
+    {{- include "serenedb.labels" . | nindent 4 }}
+data:
+  # Mounted at /etc/serenedb; the image entrypoint copies serened.conf to a
+  # writable location and appends --flagfile automatically.
+  serened.conf: |
+    --listen={{ include "serenedb.listenValue" . }}
+    --log_storage=stdout
+    --log_level={{ .Values.config.logLevel }}
+    {{- if .Values.config.maxConnections }}
+    --max_connections={{ .Values.config.maxConnections }}
+    {{- end }}
+    {{- if .Values.config.cpuThreads }}
+    --cpu_threads={{ .Values.config.cpuThreads }}
+    {{- end }}
+    {{- if .Values.config.ioThreads }}
+    --io_threads={{ .Values.config.ioThreads }}
+    {{- end }}
+    {{- if .Values.config.backgroundThreads }}
+    --background_threads={{ .Values.config.backgroundThreads }}
+    {{- end }}
+    --auth_timeout={{ .Values.config.authTimeout }}
+    --idle_session_timeout={{ .Values.config.idleSessionTimeout }}
+    {{- if .Values.config.pgMaxMessageBytes }}
+    --pg_max_message_bytes={{ .Values.config.pgMaxMessageBytes }}
+    {{- end }}
+    {{- if and .Values.listeners.http.enabled .Values.listeners.http.corsOrigins }}
+    --http_cors_origins={{ .Values.listeners.http.corsOrigins }}
+    {{- end }}
+    {{- if .Values.tls.enabled }}
+    --tls_cert=/etc/serenedb-tls/tls.crt
+    --tls_key=/etc/serenedb-tls/tls.key
+    --tls_min_version={{ .Values.tls.minVersion }}
+    {{- end }}
+    {{- if .Values.config.hba }}
+    --hba_config=/etc/serenedb/pg_hba.conf
+    {{- end }}
+    {{- range .Values.config.extraFlags }}
+    {{ . }}
+    {{- end }}
+  {{- if .Values.config.hba }}
+  pg_hba.conf: |
+    {{- .Values.config.hba | nindent 4 }}
+  {{- end }}

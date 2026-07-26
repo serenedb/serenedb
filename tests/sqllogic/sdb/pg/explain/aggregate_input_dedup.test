@@ -1,0 +1,101 @@
+# Pre-aggregation projection dedupes equal non-volatile aggregate inputs and
+# filters into a single slot. Distinct aggregates keep their own input column,
+# and volatile inputs are never shared.
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+statement ok
+CREATE TABLE agg_dedupe(x INTEGER, y INTEGER);
+
+
+statement count 5
+INSERT INTO agg_dedupe VALUES (1, 10), (2, 20), (2, 20), (3, 30), (NULL, 40);
+
+
+# Repeated non-volatile input shared across sum/avg/min/max.
+query
+SELECT sum(x), avg(x), min(x), max(x) FROM agg_dedupe;
+----
+sum	avg	min	max
+8	2	1	3
+
+
+# Two distinct aggregates over the same input keep independent columns.
+query
+SELECT count(DISTINCT x), sum(DISTINCT x) FROM agg_dedupe;
+----
+count	sum
+3	6
+
+
+# Mixed distinct + non-distinct over the same input.
+query
+SELECT sum(x), sum(DISTINCT x), count(DISTINCT x) FROM agg_dedupe;
+----
+sum	sum	count
+8	6	3
+
+
+# A filter shared by two aggregates collapses to one slot.
+query
+SELECT sum(x) FILTER (WHERE y > 15), count(x) FILTER (WHERE y > 15) FROM agg_dedupe;
+----
+sum	count
+7	3
+
+
+# Aggregate input equal to a group expression.
+query
+SELECT x, sum(x), avg(x) FROM agg_dedupe GROUP BY x ORDER BY x;
+----
+x	sum	avg
+1	1	1
+2	4	2
+3	3	3
+NULL	NULL	NULL
+
+
+# Plan: equal non-volatile inputs collapse to one slot -- min and max both read #0.
+query
+EXPLAIN SELECT min(x + 1), max(x + 1) FROM agg_dedupe;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─╮
+│ Aggregates: min(#0),  │
+│             max(#0)   │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ PROJECTION ──────────╮
+│ Projections: x + 1    │
+│ ~5 rows               │
+╰───────────┬───────────╯
+╭─ SEQ_SCAN ┴───────────╮
+│ Table: agg_dedupe     │
+│ Type: Sequential Scan │
+│ Projections: x        │
+│ ~5 rows               │
+╰───────────────────────╯
+
+
+# Plan: volatile inputs are never shared -- min reads #0, max reads #1.
+query
+EXPLAIN SELECT min(random()), max(random()) FROM agg_dedupe;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──╮
+│ Aggregates: min(#0),   │
+│             max(#1)    │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: random(), │
+│              random()  │
+│ ~5 rows                │
+╰────────────┬───────────╯
+╭─ SEQ_SCAN ─┴───────────╮
+│ Table: agg_dedupe      │
+│ Type: Sequential Scan  │
+│ ~5 rows                │
+╰────────────────────────╯

@@ -53,7 +53,7 @@ class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
   static ptr Make(Options opts);
 
   explicit PatternTokenizer(std::string_view pattern, int group = -1);
-  ~PatternTokenizer();
+  ~PatternTokenizer() override;
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);

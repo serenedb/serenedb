@@ -147,6 +147,7 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
   std::vector<catalog::Column> view_columns, ObjectId database_id,
   duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
+  duckdb::unique_ptr<duckdb::Expression> bound_where,
   SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
@@ -156,6 +157,7 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
     _database_id(database_id),
     _info(std::move(info)),
     _bound_expressions(std::move(bound_expressions)),
+    _bound_where(std::move(bound_where)),
     _schema_entry(schema_entry) {}
 
 catalog::Table* SereneDBPhysicalCreateIndex::TableOrNull() const noexcept {
@@ -239,6 +241,21 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   const auto relation_id =
     table_for_proj ? table_for_proj->GetId() : _relation->GetId();
 
+  // Normalize + serialize a bound expression (index key or partial-index
+  // predicate) into its persisted ExpressionData, keyed to stable catalog
+  // column ids.
+  auto make_expression_data = [&](const duckdb::Expression& bound,
+                                  std::string pretty) {
+    auto normalized =
+      NormalizeBoundExpression(bound, relation_id, col_index_to_id, context);
+    return catalog::ExpressionData{
+      .serialized_expr = SerializeBoundExpression(*normalized),
+      .dependent_columns = CollectDependentColumns(*normalized),
+      .return_type = normalized->GetReturnType(),
+      .pretty_printed = std::move(pretty),
+    };
+  };
+
   idx_columns.reserve(_info->parsed_expressions.size());
   for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
     auto& expr = _info->parsed_expressions[i];
@@ -270,26 +287,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                "bound expression is missing for inverted index expression");
     const auto& bound_expr = _bound_expressions[i];
 
-    auto normalized = NormalizeBoundExpression(*bound_expr, relation_id,
-                                               col_index_to_id, context);
-    std::string serialized = SerializeBoundExpression(*normalized);
-    auto dependent_columns = CollectDependentColumns(*normalized);
-    if (dependent_columns.empty()) {
+    auto data = make_expression_data(*bound_expr, expr->ToString());
+    if (data.dependent_columns.empty()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
         ERR_MSG(
           "indexed expression must reference at least one base table column"));
     }
-    auto return_type = normalized->GetReturnType();
-    auto& indexed_column = idx_columns.emplace_back(
-      "", nullptr,
-      catalog::ExpressionData{
-        .serialized_expr = std::move(serialized),
-        .dependent_columns = std::move(dependent_columns),
-        .return_type = std::move(return_type),
-        .pretty_printed = expr->ToString(),
-      },
-      std::move(opclass), std::move(opclass_options));
+    auto& indexed_column =
+      idx_columns.emplace_back("", nullptr, std::move(data), std::move(opclass),
+                               std::move(opclass_options));
     indexed_column.name = indexed_column.indexed_expr->pretty_printed;
   }
 
@@ -410,11 +417,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->pk_column = options.pk_column;
     state->pk_shape = pk_shape;
 
+    catalog::ExpressionData predicate;
+    if (_bound_where) {
+      predicate =
+        make_expression_data(*_bound_where, _info->where_clause->ToString());
+    }
+
     created = catalog_impl.CreateInvertedIndex(
       catalog::ActingAs(context), context, _database_id,
       _schema_entry.name.GetIdentifierName(), _relation->GetName(),
       _info->GetIndexName().GetIdentifierName(), std::move(idx_columns),
-      std::move(options),
+      std::move(options), std::move(predicate),
       {.create_with_tombstone = true, .if_not_exists = if_not_exists});
   } else {
     bool unique =
@@ -707,8 +720,10 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   duckdb::OperatorSinkCombineInput& input) const {
   if (auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state)) {
     lstate->writer.reset();
+    // Flush this thread's tail segment here (in parallel Combines) rather than
+    // leaving it for the single-threaded Finalize refresh to write.
     const bool committed =
-      lstate->search_trx ? lstate->search_trx->Commit() : false;
+      lstate->search_trx ? lstate->search_trx->FlushAndCommit() : false;
     lstate->search_trx.reset();
     if (committed) {
       // The final commit went through: nothing pending here anymore, drop
@@ -876,10 +891,16 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     relation = table_entry.GetSereneDBTable();
   }
 
+  duckdb::unique_ptr<duckdb::Expression> bound_where;
+  if (op.info->where_clause) {
+    SDB_ASSERT(!op.unbound_expressions.empty());
+    bound_where = std::move(op.unbound_expressions.back());
+    op.unbound_expressions.pop_back();
+  }
   auto& create_index = input.planner.Make<SereneDBPhysicalCreateIndex>(
     std::move(relation), std::move(view_columns), database_id,
-    std::move(op.info), std::move(op.unbound_expressions), schema_entry,
-    op.estimated_cardinality);
+    std::move(op.info), std::move(op.unbound_expressions),
+    std::move(bound_where), schema_entry, op.estimated_cardinality);
   create_index.children.push_back(input.table_scan);
   return create_index;
 }

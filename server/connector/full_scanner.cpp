@@ -83,6 +83,7 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
   if (count == 0) {
     return 0;
   }
+  _scanned_end = std::max<uint64_t>(_scanned_end, start_row + count);
   SDB_IF_FAILURE("SearchIncludeFetchFault") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }

@@ -56,7 +56,6 @@
 #include "iresearch/formats/column/array_column_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
-#include "iresearch/formats/column/internal/overflow_string_io.hpp"
 #include "iresearch/formats/column/list_column_reader.hpp"
 #include "iresearch/formats/column/struct_column_reader.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
@@ -235,6 +234,15 @@ bool ColumnReader::NullsInData() const noexcept {
 void ColumnReader::FinishStats(duckdb::BaseStatistics stats) {
   if (_validity) {
     stats.Merge(_validity->MergedStatistics());
+  } else if (_row_count > 0 && !_children.empty()) {
+    // A nested parent rebuilds its stats from CreateEmpty (its own blocks are
+    // plumbing, e.g. list offsets), so the null flags only come from the
+    // validity child -- and its absence means the writer counted every row
+    // valid (ColumnWriter::SealValidity). Scalars need none of this: their
+    // data block stats already carry the flags.
+    SDB_ASSERT(!stats.CanHaveNull(),
+               "column without a validity payload carries null-bearing stats");
+    stats.SetHasNoNull();
   }
   _stats = stats.ToUnique();
 }
@@ -303,9 +311,10 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(
     /*block_id=*/0, /*offset=*/0, byte_size, /*segment_state=*/nullptr);
   if (_type.InternalType() == duckdb::PhysicalType::VARCHAR) {
     if (auto seg_state = segment->GetSegmentState()) {
-      seg_state->Cast<duckdb::UncompressedStringSegmentState>()
-        .overflow_reader =
-        duckdb::make_uniq<IndexInputOverflowReader>(ctx.In());
+      auto& str_state =
+        seg_state->Cast<duckdb::UncompressedStringSegmentState>();
+      str_state.overflow_reader = &ctx;
+      str_state.stream_reader = &ctx;
     }
   }
   return segment;
@@ -657,6 +666,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
                                                   std::move(validity),
                                                   std::move(meta.variant_rgs));
       break;
+    case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT:
       col = std::make_unique<StructColumnReader>(meta.id, std::move(meta.type),
                                                  std::move(validity),

@@ -7,6 +7,34 @@
 
 
 # ----------------------------------------------------------------------
+# Type identity: TSQUERY owns serenedb reserved-range OIDs (kMinSystem+102
+# and +103 = 1000102 / 1000103), never a PostgreSQL builtin -- it must not
+# re-squat on pg_catalog's tsquery (3615). The name resolves through regtype;
+# sqllogictest-rs prints the raw OID for reserved (non-well-known) OIDs over
+# the extended protocol, so name rendering is simple-only (cf. variant.test).
+# ----------------------------------------------------------------------
+
+query
+SELECT 'tsquery'::regtype::oid AS scalar_oid, 'tsquery[]'::regtype::oid AS array_oid;
+----
+scalar_oid	array_oid
+1000102	1000103
+
+skipif pg-wire-extended
+query
+SELECT 'tsquery'::regtype AS scalar, 'tsquery[]'::regtype AS arr;
+----
+scalar	arr
+tsquery	tsquery[]
+
+query
+SELECT pg_typeof('cat & dog'::tsquery) AS wire;
+----
+wire
+text
+
+
+# ----------------------------------------------------------------------
 # 1. Values are inspectable: canonical text rendering via ::text.
 # ----------------------------------------------------------------------
 

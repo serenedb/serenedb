@@ -487,6 +487,20 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
     state.estimation);
 }
 
+DocIterator::ptr WrapRawScorer(DocIterator::ptr src, const SubReader& segment,
+                               const VectorState& state,
+                               std::span<const float> query,
+                               VectorMetric metric, score_t boost) {
+  const auto* col_reader = segment.GetColReader();
+  if (!col_reader || !src) {
+    return src;
+  }
+  const auto d = static_cast<uint32_t>(state.vector_column->ArraySize());
+  return memory::make_managed<RawVectorIterator>(
+    std::move(src), *state.vector_column, *col_reader, d, query, metric, boost,
+    state.estimation);
+}
+
 class DisjointClusterUnion : public DocIterator {
  public:
   DisjointClusterUnion(QVectorIterators&& itrs, doc_id_t docs_count,
@@ -598,19 +612,21 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
           !children.empty()) {
         using Disjunction =
           DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
-        auto v = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
-                                              std::move(children));
-        if (!_inner) {
-          return v;
+        DocIterator::ptr v = MakeDisjunction<Disjunction>(
+          WandContext{}, docs_count, std::move(children));
+        if (_inner) {
+          auto inner_it = _inner->Execute(ctx, stats);
+          if (!inner_it) {
+            return DocIterator::empty();
+          }
+          v = MergeWithInner(
+            std::move(v),
+            memory::make_managed<FilterIterator>(std::move(inner_it)),
+            docs_count, ScoreMergeType::Sum);
         }
-        auto inner_it = _inner->Execute(ctx, stats);
-        if (!inner_it) {
-          return DocIterator::empty();
-        }
-        return MergeWithInner(
-          std::move(v),
-          memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
-          ScoreMergeType::Sum);
+        return ctx.top_k_collect ? std::move(v)
+                                 : WrapRawScorer(std::move(v), _segment, _state,
+                                                 query, _metric, _boost);
       }
     }
   }
@@ -636,8 +652,7 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
   DocIterator::ptr res;
   // RawVectorReader now yields "larger = nearer" scores, so map the radius into
   // that scoring space: distance metrics (nearest = smallest) get negated.
-  const float threshold =
-    VectorMetricNearestIsLargest(_metric) ? _radius : -_radius;
+  const float threshold = VectorMetricIsAngular(_metric) ? _radius : -_radius;
   irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
     auto v_it = memory::make_managed<VectorRangeIterator<Inclusive>>(
       std::move(it), threshold);

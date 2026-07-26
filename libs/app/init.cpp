@@ -102,7 +102,11 @@ void InitProcess(const char* argv0) {
   RaiseFdLimit();
   CheckMaxMapCount();
   random::Reset();
-  FUNCTABLE_INIT;
+  auto status = [] {
+    FUNCTABLE_INIT;
+    return 0;
+  }();
+  SDB_VERIFY(status == 0);
   absl::InitializeSymbolizer(argv0);
   YACLIB_INIT_DEBUG([](std::string_view file, std::size_t line,
                        std::string_view func, std::string_view condition,

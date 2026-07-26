@@ -41,6 +41,7 @@ class PgSqlView final : public Object {
   std::shared_ptr<Object> Clone() const final;
 
   const duckdb::CreateViewInfo& GetInfo() const noexcept { return *_info; }
+  duckdb::CreateViewInfo& GetInfo() noexcept { return *_info; }
 
   Refs GetRefs(RefKinds kinds) const;
 

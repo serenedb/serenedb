@@ -184,13 +184,6 @@ db error: ERROR: Table with name ddl_index_base does not exist!
 Did you mean "<slt:ignore>"?
 
 
-# ddl_index: Partial Indexes
-statement error
-CREATE INDEX ddl_index_part ON ddl_index_base (a) WHERE a > 5;
-----
-db error: ERROR: Creating partial indexes is not supported currently
-
-
 # ddl_misc: CREATE SCHEMA
 statement ok
 CREATE SCHEMA ddl_misc_schema1;

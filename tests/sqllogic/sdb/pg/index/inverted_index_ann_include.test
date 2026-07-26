@@ -57,12 +57,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vec_t_idx                       │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ─╮                       │
-│ │ Field: emb   │                       │
-│ │ Metric: l2   │                       │
-│ │ Dims: 3      │                       │
-│ ╰──────────────╯                       │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 1                                 │
 │ Projections: label, tag,               │
 │              sdb_inverted_index_score  │
@@ -93,12 +88,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: vec_t_idx                       │
 │ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector KNN ─╮                       │
-│ │ Field: emb   │                       │
-│ │ Metric: l2   │                       │
-│ │ Dims: 3      │                       │
-│ ╰──────────────╯                       │
+│ Score: l2_distance(emb, FLOAT[3])      │
 │ Top: 1                                 │
 │ Projections: pk (l), label (i),        │
 │              body (l),                 │

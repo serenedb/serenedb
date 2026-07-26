@@ -23,7 +23,9 @@
 #include "absl/functional/any_invocable.h"
 #include "absl/functional/function_ref.h"
 #include "benchmark/benchmark.h"
+#ifdef SDB_ENABLE_FUNCTION2
 #include "function2.hpp"
+#endif
 
 #ifdef SDB_ENABLE_FOLLY
 #include "folly/Function.h"
@@ -127,6 +129,7 @@ void BmTrivialBoostFunction(benchmark::State& state) {
 }
 BENCHMARK(BmTrivialBoostFunction);
 
+#ifdef SDB_ENABLE_FUNCTION2
 void BmTrivialFu2Function(benchmark::State& state) {
   ConstructAndCallFunctionBenchmark<fu2::function<void()>>(state,
                                                            TrivialFunctor{});
@@ -144,6 +147,7 @@ void BmTrivialFu2UniqueFunction(benchmark::State& state) {
     state, TrivialFunctor{});
 }
 BENCHMARK(BmTrivialFu2UniqueFunction);
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -187,6 +191,7 @@ void BmLargeBoostFunction(benchmark::State& state) {
 }
 BENCHMARK(BmLargeBoostFunction);
 
+#ifdef SDB_ENABLE_FUNCTION2
 void BmLargeFu2Function(benchmark::State& state) {
   ConstructAndCallFunctionBenchmark<fu2::function<void()>>(state,
                                                            LargeFunctor{});
@@ -204,6 +209,7 @@ void BmLargeFu2UniqueFunction(benchmark::State& state) {
     state, LargeFunctor{});
 }
 BENCHMARK(BmLargeFu2UniqueFunction);
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -254,6 +260,7 @@ void BmFunPtrBoostFunction(benchmark::State& state) {
 }
 BENCHMARK(BmFunPtrBoostFunction);
 
+#ifdef SDB_ENABLE_FUNCTION2
 void BmFunPtrFu2Function(benchmark::State& state) {
   ConstructAndCallFunctionBenchmark<fu2::function<void()>>(state, FreeFunction);
 }
@@ -270,6 +277,7 @@ void BmFunPtrFu2UniqueFunction(benchmark::State& state) {
                                                                   FreeFunction);
 }
 BENCHMARK(BmFunPtrFu2UniqueFunction);
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -333,6 +341,7 @@ void BmTrivialArgsBoostFunction(benchmark::State& state) {
 }
 BENCHMARK(BmTrivialArgsBoostFunction);
 
+#ifdef SDB_ENABLE_FUNCTION2
 void BmTrivialArgsFu2Function(benchmark::State& state) {
   CallFunctionBenchmark<fu2::function<void(int, int, int)>>(
     state, FunctorWithTrivialArgs{}, 1, 2, 3);
@@ -350,6 +359,7 @@ void BmTrivialArgsFu2UniqueFunction(benchmark::State& state) {
     state, FunctorWithTrivialArgs{}, 1, 2, 3);
 }
 BENCHMARK(BmTrivialArgsFu2UniqueFunction);
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -416,6 +426,7 @@ void BmNonTrivialArgsBoostFunction(benchmark::State& state) {
 }
 BENCHMARK(BmNonTrivialArgsBoostFunction);
 
+#ifdef SDB_ENABLE_FUNCTION2
 void BmNonTrivialArgsFu2Function(benchmark::State& state) {
   std::string a, b, c;
   CallFunctionBenchmark<
@@ -439,6 +450,7 @@ void BmNonTrivialArgsFu2UniqueFunction(benchmark::State& state) {
     state, FunctorWithNonTrivialArgs{}, a, b, c);
 }
 BENCHMARK(BmNonTrivialArgsFu2UniqueFunction);
+#endif
 
 }  // namespace
 

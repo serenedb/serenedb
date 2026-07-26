@@ -25,6 +25,8 @@ repos:
       - id: check-vcs-permalinks
       - id: check-xml
       - id: check-yaml
+        # Helm templates are Go templates, not YAML; helm lint validates them.
+        exclude: ^packages/helm/serenedb/templates/
       - id: destroyed-symlinks
       # TODO(mbkkt) - id: detect-aws-credentials
       # TODO(mbkkt) - id: detect-private-key
@@ -38,6 +40,21 @@ repos:
     hooks:
       - id: gersemi
         name: CMake formatter
+
+  # Rewriting fixers -- must run before clang-format so it reflows their
+  # output in the same pass.
+  - repo: local
+    hooks:
+      - id: fix-enum-trailing-comma
+        name: Fix enum trailing comma
+        language: python
+        entry: python3 scripts/fix_enum_trailing_comma.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: fix-lambda-empty-parens
+        name: Fix lambda empty parameter list
+        language: python
+        entry: python3 scripts/fix_lambda_empty_parens.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v21.1.8
@@ -127,3 +144,13 @@ repos:
         entry: scripts/format_duckdb.sh --staged
         pass_filenames: false
         always_run: true
+      - id: check-submodule-pointers
+        name: Check submodule gitlinks (on a version branch, not older than main)
+        language: python
+        entry: python3 scripts/check_submodule_pointers.py
+        # pre-commit filters submodule gitlinks out of its file lists, so a
+        # files: pattern on third_party/duckdb never matches; the script
+        # no-ops instantly (two local git calls) when the gitlink equals
+        # origin/main's, so unconditional runs are cheap.
+        always_run: true
+        pass_filenames: false

@@ -99,7 +99,7 @@ struct StringSpan {
     CARET = 278,                   /* CARET  */
     TILDE = 279,                   /* TILDE  */
     PLUS = 280,                    /* PLUS  */
-    MINUS = 281                    /* MINUS  */
+    MINUS = 281,                    /* MINUS  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif

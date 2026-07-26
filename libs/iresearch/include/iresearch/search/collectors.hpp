@@ -191,7 +191,7 @@ class CompoundCollector final : public PrepareCollector {
     _children.emplace_back(std::move(child));
   }
 
-  const Scorer* GetScorer() const noexcept { return _scorer; }
+  const Scorer* GetScorer() const noexcept override { return _scorer; }
 
   auto& Child(size_t i) noexcept { return *_children[i]; }
   auto Size() const noexcept { return _children.size(); }

@@ -210,7 +210,7 @@ enum class SeekMode : uint32_t {
   NORMAL = 0,
 
   // Only random exact seeks are supported
-  RandomOnly
+  RandomOnly,
 };
 
 struct TermReader : public AttributeProvider {

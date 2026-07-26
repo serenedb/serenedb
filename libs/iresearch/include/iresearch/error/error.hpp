@@ -43,7 +43,7 @@ enum class ErrorCode : uint32_t {
   NotImplError,
   IllegalArgument,
   IllegalState,
-  UndefinedError
+  UndefinedError,
 };
 
 #define DECLARE_ERROR_CODE(class_name)                          \

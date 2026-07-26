@@ -24,10 +24,8 @@
 #include "doc_generator.hpp"
 
 #include <absl/container/flat_hash_map.h>
-#include <rapidjson/istreamwrapper.h>
-#include <rapidjson/rapidjson.h>
-#include <rapidjson/reader.h>
-#include <utf8.h>
+#include <simdjson.h>
+#include <simdutf.h>
 
 #include <cassert>
 #include <iomanip>
@@ -40,6 +38,7 @@
 #include "iresearch/index/field_data.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "utf8proc_wrapper.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace tests {
@@ -97,22 +96,16 @@ irs::field_id FieldIdForRuntime(std::string_view name) {
   return FieldIdFor(name);
 }
 
-}  // namespace tests
-namespace utf8 {
-namespace unchecked {
-
 template<typename OctetIterator>
 class BreakIterator {
  public:
-  using Utf8iterator = unchecked::iterator<OctetIterator>;
-
   using IteratorCategory = std::forward_iterator_tag;
   using ValueType = std::string;
   using Pointer = ValueType*;
   using Reference = ValueType&;
   using DifferenceType = void;
 
-  BreakIterator(utf8::uint32_t delim, const OctetIterator& begin,
+  BreakIterator(uint32_t delim, const OctetIterator& begin,
                 const OctetIterator& end)
     : _delim(delim), _wbegin(begin), _wend(begin), _end(end) {
     if (!Done()) {
@@ -148,25 +141,28 @@ class BreakIterator {
  private:
   void Next() {
     _wbegin = _wend;
-    _wend = std::find(_wbegin, _end, _delim);
-    if (_wend != _end) {
-      _res.assign(_wbegin.base(), _wend.base());
-      ++_wend;
-    } else {
-      _res.assign(_wbegin.base(), _end.base());
+    OctetIterator it = _wbegin;
+    while (it != _end) {
+      const OctetIterator prev = it;
+      int sz = 0;
+      const auto cp = duckdb::Utf8Proc::UTF8ToCodepoint(&*it, sz);
+      it += sz > 0 ? sz : 1;
+      if (static_cast<uint32_t>(cp) == _delim) {
+        _res.assign(_wbegin, prev);
+        _wend = it;
+        return;
+      }
     }
+    _wend = _end;
+    _res.assign(_wbegin, _end);
   }
 
-  utf8::uint32_t _delim;
+  uint32_t _delim;
   std::string _res;
-  Utf8iterator _wbegin;
-  Utf8iterator _wend;
-  Utf8iterator _end;
+  OctetIterator _wbegin;
+  OctetIterator _wend;
+  OctetIterator _end;
 };
-
-}  // namespace unchecked
-}  // namespace utf8
-namespace tests {
 
 Document::Document(Document&& rhs) noexcept
   : indexed(std::move(rhs.indexed)),
@@ -296,17 +292,12 @@ const Document* DelimDocGenerator::next() {
     return nullptr;
   }
 
-  {
-    const std::string::const_iterator end =
-      utf8::find_invalid(_str.begin(), _str.end());
-    if (end != _str.end()) {
-      /* invalid utf8 string */
-      return nullptr;
-    }
+  if (!simdutf::validate_utf8(_str.data(), _str.size())) {
+    /* invalid utf8 string */
+    return nullptr;
   }
 
-  using WordIterator =
-    utf8::unchecked::BreakIterator<std::string::const_iterator>;
+  using WordIterator = BreakIterator<std::string::const_iterator>;
 
   const WordIterator end(_str.end());
   WordIterator begin(_delim, _str.begin(), _str.end());
@@ -358,138 +349,103 @@ void CsvDocGenerator::reset() {
 
 bool CsvDocGenerator::skip() { return false == !getline(_ifs, _line); }
 
-//////////////////////////////////////////////////////////////////////////////
-/// @class parse_json_handler
-/// @brief rapdijson campatible visitor for
-///        JSON document-derived column value types
-//////////////////////////////////////////////////////////////////////////////
-class ParseJsonHandler : irs::util::Noncopyable {
- public:
-  typedef std::vector<Document> DocumentsT;
+namespace {
 
-  ParseJsonHandler(const JsonDocGenerator::factory_f& factory, DocumentsT& docs)
-    : _factory(factory), _docs(docs) {}
+namespace ondemand = simdjson::ondemand;
 
-  bool Null() {
-    _val.vt = JsonDocGenerator::ValueType::NIL;
-    AddField();
-    return true;
-  }
-
-  bool Bool(bool b) {
-    _val.vt = JsonDocGenerator::ValueType::BOOL;
-    _val.b = b;
-    AddField();
-    return true;
-  }
-
-  bool Int(int i) {
-    _val.vt = JsonDocGenerator::ValueType::INT;
-    _val.i = i;
-    AddField();
-    return true;
-  }
-
-  bool Uint(unsigned u) {
-    _val.vt = JsonDocGenerator::ValueType::UINT;
-    _val.ui = u;
-    AddField();
-    return true;
-  }
-
-  bool Int64(int64_t i) {
-    _val.vt = JsonDocGenerator::ValueType::INT64;
-    _val.i64 = i;
-    AddField();
-    return true;
-  }
-
-  bool Uint64(uint64_t u) {
-    _val.vt = JsonDocGenerator::ValueType::UINT64;
-    _val.ui64 = u;
-    AddField();
-    return true;
-  }
-
-  bool Double(double d) {
-    _val.vt = JsonDocGenerator::ValueType::DBL;
-    _val.dbl = d;
-    AddField();
-    return true;
-  }
-
-  bool RawNumber(const char* str, rapidjson::SizeType length, bool /*copy*/) {
-    _val.vt = JsonDocGenerator::ValueType::RAWNUM;
-    _val.str = std::string_view(str, length);
-    AddField();
-    return true;
-  }
-
-  bool String(const char* str, rapidjson::SizeType length, bool /*copy*/) {
-    _val.vt = JsonDocGenerator::ValueType::STRING;
-    _val.str = std::string_view(str, length);
-    AddField();
-    return true;
-  }
-
-  bool StartObject() {
-    if (1 == _level) {
-      _docs.emplace_back();
+// Maps a scalar on-demand value onto a JsonValue and hands it to the factory.
+// The factory must copy any string synchronously: on-demand string views are
+// only valid until the next value is parsed.
+void EmitScalar(const JsonDocGenerator::factory_f& factory, Document& doc,
+                const std::string& key, ondemand::value value) {
+  JsonDocGenerator::JsonValue val;
+  switch (value.type()) {
+    case ondemand::json_type::null:
+      val.vt = JsonDocGenerator::ValueType::NIL;
+      (void)value.is_null();  // consume the null token
+      break;
+    case ondemand::json_type::boolean:
+      val.vt = JsonDocGenerator::ValueType::BOOL;
+      val.b = value.get_bool();
+      break;
+    case ondemand::json_type::number: {
+      const ondemand::number number = value.get_number();
+      switch (number.get_number_type()) {
+        case ondemand::number_type::signed_integer:
+          val.vt = JsonDocGenerator::ValueType::INT64;
+          val.i64 = number.get_int64();
+          break;
+        case ondemand::number_type::unsigned_integer:
+          val.vt = JsonDocGenerator::ValueType::UINT64;
+          val.ui64 = number.get_uint64();
+          break;
+        case ondemand::number_type::floating_point_number:
+          val.vt = JsonDocGenerator::ValueType::DBL;
+          val.dbl = number.get_double();
+          break;
+        case ondemand::number_type::big_integer:
+          return;  // unused by the test fixtures
+      }
+      break;
     }
-
-    ++_level;
-    return true;
+    case ondemand::json_type::string:
+      val.vt = JsonDocGenerator::ValueType::STRING;
+      val.str = std::string_view{value.get_string()};
+      break;
+    default:
+      return;  // array/object are recursed by the caller
   }
+  factory(doc, key, val);
+}
 
-  bool StartArray() {
-    ++_level;
-    return true;
+void WalkValue(const JsonDocGenerator::factory_f& factory, Document& doc,
+               const std::string& key, ondemand::value value);
+
+void WalkObject(const JsonDocGenerator::factory_f& factory, Document& doc,
+                ondemand::object object) {
+  for (auto field : object) {
+    const std::string key{std::string_view{field.unescaped_key()}};
+    WalkValue(factory, doc, key, field.value());
   }
+}
 
-  bool Key(const char* str, rapidjson::SizeType length, bool) {
-    if (_level - 1 > _path.size()) {
-      _path.emplace_back(str, length);
-    } else {
-      _path.back().assign(str, length);
-    }
-    return true;
+void WalkValue(const JsonDocGenerator::factory_f& factory, Document& doc,
+               const std::string& key, ondemand::value value) {
+  switch (value.type()) {
+    case ondemand::json_type::object:
+      WalkObject(factory, doc, value.get_object());
+      break;
+    case ondemand::json_type::array:
+      for (auto element : value.get_array()) {
+        WalkValue(factory, doc, key, element.value());
+      }
+      break;
+    default:
+      EmitScalar(factory, doc, key, std::move(value));
+      break;
   }
+}
 
-  bool EndObject(rapidjson::SizeType /*memberCount*/) {
-    --_level;
-
-    if (!_path.empty()) {
-      _path.pop_back();
-    }
-    return true;
+// The document set is a top-level array whose direct object children each
+// become one Document; every scalar becomes a field keyed by its immediate
+// enclosing key.
+void ParseJsonDocuments(const JsonDocGenerator::factory_f& factory,
+                        ondemand::document& root, std::vector<Document>& docs) {
+  for (auto element : root.get_array()) {
+    docs.emplace_back();
+    WalkObject(factory, docs.back(), element.get_object());
   }
+}
 
-  bool EndArray(rapidjson::SizeType element_count) {
-    return EndObject(element_count);
-  }
-
- private:
-  void AddField() { _factory(_docs.back(), _path.back(), _val); }
-
-  const JsonDocGenerator::factory_f& _factory;
-  DocumentsT& _docs;
-  std::vector<std::string> _path;
-  size_t _level{};
-  JsonDocGenerator::JsonValue _val;
-};
+}  // namespace
 
 JsonDocGenerator::JsonDocGenerator(const std::filesystem::path& file,
                                    const JsonDocGenerator::factory_f& factory) {
-  std::ifstream input(std::filesystem::path(file).string().c_str(),
-                      std::ios::in | std::ios::binary);
-  SDB_ASSERT(input);
-
-  rapidjson::IStreamWrapper stream(input);
-  ParseJsonHandler handler(factory, _docs);
-  rapidjson::Reader reader;
-
-  [[maybe_unused]] const auto res = reader.Parse(stream, handler);
-  SDB_ASSERT(!res.IsError());
+  simdjson::ondemand::parser parser;
+  auto json = simdjson::padded_string::load(file.string());
+  SDB_ASSERT(!json.error());
+  simdjson::ondemand::document root = parser.iterate(json.value());
+  ParseJsonDocuments(factory, root, _docs);
 
   _next = _docs.begin();
 }
@@ -498,12 +454,10 @@ JsonDocGenerator::JsonDocGenerator(const char* data,
                                    const JsonDocGenerator::factory_f& factory) {
   SDB_ASSERT(data);
 
-  rapidjson::StringStream stream(data);
-  ParseJsonHandler handler(factory, _docs);
-  rapidjson::Reader reader;
-
-  [[maybe_unused]] const auto res = reader.Parse(stream, handler);
-  SDB_ASSERT(!res.IsError());
+  simdjson::ondemand::parser parser;
+  simdjson::padded_string json(data, std::char_traits<char>::length(data));
+  simdjson::ondemand::document root = parser.iterate(json);
+  ParseJsonDocuments(factory, root, _docs);
 
   _next = _docs.begin();
 }

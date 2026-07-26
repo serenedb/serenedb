@@ -127,6 +127,7 @@ TEST(CatalogPersistence, secondary_index) {
                        .pretty_printed = "a + b",
                      },
                    },
+                 .comment = "sk note",
                });
 }
 
@@ -138,6 +139,7 @@ TEST(CatalogPersistence, table) {
                                    {AclItem{.grantee = ObjectId{7},
                                             .grantor = ObjectId{42},
                                             .privs = AclMode::Select}}});
+  col_a.compression = duckdb::CompressionType::COMPRESSION_ZSTD;
   CheckFixture(
     "table.bin",
     TableData{
@@ -227,12 +229,11 @@ TEST(CatalogPersistence, entry_config_serialized_ivf) {
           .d = 128,
           .metric = irs::VectorMetric::InnerProduct,
           .quant = irs::VectorQuantization::SQ8,
-          .nlist = 0,
-          .train_sample = 4096,
-          .cluster_iters = 25,
           .pq_m = 0,
           .rabitq_bits = 0,
-          .nlist_factor = 2.5f,
+          .sample_factor = 0.5f,
+          .posting_size = 2048,
+          .compression = false,
         },
       .synthetic_column = irs::field_limits::invalid(),
       .row_group_size = 100,
@@ -257,6 +258,7 @@ TEST(CatalogPersistence, inverted_index) {
       .entries = {{1, EntryConfigSerialized{.text_dictionary = ObjectId{5},
                                             .row_group_size = 100}}},
       .options = InvertedIndexOptions{.row_group_size = 1024},
+      .comment = "inv note",
     });
 }
 
@@ -297,6 +299,7 @@ TEST(CatalogPersistence, sequence_options) {
                                      {AclItem{.grantee = ObjectId{7},
                                               .grantor = ObjectId{42},
                                               .privs = AclMode::Usage}}},
+                 .comment = "seq note",
                });
 }
 

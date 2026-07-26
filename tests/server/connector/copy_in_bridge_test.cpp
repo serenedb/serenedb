@@ -208,7 +208,10 @@ void WorkerWindowPath(CopyInBridge& bridge, uint64_t& bytes_seen,
   }
 }
 
-enum class Path { Read, Window };
+enum class Path {
+  Read,
+  Window,
+};
 
 // One full feeder/worker round: spin up the feeder coroutine on a single-thread
 // FairThreadPool (the "io thread") and run the worker on a separate blocking

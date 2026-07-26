@@ -456,6 +456,16 @@ class IndexWriter : private util::Noncopyable {
       return CommitImpl(first_tick + _queries);
     }
 
+    // Like Commit(), but writes the active segment in the calling thread first
+    // (parallel tail flush) instead of leaving it for the flush context to
+    // drain later.
+    bool FlushAndCommit() noexcept {
+      if (auto* segment = _active.Segment()) {
+        segment->Flush();
+      }
+      return Commit();
+    }
+
     bool Commit(uint64_t last_tick) noexcept {
       auto* segment = _active.Segment();
       if (segment == nullptr) {

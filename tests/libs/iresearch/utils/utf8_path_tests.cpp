@@ -920,7 +920,7 @@ TEST_F(Utf8PathTests, directory) {
         auto& result = results[i];
         pool.emplace_back(
           std::thread([&result, &directory1, &directory2, i, &mutex, &ready_cv,
-                       &ready_count, &ready]() {
+                       &ready_count, &ready] {
             std::filesystem::path path;
             path /= directory1;
             std::ostringstream ss;

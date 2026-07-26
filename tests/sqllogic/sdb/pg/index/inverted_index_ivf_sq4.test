@@ -19,7 +19,7 @@ CREATE TABLE sq4_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[3], label VARCHAR)
 
 statement ok
 CREATE INDEX sq4_l2_idx ON sq4_l2
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
   INCLUDE (label)
 
 statement count 6
@@ -58,7 +58,7 @@ CREATE TABLE sq4_mc (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq4_mc_idx ON sq4_mc
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 3))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
 
 statement count 6
 INSERT INTO sq4_mc VALUES
@@ -95,7 +95,7 @@ CREATE TABLE sq4_dml (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq4_dml_idx ON sq4_dml
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq4'))
 
 statement count 4
 INSERT INTO sq4_dml VALUES
@@ -137,7 +137,7 @@ CREATE TABLE sq4_ip (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement ok
 CREATE INDEX sq4_ip_idx ON sq4_ip
-  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq4', nlist = 1))
+  USING inverted(pk, emb ivf (metric = 'ip', quant = 'sq4'))
 
 statement count 4
 INSERT INTO sq4_ip VALUES
@@ -166,7 +166,7 @@ CREATE TABLE sq4_hyb (pk INTEGER PRIMARY KEY, emb FLOAT[3], cat INTEGER)
 
 statement ok
 CREATE INDEX sq4_hyb_idx ON sq4_hyb
-  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq4', nlist = 1))
+  USING inverted(pk, cat, emb ivf (metric = 'l2', quant = 'sq4'))
 
 statement count 4
 INSERT INTO sq4_hyb VALUES
@@ -197,19 +197,46 @@ statement ok
 RESET sdb_nprobe
 
 # ===========================================================================
-# 6. Guard: sq4 requires metric l2 or ip.
+# 6. Guard: sq4 requires metric l2, ip, or cosine (l1 is rejected).
 # ===========================================================================
 
 statement ok
 CREATE TABLE sq4_bad (pk INTEGER PRIMARY KEY, emb FLOAT[3])
 
 statement error
-CREATE INDEX sq4_bad_cos ON sq4_bad USING inverted(pk, emb ivf (metric = 'cosine', quant = 'sq4'));
-----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
-
-
-statement error
 CREATE INDEX sq4_bad_l1 ON sq4_bad USING inverted(pk, emb ivf (metric = 'l1', quant = 'sq4'));
 ----
-db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2' or 'ip'
+db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip', or 'cosine'
+
+
+# 6b. Cosine + sq4: folded into inner product over L2-normalized vectors, so
+#     ranking is by angle regardless of magnitude.
+statement ok
+SET sdb_nprobe = 1000
+
+statement ok
+CREATE TABLE sq4_cos (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX sq4_cos_idx ON sq4_cos
+  USING inverted(pk, emb ivf (metric = 'cosine', quant = 'sq4'))
+
+statement count 4
+INSERT INTO sq4_cos VALUES
+  (1, [10, 0, 0]::FLOAT[3]),
+  (2, [1, 1, 0]::FLOAT[3]),
+  (3, [0, 5, 0]::FLOAT[3]),
+  (4, [0, 0, 3]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) sq4_cos
+
+query
+SELECT pk FROM sq4_cos_idx ORDER BY emb <=> [2, 0, 0]::FLOAT[3] LIMIT 2;
+----
+pk
+1
+2
+
+statement ok
+RESET sdb_nprobe

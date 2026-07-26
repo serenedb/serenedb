@@ -1,0 +1,146 @@
+control substitution on
+
+# WAL index recovery for a HYBRID index: text column(s) + IVF vector column(s).
+#
+# A text field with the 'offset' feature sets IndexFeatures::Offs; an IVF vector
+# field quantized with sq8 (the default) sets IndexFeatures::Pay. Both live in
+# one segment and share the ".pay" stream, so the segment aggregate carries
+# Offs|Pay at once. This confirms the mixed-feature fields serialize and survive
+# WAL recovery: pre-crash rows go through a normal iresearch commit (on-disk
+# reference), post-crash rows land in the WAL only (we freeze
+# SearchRefreshTask::commitUnsafe before INSERTing them, then crash), and after
+# restart both text search and vector kNN must resolve every row.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY hy_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    frequency = true,
+    position = true,
+    offset = true
+);
+
+statement ok
+CREATE TABLE wal_hy_t(
+    pk INTEGER PRIMARY KEY,
+    title VARCHAR,
+    body VARCHAR,
+    va FLOAT[3],
+    vb FLOAT[4]
+);
+
+# Two text columns (Offs) + two IVF vector columns defaulting to sq8 (Pay).
+statement ok
+CREATE INDEX wal_hy_idx ON wal_hy_t
+    USING inverted(pk, title hy_dict, body hy_dict,
+                       va ivf (metric = 'l2'), vb ivf (metric = 'cosine'));
+
+# Pre-crash rows: committed to disk, so the on-disk segment is the reference.
+statement ok
+INSERT INTO wal_hy_t VALUES
+    (1, 'red running shoes',     'lightweight trail gear', [100,0,0]::FLOAT[3], [10,0,0,0]::FLOAT[4]),
+    (2, 'blue swimming goggles', 'water sport equipment',  [0,100,0]::FLOAT[3], [0,10,0,0]::FLOAT[4]);
+
+statement ok
+VACUUM (REFRESH_TABLE) wal_hy_t;
+
+# Pre-crash sanity: text and vector both resolve from the committed segment.
+query
+SELECT pk FROM wal_hy_idx WHERE title @@ 'red' ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM wal_hy_idx ORDER BY va <-> [100,0,0]::FLOAT[3] LIMIT 1;
+----
+pk
+1
+
+# Freeze iresearch commits BEFORE the second batch. These rows reach WAL
+# but the iresearch trx never flushes -- their fields only exist
+# as WAL bytes when we crash.
+statement ok
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_hy_t VALUES
+    (3, 'green hiking boots', 'rugged trail gear',        [0,0,100]::FLOAT[3], [0,0,10,0]::FLOAT[4]),
+    (4, 'red trail shoes',    'lightweight running gear', [90,10,0]::FLOAT[3], [9,1,0,0]::FLOAT[4]);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection hy_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) wal_hy_t;
+
+# All four rows visible after recovery.
+connection hy_after
+query
+SELECT COUNT(*) AS n FROM wal_hy_idx;
+----
+n
+4
+
+# Text search over both columns spans pre-crash and recovered rows.
+connection hy_after
+query
+SELECT pk FROM wal_hy_idx WHERE title @@ 'red' ORDER BY pk;
+----
+pk
+1
+4
+
+connection hy_after
+query
+SELECT pk FROM wal_hy_idx WHERE body @@ 'trail' ORDER BY pk;
+----
+pk
+1
+3
+
+# Vector kNN resolves the recovered rows on both vector columns.
+connection hy_after
+query
+SELECT pk FROM wal_hy_idx ORDER BY va <-> [0,0,100]::FLOAT[3] LIMIT 1;
+----
+pk
+3
+
+connection hy_after
+query
+SELECT pk FROM wal_hy_idx ORDER BY vb <=> [0,0,1,0]::FLOAT[4] LIMIT 1;
+----
+pk
+3
+
+# Hybrid: text filter + vector ordering across recovered rows.
+connection hy_after
+query
+SELECT pk FROM wal_hy_idx
+WHERE title @@ 'red'
+ORDER BY va <-> [100,0,0]::FLOAT[3]
+LIMIT 2;
+----
+pk
+1
+4
+
+connection hy_after
+query
+SELECT pk, title FROM wal_hy_t ORDER BY pk;
+----
+pk	title
+1	red running shoes
+2	blue swimming goggles
+3	green hiking boots
+4	red trail shoes

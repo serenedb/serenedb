@@ -32,7 +32,9 @@
 #ifdef SDB_ENABLE_FOLLY
 #include <folly/Range.h>
 #endif
+#if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
+#endif
 
 #include <algorithm>
 #include <cstdint>
@@ -62,12 +64,14 @@ inline uint64_t Lower64(uint64_t c) {
   r &= 0x2020202020202020ull;
   return c + r;
 }
+#if defined(__x86_64__) || defined(__i386__)
 inline __m128i Lower128(__m128i v) {
   __m128i biased = _mm_add_epi8(v, _mm_set1_epi8(int8_t(0x80 - 'A')));
   __m128i is_up =
     _mm_cmpgt_epi8(_mm_set1_epi8(int8_t('Z' + 0x80 - 'A' + 1)), biased);
   return _mm_or_si128(v, _mm_and_si128(is_up, _mm_set1_epi8(0x20)));
 }
+#endif
 
 // independent scalar oracle (shares no code with the abseil impls): used to
 // transitively validate the patched EqualsIgnoreCase / memcasecmp via the
@@ -132,6 +136,7 @@ bool EqSwar(const char* a, size_t an, const char* b, size_t bn) {
   }
   return true;
 }
+#if defined(__x86_64__) || defined(__i386__)
 bool EqSimd(const char* a, size_t an, const char* b, size_t bn) {
   if (an != bn) {
     return false;
@@ -148,6 +153,7 @@ bool EqSimd(const char* a, size_t an, const char* b, size_t bn) {
   }
   return EqSwar(a + i, n - i, b + i, n - i);
 }
+#endif
 
 // ===================== CILessThan candidates =====================
 // current: absl memcasecmp + length tiebreak
@@ -174,6 +180,7 @@ bool LtSwar(const char* a, size_t an, const char* b, size_t bn) {
   }
   return an < bn;
 }
+#if defined(__x86_64__) || defined(__i386__)
 bool LtSimd(const char* a, size_t an, const char* b, size_t bn) {
   size_t n = std::min(an, bn), i = 0;
   for (; i + 16 <= n; i += 16) {
@@ -191,6 +198,7 @@ bool LtSimd(const char* a, size_t an, const char* b, size_t bn) {
   }
   return LtSwar(a + i, an - i, b + i, bn - i);
 }
+#endif
 
 // ===================== correctness harness =====================
 std::vector<std::string> Corpus() {
@@ -315,9 +323,13 @@ BENCHMARK_TEMPLATE(Bm, EqAbsl, false)->Name("eq_absl_current");
 BENCHMARK_TEMPLATE(Bm, EqFolly, false)->Name("eq_folly");
 #endif
 BENCHMARK_TEMPLATE(Bm, EqSwar, false)->Name("eq_swar");
+#if defined(__x86_64__) || defined(__i386__)
 BENCHMARK_TEMPLATE(Bm, EqSimd, false)->Name("eq_simd");
+#endif
 BENCHMARK_TEMPLATE(Bm, LtAbsl, true)->Name("lt_absl_current");
 BENCHMARK_TEMPLATE(Bm, LtSwar, true)->Name("lt_swar");
+#if defined(__x86_64__) || defined(__i386__)
 BENCHMARK_TEMPLATE(Bm, LtSimd, true)->Name("lt_simd");
+#endif
 
 BENCHMARK_MAIN();

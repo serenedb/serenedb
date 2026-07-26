@@ -304,3 +304,65 @@ QUERY PLAN
 │ Projections: id                      │
 │ ~1 row                               │
 ╰──────────────────────────────────────╯
+
+statement ok
+CREATE TABLE ts_table (id INTEGER PRIMARY KEY, body VARCHAR, ts TIMESTAMP);
+
+statement ok
+CREATE INDEX ts_table_idx ON ts_table USING inverted(id, body fo_bool_en, ts);
+
+statement ok
+INSERT INTO ts_table VALUES 
+  (1, 'morning', TIMESTAMP '1990-01-01 09:00:00.000'),
+  (2, 'afternoon', TIMESTAMP '1990-02-02 14:00:00.000'),
+  (3, 'evening', TIMESTAMP '1991-03-03 19:00:00.000'),
+  (4, 'night', TIMESTAMP '1999-04-04 23:00:00.000');
+
+
+query
+EXPLAIN SELECT id FROM ts_table_idx WHERE ts BETWEEN TIMESTAMP '1989-12-12 00:00:00.000' AND TIMESTAMP '1991-04-04 10:00:00.000';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: ts_table_idx                      │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Granular Range ─────────────────────╮ │
+│ │ Field: ts(numeric)                   │ │
+│ │ Range:                               │ │
+│ │ >=629424000000000, <=670759200000000 │ │
+│ │ Boost: 2                             │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM ts_table_idx
+  WHERE ts BETWEEN TIMESTAMP '1989-12-12 00:00:00.000' AND TIMESTAMP '1991-04-04 10:00:00.000'
+  AND body @@ ts_any(['morning', 'afternoon', 'lunch'], 2)
+  ORDER BY BM25(ts_table_idx.tableoid);
+----
+QUERY PLAN
+╭─ ORDER_BY ────────────────────────────────────────────────────────────────────────────╮
+│ Order By: #1 ASC                                                                      │
+│ ~1 row                                                                                │
+╰───────────────────────────────────────────┬───────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────┴───────────────────────────────────────────╮
+│ Index: ts_table_idx                                                                   │
+│ Lookup: table                                                                         │
+│ Index Filter:                                                                         │
+│ ╭─ And ───────────────────────────────────╮                                           │
+│ ╰────────────────────┬────────────────────╯                                           │
+│                      ├───────────────────────────────────────────╮                    │
+│ ╭─ Terms ────────────┴────────────────────╮  ╭─ Granular Range ──┴──────────────────╮ │
+│ │ Field: body(string)                     │  │ Field: ts(numeric)                   │ │
+│ │ Values: 'afternoon', 'lunch', 'morning' │  │ Range:                               │ │
+│ │ Min Match: 2                            │  │ >=629424000000000, <=670759200000000 │ │
+│ ╰─────────────────────────────────────────╯  │ Boost: 2                             │ │
+│                                              ╰──────────────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                                                           │
+│ Projections: id, sdb_inverted_index_score                                             │
+│ ~1 row                                                                                │
+╰───────────────────────────────────────────────────────────────────────────────────────╯

@@ -913,7 +913,7 @@ TEST_P(IndexColumnTestCase,
   // Multi-row-group to exercise the codec on more than one segment.
   constexpr uint32_t kRowGroupSize = 1024;
   // Single payload value used for every row.
-  const irs::bstring kPayload = []() {
+  const irs::bstring kPayload = [] {
     irs::bstring buf;
     irs::tests::BstringDataOutput out{buf};
     out.WriteU32(0xdeadbeef);
@@ -1235,7 +1235,7 @@ TEST_P(IndexColumnTestCase,
   constexpr irs::field_id kId = 0;
   constexpr uint64_t kDocsCount = 4096;
   constexpr uint32_t kRowGroupSize = 1024;
-  const irs::bstring kPayload = []() {
+  const irs::bstring kPayload = [] {
     irs::bstring buf;
     irs::tests::BstringDataOutput out{buf};
     out.WriteU32(0xcafebabe);

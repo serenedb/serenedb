@@ -45,7 +45,10 @@
 #include "search/inverted_index_storage.h"
 namespace sdb::catalog {
 
-enum class DropOutcome : uint8_t { Done, Retry };
+enum class DropOutcome : uint8_t {
+  Done,
+  Retry,
+};
 
 using AsyncResult = yaclib::Future<DropOutcome>;
 

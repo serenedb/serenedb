@@ -181,12 +181,15 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // `columns` are the de-duped plain-column keys (each key's field_id is its
   // column id). `expression_keys` carry each expression's payload + its
   // allocated field_id as one unit. `entries` is the per-field config keyed by
-  // field_id.
+  // field_id. `predicate` is the partial-index predicate (empty
+  // serialized_expr = full index); its dependent columns join the referenced
+  // set so the store mirror declares them and duckdb populates their chunk
+  // vectors on DML.
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
                 std::vector<Column::Id> columns,
                 std::vector<ExpressionKey> expression_keys, Entries entries,
-                InvertedIndexOptions options)
+                InvertedIndexOptions options, ExpressionData predicate)
     : Index{database_id,
             schema_id,
             id,
@@ -196,11 +199,13 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
                       std::views::transform(expression_keys,
                                             [](const auto& key) -> const auto& {
                                               return key.data;
-                                            })),
+                                            }),
+                      predicate.dependent_columns),
             ObjectType::InvertedIndex},
       _entries{std::move(entries)},
       _expression_keys{std::move(expression_keys)},
-      _options{std::move(options)} {
+      _options{std::move(options)},
+      _predicate{std::move(predicate)} {
     BuildExprByFieldIdIndex();
     BuildSerializedExprIndex();
     BuildFieldLookupIndex();
@@ -252,6 +257,10 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   void ReplaceOptions(InvertedIndexOptions options) noexcept {
     _options = std::move(options);
+  }
+
+  const ExpressionData* Predicate() const noexcept {
+    return _predicate.serialized_expr.empty() ? nullptr : &_predicate;
   }
 
   // irs::IndexFieldOptions: the per-field encoding config the writer asks for
@@ -314,6 +323,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   containers::FlatHashMap<std::string_view, irs::field_id> _expr_to_field;
   containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
   InvertedIndexOptions _options;
+  ExpressionData _predicate;
   mutable std::shared_ptr<search::InvertedIndexStorage> _data;
 };
 

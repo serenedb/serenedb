@@ -192,15 +192,19 @@ statement error
 CREATE INDEX compr_mismatch_num ON compr_bad_num USING inverted(txt compr_english)
   INCLUDE (pk, n included (compression = 'fsst'));
 
-# --- 9. IVF rejects the compression option -----------------------------
-# `compression` is no longer an IVF opclass option; vectors always use the
-# auto codec. It stays valid on the `included` opclass (cases above).
+# --- 9. IVF accepts the compression boolean option ---------------------
+# `compression` is a boolean IVF opclass option (default true; false stores
+# the index vectors uncompressed). A non-boolean value is rejected.
 statement ok
 CREATE TABLE ivf_comp (id INT PRIMARY KEY, emb FLOAT[3]);
 
-statement error unknown ivf option 'compression'
-CREATE INDEX ivf_comp_unc ON ivf_comp
+statement error ivf option 'compression' must be a boolean
+CREATE INDEX ivf_comp_bad ON ivf_comp
   USING inverted(emb ivf (metric = 'l2', compression = 'uncompressed'));
+
+statement ok
+CREATE INDEX ivf_comp_unc ON ivf_comp
+  USING inverted(emb ivf (metric = 'l2', compression = false));
 
 # --- 10. IVF vector column visible to materialization ------------------
 # After auto-promoting ivf columns to store_values=true, the materializer
@@ -235,3 +239,110 @@ CREATE TABLE ivf_bad (id INT PRIMARY KEY, emb FLOAT[3]);
 statement error unknown ivf option 'row_group_size'
 CREATE INDEX ivf_bad_idx ON ivf_bad
   USING inverted(emb ivf (metric = 'l2', row_group_size = 8));
+
+# --- 12. IVF queries are correct on COMPRESSED vectors -----------------
+# compression = true (default) stores the raw vectors under COMPRESSION_AUTO
+# (DuckDB picks a float codec, ALP/ALPRD). Exact retrieval, kNN, and a
+# distance range filter must all return the right rows.
+statement ok
+CREATE TABLE ivf_qc (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_qc_idx ON ivf_qc
+  USING inverted(emb ivf (metric = 'l2', compression = true));
+
+statement ok
+INSERT INTO ivf_qc VALUES
+  (1, [1, 1, 1]), (2, [2, 2, 2]), (3, [3, 3, 3]),
+  (4, [10, 10, 10]), (5, [0.5, 0.5, 0.5]);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_qc;
+
+# Exact stored-vector round-trip (the codec is lossless).
+query
+SELECT id, emb FROM ivf_qc_idx ORDER BY id;
+----
+id	emb
+1	{1,1,1}
+2	{2,2,2}
+3	{3,3,3}
+4	{10,10,10}
+5	{0.5,0.5,0.5}
+
+# kNN nearest the origin.
+query
+SELECT id FROM ivf_qc_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+id
+5
+1
+2
+
+# kNN nearest a far point.
+query
+SELECT id FROM ivf_qc_idx ORDER BY emb <-> [10, 10, 10]::FLOAT[3] LIMIT 2;
+----
+id
+4
+3
+
+# Distance range filter.
+query
+SELECT id FROM ivf_qc_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] < 4 ORDER BY id;
+----
+id
+1
+2
+5
+
+# --- 13. IVF queries are identical on UNCOMPRESSED vectors --------------
+# compression = false stores the raw vectors uncompressed; the same queries
+# on the same data must return exactly the same rows.
+statement ok
+CREATE TABLE ivf_qu (id INT PRIMARY KEY, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ivf_qu_idx ON ivf_qu
+  USING inverted(emb ivf (metric = 'l2', compression = false));
+
+statement ok
+INSERT INTO ivf_qu VALUES
+  (1, [1, 1, 1]), (2, [2, 2, 2]), (3, [3, 3, 3]),
+  (4, [10, 10, 10]), (5, [0.5, 0.5, 0.5]);
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_qu;
+
+query
+SELECT id, emb FROM ivf_qu_idx ORDER BY id;
+----
+id	emb
+1	{1,1,1}
+2	{2,2,2}
+3	{3,3,3}
+4	{10,10,10}
+5	{0.5,0.5,0.5}
+
+query
+SELECT id FROM ivf_qu_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
+----
+id
+5
+1
+2
+
+query
+SELECT id FROM ivf_qu_idx ORDER BY emb <-> [10, 10, 10]::FLOAT[3] LIMIT 2;
+----
+id
+4
+3
+
+query
+SELECT id FROM ivf_qu_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] < 4 ORDER BY id;
+----
+id
+1
+2
+5

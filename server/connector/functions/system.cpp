@@ -40,6 +40,7 @@
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/database_size.hpp>
 #include <optional>
 #include <ranges>
 
@@ -53,6 +54,7 @@
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/virtual_table.h"
+#include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_system_table_entry.h"
 #include "connector/pg_logical_types.h"
@@ -344,65 +346,6 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // --- Size functions ---
 // Ported from server/pg/functions/size.cpp
 
-// Store-table row count as the size proxy: the native engine keeps no
-// cheap per-table byte size (one shared file), and PG callers mostly test
-// emptiness. TODO(M2): commit-time byte accounting.
-int64_t StoreTableSizeProxy(duckdb::ClientContext& context,
-                            const catalog::Snapshot& snapshot,
-                            const catalog::Object& rel) {
-  auto table = snapshot.GetObject<catalog::Table>(rel.GetId());
-  if (!table || table->GetEngine() != catalog::TableEngine::Transactional ||
-      table->Tombstoned()) {
-    return 0;
-  }
-  auto schema = snapshot.GetObject<catalog::Schema>(table->GetParentId());
-  if (!schema) {
-    return 0;
-  }
-  auto database = snapshot.GetDatabase(schema->GetParentId());
-  if (!database) {
-    return 0;
-  }
-  auto store_name = catalog::StoreTableName(
-    database->GetName(), schema->GetName(), table->GetName());
-  duckdb::EntryLookupInfo lookup(
-    duckdb::CatalogType::TABLE_ENTRY,
-    duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},
-                          "main", duckdb::Identifier{store_name}));
-  auto entry = duckdb::Catalog::GetEntry(context, lookup,
-                                         duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!entry) {
-    return 0;
-  }
-  return static_cast<int64_t>(
-    entry->Cast<duckdb::TableCatalogEntry>().GetStorage().GetTotalRows());
-}
-
-// Helper: get fork size for a relation OID.
-int64_t StoreSchemaSize(duckdb::ClientContext& context,
-                        const catalog::Snapshot& snapshot, ObjectId database_id,
-                        std::string_view schema_name) {
-  int64_t total = 0;
-  for (auto& rel : snapshot.GetRelations(database_id, schema_name)) {
-    if (rel->GetType() != catalog::ObjectType::Table) {
-      continue;
-    }
-    total += StoreTableSizeProxy(context, snapshot, *rel);
-  }
-  return total;
-}
-
-int64_t StoreDatabaseSize(duckdb::ClientContext& context,
-                          const catalog::Snapshot& snapshot,
-                          ObjectId database_id) {
-  int64_t total = 0;
-  for (auto& schema : snapshot.GetSchemas(database_id)) {
-    total += StoreSchemaSize(context, snapshot, database_id, schema->GetName());
-  }
-  return total;
-}
-
-// Ported from server/pg/functions/size.cpp GetRelationForkSize.
 int64_t GetRelationForkSize(duckdb::ClientContext& context,
                             const catalog::Snapshot& snapshot, uint64_t oid,
                             std::string_view fork, bool table_only = false) {
@@ -419,29 +362,64 @@ int64_t GetRelationForkSize(duckdb::ClientContext& context,
     return 0;
   }
   switch (rel->GetType()) {
-    case catalog::ObjectType::Table:
-      return StoreTableSizeProxy(context, snapshot, *rel);
-    case catalog::ObjectType::SecondaryIndex: {
-      // Native ART indexes live inside the store file; report the table
-      // row count as the proxy.
-      auto index = snapshot.GetObject<catalog::SecondaryIndex>(rel->GetId());
-      if (!index) {
+    case catalog::ObjectType::Table: {
+      auto table = snapshot.GetObject<catalog::Table>(rel->GetId());
+      if (!table || table->Tombstoned()) {
         return 0;
       }
-      auto table = snapshot.GetObject(index->GetRelationId());
-      return table ? StoreTableSizeProxy(context, snapshot, *table) : 0;
+      if (table->GetEngine() == catalog::TableEngine::Search) {
+        return SearchTableBytes(*table);
+      }
+      return StoreTableDataSize(context, snapshot, *table).bytes;
+    }
+    case catalog::ObjectType::SecondaryIndex: {
+      auto index = snapshot.GetObject<catalog::SecondaryIndex>(rel->GetId());
+      return index ? SecondaryIndexBytes(context, snapshot, *index) : 0;
     }
     case catalog::ObjectType::InvertedIndex: {
-      auto storage =
-        basics::downCast<const catalog::InvertedIndex>(*rel).GetData();
-      if (!storage) {
-        return 0;
-      }
-      return static_cast<int64_t>(storage->GetStats().indexSize);
+      auto index = snapshot.GetObject<catalog::InvertedIndex>(rel->GetId());
+      return index ? InvertedIndexBytes(*index) : 0;
     }
     default:
       return 0;
   }
+}
+
+int64_t GetRelationTotalSize(duckdb::ClientContext& context,
+                             const catalog::Snapshot& snapshot, uint64_t oid) {
+  auto rel = snapshot.GetObject(ObjectId{oid});
+  if (!rel) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation with OID ", oid, " does not exist"));
+  }
+  if (rel->GetType() != catalog::ObjectType::Table) {
+    return GetRelationForkSize(context, snapshot, oid, "main");
+  }
+  auto table = snapshot.GetObject<catalog::Table>(rel->GetId());
+  if (!table || table->Tombstoned()) {
+    return 0;
+  }
+  int64_t total = table->GetEngine() == catalog::TableEngine::Search
+                    ? SearchTableBytes(*table)
+                    : StoreTableDataSize(context, snapshot, *table).bytes;
+  return total + TableIndexesTotalBytes(context, snapshot, *table);
+}
+
+int64_t GetTableIndexesSize(duckdb::ClientContext& context,
+                            const catalog::Snapshot& snapshot, uint64_t oid) {
+  auto rel = snapshot.GetObject(ObjectId{oid});
+  if (!rel) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation with OID ", oid, " does not exist"));
+  }
+  if (rel->GetType() != catalog::ObjectType::Table) {
+    return 0;
+  }
+  auto table = snapshot.GetObject<catalog::Table>(rel->GetId());
+  if (!table || table->Tombstoned()) {
+    return 0;
+  }
+  return TableIndexesTotalBytes(context, snapshot, *table);
 }
 
 // pg_database_size(name) -> bigint
@@ -460,7 +438,8 @@ void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database \"", db_name, "\" does not exist"));
       }
-      return StoreDatabaseSize(context, *snapshot, database->GetId());
+      return static_cast<int64_t>(
+        DatabaseStorageSize(context, *snapshot, database->GetId()).bytes);
     });
 }
 
@@ -487,7 +466,8 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database with OID ", oid, " does not exist"));
       }
-      return StoreDatabaseSize(context, *snapshot, database->GetId());
+      return static_cast<int64_t>(
+        DatabaseStorageSize(context, *snapshot, database->GetId()).bytes);
     });
 }
 
@@ -508,7 +488,9 @@ void PgSchemaSizeNameFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema \"", schema_name, "\" does not exist"));
       }
-      return StoreSchemaSize(context, *snapshot, database_id, schema_name);
+      return static_cast<int64_t>(
+        DatabaseStorageSize(context, *snapshot, database_id, schema_name)
+          .bytes);
     });
 }
 
@@ -528,8 +510,10 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema with OID ", oid, " does not exist"));
       }
-      return StoreSchemaSize(context, *snapshot, schema->GetParentId(),
-                             schema->GetName());
+      return static_cast<int64_t>(DatabaseStorageSize(context, *snapshot,
+                                                      schema->GetParentId(),
+                                                      schema->GetName())
+                                    .bytes);
     });
 }
 
@@ -2027,22 +2011,26 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       auto snap = ctx.CatalogSnapshot();
       duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
         args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-          return GetRelationForkSize(state.GetContext(), *snap,
-                                     static_cast<uint64_t>(oid), "main");
+          return GetRelationTotalSize(state.GetContext(), *snap,
+                                      static_cast<uint64_t>(oid));
         });
     }});
 
   // pg_indexes_size(regclass)
-  loader.RegisterFunction(
-    duckdb::ScalarFunction{"pg_indexes_size",
-                           {pg::REGCLASS()},
-                           duckdb::LogicalType::BIGINT,
-                           [](duckdb::DataChunk& args, duckdb::ExpressionState&,
-                              duckdb::Vector& result) {
-                             duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
-                               args.data[0], result, args.size(),
-                               [](int64_t) -> int64_t { return 0; });
-                           }});
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "pg_indexes_size",
+    {pg::REGCLASS()},
+    duckdb::LogicalType::BIGINT,
+    [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
+       duckdb::Vector& result) {
+      auto& ctx = GetSereneDBContext(state.GetContext());
+      auto snap = ctx.CatalogSnapshot();
+      duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
+        args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
+          return GetTableIndexesSize(state.GetContext(), *snap,
+                                     static_cast<uint64_t>(oid));
+        });
+    }});
 
   // Stub functions that throw "not supported"
   auto not_supported = [](duckdb::DataChunk&, duckdb::ExpressionState&,

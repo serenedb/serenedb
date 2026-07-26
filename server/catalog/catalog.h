@@ -238,6 +238,8 @@ struct Snapshot {
   bool HasIndexes(ObjectId relation_id) const;
   std::shared_ptr<Object> GetObject(ObjectId id) const;
 
+  std::vector<PgDependEdge> CollectPgDependEdges(ObjectId db_id) const;
+
   ObjectId GetDatabaseId(const Object& obj) const {
     if (obj.GetType() == ObjectType::Database) {
       return obj.GetId();
@@ -281,7 +283,10 @@ struct Snapshot {
  private:
   friend class Catalog;
 
-  enum class EdgeAction : uint8_t { Add, Delete };
+  enum class EdgeAction : uint8_t {
+    Add,
+    Delete,
+  };
 
   template<typename T>
   std::shared_ptr<T> EnforceRead(const AccessContext& ax,
@@ -308,6 +313,9 @@ struct Snapshot {
 
   // Cross-tree fixups for DROP seed. Composition cleanup is async.
   DropPlan ComputeDropPlan(ObjectId seed) const;
+  DropPlan ComputeDropPlanRestrict(ObjectId seed, bool cascade,
+                                   std::string_view kind,
+                                   std::string_view name) const;
   // Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
   // column and cascade-drop every index covering it (PG column->index cascade).
   DropPlan ComputeColumnDropPlan(ObjectId table_id, ObjectId col_id) const;
@@ -486,6 +494,7 @@ class Catalog final {
                            std::string name,
                            std::vector<CreateIndexColumn>&& columns,
                            InvertedIndexOptions options,
+                           ExpressionData predicate,
                            CreateIndexOperationOptions operation_options);
   bool CreateTokenizer(const AccessContext& ax, ObjectId database_id,
                        std::string_view schema, std::shared_ptr<Tokenizer> dict,
@@ -527,6 +536,14 @@ class Catalog final {
     const AccessContext& ax, ObjectId database_id, std::string_view schema,
     std::string_view name,
     absl::FunctionRef<void(InvertedIndexOptions&)> mutate, bool missing_ok);
+  void SetObjectComment(const AccessContext& ax, ObjectId database_id,
+                        std::string_view schema, std::string_view name,
+                        ObjectType type, std::string_view comment,
+                        bool missing_ok);
+  void SetViewColumnComment(const AccessContext& ax, ObjectId database_id,
+                            std::string_view schema, std::string_view name,
+                            std::string_view column, std::string_view comment,
+                            bool missing_ok);
   void ChangeRole(const AccessContext& ax, std::string_view name,
                   std::string_view verb, bool allow_self,
                   ChangeCallback<Role> callback);

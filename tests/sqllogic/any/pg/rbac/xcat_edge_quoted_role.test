@@ -1,4 +1,4 @@
-# Cross-catalog EDGE CASE: a quoted, mixed-case role name "Vedernikoff" round-
+# Cross-catalog EDGE CASE: a quoted, mixed-case role name "XcatQVedernikoff" round-
 # trips through every catalog surface with its case preserved. Because the name
 # contains only letters (no spaces or special characters) its aclitem text form
 # is unquoted on both engines, so relacl renders identically. pg_roles,
@@ -11,26 +11,26 @@
 # (Mop Babsky=r/postgres). So this test sticks to a quote-free mixed-case name
 # whose relacl text matches; the space-name case is left to the sdb/ tree.
 #
-# Vedernikoff lore: the protagonist himself, mixed case. Idempotent + clean.
+# XcatQVedernikoff lore: the protagonist himself, mixed case. Idempotent + clean.
 
 statement ok
 DROP TABLE IF EXISTS xcat_q_iceberg;
 
 
 statement ok
-DROP ROLE IF EXISTS "Vedernikoff";
+DROP ROLE IF EXISTS "XcatQVedernikoff";
 
 
 statement ok
-DROP ROLE IF EXISTS "ClickClack";
+DROP ROLE IF EXISTS "XcatQClickClack";
 
 
 statement ok
-CREATE ROLE "Vedernikoff" LOGIN;
+CREATE ROLE "XcatQVedernikoff" LOGIN;
 
 
 statement ok
-CREATE ROLE "ClickClack";
+CREATE ROLE "XcatQClickClack";
 
 
 statement ok
@@ -41,34 +41,34 @@ CREATE TABLE xcat_q_iceberg (id int, payload text);
 # down-casing). rolcanlogin reflects the LOGIN option.
 query
 SELECT rolname, rolcanlogin FROM pg_roles
-WHERE rolname IN ('Vedernikoff', 'ClickClack')
+WHERE rolname IN ('XcatQVedernikoff', 'XcatQClickClack')
 ORDER BY rolname;
 ----
 rolname	rolcanlogin
-ClickClack	f
-Vedernikoff	t
+XcatQClickClack	f
+XcatQVedernikoff	t
 
 
 # A grant to the quoted role: relacl renders the mixed-case name UNQUOTED (no
 # special chars), identically on both engines.
 statement ok
-GRANT SELECT, INSERT ON xcat_q_iceberg TO "Vedernikoff";
+GRANT SELECT, INSERT ON xcat_q_iceberg TO "XcatQVedernikoff";
 
 
 query
 SELECT e FROM (
   SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xcat_q_iceberg'
-) g WHERE e LIKE 'Vedernikoff=%';
+) g WHERE e LIKE 'XcatQVedernikoff=%';
 ----
 e
-Vedernikoff=ar/postgres
+XcatQVedernikoff=ar/postgres
 
 
 # has_table_privilege keys on the exact case-sensitive name.
 query
-SELECT has_table_privilege('Vedernikoff', 'xcat_q_iceberg', 'SELECT') AS sel,
-       has_table_privilege('Vedernikoff', 'xcat_q_iceberg', 'INSERT') AS ins,
-       has_table_privilege('Vedernikoff', 'xcat_q_iceberg', 'DELETE') AS del;
+SELECT has_table_privilege('XcatQVedernikoff', 'xcat_q_iceberg', 'SELECT') AS sel,
+       has_table_privilege('XcatQVedernikoff', 'xcat_q_iceberg', 'INSERT') AS ins,
+       has_table_privilege('XcatQVedernikoff', 'xcat_q_iceberg', 'DELETE') AS del;
 ----
 sel	ins	del
 t	t	f
@@ -77,18 +77,18 @@ t	t	f
 # information_schema.table_privileges exposes the mixed-case grantee verbatim.
 query
 SELECT grantee, privilege_type FROM information_schema.table_privileges
-WHERE table_name = 'xcat_q_iceberg' AND grantee = 'Vedernikoff'
+WHERE table_name = 'xcat_q_iceberg' AND grantee = 'XcatQVedernikoff'
 ORDER BY privilege_type;
 ----
 grantee	privilege_type
-Vedernikoff	INSERT
-Vedernikoff	SELECT
+XcatQVedernikoff	INSERT
+XcatQVedernikoff	SELECT
 
 
-# Role-to-role membership with quoted names: ClickClack becomes a member of
-# Vedernikoff. pg_auth_members recovers both names case-sensitively.
+# Role-to-role membership with quoted names: XcatQClickClack becomes a member of
+# XcatQVedernikoff. pg_auth_members recovers both names case-sensitively.
 statement ok
-GRANT "Vedernikoff" TO "ClickClack";
+GRANT "XcatQVedernikoff" TO "XcatQClickClack";
 
 
 query
@@ -96,24 +96,24 @@ SELECT gr.rolname AS role, mr.rolname AS member
 FROM pg_auth_members am
 JOIN pg_roles gr ON gr.oid = am.roleid
 JOIN pg_roles mr ON mr.oid = am.member
-WHERE gr.rolname = 'Vedernikoff' AND mr.rolname = 'ClickClack';
+WHERE gr.rolname = 'XcatQVedernikoff' AND mr.rolname = 'XcatQClickClack';
 ----
 role	member
-Vedernikoff	ClickClack
+XcatQVedernikoff	XcatQClickClack
 
 
 # pg_has_role honours the membership for the case-sensitive member name.
 query
-SELECT pg_has_role('ClickClack', 'Vedernikoff', 'MEMBER') AS is_member;
+SELECT pg_has_role('XcatQClickClack', 'XcatQVedernikoff', 'MEMBER') AS is_member;
 ----
 is_member
 t
 
 
-# A lower-cased lookup does NOT match the mixed-case role: 'vedernikoff' is a
+# A lower-cased lookup does NOT match the mixed-case role: 'xcatqvedernikoff' is a
 # different identifier and does not exist, so the role membership is absent.
 query
-SELECT count(*) AS lower_match FROM pg_roles WHERE rolname = 'vedernikoff';
+SELECT count(*) AS lower_match FROM pg_roles WHERE rolname = 'xcatqvedernikoff';
 ----
 lower_match
 0
@@ -124,8 +124,8 @@ DROP TABLE xcat_q_iceberg;
 
 
 statement ok
-DROP ROLE "ClickClack";
+DROP ROLE "XcatQClickClack";
 
 
 statement ok
-DROP ROLE "Vedernikoff";
+DROP ROLE "XcatQVedernikoff";

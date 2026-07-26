@@ -48,6 +48,13 @@ class FullScanner {
 
   bool HasAny() const noexcept { return !_bound.empty() || !_filters.Empty(); }
 
+  // The exclusive end row this scanner has advanced to (max start_row + count
+  // over Scan calls). The column cursors only move forward, so a Scan below
+  // this row is invalid -- the caller rebuilds the scanner instead (see
+  // ColScanLocalState::StartUnit, where a scan order can hand out units of one
+  // segment out of row order).
+  uint64_t ScannedEnd() const noexcept { return _scanned_end; }
+
   // Zonemap skip for the bulk loop: no row before the returned end can pass
   // the pushed filters (0 = no skip), so the caller jumps the scan cursor.
   uint64_t DeadUntil(uint64_t row) {
@@ -77,6 +84,7 @@ class FullScanner {
   ColFilterChain _filters;
   duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
   duckdb::SelectionVector _sel;
+  uint64_t _scanned_end = 0;
 };
 
 }  // namespace sdb::connector

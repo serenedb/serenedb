@@ -1,0 +1,185 @@
+control substitution on
+
+# ============================================================================
+# Multi-level IVF centroid trees via sdb_ivf_posting_size.
+#
+# sdb_ivf_posting_size is the leaf cap t (target posting-list size, in vectors),
+# captured at CREATE INDEX. A tiny t drives the leaf count L = N/t above the
+# per-node fan-out cap (4096); the top-down build then square-roots L down to the
+# cap over multiple layers, so the tree becomes multi-level and the deep-descent
+# read path is exercised. Points lie on a line so every query has a unique
+# exact-match nearest; a large nprobe makes the scan effectively exhaustive over
+# leaves, so the asserted neighbor is exact.
+# ============================================================================
+
+statement ok
+SET sdb_nprobe = 100000;
+
+# ---- multi-level tree: posting_size=2, 10000 points (L=5000 > cap 4096) ------
+statement ok
+SET sdb_ivf_posting_size = 2;
+
+statement ok
+CREATE TABLE lvl3 (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX lvl3_idx ON lvl3 USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO lvl3 SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) lvl3;
+
+query
+SELECT pk FROM lvl3_idx ORDER BY emb <-> [0.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+0
+
+query
+SELECT pk FROM lvl3_idx ORDER BY emb <-> [1234.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+1234
+
+query
+SELECT pk FROM lvl3_idx ORDER BY emb <-> [1999.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+1999
+
+query
+SELECT count(*) FROM lvl3_idx;
+----
+count
+10000
+
+query
+SELECT pk FROM lvl3_idx
+  WHERE emb <-> [100.0, 0.0]::FLOAT[2] < 2.5
+  ORDER BY pk;
+----
+pk
+98
+99
+100
+101
+102
+
+statement ok
+RESET sdb_ivf_posting_size;
+
+# ============================================================================
+# sdb_ivf_sample_factor: train the tree on a fraction of the rows. Assignment
+# still routes every row, and a huge nprobe scans every leaf, so exact-NN holds.
+# ============================================================================
+
+statement ok
+SET sdb_ivf_posting_size = 2;
+
+statement ok
+SET sdb_ivf_sample_factor = 0.5;
+
+statement ok
+CREATE TABLE samp (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX samp_idx ON samp USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO samp SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) samp;
+
+query
+SELECT pk FROM samp_idx ORDER BY emb <-> [500.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+500
+
+query
+SELECT count(*) FROM samp_idx;
+----
+count
+2000
+
+statement ok
+RESET sdb_ivf_sample_factor;
+
+statement ok
+RESET sdb_ivf_posting_size;
+
+# ============================================================================
+# Settings captured at CREATE INDEX.
+#
+# posting_size / sample_factor are captured at CREATE INDEX. Changing the session
+# GUC afterward must not affect the index: later-segment flushes and the merged
+# segment all use the captured values, and results stay correct across the change
+# + compact.
+# ============================================================================
+
+statement ok
+SET sdb_ivf_posting_size = 2;
+
+statement ok
+CREATE TABLE mrg (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX mrg_idx ON mrg USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+# batch 1 -> first segment, built with the captured posting_size (2)
+statement ok
+INSERT INTO mrg SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrg;
+
+# change the session GUC AFTER the index exists
+statement ok
+RESET sdb_ivf_posting_size;
+
+# batch 2 -> second segment; still uses the index's captured posting_size (2)
+statement ok
+INSERT INTO mrg SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(1000, 2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrg;
+
+query
+SELECT pk FROM mrg_idx ORDER BY emb <-> [42.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+42
+
+query
+SELECT pk FROM mrg_idx ORDER BY emb <-> [1275.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+1275
+
+# merge both segments; results must remain correct
+statement ok
+VACUUM (COMPACT_TABLE) mrg;
+
+query
+SELECT pk FROM mrg_idx ORDER BY emb <-> [42.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+42
+
+query
+SELECT pk FROM mrg_idx ORDER BY emb <-> [1275.0, 0.0]::FLOAT[2] LIMIT 1;
+----
+pk
+1275
+
+query
+SELECT count(*) FROM mrg_idx;
+----
+count
+2000
+
+statement ok
+RESET sdb_nprobe;

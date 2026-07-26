@@ -96,6 +96,7 @@ endmacro()
 # https://gcc.gnu.org/onlinedocs/gcc/AArch64-Options.html#AArch64-Options
 macro(graviton1)
     message("Optimize for graviton1")
+    set(AARCH64_MARCH "armv8-a+crc+crypto")
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:armv8.0)
     else()
@@ -105,33 +106,35 @@ macro(graviton1)
         list(
             APPEND ARCHITECTURE_OPTIMIZATIONS
             -mlittle-endian
-            -march=armv8-a+crc+crypto
+            -march=${AARCH64_MARCH}
         )
     endif()
 endmacro()
 
 macro(graviton2)
     message("Optimize for graviton2")
+    set(AARCH64_MARCH "armv8.2-a+fp16+rcpc+dotprod+crypto")
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:armv8.2)
     else()
         list(
             APPEND ARCHITECTURE_OPTIMIZATIONS
             -mlittle-endian
-            -march=armv8.2-a+fp16+rcpc+dotprod+crypto
+            -march=${AARCH64_MARCH}
         )
     endif()
 endmacro()
 
 macro(graviton3)
     message("Optimize for graviton3")
+    set(AARCH64_MARCH "armv8.4-a+sve+rng+bf16+int8+crypto")
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         list(APPEND ARCHITECTURE_OPTIMIZATIONS /arch:armv8.4)
     else()
         list(
             APPEND ARCHITECTURE_OPTIMIZATIONS
             -mlittle-endian
-            -march=armv8.4-a+sve+rng+bf16+int8+crypto
+            -march=${AARCH64_MARCH}
         )
     endif()
 endmacro()

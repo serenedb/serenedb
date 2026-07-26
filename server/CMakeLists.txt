@@ -27,7 +27,6 @@ target_link_libraries(
     sereneserver
     PUBLIC
         boost_boost
-        immer
         iresearch-static
         s2 # needed for some includes in geo analyzers
         serene

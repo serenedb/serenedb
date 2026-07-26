@@ -67,6 +67,24 @@ enum class ScoreEmit : uint8_t {
   Negate,    // -score       (l1, l2_sqr, negative_ip, l1_norm)
 };
 
+// Maps one raw "larger = nearer" score to its user-facing value. Single source
+// of truth: applied to the output scores at the emit boundary, and baked into
+// the pushed score-column filter so the predicate is evaluated in the same
+// (user-facing) space it was written in.
+inline float ApplyScoreEmit(ScoreEmit emit, float score) {
+  switch (emit) {
+    case ScoreEmit::Identity:
+      return score;
+    case ScoreEmit::SqrtNeg:
+      return std::sqrt(-score);
+    case ScoreEmit::OneMinus:
+      return 1.0F - score;
+    case ScoreEmit::Negate:
+      return -score;
+  }
+  SDB_UNREACHABLE();
+}
+
 struct VectorScorerOptions {
   irs::field_id field_id;
   std::vector<float> query_vector;
@@ -132,7 +150,10 @@ enum class ScanEntryKind : uint8_t {
 constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
-  enum class Kind : uint8_t { Table, View };
+  enum class Kind : uint8_t {
+    Table,
+    View,
+  };
 
   std::vector<catalog::Column::Id> column_ids;
   std::vector<duckdb::LogicalType> column_types;
@@ -255,6 +276,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     std::function<void(catalog::Column::Id, const duckdb::LogicalType&)>;
   virtual void IterateColumns(const ColumnVisitor& cb) const = 0;
 
+  bool IsColumnNotNull(catalog::Column::Id col_id) const;
+
  protected:
   explicit SereneDBScanBindData(Kind k) : _kind{k} {}
 
@@ -313,5 +336,7 @@ uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
                                uint32_t default_value);
 
 duckdb::TableFunction CreateIResearchScanFunction();
+
+void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

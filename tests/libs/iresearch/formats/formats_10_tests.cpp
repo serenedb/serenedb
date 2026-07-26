@@ -871,7 +871,7 @@ TEST_P(Format10TestCase, postings_seek) {
     std::vector<std::pair<irs::doc_id_t, uint32_t>> docs;
     docs.reserve(count);
     irs::doc_id_t i = (irs::doc_limits::min)();
-    std::generate_n(std::back_inserter(docs), count, [&i, step]() {
+    std::generate_n(std::back_inserter(docs), count, [&i, step] {
       const irs::doc_id_t doc = i;
       const uint32_t freq = std::max(1U, doc % 7);
       i += step;
@@ -955,7 +955,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
     std::vector<std::pair<irs::doc_id_t, uint32_t>> docs;
     docs.reserve(count);
     irs::doc_id_t i = (irs::doc_limits::min)();
-    std::generate_n(std::back_inserter(docs), count, [&i]() {
+    std::generate_n(std::back_inserter(docs), count, [&i] {
       const irs::doc_id_t doc = i;
       const uint32_t freq = std::max(1U, doc % 7);
       ++i;

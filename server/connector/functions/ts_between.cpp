@@ -100,7 +100,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   const auto col_type = column_info.logical_type.id();
   const auto val_type = bound_val->type().id();
-  auto type_mismatch = [&]() {
+  auto type_mismatch = [&] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(label, " bound type ", bound_val->type().ToString(),
@@ -238,7 +238,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
   const auto val_type = val_sample->type().id();
 
   // Validate value type matches column type family.
-  auto type_mismatch = [&]() {
+  auto type_mismatch = [&] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_between bound type ", val_sample->type().ToString(),

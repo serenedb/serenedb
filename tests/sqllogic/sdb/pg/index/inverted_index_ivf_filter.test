@@ -28,7 +28,7 @@ CREATE TABLE ivf_f (pk INTEGER PRIMARY KEY, emb FLOAT[3], val INTEGER, ext INTEG
 
 statement ok
 CREATE INDEX ivf_f_idx ON ivf_f
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
   INCLUDE (val)
 
 statement count 6
@@ -125,7 +125,7 @@ CREATE TABLE shortf (pk INTEGER PRIMARY KEY, emb FLOAT[3], ext INTEGER)
 
 statement ok
 CREATE INDEX shortf_idx ON shortf
-  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', nlist = 4))
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
 
 statement count 30
 INSERT INTO shortf

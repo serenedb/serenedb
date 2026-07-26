@@ -22,6 +22,12 @@
 
 namespace sdb::connector {
 
-enum class ComparisonOp { None, Lt, Le, Gt, Ge };
+enum class ComparisonOp {
+  None,
+  Lt,
+  Le,
+  Gt,
+  Ge,
+};
 
 }  // namespace sdb::connector

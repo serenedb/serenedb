@@ -1,0 +1,28 @@
+SereneDB is starting.
+
+Connect from inside the cluster:
+
+  psql -h {{ include "serenedb.fullname" . }}.{{ .Release.Namespace }}.svc -p {{ .Values.listeners.postgres.port }} -U postgres -d postgres
+
+Get the postgres password:
+
+  kubectl get secret {{ include "serenedb.secretName" . }} -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.postgres-password}' | base64 -d
+
+Port-forward for local access:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "serenedb.fullname" . }} {{ .Values.listeners.postgres.port }}:{{ .Values.listeners.postgres.port }}
+
+Verify the deployment:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+{{- if and (not .Values.auth.password) (not .Values.auth.existingSecret) }}
+
+NOTE: no auth.password / auth.existingSecret was set, so a random password was
+generated. This is fine with plain `helm install/upgrade`, but GitOps tools
+that render without cluster access (Argo CD, Flux, `helm template`) will
+regenerate it on every sync -- set an explicit password there.
+{{- end }}
+
+The password only takes effect on the very first boot with an empty data
+directory. To change it later: ALTER ROLE postgres PASSWORD '...';

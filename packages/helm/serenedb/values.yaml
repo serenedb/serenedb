@@ -1,0 +1,154 @@
+image:
+  repository: serenedb/serenedb
+  # Empty = the chart's appVersion. Pin a specific version for production;
+  # avoid "latest": with IfNotPresent a cached image is never re-pulled, and
+  # upgrades roll the pod only when the tag actually changes.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Initial password for the `postgres` superuser. Applied via the
+# POSTGRES_PASSWORD env var and only honored by serened on FIRST boot with an
+# empty catalog; rotate later with `ALTER ROLE postgres PASSWORD ...`, not here.
+auth:
+  # Plaintext password. Empty -> a random one is generated and kept stable
+  # across upgrades (stored in the release Secret, which is kept on uninstall).
+  # NOTE: with GitOps tools that render templates without cluster access
+  # (Argo CD, Flux, `helm template`), the generated password changes on every
+  # sync -- set an explicit password or existingSecret there.
+  password: ""
+  # Name of an existing Secret with key `postgres-password`. Takes precedence.
+  existingSecret: ""
+
+listeners:
+  postgres:
+    port: 7890
+    # Per-listener sslmode query parameter, e.g. "require". Empty = server default.
+    sslmode: ""
+  # Optional second listener: Elasticsearch-compatible HTTP API.
+  http:
+    enabled: false
+    port: 9200
+    corsOrigins: ""
+
+tls:
+  enabled: false
+  # kubernetes.io/tls Secret (tls.crt / tls.key, optional ca.crt).
+  # Works out of the box with cert-manager Certificates.
+  existingSecret: ""
+  minVersion: "1.2"
+
+config:
+  # trace | debug | info | warning | error | fatal
+  logLevel: info
+  # 0 = unlimited
+  maxConnections: 0
+  # 0 = auto-detect. NOTE: auto-detection sees the node's cores, not the pod's
+  # CPU limit -- set these explicitly when resources.limits.cpu is small
+  # relative to the node.
+  cpuThreads: 0
+  ioThreads: 0
+  backgroundThreads: 0
+  authTimeout: 30s
+  idleSessionTimeout: 75s
+  # 0 = keep the built-in default
+  pgMaxMessageBytes: 0
+  # pg_hba.conf content, verbatim. Empty = serened's default <datadir>/pg_hba.conf.
+  hba: ""
+  # Extra serened flags appended verbatim to the flagfile, e.g. "--foo=bar".
+  extraFlags: []
+
+persistence:
+  size: 20Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  # Reuse a pre-created PVC instead of the volumeClaimTemplate.
+  existingClaim: ""
+  mountPath: /var/lib/serenedb
+  # StatefulSet persistentVolumeClaimRetentionPolicy (requires k8s >= 1.27).
+  # Retain (default) keeps the data PVC when the release is uninstalled;
+  # set whenDeleted: Delete to remove data together with the release.
+  retentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+
+# No defaults: set what fits your cluster. Recommended production starting
+# point: requests = limits, >= 2 CPU / 4Gi. When setting a CPU limit, also set
+# config.cpuThreads/ioThreads accordingly (see note there).
+resources: {}
+
+# Shutdown checkpoints and drains background/search tasks; give it room.
+terminationGracePeriodSeconds: 120
+
+podSecurityContext:
+  # Image runs as user `serenedb` with a group-0-writable datadir.
+  fsGroup: 0
+
+containerSecurityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+
+# The database has no reason to talk to the Kubernetes API.
+automountServiceAccountToken: false
+
+updateStrategy:
+  type: RollingUpdate
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+# Covers catalog + search-index load after restart/recovery: the pg listener
+# deliberately binds only once indexes are loaded, and that window grows with
+# data size. 60 * 5s = 5 minutes before liveness takes over.
+startupProbe:
+  enabled: true
+  periodSeconds: 5
+  failureThreshold: 60
+
+service:
+  type: ClusterIP
+  # Pin the NodePort when service.type is NodePort (empty = auto-assign).
+  nodePort: ""
+  annotations: {}
+
+networkPolicy:
+  # When enabled, allows ingress only to the serving ports (and only the DB
+  # pod is covered). Combine with extraObjects for stricter source selectors.
+  enabled: false
+
+# Extra pod env vars, e.g. {name: NUMA, value: disable}.
+extraEnv: []
+
+# Escape hatches, all rendered verbatim into the StatefulSet pod spec.
+initContainers: []
+sidecars: []
+extraVolumes: []
+extraVolumeMounts: []
+
+# Additional Kubernetes manifests to deploy with the release (list of objects;
+# templated, so {{ .Release.Name }} etc. work inside).
+extraObjects: []
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""

@@ -1,0 +1,31 @@
+statement ok
+CREATE TABLE fk_parent (id int PRIMARY KEY);
+
+statement ok
+CREATE TABLE fk_child (pid int REFERENCES fk_parent(id));
+
+statement error (?i)cannot drop table .*fk_parent.* because other objects depend on it
+DROP TABLE fk_parent;
+
+statement error (?i)cannot drop table .*fk_parent.* because other objects depend on it
+DROP TABLE fk_parent RESTRICT;
+
+statement ok
+DROP TABLE fk_parent CASCADE;
+
+query
+SELECT count(*) FROM fk_child;
+----
+count
+0
+
+query
+SELECT count(*) FROM pg_constraint c
+JOIN pg_class r ON r.oid = c.conrelid
+WHERE r.relname = 'fk_child' AND c.contype = 'f';
+----
+count
+0
+
+statement ok
+DROP TABLE fk_child;

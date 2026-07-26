@@ -34,12 +34,6 @@
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
 
-namespace cmdline {
-
-class parser;
-
-}  // namespace cmdline
-
 class TestEnv {
  public:
   static const std::string kTestResults;
@@ -58,8 +52,8 @@ class TestEnv {
 
  private:
   static void make_directories();
-  static void parse_command_line(cmdline::parser& vm);
-  static bool prepare(const cmdline::parser& vm);
+  static void parse_command_line();
+  static bool prepare();
 
   static int gArgc;
   static char** gArgv;

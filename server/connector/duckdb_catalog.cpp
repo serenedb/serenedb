@@ -26,7 +26,9 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/operator/persistent/physical_batch_insert.hpp>
 #include <duckdb/execution/operator/persistent/physical_delete.hpp>
@@ -55,20 +57,29 @@
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
+#include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_simple.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
+#include <duckdb/storage/block_manager.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/database_size.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table_io_manager.hpp>
 #include <ranges>
 
+#include "basics/containers/flat_hash_set.h"
+#include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/foreign_server.h"
+#include "catalog/inverted_index.h"
 #include "catalog/pk_spec.h"
 #include "catalog/schema.h"
+#include "catalog/secondary_index.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
@@ -92,6 +103,9 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "search/inverted_index_storage.h"
+#include "search/search_table.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {
@@ -557,6 +571,7 @@ namespace {
 std::vector<duckdb::idx_t> ComputeKeptViewPositions(
   const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     parsed_index_exprs,
+  const duckdb::ParsedExpression* predicate,
   const duckdb::ViewColumnInfo& column_info) {
   std::vector<duckdb::idx_t> kept;
   auto add = [&](std::string_view name) {
@@ -580,6 +595,9 @@ std::vector<duckdb::idx_t> ComputeKeptViewPositions(
   };
   for (const auto& expr : parsed_index_exprs) {
     collect(*expr);
+  }
+  if (predicate) {
+    collect(*predicate);
   }
   absl::c_sort(kept);
   kept.erase(std::unique(kept.begin(), kept.end()), kept.end());
@@ -863,6 +881,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   std::optional<ViewFastPath> view_fast_path;
   int64_t pinned_iceberg_snapshot_id = 0;
   std::optional<std::vector<duckdb::idx_t>> kept_view_positions;
+  const auto partial_view_index =
+    !!stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause;
   std::optional<std::vector<duckdb::column_t>> vcols_opt;
   if (target.type == duckdb::CatalogType::VIEW_ENTRY) {
     view_backed = true;
@@ -997,8 +1017,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                  "the leaf get came from binding the view body");
       auto kept = ComputeKeptViewPositions(
         stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
+        stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause.get(),
         *column_info);
-      if (kept.size() < column_info->names.size()) {
+      if (kept.size() < column_info->names.size() || partial_view_index) {
         plan = InsertBackfillFilterProjection(
           std::move(plan), kept, column_info->names.size(), vcols.size(),
           binder.GenerateTableIndex());
@@ -1009,8 +1030,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       if (auto column_info = view_entry.GetColumnInfo()) {
         auto kept = ComputeKeptViewPositions(
           stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
+          stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause.get(),
           *column_info);
-        if (kept.size() < column_info->names.size()) {
+        if (kept.size() < column_info->names.size() || partial_view_index) {
           plan = InsertBackfillFilterProjection(
             std::move(plan), kept, column_info->names.size(),
             /*vcols_count=*/0, binder.GenerateTableIndex());
@@ -1049,6 +1071,17 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                         ERR_MSG("unrecognized parameter \"", option, "\""));
       }
     }
+  } else if (!create_index_info->options.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("unrecognized parameter \"",
+                            create_index_info->options.begin()->first, "\""));
+  }
+
+  if (create_index_info->where_clause &&
+      create_index_info->index_type != "inverted") {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("partial indexes are only supported for inverted indexes"));
   }
 
   if (view_backed && create_index_info->index_type == "secondary") {
@@ -1123,6 +1156,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   for (auto& expr : create_index_info->parsed_expressions) {
     collect(*expr);
   }
+  if (create_index_info->where_clause) {
+    collect(*create_index_info->where_clause);
+  }
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
 
   auto leaf_get_from_plan =
@@ -1134,6 +1170,22 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     return cur->Cast<duckdb::LogicalGet>();
   };
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
+  // Partial-index predicate for the backfill: a LogicalFilter over the scan
+  // (built below) drops non-matching rows before they reach the create-index
+  // sink. The operator still receives the predicate (via expressions) to
+  // persist it for DML maintenance.
+  duckdb::unique_ptr<duckdb::Expression> backfill_filter_predicate;
+  auto bind_predicate = [&](duckdb::IndexBinder& index_binder) {
+    auto parsed = create_index_info->where_clause->Copy();
+    auto bound = index_binder.Bind(parsed);
+    if (bound->GetReturnType() != duckdb::LogicalType::BOOLEAN) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+        ERR_MSG("argument of WHERE must be type boolean, not type ",
+                bound->GetReturnType().ToString()));
+    }
+    return bound;
+  };
   if (!view_backed) {
     SDB_ASSERT(sdb_table);
     // Project only what the backfill actually needs: index columns + PK
@@ -1165,6 +1217,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                                      create_index_info.get());
     for (auto& parsed : create_index_info->expressions) {
       expressions.emplace_back(index_binder.Bind(parsed));
+    }
+    if (create_index_info->where_clause) {
+      auto bound_where = bind_predicate(index_binder);
+      backfill_filter_predicate = bound_where->Copy();
+      expressions.emplace_back(std::move(bound_where));
     }
   } else {
     create_index_info->names.assign_range(
@@ -1226,35 +1283,57 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     // chunk positions follow kept_view_positions' (sorted) order.
     duckdb::IndexBinder index_binder(binder, binder.context, nullptr,
                                      create_index_info.get());
+    // Remap col-ref bindings to (TableIndex(0), narrowed_position): the
+    // resolver matches LOGICAL_CREATE_INDEX exprs against TableIndex(0), and
+    // chunk positions follow kept_view_positions' (sorted) order. Applied to
+    // the index keys and the persisted partial-index predicate alike.
+    auto remap = [&](this auto& self, duckdb::Expression& e) -> void {
+      if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
+        auto col_idx = cref.Binding().column_index.GetIndex();
+        if (kept_view_positions) {
+          auto it = std::ranges::lower_bound(*kept_view_positions, col_idx);
+          SDB_ASSERT(it != kept_view_positions->end() && *it == col_idx,
+                     "view col ref references a non-kept position");
+          col_idx = static_cast<duckdb::idx_t>(
+            std::distance(kept_view_positions->begin(), it));
+        }
+        cref.BindingMutable() = duckdb::ColumnBinding(
+          duckdb::TableIndex(0), duckdb::ProjectionIndex(col_idx));
+      }
+      duckdb::ExpressionIterator::EnumerateChildren(
+        e, [&](duckdb::Expression& c) { self(c); });
+    };
     expressions.reserve(create_index_info->expressions.size());
     for (auto& parsed : create_index_info->expressions) {
       auto bound = index_binder.Bind(parsed);
-      auto remap = [&](this auto& self, duckdb::Expression& e) -> void {
-        if (e.GetExpressionClass() ==
-            duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-          auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
-          auto col_idx = cref.Binding().column_index.GetIndex();
-          if (kept_view_positions) {
-            auto it = std::ranges::lower_bound(*kept_view_positions, col_idx);
-            SDB_ASSERT(it != kept_view_positions->end() && *it == col_idx,
-                       "view col ref references a non-kept position");
-            col_idx = static_cast<duckdb::idx_t>(
-              std::distance(kept_view_positions->begin(), it));
-          }
-          cref.BindingMutable() = duckdb::ColumnBinding(
-            duckdb::TableIndex(0), duckdb::ProjectionIndex(col_idx));
-        }
-        duckdb::ExpressionIterator::EnumerateChildren(
-          e, [&](duckdb::Expression& c) { self(c); });
-      };
       remap(*bound);
       expressions.emplace_back(std::move(bound));
+    }
+    if (create_index_info->where_clause) {
+      auto bound_where = bind_predicate(index_binder);
+
+      SDB_ASSERT(plan->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION);
+      auto& proj = plan->Cast<duckdb::LogicalProjection>();
+      auto filter =
+        duckdb::make_uniq<duckdb::LogicalFilter>(bound_where->Copy());
+      filter->children.push_back(std::move(proj.children[0]));
+      proj.children[0] = std::move(filter);
+      // Persisted copy is normalized like the index keys.
+      remap(*bound_where);
+      expressions.emplace_back(std::move(bound_where));
     }
   }
 
   auto& target_for_op = view_backed
                           ? static_cast<duckdb::CatalogEntry&>(target)
                           : static_cast<duckdb::CatalogEntry&>(*resolved_table);
+  if (backfill_filter_predicate) {
+    auto filter = duckdb::make_uniq<duckdb::LogicalFilter>(
+      std::move(backfill_filter_predicate));
+    filter->children.push_back(std::move(plan));
+    plan = std::move(filter);
+  }
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(create_index_info), std::move(expressions), target_for_op,
     nullptr);
@@ -1262,16 +1341,212 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   return result;
 }
 
-duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
-  duckdb::ClientContext& context) {
-  // Facade tables hold no row data themselves -- it lives in the hidden store
-  // database. Report the store's size (the user never names the store).
+namespace {
+
+duckdb::optional_ptr<duckdb::TableCatalogEntry> ResolveStoreTableEntry(
+  duckdb::ClientContext& context, const catalog::Snapshot& snapshot,
+  const catalog::Table& table) {
+  auto schema = snapshot.GetObject<catalog::Schema>(table.GetParentId());
+  if (!schema) {
+    return nullptr;
+  }
+  auto database = snapshot.GetDatabase(schema->GetParentId());
+  if (!database) {
+    return nullptr;
+  }
+  auto store_name = catalog::StoreTableName(database->GetName(),
+                                            schema->GetName(), table.GetName());
+  duckdb::EntryLookupInfo lookup(
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName(duckdb::Identifier{catalog::kStoreDatabaseName},
+                          "main", duckdb::Identifier{store_name}));
+  auto entry = duckdb::Catalog::GetEntry(context, lookup,
+                                         duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry) {
+    return nullptr;
+  }
+  return &entry->Cast<duckdb::TableCatalogEntry>();
+}
+
+}  // namespace
+
+RelationStorageSize StoreTableDataSize(duckdb::ClientContext& context,
+                                       const catalog::Snapshot& snapshot,
+                                       const catalog::Table& table) {
+  RelationStorageSize result;
+  if (table.GetEngine() != catalog::TableEngine::Transactional ||
+      table.Tombstoned()) {
+    return result;
+  }
+  auto entry = ResolveStoreTableEntry(context, snapshot, table);
+  if (!entry) {
+    return result;
+  }
+  auto& storage = entry->GetStorage();
+  duckdb::QueryContext query_context(context);
+  containers::FlatHashSet<duckdb::block_id_t> blocks;
+  int64_t transient_bytes = 0;
+  for (const auto& info : storage.GetColumnSegmentInfo(query_context)) {
+    if (info.persistent) {
+      blocks.insert(info.block_id);
+      blocks.insert(info.additional_blocks.begin(),
+                    info.additional_blocks.end());
+    } else {
+      transient_bytes += static_cast<int64_t>(info.segment_size);
+    }
+  }
+  const auto block_size =
+    storage.GetTableIOManager().GetBlockManagerForRowData().GetBlockSize();
+  result.persistent_blocks = static_cast<int64_t>(blocks.size());
+  result.bytes = result.persistent_blocks * static_cast<int64_t>(block_size) +
+                 transient_bytes;
+  return result;
+}
+
+int64_t StoreTableIndexBytes(duckdb::ClientContext& context,
+                             const catalog::Snapshot& snapshot,
+                             const catalog::Table& table) {
+  if (table.GetEngine() != catalog::TableEngine::Transactional ||
+      table.Tombstoned()) {
+    return 0;
+  }
+  auto entry = ResolveStoreTableEntry(context, snapshot, table);
+  if (!entry) {
+    return 0;
+  }
+  auto& info = *entry->GetStorage().GetDataTableInfo();
+  info.BindIndexes(context);
+  int64_t total = 0;
+  for (auto& index : info.GetIndexes().Indexes()) {
+    if (!index.IsBound()) {
+      continue;
+    }
+    total += static_cast<int64_t>(
+      index.Cast<duckdb::BoundIndex>().GetAllocationSize());
+  }
+  return total;
+}
+
+int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
+                               const catalog::Snapshot& snapshot,
+                               const catalog::Table& table) {
+  int64_t total = StoreTableIndexBytes(context, snapshot, table);
+  auto schema = snapshot.GetObject<catalog::Schema>(table.GetParentId());
+  if (!schema) {
+    return total;
+  }
+  for (const auto& rel :
+       snapshot.GetRelations(schema->GetParentId(), schema->GetName())) {
+    if (rel->GetType() != catalog::ObjectType::InvertedIndex) {
+      continue;
+    }
+    const auto& index = basics::downCast<const catalog::InvertedIndex>(*rel);
+    if (index.GetRelationId() == table.GetId()) {
+      total += InvertedIndexBytes(index);
+    }
+  }
+  return total;
+}
+
+int64_t SecondaryIndexBytes(duckdb::ClientContext& context,
+                            const catalog::Snapshot& snapshot,
+                            const catalog::SecondaryIndex& index) {
+  auto table = snapshot.GetObject<catalog::Table>(index.GetRelationId());
+  if (!table || table->GetEngine() != catalog::TableEngine::Transactional ||
+      table->Tombstoned()) {
+    return 0;
+  }
+  auto entry = ResolveStoreTableEntry(context, snapshot, *table);
+  if (!entry) {
+    return 0;
+  }
+  auto& info = *entry->GetStorage().GetDataTableInfo();
+  info.BindIndexes(context);
+  auto bound = info.GetIndexes().Find(
+    duckdb::Identifier{catalog::StoreIndexName(index.GetId())});
+  return bound ? static_cast<int64_t>(bound->GetAllocationSize()) : 0;
+}
+
+int64_t SearchTableBytes(const catalog::Table& table) {
+  if (table.GetEngine() != catalog::TableEngine::Search) {
+    return 0;
+  }
+  const auto& data = table.GetData();
+  if (!data) {
+    return 0;
+  }
+  auto reader = data->GetDirectoryReader();
+  if (!reader) {
+    return 0;
+  }
+  int64_t total = 0;
+  for (const auto& segment : reader.Meta().index_meta.segments) {
+    total += static_cast<int64_t>(segment.meta.byte_size);
+  }
+  return total;
+}
+
+int64_t InvertedIndexBytes(const catalog::InvertedIndex& index) {
+  const auto& data = index.GetData();
+  if (!data) {
+    return 0;
+  }
+  return static_cast<int64_t>(data->GetStats().indexSize);
+}
+
+duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
+                                         const catalog::Snapshot& snapshot,
+                                         ObjectId database_id,
+                                         std::string_view only_schema) {
+  duckdb::DatabaseSize result;
   auto store = duckdb::DatabaseManager::Get(context).GetDatabase(
     context, duckdb::Identifier{catalog::kStoreDatabaseName});
   if (store) {
-    return store->GetCatalog().GetDatabaseSize(context);
+    result.block_size = store->GetCatalog().GetDatabaseSize(context).block_size;
   }
-  return {};
+  int64_t bytes = 0;
+  int64_t blocks = 0;
+  for (const auto& schema : snapshot.GetSchemas(database_id)) {
+    if (!only_schema.empty() && schema->GetName() != only_schema) {
+      continue;
+    }
+    for (const auto& rel :
+         snapshot.GetRelations(database_id, schema->GetName())) {
+      switch (rel->GetType()) {
+        case catalog::ObjectType::Table: {
+          auto table = snapshot.GetObject<catalog::Table>(rel->GetId());
+          if (!table || table->Tombstoned()) {
+            break;
+          }
+          if (table->GetEngine() == catalog::TableEngine::Search) {
+            bytes += SearchTableBytes(*table);
+            break;
+          }
+          const auto data = StoreTableDataSize(context, snapshot, *table);
+          bytes += data.bytes + StoreTableIndexBytes(context, snapshot, *table);
+          blocks += data.persistent_blocks;
+        } break;
+        case catalog::ObjectType::InvertedIndex: {
+          if (auto index =
+                snapshot.GetObject<catalog::InvertedIndex>(rel->GetId())) {
+            bytes += InvertedIndexBytes(*index);
+          }
+        } break;
+        default:
+          break;
+      }
+    }
+  }
+  result.bytes = static_cast<duckdb::idx_t>(bytes);
+  result.total_blocks = static_cast<duckdb::idx_t>(blocks);
+  result.used_blocks = result.total_blocks;
+  return result;
+}
+
+duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
+  duckdb::ClientContext& context) {
+  auto snapshot = GetSereneDBContext(context).CatalogSnapshot();
+  return DatabaseStorageSize(context, *snapshot, _database_id);
 }
 
 }  // namespace sdb::connector

@@ -151,3 +151,29 @@ ORDER BY n DESC, brand;
 brand	n
 acme	2
 globex	1
+
+# DOCS_TEST: example_009
+
+# DOCS_TEST_BODY
+
+query
+SELECT
+    CASE WHEN category IS NOT NULL THEN 'category'
+         WHEN brand IS NOT NULL THEN 'brand'
+         ELSE 'price_band' END AS facet,
+    coalesce(category, brand, price_band) AS value,
+    count(*) AS n
+FROM products_idx
+GROUP BY GROUPING SETS ((category), (brand), (price_band))
+ORDER BY facet, n DESC, value;
+----
+facet	value	n
+brand	acme	3
+brand	globex	3
+brand	initech	2
+category	electronics	3
+category	footwear	3
+category	apparel	2
+price_band	mid	5
+price_band	premium	2
+price_band	budget	1

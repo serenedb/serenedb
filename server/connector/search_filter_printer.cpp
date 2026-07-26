@@ -42,7 +42,6 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/vector_radius_filter.hpp>
-#include <iresearch/search/vector_similarity_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
@@ -317,15 +316,6 @@ struct FilterPrinter {
     return s;
   }
 
-  ExplainNode BuildVectorNodeCommon(std::string title, field_id fid,
-                                    VectorMetric metric, size_t dims) const {
-    ExplainNode node{std::move(title)};
-    node.attributes["Field"] = FieldName(fid);
-    node.attributes["Metric"] = std::string{VectorMetricName(metric)};
-    node.attributes["Dims"] = absl::StrCat(dims);
-    return node;
-  }
-
   ExplainNode Build(const Filter& filter) const {
     auto node = BuildNode(filter);
     if (const auto boost = filter.BoostImpl(); boost != kNoBoost) {
@@ -516,21 +506,12 @@ struct FilterPrinter {
       node.attributes["Range"] = GeoDistanceRange(f);
       return node;
     }
-    if (type == Type<ByVectorSimilarity>::id()) {
-      const auto& f = downCast<const ByVectorSimilarity>(filter);
-      const auto& o = f.options();
-      ExplainNode node = BuildVectorNodeCommon("Vector KNN", f.field_id(),
-                                               o.metric, o.query.size());
-      if (o.inner) {
-        node.children.push_back(Build(*o.inner));
-      }
-      return node;
-    }
     if (type == Type<ByRadius>::id()) {
       const auto& f = downCast<const ByRadius>(filter);
       const auto& o = f.options();
-      ExplainNode node = BuildVectorNodeCommon("Vector Range", f.field_id(),
-                                               o.metric, o.query.size());
+      ExplainNode node{"Vector Range"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
       if (o.inner) {

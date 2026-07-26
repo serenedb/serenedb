@@ -31,7 +31,10 @@ namespace sdb::auth {
 // Sorted ascending; membership tested with binary_search.
 using RoleIdSpan = std::span<const ObjectId>;
 
-enum class PrivMatch { All, Any };
+enum class PrivMatch {
+  All,
+  Any,
+};
 
 catalog::Acl AclDefault(catalog::ObjectType type, ObjectId owner);
 

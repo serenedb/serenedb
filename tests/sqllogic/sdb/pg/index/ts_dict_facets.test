@@ -1661,3 +1661,340 @@ QUERY PLAN
 │ sdb_inverted_index_term$brand, sdb_inverted_index_term_count$brand                │
 │ ~5 rows                                                                           │
 ╰───────────────────────────────────────────────────────────────────────────────────╯
+
+# A view-backed inverted index (over read_parquet, another view, ...) has no
+# catalog table, so its keys carry no NOT NULL proof -- every key rides its
+# null-marker field for the synthesized NULL group. The GROUP BY facet still
+# converts to a term-dictionary scan, and an indexed-expression WHERE claims
+# into the document filter exactly as for a table-backed index.
+statement ok
+CREATE TEXT SEARCH DICTIONARY fvw_kw(template = 'keyword')
+
+statement ok
+CREATE TABLE fvw_base(id INTEGER PRIMARY KEY, sev VARCHAR, body VARCHAR NOT NULL)
+
+statement ok
+INSERT INTO fvw_base VALUES
+  (1, 'ERROR', 'disk error'),
+  (2, 'INFO',  'all ok'),
+  (3, NULL,    'net failed'),
+  (4, 'INFO',  'error retry')
+
+statement ok
+CREATE VIEW fvw AS SELECT id, sev AS SeverityText, body AS Body FROM fvw_base
+
+statement ok
+CREATE INDEX fvw_idx ON fvw USING inverted((ts_split_by_non_alpha(Body, true)) fvw_kw, SeverityText fvw_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) fvw_base;
+
+query TI
+SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
+WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['error', 'failed'])
+GROUP BY SeverityText ORDER BY n DESC, sev
+----
+sev	n
+ERROR	1
+INFO	1
+NULL	1
+
+query
+EXPLAIN SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
+WHERE ts_split_by_non_alpha(Body, true) @@ ts_any(['error', 'failed'])
+GROUP BY SeverityText
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections:                                 │
+│ sdb_inverted_index_term$severitytext,        │
+│ CAST(#1 AS BIGINT)                           │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ HASH_GROUP_BY ───────┴──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: sum(#1)                          │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: fvw_idx                               │
+│ Index Filter:                                │
+│ ╭─ Terms ──────────────────────────────────╮ │
+│ │ Field: ts_split_by_non_alpha(body, true) │ │
+│ │ Values: 'error', 'failed'                │ │
+│ │ Min Match: 1                             │ │
+│ ╰──────────────────────────────────────────╯ │
+│ TsDict: severitytext                         │
+│ Projections:                                 │
+│ sdb_inverted_index_term$severitytext,        │
+│ sdb_inverted_index_term_count$severitytext   │
+│ ~2 rows                                      │
+╰──────────────────────────────────────────────╯
+
+query TI
+SELECT SeverityText AS sev, count(*) AS n FROM fvw_idx
+GROUP BY SeverityText ORDER BY n DESC, sev
+----
+sev	n
+INFO	2
+ERROR	1
+NULL	1
+
+# count(DISTINCT), min and max over the same view-backed index push down
+# (NULL-safe -- no null-marker needed).
+query I
+SELECT count(DISTINCT SeverityText) AS n FROM fvw_idx
+----
+n
+2
+
+query
+EXPLAIN SELECT count(DISTINCT SeverityText) FROM fvw_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────╮
+│ Aggregates: count(#0)                │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ HASH_GROUP_BY ───┴──────────────────╮
+│ Groups: #0                           │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: fvw_idx                       │
+│ TsDict: severitytext                 │
+│ Projections:                         │
+│ sdb_inverted_index_term$severitytext │
+│ ~2 rows                              │
+╰──────────────────────────────────────╯
+
+query TT
+SELECT min(SeverityText) AS lo, max(SeverityText) AS hi FROM fvw_idx
+----
+lo	hi
+ERROR	INFO
+
+query
+EXPLAIN SELECT min(SeverityText), max(SeverityText) FROM fvw_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────╮
+│ Aggregates: min(#0), max(#0)         │
+│ ~1 row                               │
+╰───────────────────┬──────────────────╯
+╭─ IRESEARCH_SCAN ──┴──────────────────╮
+│ Index: fvw_idx                       │
+│ TsDict: severitytext                 │
+│ Projections:                         │
+│ sdb_inverted_index_term$severitytext │
+│ ~2 rows                              │
+╰──────────────────────────────────────╯
+
+# array_agg keeps a NULL element the term dictionary has none for, and the view
+# can't prove NOT NULL, so it stays a document scan (result still correct).
+query T
+SELECT array_agg(DISTINCT SeverityText ORDER BY SeverityText) AS lst FROM fvw_idx
+----
+lst
+{ERROR,INFO,NULL}
+
+query
+EXPLAIN SELECT array_agg(DISTINCT SeverityText) FROM fvw_idx
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: array_agg(DISTINCT #0) │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Index: fvw_idx                     │
+│ Projections: severitytext          │
+│ ~4 rows                            │
+╰────────────────────────────────────╯
+
+# Explicit ts_dict_agg reads the dictionary terms directly (no NULL element).
+query T
+SELECT list_sort(ts_dict_agg(SeverityText)) AS terms FROM fvw_idx
+----
+terms
+{ERROR,INFO}
+
+
+# A constant-true WHERE predicate (`WHERE true`, `WHERE 1=1`, `WHERE true AND
+# 1=1`) folds away and must not block the term-dictionary facet pushdown; a
+# constant-false predicate stays restrictive and still eliminates every row.
+
+statement ok
+CREATE TABLE fconst(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX fconst_idx ON fconst USING inverted(cat fct_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO fconst VALUES (1,'red'),(2,'green'),(3,'red'),(4,'blue'),(5,'red'),(6,'green')
+
+statement ok
+VACUUM (REFRESH_TABLE) fconst;
+
+query TI
+SELECT cat, count(*) AS n FROM fconst_idx WHERE true GROUP BY cat ORDER BY cat
+----
+cat	n
+blue	1
+green	2
+red	3
+
+query
+EXPLAIN SELECT cat, count(*) AS n FROM fconst_idx WHERE true GROUP BY cat
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: fconst_idx                         │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~3 rows                                   │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT cat, count(*) AS n FROM fconst_idx WHERE 1=1 GROUP BY cat ORDER BY cat
+----
+cat	n
+blue	1
+green	2
+red	3
+
+query
+EXPLAIN SELECT cat, count(*) AS n FROM fconst_idx WHERE true AND 1=1 GROUP BY cat
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────╮
+│ Projections: sdb_inverted_index_term$cat, │
+│              CAST(#1 AS BIGINT)           │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ HASH_GROUP_BY ─────┴─────────────────────╮
+│ Groups: #0                                │
+│ Aggregates: sum(#1)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: fconst_idx                         │
+│ TsDict: cat                               │
+│ Projections:                              │
+│ sdb_inverted_index_term$cat,              │
+│ sdb_inverted_index_term_count$cat         │
+│ ~3 rows                                   │
+╰───────────────────────────────────────────╯
+
+query TI
+SELECT cat, count(*) AS n FROM fconst_idx WHERE false GROUP BY cat ORDER BY cat
+----
+cat	n
+
+# --- A constant-false predicate declines the pushdown and stays restrictive:
+# it is a real conjunct (not folded away), so the scan runs and eliminates
+# every row.
+query
+EXPLAIN SELECT cat, count(*) AS n FROM fconst_idx WHERE false GROUP BY cat
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~0 rows                  │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+# The same folding applies on the GROUPING SETS path (multiple singleton
+# keyword keys): a constant-true WHERE is transparent and the multi-field term
+# scan is preserved; a constant-false WHERE still empties the result.
+
+statement ok
+CREATE TABLE fgs(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, region VARCHAR NOT NULL)
+
+statement ok
+CREATE INDEX fgs_idx ON fgs USING inverted(cat fct_kw, region fct_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+INSERT INTO fgs VALUES
+  (1,'red','north'),(2,'green','south'),(3,'red','north'),
+  (4,'blue','east'),(5,'red','south'),(6,'green','north')
+
+statement ok
+VACUUM (REFRESH_TABLE) fgs;
+
+query TTI
+SELECT cat, region, count(*) AS n FROM fgs_idx WHERE true
+  GROUP BY GROUPING SETS ((cat),(region)) ORDER BY cat NULLS LAST, region NULLS LAST
+----
+cat	region	n
+blue	NULL	1
+green	NULL	2
+red	NULL	3
+NULL	east	1
+NULL	north	3
+NULL	south	2
+
+query
+EXPLAIN SELECT cat, region, count(*) AS n FROM fgs_idx WHERE true
+  GROUP BY GROUPING SETS ((cat),(region))
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                       │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term$region, CAST(#2 AS BIGINT)    │
+│ ~5 rows                                                                            │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────┴─────────────────────────────────────────╮
+│ Groups: #0, #1                                                                     │
+│ Aggregates: sum(#2)                                                                │
+│ ~5 rows                                                                            │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────────┴─────────────────────────────────────────╮
+│ Projections:                                                                       │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term$region,                       │
+│ COALESCE(sdb_inverted_index_term_count$cat, sdb_inverted_index_term_count$region)  │
+│ ~6 rows                                                                            │
+╰──────────────────────────────────────────┬─────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────┴─────────────────────────────────────────╮
+│ Index: fgs_idx                                                                     │
+│ TsDict: cat, region                                                                │
+│ Projections:                                                                       │
+│ sdb_inverted_index_term$cat, sdb_inverted_index_term_count$cat,                    │
+│ sdb_inverted_index_term$region, sdb_inverted_index_term_count$region               │
+│ ~6 rows                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+
+query TTI
+SELECT cat, region, count(*) AS n FROM fgs_idx WHERE 1=1
+  GROUP BY GROUPING SETS ((cat),(region)) ORDER BY cat NULLS LAST, region NULLS LAST
+----
+cat	region	n
+blue	NULL	1
+green	NULL	2
+red	NULL	3
+NULL	east	1
+NULL	north	3
+NULL	south	2
+
+query TTI
+SELECT cat, region, count(*) AS n FROM fgs_idx WHERE false
+  GROUP BY GROUPING SETS ((cat),(region)) ORDER BY cat NULLS LAST, region NULLS LAST
+----
+cat	region	n

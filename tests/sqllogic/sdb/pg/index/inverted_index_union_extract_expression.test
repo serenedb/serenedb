@@ -1,0 +1,103 @@
+hash-threshold 100
+
+# A UNION column itself can not be indexed (it is a nested type), but a
+# union_extract(u, 'member') expression yields a scalar -- VARCHAR or INTEGER --
+# which IS indexable. This covers text search on the string member and equality
+# on the integer member, both pushed into the inverted index as a Term filter.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_ext_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE union_ext_expr(id INTEGER PRIMARY KEY,
+                            u UNION(num INTEGER, str VARCHAR));
+
+
+statement count 5
+INSERT INTO union_ext_expr VALUES
+  (1, union_value(num := 42)),
+  (2, 'apple banana'),
+  (3, union_value(str := 'apple cherry')),
+  (4, 7),
+  (5, union_value(num := 42));
+
+
+# Text index on the VARCHAR member.
+statement ok
+CREATE INDEX union_ext_str_idx ON union_ext_expr
+  USING inverted(union_extract(u, 'str') union_ext_en);
+
+
+# Numeric index on the INTEGER member.
+statement ok
+CREATE INDEX union_ext_num_idx ON union_ext_expr
+  USING inverted(union_extract(u, 'num'));
+
+
+statement ok
+VACUUM (REFRESH_TABLE) union_ext_expr;
+
+
+# Phrase search on the string member -- only rows whose active member is `str`
+# and matches are returned (num-tagged rows have a NULL str, so they drop out).
+query
+SELECT id FROM union_ext_str_idx
+  WHERE union_extract(u, 'str') @@ ts_phrase('apple') ORDER BY id;
+----
+id
+2
+3
+
+
+query
+SELECT id FROM union_ext_str_idx
+  WHERE union_extract(u, 'str') @@ ts_phrase('banana') ORDER BY id;
+----
+id
+2
+
+
+# The filter is served from the index as a Term over the extracted field.
+query
+EXPLAIN SELECT id FROM union_ext_str_idx
+  WHERE union_extract(u, 'str') @@ ts_phrase('banana');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: union_ext_str_idx                   │
+│ Lookup: table                              │
+│ Index Filter:                              │
+│ ╭─ Term ─────────────────────────────────╮ │
+│ │ Field: union_extract(u, 'str')(string) │ │
+│ │ Value: banana                          │ │
+│ ╰────────────────────────────────────────╯ │
+│ Projections: id                            │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
+
+
+# Equality on the integer member.
+query
+SELECT id FROM union_ext_num_idx
+  WHERE union_extract(u, 'num') = 42 ORDER BY id;
+----
+id
+1
+5
+
+
+query
+SELECT id FROM union_ext_num_idx
+  WHERE union_extract(u, 'num') = 7 ORDER BY id;
+----
+id
+4

@@ -216,7 +216,7 @@ TEST_F(DirectoryUtilsTests, test_ref_tracking_dir) {
   {
     irs::MemoryDirectory dir;
 
-    auto clean = [&dir]() { irs::directory_utils::RemoveAllUnreferenced(dir); };
+    auto clean = [&dir] { irs::directory_utils::RemoveAllUnreferenced(dir); };
 
     CallbackDirectory callback_dir{dir, clean};
     irs::RefTrackingDirectory track_dir(callback_dir, true);

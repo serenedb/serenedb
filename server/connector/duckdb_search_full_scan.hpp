@@ -159,6 +159,10 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
     duckdb::unique_ptr<duckdb::TableFilter> not_null;
   };
   std::vector<ColFilter> col_filters;
+  // Owns the emit-adjusted copies of pushed score filters (the predicate with
+  // the score-emit baked into the score reference, so it evaluates in the
+  // user-facing space it was written in). A `col_filters` entry points into it.
+  std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
   // Score-filter machinery. `score_dynamic_filter` is the shared runtime bound
   // TOP_N updates (captured from the pushed dynamic score filter; null when
   // none). `score_static_floor` is the lower bound implied by pushed static

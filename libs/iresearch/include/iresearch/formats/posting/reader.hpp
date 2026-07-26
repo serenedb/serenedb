@@ -121,8 +121,6 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
                                         IndexFeatures features) {
   std::string buf;
 
-  SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Offs) ||
-             IndexFeatures::None == (features & IndexFeatures::Pay));
   const bool needs_pay =
     IndexFeatures::None !=
     (features & (IndexFeatures::Offs | IndexFeatures::Pay));
@@ -194,6 +192,9 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
                                          TermMeta& state) {
   auto& term_meta = static_cast<TermMetaImpl&>(state);
   const auto* p = in;
+
+  SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Offs) ||
+             IndexFeatures::None == (features & IndexFeatures::Pay));
 
   term_meta.docs_count = vread<uint32_t>(p);
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {

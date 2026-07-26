@@ -203,15 +203,14 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
 
 std::optional<ExternalKeyColumn> FindKeyColumn(
   const duckdb::TableCatalogEntry& entry, const std::string& name) {
-  duckdb::column_t pos = 0;
-  for (const auto& col : entry.GetColumns().Logical()) {
-    if (col.Name() == name) {
-      return ExternalKeyColumn{
-        .name = name, .source_index = pos, .type = col.GetType()};
-    }
-    ++pos;
+  const auto& columns = entry.GetColumns();
+  const duckdb::Identifier id{name};
+  if (!columns.ColumnExists(id)) {
+    return std::nullopt;
   }
-  return std::nullopt;
+  const auto& col = columns.GetColumn(id);
+  return ExternalKeyColumn{
+    .name = name, .source_index = col.Logical().index, .type = col.GetType()};
 }
 
 }  // namespace
@@ -371,6 +370,17 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
       .schema = entry.ParentSchema().name.GetIdentifierName(),
       .table = entry.name.GetIdentifierName()};
+    // Exactly one of the branches below returns, so each may consume
+    // projection_columns.
+    auto external_fast_path = [&](catalog::PkSpec spec,
+                                  std::vector<ExternalKeyColumn> keys = {}) {
+      ViewFastPath out;
+      out.catalog_ref = ext_ref;
+      out.pk_spec = spec;
+      out.key_columns = std::move(keys);
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    };
     if ((cat_type == "clickhouse" || cat_type == "postgres") &&
         !key_columns.empty()) {
       // User key via WITH (key_columns = '...'): any column count/types,
@@ -385,22 +395,14 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         }
         cols.push_back(std::move(*col));
       }
-      ViewFastPath out;
-      out.catalog_ref = ext_ref;
-      out.pk_spec = catalog::PkSpec::ExternalColumnKey;
-      out.key_columns = std::move(cols);
-      out.projection_columns = std::move(projection_columns);
-      return out;
+      return external_fast_path(catalog::PkSpec::ExternalColumnKey,
+                                std::move(cols));
     }
     if (cat_type == "postgres") {
       // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
       // needed, unique within the index snapshot. The lookup's `rowid IN (...)`
       // is pushed down as a `ctid IN (...)` TID scan.
-      ViewFastPath out;
-      out.catalog_ref = ext_ref;
-      out.pk_spec = catalog::PkSpec::ExternalPostgresCtid;
-      out.projection_columns = std::move(projection_columns);
-      return out;
+      return external_fast_path(catalog::PkSpec::ExternalPostgresCtid);
     }
     if (cat_type == "clickhouse") {
       // ClickHouse: part+offset ids die on merges, so key on the single-BIGINT
@@ -415,10 +417,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         if (!unique.IsPrimaryKey()) {
           continue;
         }
-        if (unique.GetColumnNames().size() != 1) {
+        const auto& names = unique.GetColumnNames();
+        if (names.size() != 1) {
           return std::nullopt;
         }
-        pk_name = unique.GetColumnNames()[0].GetIdentifierName();
+        pk_name = names[0].GetIdentifierName();
+        break;  // a table has at most one primary key
       }
       if (!pk_name) {
         return std::nullopt;
@@ -429,12 +433,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       if (!key || key->type.id() != duckdb::LogicalTypeId::BIGINT) {
         return std::nullopt;
       }
-      ViewFastPath out;
-      out.catalog_ref = ext_ref;
-      out.pk_spec = catalog::PkSpec::ExternalColumnKey;
-      out.key_columns.push_back(std::move(*key));
-      out.projection_columns = std::move(projection_columns);
-      return out;
+      return external_fast_path(catalog::PkSpec::ExternalColumnKey,
+                                {std::move(*key)});
     }
     return std::nullopt;
   }

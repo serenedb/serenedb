@@ -201,17 +201,6 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
                           "\" has no (VARCHAR) overload"));
 }
 
-std::vector<std::string> ParseKeyColumns(std::string_view text) {
-  std::vector<std::string> cols;
-  // SkipWhitespace drops the empty and all-whitespace parts, so what survives
-  // only needs trimming.
-  for (std::string_view part :
-       absl::StrSplit(text, ',', absl::SkipWhitespace())) {
-    cols.emplace_back(absl::StripAsciiWhitespace(part));
-  }
-  return cols;
-}
-
 std::optional<ExternalKeyColumn> FindKeyColumn(
   const duckdb::TableCatalogEntry& entry, const std::string& name) {
   duckdb::column_t pos = 0;
@@ -233,8 +222,17 @@ std::vector<std::string> KeyColumnsFromOptions(
   if (it == options.end()) {
     return {};
   }
-  return ParseKeyColumns(it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
-                           .GetValue<std::string>());
+  const auto text = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+                      .GetValue<std::string>();
+  std::vector<std::string> cols;
+  // SkipWhitespace drops the empty and all-whitespace parts, so what survives
+  // only needs trimming. The result is persisted in the index options, so it
+  // owns its names rather than viewing into `text`.
+  for (std::string_view part :
+       absl::StrSplit(text, ',', absl::SkipWhitespace())) {
+    cols.emplace_back(absl::StripAsciiWhitespace(part));
+  }
+  return cols;
 }
 
 std::optional<ViewFastPath> ResolveViewFastPath(

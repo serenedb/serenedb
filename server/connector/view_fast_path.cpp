@@ -203,11 +203,11 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
 
 std::vector<std::string> ParseKeyColumns(std::string_view text) {
   std::vector<std::string> cols;
-  for (auto part : absl::StrSplit(text, ',')) {
-    auto trimmed = absl::StripAsciiWhitespace(part);
-    if (!trimmed.empty()) {
-      cols.emplace_back(trimmed);
-    }
+  // SkipWhitespace drops the empty and all-whitespace parts, so what survives
+  // only needs trimming.
+  for (std::string_view part :
+       absl::StrSplit(text, ',', absl::SkipWhitespace())) {
+    cols.emplace_back(absl::StripAsciiWhitespace(part));
   }
   return cols;
 }

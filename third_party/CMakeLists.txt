@@ -607,7 +607,7 @@ target_compile_definitions(
 
 target_link_libraries(
     clickhouse_cpp
-    PUBLIC lz4::lz4 zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
+    PUBLIC lz4_static zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
 )
 
 ################################################################################

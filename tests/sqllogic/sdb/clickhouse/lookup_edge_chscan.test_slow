@@ -1,29 +1,28 @@
 control substitution on
 
-# Negative / fallback cases for metadata-PK materialisation over ClickHouse.
+# Where metadata-PK materialisation over ClickHouse engages, and where it does
+# not.
 #
 # Full-row retrieval ("materialise real source columns") off a view-backed
 # inverted index only engages when ResolveViewFastPath recognises the source
 # (server/connector/view_fast_path.cpp). For an ATTACHed ClickHouse *table* that
-# means the engine's PK metadata (system.columns.is_in_primary_key -> a standard
-# single-column PRIMARY KEY constraint) AND a key type the v1 path supports: a
-# single signed 64-bit integer (CH Int64 -> BIGINT). Anything else -> no fast
-# path -> the index degrades to the generic-view shape: count(*)/BM25 still flow
-# off the iresearch index, but materialising real columns raises a clean
-# FEATURE_NOT_SUPPORTED.
+# means the engine has PK metadata at all (system.columns.is_in_primary_key -> a
+# PRIMARY KEY constraint). The key itself is taken as it comes: the whole
+# MergeTree key, any arity, any column types -- composite keys are the norm in
+# ClickHouse. Without such metadata there is no key to re-fetch by, so the index
+# degrades to the generic-view shape: count(*)/BM25 still flow off the iresearch
+# index, but materialising real columns raises a clean FEATURE_NOT_SUPPORTED.
 #
 # This file pins that boundary:
 #   (a) inverted index over a clickhouse_query() VIEW -- a generic function with
-#       no engine metadata at all (mirrors inverted_index_chscan.test_slow).
-#   (b) inverted index over an ATTACHed table whose PK is NOT a single BIGINT
-#       (widgets.id is UInt32; types_all's key c_uint8 is UInt8) -- the PK is
-#       present but the wrong shape, so the fast path declines exactly like (a).
-#   (c) a positive control: vedernikoff.id is Int64, so the SAME shape of query
-#       materialises real columns. This is the one supported case; the
-#       unsupported PK shapes (UInt32 / UInt8 / string) are documented in
-#       comments and asserted only where SQL can observe them.
-#   (d) a COMPOSITE metadata PK -- rejected on arity, not type -- alongside the
-#       explicit key_columns override that DOES accept the same two columns.
+#       no engine metadata at all, so it declines (mirrors
+#       inverted_index_chscan.test_slow). This is the case that still degrades.
+#   (b) PK types other than BIGINT materialise: widgets.id is UInt32, and
+#       types_all's key c_uint8 is UInt8. The key travels as its own type in the
+#       stored struct, so nothing requires it to be a signed 64-bit integer.
+#   (c) vedernikoff.id is Int64 -- the plain single-BIGINT case.
+#   (d) a COMPOSITE metadata PK (ORDER BY (a, b)) materialises as well, and the
+#       explicit key_columns override over the same two columns still agrees.
 #
 # Unique attach name (chlke) so the global catalog name does not collide with
 # other parallel _chscan files. Unique object names (chlke_*) for the same
@@ -144,8 +143,15 @@ count
 
 # UInt32 PK is the wrong shape for the v1 fast path -> real-column retrieval
 # declines with the generic-view error (the PK exists but is not a single BIGINT).
-statement error
+# The UInt32 key materialises: the key travels as its own type in the stored
+# struct and the re-fetch renders it as-is, so nothing needs it to be BIGINT.
+# widgets holds gadget at id 1 and id 4.
+query
 SELECT id, name FROM chlke_widgets_idx WHERE name @@ ts_phrase('gadget') ORDER BY id;
+----
+id	name
+1	gadget
+4	gadget
 
 
 # =====================================================================
@@ -172,9 +178,12 @@ SELECT count(*) FROM chlke_types_idx WHERE c_string @@ ts_phrase('world');
 count
 1
 
-# UInt8 key -> not a single BIGINT -> materialisation declines.
-statement error
+# Likewise the UInt8 key: 'hello' is the c_uint8 = 1 row.
+query
 SELECT c_uint8, c_string FROM chlke_types_idx WHERE c_string @@ ts_phrase('hello') ORDER BY c_uint8;
+----
+c_uint8	c_string
+1	hello
 
 
 # =====================================================================
@@ -278,12 +287,14 @@ ORDER BY BM25(chlke_pair_idx.tableoid) DESC LIMIT 1;
 has_score
 t
 
-# Materialising a real source column declines: no fast path was resolved. Bare
-# `statement error` matches the other cases in this file; the error raised here
-# was checked to be the FEATURE_NOT_SUPPORTED "materialising real columns ... is
-# not yet supported" decline (sqlstate 0A000), not an unrelated failure.
-statement error
-SELECT a, body FROM chlke_pair_idx WHERE body @@ ts_phrase('pudge') ORDER BY a;
+# The composite key materialises through the default too: both key columns are
+# stored and the re-fetch matches on the pair.
+query
+SELECT a, b, body FROM chlke_pair_idx WHERE body @@ ts_phrase('pudge') ORDER BY a, b;
+----
+a	b	body
+1	10	pudge hooks
+1	11	pudge rots
 
 # Control: the same two columns, named explicitly, DO materialise.
 statement ok

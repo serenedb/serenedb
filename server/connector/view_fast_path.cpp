@@ -202,6 +202,12 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
                           "\" has no (VARCHAR) overload"));
 }
 
+std::string KeyColumnName(const std::string& name) { return name; }
+
+std::string KeyColumnName(const duckdb::Identifier& name) {
+  return name.GetIdentifierName();
+}
+
 std::optional<ExternalKeyColumn> FindKeyColumn(
   const duckdb::TableCatalogEntry& entry, const std::string& name) {
   const auto& columns = entry.GetColumns();
@@ -212,6 +218,24 @@ std::optional<ExternalKeyColumn> FindKeyColumn(
   const auto& col = columns.GetColumn(id);
   return ExternalKeyColumn{
     .name = name, .source_index = col.Logical().index, .type = col.GetType()};
+}
+
+// Resolve key column names against the source table, in order. nullopt when any
+// name is not one of its columns. Takes the user's WITH (key_columns = ...) as
+// std::string and the engine's PK metadata as duckdb::Identifier.
+template<typename Names>
+std::optional<std::vector<ExternalKeyColumn>> FindKeyColumns(
+  const duckdb::TableCatalogEntry& entry, const Names& names) {
+  std::vector<ExternalKeyColumn> cols;
+  cols.reserve(names.size());
+  for (const auto& name : names) {
+    auto col = FindKeyColumn(entry, KeyColumnName(name));
+    if (!col) {
+      return std::nullopt;
+    }
+    cols.push_back(std::move(*col));
+  }
+  return cols;
 }
 
 }  // namespace
@@ -390,19 +414,14 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       return out;
     };
     if (!key_columns.empty()) {
-      // WITH (key_columns = '...'): any column count/types, and it takes
-      // precedence over the connector default. Unknown column -> no fast path.
-      std::vector<ExternalKeyColumn> cols;
-      cols.reserve(key_columns.size());
-      for (const auto& name : key_columns) {
-        auto col = FindKeyColumn(entry, name);
-        if (!col) {
-          return std::nullopt;
-        }
-        cols.push_back(std::move(*col));
+      // WITH (key_columns = '...') takes precedence over the connector default.
+      // Unknown column -> no fast path.
+      auto cols = FindKeyColumns(entry, key_columns);
+      if (!cols) {
+        return std::nullopt;
       }
       return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                                std::move(cols));
+                                std::move(*cols));
     }
     if (is_postgres) {
       // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
@@ -410,9 +429,11 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // is pushed down as a `ctid IN (...)` TID scan.
       return external_fast_path(catalog::PkSpec::ExternalPostgresCtid);
     }
-    // ClickHouse: part+offset ids die on merges, so key on the single-BIGINT
-    // MergeTree PK column (v1; anything else -> no fast path). That "PK" is
-    // only a sorting prefix: duplicate keys each index their own document.
+    // ClickHouse: part+offset ids die on merges, so key on the engine's PK
+    // metadata -- the whole MergeTree key in order, whatever its arity and
+    // types, since composite keys are the norm there. That key is a sorting
+    // prefix and not a uniqueness constraint, so duplicate keys each index
+    // their own document and a re-fetch returns every row sharing a key.
     const auto& constraints = entry.GetConstraints();
     const auto pk = absl::c_find_if(
       constraints, [](const duckdb::unique_ptr<duckdb::Constraint>& c) {
@@ -422,22 +443,13 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     if (pk == constraints.end()) {
       return std::nullopt;
     }
-    const auto& names =
-      (*pk)->Cast<duckdb::UniqueConstraint>().GetColumnNames();
-    // A composite ORDER BY arrives as this one constraint carrying several
-    // names; v1 keys a posting on a single int64, so decline on arity before
-    // the type is even considered.
-    if (names.size() != 1) {
-      return std::nullopt;
-    }
-    // v1: a signed 64-bit key -- both the int64 storage and the re-fetch are
-    // exact only for BIGINT.
-    auto key = FindKeyColumn(entry, names[0].GetIdentifierName());
-    if (!key || key->type.id() != duckdb::LogicalTypeId::BIGINT) {
+    auto cols = FindKeyColumns(
+      entry, (*pk)->Cast<duckdb::UniqueConstraint>().GetColumnNames());
+    if (!cols || cols->empty()) {
       return std::nullopt;
     }
     return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                              {std::move(*key)});
+                              std::move(*cols));
   }
   if (select_node.from_table->type !=
       duckdb::TableReferenceType::TABLE_FUNCTION) {

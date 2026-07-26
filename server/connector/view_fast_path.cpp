@@ -221,12 +221,14 @@ std::vector<std::string> KeyColumnsFromOptions(
   if (it == options.end()) {
     return {};
   }
-  const auto text = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
-                      .GetValue<std::string>();
+  // `text` borrows out of `value`, which owns the (possibly cast) characters
+  // for the rest of the scope -- no copy just to split it.
+  const auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR);
+  const std::string_view text = duckdb::StringValue::Get(value);
   std::vector<std::string> cols;
   // SkipWhitespace drops the empty and all-whitespace parts, so what survives
-  // only needs trimming. The result is persisted in the index options, so it
-  // owns its names rather than viewing into `text`.
+  // only needs trimming. The names outlive this scope -- they are persisted in
+  // the index options -- so cols owns them rather than viewing into `value`.
   for (std::string_view part :
        absl::StrSplit(text, ',', absl::SkipWhitespace())) {
     cols.emplace_back(absl::StripAsciiWhitespace(part));

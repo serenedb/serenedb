@@ -587,9 +587,6 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
   _document.emplace(_trx.Insert(false, batch_size, commit_on_flush));
   _pk_column_writer = nullptr;
   if (_pk_policy.column == catalog::PkColumnKind::Has && pk.column) {
-    // The stored PK column self-describes its type (BIGINT for a single key,
-    // STRUCT for a file/row, composite or ctid key), so store it as-is and the
-    // reader needs no separate shape tag.
     _pk_column_writer = EnsurePerRowColumnWriter(catalog::term_dict::kPKFieldId,
                                                  pk.column->GetType());
   }

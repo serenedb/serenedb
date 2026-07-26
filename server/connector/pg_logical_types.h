@@ -117,12 +117,6 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
 
 #undef DECLARE_PG_TYPE
 
-// PG ctid as stored by external-lookup indexes: the two halves of an
-// ItemPointer as separate BIGINT struct fields (page compresses run-length,
-// tuple bitpacks). The alias marks the struct as ONE pg wire value -- the
-// postgres connector's lookup path encodes it as a single tid parameter
-// instead of mapping its children to parameters. Distinct from TID above
-// (BIGINT-backed pseudo-type on the SQL surface).
 inline constexpr std::string_view kCtidAlias = "ctid";
 
 inline bool IsCtid(const duckdb::LogicalType& type) {
@@ -132,8 +126,6 @@ inline bool IsCtid(const duckdb::LogicalType& type) {
 
 #ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType CTID() {
-  // Matches postgres' ItemPointer: BlockNumber is uint32, OffsetNumber is
-  // uint16 -- 6 bytes, not two BIGINTs. Built once (static local).
   static const auto kType = [] {
     auto type = duckdb::LogicalType::STRUCT(
       {{"block_number", duckdb::LogicalType::UINTEGER},

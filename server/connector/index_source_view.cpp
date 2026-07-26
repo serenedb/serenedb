@@ -97,15 +97,8 @@ std::span<const int64_t> ViewIndexSourceBase::SortRows(const duckdb::Vector& pk,
   _sort_perm.resize(count);
   absl::c_iota(_sort_perm, duckdb::idx_t{0});
   // Doc-id order already ascends for contiguous-insert base tables and
-  // single-file views: an O(n) sortedness check skips the O(n log n) sort.
-  bool is_sorted = true;
-  for (duckdb::idx_t k = 1; k < count; ++k) {
-    if (keys[k] < keys[k - 1]) {
-      is_sorted = false;
-      break;
-    }
-  }
-  if (is_sorted) {
+  // single-file views: the sortedness check skips the O(n log n) sort.
+  if (std::is_sorted(keys, keys + count)) {
     return {keys, count};
   }
   absl::c_sort(_sort_perm, [&](duckdb::idx_t a, duckdb::idx_t b) {

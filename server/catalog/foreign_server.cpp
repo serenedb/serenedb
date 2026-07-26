@@ -51,7 +51,11 @@ namespace {
 
 using persistence::ForeignServerData;
 
-// Map an FDW name to the DuckDB connector storage type; "" if unsupported.
+// A foreign-data wrapper (FDW) is the Postgres object that names a connector in
+// `CREATE SERVER ... FOREIGN DATA WRAPPER <fdw>`. Map that wrapper name to our
+// internal connector storage type. Both the canonical Postgres extension names
+// (postgres_fdw / clickhouse_fdw) and the bare aliases (postgres / clickhouse)
+// are accepted; an unrecognised wrapper returns "" (rejected by IsSupportedFdw).
 std::string StorageTypeForFdw(std::string_view fdw) {
   if (fdw == "clickhouse_fdw" || fdw == "clickhouse") {
     return "clickhouse";

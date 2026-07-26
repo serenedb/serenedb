@@ -36,7 +36,16 @@ ALLOWED_PATHS = (
 STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
 COMMENT_RE = re.compile(r"//.*$|/\*.*?\*/")
 THROW_RE = re.compile(r"\bthrow\b\s*(?P<rest>[^\s;]*)")
-ALLOWED_EXPRS = ("sdb::SqlException", "duckdb::TransactionException")
+# duckdb::NotImplementedException: the plan serialize / deserialize callbacks
+# duckdb requires on our table functions and system table entries are
+# unreachable placeholders (we never serialize a plan), and duckdb itself
+# expects that exception type there -- it never surfaces to a client as a pg
+# error, so a sqlstate would be meaningless.
+ALLOWED_EXPRS = (
+    "sdb::SqlException",
+    "duckdb::TransactionException",
+    "duckdb::NotImplementedException",
+)
 
 
 def is_target(path: str) -> bool:
@@ -87,7 +96,8 @@ def main() -> int:
             "SDB_THROW) so the PG sqlstate survives to the client "
             "(pg/sql_exception_macro.h). Sanctioned: bare `throw;`, "
             "`throw sdb::SqlException{...}`, "
-            "`throw duckdb::TransactionException`, and the allowlisted "
+            "`throw duckdb::TransactionException`, "
+            "`throw duckdb::NotImplementedException`, and the allowlisted "
             "subsystems in scripts/check_no_raw_throw.py.",
             file=sys.stderr,
         )

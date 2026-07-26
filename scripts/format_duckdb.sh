@@ -45,13 +45,20 @@ is_intree() {
 # Track duckdb's own CI (CheckIssueForCodeFormatting.yml uses Python 3.12).
 IMAGE="python:3.12-slim"
 
+# An uninitialized submodule has no working tree, so it cannot have changed
+# files to format -- skip it rather than failing. CI checks out with
+# submodules: false, where every submodule is an empty directory.
+present=()
 for sm in "${SUBMODULES[@]}"; do
 	sm_dir="$THIRD_PARTY/$sm"
 	if [[ ! -d "$sm_dir/.git" && ! -f "$sm_dir/.git" ]]; then
-		echo "error: $sm_dir is not a git checkout" >&2
-		exit 1
+		echo "note: skipping $sm (not a git checkout)" >&2
+		continue
 	fi
+	present+=("$sm")
 done
+SUBMODULES=("${present[@]+"${present[@]}"}")
+ALL_DIRS=("${SUBMODULES[@]+"${SUBMODULES[@]}"}" "${INTREE[@]}")
 for sm in "${INTREE[@]}"; do
 	if [[ ! -d "$THIRD_PARTY/$sm" ]]; then
 		echo "error: $THIRD_PARTY/$sm does not exist" >&2

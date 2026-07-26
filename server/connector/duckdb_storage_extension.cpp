@@ -105,21 +105,13 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
     conn_ctx.DropCatalogSnapshot();
   }
 
-  // Collect the database's foreign servers BEFORE the drop: the cascade
-  // sweeps their catalog rows, but their live (instance-global) DuckDB
-  // attachments are invisible to the drop plan and must be detached once the
-  // drop commits.
-  std::vector<std::string> detach_servers;
-  {
-    auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-    for (const auto& srv : snapshot->GetForeignServers(GetDatabaseId())) {
-      detach_servers.emplace_back(srv->GetName());
-    }
-  }
-
+  // The cascade removes the servers' catalog rows but not their instance-global
+  // DuckDB attachments; DropDatabase returns their names (collected atomically
+  // under the catalog lock) to detach once the drop commits.
+  catalog::ForeignServerDdlLock ddl_lock;
   duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  catalog::DropDatabase(ax, GetName().GetIdentifierName(),
-                        std::move(keep_alive));
+  const auto detach_servers = catalog::DropDatabase(
+    ax, GetName().GetIdentifierName(), std::move(keep_alive));
   for (const auto& server_name : detach_servers) {
     catalog::DetachForeignServerAttachment(server_name);
   }

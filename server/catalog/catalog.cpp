@@ -3877,8 +3877,9 @@ bool Catalog::DropRole(const AccessContext& ax, std::string_view role,
   return true;
 }
 
-void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
-                           duckdb::shared_ptr<void> keep_alive) {
+std::vector<std::string> Catalog::DropDatabase(
+  const AccessContext& ax, std::string_view name,
+  duckdb::shared_ptr<void> keep_alive) {
   absl::MutexLock lock{&_mutex};
   auto database_id =
     _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, name);
@@ -3886,6 +3887,14 @@ void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
     THROW_SQL_ERROR(ERR_MSG("database \"", name, "\" does not exist"));
   }
   RequireObjectOwner(*_snapshot, ax.role, *database_id);
+
+  // Collected under the lock, atomic with the drop: the cascade removes the
+  // servers' catalog rows but not their instance-global DuckDB attachments, and
+  // a CREATE SERVER racing an out-of-lock collect would leak one.
+  std::vector<std::string> detach_servers;
+  for (const auto& server : _snapshot->GetForeignServers(*database_id)) {
+    detach_servers.emplace_back(server->GetName());
+  }
 
   auto plan = _snapshot->ComputeDropPlan(*database_id);
 
@@ -3907,6 +3916,7 @@ void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
     SDB_IF_FAILURE("crash_on_drop") { return; }
     DropTask::Schedule(std::move(task)).Detach();
   });
+  return detach_servers;
 }
 
 bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
@@ -5239,14 +5249,15 @@ void InitCatalog() {
   // database, a remote being unreachable must NOT abort startup -- warn and
   // continue; the server stays defined and a later access will surface it.
   {
+    ForeignServerDdlLock ddl_lock;
     auto snapshot = GetCatalog().GetCatalogSnapshot();
     auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {
       for (auto& server : snapshot->GetForeignServers(db->GetId())) {
-        auto err = RunForeignServerAttach(*conn, *server);
-        if (err && !err->empty()) {
+        auto res = RunForeignServerAttach(*conn, *server);
+        if (res.status == ForeignServerAttachResult::Status::Failed) {
           SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
-                   server->GetName(), ": ", *err);
+                   server->GetName(), ": ", res.error);
         }
       }
     }

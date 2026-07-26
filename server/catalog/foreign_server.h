@@ -20,8 +20,8 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -70,16 +70,36 @@ class ForeignServer : public Object {
   std::vector<std::string> _option_values;
 };
 
-// True when the FDW name maps to a connector storage type (clickhouse_fdw,
-// postgres_fdw and their bare aliases).
+// Serialises all foreign-server DDL (CREATE/DROP SERVER, the DROP DATABASE
+// cascade, boot re-attach). The catalog row and the instance-global DuckDB
+// attachment are two separate pieces of state; holding this across both keeps
+// them consistent -- without it a DROP's detach can interleave with a
+// concurrent same-named CREATE's attach and tear down the new attachment.
+class ForeignServerDdlLock {
+ public:
+  ForeignServerDdlLock();
+  ~ForeignServerDdlLock();
+  ForeignServerDdlLock(const ForeignServerDdlLock&) = delete;
+  ForeignServerDdlLock& operator=(const ForeignServerDdlLock&) = delete;
+};
+
+// True when the FDW name maps to a connector storage type (clickhouse_fdw or
+// postgres_fdw).
 bool IsSupportedFdw(std::string_view fdw_name);
 
-// Registers the transient secret, runs the ATTACH on `conn`, drops the secret.
-// nullopt = unsupported FDW (nothing run); "" = success; else the connector
-// error. Credentials come from the server's OPTIONS. The attach alias is the
-// server name.
-std::optional<std::string> RunForeignServerAttach(duckdb::Connection& conn,
-                                                  const ForeignServer& server);
+// The outcome of RunForeignServerAttach: the FDW is not one we implement, the
+// attach succeeded, or the connector rejected it (Failed carries the message).
+struct ForeignServerAttachResult {
+  enum class Status : uint8_t { Unsupported, Attached, Failed };
+  Status status = Status::Unsupported;
+  std::string error;
+};
+
+// Registers the transient secret, runs the ATTACH on `conn`, drops the secret,
+// and reports the outcome. Credentials come from the server's OPTIONS; the
+// attach alias is the server name.
+ForeignServerAttachResult RunForeignServerAttach(duckdb::Connection& conn,
+                                                 const ForeignServer& server);
 
 // Best-effort DETACH of a server's live (instance-global) DuckDB attachment,
 // on a fresh engine connection. Used by DROP SERVER and by the DROP SCHEMA /

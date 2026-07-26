@@ -22,6 +22,7 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cctype>
@@ -36,7 +37,6 @@
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -51,25 +51,20 @@ namespace {
 
 using persistence::ForeignServerData;
 
-// A foreign-data wrapper (FDW) is the Postgres object that names a connector in
-// `CREATE SERVER ... FOREIGN DATA WRAPPER <fdw>`. Map that wrapper name to our
-// internal connector storage type. Both the canonical Postgres extension names
-// (postgres_fdw / clickhouse_fdw) and the bare aliases (postgres / clickhouse)
-// are accepted; an unrecognised wrapper returns "" (rejected by IsSupportedFdw).
-std::string StorageTypeForFdw(std::string_view fdw) {
-  if (fdw == "clickhouse_fdw" || fdw == "clickhouse") {
+absl::Mutex g_ddl_mutex;
+
+std::string_view StorageTypeForFdw(std::string_view fdw) {
+  if (fdw == "clickhouse_fdw") {
     return "clickhouse";
   }
-  if (fdw == "postgres_fdw" || fdw == "postgres") {
+  if (fdw == "postgres_fdw") {
     return "postgres";
   }
   return {};
 }
 
-// Canonicalise a (lower-cased) option key to the connector's secret parameter
-// name. The connectors resolve aliases in their connstr parser, but their
-// secret overlays read exact keys, so we resolve the aliases here instead.
-std::string CanonicalOptionKey(std::string_view storage, std::string key) {
+std::string_view CanonicalOptionKey(std::string_view storage,
+                                    std::string_view key) {
   if (key == "hostname") {
     return "host";
   }
@@ -92,15 +87,7 @@ std::string CanonicalOptionKey(std::string_view storage, std::string key) {
   return key;
 }
 
-// The deterministic transient-secret name serenedb registers for a foreign
-// server's ATTACH `alias` (sanitised to an identifier).
 std::string MakeForeignServerSecretName(std::string_view alias) {
-  // The temporary-secret store is instance-global while sanitized aliases can
-  // collide (distinct names mapping to one sanitized form, or same-named
-  // servers in different databases); registration REPLACEs and drop is
-  // by-name, so a bare alias would let concurrent attaches swap or drop each
-  // other's credentials mid-window. The counter makes every attach's secret
-  // name private to the Prepare/Drop pair that generated it.
   static std::atomic<uint64_t> counter{0};
   std::string out = "__sdb_fdw_secret_";
   for (char c : alias) {
@@ -111,18 +98,14 @@ std::string MakeForeignServerSecretName(std::string_view alias) {
   return out;
 }
 
-// Drops a transient secret registered by PrepareForeignServerAttach; a missing
-// secret is ignored (best-effort cleanup).
 void DropForeignServerSecret(duckdb::ClientContext& context,
                              std::string_view secret_name) {
   auto& secret_manager = duckdb::SecretManager::Get(context);
-  // Like RegisterSecret, dropping needs an active transaction; wrap it (the
-  // ATTACH query has already returned the connection to autocommit).
-  context.RunFunctionInTransaction([&]() {
+  context.RunFunctionInTransaction([&] {
     auto transaction =
       duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
     secret_manager.DropSecretByName(
-      transaction, duckdb::Identifier{std::string{secret_name}},
+      transaction, duckdb::Identifier{secret_name},
       duckdb::OnEntryNotFound::RETURN_NULL,
       duckdb::SecretPersistType::TEMPORARY);
   });
@@ -130,12 +113,16 @@ void DropForeignServerSecret(duckdb::ClientContext& context,
 
 }  // namespace
 
+ForeignServerDdlLock::ForeignServerDdlLock() { g_ddl_mutex.Lock(); }
+
+ForeignServerDdlLock::~ForeignServerDdlLock() { g_ddl_mutex.Unlock(); }
+
 bool IsSupportedFdw(std::string_view fdw_name) {
   return !StorageTypeForFdw(fdw_name).empty();
 }
 
 std::string QuoteSqlIdentifier(std::string_view name) {
-  return duckdb::KeywordHelper::WriteQuoted(std::string{name}, '"');
+  return duckdb::KeywordHelper::WriteQuoted(name, '"');
 }
 
 ForeignServer::ForeignServer(Permissions perm, ObjectId schema_id, ObjectId id,
@@ -161,7 +148,6 @@ std::shared_ptr<ForeignServer> ForeignServer::Deserialize(
   ForeignServerData data;
   basics::ReadTuple(src, data);
 
-  // parent = the database (servers are database children, like PG).
   return std::make_shared<ForeignServer>(
     std::move(data.perm), ctx.database_id, ctx.id, data.name,
     std::move(data.fdw_name), std::move(data.option_keys),
@@ -186,13 +172,6 @@ std::shared_ptr<Object> ForeignServer::Clone() const {
     {.id = GetId(), .database_id = GetParentId()});
 }
 
-// Registers a TEMPORARY DuckDB secret named `secret_name` carrying the server's
-// connection options, and returns the `ATTACH '' AS "<alias>" (TYPE <storage>,
-// SECRET <secret_name>)` statement that consumes it. Option values are stored
-// as duckdb Values (no connstr quoting), so a password may contain
-// spaces/quotes freely and never appears in SQL text. Returns "" (registering
-// nothing) for an unsupported FDW. The connector captures the resolved params
-// at ATTACH time, so the secret may be dropped right after the statement runs.
 static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                                               std::string_view secret_name,
                                               const ForeignServer& server) {
@@ -201,10 +180,6 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
     return {};
   }
 
-  // Carry the options in a TEMPORARY secret: values are duckdb Values, so
-  // nothing needs connstr quoting and no password ever enters the SQL text.
-  // Keys are canonicalised to the connector's secret params; a canonical-key
-  // collision keeps the last value (the map assignment's natural last-wins).
   auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
     std::vector<std::string>{}, duckdb::Identifier{storage}, "config",
     duckdb::Identifier{secret_name});
@@ -213,17 +188,12 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
   for (size_t i = 0; i < keys.size(); ++i) {
     const duckdb::Identifier key{
       CanonicalOptionKey(storage, absl::AsciiStrToLower(keys[i]))};
-    secret->secret_map[key] = duckdb::Value(std::string{values[i]});
-    // The secret's values are internal to the attach; hide every one from
-    // duckdb_secrets() for the attach window (the connector reads secret_map
-    // directly, so redact_keys only affects the display).
+    secret->secret_map[key] = duckdb::Value(values[i]);
     secret->redact_keys.insert(key);
   }
 
   auto& secret_manager = duckdb::SecretManager::Get(context);
-  // RegisterSecret needs an active transaction; these attach paths run on a
-  // fresh connection with none, so wrap it (begins + commits one).
-  context.RunFunctionInTransaction([&]() {
+  context.RunFunctionInTransaction([&] {
     auto transaction =
       duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
     secret_manager.RegisterSecret(transaction, std::move(secret),
@@ -235,23 +205,20 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
                       " (TYPE ", storage, ", SECRET ", secret_name, ")");
 }
 
-std::optional<std::string> RunForeignServerAttach(duckdb::Connection& conn,
-                                                  const ForeignServer& server) {
+ForeignServerAttachResult RunForeignServerAttach(duckdb::Connection& conn,
+                                                 const ForeignServer& server) {
   const auto secret = MakeForeignServerSecretName(server.GetName());
   auto sql = PrepareForeignServerAttach(*conn.context, secret, server);
   if (sql.empty()) {
-    return std::nullopt;
+    return {ForeignServerAttachResult::Status::Unsupported, {}};
   }
   auto result = conn.Query(sql);
   DropForeignServerSecret(*conn.context, secret);
   if (result->HasError()) {
-    // The attach carries credentials in a TEMPORARY secret, not the SQL text,
-    // and neither connector echoes them on connect failure (the postgres error
-    // renders an empty attach path; PQerrorMessage never prints the password),
-    // so the connector error is safe to surface verbatim.
-    return std::string{result->GetError()};
+    return {ForeignServerAttachResult::Status::Failed,
+            std::string{result->GetError()}};
   }
-  return "";
+  return {ForeignServerAttachResult::Status::Attached, {}};
 }
 
 void DetachForeignServerAttachment(std::string_view server_name) {

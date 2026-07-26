@@ -29,7 +29,8 @@ struct AccessContext;
 
 bool CreateDatabase(const AccessContext& ax, std::string_view name,
                     bool if_not_exists);
-void DropDatabase(const AccessContext& ax, std::string_view db_name,
-                  duckdb::shared_ptr<void> keep_alive = {});
+std::vector<std::string> DropDatabase(const AccessContext& ax,
+                                      std::string_view db_name,
+                                      duckdb::shared_ptr<void> keep_alive = {});
 
 }  // namespace sdb::catalog

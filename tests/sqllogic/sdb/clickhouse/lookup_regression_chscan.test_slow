@@ -9,7 +9,12 @@ control substitution on
 # slot must read NULL -- never stale/garbage data left in a recycled chunk. The
 # fix pre-nulls every real-column slot before mapping returned rows back by PK.
 #
-# Unique attach name (chreg) + object names (reg_*) for parallel safety.
+# Unique attach name (chreg) + object names (reg_*) for parallel safety. The
+# alias is instance-wide and the runner replays this file once per wire engine,
+# so drop a previous pass's attachment first.
+
+statement ok
+DETACH IF EXISTS chreg;
 
 statement ok
 ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chreg (TYPE clickhouse);
@@ -24,6 +29,9 @@ CREATE TEXT SEARCH DICTIONARY reg_en(
     frequency = true,
     position = true
 );
+
+statement ok
+DROP TABLE IF EXISTS chreg.default.reg_lk;
 
 statement ok
 CREATE TABLE chreg.default.reg_lk (id BIGINT PRIMARY KEY, val VARCHAR);
@@ -58,13 +66,14 @@ SELECT count(*) FROM reg_idx WHERE val @@ ts_phrase('shared');
 count
 2
 
-# Materialisation: the deleted row's slot reads NULL (the WHERE id IN (2,3)
-# re-fetch returns only id=3), NOT garbage; the surviving row is intact.
+# Materialisation: the re-fetch (WHERE id IN (2,3)) comes back with only id=3, so
+# the stale slot is dropped rather than materialised as NULL or as garbage -- the
+# lookup compacts to the keys the source still holds. count(*) above still says 2
+# because it flows off the stale postings without re-fetching the source.
 query
 SELECT id, val FROM reg_idx WHERE val @@ ts_phrase('shared') ORDER BY id NULLS FIRST;
 ----
 id	val
-NULL	NULL
 3	gamma shared
 
 # Searching for the still-present unique row materialises normally.

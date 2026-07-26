@@ -14,19 +14,20 @@ control substitution on
 # the key_columns index takes the explicit-key path -- the same data checks
 # both transports.
 #
-# Unique attach alias (pgn_*) and remote schema (pgnul_docs) for parallel
-# safety.
+# Unique attach alias (pgn_*) and remote schema (s*_nul) for parallel safety --
+# both carry ${__DATABASE__} because the remote postgres is shared and the runner
+# replays this file once per wire engine.
 
 statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgn_${__DATABASE__} (TYPE postgres);
 
 
 statement ok
-CREATE SCHEMA pgn_${__DATABASE__}.pgnul_docs;
+CREATE SCHEMA pgn_${__DATABASE__}.s${__DATABASE__}_nul;
 
 
 statement ok
-CREATE TABLE pgn_${__DATABASE__}.pgnul_docs.docs (
+CREATE TABLE pgn_${__DATABASE__}.s${__DATABASE__}_nul.docs (
   id   BIGINT,
   body TEXT,
   val  TEXT
@@ -34,7 +35,7 @@ CREATE TABLE pgn_${__DATABASE__}.pgnul_docs.docs (
 
 
 statement ok
-INSERT INTO pgn_${__DATABASE__}.pgnul_docs.docs
+INSERT INTO pgn_${__DATABASE__}.s${__DATABASE__}_nul.docs
   SELECT g, 'nulzu doc ' || g,
          CASE WHEN g % 2 = 1 THEN NULL ELSE 'v' || g END
   FROM generate_series(1, 4200) t(g);
@@ -57,7 +58,7 @@ CREATE TEXT SEARCH DICTIONARY pgnul_en_${__DATABASE__}(
 # =====================================================================
 
 statement ok
-CREATE VIEW pgnul_ctid_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.pgnul_docs.docs;
+CREATE VIEW pgnul_ctid_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.s${__DATABASE__}_nul.docs;
 
 
 statement ok
@@ -90,7 +91,7 @@ id	val
 # =====================================================================
 
 statement ok
-CREATE VIEW pgnul_key_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.pgnul_docs.docs;
+CREATE VIEW pgnul_key_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.s${__DATABASE__}_nul.docs;
 
 
 statement ok
@@ -128,7 +129,7 @@ id	val
 # =====================================================================
 
 statement ok
-CREATE TABLE pgn_${__DATABASE__}.pgnul_docs.dups (
+CREATE TABLE pgn_${__DATABASE__}.s${__DATABASE__}_nul.dups (
   id   BIGINT,
   body TEXT,
   val  TEXT
@@ -136,13 +137,13 @@ CREATE TABLE pgn_${__DATABASE__}.pgnul_docs.dups (
 
 
 statement ok
-INSERT INTO pgn_${__DATABASE__}.pgnul_docs.dups
+INSERT INTO pgn_${__DATABASE__}.s${__DATABASE__}_nul.dups
   SELECT g % 15 + 1, 'nulzu dup ' || g, 'w' || (g % 15 + 1)
   FROM generate_series(0, 29) t(g);
 
 
 statement ok
-CREATE VIEW pgnul_dup_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.pgnul_docs.dups;
+CREATE VIEW pgnul_dup_v AS SELECT id, body, val FROM pgn_${__DATABASE__}.s${__DATABASE__}_nul.dups;
 
 
 statement ok
@@ -158,3 +159,36 @@ FROM pgnul_dup_idx WHERE body @@ ts_phrase('nulzu');
 ----
 total	distinct_vals	wrong
 30	15	0
+
+statement ok
+DROP INDEX pgnul_dup_idx;
+
+statement ok
+DROP VIEW pgnul_dup_v;
+
+statement ok
+DROP INDEX pgnul_key_idx;
+
+statement ok
+DROP VIEW pgnul_key_v;
+
+statement ok
+DROP INDEX pgnul_ctid_idx;
+
+statement ok
+DROP VIEW pgnul_ctid_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pgnul_en_${__DATABASE__};
+
+statement ok
+DROP TABLE pgn_${__DATABASE__}.s${__DATABASE__}_nul.dups;
+
+statement ok
+DROP TABLE pgn_${__DATABASE__}.s${__DATABASE__}_nul.docs;
+
+statement ok
+DROP SCHEMA pgn_${__DATABASE__}.s${__DATABASE__}_nul;
+
+statement ok
+DETACH pgn_${__DATABASE__};

@@ -6,7 +6,12 @@ control substitution on
 # catch stale validity bits or cross-call drain bugs in reused chunks.
 #
 # Unique attach alias (chnul) and remote table names (nul_*) for parallel
-# safety.
+# safety. The alias is instance-wide and the runner replays this file once per
+# wire engine, so drop a previous pass's attachment first -- it survives if that
+# pass failed before its DETACH.
+
+statement ok
+DETACH IF EXISTS chnul;
 
 statement ok
 ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chnul (TYPE clickhouse);
@@ -119,3 +124,33 @@ FROM chnul_dups_idx WHERE body @@ ts_phrase('nulch');
 ----
 total	distinct_vals	wrong
 30	15	0
+
+statement ok
+DROP INDEX chnul_dups_idx;
+
+statement ok
+DROP VIEW chnul_dups_v;
+
+statement ok
+DROP INDEX chnul_docs_idx;
+
+statement ok
+DROP VIEW chnul_docs_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY chnul_en;
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.nul_dups');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.nul_docs');
+----
+n
+1
+
+statement ok
+DETACH chnul;

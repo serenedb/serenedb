@@ -26,17 +26,17 @@
 
 #include <atomic>
 #include <cctype>
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/enums/on_create_conflict.hpp>
 #include <duckdb/common/enums/on_entry_not_found.hpp>
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/main/attached_database.hpp>
-#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>

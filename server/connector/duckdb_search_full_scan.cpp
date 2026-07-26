@@ -114,7 +114,6 @@ struct IResearchScanLocalState : public duckdb::LocalTableFunctionState {
 
 struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
   duckdb::Vector* pk_column = nullptr;
-  duckdb::idx_t pk_count = 0;
   std::shared_ptr<IndexSource> index_source;
   std::unique_ptr<HitBatcher> hit_batcher;
   // The scorer prepare phase ran (TopK / scored Stream dispatch).
@@ -2157,7 +2156,6 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                         const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
     }
     l.pk_column = nullptr;
-    l.pk_count = 0;
   }
   const auto batch = l.hit_batcher->Emit(output);
   if (batch.pk != nullptr) {
@@ -2166,7 +2164,6 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
     }
     batch.pk->Flatten(batch.count);
     l.pk_column = batch.pk;
-    l.pk_count = batch.count;
   }
   const HitsChunk view{
     .docs = batch.docs,
@@ -2188,7 +2185,7 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx,
     return collected;
   }
   SDB_ASSERT(l.index_source);
-  SDB_ASSERT(l.pk_column && l.pk_count == collected);
+  SDB_ASSERT(l.pk_column);
   // Returns the survivor count: the lookup applies pushed lookup-column filters
   // natively and compacts to survivors (== collected when no lookup filter).
   return l.index_source->Materialize(ctx, *l.pk_column, collected, output);

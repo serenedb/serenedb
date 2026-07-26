@@ -81,7 +81,7 @@ struct ViewFastPath {
 // Build and lookup must pass the SAME value (CREATE INDEX / persisted opts).
 std::optional<ViewFastPath> ResolveViewFastPath(
   duckdb::ClientContext& context, const catalog::PgSqlView& view,
-  std::span<const std::string> key_columns = {});
+  std::span<const std::string> key_columns);
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp);
 

@@ -20,15 +20,8 @@
 
 #pragma once
 
-#include <cstring>
-#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/storage/arena_allocator.hpp>
-#include <limits>
-#include <memory>
-#include <string_view>
-#include <vector>
 
 namespace duckdb {
 

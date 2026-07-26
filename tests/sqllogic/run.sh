@@ -466,6 +466,15 @@ launch_postgres() {
 # Date/DateTime), keeping read-decode coverage independent of the write path.
 # Write tests create their own tables in `default` through the connector.
 launch_clickhouse() {
+	# A harness without the docker socket (the recovery kind) supplies ClickHouse
+	# as a sibling compose service instead and points CHHOST/CHPORT at it; there is
+	# nothing for us to start in that case.
+	if [[ -n "${CHHOST:-}" && -n "${CHPORT:-}" ]]; then
+		echo "Using existing clickhouse at ${CHHOST}:${CHPORT}."
+		export CHUSER="${CHUSER:-default}"
+		return 0
+	fi
+
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	CLICKHOUSE_CONTAINER_NAME="${prefix}-serenedb-test-clickhouse-$$"

@@ -23,7 +23,6 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
-#include <atomic>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/enums/on_create_conflict.hpp>
@@ -110,14 +109,14 @@ std::string_view CanonicalOptionKey(std::string_view storage,
   return key;
 }
 
-std::string MakeForeignServerSecretName(std::string_view alias) {
-  static std::atomic<uint64_t> counter{0};
+std::string MakeForeignServerSecretName(const ForeignServer& server) {
+  const std::string_view alias = server.GetName();
   std::string out = "__sdb_fdw_secret_";
   out.reserve(out.size() + alias.size() + 24);
   for (const char c : alias) {
     out += (absl::ascii_isalnum(c) || c == '_') ? c : '_';
   }
-  absl::StrAppend(&out, "_", counter.fetch_add(1, std::memory_order_relaxed));
+  absl::StrAppend(&out, "_", server.GetId().id());
   return out;
 }
 
@@ -231,7 +230,7 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
 
 ForeignServerAttachResult RunForeignServerAttach(duckdb::Connection& conn,
                                                  const ForeignServer& server) {
-  const auto secret = MakeForeignServerSecretName(server.GetName());
+  const auto secret = MakeForeignServerSecretName(server);
   auto sql = PrepareForeignServerAttach(*conn.context, secret, server);
   if (sql.empty()) {
     return {ForeignServerAttachResult::Status::Unsupported, {}};

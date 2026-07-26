@@ -225,18 +225,20 @@ std::optional<ExternalKeyColumn> FindKeyColumn(
                            .type = col.GetType()};
 }
 
-// Resolve key column names against the source table, in order. nullopt when any
-// name is not one of its columns. Takes the user's WITH (key_columns = ...) as
-// std::string and the engine's PK metadata as duckdb::Identifier.
+// Resolve key column names against the source table, in order. Empty means no
+// key: either `names` was empty or one of them is not a column of the table --
+// both leave nothing to key on, so callers reject the same way. Takes the
+// user's WITH (key_columns = ...) as std::string and the engine's PK metadata
+// as duckdb::Identifier.
 template<typename Names>
-std::optional<std::vector<ExternalKeyColumn>> FindKeyColumns(
+std::vector<ExternalKeyColumn> FindKeyColumns(
   const duckdb::TableCatalogEntry& entry, const Names& names) {
   std::vector<ExternalKeyColumn> cols;
   cols.reserve(names.size());
   for (const auto& name : names) {
     auto col = FindKeyColumn(entry, KeyColumnName(name));
     if (!col) {
-      return std::nullopt;
+      return {};
     }
     cols.push_back(std::move(*col));
   }
@@ -422,11 +424,11 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       // WITH (key_columns = '...') takes precedence over the connector default.
       // Unknown column -> no fast path.
       auto cols = FindKeyColumns(entry, key_columns);
-      if (!cols) {
+      if (cols.empty()) {
         return std::nullopt;
       }
       return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                                std::move(*cols));
+                                std::move(cols));
     }
     if (is_postgres) {
       // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
@@ -450,11 +452,11 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     }
     auto cols = FindKeyColumns(
       entry, (*pk)->Cast<duckdb::UniqueConstraint>().GetColumnNames());
-    if (!cols || cols->empty()) {
+    if (cols.empty()) {
       return std::nullopt;
     }
     return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                              std::move(*cols));
+                              std::move(cols));
   }
   if (select_node.from_table->type !=
       duckdb::TableReferenceType::TABLE_FUNCTION) {

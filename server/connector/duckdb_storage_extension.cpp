@@ -106,14 +106,14 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   }
 
   // The cascade removes the servers' catalog rows but not their instance-global
-  // DuckDB attachments; DropDatabase returns their names (collected atomically
-  // under the catalog lock) to detach once the drop commits.
-  catalog::ForeignServerDdlLock ddl_lock;
+  // DuckDB attachments; DropDatabase returns each one's name and the attachment
+  // identity it saw (both captured under the catalog lock) so the detach below
+  // can only remove exactly those attachments.
   duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
   const auto detach_servers = catalog::DropDatabase(
     ax, GetName().GetIdentifierName(), std::move(keep_alive));
-  for (const auto& server_name : detach_servers) {
-    catalog::DetachForeignServerAttachment(server_name);
+  for (const auto& server : detach_servers) {
+    catalog::DetachForeignServerAttachment(server.name, server.attachment_id);
   }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
 }

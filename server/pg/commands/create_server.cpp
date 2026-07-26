@@ -54,7 +54,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> MakeServerOptions(
 }
 
 // Establish the live attachment for a server (validates connectivity too).
-void RunAttach(const catalog::ForeignServer& server) {
+uint64_t RunAttach(const catalog::ForeignServer& server) {
   auto conn = DuckDBEngine::Instance().CreateConnection();
   const auto res = catalog::RunForeignServerAttach(*conn, server);
   using Status = catalog::ForeignServerAttachResult::Status;
@@ -69,6 +69,7 @@ void RunAttach(const catalog::ForeignServer& server) {
                     ERR_MSG("could not connect foreign server \"",
                             server.GetName(), "\": ", res.error));
   }
+  return res.attachment_id;
 }
 
 }  // namespace
@@ -76,7 +77,6 @@ void RunAttach(const catalog::ForeignServer& server) {
 void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                          std::string_view fdw_name, bool if_not_exists,
                          const duckdb::named_parameter_map_t& options) {
-  catalog::ForeignServerDdlLock ddl_lock;
   auto db_id = conn_ctx.GetDatabaseId();
 
   // Owner = the creating role; the default ACL then gives the owner USAGE and
@@ -96,8 +96,9 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                                    db_id, server, if_not_exists)) {
     return;
   }
+  uint64_t attachment = 0;
   try {
-    RunAttach(*server);
+    attachment = RunAttach(*server);
   } catch (...) {
     try {
       catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
@@ -109,12 +110,26 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     }
     throw;
   }
+
+  // The attach is the slow part, and a concurrent DROP SERVER may have removed
+  // our row while it ran -- that DROP saw no attachment yet, so it detached
+  // nothing. Own what we attached: take it back down rather than leaving an
+  // attachment holding the alias with no row to drop it by.
+  if (!catalog.GetCatalogSnapshot()->GetForeignServer(name)) {
+    catalog::DetachForeignServerAttachment(name, attachment);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("server \"", name,
+                            "\" was dropped concurrently with its creation"));
+  }
 }
 
 void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                        bool missing_ok, bool cascade) {
-  catalog::ForeignServerDdlLock ddl_lock;
   auto& catalog = catalog::GetCatalog();
+  // Captured before the row goes: the detach afterwards removes this exact
+  // attachment or nothing, so it cannot tear down one that a concurrent
+  // same-named CREATE SERVER attached in the meantime.
+  const auto attachment = catalog::ForeignServerAttachmentId(name);
   // The catalog drops the server row; absent + missing_ok returns false.
   if (!catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
                                  conn_ctx.GetDatabase(), name, cascade,
@@ -122,7 +137,7 @@ void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     return;
   }
 
-  catalog::DetachForeignServerAttachment(name);
+  catalog::DetachForeignServerAttachment(name, attachment);
 }
 
 }  // namespace sdb::pg

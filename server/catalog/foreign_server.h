@@ -70,17 +70,19 @@ class ForeignServer : public Object {
   std::vector<std::string> _option_values;
 };
 
-// Serialises all foreign-server DDL (CREATE/DROP SERVER, the DROP DATABASE
-// cascade, boot re-attach). The catalog row and the instance-global DuckDB
-// attachment are two separate pieces of state; holding this across both keeps
-// them consistent -- without it a DROP's detach can interleave with a
-// concurrent same-named CREATE's attach and tear down the new attachment.
-class ForeignServerDdlLock {
- public:
-  ForeignServerDdlLock();
-  ~ForeignServerDdlLock();
-  ForeignServerDdlLock(const ForeignServerDdlLock&) = delete;
-  ForeignServerDdlLock& operator=(const ForeignServerDdlLock&) = delete;
+// Identity of the foreign-server attachment currently holding `server_name`, or
+// 0 when no foreign-server attachment holds it. The catalog row and the
+// instance-global DuckDB attachment are separate state, so a detach names the
+// attachment it means to remove: capture the id before changing the row, and a
+// concurrent same-named CREATE's newer attachment can never be torn down by an
+// older DROP's detach.
+uint64_t ForeignServerAttachmentId(std::string_view server_name);
+
+// A foreign server whose attachment outlived its catalog row, with the identity
+// observed when the row was removed.
+struct ForeignServerAttachment {
+  std::string name;
+  uint64_t attachment_id = 0;
 };
 
 // True when the FDW name maps to a connector storage type (clickhouse_fdw or
@@ -97,6 +99,8 @@ struct ForeignServerAttachResult {
   };
   Status status = Status::Unsupported;
   std::string error;
+  // Identity of the attachment created on success; 0 otherwise.
+  uint64_t attachment_id = 0;
 };
 
 // Registers the transient secret, runs the ATTACH on `conn`, drops the secret,
@@ -110,7 +114,11 @@ ForeignServerAttachResult RunForeignServerAttach(duckdb::Connection& conn,
 // DROP DATABASE cascade sweeps -- the generic drop plan removes catalog state
 // only, never the attachment. The attachment may legitimately be absent (boot
 // replay skips a down remote), so errors are swallowed.
-void DetachForeignServerAttachment(std::string_view server_name);
+// Detaches `server_name` only while `attachment_id` still holds that alias, so
+// it can neither destroy a newer attachment nor a same-named serenedb database.
+// A zero id means nothing was attached when the caller looked, and is a no-op.
+void DetachForeignServerAttachment(std::string_view server_name,
+                                   uint64_t attachment_id);
 
 // Quote an SQL identifier with double quotes, doubling any embedded quote.
 std::string QuoteSqlIdentifier(std::string_view name);

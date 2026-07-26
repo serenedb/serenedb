@@ -4263,7 +4263,7 @@ bool Catalog::DropRole(const AccessContext& ax, std::string_view role,
   return true;
 }
 
-std::vector<std::string> Catalog::DropDatabase(
+std::vector<ForeignServerAttachment> Catalog::DropDatabase(
   const AccessContext& ax, std::string_view name,
   duckdb::shared_ptr<void> keep_alive) {
   absl::MutexLock lock{&_mutex};
@@ -4275,11 +4275,15 @@ std::vector<std::string> Catalog::DropDatabase(
   RequireObjectOwner(*_snapshot, ax.role, *database_id);
 
   // Collected under the lock, atomic with the drop: the cascade removes the
-  // servers' catalog rows but not their instance-global DuckDB attachments, and
-  // a CREATE SERVER racing an out-of-lock collect would leak one.
-  std::vector<std::string> detach_servers;
+  // servers' catalog rows but not their instance-global DuckDB attachments. The
+  // attachment identity is captured here too, so the detach afterwards can only
+  // remove what this drop actually saw -- never an attachment a concurrent
+  // same-named CREATE SERVER put there in between.
+  std::vector<ForeignServerAttachment> detach_servers;
   for (const auto& server : _snapshot->GetForeignServers(*database_id)) {
-    detach_servers.emplace_back(server->GetName());
+    auto server_name = std::string{server->GetName()};
+    detach_servers.emplace_back(ForeignServerAttachment{
+      server_name, ForeignServerAttachmentId(server_name)});
   }
 
   auto plan = _snapshot->ComputeDropPlan(*database_id);
@@ -5601,7 +5605,6 @@ void InitCatalog() {
   // database, a remote being unreachable must NOT abort startup -- warn and
   // continue; the server stays defined and a later access will surface it.
   {
-    ForeignServerDdlLock ddl_lock;
     auto snapshot = GetCatalog().GetCatalogSnapshot();
     auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {

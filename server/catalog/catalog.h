@@ -568,9 +568,9 @@ class Catalog final {
                         std::string_view column, duckdb::LogicalType new_type,
                         std::string using_sql);
 
-  std::vector<std::string> DropDatabase(const AccessContext& ax,
-                                        std::string_view name,
-                                        duckdb::shared_ptr<void> keep_alive);
+  std::vector<ForeignServerAttachment> DropDatabase(
+    const AccessContext& ax, std::string_view name,
+    duckdb::shared_ptr<void> keep_alive);
   bool DropRole(const AccessContext& ax, std::string_view role,
                 bool missing_ok);
   bool DropSchema(const AccessContext& ax, std::string_view database,

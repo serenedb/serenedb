@@ -34,9 +34,9 @@ bool CreateDatabase(const AccessContext& ax, std::string_view name,
                                               if_not_exists);
 }
 
-std::vector<std::string> DropDatabase(const AccessContext& ax,
-                                      std::string_view db_name,
-                                      duckdb::shared_ptr<void> keep_alive) {
+std::vector<ForeignServerAttachment> DropDatabase(
+  const AccessContext& ax, std::string_view db_name,
+  duckdb::shared_ptr<void> keep_alive) {
   return catalog::GetCatalog().DropDatabase(ax, db_name, std::move(keep_alive));
 }
 

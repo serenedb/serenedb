@@ -22,7 +22,6 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
-#include <absl/synchronization/mutex.h>
 
 #include <atomic>
 #include <cctype>
@@ -54,8 +53,6 @@ namespace {
 
 using persistence::ForeignServerData;
 
-absl::Mutex g_ddl_mutex;
-
 constexpr std::string_view kClickHouseStorage = "clickhouse";
 constexpr std::string_view kPostgresStorage = "postgres";
 
@@ -73,6 +70,21 @@ std::string_view StorageTypeForFdw(std::string_view fdw) {
 // Catalog::GetCatalogType() returns exactly the storage type above.
 bool IsForeignServerStorage(std::string_view catalog_type) {
   return catalog_type == kClickHouseStorage || catalog_type == kPostgresStorage;
+}
+
+// The attachment holding `name`, but only when a foreign server owns it. The
+// alias namespace is shared with serenedb databases, so this also keeps a
+// foreign-server detach from ever touching a database.
+duckdb::shared_ptr<duckdb::AttachedDatabase> LookupAttachment(
+  std::string_view name) {
+  auto attached =
+    duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
+      .GetDatabase(duckdb::Identifier{name});
+  if (!attached ||
+      !IsForeignServerStorage(attached->GetCatalog().GetCatalogType())) {
+    return nullptr;
+  }
+  return attached;
 }
 
 std::string_view CanonicalOptionKey(std::string_view storage,
@@ -125,9 +137,10 @@ void DropForeignServerSecret(duckdb::ClientContext& context,
 
 }  // namespace
 
-ForeignServerDdlLock::ForeignServerDdlLock() { g_ddl_mutex.Lock(); }
-
-ForeignServerDdlLock::~ForeignServerDdlLock() { g_ddl_mutex.Unlock(); }
+uint64_t ForeignServerAttachmentId(std::string_view server_name) {
+  auto attached = LookupAttachment(server_name);
+  return attached ? static_cast<uint64_t>(attached->oid) : 0;
+}
 
 bool IsSupportedFdw(std::string_view fdw_name) {
   return !StorageTypeForFdw(fdw_name).empty();
@@ -230,23 +243,24 @@ ForeignServerAttachResult RunForeignServerAttach(duckdb::Connection& conn,
     return {ForeignServerAttachResult::Status::Failed,
             std::string{result->GetError()}};
   }
-  return {ForeignServerAttachResult::Status::Attached, {}};
+  return {ForeignServerAttachResult::Status::Attached,
+          {},
+          ForeignServerAttachmentId(server.GetName())};
 }
 
-void DetachForeignServerAttachment(std::string_view server_name) {
-  auto conn = DuckDBEngine::Instance().CreateConnection();
-  // Detach ONLY a foreign-server attachment. The alias namespace is shared with
-  // serenedb databases, so a blind DETACH of a name that happens to be a
-  // database would tear that database down -- and its OnDetach would re-enter
-  // this file's DDL lock on this very thread (absl::Mutex is not recursive) and
-  // drop the database with NoAccessCheck, past its ownership check.
-  auto attached = duckdb::DatabaseManager::Get(*conn->context)
-                    .GetDatabase(duckdb::Identifier{server_name});
-  if (!attached ||
-      !IsForeignServerStorage(attached->GetCatalog().GetCatalogType())) {
+void DetachForeignServerAttachment(std::string_view server_name,
+                                   uint64_t attachment_id) {
+  if (attachment_id == 0) {
+    return;
+  }
+  auto attached = LookupAttachment(server_name);
+  if (!attached || static_cast<uint64_t>(attached->oid) != attachment_id) {
+    // Already gone, or a newer attachment owns the alias now: either way this
+    // caller has nothing left to remove.
     return;
   }
   attached.reset();
+  auto conn = DuckDBEngine::Instance().CreateConnection();
   conn->Query(absl::StrCat("DETACH ", QuoteSqlIdentifier(server_name)));
 }
 

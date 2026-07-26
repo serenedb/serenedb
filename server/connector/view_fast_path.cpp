@@ -366,8 +366,13 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.projection_columns = std::move(projection_columns);
       return out;
     }
-    // The attached-external-DB branches below (user key_columns, postgres ctid,
-    // clickhouse metadata PK) all key on the same source table.
+    // Everything below is an attached external DB keyed on this source table:
+    // a user key_columns override, else the connector's own default (postgres
+    // ctid / clickhouse metadata PK).
+    const bool is_postgres = cat_type == "postgres";
+    if (!is_postgres && cat_type != "clickhouse") {
+      return std::nullopt;
+    }
     const CatalogTableRef ext_ref{
       .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
       .schema = entry.ParentSchema().name.GetIdentifierName(),
@@ -383,11 +388,9 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.projection_columns = std::move(projection_columns);
       return out;
     };
-    if ((cat_type == "clickhouse" || cat_type == "postgres") &&
-        !key_columns.empty()) {
-      // User key via WITH (key_columns = '...'): any column count/types,
-      // overrides the auto default (pg ctid / CH PK). Unknown column -> no fast
-      // path.
+    if (!key_columns.empty()) {
+      // WITH (key_columns = '...'): any column count/types, and it takes
+      // precedence over the connector default. Unknown column -> no fast path.
       std::vector<ExternalKeyColumn> cols;
       cols.reserve(key_columns.size());
       for (const auto& name : key_columns) {
@@ -400,45 +403,42 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       return external_fast_path(catalog::PkSpec::ExternalColumnKey,
                                 std::move(cols));
     }
-    if (cat_type == "postgres") {
+    if (is_postgres) {
       // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
       // needed, unique within the index snapshot. The lookup's `rowid IN (...)`
       // is pushed down as a `ctid IN (...)` TID scan.
       return external_fast_path(catalog::PkSpec::ExternalPostgresCtid);
     }
-    if (cat_type == "clickhouse") {
-      // ClickHouse: part+offset ids die on merges, so key on the single-BIGINT
-      // MergeTree PK column (v1; anything else -> no fast path). That "PK" is
-      // only a sorting prefix: duplicate keys each index their own document.
-      std::optional<std::string> pk_name;
-      for (const auto& constraint : entry.GetConstraints()) {
-        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
-          continue;
-        }
-        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
-        if (!unique.IsPrimaryKey()) {
-          continue;
-        }
-        const auto& names = unique.GetColumnNames();
-        if (names.size() != 1) {
-          return std::nullopt;
-        }
-        pk_name = names[0].GetIdentifierName();
-        break;  // a table has at most one primary key
+    // ClickHouse: part+offset ids die on merges, so key on the single-BIGINT
+    // MergeTree PK column (v1; anything else -> no fast path). That "PK" is
+    // only a sorting prefix: duplicate keys each index their own document.
+    std::optional<std::string> pk_name;
+    for (const auto& constraint : entry.GetConstraints()) {
+      if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+        continue;
       }
-      if (!pk_name) {
+      const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+      if (!unique.IsPrimaryKey()) {
+        continue;
+      }
+      const auto& names = unique.GetColumnNames();
+      if (names.size() != 1) {
         return std::nullopt;
       }
-      // v1: a signed 64-bit key -- both the int64 storage and the re-fetch are
-      // exact only for BIGINT.
-      auto key = FindKeyColumn(entry, *pk_name);
-      if (!key || key->type.id() != duckdb::LogicalTypeId::BIGINT) {
-        return std::nullopt;
-      }
-      return external_fast_path(catalog::PkSpec::ExternalColumnKey,
-                                {std::move(*key)});
+      pk_name = names[0].GetIdentifierName();
+      break;  // a table has at most one primary key
     }
-    return std::nullopt;
+    if (!pk_name) {
+      return std::nullopt;
+    }
+    // v1: a signed 64-bit key -- both the int64 storage and the re-fetch are
+    // exact only for BIGINT.
+    auto key = FindKeyColumn(entry, *pk_name);
+    if (!key || key->type.id() != duckdb::LogicalTypeId::BIGINT) {
+      return std::nullopt;
+    }
+    return external_fast_path(catalog::PkSpec::ExternalColumnKey,
+                              {std::move(*key)});
   }
   if (select_node.from_table->type !=
       duckdb::TableReferenceType::TABLE_FUNCTION) {

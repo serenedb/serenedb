@@ -102,3 +102,8 @@ INSERT INTO chtest.lc_nullable (id, n32, n64, f64) VALUES
 -- password by CLICKHOUSE_SKIP_USER_SETUP, rejects a non-empty password).
 CREATE USER IF NOT EXISTS scanner IDENTIFIED WITH plaintext_password BY 'pass word';
 GRANT SELECT ON chtest.* TO scanner;
+-- Attachments are instance-wide, so PRAGMA database_size in any concurrently
+-- running test enumerates a scanner-authenticated ClickHouse catalog too. That
+-- reads system.parts, which needs its own grant -- without it the pragma fails
+-- in unrelated tests.
+GRANT SELECT ON system.parts TO scanner;

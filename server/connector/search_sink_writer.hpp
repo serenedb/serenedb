@@ -117,7 +117,7 @@ inline EntryInfoProvider AllStoredEntryInfoProvider() {
 
 struct PkPolicy {
   bool index_term = true;
-  catalog::PkColumnKind column = catalog::PkColumnKind::None;
+  catalog::PkColumnKind column = catalog::PkColumnKind::Has;
 };
 
 class SearchSinkInsertBaseImpl {

@@ -202,22 +202,27 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
                           "\" has no (VARCHAR) overload"));
 }
 
-std::string KeyColumnName(const std::string& name) { return name; }
+// Both overloads borrow: the argument is a live element of the caller's range,
+// and Identifier::GetIdentifierName returns a reference into it.
+std::string_view KeyColumnName(const std::string& name) { return name; }
 
-std::string KeyColumnName(const duckdb::Identifier& name) {
+std::string_view KeyColumnName(const duckdb::Identifier& name) {
   return name.GetIdentifierName();
 }
 
 std::optional<ExternalKeyColumn> FindKeyColumn(
-  const duckdb::TableCatalogEntry& entry, const std::string& name) {
+  const duckdb::TableCatalogEntry& entry, std::string_view name) {
   const auto& columns = entry.GetColumns();
   const duckdb::Identifier id{name};
   if (!columns.ColumnExists(id)) {
     return std::nullopt;
   }
   const auto& col = columns.GetColumn(id);
-  return ExternalKeyColumn{
-    .name = name, .source_index = col.Logical().index, .type = col.GetType()};
+  // ExternalKeyColumn::name outlives this scope (it drives the re-fetch), so it
+  // owns; everything up to here only reads.
+  return ExternalKeyColumn{.name = std::string{name},
+                           .source_index = col.Logical().index,
+                           .type = col.GetType()};
 }
 
 // Resolve key column names against the source table, in order. nullopt when any

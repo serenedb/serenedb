@@ -24,7 +24,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <atomic>
-#include <cctype>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/enums/on_create_conflict.hpp>
@@ -114,9 +113,9 @@ std::string_view CanonicalOptionKey(std::string_view storage,
 std::string MakeForeignServerSecretName(std::string_view alias) {
   static std::atomic<uint64_t> counter{0};
   std::string out = "__sdb_fdw_secret_";
-  for (char c : alias) {
-    out +=
-      (std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_') ? c : '_';
+  out.reserve(out.size() + alias.size() + 24);
+  for (const char c : alias) {
+    out += (absl::ascii_isalnum(c) || c == '_') ? c : '_';
   }
   absl::StrAppend(&out, "_", counter.fetch_add(1, std::memory_order_relaxed));
   return out;

@@ -46,6 +46,7 @@
 #include "catalog/scorer_options.h"
 #include "catalog/tokenizer.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_object_entry.h"
 #include "connector/functions/split_by_non_alpha.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_highlight.h"
@@ -293,32 +294,38 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
 
 }  // namespace
 
-catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
+catalog::CreateTokenizerInfo::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
-  auto entry = ResolveCatalogTokenizer(context, name);
-  if (!entry) {
+  auto dict = ResolveCatalogTokenizer(context, name);
+  if (!dict) {
     return {};
   }
-  return entry->GetTokenizer();
+  return dict->GetTokenizer();
 }
 
-std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(
-  duckdb::ClientContext& context, std::string_view name) {
+catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
+                                              std::string_view name) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
   if (!state) [[unlikely]] {
     return nullptr;
   }
   auto& conn_ctx = state->GetConnectionContext();
-  auto db_id = conn_ctx.GetDatabaseId();
-  auto current_schema = conn_ctx.GetCurrentSchema();
-  auto qualified = pg::ParseObjectName(name, current_schema);
-  auto snapshot = conn_ctx.CatalogSnapshot();
-  if (!snapshot) {
+  const auto qualified = pg::ParseObjectName(name, conn_ctx.GetCurrentSchema());
+  // Through the duckdb catalog, so the schema entry's TOKENIZER_ENTRY set
+  // answers -- including for a transaction reading its own uncommitted DDL,
+  // whose version is in the set under its transaction id.
+  const duckdb::EntryLookupInfo lookup{
+    duckdb::CatalogType::TOKENIZER_ENTRY,
+    duckdb::QualifiedName{duckdb::Identifier{conn_ctx.GetDatabase()},
+                          duckdb::Identifier{qualified.schema},
+                          duckdb::Identifier{qualified.relation}}};
+  auto entry = duckdb::Catalog::GetEntry(context, lookup,
+                                         duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry) {
     return nullptr;
   }
-  return snapshot->GetTokenizer(catalog::NoAccessCheck(), db_id,
-                                qualified.schema, qualified.relation);
+  return entry->Cast<SereneDBTokenizerEntry>().Definition();
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

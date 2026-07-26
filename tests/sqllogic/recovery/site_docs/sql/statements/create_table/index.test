@@ -1,5 +1,17 @@
 control substitution on
 
+# The CHECK-violation expectations below name the table as an unquoted
+# `<database>.public.<table>` path. It used to be wrapped in one pair of double
+# quotes, captured from a build where the whole path still went through duckdb's
+# SQL-identifier formatting -- which quotes anything containing a dot, so a
+# three-part path came out looking like a single identifier that contains dots.
+# The path now reaches the message as a plain string (DBConfig's
+# error_entity_name_mapper, which is what turns the store's t<id> back into the
+# user's name), so the quotes are gone. Unquoted is also the only one of the two
+# PG 18 could not contradict: it reports `new row for relation "t1" violates
+# check constraint "..."`, quoting the bare relation name and never a
+# dotted path. Only the database name is wildcarded -- it is generated per run.
+
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
@@ -303,7 +315,7 @@ INSERT INTO t1 VALUES (1, 5);
 statement error
 INSERT INTO t1 VALUES (2, -1);
 ----
-db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t1" with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
+db error: ERROR: CHECK constraint failed on table t1 with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
 
 
 # DOCS_TEST: example_019
@@ -313,7 +325,7 @@ db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t1" with 
 statement error
 INSERT INTO t1 VALUES (3, 101);
 ----
-db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t1" with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
+db error: ERROR: CHECK constraint failed on table t1 with expression CHECK(((0 <= percentage) AND (percentage <= 100)))
 
 
 # DOCS_TEST: example_020
@@ -332,7 +344,7 @@ INSERT INTO t2 VALUES (1, 5, 10);
 statement error
 INSERT INTO t2 VALUES (2, 5, 3);
 ----
-db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t2" with expression CHECK((x < y))
+db error: ERROR: CHECK constraint failed on table t2 with expression CHECK((x < y))
 
 
 # DOCS_TEST: example_021
@@ -353,7 +365,7 @@ INSERT INTO t3 VALUES (1, 5, 10);
 statement error
 INSERT INTO t3 VALUES (2, 5, 3);
 ----
-db error: ERROR: CHECK constraint failed on table "<slt:ignore>.public.t3" with expression CHECK((x < y))
+db error: ERROR: CHECK constraint failed on table t3 with expression CHECK((x < y))
 
 
 # DOCS_TEST: example_022

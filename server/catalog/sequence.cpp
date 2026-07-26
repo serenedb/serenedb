@@ -22,78 +22,60 @@
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+#include <utility>
 
 #include "basics/assert.h"
 #include "basics/serializer.h"
+#include "basics/simdjson_sink.h"
 #include "catalog/store/store.h"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::catalog {
 
-Sequence::Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts)
-  : Object{opts.perm, schema_id, id, opts.name, ObjectType::Sequence},
-    _options{std::move(opts)} {
-  auto seed = _options.Seed();
-  _cnt.store(seed, std::memory_order_release);
-  _cache_begin.store(seed + 1, std::memory_order_release);
-  _cache_end.store(seed, std::memory_order_release);
-}
-
-void Sequence::Serialize(duckdb::Serializer& sink) const {
-  auto opts = _options;
-  opts.perm = GetPermissions();
-  basics::WriteTuple(sink, opts);
-}
-
-std::shared_ptr<Sequence> Sequence::Deserialize(duckdb::Deserializer& src,
-                                                ReadContext ctx) {
-  SequenceOptions opts;
-  basics::ReadTuple(src, opts);
-  auto seq = std::make_shared<Sequence>(ctx.schema_id, ctx.id, std::move(opts));
-  auto persisted = seq->LoadFromDb();
-  seq->_cnt.store(persisted, std::memory_order_release);
-  seq->_cache_begin.store(persisted + 1, std::memory_order_release);
-  seq->_cache_end.store(persisted, std::memory_order_release);
-  return seq;
-}
-
-std::shared_ptr<Object> Sequence::Clone() const {
-  auto opts = _options;
-  opts.perm = GetPermissions();
-  return std::make_shared<Sequence>(GetParentId(), GetId(), std::move(opts));
-}
-
-std::shared_ptr<Sequence> Sequence::CloneWithComment(
-  std::string_view comment) const {
-  auto opts = _options;
-  opts.perm = GetPermissions();
-  opts.comment = std::string{comment};
-  auto seq =
-    std::make_shared<Sequence>(GetParentId(), GetId(), std::move(opts));
-  absl::MutexLock lock{&_cnt_mtx};
-  const auto cur = _cnt.load(std::memory_order_acquire);
-  seq->_cnt.store(cur, std::memory_order_release);
-  seq->_cache_begin.store(cur + 1, std::memory_order_release);
-  seq->_cache_end.store(cur, std::memory_order_release);
-  return seq;
-}
-
-uint64_t Sequence::LoadFromDb() const {
-  auto& store = GetCatalogStore();
-  uint64_t value = 0;
-  if (store.TryGetBootSequenceValue(GetId(), value)) {
-    return value;
+void SequenceCounter::Seed(uint64_t value) {
+  _cnt.store(value, std::memory_order_release);
+  {
+    absl::MutexLock lock{&_mtx};
+    _durable = value;
+    _pending = value;
   }
-  store.GetSequenceValue(GetId(), value);
-  return value;
+  _cache_begin.store(value + 1, std::memory_order_release);
+  _cache_end.store(value, std::memory_order_release);
 }
 
-void Sequence::Persist(uint64_t value) {
-  GetCatalogStore().PutSequenceValue(GetId(), value);
+void SequenceCounter::ReloadDurable() { Seed(LoadFromDb()); }
+
+uint64_t SequenceCounter::LoadFromDb() const {
+  return GetCatalogStore().GetSequenceValue(_id);
 }
 
-uint64_t Sequence::ReserveCached(uint64_t count) {
-  SDB_ASSERT(_options.cache > 1);
+void SequenceCounter::CoverDurable(uint64_t next_end) {
+  if (next_end <= _durable) {
+    return;
+  }
+  if (next_end > _pending) {
+    const auto horizon = next_end + LogAhead();
+    _pending = horizon;
+    ++_appends_in_flight;
+    _mtx.Unlock();
+    GetCatalogStore().AdvanceSequenceValue(_id, horizon);
+    _mtx.Lock();
+    --_appends_in_flight;
+    _durable = std::max(_durable, horizon);
+    return;
+  }
+  // A concurrent bump's in-flight append covers this range; wait for its
+  // sync instead of writing another record.
+  struct Wait {
+    const uint64_t* durable;
+    uint64_t need;
+  };
+  Wait wait{&_durable, next_end};
+  _mtx.Await(
+    absl::Condition(+[](Wait* w) { return *w->durable >= w->need; }, &wait));
+}
+
+uint64_t SequenceCounter::ReserveCached(uint64_t count) {
+  SDB_ASSERT(_cache > 1);
   auto base = _cache_begin.fetch_add(count, std::memory_order_acq_rel);
   const auto end = _cache_end.load(std::memory_order_acquire);
   if (base + count - 1 <= end) [[likely]] {
@@ -102,31 +84,23 @@ uint64_t Sequence::ReserveCached(uint64_t count) {
   return RefillCache(count);
 }
 
-uint64_t Sequence::AdvanceCounter(uint64_t count) {
-  absl::MutexLock lock{&_cnt_mtx};
-  const auto cur = _cnt.load(std::memory_order_acquire);
-  Persist(cur + count);
-  return _cnt.fetch_add(count, std::memory_order_acq_rel) + 1;
+uint64_t SequenceCounter::AdvanceCounter(uint64_t count) {
+  absl::MutexLock lock{&_mtx};
+  const auto base = _cnt.fetch_add(count, std::memory_order_acq_rel);
+  CoverDurable(base + count);
+  return base + 1;
 }
 
-uint64_t Sequence::ReserveWriteUnsafe(uint64_t count) {
+uint64_t SequenceCounter::Reserve(uint64_t count) {
   SDB_ASSERT(count > 0);
-  if (_options.cache > 1) {
+  if (_cache > 1) {
     return ReserveCached(count);
   }
   return AdvanceCounter(count);
 }
 
-uint64_t Sequence::Reserve(uint64_t count) {
-  SDB_ASSERT(count > 0);
-  if (_options.cache > 1) {
-    return ReserveCached(count);
-  }
-  return AdvanceCounter(count);
-}
-
-uint64_t Sequence::RefillCache(uint64_t count) {
-  absl::MutexLock lock{&_cnt_mtx};
+uint64_t SequenceCounter::RefillCache(uint64_t count) {
+  absl::MutexLock lock{&_mtx};
 
   // Another thread may have refilled while we queued for the lock.
   auto end = _cache_end.load(std::memory_order_acquire);
@@ -135,24 +109,104 @@ uint64_t Sequence::RefillCache(uint64_t count) {
     return base;
   }
 
-  uint64_t refill = std::max(count, _options.cache);
-  const auto cur = _cnt.load(std::memory_order_acquire);
-  Persist(cur + refill);
+  uint64_t refill = std::max(count, _cache);
   auto old_cnt = _cnt.fetch_add(refill, std::memory_order_acq_rel);
+  // Persist with the lock held: the cache pointers published below must not
+  // interleave with another refill, and refills already amortize the append.
+  if (const auto new_end = old_cnt + refill; new_end > _durable) {
+    const auto horizon = new_end + LogAhead();
+    _pending = std::max(_pending, horizon);
+    GetCatalogStore().AdvanceSequenceValue(_id, horizon);
+    _durable = std::max(_durable, horizon);
+  }
   uint64_t new_base = old_cnt + 1;
   _cache_end.store(old_cnt + refill, std::memory_order_release);
   _cache_begin.store(new_base + count, std::memory_order_release);
   return new_base;
 }
 
-uint64_t Sequence::Read() const { return _cnt.load(std::memory_order_acquire); }
+uint64_t SequenceCounter::Read() const {
+  return _cnt.load(std::memory_order_acquire);
+}
 
-void Sequence::Write(uint64_t value) {
-  absl::MutexLock lock{&_cnt_mtx};
-  Persist(value);
+void SequenceCounter::Write(uint64_t value) {
+  absl::MutexLock lock{&_mtx};
+  // Drain in-flight advances so the authoritative assign lands after every
+  // record it raced (wal order matches the resident map).
+  _mtx.Await(absl::Condition(
+    +[](uint32_t* in_flight) { return *in_flight == 0; }, &_appends_in_flight));
+  // setval is exact: the persisted value is what a restart must report, so
+  // no log-ahead here and the horizon collapses back to it.
+  GetCatalogStore().PutSequenceValue(_id, value);
+  _durable = value;
+  _pending = value;
   _cnt.store(value, std::memory_order_release);
   _cache_end.store(value, std::memory_order_release);
   _cache_begin.store(value + 1, std::memory_order_release);
+}
+
+CreateSequenceInfo::CreateSequenceInfo(ObjectId id, ObjectId schema_id,
+                                       SequenceOptions opts)
+  : _options{std::move(opts)} {
+  SetId(id);
+  SetSchemaId(schema_id);
+  SetSequenceName(duckdb::Identifier{_options.name});
+  // duckdb's own fields are the copy upstream machinery reads
+  // (duckdb_sequences, the entry's ToSQL); ours stay unsigned because the
+  // counter is.
+  start_value = static_cast<int64_t>(_options.start_value);
+  increment = static_cast<int64_t>(_options.increment);
+  min_value = static_cast<int64_t>(_options.min_value);
+  max_value = static_cast<int64_t>(_options.max_value);
+  cycle = _options.cycle;
+  usage_count = 0;
+  if (!_options.comment.empty()) {
+    comment = duckdb::Value(_options.comment);
+  }
+}
+
+persistence::SequenceOptions CreateSequenceInfo::ToData() const {
+  return _options;
+}
+
+void CreateSequenceInfo::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, _options);
+}
+
+void CreateSequenceInfo::WriteJson(basics::JsonSink& sink) const {
+  basics::WriteObject(sink, _options);
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> CreateSequenceInfo::Copy() const {
+  auto copy =
+    duckdb::make_uniq<CreateSequenceInfo>(GetId(), GetSchemaId(), _options);
+  CopyProperties(*copy);
+  return copy;
+}
+
+std::shared_ptr<CreateSequenceInfo> CreateSequenceInfo::Deserialize(
+  duckdb::Deserializer& src, ObjectId id, ObjectId schema_id) {
+  SequenceOptions opts;
+  basics::ReadTuple(src, opts);
+  return std::make_shared<CreateSequenceInfo>(id, schema_id, std::move(opts));
+}
+
+namespace {}  // namespace
+
+std::shared_ptr<SequenceCounter> NewCounter(ObjectId id,
+                                            const SequenceOptions& opts) {
+  auto counter =
+    std::make_shared<SequenceCounter>(id, opts.increment, opts.cache);
+  counter->Seed(opts.Seed());
+  return counter;
+}
+
+std::shared_ptr<SequenceCounter> ReloadedCounter(ObjectId id,
+                                                 const SequenceOptions& opts) {
+  auto counter =
+    std::make_shared<SequenceCounter>(id, opts.increment, opts.cache);
+  counter->ReloadDurable();
+  return counter;
 }
 
 }  // namespace sdb::catalog

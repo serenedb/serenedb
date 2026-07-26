@@ -24,14 +24,14 @@
 #include <duckdb/execution/physical_operator.hpp>
 #include <memory>
 
-#include "catalog/table.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 
 class SereneDBSearchTruncate final : public duckdb::PhysicalOperator {
  public:
   SereneDBSearchTruncate(duckdb::PhysicalPlan& plan,
-                         std::shared_ptr<catalog::Table> table,
+                         std::shared_ptr<search::SearchTable> data,
                          duckdb::idx_t estimated_cardinality);
 
   bool IsSource() const final { return true; }
@@ -40,7 +40,7 @@ class SereneDBSearchTruncate final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
 
  private:
-  std::shared_ptr<catalog::Table> _table;
+  std::shared_ptr<search::SearchTable> _data;
 };
 
 }  // namespace sdb::connector

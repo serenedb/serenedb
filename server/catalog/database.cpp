@@ -24,26 +24,41 @@
 #include <duckdb/common/serializer/serializer.hpp>
 
 #include "basics/serializer.h"
+#include "basics/simdjson_sink.h"
 
 namespace sdb::catalog {
 
-Database::Database(Permissions perm, ObjectId id, std::string_view name)
-  : Object{std::move(perm), {}, id, name, ObjectType::Database} {}
+CreateDatabaseInfo::CreateDatabaseInfo(ObjectId id, std::string_view name)
+  : duckdb::CreateInfo{duckdb::CatalogType::DATABASE_ENTRY} {
+  SetId(id);
+  SetDatabaseName(name);
+}
 
-std::shared_ptr<Database> Database::Deserialize(duckdb::Deserializer& src,
-                                                ReadContext ctx) {
-  DatabaseOptions data;
+persistence::DatabaseOptions CreateDatabaseInfo::ToData() const {
+  return persistence::DatabaseOptions{.name = std::string{GetName()}};
+}
+
+void CreateDatabaseInfo::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, ToData());
+}
+
+void CreateDatabaseInfo::WriteJson(basics::JsonSink& sink) const {
+  basics::WriteObject(sink, ToData());
+}
+
+std::shared_ptr<CreateDatabaseInfo> CreateDatabaseInfo::Deserialize(
+  duckdb::Deserializer& src, ObjectId id) {
+  persistence::DatabaseOptions data;
   basics::ReadTuple(src, data);
-  return std::make_shared<Database>(std::move(data.perm), ctx.id, data.name);
+  return std::make_shared<CreateDatabaseInfo>(id, data.name);
 }
 
-void Database::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink,
-                     DatabaseOptions{std::string{GetName()}, GetPermissions()});
+std::shared_ptr<CreateDatabaseInfo> CreateDatabaseInfo::CloneDatabase() const {
+  return std::make_shared<CreateDatabaseInfo>(GetId(), GetName());
 }
 
-std::shared_ptr<Object> Database::Clone() const {
-  return std::make_shared<Database>(*this);
+duckdb::unique_ptr<duckdb::CreateInfo> CreateDatabaseInfo::Copy() const {
+  return duckdb::make_uniq<CreateDatabaseInfo>(GetId(), GetName());
 }
 
 }  // namespace sdb::catalog

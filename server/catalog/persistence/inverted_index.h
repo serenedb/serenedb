@@ -81,7 +81,7 @@ struct InvertedIndexData {
   std::string name;
   // Plain-column keys (de-duped). Each column key's field_id is its column id,
   // so no separate field_id is stored. Order is not load-bearing for inverted.
-  std::vector<Column::Id> columns;
+  std::vector<ColumnId> columns;
   std::vector<ExpressionKey> expression_keys;
   // Per-field iresearch config keyed by field_id.
   containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;

@@ -21,42 +21,24 @@
 #pragma once
 
 #include <duckdb.hpp>
-#include <duckdb/transaction/transaction.hpp>
-#include <duckdb/transaction/transaction_manager.hpp>
-
-namespace sdb {
-
-class ConnectionContext;
-}
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 
 namespace sdb::connector {
 
-class SereneDBTransaction final : public duckdb::Transaction {
+// DDL on a serenedb database runs on a real DuckTransaction so it gets the undo
+// buffer, commit-id stamping and rollback that CatalogSet mutations require --
+// they call DuckTransactionManager::Get(), which throws for a foreign manager.
+//
+// ForwardWrites() stays false, i.e. inherited: the rows are in this attachment
+// now, so a statement writing a serenedb table writes exactly one database and
+// occupies the single-writable-db slot like any duckdb table. Making it true
+// would also skip the modified_database bookkeeping DuckSchemaEntry requires
+// before it will add a store table.
+class SereneDBTransactionManager final : public duckdb::DuckTransactionManager {
  public:
-  SereneDBTransaction(duckdb::TransactionManager& manager,
-                      duckdb::ClientContext& context);
-
-  void SetConnectionContext(ConnectionContext* ctx) { _connection_ctx = ctx; }
-  ConnectionContext* GetConnectionContext() const { return _connection_ctx; }
-
- private:
-  ConnectionContext* _connection_ctx = nullptr;
-};
-
-class SereneDBTransactionManager final : public duckdb::TransactionManager {
- public:
-  bool ForwardWrites() const final { return true; }
   explicit SereneDBTransactionManager(duckdb::AttachedDatabase& db);
 
-  duckdb::Transaction& StartTransaction(duckdb::ClientContext& context) final;
-  duckdb::ErrorData CommitTransaction(duckdb::ClientContext& context,
-                                      duckdb::Transaction& transaction) final;
-  void RollbackTransaction(duckdb::Transaction& transaction) final;
   void Checkpoint(duckdb::ClientContext& context, bool force) final;
-
- private:
-  duckdb::mutex _lock;
-  std::vector<duckdb::unique_ptr<SereneDBTransaction>> _transactions;
 };
 
 }  // namespace sdb::connector

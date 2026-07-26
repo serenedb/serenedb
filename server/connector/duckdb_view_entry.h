@@ -22,8 +22,11 @@
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <memory>
+#include <optional>
 
+#include "catalog/entry.h"
 #include "catalog/view.h"
+#include "connector/duckdb_entry.h"
 
 namespace sdb::connector {
 
@@ -35,17 +38,10 @@ class SereneDBViewEntry final : public duckdb::ViewCatalogEntry {
  public:
   SereneDBViewEntry(duckdb::Catalog& catalog,
                     duckdb::SchemaCatalogEntry& schema,
-                    duckdb::CreateViewInfo& info,
-                    std::shared_ptr<const catalog::PgSqlView> sdb_view)
-    : duckdb::ViewCatalogEntry(catalog, schema, info),
-      _sdb_view(std::move(sdb_view)) {}
-
-  const std::shared_ptr<const catalog::PgSqlView>& GetSereneDBView() const {
-    return _sdb_view;
+                    duckdb::CreateViewInfo& info, catalog::Permissions perm)
+    : duckdb::ViewCatalogEntry(catalog, schema, info) {
+    catalog::AdoptEntryIdentity(*this, ObjectId{info.oid}, std::move(perm));
   }
-
- private:
-  std::shared_ptr<const catalog::PgSqlView> _sdb_view;
 };
 
 }  // namespace sdb::connector

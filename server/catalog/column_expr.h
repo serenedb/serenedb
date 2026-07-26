@@ -44,6 +44,10 @@ struct QualifiedRef {
   std::string catalog;
   std::string schema;
   std::string name;
+  // The node stating the name, filled only by the mutable walk: it is where
+  // the resolution is stamped back (ParsedExpression::oid), so that a later
+  // reader takes the id instead of the name a rename since has moved.
+  duckdb::ParsedExpression* node = nullptr;
 };
 
 enum class RefKinds : uint8_t {
@@ -95,6 +99,16 @@ Refs ExtractRefs(const duckdb::SelectStatement& stmt, RefKinds kinds);
 Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds);
 Refs ExtractRefs(const duckdb::QueryNode& node, RefKinds kinds);
 
+// The same over an expression that may be written to: every QualifiedRef comes
+// back with the node stating it, so the caller can stamp what it resolved to.
+Refs ExtractMutableRefs(duckdb::ParsedExpression& expr, RefKinds kinds);
+
 void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out);
+
+// The ids stamped on `expr`'s nodes, plus the types its CASTs name that were
+// already bound to one. This is what the write path recorded and what boot
+// reads back -- neither resolves a name.
+void CollectExprIds(const duckdb::ParsedExpression& expr,
+                    std::vector<ObjectId>& out);
 
 }  // namespace sdb

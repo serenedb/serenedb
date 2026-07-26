@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/pg_am.h"
 
+#include "auth/role_closure.h"
 #include "catalog/identifiers/object_id.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -56,7 +57,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAm>::GetTableData() {
   auto result = CreateColumns<PgAm>(kSampleData.size());
   for (size_t row = 0; row < kSampleData.size(); ++row) {
     WriteData(result, kSampleData[row], kNullMask, row,
-              *_config.CatalogSnapshot());
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), kSampleData.size()};
 }

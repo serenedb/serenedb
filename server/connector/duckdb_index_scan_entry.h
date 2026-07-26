@@ -23,31 +23,75 @@
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
+#include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
-#include "catalog/object.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/duckdb_table_entry.h"
 
 namespace sdb::connector {
 
-// Catalog entry for `SELECT * FROM idx_name WHERE ...`.
+// The relation an index wrapper stands in front of, as the facts the wrapper
+// answers with. An index has no owner, no ACL and no columns of its own --
+// postgres gives it none -- so all of them are the relation's, copied in at
+// build time rather than reached for through a pointer into a version the
+// wrapper does not own.
+struct IndexedRelation {
+  ObjectId id;
+  duckdb::CatalogType type = duckdb::CatalogType::INVALID;
+  std::string name;
+  catalog::Permissions perm;
+  // Empty for a view, which has no columns of its own to carry grants for.
+  catalog::CreateTableInfo::ColumnAcls column_acls;
+};
+
+// Catalog entry for `SELECT * FROM idx_name WHERE ...`. Its own identity is the
+// index -- that is the name being scanned -- while what governs access is the
+// relation the index hangs off: postgres gives an index no ACL of its own, so
+// the relation's owner and grants travel here beside it.
 class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
  public:
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext& context, duckdb::column_t column_id) final;
 
-  const catalog::Object* GetIndexedRelation() const { return _relation; }
+  // A plan names this wrapper the way the user wrote it -- the index's own
+  // name, unqualified, as every serenedb relation is named.
+  std::string ScanName() const override { return name.GetIdentifierName(); }
+
+  const catalog::Permissions& GetIndexedRelationPermissions() const {
+    return _relation_perm;
+  }
+  // What an error about this index names: the relation it is built on.
+  duckdb::CatalogType GetIndexedRelationType() const noexcept {
+    return _relation_type;
+  }
+  std::string_view GetIndexedRelationName() const noexcept {
+    return _relation_name;
+  }
+  ObjectId GetIndexedRelationId() const noexcept { return _relation_id; }
+
+  // The relation's per-column grants, which are what a column check reads:
+  // an index has no columns of its own.
+  const catalog::CreateTableInfo::ColumnAcls& GetColumnAcls() const noexcept {
+    return _relation_column_acls;
+  }
 
  protected:
   SereneDBIndexScanEntry(duckdb::Catalog& catalog,
                          duckdb::SchemaCatalogEntry& schema,
                          duckdb::CreateTableInfo& info,
+                         const catalog::CreateIndexInfoBase& index,
                          std::vector<size_t> indexed_col_indices);
 
+  void SetIndexedRelation(IndexedRelation relation);
+
   std::vector<size_t> _indexed_col_indices;
-  const catalog::Object* _relation = nullptr;
+  catalog::Permissions _relation_perm;
+  catalog::CreateTableInfo::ColumnAcls _relation_column_acls;
+  duckdb::CatalogType _relation_type{duckdb::CatalogType::INVALID};
+  ObjectId _relation_id;
+  std::string _relation_name;
 };
 
 class InvertedIndexScanEntry : public SereneDBIndexScanEntry {
@@ -61,26 +105,31 @@ class InvertedIndexScanEntry : public SereneDBIndexScanEntry {
     duckdb::vector<duckdb::ColumnSegmentInfo>& result) final;
 
  protected:
-  InvertedIndexScanEntry(
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    duckdb::CreateTableInfo& info, std::vector<size_t> indexed_col_indices,
-    std::shared_ptr<const catalog::InvertedIndex> inverted_index);
+  InvertedIndexScanEntry(duckdb::Catalog& catalog,
+                         duckdb::SchemaCatalogEntry& schema,
+                         duckdb::CreateTableInfo& info,
+                         std::vector<size_t> indexed_col_indices,
+                         catalog::IndexInfoRef inverted_index);
+
+  static const catalog::CreateIndexInfoBase& IndexOf(
+    const catalog::IndexInfoRef& index);
 
   virtual std::vector<IResearchColumnBinding> SegmentInfoBindings() const = 0;
   virtual duckdb::column_t RowIdentityColumnId() const = 0;
 
   std::vector<IResearchColumnBinding> IndexSegmentInfoBindings() const;
 
-  std::shared_ptr<const catalog::InvertedIndex> _inverted_index;
+  catalog::IndexInfoRef _inverted_index;
 };
 
 class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
  public:
-  TableInvertedIndexScanEntry(
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
-    std::vector<size_t> indexed_col_indices,
-    std::shared_ptr<const catalog::InvertedIndex> inverted_index);
+  TableInvertedIndexScanEntry(duckdb::Catalog& catalog,
+                              duckdb::SchemaCatalogEntry& schema,
+                              duckdb::CreateTableInfo& info,
+                              IndexedRelation relation,
+                              std::vector<size_t> indexed_col_indices,
+                              catalog::IndexInfoRef inverted_index);
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
@@ -94,19 +143,17 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
  protected:
   std::vector<IResearchColumnBinding> SegmentInfoBindings() const final;
   duckdb::column_t RowIdentityColumnId() const final;
-
- private:
-  std::shared_ptr<catalog::Table> _sdb_table;
 };
 
 class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
  public:
-  ViewInvertedIndexScanEntry(
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    duckdb::CreateTableInfo& info,
-    std::shared_ptr<const catalog::PgSqlView> sdb_view,
-    std::vector<size_t> indexed_col_indices,
-    std::shared_ptr<const catalog::InvertedIndex> inverted_index);
+  ViewInvertedIndexScanEntry(duckdb::Catalog& catalog,
+                             duckdb::SchemaCatalogEntry& schema,
+                             duckdb::CreateTableInfo& info,
+                             const duckdb::ViewCatalogEntry& view,
+                             IndexedRelation relation,
+                             std::vector<size_t> indexed_col_indices,
+                             catalog::IndexInfoRef inverted_index);
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
@@ -122,7 +169,9 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
   duckdb::column_t RowIdentityColumnId() const final;
 
  private:
-  std::shared_ptr<const catalog::PgSqlView> _sdb_view;
+  // The view version this wrapper projects, snapshotted at construction: the
+  // scan's bind data outlives the catalog lookup that produced it.
+  std::shared_ptr<const duckdb::CreateViewInfo> _sdb_view;
 };
 
 class SecondaryIndexScanEntry : public SereneDBIndexScanEntry {
@@ -133,8 +182,9 @@ class SecondaryIndexScanEntry : public SereneDBIndexScanEntry {
   SecondaryIndexScanEntry(duckdb::Catalog& catalog,
                           duckdb::SchemaCatalogEntry& schema,
                           duckdb::CreateTableInfo& info,
+                          const catalog::CreateIndexInfoBase& index,
                           std::vector<size_t> indexed_col_indices,
-                          ObjectId secondary_index_id, bool sk_unique);
+                          bool sk_unique);
 
   ObjectId _secondary_index_id;
   bool _sk_unique;
@@ -145,9 +195,10 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
   TableSecondaryIndexScanEntry(duckdb::Catalog& catalog,
                                duckdb::SchemaCatalogEntry& schema,
                                duckdb::CreateTableInfo& info,
-                               std::shared_ptr<catalog::Table> sdb_table,
+                               IndexedRelation relation,
+                               const catalog::CreateIndexInfoBase& index,
                                std::vector<size_t> indexed_col_indices,
-                               ObjectId secondary_index_id, bool sk_unique);
+                               bool sk_unique);
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
@@ -156,10 +207,9 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
  private:
-  duckdb::TableCatalogEntry& ResolveStoreEntry(
+  // The relation whose rows this index-as-table wrapper reads.
+  duckdb::TableCatalogEntry& ResolveRelationEntry(
     duckdb::ClientContext& context) const;
-
-  std::shared_ptr<catalog::Table> _sdb_table;
 };
 
 }  // namespace sdb::connector

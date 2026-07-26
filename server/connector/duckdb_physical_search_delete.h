@@ -25,7 +25,7 @@
 #include <memory>
 #include <vector>
 
-#include "catalog/table.h"
+#include "connector/search_table_dispatch.h"
 
 namespace sdb::connector {
 
@@ -35,9 +35,14 @@ namespace sdb::connector {
 // (2) recorded on the transaction as the WAL delete payload.
 class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
  public:
-  SereneDBSearchDelete(duckdb::PhysicalPlan& plan,
-                       std::shared_ptr<catalog::Table> table,
+  // `types` and `column_map` are RETURNING: the row the operator hands back and
+  // where in the child's chunk each of its columns arrived. An empty
+  // `column_map` is no RETURNING -- the operator then reports the row count and
+  // `types` is one BIGINT.
+  SereneDBSearchDelete(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
                        std::vector<duckdb::idx_t> pk_col_indices,
+                       duckdb::vector<duckdb::LogicalType> types,
+                       std::vector<duckdb::idx_t> column_map,
                        duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
@@ -59,10 +64,12 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
 
  private:
-  std::shared_ptr<catalog::Table> _table;
+  SearchWriteTarget _target;
   // Positions in the input chunk of the PK columns (explicit PK), or the single
   // generated-PK rowid column (no-PK tables). Same layout PlanDelete computes.
   std::vector<duckdb::idx_t> _pk_col_indices;
+  // Empty unless the statement has a RETURNING clause.
+  std::vector<duckdb::idx_t> _column_map;
 };
 
 }  // namespace sdb::connector

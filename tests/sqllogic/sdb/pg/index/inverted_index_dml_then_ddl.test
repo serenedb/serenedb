@@ -1,0 +1,179 @@
+# DML followed by DDL in ONE implicit transaction, on a table carrying an
+# inverted index.
+#
+# Uncommitted DML pins the catalog snapshot; the transaction's own DDL replaces
+# that pin instead of dropping it, because the commit itself reads the snapshot
+# (LocalStorage::Flush -> AppendToIndexes ->
+# InvertedStoreIndex::EnsureInvertedFeedSession) and, when the DDL is the last
+# statement, no later statement would re-acquire one. Dropping it aborted the
+# server at commit. The DDL need touch neither the table nor the index.
+#
+# The multi-statement blocks are what makes the transaction implicit, so they
+# only run over the simple protocol; the extended protocol rejects several
+# commands in one Parse, and runs them separately to keep both engines in the
+# same state afterwards.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY iidd_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE TABLE iidd (id INTEGER, body VARCHAR);
+
+
+statement ok
+CREATE INDEX iidd_idx ON iidd USING inverted(id, body iidd_en);
+
+
+# --- the regression: unrelated DDL closes the implicit transaction ---
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO iidd VALUES (1, 'alpha bravo'); CREATE TABLE iidd_unrelated(q INTEGER);
+
+
+onlyif pg-wire-extended
+statement ok
+INSERT INTO iidd VALUES (1, 'alpha bravo');
+
+
+onlyif pg-wire-extended
+statement ok
+CREATE TABLE iidd_unrelated(q INTEGER);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iidd;
+
+
+# the row committed AND reached the index -- the flush had a usable snapshot
+query
+SELECT id, body FROM iidd_idx WHERE body @@ ts_phrase('alpha bravo');
+----
+id	body
+1	alpha bravo
+
+
+# --- DDL on the indexed table itself, same transaction ---
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO iidd VALUES (2, 'charlie delta'); ALTER TABLE iidd ADD COLUMN extra INTEGER;
+
+
+onlyif pg-wire-extended
+statement ok
+INSERT INTO iidd VALUES (2, 'charlie delta');
+
+
+onlyif pg-wire-extended
+statement ok
+ALTER TABLE iidd ADD COLUMN extra INTEGER;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iidd;
+
+
+query
+SELECT id, body FROM iidd_idx WHERE body @@ ts_phrase('charlie delta');
+----
+id	body
+2	charlie delta
+
+
+# --- three statements, DDL in the middle then more DML ---
+
+skipif pg-wire-extended
+statement ok
+INSERT INTO iidd(id, body) VALUES (3, 'echo foxtrot'); CREATE TABLE iidd_unrelated2(q INTEGER); INSERT INTO iidd(id, body) VALUES (4, 'golf hotel');
+
+
+onlyif pg-wire-extended
+statement ok
+INSERT INTO iidd(id, body) VALUES (3, 'echo foxtrot');
+
+
+onlyif pg-wire-extended
+statement ok
+CREATE TABLE iidd_unrelated2(q INTEGER);
+
+
+onlyif pg-wire-extended
+statement ok
+INSERT INTO iidd(id, body) VALUES (4, 'golf hotel');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iidd;
+
+
+query
+SELECT id FROM iidd_idx WHERE body @@ ts_phrase('golf hotel');
+----
+id
+4
+
+
+# --- the same shape inside an explicit transaction block ---
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO iidd(id, body) VALUES (5, 'india juliett');
+
+
+statement ok
+CREATE TABLE iidd_unrelated3(q INTEGER);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iidd;
+
+
+query
+SELECT id FROM iidd_idx WHERE body @@ ts_phrase('india juliett');
+----
+id
+5
+
+
+query
+SELECT count(*) AS n FROM iidd;
+----
+n
+5
+
+
+statement ok
+DROP TABLE iidd;
+
+
+statement ok
+DROP TABLE iidd_unrelated;
+
+
+statement ok
+DROP TABLE iidd_unrelated2;
+
+
+statement ok
+DROP TABLE iidd_unrelated3;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY iidd_en;

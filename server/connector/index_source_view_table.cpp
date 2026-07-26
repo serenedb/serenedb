@@ -22,6 +22,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_column_type.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/data_table.hpp>
@@ -59,25 +60,19 @@ duckdb::TableCatalogEntry& ResolveTableEntry(duckdb::ClientContext& context,
 
 duckdb::TableCatalogEntry& ResolveStoreTableEntry(
   duckdb::ClientContext& context, const duckdb::TableCatalogEntry& scan_entry,
-  const catalog::Table& table) {
-  // The scan entry is the facade table or one of its index entries; either
-  // way it shares the table's database and schema.
-  auto store_name = catalog::StoreTableName(
-    scan_entry.ParentCatalog().GetName().GetIdentifierName(),
-    scan_entry.ParentSchema().name.GetIdentifierName(), table.GetName());
-  return duckdb::Catalog::GetEntry(
-           context, duckdb::CatalogType::TABLE_ENTRY,
-           duckdb::QualifiedName(
-             duckdb::Identifier{catalog::kStoreDatabaseName},
-             duckdb::Identifier{"main"}, duckdb::Identifier{store_name}))
-    .Cast<duckdb::TableCatalogEntry>();
+  ObjectId relation_id) {
+  return *catalog::GetStoreTableEntry(
+    context, const_cast<duckdb::Catalog&>(scan_entry.ParentCatalog()),
+    relation_id, duckdb::OnEntryNotFound::THROW_EXCEPTION);
 }
 
 }  // namespace
 
 duckdb::LogicalType RowIdFetchIndexSource::AddFetchColumn(
   const duckdb::ColumnDefinition& col) {
-  if (col.Generated()) {
+  // A STORED generated column has its own storage and is fetched like any
+  // other; only a VIRTUAL one has nothing on disk to look up.
+  if (col.Category() == duckdb::TableColumnType::GENERATED_VIRTUAL) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("cannot materialise generated column \"",
@@ -136,7 +131,7 @@ ViewTableIndexSource::ViewTableIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids,
+  std::span<const catalog::ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters)
   : RowIdFetchIndexSource{std::move(fast_path)} {
   auto& table = ResolveTableEntry(context, _fast_path);
@@ -171,26 +166,23 @@ ViewTableIndexSource::ViewTableIndexSource(
 
 TableRowIdIndexSource::TableRowIdIndexSource(
   duckdb::ClientContext& context, const duckdb::TableCatalogEntry& scan_entry,
-  const catalog::Table& sdb_table,
-  std::span<const duckdb::idx_t> projected_columns,
+  ObjectId relation_id, std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids,
+  std::span<const catalog::ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters)
   : RowIdFetchIndexSource{ViewFastPath{}} {
-  auto& table = ResolveStoreTableEntry(context, scan_entry, sdb_table);
+  auto& table = ResolveStoreTableEntry(context, scan_entry, relation_id);
   SetTable(table);
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
-  // Store physical positions follow the facade column order minus the
-  // generated PK; map catalog column ids through that order.
+  // Store physical positions follow the facade column order; map catalog
+  // column ids through that order.
+  const auto& scan_columns = scan_entry.GetColumns();
   containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> id_to_pos;
-  id_to_pos.reserve(sdb_table.Columns().size());
+  id_to_pos.reserve(scan_columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
-  for (const auto& col : sdb_table.Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
-    }
-    id_to_pos.emplace(static_cast<duckdb::idx_t>(col.GetId()), pos++);
+  for (const auto& col : scan_columns.Logical()) {
+    id_to_pos.emplace(col.HostId(), pos++);
   }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,

@@ -32,7 +32,7 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
-#include "catalog/object.h"
+#include "catalog/entry.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 

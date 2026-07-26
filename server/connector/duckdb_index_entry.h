@@ -22,7 +22,19 @@
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
 
+#include "catalog/index.h"
+#include "connector/duckdb_entry.h"
+
+namespace sdb::search {
+
+class InvertedIndexStorage;
+
+}  // namespace sdb::search
 namespace sdb::connector {
 
 // Index entry for SereneDB indexes (secondary indexes
@@ -32,15 +44,42 @@ class SereneDBIndexEntry final : public duckdb::IndexCatalogEntry {
  public:
   SereneDBIndexEntry(duckdb::Catalog& catalog,
                      duckdb::SchemaCatalogEntry& schema,
-                     duckdb::CreateIndexInfo& info, std::string table_name);
+                     duckdb::CreateIndexInfo& info, catalog::IndexInfoRef index,
+                     std::string table_name);
 
   duckdb::Identifier GetSchemaName() const final { return schema.name; }
   duckdb::Identifier GetTableName() const final {
     return duckdb::Identifier{_table_name};
   }
 
+  // The relation this index is built on. An index is the one kind with two
+  // ancestors -- its name lives in the schema, its rows belong to a relation --
+  // so its schema does not answer this.
+  ObjectId GetRelationId() const noexcept { return _relation_id; }
+
+  bool IsInverted() const noexcept { return _sdb_index->IsInverted(); }
+
+  // The iresearch directory behind an inverted index, shared with every other
+  // version of the same index. Null for a secondary index, whose rows are an
+  // ART on the store table.
+  //
+  // Read through the definition rather than captured: the holder is bound
+  // after the entry exists at boot, where the catalog log builds every entry
+  // before anything opens a directory.
+  const std::shared_ptr<search::InvertedIndexStorage>& GetInvertedData()
+    const noexcept {
+    return _sdb_index->GetData();
+  }
+
+  // The definition this entry is, which is the only place an index lives.
+  const catalog::IndexInfoRef& Definition() const noexcept {
+    return _sdb_index;
+  }
+
  private:
+  catalog::IndexInfoRef _sdb_index;
   std::string _table_name;
+  ObjectId _relation_id;
 };
 
 }  // namespace sdb::connector

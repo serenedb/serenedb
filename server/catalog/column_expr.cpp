@@ -35,6 +35,7 @@
 #include <duckdb/parser/tableref.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
+#include <type_traits>
 
 #include "catalog/user_type.h"
 #include "connector/functions/sequence.h"
@@ -48,24 +49,35 @@ bool IsSequenceFunctionName(std::string_view fn_name) {
 
 void WalkSelect(const duckdb::SelectStatement& stmt, RefKinds kinds, Refs& out);
 
-std::optional<QualifiedRef> ExtractUnboundTypeName(
-  const duckdb::LogicalType& type) {
+// The node naming one unbound type, or null when the type is not one. Not
+// const: it is where the resolution of that name is stamped, and a LogicalType
+// hands its aux info back read-only whichever side asked.
+duckdb::ParsedExpression* UnboundTypeExpr(const duckdb::LogicalType& type) {
   if (type.id() != duckdb::LogicalTypeId::UNBOUND) {
-    return std::nullopt;
+    return nullptr;
   }
   auto info = type.AuxInfo();
   if (!info) {
-    return std::nullopt;
+    return nullptr;
   }
   const auto& unbound = info->Cast<duckdb::UnboundTypeInfo>();
   if (!unbound.expr ||
       unbound.expr->GetExpressionType() != duckdb::ExpressionType::TYPE) {
+    return nullptr;
+  }
+  return const_cast<duckdb::ParsedExpression*>(unbound.expr.get());
+}
+
+std::optional<QualifiedRef> ExtractUnboundTypeName(
+  const duckdb::LogicalType& type) {
+  auto* node = UnboundTypeExpr(type);
+  if (node == nullptr) {
     return std::nullopt;
   }
-  const auto& te = unbound.expr->Cast<duckdb::TypeExpression>();
+  const auto& te = node->Cast<duckdb::TypeExpression>();
   return QualifiedRef{te.GetCatalog().GetIdentifierName(),
                       te.GetSchema().GetIdentifierName(),
-                      te.GetTypeName().GetIdentifierName()};
+                      te.GetTypeName().GetIdentifierName(), node};
 }
 
 }  // namespace
@@ -111,30 +123,44 @@ void CollectTypeRefs(const duckdb::LogicalType& type, Refs& out) {
 
 namespace {
 
-void WalkExpr(const duckdb::ParsedExpression& expr, RefKinds kinds, Refs& out) {
+// Null on the read-only walk, which has no node to hand back.
+constexpr duckdb::ParsedExpression* NodeOf(
+  const duckdb::ParsedExpression&) noexcept {
+  return nullptr;
+}
+constexpr duckdb::ParsedExpression* NodeOf(
+  duckdb::ParsedExpression& expr) noexcept {
+  return &expr;
+}
+
+template<typename Expr>
+void WalkExpr(Expr& expr, RefKinds kinds, Refs& out) {
   if (RefKinds::None != (kinds & RefKinds::Types) &&
       expr.GetExpressionType() == duckdb::ExpressionType::OPERATOR_CAST) {
-    CollectTypeRefs(expr.Cast<duckdb::CastExpression>().TargetType(), out);
+    CollectTypeRefs(expr.template Cast<duckdb::CastExpression>().TargetType(),
+                    out);
   }
   if (expr.GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
-    const auto& fn = expr.Cast<duckdb::FunctionExpression>();
+    const auto& fn = expr.template Cast<duckdb::FunctionExpression>();
     if (IsSequenceFunctionName(fn.FunctionName().GetIdentifierName())) {
       if (RefKinds::None != (kinds & RefKinds::Sequences) &&
           !fn.GetArguments().empty()) {
         const auto& arg = fn.GetArguments()[0].GetExpression();
         if (arg.GetExpressionType() == duckdb::ExpressionType::VALUE_CONSTANT) {
-          const auto& konst = arg.Cast<duckdb::ConstantExpression>();
+          const auto& konst = arg.template Cast<duckdb::ConstantExpression>();
           if (konst.GetValue().type().id() == duckdb::LogicalTypeId::VARCHAR &&
               !konst.GetValue().IsNull()) {
             // nextval('[schema.]name') -- split here so callers see a
             // uniform QualifiedRef like relations/functions.
-            auto qualified = konst.GetValue().GetValue<std::string>();
+            auto qualified = konst.GetValue().template GetValue<std::string>();
             auto dot = qualified.find('.');
             if (dot == std::string::npos) {
-              out.sequences.emplace_back("", "", std::move(qualified));
+              out.sequences.emplace_back("", "", std::move(qualified),
+                                         NodeOf(expr));
             } else {
               out.sequences.emplace_back("", qualified.substr(0, dot),
-                                         qualified.substr(dot + 1));
+                                         qualified.substr(dot + 1),
+                                         NodeOf(expr));
             }
           }
         }
@@ -143,19 +169,26 @@ void WalkExpr(const duckdb::ParsedExpression& expr, RefKinds kinds, Refs& out) {
       out.functions.emplace_back(
         fn.GetQualifiedName().Catalog().GetIdentifierName(),
         fn.GetQualifiedName().Schema().GetIdentifierName(),
-        fn.FunctionName().GetIdentifierName());
+        fn.FunctionName().GetIdentifierName(), NodeOf(expr));
     }
   }
   if (expr.GetExpressionType() == duckdb::ExpressionType::SUBQUERY) {
-    const auto& sub = expr.Cast<duckdb::SubqueryExpression>();
+    const auto& sub = expr.template Cast<duckdb::SubqueryExpression>();
     if (sub.Subquery()) {
       WalkSelect(*sub.Subquery(), kinds, out);
     }
   }
-  duckdb::ParsedExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::ParsedExpression& child) {
-      WalkExpr(child, kinds, out);
-    });
+  if constexpr (std::is_const_v<Expr>) {
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      expr, [&](const duckdb::ParsedExpression& child) {
+        WalkExpr(child, kinds, out);
+      });
+  } else {
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      expr, [&](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
+        WalkExpr(*child, kinds, out);
+      });
+  }
 }
 
 void WalkQueryNode(const duckdb::QueryNode& node, RefKinds kinds, Refs& out) {
@@ -223,6 +256,39 @@ Refs ExtractRefs(const duckdb::ParsedExpression& expr, RefKinds kinds) {
   Refs out;
   WalkExpr(expr, kinds, out);
   return out;
+}
+
+Refs ExtractMutableRefs(duckdb::ParsedExpression& expr, RefKinds kinds) {
+  Refs out;
+  WalkExpr(expr, kinds, out);
+  return out;
+}
+
+void CollectExprIds(const duckdb::ParsedExpression& expr,
+                    std::vector<ObjectId>& out) {
+  const auto take = [&](idx_t oid) {
+    if (oid != 0) {
+      out.push_back(ObjectId{oid});
+    }
+  };
+  take(expr.oid);
+  if (expr.GetExpressionType() == duckdb::ExpressionType::OPERATOR_CAST) {
+    Refs types;
+    CollectTypeRefs(expr.Cast<duckdb::CastExpression>().TargetType(), types);
+    // A bound type is already an id; an unbound one took its resolution on the
+    // node naming it, which is one node per name however deeply nested.
+    for (const auto id : types.types) {
+      out.push_back(id);
+    }
+    for (const auto& ref : types.unbound_types) {
+      if (ref.node != nullptr) {
+        take(ref.node->oid);
+      }
+    }
+  }
+  duckdb::ParsedExpressionIterator::EnumerateChildren(
+    expr,
+    [&](const duckdb::ParsedExpression& child) { CollectExprIds(child, out); });
 }
 
 Refs ExtractRefs(const duckdb::QueryNode& node, RefKinds kinds) {

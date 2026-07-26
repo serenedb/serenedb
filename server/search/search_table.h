@@ -42,8 +42,8 @@
 namespace sdb::search {
 
 // Per-table iresearch columnstore store for a TableEngine::Search table -- the
-// Search-engine sibling of InvertedIndexStorage. Attached to the
-// catalog::Table via GetData()/SetData().
+// Search-engine sibling of InvertedIndexStorage. Held by the table's entry,
+// which shares it with every version of that table.
 class SearchTable : public std::enable_shared_from_this<SearchTable> {
  public:
   // `is_new` opens a fresh index; otherwise the durable one is reopened.

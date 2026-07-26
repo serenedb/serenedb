@@ -20,31 +20,38 @@
 
 #pragma once
 
+#include <memory>
+
+namespace duckdb {
+
+struct CreateTypeInfo;
+struct CreateViewInfo;
+struct CreateMacroInfo;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
-struct Snapshot;
-
-class Object;
-class PgSqlFunction;
-class Table;
-class Column;
-class Role;
-class PgSqlView;
-class Sequence;
-class Index;
-class InvertedIndex;
-class SecondaryIndex;
-class Schema;
-class Database;
-struct FunctionSignature;
-struct CreateTableOptions;
+class CreateTableInfo;
+using TableInfoRef = std::shared_ptr<const CreateTableInfo>;
+class CreateRoleInfo;
+class CreateDatabaseInfo;
+class CreateSchemaInfo;
+using SchemaRef = std::shared_ptr<const CreateSchemaInfo>;
+class CreateSequenceInfo;
+class CreateIndexInfoBase;
+using IndexInfoRef = std::shared_ptr<const CreateIndexInfoBase>;
+class CreateInvertedIndexInfo;
+class CreateSecondaryIndexInfo;
+class CreateTokenizerInfo;
+using TokenizerRef = std::shared_ptr<const CreateTokenizerInfo>;
+class CreateForeignServerInfo;
+using ForeignServerRef = std::shared_ptr<const CreateForeignServerInfo>;
 class VirtualTable;
 class VirtualTableSnapshot;
 
 }  // namespace sdb::catalog
 namespace sdb {
 
-class KeyGenerator;
 class ObjectId;
 
 }  // namespace sdb

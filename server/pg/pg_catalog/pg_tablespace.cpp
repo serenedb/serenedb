@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_tablespace.h"
 
+#include "auth/role_closure.h"
+
 namespace sdb::pg {
 namespace {
 
@@ -48,7 +50,8 @@ catalog::MaterializedData SystemTableSnapshot<PgTablespace>::GetTableData() {
 
   auto result = CreateColumns<PgTablespace>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), values.size()};
 }

@@ -22,7 +22,9 @@
 
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "connector/duckdb_catalog_sets.h"
 
 namespace sdb::pg {
 namespace {
@@ -36,28 +38,25 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
   std::vector<PgRewrite> values;
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
-    for (const auto& view :
-         catalog->GetViews(GetDatabaseId(), schema->GetName())) {
-      values.push_back(PgRewrite{
-        Oid{view->GetId().id()},
-        Name{"_RETURN"},
-        Oid{view->GetId().id()},
-        PgRewrite::EvType::Select,
-        PgRewrite::EvEnabled::Origin,
-        true,
-        {},
-        {},
-      });
-    }
-  }
+  connector::VisitViews(&_config.GetClientContext(), GetDatabaseId(),
+                        [&](const duckdb::ViewCatalogEntry& view) {
+                          values.push_back(PgRewrite{
+                            Oid{view.oid},
+                            Name{"_RETURN"},
+                            Oid{view.oid},
+                            PgRewrite::EvType::Select,
+                            PgRewrite::EvEnabled::Origin,
+                            true,
+                            {},
+                            {},
+                          });
+                        });
 
   auto result = CreateColumns<PgRewrite>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *catalog);
+    WriteData(result, values[row], kNullMask, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), values.size()};
 }

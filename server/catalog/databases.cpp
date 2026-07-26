@@ -26,18 +26,16 @@
 
 namespace sdb::catalog {
 
-bool CreateDatabase(const AccessContext& ax, std::string_view name,
-                    bool if_not_exists) {
-  auto database =
-    std::make_shared<catalog::Database>(Permissions{ax.role}, ObjectId{}, name);
-  return catalog::GetCatalog().CreateDatabase(ax, std::move(database),
+HeldSchema CreateDatabase(const AccessContext& ax, std::string_view name,
+                          bool if_not_exists) {
+  auto database = std::make_shared<CreateDatabaseInfo>(ObjectId{}, name);
+  return catalog::GetCatalog().CreateDatabase(ax, std::move(database), ax.role,
                                               if_not_exists);
 }
 
-std::vector<ForeignServerAttachment> DropDatabase(
-  const AccessContext& ax, std::string_view db_name,
-  duckdb::shared_ptr<void> keep_alive) {
-  return catalog::GetCatalog().DropDatabase(ax, db_name, std::move(keep_alive));
+void DropDatabase(const AccessContext& ax, std::string_view db_name,
+                  duckdb::shared_ptr<void> keep_alive) {
+  catalog::GetCatalog().DropDatabase(ax, db_name, std::move(keep_alive));
 }
 
 }  // namespace sdb::catalog

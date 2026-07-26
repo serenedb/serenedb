@@ -38,8 +38,8 @@
 #include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
-#include "catalog/object_dependency.h"
 #include "catalog/schema.h"
+#include "catalog/store/data_store.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "search/inverted_index_storage.h"
@@ -48,6 +48,9 @@ namespace sdb::catalog {
 enum class DropOutcome : uint8_t {
   Done,
   Retry,
+  // Shutdown observed while the task still needed a retry. The tombstone is
+  // durable and boot reschedules the drop, so giving up here loses nothing.
+  Abandoned,
 };
 
 using AsyncResult = yaclib::Future<DropOutcome>;
@@ -57,21 +60,37 @@ inline constexpr auto kMaxDelay = std::chrono::milliseconds{1000};
 
 class DropTask {
  public:
-  // DropTask on reboot, since there is no Object
+  // A drop rescheduled at boot, which has no definition left to gate on: the
+  // record that opened the bracket is all there is.
   DropTask(ObjectId id, ObjectId parent_id, bool is_root = false)
     : _parent_id{parent_id}, _id{id}, _is_root{is_root} {}
 
-  DropTask(const std::shared_ptr<Object>& object, ObjectId parent_id,
-           bool is_root = false)
+  // `definition` is what a live reader still holds -- an entry version, a
+  // pinned plan -- and the sweep waits for the last of them to let go before
+  // it removes anything on disk.
+  DropTask(ObjectId id, std::weak_ptr<const duckdb::CreateInfo> definition,
+           ObjectId parent_id, bool is_root = false)
     : _parent_id{parent_id},
-      _id{object->GetId()},
+      _id{id},
       _is_root{is_root},
-      _object{object} {}
+      _object{std::move(definition)} {}
 
   static AsyncResult Schedule(std::shared_ptr<DropTask> task) noexcept;
 
+  // Once shutdown starts BackgroundScheduler::Delay stops waiting, so a retry
+  // that keeps going spins on a satisfied delay instead of backing off. Every
+  // retry point polls this: the loop in Schedule, and each Execute that
+  // resumes after awaiting its children (a child that abandoned must not be
+  // finalized over by its parent -- the whole subtree is redone at boot).
+  static bool ShouldStop() noexcept;
+
   static AsyncResult ExecuteTask(std::shared_ptr<DropTask> task) {
     SDB_ASSERT(task);
+    // Drops touch the data DB; boot schedules them (from tombstones) before
+    // it is attached and reconciled.
+    if (!DataStore::IsReady()) {
+      return yaclib::MakeFuture<DropOutcome>(DropOutcome::Retry);
+    }
     if (!task->AllowToDrop()) {
       SDB_TRACE(STORAGE, "Waiting till the snapshots will free the object ",
                 task->GetContext());
@@ -98,32 +117,47 @@ class DropTask {
   virtual bool AllowToDropDependencies() const noexcept = 0;
   virtual ~DropTask() = default;
 
+  ObjectId GetId() const noexcept { return _id; }
+
+  // Appends this task's own node under `parent_id` and then everything below
+  // it, so the DropPrepare that opens the bracket carries the whole
+  // reclamation and a boot rebuilds the task tree from the record instead of
+  // from definitions the drop has already removed.
+  virtual void DescribeSubtree(ObjectId parent_id,
+                               std::vector<wal::DropNode>& out) const = 0;
+
  protected:
   ObjectId _parent_id;
   ObjectId _id;
   bool _is_root;
   std::chrono::milliseconds _delay = kInitialDelay;
-  std::weak_ptr<Object> _object;
+  std::weak_ptr<const duckdb::CreateInfo> _object;
   std::vector<std::weak_ptr<DropTask>> _attached;
 };
 
 struct IndexDrop final : public DropTask {
  public:
-  IndexDrop(ObjectId id, ObjectType type, ObjectId db_id, ObjectId schema_id,
+  // Without a name: a drop reopened at boot, rebuilt from the record, which
+  // names no physical index. The frame that opened the drop carried the store
+  // removal, so there is nothing left for this one to take off the list.
+  IndexDrop(ObjectId id, bool inverted, ObjectId db_id, ObjectId schema_id,
             ObjectId table_id, bool is_root = false)
     : DropTask{id, table_id, is_root},
       _db_id{db_id},
       _schema_id{schema_id},
-      _type{type} {}
+      _inverted{inverted} {}
 
-  IndexDrop(const std::shared_ptr<Index>& index, ObjectId db_id,
+  // An index has no definition a reader pins: what one holds is the iresearch
+  // storage, and `_data` is the gate for it.
+  IndexDrop(const CreateIndexInfoBase& index, ObjectId db_id,
             ObjectId schema_id, ObjectId table_id,
             std::weak_ptr<search::InvertedIndexStorage> data,
             bool is_root = false)
-    : DropTask{index, table_id, is_root},
+    : DropTask{index.GetId(), table_id, is_root},
       _db_id{db_id},
       _schema_id{schema_id},
-      _type{index->GetType()},
+      _inverted{index.IsInverted()},
+      _name{std::string{index.GetName()}},
       _data{std::move(data)} {}
 
   std::string GetContext() const noexcept final {
@@ -146,81 +180,96 @@ struct IndexDrop final : public DropTask {
 
   ObjectId GetDatabaseId() const { return _db_id; }
 
+  bool IsInverted() const noexcept { return _inverted; }
+
+  void DescribeSubtree(ObjectId parent_id,
+                       std::vector<wal::DropNode>& out) const final {
+    out.push_back({.parent_id = parent_id,
+                   .id = _id,
+                   .type = duckdb::CatalogType::INDEX_ENTRY,
+                   .inverted = _inverted});
+  }
+
   AsyncResult Execute() final;
   void Finalize();
 
  private:
   ObjectId _db_id;
   ObjectId _schema_id;
-  ObjectType _type;
+  bool _inverted;
+  std::string _name;
   std::weak_ptr<search::InvertedIndexStorage> _data;
 };
 
 struct TableDropBase : public DropTask {
  public:
-  virtual void EmitStoreFkCleanups(CatalogStore::WriteContext&) const {}
   virtual void EmitStoreDrops(CatalogStore::WriteContext&) const {}
 
   void Finalize();
 
- protected:
-  TableDropBase(ObjectId id, std::vector<ObjectId> owned_sequences,
-                ObjectId schema_id, bool is_root)
-    : DropTask{id, schema_id, is_root},
-      _owned_sequences{std::move(owned_sequences)} {}
+  virtual TableEngine GetEngine() const noexcept = 0;
 
-  TableDropBase(const std::shared_ptr<Table>& table,
+  void DescribeSubtree(ObjectId parent_id,
+                       std::vector<wal::DropNode>& out) const override {
+    out.push_back({.parent_id = parent_id,
+                   .id = _id,
+                   .type = duckdb::CatalogType::TABLE_ENTRY,
+                   .engine = GetEngine()});
+    for (const auto seq_id : _owned_sequences) {
+      out.push_back({.parent_id = _id,
+                     .id = seq_id,
+                     .type = duckdb::CatalogType::SEQUENCE_ENTRY});
+    }
+  }
+
+ protected:
+  TableDropBase(ObjectId id, ObjectId db_id,
                 std::vector<ObjectId> owned_sequences, ObjectId schema_id,
                 bool is_root)
-    : DropTask{table, schema_id, is_root},
+    : DropTask{id, schema_id, is_root},
+      _db_id{db_id},
+      _owned_sequences{std::move(owned_sequences)} {}
+
+  TableDropBase(const TableInfoRef& table, ObjectId db_id,
+                std::vector<ObjectId> owned_sequences, ObjectId schema_id,
+                bool is_root)
+    : DropTask{table->GetId(), table, schema_id, is_root},
+      _db_id{db_id},
       _owned_sequences{std::move(owned_sequences)} {}
 
   virtual void FinalizeStore(CatalogStore::WriteContext&) const {}
 
+  // The database whose attachment holds the rows.
+  ObjectId _db_id;
   std::vector<ObjectId> _owned_sequences;
 };
 
 struct TableDrop final : public TableDropBase {
  public:
-  TableDrop(ObjectId id, std::vector<std::shared_ptr<IndexDrop>> indexes,
-            std::vector<ObjectId> owned_sequences, ObjectId schema_id,
-            bool is_root = false)
-    : TableDropBase{id, std::move(owned_sequences), schema_id, is_root},
-      _indexes{std::move(indexes)} {}
-
-  TableDrop(const std::shared_ptr<Table>& table,
+  TableDrop(ObjectId id, ObjectId db_id,
             std::vector<std::shared_ptr<IndexDrop>> indexes,
             std::vector<ObjectId> owned_sequences, ObjectId schema_id,
-            std::string store_name,
-            std::vector<std::string> fk_referenced_store_names,
             bool is_root = false)
-    : TableDropBase{table, std::move(owned_sequences), schema_id, is_root},
-      _store_name{std::move(store_name)},
-      _fk_referenced_store_names{std::move(fk_referenced_store_names)},
+    : TableDropBase{id, db_id, std::move(owned_sequences), schema_id, is_root},
       _indexes{std::move(indexes)} {}
 
-  // FK linkage entries must go before ANY table drop in the transaction:
-  // a live back-reference makes duckdb refuse dropping the main-key table,
-  // and the cascade emission order is arbitrary. Removing both directions
-  // up front makes the drops order-independent.
-  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const override {
-    if (_store_name.empty()) {
-      return;
-    }
-    for (const auto& referenced : _fk_referenced_store_names) {
-      ctx.DropStoreForeignKey(referenced, _store_name);
-      ctx.DropStoreForeignKey(_store_name, referenced);
-    }
-  }
+  TableDrop(const TableInfoRef& table, ObjectId db_id,
+            std::vector<std::shared_ptr<IndexDrop>> indexes,
+            std::vector<ObjectId> owned_sequences, ObjectId schema_id,
+            bool is_root = false)
+    : TableDropBase{table, db_id, std::move(owned_sequences), schema_id,
+                    is_root},
+      _indexes{std::move(indexes)},
+      _has_store_table{true} {}
 
   // Drops the store table synchronously in the same transaction that
   // tombstones the drop, freeing the public name immediately (renames are
   // unsafe for FK-involved tables: duckdb keeps back-references by name).
-  // No-op when the table has no store table (Search engine) or lives under
-  // the dropped name (CTAS); Finalize's drop-by-id covers the latter.
+  // The id-only constructor (a drop rescheduled at boot) knows of no store
+  // table; Finalize's drop-by-id covers it.
   void EmitStoreDrops(CatalogStore::WriteContext& ctx) const override {
-    if (!_store_name.empty()) {
-      ctx.DropStoreTable(_store_name);
+    if (_has_store_table) {
+      ctx.store().DropTable(_db_id, _id);
     }
   }
 
@@ -240,30 +289,42 @@ struct TableDrop final : public TableDropBase {
     });
   }
 
- private:
-  void FinalizeStore(CatalogStore::WriteContext& ctx) const override {
-    ctx.DropStoreTable(catalog::DroppedStoreTableName(_id));
+  TableEngine GetEngine() const noexcept final {
+    return TableEngine::Transactional;
   }
 
-  std::string _store_name;
-  std::vector<std::string> _fk_referenced_store_names;
+  void DescribeSubtree(ObjectId parent_id,
+                       std::vector<wal::DropNode>& out) const final {
+    TableDropBase::DescribeSubtree(parent_id, out);
+    for (const auto& index : _indexes) {
+      index->DescribeSubtree(_id, out);
+    }
+  }
+
+ private:
+  void FinalizeStore(CatalogStore::WriteContext& ctx) const override {
+    ctx.store().DropTable(_db_id, _id);
+  }
+
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
+  bool _has_store_table = false;
 };
 
 struct SearchTableDrop final : public TableDropBase {
  public:
-  SearchTableDrop(const std::shared_ptr<Table>& table, ObjectId db_id,
-                  std::vector<ObjectId> owned_sequences, ObjectId schema_id,
-                  bool is_root = false)
-    : TableDropBase{table, std::move(owned_sequences), schema_id, is_root},
-      _db_id{db_id},
-      _search_data{table->GetData()} {}
+  SearchTableDrop(const TableInfoRef& table,
+                  std::shared_ptr<search::SearchTable> search_data,
+                  ObjectId db_id, std::vector<ObjectId> owned_sequences,
+                  ObjectId schema_id, bool is_root = false)
+    : TableDropBase{table, db_id, std::move(owned_sequences), schema_id,
+                    is_root},
+      _search_data{std::move(search_data)} {}
 
   SearchTableDrop(ObjectId id, ObjectId db_id,
                   std::vector<ObjectId> owned_sequences, ObjectId schema_id,
                   bool is_root = false)
-    : TableDropBase{id, std::move(owned_sequences), schema_id, is_root},
-      _db_id{db_id} {}
+    : TableDropBase{id, db_id, std::move(owned_sequences), schema_id, is_root} {
+  }
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("SearchTableDrop(schema $0 table $1)",
@@ -280,22 +341,23 @@ struct SearchTableDrop final : public TableDropBase {
     return _search_data.expired();
   }
 
+  TableEngine GetEngine() const noexcept final { return TableEngine::Search; }
+
  private:
-  ObjectId _db_id;
   std::weak_ptr<search::SearchTable> _search_data;
 };
 
 struct SchemaDrop final : public DropTask {
  public:
+  // `sequences` are the ones standing on their own under the schema; a table's
+  // owned sequences go with that table's drop.
   SchemaDrop(ObjectId schema_id,
-             std::vector<std::shared_ptr<TableDropBase>> tables, ObjectId db_id,
+             std::vector<std::shared_ptr<TableDropBase>> tables,
+             std::vector<ObjectId> sequences, ObjectId db_id,
              bool is_root = false)
-    : DropTask{schema_id, db_id, is_root}, _tables{std::move(tables)} {}
-
-  SchemaDrop(const std::shared_ptr<Schema>& schema,
-             std::vector<std::shared_ptr<TableDropBase>> tables, ObjectId db_id,
-             bool is_root = false)
-    : DropTask{schema, db_id, is_root}, _tables{std::move(tables)} {}
+    : DropTask{schema_id, db_id, is_root},
+      _sequences{std::move(sequences)},
+      _tables{std::move(tables)} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("SchemaDrop(database $0 schema $1)",
@@ -304,11 +366,6 @@ struct SchemaDrop final : public DropTask {
 
   std::string_view GetName() const noexcept final { return "schema drop"; }
 
-  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
-    for (const auto& table : _tables) {
-      table->EmitStoreFkCleanups(ctx);
-    }
-  }
   void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
     for (const auto& table : _tables) {
       table->EmitStoreDrops(ctx);
@@ -325,7 +382,23 @@ struct SchemaDrop final : public DropTask {
     });
   }
 
+  void DescribeSubtree(ObjectId parent_id,
+                       std::vector<wal::DropNode>& out) const final {
+    out.push_back({.parent_id = parent_id,
+                   .id = _id,
+                   .type = duckdb::CatalogType::SCHEMA_ENTRY});
+    for (const auto seq_id : _sequences) {
+      out.push_back({.parent_id = _id,
+                     .id = seq_id,
+                     .type = duckdb::CatalogType::SEQUENCE_ENTRY});
+    }
+    for (const auto& table : _tables) {
+      table->DescribeSubtree(_id, out);
+    }
+  }
+
  private:
+  std::vector<ObjectId> _sequences;
   std::vector<std::shared_ptr<TableDropBase>> _tables;
 };
 
@@ -334,10 +407,9 @@ struct DatabaseDrop final : public DropTask {
   DatabaseDrop(ObjectId db_id, std::vector<std::shared_ptr<SchemaDrop>> schemas)
     : DropTask{db_id, id::kInstance, true}, _schemas{std::move(schemas)} {}
 
-  DatabaseDrop(const std::shared_ptr<Database>& db,
-               std::vector<std::shared_ptr<SchemaDrop>> schemas,
+  DatabaseDrop(ObjectId db_id, std::vector<std::shared_ptr<SchemaDrop>> schemas,
                duckdb::shared_ptr<void> keep_alive)
-    : DropTask{db, id::kInstance, true},
+    : DropTask{db_id, id::kInstance, true},
       _keep_alive{std::move(keep_alive)},
       _schemas{std::move(schemas)} {}
 
@@ -347,11 +419,6 @@ struct DatabaseDrop final : public DropTask {
 
   std::string_view GetName() const noexcept final { return "database drop"; }
 
-  void EmitStoreFkCleanups(CatalogStore::WriteContext& ctx) const {
-    for (const auto& schema : _schemas) {
-      schema->EmitStoreFkCleanups(ctx);
-    }
-  }
   void EmitStoreDrops(CatalogStore::WriteContext& ctx) const {
     for (const auto& schema : _schemas) {
       schema->EmitStoreDrops(ctx);
@@ -366,6 +433,16 @@ struct DatabaseDrop final : public DropTask {
       SDB_ASSERT(schema);
       return schema->AllowToDrop();
     });
+  }
+
+  void DescribeSubtree(ObjectId parent_id,
+                       std::vector<wal::DropNode>& out) const final {
+    out.push_back({.parent_id = parent_id,
+                   .id = _id,
+                   .type = duckdb::CatalogType::DATABASE_ENTRY});
+    for (const auto& schema : _schemas) {
+      schema->DescribeSubtree(_id, out);
+    }
   }
 
  private:

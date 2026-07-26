@@ -20,9 +20,17 @@
 
 #pragma once
 
+#include <duckdb/common/enums/catalog_type.hpp>
+
 #include "pg/system_table.h"
 
 namespace sdb::pg {
+
+// The pg_class oid of the catalog an object of this kind lives in -- pg_depend
+// and pg_shdepend both address an endpoint that way. A sub-object of a relation
+// (a constraint, a rewrite rule, a column default) is not a kind and names its
+// own catalog at the row.
+Oid CatalogClassOid(duckdb::CatalogType type);
 
 // https://www.postgresql.org/docs/18/catalog-pg-depend.html
 // NOLINTBEGIN

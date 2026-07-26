@@ -1,0 +1,75 @@
+control substitution on
+
+# A data-WAL record names its table by the catalog's stable identifier, not by
+# a qualified name a rename can move. The append and the update below happen
+# after the rename and after the last checkpoint, so they only come back if the
+# replay resolved the table by that identifier.
+
+
+statement ok
+CREATE TABLE wti_a (a INTEGER, b TEXT);
+
+
+statement ok
+INSERT INTO wti_a VALUES (1, 'one');
+
+
+# Everything before the rename lands in the file, so the WAL tail the boot
+# replays holds nothing but the post-rename writes.
+statement ok
+CHECKPOINT;
+
+
+statement ok
+ALTER TABLE wti_a RENAME TO wti_b;
+
+
+statement ok
+INSERT INTO wti_b VALUES (2, 'two');
+
+
+statement ok
+UPDATE wti_b SET b = 'ONE' WHERE a = 1;
+
+
+statement ok
+DELETE FROM wti_b WHERE a = 3;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1 AS one;
+----
+one
+1
+
+
+connection after_crash
+query
+SELECT a, b FROM wti_b ORDER BY a;
+----
+a	b
+1	ONE
+2	two
+
+
+# The rename itself survived, and the old name is gone.
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'wti_a';
+----
+n
+0
+
+
+connection after_crash
+statement ok
+DROP TABLE wti_b;

@@ -36,6 +36,7 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/role.h"
+#include "connector/duckdb_catalog_sets.h"
 #include "network/connection.h"
 #include "network/credentials.h"
 #include "network/http/es/handlers.h"
@@ -122,8 +123,7 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
  public:
   std::optional<network::Credential> LookupCredential(
     std::string_view username) const override {
-    auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-    auto role = snapshot->GetRole(username);
+    auto role = connector::FindRole(nullptr, username);
     if (!role) {
       return std::nullopt;
     }

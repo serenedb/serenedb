@@ -20,14 +20,17 @@
 
 #include "pg/pg_catalog/pg_database.h"
 
+#include <deque>
 #include <string>
 #include <vector>
 
 #include "app/app_server.h"
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/role.h"
+#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -46,36 +49,43 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
   std::vector<PgDatabase> values;
-  for (const auto& db : catalog->GetDatabases()) {
-    values.push_back(PgDatabase{
-      .oid = db->GetId().id(),
-      .datname = db->GetName(),
-      .datdba = db->GetOwner().id(),
-      .encoding = 6,  // UTF8
-      .datlocprovider = PgDatabase::Datlocprovider::Libc,
-      .datistemplate = false,
-      .datallowconn = true,
-      .dathasloginevt = false,
-      .datconnlimit = -1,
-      .datfrozenxid = 0,
-      .datminmxid = 0,
-      // pg_default; always 1663 (no CREATE TABLESPACE) and must be a real
-      // pg_tablespace oid -- \l inner-joins pg_tablespace and would otherwise
-      // drop the row. TODO: derive from a real tablespace once CREATE
-      // TABLESPACE exists.
-      .dattablespace = 1663,
-      .datcollate = "C.UTF-8",
-      .datctype = "C.UTF-8",
-      .datacl = {db->GetAcl()},
+  // The name and the ACL of every row are views into the ref the visitor was
+  // handed, which it does not own -- off the committed set it is a temporary
+  // built per entry. The rows are written after the walk, so each ref has to be
+  // kept until then. A deque, not a vector: the rows hold spans into these, so
+  // their addresses have to survive the next push.
+  std::deque<connector::DatabaseRef> kept;
+  connector::VisitDatabases(
+    &_config.GetClientContext(), [&](const connector::DatabaseRef& ref) {
+      const auto& db = kept.emplace_back(ref);
+      values.push_back(PgDatabase{
+        .oid = db.Id().id(),
+        .datname = db.Name(),
+        .datdba = db.perm.owner,
+        .encoding = 6,  // UTF8
+        .datlocprovider = PgDatabase::Datlocprovider::Libc,
+        .datistemplate = false,
+        .datallowconn = true,
+        .dathasloginevt = false,
+        .datconnlimit = -1,
+        .datfrozenxid = 0,
+        .datminmxid = 0,
+        // pg_default; always 1663 (no CREATE TABLESPACE) and must be a real
+        // pg_tablespace oid -- \l inner-joins pg_tablespace and would otherwise
+        // drop the row. TODO: derive from a real tablespace once CREATE
+        // TABLESPACE exists.
+        .dattablespace = 1663,
+        .datcollate = "C.UTF-8",
+        .datctype = "C.UTF-8",
+        .datacl = {catalog::AclView{db.perm.acl}},
+      });
     });
-  }
 
   auto result = CreateColumns<PgDatabase>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), values.size()};
 }

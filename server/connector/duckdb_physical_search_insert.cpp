@@ -21,6 +21,7 @@
 #include "connector/duckdb_physical_search_insert.h"
 
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <memory>
@@ -43,6 +44,7 @@
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_schema_entry.h"
@@ -60,20 +62,21 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
-  std::vector<catalog::Column::Id> column_ids;
+  std::vector<catalog::ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
-  std::shared_ptr<catalog::Sequence> generated_pk_seq;
+  std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
 
   std::mutex combine_mu;
   duckdb::idx_t insert_count = 0;
+  // RETURNING only: the inserted rows, merged out of the sink threads.
+  std::optional<duckdb::ColumnDataCollection> returned;
 
   std::vector<search::SearchDbWal::PendingChunk> bulk_chunks;
 
   bool ctas_mode = false;
   bool ctas_finalized = false;
-  ObjectId ctas_database_id;
   std::string ctas_database_name;
   std::string ctas_schema_name;
   std::string ctas_table_name;
@@ -97,6 +100,7 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
 
 struct SearchInsertSourceState : duckdb::GlobalSourceState {
   bool finished = false;
+  duckdb::ColumnDataScanState scan;
 };
 
 struct SearchInsertLocalState : duckdb::LocalSinkState {
@@ -106,34 +110,57 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
   bool no_op = false;
   std::optional<search::SearchDbWal::ChunkWriter> chunk_writer;
   duckdb::idx_t insert_count = 0;
+  // RETURNING only: collected per sink thread so a parallel insert does not
+  // serialise on one collection, and merged on Combine.
+  std::optional<duckdb::ColumnDataCollection> returned;
 };
 
-std::shared_ptr<catalog::Table> CreateCtasTable(
-  duckdb::ClientContext& context, SearchInsertGlobalState& state,
-  duckdb::BoundCreateTableInfo& info, duckdb::SchemaCatalogEntry& schema) {
+SearchWriteTarget CtasWriteTarget(const catalog::CreateTableInfo& table,
+                                  const SereneDBTableEntry& entry) {
+  SearchWriteTarget target;
+  target.table_id = table.GetId();
+  target.data = entry.GetSearchData();
+  const auto& columns = table.columns;
+  target.column_ids.reserve(columns.LogicalColumnCount());
+  target.chunk_types.reserve(columns.LogicalColumnCount());
+  for (const auto& col : columns.Logical()) {
+    target.column_ids.emplace_back(col.HostId());
+    target.chunk_types.push_back(col.Type());
+  }
+  target.pk_columns = duckdb_primary_key::BuildPKColumns(table);
+  if (target.pk_columns.empty()) {
+    target.generated_pk_seq = entry.GetGeneratedPkSequence();
+    SDB_ASSERT(target.generated_pk_seq);
+  }
+  return target;
+}
+
+catalog::TableInfoRef CreateCtasTable(duckdb::ClientContext& context,
+                                      SearchInsertGlobalState& state,
+                                      duckdb::BoundCreateTableInfo& info,
+                                      duckdb::SchemaCatalogEntry& schema) {
   auto& schema_entry = schema.Cast<SereneDBSchemaEntry>();
   auto database_id = schema_entry.GetDatabaseId();
   auto& create_info = info.Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
-  catalog::CreateTableOptions options;
-  options.name = table_info.GetTableName().GetIdentifierName();
+  auto options = std::make_shared<catalog::CreateTableInfo>();
+  options->SetTableName(table_info.GetTableName());
+  options->SetSchema(schema.name);
   for (auto& col : table_info.columns.Logical()) {
-    catalog::Column sdb_col{
-      {}, catalog::NextId(), col.Name().GetIdentifierName(), col.Type()};
+    duckdb::ColumnDefinition column{col.Name(), col.Type()};
+    column.SetHostId(catalog::NextId().id());
     if (col.Generated()) {
-      sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
-      sdb_col.expr =
-        std::make_shared<ColumnExpr>(col.GeneratedExpression().Copy());
+      column.SetGeneratedExpression(col.GeneratedExpression().Copy(),
+                                    duckdb::TableColumnType::GENERATED_STORED);
     } else if (col.HasDefaultValue()) {
-      sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
+      column.SetDefaultValue(col.DefaultValue().Copy());
     }
-    options.columns.push_back(std::move(sdb_col));
+    options->columns.AddColumn(std::move(column));
   }
-  // CTAS has no PK/UNIQUE constraints, so the Table ctor wires up a generated
-  // PK sequence.
-  ApplyStorageKind(context, options, table_info.options);
-  SDB_ASSERT(options.engine == catalog::TableEngine::Search,
+  // CTAS declares no PRIMARY KEY, so the create wires up a generated one.
+  ApplyStorageKind(context, *options, table_info.options);
+  SDB_ASSERT(options->GetEngine() == catalog::TableEngine::Search,
              "SereneDBSearchInsert CTAS mode used for non-Search engine");
 
   auto& catalog_impl = catalog::GetCatalog();
@@ -141,63 +168,51 @@ std::shared_ptr<catalog::Table> CreateCtasTable(
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
   op_options.if_not_exists = if_not_exists;
-  // A valid pre-allocated id puts CreateTable in CTAS mode: tombstoned and with
-  // no backing store table (a Search table never has one).
+  // A valid pre-allocated id puts CreateTable in CTAS mode: no backing store
+  // table (a Search table never has one).
   op_options.table_id = catalog::NextId();
 
-  if (!catalog_impl.CreateTable(catalog::NoAccessCheck(), database_id,
-                                schema.name.GetIdentifierName(),
-                                std::move(options), op_options)) {
+  auto catalog_table = catalog_impl.CreateTable(
+    catalog::NoAccessCheck(context), database_id,
+    schema.name.GetIdentifierName(), std::move(options), {}, op_options);
+  if (!catalog_table) {
     return nullptr;
   }
 
-  auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto catalog_table = snapshot->GetTable(
-    catalog::NoAccessCheck(), database_id, schema.name.GetIdentifierName(),
-    table_info.GetTableName().GetIdentifierName());
-  SDB_ASSERT(catalog_table);
-  auto database = snapshot->GetDatabase(database_id);
+  auto database = FindDatabase(&context, database_id);
   SDB_ASSERT(database);
 
   state.ctas_mode = true;
-  state.ctas_database_id = database_id;
-  state.ctas_database_name = database->GetName();
+  state.ctas_database_name = database.Name();
   state.ctas_schema_name = schema.name.GetIdentifierName();
   state.ctas_table_name = table_info.GetTableName().GetIdentifierName();
   return catalog_table;
 }
 
-void RemoveCtasTombstoneIfNeeded(SearchInsertGlobalState& state) {
+void FinalizeCtasIfNeeded(SearchInsertGlobalState& state) {
   if (!state.ctas_mode) {
     return;
   }
-  SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
-  auto& catalog = catalog::GetCatalog();
-  catalog.RemoveTombstone(state.ctas_database_id, state.ctas_schema_name,
-                          state.ctas_table_name);
+  SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
   state.ctas_finalized = true;
 
-  // The CTAS table is now visible; start its background maintenance. CTAS skips
+  // The load is done; start the table's background maintenance. CTAS skips
   // SchemaEntry::CreateTable (which does this for a plain CREATE), so otherwise
   // a CTAS search table would get no background maintenance until the next
-  // boot.
-  auto snapshot = catalog.GetCatalogSnapshot();
-  auto table =
-    snapshot->GetTable(catalog::NoAccessCheck(), state.ctas_database_id,
-                       state.ctas_schema_name, state.ctas_table_name);
-  SDB_ASSERT(table);
-  table->GetData()->StartTasks();
+  // boot. The shard is the one bound at create -- every version shares it.
+  state.search_table->StartTasks();
 }
 
 }  // namespace
 
 SereneDBSearchInsert::SereneDBSearchInsert(
-  duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
+  duckdb::PhysicalPlan& plan, SearchWriteTarget target,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality)
+  duckdb::idx_t estimated_cardinality, bool return_chunk)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
-    _table(std::move(table)) {}
+    _target(std::move(target)),
+    _return_chunk(return_chunk) {}
 
 SereneDBSearchInsert::SereneDBSearchInsert(
   duckdb::PhysicalPlan& plan,
@@ -214,44 +229,36 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchInsertGlobalState>();
   auto& conn_ctx = GetSereneDBContext(context);
 
-  std::shared_ptr<catalog::Table> table;
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+  SearchWriteTarget ctas_target;
   if (_ctas_info) {
-    table = CreateCtasTable(context, *state, *_ctas_info, *_ctas_schema);
+    auto table = CreateCtasTable(context, *state, *_ctas_info, *_ctas_schema);
     if (!table) {
       return nullptr;
     }
-    auto& catalog_impl = catalog::GetCatalog();
-    snapshot = catalog_impl.GetCatalogSnapshot();
-  } else {
-    table = _table;
-    snapshot = conn_ctx.CatalogSnapshot();
+    const auto* entry = FindTableEntryIn(
+      &context, SchemaDatabaseId(&context, table->GetParentId()),
+      table->GetId());
+    if (entry == nullptr) {
+      return nullptr;
+    }
+    ctas_target = CtasWriteTarget(*table, *entry);
   }
+  const auto& target = _ctas_info ? ctas_target : _target;
 
-  state->table_id = table->GetId();
+  state->table_id = target.table_id;
 
-  state->search_table = table->GetData();
+  state->search_table = target.data;
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
-  if (table->PKColumns().empty()) {
-    state->generated_pk_seq =
-      snapshot->GetObject<catalog::Sequence>(table->GetGeneratedPkSeqId());
-    SDB_ASSERT(state->generated_pk_seq);
-  }
-
-  state->column_ids.reserve(table->Columns().size());
-  state->chunk_types.reserve(table->Columns().size());
-  for (const auto& col : table->Columns()) {
-    if (col.GetId() == catalog::Column::kGeneratedPKId) {
-      continue;
-    }
-    state->column_ids.push_back(col.GetId());
-    state->chunk_types.push_back(col.type);
-  }
-
-  state->pk_columns = duckdb_primary_key::BuildPKColumns(*table);
+  state->generated_pk_seq = target.generated_pk_seq;
+  state->column_ids = target.column_ids;
+  state->chunk_types = target.chunk_types;
+  state->pk_columns = target.pk_columns;
 
   state->sdb_txn = &conn_ctx;
+  if (_return_chunk) {
+    state->returned.emplace(context, GetTypes());
+  }
 
   return state;
 }
@@ -269,6 +276,9 @@ SereneDBSearchInsert::GetLocalSinkState(
   }
 
   lstate->bulk = context.pipeline && context.pipeline->GetMaxThreads() > 1;
+  if (_return_chunk) {
+    lstate->returned.emplace(context.client, GetTypes());
+  }
 
   if (lstate->bulk) {
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
@@ -298,10 +308,15 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
 
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =
-    uses_generated_pk ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
-                      : 0;
+    uses_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
   WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
                          gstate.pk_columns, uses_generated_pk, pk_base);
+  if (lstate->returned) {
+    // The chunk is the whole row in table-column order -- the defaults and the
+    // STORED generated columns were resolved into the plan below this sink --
+    // which is exactly what RETURNING projects over.
+    lstate->returned->Append(chunk);
+  }
 
   if (lstate->bulk) {
     if (!lstate->chunk_writer) {
@@ -327,6 +342,11 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
     return duckdb::SinkCombineResultType::FINISHED;
   }
   lstate->sink.reset();
+
+  if (lstate->returned && lstate->returned->Count() != 0) {
+    std::lock_guard<std::mutex> lock(gstate.combine_mu);
+    gstate.returned->Combine(*lstate->returned);
+  }
 
   if (lstate->insert_count == 0) {
     lstate->search_trx.reset();
@@ -356,7 +376,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
   if (gstate.insert_count == 0) {
-    RemoveCtasTombstoneIfNeeded(gstate);
+    FinalizeCtasIfNeeded(gstate);
     return duckdb::SinkFinalizeType::READY;
   }
 
@@ -365,26 +385,38 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
                                               std::move(gstate.bulk_chunks));
   }
 
-  RemoveCtasTombstoneIfNeeded(gstate);
+  FinalizeCtasIfNeeded(gstate);
   return duckdb::SinkFinalizeType::READY;
 }
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
 SereneDBSearchInsert::GetGlobalSourceState(
   duckdb::ClientContext& context) const {
-  return duckdb::make_uniq<SearchInsertSourceState>();
+  auto state = duckdb::make_uniq<SearchInsertSourceState>();
+  if (_return_chunk && sink_state != nullptr) {
+    auto& gstate = sink_state->Cast<SearchInsertGlobalState>();
+    if (gstate.returned) {
+      gstate.returned->InitializeScan(state->scan);
+    }
+  }
+  return state;
 }
 
 duckdb::SourceResultType SereneDBSearchInsert::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSourceInput& input) const {
   auto& source = input.global_state.Cast<SearchInsertSourceState>();
+  auto& gstate = sink_state->Cast<SearchInsertGlobalState>();
+  if (gstate.returned) {
+    gstate.returned->Scan(source.scan, chunk);
+    return chunk.size() == 0 ? duckdb::SourceResultType::FINISHED
+                             : duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+  }
   if (source.finished) {
     return duckdb::SourceResultType::FINISHED;
   }
   source.finished = true;
 
-  auto& gstate = sink_state->Cast<SearchInsertGlobalState>();
   chunk.SetCardinality(1);
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.insert_count));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;

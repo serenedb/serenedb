@@ -18,31 +18,23 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "entry.h"
 
-#include <string>
-#include <vector>
+#include <duckdb/main/database_manager.hpp>
 
-#include "catalog/object.h"
-#include "catalog/table_options.h"
+#include "basics/duckdb_engine.h"
+#include "catalog/identifiers/object_id.h"
 
-namespace sdb::catalog::persistence {
+namespace sdb::catalog {
 
-struct TableData {
-  std::string name;
-  std::vector<Column> columns;
-  std::vector<Column::Id> pk_columns;
-  std::string pk_name;
-  std::vector<CheckConstraint> check_constraints;
-  ObjectId generated_pk_seq_id;
-  TableEngine engine = TableEngine::Transactional;
-  std::vector<TableUnique> unique_constraints;
-  std::vector<TableForeignKey> foreign_keys;
-  Permissions perm;
-  std::string comment;
-  SearchTableOptions search_options;
-  ObjectId pk_constraint_id;
-  ObjectId pk_index_id;
-};
+duckdb::DatabaseManager& IdAllocator() {
+  return duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
+}
 
-}  // namespace sdb::catalog::persistence
+ObjectId NextId() { return ObjectId{IdAllocator().NextOid()}; }
+
+ObjectId NextNIds(uint64_t n) { return ObjectId{IdAllocator().NextOids(n)}; }
+
+void RestoreId(uint64_t id) { IdAllocator().RestoreOid(id); }
+
+}  // namespace sdb::catalog

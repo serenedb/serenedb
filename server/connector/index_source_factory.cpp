@@ -41,7 +41,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids,
+  std::span<const catalog::ColumnId> bind_column_ids,
   duckdb::TableFilterSet* pushed_filters) {
   if (bind_data.IsViewBacked()) {
     const auto& vbd = bind_data.As<ViewScanBindData>();
@@ -58,7 +58,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
     auto fp = *vbd.fast_path;
     // Re-bind must target the same manifest as CREATE INDEX did.
     if (vbd.inverted_index) {
-      if (auto storage = vbd.inverted_index->GetData()) {
+      if (const auto& storage = vbd.inverted_storage) {
         fp.pinned_iceberg_snapshot_id = storage->GetIcebergSnapshotId();
       }
     }
@@ -81,12 +81,10 @@ std::unique_ptr<IndexSource> MakeIndexSource(
       context, std::move(fp), projected_columns, projected_types,
       bind_column_ids, pushed_filters);
   }
-  const auto& tbd = bind_data.As<TableScanBindData>();
-  SDB_ASSERT(tbd.table);
-  SDB_ASSERT(tbd.table_entry);
+  SDB_ASSERT(bind_data.table_entry);
   return std::make_unique<TableRowIdIndexSource>(
-    context, *tbd.table_entry, *tbd.table, projected_columns, projected_types,
-    bind_column_ids, pushed_filters);
+    context, *bind_data.table_entry, bind_data.RelationId(), projected_columns,
+    projected_types, bind_column_ids, pushed_filters);
 }
 
 }  // namespace sdb::connector

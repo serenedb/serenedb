@@ -62,8 +62,10 @@
 #include "basics/log.h"
 #include "basics/misc.hpp"
 #include "basics/system-compiler.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
+#include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
@@ -1159,14 +1161,14 @@ struct RegtypeTextCore {
 struct RegclassTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegclassOut(*ctx.snapshot, oid));
+    EmitEscaped(ctx, RegclassOut(ctx.client, ctx.database, oid));
   }
 };
 
 struct RegnamespaceTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegnamespaceOut(*ctx.snapshot, oid));
+    EmitEscaped(ctx, RegnamespaceOut(ctx.client, oid));
   }
 };
 
@@ -2326,7 +2328,9 @@ void FillContext(const Config& config, SerializationContext& context) {
     context.time_zone.reset(
       icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(tz_name)));
   }
-  context.snapshot = config.CatalogSnapshot().get();
+  context.client = &config.GetClientContext();
+  context.database =
+    connector::GetSereneDBContext(config.GetClientContext()).GetDatabaseId();
   // types_cache stays lazy (GetSerializersCache); record results only.
   context.types_cache.reset();
 }

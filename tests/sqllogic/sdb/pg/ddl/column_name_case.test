@@ -1,0 +1,139 @@
+# Unquoted identifiers are folded at parse time and then matched exactly, as in
+# PostgreSQL, so "A" and "a" are two distinct columns of one table. Every place
+# that keys columns by name -- the definition, the binding, the INSERT column
+# list, ALTER, CTAS -- has to agree with that.
+
+statement ok
+CREATE TABLE mishustin_case ("A" INTEGER, "a" INTEGER, b INTEGER);
+
+query
+SELECT attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'mishustin_case' AND a.attnum > 0 ORDER BY a.attnum;
+----
+attname
+A
+a
+b
+
+statement ok
+INSERT INTO mishustin_case VALUES (1, 2, 3);
+
+# Naming the columns explicitly reaches each of them, in the order given.
+statement ok
+INSERT INTO mishustin_case ("a", "A", b) VALUES (20, 10, 30);
+
+query
+SELECT "A", "a", b FROM mishustin_case ORDER BY b;
+----
+A a b
+1 2 3
+10 20 30
+
+# An unquoted reference folds to lowercase and finds the lowercase column.
+query
+SELECT A, b FROM mishustin_case ORDER BY b;
+----
+a b
+2 3
+20 30
+
+query
+SELECT * FROM mishustin_case ORDER BY b;
+----
+A a b
+1 2 3
+10 20 30
+
+statement ok
+UPDATE mishustin_case SET "A" = 100 WHERE b = 3;
+
+query
+SELECT "A", "a" FROM mishustin_case ORDER BY b;
+----
+A a
+100 2
+10 20
+
+# ADD COLUMN keeps the distinction: "B" joins the existing b.
+statement ok
+ALTER TABLE mishustin_case ADD COLUMN "B" INTEGER;
+
+statement ok
+UPDATE mishustin_case SET "B" = b * 2;
+
+query
+SELECT b, "B" FROM mishustin_case ORDER BY b;
+----
+b B
+3 6
+30 60
+
+statement ok
+ALTER TABLE mishustin_case RENAME COLUMN "A" TO "AA";
+
+query
+SELECT "AA", "a" FROM mishustin_case ORDER BY b;
+----
+AA a
+100 2
+10 20
+
+statement ok
+CREATE INDEX mishustin_case_ix ON mishustin_case ("a");
+
+statement ok
+ALTER TABLE mishustin_case DROP COLUMN "a";
+
+query
+SELECT attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'mishustin_case' AND a.attnum > 0 ORDER BY a.attnum;
+----
+attname
+AA
+b
+B
+
+# CTAS carries both names through rather than suffixing the second one.
+statement ok
+CREATE TABLE zhirinovsky_case ("Q" INTEGER, "q" INTEGER);
+
+statement ok
+INSERT INTO zhirinovsky_case VALUES (7, 8);
+
+statement ok
+CREATE TABLE zhirinovsky_copy AS SELECT * FROM zhirinovsky_case;
+
+query
+SELECT "Q", "q" FROM zhirinovsky_copy;
+----
+Q q
+7 8
+
+statement ok
+CREATE TABLE zhirinovsky_named ("W", "w") AS SELECT * FROM zhirinovsky_case;
+
+query
+SELECT "W", "w" FROM zhirinovsky_named;
+----
+W w
+7 8
+
+# Two columns that differ in nothing but case are still one name when written
+# unquoted, because the parser folds both.
+statement error
+CREATE TABLE zhirinovsky_folded (Xy INTEGER, xY INTEGER);
+----
+db error: ERROR: Column with name xy already exists!
+
+
+statement ok
+DROP TABLE zhirinovsky_named;
+
+statement ok
+DROP TABLE zhirinovsky_copy;
+
+statement ok
+DROP TABLE zhirinovsky_case;
+
+statement ok
+DROP TABLE mishustin_case;

@@ -21,47 +21,28 @@
 #pragma once
 
 #include <duckdb/parser/parsed_data/create_type_info.hpp>
+#include <memory>
 #include <string>
+#include <string_view>
+#include <utility>
 
-#include "catalog/object.h"
+#include "catalog/entry.h"
+#include "catalog/identifiers/object_id.h"
 
-namespace duckdb {
-
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
 inline constexpr std::string kPgSqlTypeOidProp = "sdb_oid";
 
-class PgSqlType final : public Object {
- public:
-  PgSqlType(Permissions perm, ObjectId schema_id, ObjectId id,
-            std::string_view name,
-            duckdb::unique_ptr<duckdb::CreateTypeInfo> info);
+// The array type PG pairs with a scalar one. Allocated together with the
+// scalar, one below it, so neither has to be written down twice.
+constexpr ObjectId TypeArrayOid(ObjectId scalar) noexcept {
+  return ObjectId{scalar.id() - 1};
+}
 
-  static std::shared_ptr<PgSqlType> Deserialize(duckdb::Deserializer& src,
-                                                ReadContext ctx);
-
-  void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
-
-  const duckdb::CreateTypeInfo& GetInfo() const noexcept { return *_info; }
-  duckdb::CreateTypeInfo& GetInfo() noexcept { return *_info; }
-
-  static constexpr ObjectId ToArrayOid(ObjectId scalar) noexcept {
-    return ObjectId{scalar.id() - 1};
-  }
-  ObjectId GetArrayOid() const noexcept { return ToArrayOid(GetId()); }
-
-  const duckdb::LogicalType& GetLogicalType() const noexcept {
-    SDB_ASSERT(_info);
-    return _info->type;
-  }
-
- private:
-  duckdb::unique_ptr<duckdb::CreateTypeInfo> _info;
-};
+// Stamps the type's own name and stable id into its extension info, so a
+// LogicalType read back from a column, a parameter or a wire description still
+// names the catalog row it came from.
+duckdb::LogicalType StampUserType(const duckdb::LogicalType& type,
+                                  std::string_view name, ObjectId id);
 
 }  // namespace sdb::catalog

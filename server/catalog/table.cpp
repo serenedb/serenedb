@@ -22,520 +22,799 @@
 #include "table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/common/types/value.hpp>
+#include <duckdb/parser/constraints/check_constraint.hpp>
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <memory>
 #include <ranges>
+#include <span>
+#include <string>
 #include <utility>
 
-#include "auth/acl.h"
-#include "basics/down_cast.h"
-#include "basics/serializer.h"
 #include "catalog/column_expr.h"
-#include "catalog/persistence/table.h"
-#include "database/ticks.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "query/config_variable_names.h"
 
 namespace sdb::catalog {
 namespace {
 
-using persistence::TableData;
+// Re-points the column references of a stored expression -- a CHECK body, a
+// DEFAULT, a generated column -- at a column's new name. The store table
+// carries the user's own column names, so an expression that still names the
+// old one would no longer describe the constraint the rows are checked
+// against; postgres rewrites these on rename for the same reason.
+void RenameExprRefs(duckdb::ParsedExpression& expr, std::string_view old_name,
+                    std::string_view new_name) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+    auto& ref = expr.Cast<duckdb::ColumnRefExpression>();
+    auto& names = ref.ColumnNamesMutable();
+    if (!names.empty() && names.back().GetIdentifierName() == old_name) {
+      names.back() = duckdb::Identifier{std::string{new_name}};
+    }
+    return;
+  }
+  duckdb::ParsedExpressionIterator::EnumerateChildren(
+    expr, [&](duckdb::ParsedExpression& child) {
+      RenameExprRefs(child, old_name, new_name);
+    });
+}
+
+// Whether `expr` names `column`. Postgres drops every constraint that
+// references a column with the column; leaving a CHECK behind that names one
+// the table no longer lists makes the table permanently un-insertable, because
+// binding the constraint is part of binding the write.
+bool ExprNamesColumn(const duckdb::ParsedExpression& expr,
+                     std::string_view column) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+    const auto& names = expr.Cast<duckdb::ColumnRefExpression>().ColumnNames();
+    return !names.empty() && names.back().GetIdentifierName() == column;
+  }
+  bool found = false;
+  duckdb::ParsedExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::ParsedExpression& child) {
+      found = found || ExprNamesColumn(child, column);
+    });
+  return found;
+}
+
+constexpr std::string_view kSearchEngineTag = "search";
+constexpr std::string_view kTransactionalEngineTag = "transactional";
+
+std::string_view TagValue(const TableTags& tags,
+                          std::string_view key) noexcept {
+  const auto it = tags.find(std::string{key});
+  return it == tags.end() ? std::string_view{} : it->second;
+}
+
+template<typename T>
+T TagUint(const TableTags& tags, std::string_view key) noexcept {
+  T parsed = 0;
+  return absl::SimpleAtoi(TagValue(tags, key), &parsed) ? parsed : T{0};
+}
 
 }  // namespace
 
-Table::Table(Permissions perm, ObjectId schema_id, ObjectId id,
-             std::string_view name, std::vector<Column> columns,
-             std::vector<Column::Id> pk_columns,
-             std::vector<CheckConstraint> check_constraints,
-             ObjectId generated_pk_seq_id, TableEngine engine,
-             std::vector<TableUnique> unique_constraints,
-             std::vector<TableForeignKey> foreign_keys, std::string pk_name,
-             ObjectId pk_constraint_id, ObjectId pk_index_id)
-  : Object{std::move(perm), schema_id, id, std::string{name},
-           ObjectType::Table},
-    _columns{std::move(columns)},
-    _pk_columns{std::move(pk_columns)},
-    _pk_name{std::move(pk_name)},
-    _pk_constraint_id{pk_constraint_id},
-    _pk_index_id{pk_index_id},
-    _check_constraints{std::move(check_constraints)},
-    _generated_pk_seq_id{generated_pk_seq_id},
-    _engine{engine},
-    _unique_constraints{std::move(unique_constraints)},
-    _foreign_keys{std::move(foreign_keys)} {
-  _column_index.reserve(_columns.size());
-  for (auto& col : _columns) {
-    col.SetParentId(_id);
-    _column_index.emplace(col.GetId(), &col);
+void WriteTableTags(TableTags& tags, TableEngine engine,
+                    const SearchTableOptions& search_options,
+                    ObjectId generated_pk_seq_id) {
+  // duckdb's insert is first-write-wins, so a rewrite has to clear first: this
+  // is the one writer of all four keys and it must be idempotent.
+  for (const auto& key :
+       {kStorageOption, kRefreshIntervalSetting, kCompactionIntervalSetting,
+        kCleanupIntervalStepSetting, kGeneratedPkSeqTag}) {
+    if (const auto it = tags.find(std::string{key}); it != tags.end()) {
+      tags.erase(it);
+    }
   }
-  for (auto& c : _check_constraints) {
-    c.SetParentId(_id);
+  tags.insert(
+    std::string{kStorageOption},
+    std::string{engine == TableEngine::Search ? kSearchEngineTag
+                                              : kTransactionalEngineTag});
+  // The intervals are resolved from session defaults at CREATE and only mean
+  // anything to the engine that runs them, so a transactional table carries no
+  // key at all rather than three zeroes.
+  if (engine == TableEngine::Search) {
+    tags.insert(std::string{kRefreshIntervalSetting},
+                absl::StrCat(search_options.refresh_interval_ms));
+    tags.insert(std::string{kCompactionIntervalSetting},
+                absl::StrCat(search_options.compaction_interval_ms));
+    tags.insert(std::string{kCleanupIntervalStepSetting},
+                absl::StrCat(search_options.cleanup_interval_step));
   }
-  // Constraint ids are plain ObjectId fields, not Objects: nothing else
-  // advances the tick allocator past them on catalog load.
-  UpdateTickServer(_pk_constraint_id.id());
-  UpdateTickServer(_pk_index_id.id());
-  for (const auto& u : _unique_constraints) {
-    UpdateTickServer(u.id.id());
-    UpdateTickServer(u.index_id.id());
-  }
-  for (const auto& fk : _foreign_keys) {
-    UpdateTickServer(fk.id.id());
+  if (generated_pk_seq_id.isSet()) {
+    tags.insert(std::string{kGeneratedPkSeqTag},
+                absl::StrCat(generated_pk_seq_id.id()));
   }
 }
 
-bool Table::IsColumnNotNull(Column::Id col_id) const {
-  const auto* col = ColumnById(col_id);
-  if (!col) {
-    return false;
+TableEngine ReadTableEngineTag(const TableTags& tags) noexcept {
+  return TagValue(tags, kStorageOption) == kSearchEngineTag
+           ? TableEngine::Search
+           : TableEngine::Transactional;
+}
+
+SearchTableOptions ReadSearchOptionTags(const TableTags& tags) noexcept {
+  return {
+    .refresh_interval_ms = TagUint<uint32_t>(tags, kRefreshIntervalSetting),
+    .compaction_interval_ms =
+      TagUint<uint32_t>(tags, kCompactionIntervalSetting),
+    .cleanup_interval_step =
+      TagUint<uint32_t>(tags, kCleanupIntervalStepSetting),
+  };
+}
+
+ObjectId ReadGeneratedPkSeqTag(const TableTags& tags) noexcept {
+  return ObjectId{TagUint<uint64_t>(tags, kGeneratedPkSeqTag)};
+}
+
+namespace {
+
+// Where a constraint sits in the list. The list is grouped -- NOT NULL,
+// primary key, unique, foreign key, check -- and that is the order the rows
+// behind the entry are verified in, so a mutation adding one puts it at the
+// end of its own group rather than at the end of the list.
+enum class ConstraintGroup : uint8_t {
+  NotNull,
+  PrimaryKey,
+  Unique,
+  ForeignKey,
+  Check,
+};
+
+ConstraintGroup GroupOf(const duckdb::Constraint& constraint) noexcept {
+  switch (constraint.type) {
+    case duckdb::ConstraintType::NOT_NULL:
+      return ConstraintGroup::NotNull;
+    case duckdb::ConstraintType::UNIQUE:
+      return constraint.Cast<duckdb::UniqueConstraint>().IsPrimaryKey()
+               ? ConstraintGroup::PrimaryKey
+               : ConstraintGroup::Unique;
+    case duckdb::ConstraintType::FOREIGN_KEY:
+      return ConstraintGroup::ForeignKey;
+    default:
+      return ConstraintGroup::Check;
   }
-  const std::string_view name = col->GetName();
-  return absl::c_any_of(_check_constraints, [&](const auto& cc) {
-    return cc.NotNullColumnName() == name;
+}
+
+void InsertConstraint(duckdb::CreateTableInfo& info,
+                      duckdb::unique_ptr<duckdb::Constraint> constraint) {
+  const auto group = GroupOf(*constraint);
+  auto& list = info.constraints;
+  auto it = list.begin();
+  while (it != list.end() && GroupOf(**it) <= group) {
+    ++it;
+  }
+  list.insert(it, std::move(constraint));
+}
+
+// The primary key of `info`, or null when it declares none.
+const duckdb::UniqueConstraint* FindPrimaryKey(
+  const duckdb::CreateTableInfo& info) noexcept {
+  for (const auto& constraint : info.constraints) {
+    if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+      continue;
+    }
+    const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+    if (unique.IsPrimaryKey()) {
+      return &unique;
+    }
+  }
+  return nullptr;
+}
+
+bool NameTaken(const duckdb::CreateTableInfo& info, std::string_view name) {
+  return absl::c_any_of(info.constraints, [&](const auto& constraint) {
+    return constraint->constraint_name == name;
   });
 }
 
-void Table::RebuildColumnIndex() {
-  _column_index.clear();
-  _column_index.reserve(_columns.size());
-  for (auto& col : _columns) {
-    _column_index.emplace(col.GetId(), &col);
+// `name`, with a counter appended until no constraint answers to it. PG's own
+// way of naming a constraint the user did not.
+std::string UniqueConstraintName(const duckdb::CreateTableInfo& info,
+                                 std::string name) {
+  for (size_t counter = 1; NameTaken(info, name); ++counter) {
+    name = absl::StrCat(name, counter);
   }
+  return name;
 }
 
-std::shared_ptr<Table> Table::Deserialize(duckdb::Deserializer& src,
-                                          ReadContext ctx) {
-  TableData data;
-  basics::ReadTuple(src, data);
-  auto table = std::make_shared<Table>(
-    std::move(data.perm), ctx.schema_id, ctx.id, data.name,
-    std::move(data.columns), std::move(data.pk_columns),
-    std::move(data.check_constraints), data.generated_pk_seq_id, data.engine,
-    std::move(data.unique_constraints), std::move(data.foreign_keys),
-    std::move(data.pk_name), data.pk_constraint_id, data.pk_index_id);
-  table->_comment = std::move(data.comment);
-  table->_search_options = data.search_options;
-  return table;
-}
-
-void Table::Serialize(duckdb::Serializer& sink) const {
-  TableData data{
-    .name = std::string{GetName()},
-    .columns = _columns,
-    .pk_columns = _pk_columns,
-    .pk_name = _pk_name,
-    .check_constraints = _check_constraints,
-    .generated_pk_seq_id = _generated_pk_seq_id,
-    .engine = _engine,
-    .unique_constraints = _unique_constraints,
-    .foreign_keys = _foreign_keys,
-    .perm = GetPermissions(),
-    .comment = _comment,
-    .search_options = _search_options,
-    .pk_constraint_id = _pk_constraint_id,
-    .pk_index_id = _pk_index_id,
-  };
-  basics::WriteTuple(sink, data);
-}
-
-void Table::RenameColumn(std::shared_ptr<Table>& result,
-                         std::string_view old_name,
-                         std::string_view new_name) const {
-  auto column_it = _columns.end();
-  for (auto it = _columns.begin(); it != _columns.end(); ++it) {
-    if (it->GetName() == new_name) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-                      ERR_MSG("column \"", new_name, "\" of relation \"",
-                              GetName(), "\" already exists"));
+// The NOT NULL covering `column`, if there is one.
+const duckdb::NotNullConstraint* FindNotNull(
+  const duckdb::CreateTableInfo& info,
+  const duckdb::ColumnDefinition& column) noexcept {
+  for (const auto& constraint : info.constraints) {
+    if (constraint->type != duckdb::ConstraintType::NOT_NULL) {
+      continue;
     }
-    if (it->GetName() == old_name) {
-      column_it = it;
+    const auto& not_null = constraint->Cast<duckdb::NotNullConstraint>();
+    if (not_null.index == column.Logical()) {
+      return &not_null;
     }
   }
-  if (column_it == _columns.end()) {
+  return nullptr;
+}
+
+std::string_view CommentText(const duckdb::Value& comment) noexcept {
+  return comment.IsNull() ? std::string_view{}
+                          : duckdb::StringValue::Get(comment);
+}
+
+duckdb::Value CommentValue(std::string_view comment) {
+  return comment.empty() ? duckdb::Value{}
+                         : duckdb::Value{std::string{comment}};
+}
+
+// The key `ids` names, as the column names a duckdb constraint spells its key
+// with. The columns must exist and must be keyable: ART has no nested-type key,
+// so the store cannot enforce a key over one, and letting ALTER through would
+// leave a key the catalog reports and nothing checks.
+duckdb::vector<duckdb::Identifier> RequireKeyColumns(
+  const CreateTableInfo& info, std::span<const ObjectId> ids,
+  std::string_view what) {
+  duckdb::vector<duckdb::Identifier> names;
+  names.reserve(ids.size());
+  for (const auto column_id : ids) {
+    const auto* column = info.ColumnById(column_id);
+    if (column == nullptr) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column does not exist"));
+    }
+    if (column->Type().IsNested()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(what, " column \"", column->Name().GetIdentifierName(),
+                "\" has unsupported nested type ", column->Type().ToString()));
+    }
+    names.push_back(column->Name());
+  }
+  return names;
+}
+
+[[noreturn]] void ThrowNoSuchColumn(const CreateTableInfo& info,
+                                    std::string_view column_name) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                  ERR_MSG("column \"", column_name, "\" of relation \"",
+                          info.GetName(), "\" does not exist"));
+}
+
+const duckdb::ColumnDefinition& RequireColumn(const CreateTableInfo& info,
+                                              std::string_view column_name) {
+  const auto* column = info.ColumnByName(column_name);
+  if (column == nullptr) {
+    ThrowNoSuchColumn(info, column_name);
+  }
+  return *column;
+}
+
+}  // namespace
+
+CreateTableInfo::CreateTableInfo() {
+  // SereneDB folds unquoted identifiers at parse time and then matches exactly,
+  // so `t("A" int, "a" int)` is two columns -- duckdb's case-insensitive keying
+  // would refuse the second one. Set here rather than at each build site: a
+  // list that loses the keying loses one of the two columns on the next ALTER.
+  columns = duckdb::ColumnList(/*allow_duplicate_names=*/false,
+                               /*case_sensitive=*/true);
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> CreateTableInfo::Copy() const {
+  auto copy = duckdb::make_uniq<CreateTableInfo>();
+  CopyProperties(*copy);
+  copy->SetQualifiedName(GetQualifiedName());
+  copy->columns = columns.Copy();
+  for (const auto& constraint : constraints) {
+    copy->constraints.push_back(constraint->Copy());
+  }
+  for (const auto& partition : partition_keys) {
+    copy->partition_keys.push_back(partition->Copy());
+  }
+  for (const auto& order : sort_keys) {
+    copy->sort_keys.push_back(order->Copy());
+  }
+  for (const auto& option : options) {
+    copy->options.emplace(option.first, option.second->Copy());
+  }
+  if (query) {
+    copy->query =
+      duckdb::unique_ptr_cast<duckdb::SQLStatement, duckdb::SelectStatement>(
+        query->Copy());
+  }
+  copy->_column_acls = _column_acls;
+  return copy;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::Clone() const {
+  return std::shared_ptr<CreateTableInfo>{
+    static_cast<CreateTableInfo*>(Copy().release())};
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::Adopt(
+  duckdb::CreateTableInfo& base) {
+  auto info = std::make_shared<CreateTableInfo>();
+  base.CopyProperties(*info);
+  info->SetQualifiedName(base.GetQualifiedName());
+  info->columns = std::move(base.columns);
+  info->constraints = std::move(base.constraints);
+  info->partition_keys = std::move(base.partition_keys);
+  info->sort_keys = std::move(base.sort_keys);
+  info->options = std::move(base.options);
+  info->query = std::move(base.query);
+  return info;
+}
+
+const duckdb::ColumnDefinition* CreateTableInfo::ColumnById(
+  ObjectId column_id) const noexcept {
+  if (!column_id.isSet()) {
+    return nullptr;
+  }
+  for (const auto& column : columns.Logical()) {
+    if (column.HostId() == column_id.id()) {
+      return &column;
+    }
+  }
+  return nullptr;
+}
+
+const duckdb::ColumnDefinition* CreateTableInfo::ColumnByName(
+  std::string_view name) const noexcept {
+  for (const auto& column : columns.Logical()) {
+    if (column.Name().GetIdentifierName() == name) {
+      return &column;
+    }
+  }
+  return nullptr;
+}
+
+bool CreateTableInfo::IsColumnNotNull(ObjectId column_id) const noexcept {
+  const auto* column = ColumnById(column_id);
+  return column != nullptr && FindNotNull(*this, *column) != nullptr;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::RenameColumn(
+  std::string_view old_name, std::string_view new_name) const {
+  if (ColumnByName(new_name) != nullptr) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+                    ERR_MSG("column \"", new_name, "\" of relation \"",
+                            GetName(), "\" already exists"));
+  }
+  if (ColumnByName(old_name) == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                     ERR_MSG("column \"", old_name, "\" does not exist"));
   }
-
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_columns[std::distance(_columns.begin(), column_it)].SetName(
-    new_name);
-  result = std::move(new_table);
+  auto next = Clone();
+  // Rebuilt rather than edited: the name is the list's key, so a rename has to
+  // go through AddColumn to re-key it.
+  auto renamed = duckdb::ColumnList(/*allow_duplicate_names=*/false,
+                                    /*case_sensitive=*/true);
+  for (const auto& column : next->columns.Logical()) {
+    auto copy = column.Copy();
+    if (copy.Name().GetIdentifierName() == old_name) {
+      copy.SetName(duckdb::Identifier{new_name});
+    }
+    // The copy owns its expression, so rewriting it in place cannot reach the
+    // version being replaced.
+    if (copy.Generated()) {
+      RenameExprRefs(copy.GeneratedExpressionMutable(), old_name, new_name);
+    } else if (copy.HasDefaultValue()) {
+      auto expr = copy.DefaultValue().Copy();
+      RenameExprRefs(*expr, old_name, new_name);
+      copy.SetDefaultValue(std::move(expr));
+    }
+    renamed.AddColumn(std::move(copy));
+  }
+  next->columns = std::move(renamed);
+  // A constraint spells its key with column names, so every one of them moves
+  // with the column -- what the ids do for the catalog, the names do here.
+  const duckdb::Identifier replacement{new_name};
+  auto rename_names = [&](duckdb::vector<duckdb::Identifier>& names) {
+    for (auto& name : names) {
+      if (name.GetIdentifierName() == old_name) {
+        name = replacement;
+      }
+    }
+  };
+  for (auto& constraint : next->constraints) {
+    switch (constraint->type) {
+      case duckdb::ConstraintType::CHECK:
+        RenameExprRefs(*constraint->Cast<duckdb::CheckConstraint>().expression,
+                       old_name, new_name);
+        break;
+      case duckdb::ConstraintType::UNIQUE:
+        rename_names(
+          constraint->Cast<duckdb::UniqueConstraint>().GetColumnNamesMutable());
+        break;
+      case duckdb::ConstraintType::FOREIGN_KEY: {
+        auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+        rename_names(fk.fk_columns);
+        // Only a self-reference names this table's columns on both sides.
+        if (fk.info.type ==
+            duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
+          rename_names(fk.pk_columns);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return next;
 }
 
-void Table::RenameConstraint(std::shared_ptr<Table>& result,
-                             std::string_view old_name,
-                             std::string_view new_name) const {
-  // new_name must be free across every constraint on the table.
-  auto name_taken = [&](std::string_view n) {
-    return absl::c_any_of(_check_constraints,
-                          [&](const auto& c) { return c.GetName() == n; }) ||
-           absl::c_any_of(_unique_constraints,
-                          [&](const auto& u) { return u.name == n; }) ||
-           absl::c_any_of(_foreign_keys,
-                          [&](const auto& f) { return f.name == n; }) ||
-           _pk_name == n;
-  };
-  if (name_taken(new_name)) {
+std::shared_ptr<CreateTableInfo> CreateTableInfo::RenameConstraint(
+  std::string_view old_name, std::string_view new_name) const {
+  if (NameTaken(*this, new_name)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("constraint \"", new_name, "\" for relation \"",
                             GetName(), "\" already exists"));
   }
-  auto new_table = basics::downCast<Table>(Clone());
-  for (auto& c : new_table->_check_constraints) {
-    if (c.GetName() == old_name) {
-      c.SetName(new_name);
-      result = std::move(new_table);
-      return;
+  auto next = Clone();
+  for (auto& constraint : next->constraints) {
+    if (constraint->constraint_name == old_name) {
+      constraint->constraint_name = std::string{new_name};
+      return next;
     }
-  }
-  for (auto& u : new_table->_unique_constraints) {
-    if (u.name == old_name) {
-      u.name = std::string{new_name};
-      result = std::move(new_table);
-      return;
-    }
-  }
-  for (auto& f : new_table->_foreign_keys) {
-    if (f.name == old_name) {
-      f.name = std::string{new_name};
-      result = std::move(new_table);
-      return;
-    }
-  }
-  if (new_table->_pk_name == old_name) {
-    new_table->_pk_name = std::string{new_name};
-    result = std::move(new_table);
-    return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                   ERR_MSG("constraint \"", old_name, "\" for table \"",
                           GetName(), "\" does not exist"));
 }
 
-void Table::DropCheckConstraint(std::shared_ptr<Table>& result,
-                                std::string_view constraint_name,
-                                bool missing_ok) const {
-  auto new_table = basics::downCast<Table>(Clone());
-  if (auto it = absl::c_find_if(new_table->_check_constraints,
-                                [&](const CheckConstraint& c) {
-                                  return c.GetName() == constraint_name;
-                                });
-      it != new_table->_check_constraints.end()) {
-    new_table->_check_constraints.erase(it);
-    result = std::move(new_table);
-    return;
-  }
-  if (auto it = absl::c_find_if(
-        new_table->_unique_constraints,
-        [&](const TableUnique& u) { return u.name == constraint_name; });
-      it != new_table->_unique_constraints.end()) {
-    new_table->_unique_constraints.erase(it);
-    result = std::move(new_table);
-    return;
-  }
-  if (auto it = absl::c_find_if(
-        new_table->_foreign_keys,
-        [&](const TableForeignKey& f) { return f.name == constraint_name; });
-      it != new_table->_foreign_keys.end()) {
-    new_table->_foreign_keys.erase(it);
-    result = std::move(new_table);
-    return;
-  }
-  if (!new_table->_pk_columns.empty() &&
-      new_table->_pk_name == constraint_name) {
-    new_table->_pk_columns.clear();
-    new_table->_pk_name.clear();
-    new_table->_pk_constraint_id = ObjectId{};
-    new_table->_pk_index_id = ObjectId{};
-    result = std::move(new_table);
-    return;
+std::shared_ptr<CreateTableInfo> CreateTableInfo::DropConstraint(
+  std::string_view name, bool missing_ok) const {
+  auto next = Clone();
+  const auto erased =
+    std::erase_if(next->constraints, [&](const auto& constraint) {
+      return constraint->constraint_name == name;
+    });
+  if (erased != 0) {
+    return next;
   }
   if (missing_ok) {
-    return;
+    return nullptr;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                  ERR_MSG("constraint \"", constraint_name, "\" of relation \"",
-                          GetName(), "\" does not exist"));
+                  ERR_MSG("constraint \"", name, "\" of relation \"", GetName(),
+                          "\" does not exist"));
 }
 
-void Table::SetNotNull(std::shared_ptr<Table>& result,
-                       std::string_view column_name) const {
-  auto col = absl::c_find_if(
-    _columns, [&](const Column& c) { return c.GetName() == column_name; });
-  if (col == _columns.end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column_name, "\" of relation \"",
-                            GetName(), "\" does not exist"));
-  }
-  // Idempotent: SET NOT NULL on an already-NOT NULL column is a no-op.
-  for (const auto& c : _check_constraints) {
-    auto idx = c.IsNotNull(_columns);
-    if (idx && _columns[*idx].GetId() == col->GetId()) {
-      result = basics::downCast<Table>(Clone());
-      return;
-    }
-  }
-  auto name = absl::StrCat(GetName(), "_", column_name, "_not_null");
-  for (size_t counter = 1; absl::c_any_of(
-         _check_constraints,
-         [&](const CheckConstraint& c) { return c.GetName() == name; });
-       ++counter) {
-    name = absl::StrCat(GetName(), "_", column_name, "_not_null", counter);
-  }
-  auto col_ref = duckdb::make_uniq<duckdb::ColumnRefExpression>(
-    duckdb::Identifier{column_name});
-  auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
-    duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_check_constraints.emplace_back(
-    new_table->GetId(), NextId(), name,
-    std::make_shared<ColumnExpr>(std::move(is_not_null)));
-  result = std::move(new_table);
-}
-
-void Table::DropNotNull(std::shared_ptr<Table>& result,
-                        std::string_view column_name) const {
-  auto col = absl::c_find_if(
-    _columns, [&](const Column& c) { return c.GetName() == column_name; });
-  if (col == _columns.end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column_name, "\" of relation \"",
-                            GetName(), "\" does not exist"));
-  }
-  auto new_table = basics::downCast<Table>(Clone());
-  std::erase_if(new_table->_check_constraints, [&](const CheckConstraint& c) {
-    auto idx = c.IsNotNull(new_table->_columns);
-    return idx && new_table->_columns[*idx].GetId() == col->GetId();
+std::shared_ptr<CreateTableInfo> CreateTableInfo::DropConstraint(
+  ObjectId constraint_id) const {
+  SDB_ASSERT(constraint_id.isSet());
+  auto next = Clone();
+  std::erase_if(next->constraints, [&](const auto& constraint) {
+    return constraint->host_id == constraint_id.id();
   });
-  result = std::move(new_table);
+  return next;
 }
 
-void Table::SetDefault(std::shared_ptr<Table>& result,
-                       std::string_view column_name,
-                       std::shared_ptr<ColumnExpr> expr) const {
-  auto it = absl::c_find_if(
-    _columns, [&](const Column& c) { return c.GetName() == column_name; });
-  if (it == _columns.end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column_name, "\" of relation \"",
-                            GetName(), "\" does not exist"));
+std::shared_ptr<CreateTableInfo> CreateTableInfo::SetNotNull(
+  std::string_view column_name, ObjectId constraint_id) const {
+  const auto& column = RequireColumn(*this, column_name);
+  // Idempotent: SET NOT NULL on an already-NOT NULL column still writes a new
+  // version, so the statement's own bookkeeping runs, but changes nothing.
+  if (FindNotNull(*this, column) != nullptr) {
+    return Clone();
   }
-  // A generated column stores its generated expression in `expr`; setting a
-  // default would clobber it.
-  if (it->IsGenerated()) {
+  auto next = Clone();
+  auto not_null =
+    duckdb::make_uniq<duckdb::NotNullConstraint>(column.Logical());
+  not_null->constraint_name = UniqueConstraintName(
+    *next, absl::StrCat(GetName(), "_", column_name, "_not_null"));
+  not_null->host_id = constraint_id.id();
+  InsertConstraint(*next, std::move(not_null));
+  return next;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::DropNotNull(
+  std::string_view column_name) const {
+  const auto& column = RequireColumn(*this, column_name);
+  const auto logical = column.Logical();
+  auto next = Clone();
+  std::erase_if(next->constraints, [&](const auto& constraint) {
+    return constraint->type == duckdb::ConstraintType::NOT_NULL &&
+           constraint->template Cast<duckdb::NotNullConstraint>().index ==
+             logical;
+  });
+  return next;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::SetDefault(
+  std::string_view column_name,
+  duckdb::unique_ptr<duckdb::ParsedExpression> expr) const {
+  const auto& column = RequireColumn(*this, column_name);
+  // A generated column keeps its generated expression where a default would
+  // go; setting one would clobber it.
+  if (column.Generated()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("cannot set a default on generated column \"",
                             column_name, "\""));
   }
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_columns[std::distance(_columns.begin(), it)].expr =
-    std::move(expr);
-  result = std::move(new_table);
+  auto next = Clone();
+  next->columns.GetColumnMutable(column.Logical())
+    .SetDefaultValue(std::move(expr));
+  return next;
 }
 
-void Table::SetComment(std::shared_ptr<Table>& result,
-                       std::string_view comment) const {
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_comment = std::string{comment};
-  result = std::move(new_table);
-}
-
-void Table::SetColumnComment(std::shared_ptr<Table>& result,
-                             std::string_view column_name,
-                             std::string_view comment) const {
-  auto it = absl::c_find_if(
-    _columns, [&](const Column& c) { return c.GetName() == column_name; });
-  if (it == _columns.end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column_name, "\" of relation \"",
-                            GetName(), "\" does not exist"));
+std::shared_ptr<CreateTableInfo> CreateTableInfo::DropColumnDefault(
+  ObjectId column_id) const {
+  auto next = Clone();
+  if (const auto* column = next->ColumnById(column_id); column != nullptr) {
+    SDB_ASSERT(!column->Generated());
+    next->columns.GetColumnMutable(column->Logical()).SetDefaultValue(nullptr);
   }
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_columns[std::distance(_columns.begin(), it)].comment =
-    std::string{comment};
-  result = std::move(new_table);
+  return next;
 }
 
-void Table::AddCheckConstraint(std::shared_ptr<Table>& result, std::string name,
-                               std::shared_ptr<ColumnExpr> expr) const {
-  for (size_t counter = 1; absl::c_any_of(
-         _check_constraints,
-         [&](const CheckConstraint& c) { return c.GetName() == name; });
-       ++counter) {
-    name = absl::StrCat(name, counter);
-  }
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_check_constraints.emplace_back(new_table->GetId(), NextId(), name,
-                                             std::move(expr));
-  result = std::move(new_table);
+std::shared_ptr<CreateTableInfo> CreateTableInfo::AddCheckConstraint(
+  std::string name, duckdb::unique_ptr<duckdb::ParsedExpression> expr,
+  ObjectId constraint_id) const {
+  auto next = Clone();
+  auto check = duckdb::make_uniq<duckdb::CheckConstraint>(std::move(expr));
+  check->constraint_name = UniqueConstraintName(*next, std::move(name));
+  check->host_id = constraint_id.id();
+  InsertConstraint(*next, std::move(check));
+  return next;
 }
 
-void Table::AddPrimaryKey(std::shared_ptr<Table>& result,
-                          std::vector<Column::Id> pk_columns,
-                          std::string name) const {
-  if (!_pk_columns.empty()) {
+std::shared_ptr<CreateTableInfo> CreateTableInfo::AddPrimaryKey(
+  std::span<const ObjectId> pk_columns, std::string name,
+  const PrimaryKeyIds& ids) const {
+  if (FindPrimaryKey(*this) != nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
                     ERR_MSG("multiple primary keys for table \"", GetName(),
                             "\" are not allowed"));
   }
-  for (auto col_id : pk_columns) {
-    if (!ColumnById(col_id)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                      ERR_MSG("column does not exist"));
+  auto names = RequireKeyColumns(*this, pk_columns, "primary key");
+  SDB_ASSERT(ids.not_null_ids.size() == pk_columns.size());
+  auto next = Clone();
+  auto key =
+    duckdb::make_uniq<duckdb::UniqueConstraint>(names,
+                                                /*is_primary_key=*/true);
+  key->constraint_name =
+    name.empty() ? absl::StrCat(GetName(), "_pkey") : std::move(name);
+  key->host_id = ids.constraint_id.id();
+  key->host_index_id = ids.index_id.id();
+  InsertConstraint(*next, std::move(key));
+  // A PK implies NOT NULL on each key column, written through SetNotNull so the
+  // implied constraints match the CREATE-TABLE-with-PK path exactly.
+  for (size_t i = 0; i != names.size(); ++i) {
+    next = next->SetNotNull(names[i].GetIdentifierName(), ids.not_null_ids[i]);
+  }
+  return next;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::AddUniqueConstraint(
+  std::span<const ObjectId> columns_p, std::string name, ObjectId constraint_id,
+  ObjectId index_id) const {
+  auto names = RequireKeyColumns(*this, columns_p, "unique constraint");
+  auto next = Clone();
+  auto unique = duckdb::make_uniq<duckdb::UniqueConstraint>(
+    names, /*is_primary_key=*/false);
+  unique->constraint_name =
+    name.empty()
+      ? absl::StrCat(GetName(), "_", names.front().GetIdentifierName(), "_key")
+      : std::move(name);
+  unique->host_id = constraint_id.id();
+  unique->host_index_id = index_id.id();
+  InsertConstraint(*next, std::move(unique));
+  return next;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::AddColumn(
+  duckdb::ColumnDefinition column, bool if_not_exists) const {
+  const auto column_name = column.Name().GetIdentifierName();
+  if (ColumnByName(column_name) != nullptr) {
+    if (if_not_exists) {
+      return nullptr;
     }
-  }
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_pk_columns = pk_columns;
-  new_table->_pk_name = std::move(name);
-  new_table->_pk_constraint_id = NextId();
-  new_table->_pk_index_id = NextId();
-  // A PK implies NOT NULL on each key column. Reuse SetNotNull so the implied
-  // not-null CHECKs match the CREATE-TABLE-with-PK path exactly. Iterate the
-  // local `pk_columns`: SetNotNull reassigns new_table below, which would free
-  // the object a range-for over new_table->_pk_columns binds to.
-  for (auto col_id : pk_columns) {
-    const auto* col = new_table->ColumnById(col_id);
-    std::shared_ptr<Table> tmp;
-    new_table->SetNotNull(tmp, col->GetName());
-    new_table = basics::downCast<Table>(std::move(tmp));
-  }
-  result = std::move(new_table);
-}
-
-void Table::AddUniqueConstraint(std::shared_ptr<Table>& result,
-                                std::vector<Column::Id> columns,
-                                std::string name) const {
-  for (auto col_id : columns) {
-    if (!ColumnById(col_id)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                      ERR_MSG("column does not exist"));
-    }
-  }
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_unique_constraints.push_back(
-    TableUnique{std::move(name), std::move(columns), NextId(), NextId()});
-  result = std::move(new_table);
-}
-
-std::shared_ptr<Object> Table::Clone() const {
-  auto cloned = std::make_shared<Table>(
-    GetPermissions(), GetParentId(), GetId(), GetName(), _columns, _pk_columns,
-    _check_constraints, _generated_pk_seq_id, _engine, _unique_constraints,
-    _foreign_keys, _pk_name, _pk_constraint_id, _pk_index_id);
-  cloned->SetTombstoned(Tombstoned());
-  cloned->SetData(_data);
-  cloned->_comment = _comment;
-  cloned->_search_options = _search_options;
-  return cloned;
-}
-
-void Table::ChangeColumnAcl(std::shared_ptr<Table>& result,
-                            std::string_view column_name,
-                            absl::FunctionRef<void(Acl&)> mutate) const {
-  auto it = absl::c_find_if(
-    _columns, [&](const Column& c) { return c.GetName() == column_name; });
-  if (it == _columns.end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
                     ERR_MSG("column \"", column_name, "\" of relation \"",
-                            GetName(), "\" does not exist"));
+                            GetName(), "\" already exists"));
   }
-
-  auto new_table = basics::downCast<Table>(Clone());
-  auto& column = new_table->_columns[std::distance(_columns.begin(), it)];
-  auto acl = column.GetPermissions().acl;
-  mutate(acl);
-  column.SetPermissions(Permissions{ObjectId{}, std::move(acl)});
-  result = std::move(new_table);
+  SDB_ASSERT(column.HostId() != 0);
+  auto next = Clone();
+  next->columns.AddColumn(std::move(column));
+  return next;
 }
 
-std::shared_ptr<Table> Table::DropColumnDefault(Column::Id column_id) const {
-  auto cloned = basics::downCast<Table>(Clone());
-  auto it = absl::c_find_if(
-    cloned->_columns, [&](const Column& c) { return c.GetId() == column_id; });
-  if (it != cloned->_columns.end()) {
-    SDB_ASSERT(!it->IsGenerated());
-    it->expr.reset();
+std::shared_ptr<CreateTableInfo> CreateTableInfo::DropColumn(
+  ObjectId column_id) const {
+  const auto* dropped = ColumnById(column_id);
+  if (dropped == nullptr) {
+    return Clone();
   }
-  return cloned;
-}
+  const auto dropped_index = dropped->Logical();
+  // The raw name, never the Identifier: identifiers compare case-insensitively
+  // and serenedb's column names do not -- `t("A" int, "a" int)` is two columns.
+  const std::string dropped_name{dropped->Name().GetIdentifierName()};
+  auto next = Clone();
+  auto kept = duckdb::ColumnList(/*allow_duplicate_names=*/false,
+                                 /*case_sensitive=*/true);
+  for (const auto& column : next->columns.Logical()) {
+    if (column.Logical() != dropped_index) {
+      kept.AddColumn(column.Copy());
+    }
+  }
+  next->columns = std::move(kept);
 
-std::shared_ptr<Table> Table::DropColumn(Column::Id column_id) const {
-  auto cloned = basics::downCast<Table>(Clone());
-  std::erase_if(cloned->_check_constraints, [&](const CheckConstraint& c) {
-    auto idx = c.IsNotNull(cloned->_columns);
-    return idx.has_value() && cloned->_columns[*idx].GetId() == column_id;
-  });
-  std::erase_if(cloned->_columns,
-                [&](const Column& c) { return c.GetId() == column_id; });
-  std::erase(cloned->_pk_columns, column_id);
-  std::erase_if(cloned->_unique_constraints, [&](const TableUnique& u) {
-    return absl::c_contains(u.columns, column_id);
-  });
-  std::erase_if(cloned->_foreign_keys, [&](const TableForeignKey& fk) {
-    return absl::c_contains(fk.columns, column_id);
-  });
-  cloned->RebuildColumnIndex();
-  return cloned;
-}
-
-void Table::AddColumn(std::shared_ptr<Table>& result, Column column,
-                      bool if_not_exists) const {
-  for (const auto& c : _columns) {
-    if (c.GetName() == column.GetName()) {
-      if (if_not_exists) {
-        return;
+  auto names_column = [&](const duckdb::vector<duckdb::Identifier>& names) {
+    return absl::c_any_of(names, [&](const duckdb::Identifier& name) {
+      return name.GetIdentifierName() == dropped_name;
+    });
+  };
+  // A primary key merely narrows, and is gone only once its last key column is.
+  for (auto& constraint : next->constraints) {
+    if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+      continue;
+    }
+    auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+    if (unique.IsPrimaryKey() && !unique.HasIndex()) {
+      std::erase_if(unique.GetColumnNamesMutable(),
+                    [&](const duckdb::Identifier& name) {
+                      return name.GetIdentifierName() == dropped_name;
+                    });
+    }
+  }
+  // Any other key over the column goes with it.
+  std::erase_if(next->constraints, [&](const auto& constraint) {
+    switch (constraint->type) {
+      case duckdb::ConstraintType::NOT_NULL:
+        return constraint->template Cast<duckdb::NotNullConstraint>().index ==
+               dropped_index;
+      case duckdb::ConstraintType::UNIQUE: {
+        const auto& unique =
+          constraint->template Cast<duckdb::UniqueConstraint>();
+        if (unique.HasIndex()) {
+          return unique.GetIndex() == dropped_index;
+        }
+        return unique.IsPrimaryKey() ? unique.GetColumnNames().empty()
+                                     : names_column(unique.GetColumnNames());
       }
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-        ERR_MSG("column \"", column.GetName(), "\" of relation \"", GetName(),
-                "\" already exists"));
+      case duckdb::ConstraintType::FOREIGN_KEY: {
+        const auto& fk =
+          constraint->template Cast<duckdb::ForeignKeyConstraint>();
+        return names_column(fk.fk_columns) ||
+               (fk.info.type ==
+                  duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE &&
+                names_column(fk.pk_columns));
+      }
+      case duckdb::ConstraintType::CHECK:
+        return ExprNamesColumn(
+          *constraint->template Cast<duckdb::CheckConstraint>().expression,
+          dropped_name);
+      default:
+        return false;
+    }
+  });
+  // Every position past the dropped column has moved down one. The key lists a
+  // foreign key carries are positions too, but only on this table's side --
+  // the other side indexes the referenced table's columns.
+  const auto shift = [&](duckdb::vector<duckdb::PhysicalIndex>& keys) {
+    for (auto& key : keys) {
+      if (key.index > dropped_index.index) {
+        --key.index;
+      }
+    }
+  };
+  for (auto& constraint : next->constraints) {
+    switch (constraint->type) {
+      case duckdb::ConstraintType::NOT_NULL: {
+        auto& index = constraint->Cast<duckdb::NotNullConstraint>().index;
+        if (index.index > dropped_index.index) {
+          --index.index;
+        }
+        break;
+      }
+      case duckdb::ConstraintType::UNIQUE: {
+        auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+        if (unique.HasIndex() &&
+            unique.GetIndex().index > dropped_index.index) {
+          unique.SetIndex(duckdb::LogicalIndex{unique.GetIndex().index - 1});
+        }
+        break;
+      }
+      case duckdb::ConstraintType::FOREIGN_KEY: {
+        auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+        shift(fk.info.fk_keys);
+        if (fk.info.type ==
+            duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
+          shift(fk.info.pk_keys);
+        }
+        break;
+      }
+      default:
+        break;
     }
   }
-  auto new_table = basics::downCast<Table>(Clone());
-  column.SetParentId(new_table->GetId());
-  new_table->_columns.push_back(std::move(column));
-  new_table->RebuildColumnIndex();
-  result = std::move(new_table);
+  next->_column_acls.erase(column_id);
+  return next;
 }
 
-void Table::ChangeColumnType(std::shared_ptr<Table>& result,
-                             std::string_view column_name,
-                             duckdb::LogicalType new_type) const {
-  auto it = absl::c_find_if(
-    _columns, [&](const Column& c) { return c.GetName() == column_name; });
-  if (it == _columns.end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column_name, "\" of relation \"",
-                            GetName(), "\" does not exist"));
+std::shared_ptr<CreateTableInfo> CreateTableInfo::ChangeColumnType(
+  std::string_view column_name, duckdb::LogicalType new_type) const {
+  const auto& column = RequireColumn(*this, column_name);
+  auto next = Clone();
+  next->columns.GetColumnMutable(column.Logical()).SetType(new_type);
+  return next;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::ChangeColumnAcl(
+  std::string_view column_name, absl::FunctionRef<void(Acl&)> mutate) const {
+  const auto& column = RequireColumn(*this, column_name);
+  const ObjectId column_id{column.HostId()};
+  auto next = Clone();
+  auto acl = next->_column_acls[column_id];
+  mutate(acl);
+  if (acl.empty()) {
+    next->_column_acls.erase(column_id);
+  } else {
+    next->_column_acls[column_id] = std::move(acl);
   }
-  auto new_table = basics::downCast<Table>(Clone());
-  new_table->_columns[std::distance(_columns.begin(), it)].type =
-    std::move(new_type);
-  result = std::move(new_table);
+  return next;
 }
 
-std::shared_ptr<Table> Table::DropForeignKeysReferencing(
+std::shared_ptr<CreateTableInfo> CreateTableInfo::SetComment(
+  std::string_view text) const {
+  if (CommentText(comment) == text) {
+    return nullptr;
+  }
+  auto next = Clone();
+  next->comment = CommentValue(text);
+  return next;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::SetColumnComment(
+  std::string_view column_name, std::string_view text) const {
+  const auto& column = RequireColumn(*this, column_name);
+  if (CommentText(column.Comment()) == text) {
+    return nullptr;
+  }
+  auto next = Clone();
+  next->columns.GetColumnMutable(column.Logical())
+    .SetComment(CommentValue(text));
+  return next;
+}
+
+std::shared_ptr<CreateTableInfo> CreateTableInfo::DropForeignKeysReferencing(
   ObjectId referenced_table) const {
-  auto cloned = basics::downCast<Table>(Clone());
-  std::erase_if(cloned->_foreign_keys, [&](const TableForeignKey& fk) {
-    return fk.referenced_table == referenced_table;
+  SDB_ASSERT(referenced_table.isSet());
+  auto next = Clone();
+  std::erase_if(next->constraints, [&](const auto& constraint) {
+    return constraint->type == duckdb::ConstraintType::FOREIGN_KEY &&
+           constraint->template Cast<duckdb::ForeignKeyConstraint>()
+               .host_referenced_id == referenced_table.id();
   });
-  return cloned;
+  return next;
 }
 
-std::shared_ptr<Table> Table::DropCheckConstraint(
-  ObjectId constraint_id) const {
-  auto cloned = basics::downCast<Table>(Clone());
-  std::erase_if(cloned->_check_constraints, [&](const CheckConstraint& c) {
-    return c.GetId() == constraint_id;
-  });
-  return cloned;
+const duckdb::UniqueConstraint* TablePrimaryKey(
+  const duckdb::CreateTableInfo& info) noexcept {
+  return FindPrimaryKey(info);
+}
+
+duckdb::vector<duckdb::Identifier> ReferencedKeyNames(
+  const duckdb::ForeignKeyConstraint& fk, const CreateTableInfo* referenced) {
+  if (referenced == nullptr ||
+      fk.host_pk_column_ids.size() != fk.pk_columns.size()) {
+    return fk.pk_columns;
+  }
+  duckdb::vector<duckdb::Identifier> names;
+  names.reserve(fk.pk_columns.size());
+  for (size_t i = 0; i != fk.pk_columns.size(); ++i) {
+    const auto* column =
+      referenced->ColumnById(ObjectId{fk.host_pk_column_ids[i]});
+    names.push_back(column == nullptr ? fk.pk_columns[i] : column->Name());
+  }
+  return names;
 }
 
 }  // namespace sdb::catalog

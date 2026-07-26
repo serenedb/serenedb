@@ -48,7 +48,8 @@ sdb::pg::SerializationContext CloneProto(
   if (proto.time_zone) {
     context.time_zone.reset(proto.time_zone->clone());
   }
-  context.snapshot = proto.snapshot;
+  context.client = proto.client;
+  context.database = proto.database;
   context.quote_seq = proto.quote_seq;
   context.backslash_count = proto.backslash_count;
   context.copy_text = proto.copy_text;

@@ -122,14 +122,13 @@ std::filesystem::path InvertedIndexStorage::GetPath(ObjectId db_id,
 }
 
 std::shared_ptr<InvertedIndexStorage> InvertedIndexStorage::Create(
-  ObjectId id, const catalog::InvertedIndex& index, bool is_new) {
-  return std::make_shared<InvertedIndexStorage>(id, index, is_new);
+  ObjectId db_id, const catalog::CreateInvertedIndexInfo& index, bool is_new) {
+  return std::make_shared<InvertedIndexStorage>(db_id, index, is_new);
 }
 
-InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
-                                           const catalog::InvertedIndex& index,
-                                           bool is_new)
-  : _index_id{index.GetId()}, _search{GetSearchEngine()} {
+InvertedIndexStorage::InvertedIndexStorage(
+  ObjectId db_id, const catalog::CreateInvertedIndexInfo& index, bool is_new)
+  : _index_id{index.GetId()}, _db_id{db_id}, _search{GetSearchEngine()} {
   const auto& options = index.GetOptions();
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
@@ -140,9 +139,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   _tasks_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
 
-  const auto schema_id = index.GetParentId();
-  const auto db_id =
-    catalog::GetCatalog().GetCatalogSnapshot()->GetDatabaseId(index);
+  const auto schema_id = index.GetSchemaId();
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path =
@@ -501,9 +498,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
       _stamp_cursor_from_flush = false;
     };
     if (for_checkpoint) {
-      if (auto store =
-            duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance())
-              .GetDatabase(duckdb::Identifier{catalog::kStoreDatabaseName})) {
+      if (auto store = catalog::TryStoreDatabase(_db_id)) {
         const auto next_gen = store->GetStorageManager()
                                 .GetBlockManager()
                                 .GetCheckpointIteration() +
@@ -518,8 +513,14 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     const auto refresh_tick = [&] {
       switch (_phase) {
         case Phase::Creating:
-        case Phase::Recovering:
           return irs::writer_limits::kMaxTick;
+        case Phase::Recovering:
+          // Replay retires eagerly but only the committed frontier may become
+          // durable: the cursor payload covers exactly the ticks below it.
+          // Before any frontier exists this commits nothing.
+          return std::max(
+            _recovery_frontier_tick.load(std::memory_order_acquire),
+            irs::writer_limits::kMinTick + 1);
         case Phase::Active:
           return before_refresh;
       }

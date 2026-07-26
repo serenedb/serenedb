@@ -1,0 +1,137 @@
+# A transaction reads its own uncommitted DDL back out of the catalog sets, and
+# only its own.
+#
+# sdb_deferred_catalog() counts the catalog mutations the transaction has
+# recorded and reports the catalog identity its plans stand on.
+
+statement ok
+BEGIN;
+
+
+# No DDL yet.
+query
+SELECT writes FROM sdb_deferred_catalog();
+----
+writes
+0
+
+
+statement ok
+CREATE TABLE covl_a(id INTEGER);
+
+
+query
+SELECT writes FROM sdb_deferred_catalog();
+----
+writes
+1
+
+
+# What the transaction's own view is for: it sees the DDL it issued.
+query
+SELECT count(*) AS n FROM covl_a;
+----
+n
+0
+
+
+statement ok
+COMMIT;
+
+
+# The counter belongs to the transaction, not the connection.
+query
+SELECT writes FROM sdb_deferred_catalog();
+----
+writes
+0
+
+
+statement ok
+DROP TABLE covl_a;
+
+
+# --- the transaction's own view composes with the pin ---
+#
+# Uncommitted DML freezes the read view for the rest of the transaction so that
+# another session's DDL cannot drift the pending rows. The transaction's own DDL
+# still reaches it: its entries are its own uncommitted versions.
+
+statement ok
+CREATE TABLE covl_pin(id INTEGER);
+
+connection pinner
+
+connection pinner
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+connection pinner
+statement ok
+INSERT INTO covl_pin VALUES (1);
+
+
+connection other
+statement ok
+CREATE TABLE covl_other(id INTEGER);
+
+
+# frozen base: the other session's DDL is not visible here
+connection pinner
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'covl_other';
+----
+n
+0
+
+
+connection pinner
+statement ok
+CREATE TABLE covl_own(id INTEGER);
+
+
+# own ops on top of that base: this one is
+connection pinner
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'covl_own';
+----
+n
+1
+
+
+connection pinner
+query
+SELECT count(*) AS n FROM covl_own;
+----
+n
+0
+
+
+# and the pin still does its own job -- the uncommitted rows are readable
+connection pinner
+query
+SELECT count(*) AS n FROM covl_pin;
+----
+n
+1
+
+
+connection pinner
+statement ok
+COMMIT;
+
+
+connection pinner
+statement ok
+DROP TABLE covl_pin;
+
+
+connection pinner
+statement ok
+DROP TABLE covl_other;
+
+
+connection pinner
+statement ok
+DROP TABLE covl_own;

@@ -98,7 +98,7 @@ void FromTokenizeListInAnyAllOf(
   // Hold the wrapper as a stack local so its raw pointer (used by
   // `analyzer` below) stays valid for the loop. Drops at function
   // return -> analyzer goes back to the catalog Tokenizer's pool.
-  catalog::Tokenizer::TokenizerWrapper override_wrapper;
+  catalog::CreateTokenizerInfo::TokenizerWrapper override_wrapper;
   if (tokenize_call.GetChildren().size() == 2) {
     std::string analyzer_name;
     GetVarcharArg(*tokenize_call.GetChildren()[1], analyzer_name,

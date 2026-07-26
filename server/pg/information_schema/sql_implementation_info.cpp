@@ -20,6 +20,7 @@
 
 #include "pg/information_schema/sql_implementation_info.h"
 
+#include "auth/role_closure.h"
 #include "basics/build.h"
 
 namespace sdb::pg {
@@ -66,7 +67,7 @@ SystemTableSnapshot<SqlImplementationInfo>::GetTableData() {
   auto result = CreateColumns<SqlImplementationInfo>(kNumRows);
   for (size_t row = 0; row < kNumRows; ++row) {
     WriteData(result, kRows[row].data, kRows[row].nulls, row,
-              *_config.CatalogSnapshot());
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), kNumRows};
 }

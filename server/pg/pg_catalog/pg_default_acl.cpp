@@ -21,37 +21,39 @@
 #include "pg/pg_catalog/pg_default_acl.h"
 
 #include "app/app_server.h"
+#include "auth/role_closure.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/role.h"
+#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
-  auto roles = catalog->GetRoles();
   std::vector<PgDefaultAcl> values;
   uint64_t oid = 1;
-  for (const auto& role : roles) {
-    for (const auto& entry : role->DefaultAcls()) {
-      // defaclnamespace 0 == all schemas (the schema-less form).
-      const uint64_t ns = entry.schema.isSet() ? entry.schema.id() : 0;
-      values.push_back(PgDefaultAcl{
-        .oid = oid++,
-        .defaclrole = role->GetId().id(),
-        .defaclnamespace = ns,
-        .defaclobjtype =
-          static_cast<PgDefaultAcl::Defaclobjtype>(entry.objtype),
-        .defaclacl = {entry.acl},
-      });
-    }
-  }
+  connector::VisitRoles(
+    &_config.GetClientContext(), [&](const catalog::CreateRoleInfo& role) {
+      for (const auto& entry : role.DefaultAcls()) {
+        // defaclnamespace 0 == all schemas (the schema-less form).
+        const uint64_t ns = entry.schema.isSet() ? entry.schema.id() : 0;
+        values.push_back(PgDefaultAcl{
+          .oid = oid++,
+          .defaclrole = role.GetId().id(),
+          .defaclnamespace = ns,
+          .defaclobjtype =
+            static_cast<PgDefaultAcl::Defaclobjtype>(entry.objtype),
+          .defaclacl = {entry.acl},
+        });
+      }
+    });
 
   auto result = CreateColumns<PgDefaultAcl>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], 0, row, *_config.GetCatalogSnapshot());
+    WriteData(result, values[row], 0, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), values.size()};
 }

@@ -37,6 +37,7 @@
 #include "basics/assert.h"
 #include "basics/primary_key.hpp"  // for AppendSigned, ReadSigned
 #include "basics/string_utils.h"
+#include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_table_entry.h"
 #include "pg/sql_exception_macro.h"
@@ -163,29 +164,20 @@ inline void AppendPKValue(std::string& key,
   }
 }
 
-// Build PK column mappings from a chunk-ordered range of catalog columns.
-// Maps each PK column ID to its position in `columns` + DuckDB type.
+// Build PK column mappings from a chunk-ordered list of column ids and the
+// types beside them. Maps each key column to its position in that list.
 //
-// Accepts any random-access range whose elements are catalog::Column (vector,
-// span, or a lazy views::transform of an index list, etc.) so the caller can
-// describe a projected/reordered chunk without materialising a copy.
-template<std::ranges::random_access_range R>
-  requires std::same_as<std::remove_cvref_t<std::ranges::range_reference_t<R>>,
-                        catalog::Column>
+// `columns` describes the chunk the writer produces, which may be a projection
+// of the table rather than its whole width.
 inline std::vector<PKColumn> BuildPKColumns(
-  R&& columns, std::span<const catalog::Column::Id> pk_col_ids) {
+  std::span<const ObjectId> columns, std::span<const duckdb::LogicalType> types,
+  std::span<const ObjectId> pk_col_ids) {
   std::vector<PKColumn> result;
   result.reserve(pk_col_ids.size());
-  const auto begin = std::ranges::begin(columns);
-  const auto n = std::ranges::size(columns);
   for (auto pk_id : pk_col_ids) {
-    for (size_t i = 0; i < n; ++i) {
-      const catalog::Column& c = begin[i];
-      if (c.GetId() == pk_id) {
-        result.push_back(PKColumn{
-          .input_col_idx = i,
-          .type = c.type,
-        });
+    for (size_t i = 0; i != columns.size(); ++i) {
+      if (columns[i] == pk_id) {
+        result.push_back(PKColumn{.input_col_idx = i, .type = types[i]});
         break;
       }
     }
@@ -193,10 +185,26 @@ inline std::vector<PKColumn> BuildPKColumns(
   return result;
 }
 
-// Convenience: PK columns laid out in catalog order (used by paths whose
-// chunk shape mirrors `table.Columns()`).
-inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
-  return BuildPKColumns(table.Columns(), table.PKColumns());
+// The declared primary key of `info`, in key order, as positions in its own
+// column list. Empty when it declares none -- there the row identity is the
+// generated PK instead.
+inline std::vector<PKColumn> BuildPKColumns(
+  const catalog::CreateTableInfo& info) {
+  const auto* key = catalog::TablePrimaryKey(info);
+  if (key == nullptr) {
+    return {};
+  }
+  std::vector<PKColumn> result;
+  result.reserve(key->GetColumnNames().size());
+  for (const auto& name : key->GetColumnNames()) {
+    const auto* column = info.ColumnByName(name.GetIdentifierName());
+    if (column == nullptr) {
+      continue;
+    }
+    result.push_back(PKColumn{.input_col_idx = column->Logical().index,
+                              .type = column->Type()});
+  }
+  return result;
 }
 
 inline void PreparePKFormats(

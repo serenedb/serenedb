@@ -23,16 +23,19 @@
 #include <duckdb/main/database_manager.hpp>
 #include <string_view>
 
-#include "catalog/foreign_server.h"
+#include "catalog/schema.h"
 
 namespace sdb::catalog {
 
 struct AccessContext;
 
-bool CreateDatabase(const AccessContext& ax, std::string_view name,
-                    bool if_not_exists);
-std::vector<ForeignServerAttachment> DropDatabase(
-  const AccessContext& ax, std::string_view db_name,
-  duckdb::shared_ptr<void> keep_alive = {});
+// The public schema the create wrote, for the attachment being built around
+// it: the schema record shares the database's frame, but its entry has nowhere
+// to go until that attachment makes the set. Empty when the database was
+// already there and IF NOT EXISTS made the create a no-op.
+HeldSchema CreateDatabase(const AccessContext& ax, std::string_view name,
+                          bool if_not_exists);
+void DropDatabase(const AccessContext& ax, std::string_view db_name,
+                  duckdb::shared_ptr<void> keep_alive = {});
 
 }  // namespace sdb::catalog

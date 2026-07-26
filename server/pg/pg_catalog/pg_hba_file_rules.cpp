@@ -22,6 +22,7 @@
 
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "network/pg/hba.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -59,10 +60,10 @@ catalog::MaterializedData SystemTableSnapshot<PgHbaFileRule>::GetTableData() {
     });
   }
 
-  auto catalog = _config.CatalogSnapshot();
   auto result = CreateColumns<PgHbaFileRule>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], /*null_mask=*/0, row, *catalog);
+    WriteData(result, values[row], /*null_mask=*/0, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), values.size()};
 }

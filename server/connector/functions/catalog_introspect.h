@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,28 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "object.h"
+#pragma once
 
-#include "app/app_server.h"
-#include "catalog/identifiers/object_id.h"
-#include "database/ticks.h"
+#include <duckdb/main/database.hpp>
 
-namespace sdb::catalog {
+namespace sdb::connector {
 
-Object::~Object() = default;
+// Debug views over the catalog's persistent form, definitions rendered as
+// JSON text: sdb_catalog_wal() walks the on-disk wal frame by frame,
+// sdb_catalog_snapshot() dumps the resident record maps (what a compaction
+// would write).
+void RegisterCatalogIntrospectFunctions(duckdb::DatabaseInstance& db);
 
-Object::Object(Permissions perm, ObjectId parent_id, ObjectId id,
-               std::string_view name, ObjectType type)
-  : _name{name},
-    _id{id != id::kInvalid ? id : NextId()},
-    _parent_id{parent_id},
-    _perm{std::move(perm)},
-    _type{type} {
-  UpdateTickServer(GetId().id());
-}
-
-ObjectId NextId() { return ObjectId{NewTickServer()}; }
-
-ObjectId NextNIds(uint64_t n) { return ObjectId{NewTickServer(n)}; }
-
-}  // namespace sdb::catalog
+}  // namespace sdb::connector

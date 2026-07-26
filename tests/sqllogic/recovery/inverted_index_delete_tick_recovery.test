@@ -1,0 +1,143 @@
+control substitution on
+
+# A replayed multi-row DELETE must keep its ordering against the inserts it
+# masks, including when the deleted row ids are reused.
+#
+# Replay retires WAL entries in order and gives each a tick band before
+# committing its transactions. A range entry sized that band to its widest
+# sub-range transaction, but a single-entry worker job left it at one tick --
+# while a tick-bound Remove bumps the transaction's query counter once per row
+# (irs::IndexWriter::Transaction::Remove) and Commit lays a transaction's
+# documents out below the tick it is handed. So one WAL entry deleting N rows
+# reserved one tick and wrote N-1 documents onto ticks already given to earlier
+# entries, which is exactly the last-op-wins ordering the feed relies on for
+# TRUNCATE and row id reuse. The band is now computed from the entry's own
+# transactions, the same rule the live commit path uses.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dtr_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE dtr(id INTEGER, txt TEXT);
+
+statement ok
+CREATE INDEX dtr_idx ON dtr USING inverted(id, txt dtr_dict);
+
+statement ok
+INSERT INTO dtr SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 30000) g;
+
+# One statement, so one WAL delete entry carrying many row ids -- the shape that
+# under-reserved its band.
+statement ok
+DELETE FROM dtr WHERE id <= 20000;
+
+# Re-insert the same ids: the freed row ids come back, so the delete and these
+# inserts must stay ordered relative to each other.
+statement ok
+INSERT INTO dtr SELECT g, 'row ' || g || ' charlie' FROM generate_series(1, 20000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) dtr;
+
+query
+SELECT count(*) FROM dtr;
+----
+count
+30000
+
+query
+SELECT count(*) FROM dtr_idx WHERE txt @@ ts_like('bravo');
+----
+count
+10000
+
+query
+SELECT count(*) FROM dtr_idx WHERE txt @@ ts_like('charlie');
+----
+count
+20000
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+# The replay has to reproduce the same visibility. Waiting on the assertion that
+# matters rather than on a bare SELECT 1.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM dtr_idx WHERE txt @@ ts_like('bravo');
+----
+count
+10000
+
+connection after_crash
+query
+SELECT count(*) FROM dtr_idx WHERE txt @@ ts_like('charlie');
+----
+count
+20000
+
+connection after_crash
+query
+SELECT count(*) FROM dtr;
+----
+count
+30000
+
+# The deleted generation must not come back: nothing the index reports for the
+# masked term may still be in the table under it.
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM dtr_idx WHERE txt @@ ts_like('charlie')
+  EXCEPT SELECT id FROM dtr WHERE txt LIKE '%charlie%') x;
+----
+count
+0
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM dtr WHERE txt LIKE '%charlie%'
+  EXCEPT SELECT id FROM dtr_idx WHERE txt @@ ts_like('charlie')) x;
+----
+count
+0
+
+# Writes after recovery still land.
+connection after_crash
+statement ok
+INSERT INTO dtr SELECT g, 'row ' || g || ' delta' FROM generate_series(30001, 31000) g;
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) dtr;
+
+connection after_crash
+query
+SELECT count(*) FROM dtr_idx WHERE txt @@ ts_like('delta');
+----
+count
+1000
+
+connection after_crash
+statement ok
+DROP TABLE dtr;
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY dtr_dict;

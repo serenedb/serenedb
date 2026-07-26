@@ -1,7 +1,8 @@
 # Constraints, generated columns, and ON CONFLICT on a table that ALSO carries
 # an inverted index, so every write drives the commit-time search-index sink.
-# NOT NULL / CHECK error texts embed the per-test random database name, so the
-# variable tail is masked with <slt:ignore>.
+# NOT NULL / CHECK error texts embed the per-test random database name, so only
+# that leading component is masked with <slt:ignore>; the rest is the user's own
+# relation, column and CHECK body, which the rows are stored under.
 
 
 statement ok
@@ -28,13 +29,13 @@ INSERT INTO cwi_con VALUES (1, 'valid row', 5);
 statement error
 INSERT INTO cwi_con VALUES (2, NULL, 5);
 ----
-db error: ERROR: NOT NULL constraint failed: <slt:ignore>
+db error: ERROR: NOT NULL constraint failed: cwi_con.body
 
 
 statement error
 INSERT INTO cwi_con VALUES (3, 'bad check', -1);
 ----
-db error: ERROR: CHECK constraint failed on table <slt:ignore>
+db error: ERROR: CHECK constraint failed on table cwi_con with expression CHECK((n > 0))
 
 
 statement ok

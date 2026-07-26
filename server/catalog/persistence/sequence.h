@@ -24,10 +24,12 @@
 #include <limits>
 #include <string>
 
-#include "catalog/object.h"
+#include "catalog/entry.h"
 
 namespace sdb::catalog::persistence {
 
+// Owner and ACL are not here: a sequence's entry is the object, and the record
+// that carries the definition writes the permissions beside it.
 struct SequenceOptions {
   std::string name;
   uint64_t start_value = 1;
@@ -37,7 +39,6 @@ struct SequenceOptions {
   uint64_t cache = 1;
   uint64_t owner_table_id = 0;
   bool cycle = false;
-  Permissions perm;
   std::string comment;
 
   uint64_t Seed() const noexcept { return start_value - increment; }

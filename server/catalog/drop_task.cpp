@@ -33,9 +33,10 @@
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
+#include "basics/lifecycle.h"
 #include "catalog/catalog.h"
+#include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/object.h"
 #include "catalog/store/store.h"
 #include "catalog/types.h"
 #include "scheduler/background_scheduler.h"
@@ -77,19 +78,30 @@ yaclib::Future<> RunChildrenTasks(std::span<std::shared_ptr<T>> tasks) {
 
 }  // namespace
 
+bool DropTask::ShouldStop() noexcept {
+  return lifecycle::IsStopping() ||
+         BackgroundScheduler::instance().IsStopping();
+}
+
 AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
   try {
-    while (true) {
-      auto& scheduler = BackgroundScheduler::instance();
+    auto& scheduler = BackgroundScheduler::instance();
+    while (!ShouldStop()) {
       co_await scheduler.Delay(task->_delay);
-      auto outcome = co_await scheduler.Run(
-        [task] { return DropTask::ExecuteTask(std::move(task)); });
-      if (outcome == DropOutcome::Retry) {
-        task->_delay = std::min(kMaxDelay, task->_delay * 2);
-        continue;
+      if (ShouldStop()) {
+        break;
       }
-      co_return outcome;
+      // The delay completes on an io thread, which does socket IO only: hop
+      // onto the background pool before touching a drop.
+      co_await On(scheduler.executor());
+      // Copy, not move: the loop still owns `task` for the next backoff.
+      auto outcome = co_await DropTask::ExecuteTask(task);
+      if (outcome != DropOutcome::Retry) {
+        co_return outcome;
+      }
+      task->_delay = std::min(kMaxDelay, task->_delay * 2);
     }
+    co_return DropOutcome::Abandoned;
   } catch (std::exception& e) {
     SDB_ERROR(GENERAL, "Unable to schedule ", task->GetName(), ": \"", e.what(),
               "\"");
@@ -98,19 +110,16 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
 }
 
 void IndexDrop::Finalize() {
-  if (_type == catalog::ObjectType::InvertedIndex ||
-      _type == catalog::ObjectType::SecondaryIndex) {
-    GetCatalogStore().Write([&](auto& ctx) { ctx.DropStoreIndex(_id); });
-  }
-  auto& server = GetCatalogStore();
-  if (_is_root) {
-    server.DropDefinition(_parent_id, _type, _id);
-    server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
-  }
+  GetCatalogStore().Write([&](auto& ctx) {
+    ctx.store().DropIndex(_db_id, _id, _parent_id, _name);
+    if (_is_root) {
+      ctx.catalog().PrepareCommit(_id);
+    }
+  });
 }
 
 AsyncResult IndexDrop::Execute() {
-  if (_type == catalog::ObjectType::InvertedIndex && _is_root) {
+  if (_inverted && _is_root) {
     // The storage is guaranteed released here: AllowToDropDependencies() gates
     // on _data.expired(), so neither this drop nor any ancestor reaches Execute
     // while a catalog snapshot, query, replay session, or background task still
@@ -127,18 +136,29 @@ AsyncResult IndexDrop::Execute() {
 
 void TableDropBase::Finalize() {
   SDB_IF_FAILURE("crash_before_seq_counter_wipe") { SDB_IMMEDIATE_ABORT(); }
+  // The async half of a drop runs long after its tombstone, so compaction has
+  // to be able to run in between and carry the open drop.
+  // A drop task holds no catalog mutex, so the rewrite has to take it itself.
+  SDB_IF_FAILURE("compact_inside_drop") {
+    GetCatalog().TryExcludingMutations([] { GetCatalogStore().CompactNow(); });
+  }
   auto& server = GetCatalogStore();
-  // Indexes and their storage.
-  server.DropEntry(_id);
-  // Owned seqs (def + counter) + the table's own catalog rows in one batch.
   server.Write([&](auto& ctx) {
+    // Counters live outside the definition tree, so no commit covers them.
     for (auto seq_id : _owned_sequences) {
-      ctx.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
-      ctx.DropSequence(seq_id);
+      ctx.catalog().DropSequence(seq_id);
     }
     if (_is_root) {
-      ctx.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
-      ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
+      // The commit takes the table's definition and its indexes. Its owned
+      // sequences hang off the schema, not the table, so they are named here.
+      for (auto seq_id : _owned_sequences) {
+        ctx.catalog().DropObject(_parent_id,
+                                 duckdb::CatalogType::SEQUENCE_ENTRY, seq_id);
+      }
+      ctx.catalog().PrepareCommit(_id);
+    } else {
+      // No open drop of its own, so this level says what went with it.
+      ctx.catalog().DropChildren(_id);
     }
     FinalizeStore(ctx);
   });
@@ -146,14 +166,15 @@ void TableDropBase::Finalize() {
 
 AsyncResult TableDrop::Execute() {
   if (_is_root && !_indexes.empty()) {
-    ObjectId db_id = _indexes.back()->GetDatabaseId();
-    ObjectId schema_id = _parent_id;
-    if (auto s = RemoveIndexStorage(db_id, schema_id, _id); !s.ok()) {
+    if (auto s = RemoveIndexStorage(_db_id, _parent_id, _id); !s.ok()) {
       SDB_WARN(GENERAL, "Retrying ", GetContext(), ": ", s.message());
       co_return DropOutcome::Retry;
     }
   }
   co_await RunChildrenTasks(std::span{_indexes});
+  if (ShouldStop()) {
+    co_return DropOutcome::Abandoned;
+  }
   Finalize();
   co_return DropOutcome::Done;
 }
@@ -180,17 +201,18 @@ AsyncResult SearchTableDrop::Execute() {
 
 void SchemaDrop::Finalize() {
   auto& server = GetCatalogStore();
-  // Standalone seq counter rows -- DropEntry only sweeps definition rows.
-  server.VisitDefinitions(_id, catalog::ObjectType::Sequence,
-                          [&](CatalogStore::Key key, std::string_view) {
-                            server.DropSequence(key.id);
-                            return true;
-                          });
-  server.DropEntry(_id);
-  if (_is_root) {
-    server.DropDefinition(_parent_id, catalog::ObjectType::Schema, _id);
-    server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
-  }
+  server.Write([&](auto& ctx) {
+    // Counters live outside the definition tree, so no commit covers them. A
+    // table's owned ones go with that table's own drop.
+    for (auto seq_id : _sequences) {
+      ctx.catalog().DropSequence(seq_id);
+    }
+    if (_is_root) {
+      ctx.catalog().PrepareCommit(_id);
+    } else {
+      ctx.catalog().DropChildren(_id);
+    }
+  });
 }
 
 AsyncResult SchemaDrop::Execute() {
@@ -201,20 +223,30 @@ AsyncResult SchemaDrop::Execute() {
     }
   }
   co_await RunChildrenTasks(std::span{_tables});
+  if (ShouldStop()) {
+    co_return DropOutcome::Abandoned;
+  }
   Finalize();
   co_return DropOutcome::Done;
 }
 
 void DatabaseDrop::Finalize() {
   auto& server = GetCatalogStore();
-  // Range-delete schema Definitions under db. Per-schema standalone-seq
-  // counter wipes already ran inside each SchemaDrop::Finalize above.
-  server.DropEntry(_id, catalog::ObjectType::Schema);
-  // Foreign servers are database children (PG shape); their definition rows
-  // are stored flat under the database id.
-  server.DropEntry(_id, catalog::ObjectType::ForeignServer);
-  server.DropDefinition(id::kInstance, catalog::ObjectType::Database, _id);
-  server.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone, _id);
+  // The commit takes the database's definition and everything filed under its
+  // id -- its schemas, and the foreign servers that hang off the database
+  // directly (PG shape). Each SchemaDrop::Finalize already erased its own
+  // children, counters included.
+  server.Write([&](auto& ctx) { ctx.catalog().PrepareCommit(_id); });
+  // The record is gone, so the file is garbage whatever happens next: a crash
+  // before the unlink leaves it for boot reclamation.
+  const auto path = CatalogStore::DatabaseFilePath(_id);
+  for (const auto& name : {path, path + ".wal"}) {
+    std::error_code ec;
+    std::filesystem::remove(name, ec);
+    if (ec) {
+      SDB_WARN(GENERAL, "could not remove '", name, "': ", ec.message());
+    }
+  }
 }
 
 AsyncResult DatabaseDrop::Execute() {
@@ -224,6 +256,9 @@ AsyncResult DatabaseDrop::Execute() {
     co_return DropOutcome::Retry;
   }
   co_await RunChildrenTasks(std::span{_schemas});
+  if (ShouldStop()) {
+    co_return DropOutcome::Abandoned;
+  }
   Finalize();
   co_return DropOutcome::Done;
 }

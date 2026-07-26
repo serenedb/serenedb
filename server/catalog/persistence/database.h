@@ -22,14 +22,12 @@
 
 #include <string>
 
-#include "catalog/identifiers/object_id.h"
-#include "catalog/object.h"
-
 namespace sdb::catalog::persistence {
 
+// Owner and ACL are written beside the definition by the record that carries
+// it, so the name is the whole of what a database's own definition holds.
 struct DatabaseOptions {
   std::string name;
-  Permissions perm;
 };
 
 }  // namespace sdb::catalog::persistence

@@ -66,7 +66,7 @@ struct InvertedIndexOptions {
 // its own key layout; only this leaf is common.
 struct ExpressionData {
   std::string serialized_expr;
-  std::vector<Column::Id> dependent_columns;
+  std::vector<ColumnId> dependent_columns;
   duckdb::LogicalType return_type;
   std::string pretty_printed;
 };

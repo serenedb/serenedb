@@ -314,24 +314,24 @@ namespace {
 // column additionally records its output slot (filters on it apply to the
 // computed score vector).
 std::optional<duckdb::LogicalType> VirtualIndexColumnType(
-  catalog::Column::Id col_id) {
-  if (col_id == catalog::Column::kInvertedIndexScoreId ||
-      col_id == catalog::Column::kInvertedIndexTermScoreId) {
+  catalog::ColumnId col_id) {
+  if (col_id == catalog::kInvertedIndexScoreId ||
+      col_id == catalog::kInvertedIndexTermScoreId) {
     return duckdb::LogicalType::FLOAT;
   }
-  if (col_id == catalog::Column::kInvertedIndexOffsetsId) {
-    return catalog::Column::MakeOffsetsType();
+  if (col_id == catalog::kInvertedIndexOffsetsId) {
+    return catalog::MakeOffsetsType();
   }
-  if (col_id == catalog::Column::kInvertedIndexTermId) {
+  if (col_id == catalog::kInvertedIndexTermId) {
     return duckdb::LogicalType::VARCHAR;
   }
-  if (col_id == catalog::Column::kInvertedIndexTermRawId) {
+  if (col_id == catalog::kInvertedIndexTermRawId) {
     return duckdb::LogicalType::BLOB;
   }
-  if (col_id == catalog::Column::kInvertedIndexTermCountId) {
+  if (col_id == catalog::kInvertedIndexTermCountId) {
     return duckdb::LogicalType::INTEGER;
   }
-  if (col_id == catalog::Column::kInvertedIndexTermFreqId) {
+  if (col_id == catalog::kInvertedIndexTermFreqId) {
     return duckdb::LogicalType::BIGINT;
   }
   return std::nullopt;
@@ -383,10 +383,10 @@ void InitScanState(IResearchScanGlobalState& state,
                  "virtual PK columns are not used for view-backed scans");
       auto cat_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
       SDB_ASSERT(cat_idx != duckdb::DConstants::INVALID_INDEX);
-      const auto& tbd = bind_data.As<TableScanBindData>();
-      const auto& catalog_cols = tbd.table->Columns();
-      SDB_ASSERT(cat_idx < catalog_cols.size());
-      const auto catalog_col_id = catalog_cols[cat_idx].GetId();
+      const auto& catalog_cols = bind_data.table_entry->GetColumns();
+      SDB_ASSERT(cat_idx < catalog_cols.LogicalColumnCount());
+      const catalog::ColumnId catalog_col_id{
+        catalog_cols.GetColumn(duckdb::LogicalIndex(cat_idx)).HostId()};
       duckdb::idx_t bind_idx = duckdb::DConstants::INVALID_INDEX;
       for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
         if (bind_data.column_ids[i] == catalog_col_id) {
@@ -400,7 +400,7 @@ void InitScanState(IResearchScanGlobalState& state,
     } else if (col_id < num_bind_columns) {
       const auto catalog_col_id = bind_data.column_ids[col_id];
       if (const auto virtual_type = VirtualIndexColumnType(catalog_col_id)) {
-        if (catalog_col_id == catalog::Column::kInvertedIndexScoreId) {
+        if (catalog_col_id == catalog::kInvertedIndexScoreId) {
           state.score_output_idx = proj;
         }
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
@@ -630,7 +630,7 @@ void WrapScoreRefsWithEmit(duckdb::unique_ptr<duckdb::Expression>& expr,
 void BuildTableFilter(IResearchScanGlobalState& state,
                       const SereneDBScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
-  const catalog::InvertedIndex* index_meta =
+  const catalog::CreateInvertedIndexInfo* index_meta =
     bind_data.IsInvertedIndexEntry() ? bind_data.inverted_index.get() : nullptr;
   // Score-column filters, applied on the computed score vector (whatever
   // HandleScoreFilter left pushed: on top-k the collector-enforced conjuncts
@@ -694,7 +694,7 @@ void BuildTableFilter(IResearchScanGlobalState& state,
       continue;
     }
     const auto col_id = bind_data.column_ids[bind_index];
-    if (col_id == catalog::Column::kInvertedIndexScoreId) {
+    if (col_id == catalog::kInvertedIndexScoreId) {
       push_score_filter(entry.Filter());
       continue;
     }
@@ -804,9 +804,9 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
       state.cs_projections.emplace_back(std::move(cp));
     }
     if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
-      state.cs_projections.emplace_back(ColumnstoreProjection{
-        .output_slot = state.generated_pk_output_idx,
-        .column_id = catalog::Column::kGeneratedPKId.id()});
+      state.cs_projections.emplace_back(
+        ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
+                              .column_id = catalog::kGeneratedPKId.id()});
     }
     return;
   }
@@ -1429,7 +1429,7 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
                                      std::numeric_limits<size_t>::max());
   size_t k = 0;
   for (size_t i = 0; i < bd.column_ids.size(); ++i) {
-    if (bd.column_ids[i] == catalog::Column::kInvertedIndexOffsetsId) {
+    if (bd.column_ids[i] == catalog::kInvertedIndexOffsetsId) {
       ss_idx_at_bind[i] = k++;
     }
   }
@@ -1443,7 +1443,7 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
     if (col_id >= bd.column_ids.size()) {
       continue;
     }
-    if (bd.column_ids[col_id] == catalog::Column::kInvertedIndexOffsetsId) {
+    if (bd.column_ids[col_id] == catalog::kInvertedIndexOffsetsId) {
       const auto ss_idx = ss_idx_at_bind[col_id];
       SDB_ASSERT(ss_idx < ss.offsets.size());
       FieldEntry entry;
@@ -1550,21 +1550,19 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
   using Field = TsDictLocalState::FieldState;
 
   struct SlotKind {
-    catalog::Column::Id cat;
+    catalog::ColumnId cat;
     duckdb::idx_t Req::* req;
     duckdb::idx_t Field::* slot;
     size_t next = 0;
   };
   std::array<SlotKind, 5> kinds{{
-    {catalog::Column::kInvertedIndexTermId, &Req::term_col_idx,
-     &Field::term_slot},
-    {catalog::Column::kInvertedIndexTermRawId, &Req::term_raw_col_idx,
+    {catalog::kInvertedIndexTermId, &Req::term_col_idx, &Field::term_slot},
+    {catalog::kInvertedIndexTermRawId, &Req::term_raw_col_idx,
      &Field::term_raw_slot},
-    {catalog::Column::kInvertedIndexTermCountId, &Req::count_col_idx,
+    {catalog::kInvertedIndexTermCountId, &Req::count_col_idx,
      &Field::count_slot},
-    {catalog::Column::kInvertedIndexTermFreqId, &Req::freq_col_idx,
-     &Field::freq_slot},
-    {catalog::Column::kInvertedIndexTermScoreId, &Req::score_col_idx,
+    {catalog::kInvertedIndexTermFreqId, &Req::freq_col_idx, &Field::freq_slot},
+    {catalog::kInvertedIndexTermScoreId, &Req::score_col_idx,
      &Field::score_slot},
   }};
 
@@ -1726,7 +1724,7 @@ void IResearchSetScanOrder(
     return;
   }
   const auto col_id = bd.column_ids[order_col];
-  if (col_id != catalog::Column::kInvertedIndexScoreId) {
+  if (col_id != catalog::kInvertedIndexScoreId) {
     // ORDER BY <covered .col column> LIMIT: iterate segments best-first by the
     // column's per-file statistics (duckdb's row-group reorder, one level up).
     // Only covered columns have `.col` statistics.

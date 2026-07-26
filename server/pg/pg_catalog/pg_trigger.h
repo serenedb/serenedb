@@ -59,4 +59,7 @@ struct PgTrigger {
 };
 // NOLINTEND
 
+template<>
+catalog::MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData();
+
 }  // namespace sdb::pg

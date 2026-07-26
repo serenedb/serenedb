@@ -326,10 +326,10 @@ duckdb::BoundCastInfo PgRegtypeToVarcharBind(duckdb::BindCastInput&,
 bool PgRegclassToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
                              duckdb::idx_t count,
                              duckdb::CastParameters& params) {
-  auto snap = GetSereneDBContext(*params.cast_data->Cast<RegCastData>().ctx)
-                .CatalogSnapshot();
+  auto* context = params.cast_data->Cast<RegCastData>().ctx;
+  const auto database = GetSereneDBContext(*context).GetDatabaseId();
   return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
-    return pg::RegclassOut(*snap, oid);
+    return pg::RegclassOut(context, database, oid);
   });
 }
 
@@ -344,10 +344,9 @@ duckdb::BoundCastInfo PgRegclassToVarcharBind(duckdb::BindCastInput& input,
 bool PgRegnamespaceToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
                                  duckdb::idx_t count,
                                  duckdb::CastParameters& params) {
-  auto snap = GetSereneDBContext(*params.cast_data->Cast<RegCastData>().ctx)
-                .CatalogSnapshot();
+  auto* context = params.cast_data->Cast<RegCastData>().ctx;
   return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
-    return pg::RegnamespaceOut(*snap, oid);
+    return pg::RegnamespaceOut(context, oid);
   });
 }
 

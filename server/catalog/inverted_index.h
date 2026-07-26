@@ -33,28 +33,28 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/down_cast.h"
 #include "catalog/index.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 
-namespace duckdb {
-
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace sdb::search {
 
 class InvertedIndexStorage;
 
 }  // namespace sdb::search
+namespace duckdb {
+
+class AttachedDatabase;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 namespace term_dict {
 
 inline constexpr irs::field_id kPKFieldId =
-  static_cast<irs::field_id>(Column::kGeneratedPKId.id());
+  static_cast<irs::field_id>(kGeneratedPKId.id());
 
 enum class Kind : uint8_t {
   Unsupported,
@@ -161,19 +161,43 @@ struct InvertedIndexEntryInfo {
   bool IsStored() const noexcept { return store_values || IsIVF(); }
 };
 
+// The text-search dictionaries an index's entries name, resolved once. The
+// definitions are catalog entries now, so a per-field lookup on a flush path
+// would be a catalog read per column per chunk; the tokenize paths take this
+// instead, built where a transaction is still in scope.
+using TokenizerMap = containers::FlatHashMap<ObjectId, TokenizerRef>;
+
+// Read through `context`'s own transaction, out of the catalog of the database
+// it is connected to -- the one holding both the index and them. Never through
+// the shared by-id cache: that holds what is committed, and a reader has to
+// keep seeing the dictionary its own index version names after another session
+// has dropped both.
+TokenizerMap ResolveTokenizers(duckdb::ClientContext& context,
+                               const CreateIndexInfoBase& index);
+// The same for the feed, which reaches here from WAL replay and from the tail
+// of a commit: there the attachment is at hand and a transaction may not be,
+// and the attachment may still be opening.
+TokenizerMap ResolveTokenizers(duckdb::ClientContext* context,
+                               duckdb::AttachedDatabase& db,
+                               const CreateIndexInfoBase& index);
+
 struct ColumnTokenizer {
-  Tokenizer::TokenizerWrapper analyzer;
+  CreateTokenizerInfo::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
 };
 
-// Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding
+// One inverted index, in the form a catalog entry is built from -- and also an
+// irs::IndexFieldOptions: the definition IS the per-column physical-encoding
 // config the iresearch writer consults at flush/merge. A write or compaction
-// hands the writer the index from its own DDL snapshot, so the long-lived
-// writer never reaches into the live catalog. Copy-on-write means an unchanged
-// index is the same object across snapshots, so the inherited EqualOptions
-// (pointer identity) is the cheap segment-reuse check.
-class InvertedIndex final : public Index, public irs::IndexFieldOptions {
+// hands the writer the info from its own DDL view, so the long-lived writer
+// never reaches into the live catalog.
+//
+// The three derived maps below alias this object's own storage, which is why
+// there is no copy constructor: the info is const and shared, and Copy()
+// rebuilds a fresh one from the payload rather than aliasing the source.
+class CreateInvertedIndexInfo final : public CreateIndexInfoBase,
+                                      public irs::IndexFieldOptions {
  public:
   using Entries =
     containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
@@ -185,43 +209,55 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // serialized_expr = full index); its dependent columns join the referenced
   // set so the store mirror declares them and duckdb populates their chunk
   // vectors on DML.
-  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                ObjectId relation_id, std::string name,
-                std::vector<Column::Id> columns,
-                std::vector<ExpressionKey> expression_keys, Entries entries,
-                InvertedIndexOptions options, ExpressionData predicate)
-    : Index{database_id,
-            schema_id,
-            id,
-            relation_id,
-            std::move(name),
-            DeriveIds(columns,
-                      std::views::transform(expression_keys,
-                                            [](const auto& key) -> const auto& {
-                                              return key.data;
-                                            }),
-                      predicate.dependent_columns),
-            ObjectType::InvertedIndex},
+  CreateInvertedIndexInfo(ObjectId schema_id, ObjectId id, ObjectId relation_id,
+                          std::string_view name, std::string comment,
+                          std::vector<ColumnId> columns,
+                          std::vector<ExpressionKey> expression_keys,
+                          Entries entries, InvertedIndexOptions options,
+                          ExpressionData predicate)
+    : CreateIndexInfoBase{schema_id,
+                          id,
+                          relation_id,
+                          name,
+                          std::move(comment),
+                          DeriveIds(columns,
+                                    std::views::transform(
+                                      expression_keys,
+                                      [](const auto& key) -> const auto& {
+                                        return key.data;
+                                      }),
+                                    predicate.dependent_columns),
+                          /*inverted=*/true},
       _entries{std::move(entries)},
       _expression_keys{std::move(expression_keys)},
       _options{std::move(options)},
       _predicate{std::move(predicate)} {
-    BuildExprByFieldIdIndex();
-    BuildSerializedExprIndex();
-    BuildFieldLookupIndex();
-    BumpTickServerForEntryIds();
+    BuildDerivedIndexes();
+    RestoreEntryIds();
   }
 
-  static std::shared_ptr<InvertedIndex> Deserialize(duckdb::Deserializer& src,
-                                                    ReadContext ctx);
+  CreateInvertedIndexInfo(const CreateInvertedIndexInfo&) = delete;
+  CreateInvertedIndexInfo& operator=(const CreateInvertedIndexInfo&) = delete;
+
+  persistence::InvertedIndexData ToData() const;
   void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
+  void WriteJson(basics::JsonSink& sink) const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
+
+  static std::shared_ptr<CreateInvertedIndexInfo> Deserialize(
+    duckdb::Deserializer& src, ObjectId schema_id, ObjectId id,
+    ObjectId relation_id);
+  // From the persisted payload, which stores the per-field config in its packed
+  // form -- boot replay and Copy() both come through here.
+  static std::shared_ptr<CreateInvertedIndexInfo> FromData(
+    ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    persistence::InvertedIndexData data);
 
   const InvertedIndexEntryInfo* FindEntry(irs::field_id id) const noexcept;
   // Convenience: returns the entry only if it is a plain column (not an
   // indexed expression). Use when the caller knows column id semantics.
   const InvertedIndexEntryInfo* FindColumnInfo(
-    catalog::Column::Id column_id) const noexcept;
+    catalog::ColumnId column_id) const noexcept;
 
   // The expression key owning `field_id`, or nullptr if `field_id` is a plain
   // column key (or unknown). Pointer is stable for the index's lifetime (into
@@ -234,6 +270,12 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
     return _expression_keys;
   }
 
+  // Whether `field_id`'s expression feeds a synthetic geo column, where JSON
+  // object/array leaves are geometry rather than the error they are anywhere
+  // else. Both the DML feed and the CREATE INDEX build gate their leaf
+  // rejection on this, so it lives with the keys instead of beside each.
+  bool IsGeoJsonKey(const ExpressionKey& key) const noexcept;
+
   struct FieldLookup {
     const InvertedIndexEntryInfo* entry = nullptr;
     irs::field_id entry_field_id = irs::field_limits::invalid();
@@ -242,10 +284,10 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   static void AppendKindSuffix(std::string& out,
                                const duckdb::LogicalType& type);
 
-  ColumnTokenizer GetTokenizer(const std::shared_ptr<const Snapshot>& snapshot,
+  ColumnTokenizer GetTokenizer(const TokenizerMap& dicts,
                                irs::field_id field_id) const;
 
-  bool IsKeywordField(const Snapshot& snapshot,
+  bool IsKeywordField(duckdb::ClientContext& context,
                       irs::field_id field_id) const noexcept;
 
   irs::field_id FindFieldIdBySerialized(
@@ -254,10 +296,6 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   std::optional<irs::IvfInfo> GetIvfInfo(irs::field_id field_id) const;
 
   const InvertedIndexOptions& GetOptions() const noexcept { return _options; }
-
-  void ReplaceOptions(InvertedIndexOptions options) noexcept {
-    _options = std::move(options);
-  }
 
   const ExpressionData* Predicate() const noexcept {
     return _predicate.serialized_expr.empty() ? nullptr : &_predicate;
@@ -274,14 +312,16 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // opened by another incarnation. A DROP COLUMN that truly changes the
   // physical layout recreates the storage (new index id -> new writer), so a
   // single writer's pooled segments only ever see encoding-equivalent
-  // incarnations; RENAME -- the one in-place mutation -- leaves column options
-  // untouched. A serenedb writer's gate only ever compares two InvertedIndex
-  // options (the other concrete IndexFieldOptions, FunctionFieldOptions, is
-  // iresearch-test- only and never mixed onto the same writer), so equality
-  // reduces to "same type" -- which is an invariant here, asserted rather than
-  // branched on.
+  // incarnations; RENAME and SET COMMENT -- the mutations that rewrite the info
+  // without touching a key -- leave column options untouched. A serenedb
+  // writer's gate only ever compares two of these (the other concrete
+  // IndexFieldOptions, FunctionFieldOptions, is iresearch-test-only and never
+  // mixed onto the same writer), so equality reduces to "same type" -- which is
+  // an invariant here, asserted rather than branched on. It is deliberately NOT
+  // the inherited pointer identity: a rewritten info is a new object encoding
+  // the same columns, and pointer identity would end every open segment.
   bool EqualOptions(const irs::IndexFieldOptions& other) const noexcept final {
-    SDB_ASSERT(dynamic_cast<const InvertedIndex*>(&other) != nullptr,
+    SDB_ASSERT(dynamic_cast<const CreateInvertedIndexInfo*>(&other) != nullptr,
                "EqualOptions across IndexFieldOptions types");
     return true;
   }
@@ -292,25 +332,12 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
-  // Mutable iresearch runtime storage (writer/reader/refresh) for this index,
-  // held behind a shared_ptr on the otherwise-immutable metadata object: a COW
-  // snapshot clone shares the same storage, a row feed never clones the
-  // catalog, and a metadata mutation (Clone) carries it forward. nullptr until
-  // the index is bound to its storage (CREATE INDEX / boot recovery).
-  const std::shared_ptr<search::InvertedIndexStorage>& GetData()
-    const noexcept {
-    return _data;
-  }
-  void SetData(
-    std::shared_ptr<search::InvertedIndexStorage> data) const noexcept {
-    _data = std::move(data);
-  }
-
  private:
+  void BuildDerivedIndexes();
   void BuildExprByFieldIdIndex();
   void BuildSerializedExprIndex();
   void BuildFieldLookupIndex();
-  void BumpTickServerForEntryIds();
+  void RestoreEntryIds();
 
   Entries _entries;
   std::vector<ExpressionKey> _expression_keys;
@@ -324,7 +351,22 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   containers::FlatHashMap<irs::field_id, FieldLookup> _field_lookup;
   InvertedIndexOptions _options;
   ExpressionData _predicate;
-  mutable std::shared_ptr<search::InvertedIndexStorage> _data;
 };
+
+using InvertedIndexInfoRef = std::shared_ptr<const CreateInvertedIndexInfo>;
+
+// The inverted info behind an index, for the readers whose facts are this
+// kind's only.
+inline const CreateInvertedIndexInfo& InvertedInfo(
+  const CreateIndexInfoBase& index) noexcept {
+  return basics::downCast<const CreateInvertedIndexInfo>(index);
+}
+
+// The same as its own ref, for the readers that keep it alive past the
+// definition they took it from.
+inline InvertedIndexInfoRef InvertedInfoRef(const IndexInfoRef& index) {
+  SDB_ASSERT(index->IsInverted());
+  return std::static_pointer_cast<const CreateInvertedIndexInfo>(index);
+}
 
 }  // namespace sdb::catalog

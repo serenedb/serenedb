@@ -21,11 +21,16 @@
 #include "pg/pg_catalog/pg_index.h"
 
 #include "app/app_server.h"
+#include "auth/role_closure.h"
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/index.h"
+#include "catalog/schema.h"
 #include "catalog/secondary_index.h"
-#include "catalog/table.h"
+#include "connector/duckdb_catalog_sets.h"
+#include "connector/duckdb_table_entry.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 
@@ -55,42 +60,47 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
   std::vector<PgIndex> values;
   std::vector<std::vector<int16_t>> indkey_storage;
 
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
-    SDB_ASSERT(schema);
+  auto& context = _config.GetClientContext();
 
-    // Explicit user-created indexes
-    for (const auto& index_ptr :
-         catalog->GetIndexes(GetDatabaseId(), schema->GetName())) {
-      SDB_ASSERT(index_ptr);
-      auto& index = *index_ptr;
-      const auto& column_ids = index.GetColumns();
+  // Every base table of the database, by id: an index row needs the attnums of
+  // the relation it hangs off, and the synthetic rows below are that relation's
+  // own key constraints.
+  containers::FlatHashMap<ObjectId, const connector::SereneDBTableEntry*>
+    tables;
+  connector::VisitTableEntries(context, GetDatabaseId(),
+                               [&](const catalog::CreateSchemaInfo&,
+                                   const connector::SereneDBTableEntry& table) {
+                                 tables.emplace(catalog::IdOf(table), &table);
+                               });
+
+  // Explicit user-created indexes
+  connector::VisitIndexes(
+    &context, GetDatabaseId(), [&](const catalog::IndexInfoRef& index) {
+      const auto& column_ids = index->GetColumns();
       auto natts = static_cast<int16_t>(column_ids.size());
 
       // Build indkey: map column IDs to 1-based attnum in the parent table
       std::vector<int16_t> indkey;
       indkey.reserve(column_ids.size());
 
-      auto table_obj = catalog->GetObject(index.GetRelationId());
-      if (table_obj && table_obj->GetType() == catalog::ObjectType::Table) {
-        auto& table = basics::downCast<catalog::Table>(*table_obj);
+      // An index over a view has no attnums of its own to report.
+      const auto table = tables.find(index->GetRelationId());
+      if (table != tables.end()) {
         for (auto col_id : column_ids) {
-          const auto pos = table.ColumnPosById(col_id);
-          indkey.push_back(
-            pos < table.Columns().size() ? static_cast<int16_t>(pos + 1) : 0);
+          indkey.push_back(connector::TableEntryAttnum(*table->second, col_id));
         }
       }
-      bool is_unique_index =
-        index.GetType() == catalog::ObjectType::SecondaryIndex &&
-        basics::downCast<catalog::SecondaryIndex>(index).IsUnique();
+      const bool is_unique_index =
+        !index->IsInverted() &&
+        basics::downCast<const catalog::CreateSecondaryIndexInfo>(*index)
+          .IsUnique();
       indkey_storage.push_back(std::move(indkey));
       values.push_back({
-        .indexrelid = index.GetId().id(),
-        .indrelid = index.GetRelationId().id(),
+        .indexrelid = index->GetId().id(),
+        .indrelid = index->GetRelationId().id(),
         .indnatts = natts,
         .indnkeyatts = natts,
         .indisunique = is_unique_index,
@@ -100,49 +110,9 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
         .indimmediate = true,
         .indisclustered = false,
         // indisvalid = usable for QUERIES; indisready = maintained by WRITES
-        // (pg_index semantics). DML feeds the index from the moment it is
-        // attached (same catalog mutation that makes this row visible), so
-        // ready is always true; an in-flight online build shows
-        // ready=t/valid=f -- exactly PG's CREATE INDEX CONCURRENTLY mid
-        // phase.
-        .indisvalid = !index.Tombstoned(),
-        .indcheckxmin = false,
-        .indisready = true,
-        .indislive = true,
-        .indisreplident = false,
-        .indkey = indkey_storage.back(),
-      });
-    }
-
-    // Synthetic indexes for primary keys (PG semantics: each PK has a backing
-    // index). Use the table's OID as both indexrelid and indrelid so it lines
-    // up with pg_constraint.conindid and pg_class lookups.
-    for (const auto& table :
-         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
-      auto& pk_columns = table->PKColumns();
-      if (pk_columns.empty()) {
-        continue;
-      }
-      std::vector<int16_t> indkey;
-      indkey.reserve(pk_columns.size());
-      for (auto pk_id : pk_columns) {
-        const auto pos = table->ColumnPosById(pk_id);
-        indkey.push_back(
-          pos < table->Columns().size() ? static_cast<int16_t>(pos + 1) : 0);
-      }
-      auto natts = static_cast<int16_t>(indkey.size());
-      indkey_storage.push_back(std::move(indkey));
-      values.push_back({
-        .indexrelid = table->PKIndexId().id(),
-        .indrelid = table->GetId().id(),
-        .indnatts = natts,
-        .indnkeyatts = natts,
-        .indisunique = true,
-        .indnullsnotdistinct = false,
-        .indisprimary = true,
-        .indisexclusion = false,
-        .indimmediate = true,
-        .indisclustered = false,
+        // (pg_index semantics). An index only becomes visible when the
+        // transaction that built it commits, and by then the build is done, so
+        // every row this projection can produce is both valid and ready.
         .indisvalid = true,
         .indcheckxmin = false,
         .indisready = true,
@@ -150,49 +120,58 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
         .indisreplident = false,
         .indkey = indkey_storage.back(),
       });
-    }
+    });
 
-    // Synthetic indexes for UNIQUE constraints (PG: each UNIQUE has a backing
-    // index). indexrelid matches pg_constraint.conindid and pg_class.oid.
-    for (const auto& table :
-         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
-      const auto& uniques = table->UniqueConstraints();
-      for (size_t uq_idx = 0; uq_idx < uniques.size(); ++uq_idx) {
-        std::vector<int16_t> indkey;
-        indkey.reserve(uniques[uq_idx].columns.size());
-        for (auto col_id : uniques[uq_idx].columns) {
-          const auto pos = table->ColumnPosById(col_id);
-          indkey.push_back(
-            pos < table->Columns().size() ? static_cast<int16_t>(pos + 1) : 0);
+  // Synthetic indexes for the key constraints: postgres backs every PRIMARY
+  // KEY and UNIQUE with an index of its own, whose oid is the one the
+  // constraint carries and which pg_constraint.conindid and pg_class.oid both
+  // name. Primary keys first, then the uniques, so the rows stay grouped the
+  // way the tables that read them expect.
+  const auto emit_keys = [&](bool primary) {
+    connector::VisitTableEntries(
+      context, GetDatabaseId(),
+      [&](const catalog::CreateSchemaInfo&,
+          const connector::SereneDBTableEntry& table) {
+        for (const auto& constraint : table.GetConstraints()) {
+          if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+            continue;
+          }
+          const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+          if (unique.IsPrimaryKey() != primary) {
+            continue;
+          }
+          auto indkey = connector::KeyConstraintAttnums(table, unique);
+          auto natts = static_cast<int16_t>(indkey.size());
+          indkey_storage.push_back(std::move(indkey));
+          values.push_back({
+            .indexrelid = unique.host_index_id,
+            .indrelid = catalog::IdOf(table).id(),
+            .indnatts = natts,
+            .indnkeyatts = natts,
+            .indisunique = true,
+            .indnullsnotdistinct = false,
+            .indisprimary = primary,
+            .indisexclusion = false,
+            .indimmediate = true,
+            .indisclustered = false,
+            .indisvalid = true,
+            .indcheckxmin = false,
+            .indisready = true,
+            .indislive = true,
+            .indisreplident = false,
+            .indkey = indkey_storage.back(),
+          });
         }
-        auto natts = static_cast<int16_t>(indkey.size());
-        indkey_storage.push_back(std::move(indkey));
-        values.push_back({
-          .indexrelid = uniques[uq_idx].index_id.id(),
-          .indrelid = table->GetId().id(),
-          .indnatts = natts,
-          .indnkeyatts = natts,
-          .indisunique = true,
-          .indnullsnotdistinct = false,
-          .indisprimary = false,
-          .indisexclusion = false,
-          .indimmediate = true,
-          .indisclustered = false,
-          .indisvalid = true,
-          .indcheckxmin = false,
-          .indisready = true,
-          .indislive = true,
-          .indisreplident = false,
-          .indkey = indkey_storage.back(),
-        });
-      }
-    }
-  }
+      });
+  };
+  emit_keys(true);
+  emit_keys(false);
 
   auto result = CreateColumns<PgIndex>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
 
   return {std::move(result), values.size()};

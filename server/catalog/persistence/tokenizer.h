@@ -24,7 +24,6 @@
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <string>
 
-#include "catalog/object.h"
 #include "catalog/search_analyzer_impl.h"
 
 namespace sdb::catalog::persistence {
@@ -34,7 +33,6 @@ struct TokenizerData {
   irs::analysis::TokenizerConfig config;
   search::Features features;
   uint32_t norm_row_group_size = 0;
-  Permissions perm;
 };
 
 }  // namespace sdb::catalog::persistence

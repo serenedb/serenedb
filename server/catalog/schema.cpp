@@ -22,32 +22,46 @@
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <ranges>
 
 #include "basics/serializer.h"
+#include "basics/simdjson_sink.h"
 
 namespace sdb::catalog {
 
-Schema::Schema(Permissions perm, ObjectId database_id, ObjectId id,
-               std::string_view name)
-  : Object{std::move(perm), database_id, id, name, ObjectType::Schema} {}
+CreateSchemaInfo::CreateSchemaInfo(ObjectId id, ObjectId database_id,
+                                   std::string_view name) {
+  SetId(id);
+  SetDatabaseId(database_id);
+  SetSchemaName(name);
+}
 
-std::shared_ptr<Schema> Schema::Deserialize(duckdb::Deserializer& src,
-                                            ReadContext ctx) {
-  SchemaOptions data;
+persistence::SchemaOptions CreateSchemaInfo::ToData() const {
+  return persistence::SchemaOptions{.name = std::string{GetName()}};
+}
+
+void CreateSchemaInfo::Serialize(duckdb::Serializer& sink) const {
+  basics::WriteTuple(sink, ToData());
+}
+
+void CreateSchemaInfo::WriteJson(basics::JsonSink& sink) const {
+  basics::WriteObject(sink, ToData());
+}
+
+std::shared_ptr<CreateSchemaInfo> CreateSchemaInfo::Deserialize(
+  duckdb::Deserializer& src, ObjectId id, ObjectId database_id) {
+  persistence::SchemaOptions data;
   basics::ReadTuple(src, data);
-  return std::make_shared<Schema>(std::move(data.perm), ctx.database_id,
-                                  data.id, data.name);
+  return std::make_shared<CreateSchemaInfo>(id, database_id, data.name);
 }
 
-void Schema::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(
-    sink,
-    SchemaOptions{.id = GetId(), .name = _name, .perm = GetPermissions()});
+std::shared_ptr<CreateSchemaInfo> CreateSchemaInfo::CloneSchema() const {
+  return std::make_shared<CreateSchemaInfo>(GetId(), GetDatabaseId(),
+                                            GetName());
 }
 
-std::shared_ptr<Object> Schema::Clone() const {
-  return std::make_shared<Schema>(*this);
+duckdb::unique_ptr<duckdb::CreateInfo> CreateSchemaInfo::Copy() const {
+  return duckdb::make_uniq<CreateSchemaInfo>(GetId(), GetDatabaseId(),
+                                             GetName());
 }
 
 }  // namespace sdb::catalog

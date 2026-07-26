@@ -20,44 +20,13 @@
 
 #include "catalog/view.h"
 
-#include "basics/serializer.h"
-#include "catalog/create_info_serde.h"
-
 namespace sdb::catalog {
 
-PgSqlView::PgSqlView(Permissions perm, ObjectId schema_id, ObjectId id,
-                     std::string_view name,
-                     duckdb::unique_ptr<duckdb::CreateViewInfo> info)
-  : Object{std::move(perm), schema_id, id, std::string{name}, ObjectType::View},
-    _info{std::move(info)} {}
-
-std::shared_ptr<PgSqlView> PgSqlView::Deserialize(duckdb::Deserializer& src,
-                                                  ReadContext ctx) {
-  CreateInfoReadData<duckdb::CreateViewInfo> data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<PgSqlView>(std::move(data.perm), ctx.schema_id,
-                                     ctx.id, data.name,
-                                     std::move(data.info.info));
-}
-
-void PgSqlView::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, CreateInfoWriteData<duckdb::CreateViewInfo>{
-                             GetName(), {_info.get()}, GetPermissions()});
-}
-
-std::shared_ptr<Object> PgSqlView::Clone() const {
-  auto cloned_info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
-      _info->Copy());
-  return std::make_shared<PgSqlView>(GetPermissions(), GetParentId(), GetId(),
-                                     GetName(), std::move(cloned_info));
-}
-
-Refs PgSqlView::GetRefs(RefKinds kinds) const {
-  if (!_info->query) {
+Refs ViewRefs(const duckdb::CreateViewInfo& info, RefKinds kinds) {
+  if (!info.query) {
     return {};
   }
-  return ExtractRefs(*_info->query, kinds);
+  return ExtractRefs(*info.query, kinds);
 }
 
 }  // namespace sdb::catalog

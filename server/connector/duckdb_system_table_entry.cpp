@@ -135,10 +135,16 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
                                    duckdb::CreateTableInfo& info,
                                    const catalog::VirtualTable& virtual_table)
   : duckdb::TableCatalogEntry(catalog, schema, info),
-    _virtual_table(virtual_table),
-    _system_object{virtual_table.Id(), virtual_table.GetName(),
-                   catalog::Acl{virtual_table.GetAcl().begin(),
-                                virtual_table.GetAcl().end()}} {}
+    _virtual_table(virtual_table) {
+  // A built-in relation has a fixed id, and pg_class.oid renders it; keep
+  // duckdb's oid the same number. Its content is static, so nothing here is
+  // duckdb's to persist either.
+  catalog::AdoptEntryIdentity(
+    *this, virtual_table.Id(),
+    catalog::Permissions{id::kRootUser,
+                         catalog::Acl{virtual_table.GetAcl().begin(),
+                                      virtual_table.GetAcl().end()}});
+}
 
 duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableEntry::GetStatistics(
   duckdb::ClientContext&, duckdb::column_t) {

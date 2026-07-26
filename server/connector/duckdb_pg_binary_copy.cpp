@@ -131,7 +131,7 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   // File (or real stdout): write the raw PGCOPY stream through a plain DuckDB
   // FileHandle. No CopyData framing, no CopyOutResponse/CopyDone -- those are
   // wire-only. Works without a wire connection. A private staging buffer feeds
-  // the same serializers; FillContext needs a catalog snapshot, taken from the
+  // the same serializers; FillContext takes what it needs from the
   // wire connection when present, otherwise from the client context's catalog.
   result->handle = duckdb::FileSystem::GetFileSystem(context).OpenFile(
     file_path, duckdb::FileFlags::FILE_FLAGS_WRITE |
@@ -229,7 +229,6 @@ struct PgBinaryCopyFromBindData final : public duckdb::TableFunctionData {
 struct PgBinaryCopyFromGlobalState final
   : public duckdb::GlobalTableFunctionState {
   std::unique_ptr<ByteSource> source;
-  std::shared_ptr<const catalog::Snapshot> snapshot;
   std::vector<sdb::pg::DeserializationFunction<sdb::pg::VectorSink>>
     deserializers;
   bool header_done = false;
@@ -250,7 +249,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
   auto result = duckdb::make_uniq<PgBinaryCopyFromGlobalState>();
 
   // pg-wire STDIN routes through SereneDBCopyFileSystem -> CopyInBridge, which
-  // needs the server-side wire connection (and its catalog snapshot for binary
+  // needs the server-side wire connection (for binary
   // value deserialization). A real file falls through to the OS filesystem and
   // works without any connection.
   auto* state =
@@ -264,7 +263,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
                 "on a server-side PostgreSQL wire connection"));
     }
     auto& conn = state->GetConnectionContext();
-    result->snapshot = conn.CatalogSnapshot();
     // pg-stdin: borrow the recv-buffer view the bridge already holds; skip the
     // FileHandle (and its per-field memcpy) entirely. Binary COPY opens stdin
     // once (single-pass), so nothing else reads the handle, and the session has
@@ -278,9 +276,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
     }
     result->source = std::make_unique<BridgeByteSource>(*bridge);
     return result;
-  }
-  if (state) {
-    result->snapshot = state->GetConnectionContext().CatalogSnapshot();
   }
   // file / real-stdin: block-buffered reader over the OS FileHandle.
   result->source = std::make_unique<HandleByteSource>(
@@ -357,7 +352,7 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
           type, sdb::pg::VarFormat::Binary));
     }
   }
-  sdb::pg::DeserializeContext dctx{g.snapshot.get()};
+  sdb::pg::DeserializeContext dctx;
   std::string
     field;  // a field that straddles a frame boundary, or the fallback
   duckdb::idx_t row = 0;

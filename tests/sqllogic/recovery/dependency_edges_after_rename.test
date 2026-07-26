@@ -1,0 +1,313 @@
+control substitution on
+
+# A dependency edge used to be re-derived at boot by resolving the dependent's
+# stored SQL text by name. A rename moves that name, so every edge pointing at
+# a renamed object came back missing: RESTRICT let the drop through and CASCADE
+# left the dependent behind in pg_class. The resolution now travels with the
+# definition, so boot installs ids instead of resolving names again.
+#
+# Every endpoint kind that can be renamed and be depended upon is here, each
+# with a control that is never renamed.
+
+statement ok
+CREATE SCHEMA dre;
+
+
+# table <- view
+statement ok
+CREATE TABLE dre.t(a INTEGER);
+
+statement ok
+CREATE VIEW dre.v AS SELECT a FROM dre.t;
+
+statement ok
+CREATE TABLE dre.ct(a INTEGER);
+
+statement ok
+CREATE VIEW dre.cv AS SELECT a FROM dre.ct;
+
+statement ok
+ALTER TABLE dre.t RENAME TO t2;
+
+
+# view <- view
+statement ok
+CREATE VIEW dre.vbase AS SELECT 1 AS x;
+
+statement ok
+CREATE VIEW dre.vtop AS SELECT x FROM dre.vbase;
+
+statement ok
+ALTER VIEW dre.vbase RENAME TO vbase2;
+
+
+# function <- view
+statement ok
+CREATE FUNCTION dre.f(i INTEGER) RETURNS INTEGER AS 'SELECT i + 1' LANGUAGE SQL;
+
+statement ok
+CREATE VIEW dre.fv AS SELECT dre.f(1) AS y;
+
+statement ok
+ALTER FUNCTION dre.f RENAME TO f2;
+
+
+# sequence <- column DEFAULT, under a table that is then renamed
+statement ok
+CREATE SEQUENCE dre.s;
+
+statement ok
+CREATE TABLE dre.st(a INTEGER DEFAULT nextval('dre.s'));
+
+statement ok
+ALTER TABLE dre.st RENAME TO st2;
+
+
+# table <- index, where the index is renamed and so is its table
+statement ok
+CREATE TABLE dre.it(a INTEGER);
+
+statement ok
+CREATE INDEX it_idx ON dre.it(a);
+
+statement ok
+ALTER INDEX dre.it_idx RENAME TO it_idx2;
+
+statement ok
+ALTER TABLE dre.it RENAME TO it2;
+
+
+# The edges hold before the restart -- they always did.
+statement error
+DROP TABLE dre.t2;
+----
+db error: ERROR: cannot drop table t2 because other objects depend on it
+DETAIL: view v depends on table t2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement error
+DROP VIEW dre.vbase2;
+----
+db error: ERROR: cannot drop view vbase2 because other objects depend on it
+DETAIL: view vtop depends on view vbase2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement error
+DROP FUNCTION dre.f2;
+----
+db error: ERROR: cannot drop function f2 because other objects depend on it
+DETAIL: view fv depends on function f2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# Everything above, again, on a catalog that was rebuilt from the log.
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname IN ('v', 'cv', 'vtop', 'fv', 'st2');
+----
+count
+5
+
+connection after_crash
+statement error
+DROP TABLE dre.t2;
+----
+db error: ERROR: cannot drop table t2 because other objects depend on it
+DETAIL: view v depends on table t2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+# The control, which was never renamed and never lost its edge.
+connection after_crash
+statement error
+DROP TABLE dre.ct;
+----
+db error: ERROR: cannot drop table ct because other objects depend on it
+DETAIL: view cv depends on table ct
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_crash
+statement error
+DROP VIEW dre.vbase2;
+----
+db error: ERROR: cannot drop view vbase2 because other objects depend on it
+DETAIL: view vtop depends on view vbase2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_crash
+statement error
+DROP FUNCTION dre.f2;
+----
+db error: ERROR: cannot drop function f2 because other objects depend on it
+DETAIL: view fv depends on function f2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_crash
+statement error
+DROP SEQUENCE dre.s;
+----
+db error: ERROR: cannot drop sequence s because other objects depend on it
+DETAIL: table st2 depends on sequence s
+HINT: Use DROP ... CASCADE to drop the dependent objects too, or DROP TABLE on the owning table.
+
+
+# The renamed index still hangs off the renamed table, so the table's drop takes
+# it and nothing is left behind.
+connection after_crash
+query ok
+SELECT indexname FROM pg_indexes WHERE tablename = 'it2';
+----
+indexname
+it_idx2
+
+connection after_crash
+statement ok
+DROP TABLE dre.it2;
+
+connection after_crash
+query ok
+SELECT count(*) FROM pg_class WHERE relname = 'it_idx2';
+----
+count
+0
+
+
+# CASCADE removes the dependent rather than leaving it dangling.
+connection after_crash
+statement ok
+DROP TABLE dre.t2 CASCADE;
+
+connection after_crash
+query ok
+SELECT count(*) FROM pg_class WHERE relname = 'v';
+----
+count
+0
+
+connection after_crash
+statement ok
+DROP VIEW dre.vbase2 CASCADE;
+
+connection after_crash
+query ok
+SELECT count(*) FROM pg_class WHERE relname = 'vtop';
+----
+count
+0
+
+connection after_crash
+statement ok
+DROP FUNCTION dre.f2 CASCADE;
+
+connection after_crash
+query ok
+SELECT count(*) FROM pg_class WHERE relname = 'fv';
+----
+count
+0
+
+connection after_crash
+statement ok
+DROP SEQUENCE dre.s CASCADE;
+
+
+# The resolution rides the definition record, so it lands in the same frame as
+# the store half it describes -- and a crash between that frame and the data
+# commit leaves the database behind the log tail. Boot replays the gap, and the
+# edge has to come back with the definition rather than being resolved again.
+connection after_crash
+statement ok
+CREATE SEQUENCE dre.gs;
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+connection after_crash
+statement error connection closed
+CREATE TABLE dre.gt(a INTEGER DEFAULT nextval('dre.gs'), b TEXT);
+
+connection after_gap
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname = 'gt';
+----
+count
+1
+
+connection after_gap
+statement ok
+INSERT INTO dre.gt(b) VALUES ('one'), ('two');
+
+connection after_gap
+query ok
+SELECT a, b FROM dre.gt ORDER BY a;
+----
+a	b
+1	one
+2	two
+
+connection after_gap
+statement error
+DROP SEQUENCE dre.gs;
+----
+db error: ERROR: cannot drop sequence gs because other objects depend on it
+DETAIL: table gt depends on sequence gs
+HINT: Use DROP ... CASCADE to drop the dependent objects too, or DROP TABLE on the owning table.
+
+
+
+# A checkpoint rewrites the whole file from the catalog's own definitions, so
+# the resolution recorded beside each one has to go out with it again.
+connection after_gap
+statement ok
+CREATE TABLE dre.pt(a INTEGER);
+
+connection after_gap
+statement ok
+CREATE VIEW dre.pv AS SELECT a FROM dre.pt;
+
+connection after_gap
+statement ok
+ALTER TABLE dre.pt RENAME TO pt2;
+
+connection after_gap
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+connection after_gap
+statement ok
+CREATE TABLE dre.compact_trigger(x INTEGER);
+
+connection after_gap
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_gap
+statement error connection closed
+SELECT 1;
+
+
+connection after_compact
+statement error retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+DROP TABLE dre.pt2;
+----
+db error: ERROR: cannot drop table pt2 because other objects depend on it
+DETAIL: view pv depends on table pt2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_compact
+statement ok
+DROP SCHEMA dre CASCADE;

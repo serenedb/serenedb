@@ -20,13 +20,25 @@
 
 #include "connector/duckdb_index_entry.h"
 
+#include "basics/down_cast.h"
+#include "catalog/inverted_index.h"
+
 namespace sdb::connector {
 
 SereneDBIndexEntry::SereneDBIndexEntry(duckdb::Catalog& catalog,
                                        duckdb::SchemaCatalogEntry& schema,
                                        duckdb::CreateIndexInfo& info,
+                                       catalog::IndexInfoRef index,
                                        std::string table_name)
   : duckdb::IndexCatalogEntry{catalog, schema, info},
-    _table_name{std::move(table_name)} {}
+    _sdb_index{std::move(index)},
+    _table_name{std::move(table_name)},
+    _relation_id{_sdb_index->GetRelationId()} {
+  // An ART on the store table or an iresearch directory: the storage is not a
+  // duckdb index block list, and the definition lives in the serenedb log.
+  // An index carries no owner and no ACL: postgres gives it none, so every
+  // privilege decision reads the relation it is built on.
+  catalog::AdoptEntryIdentity(*this, _sdb_index->GetId());
+}
 
 }  // namespace sdb::connector

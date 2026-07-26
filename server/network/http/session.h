@@ -48,6 +48,7 @@
 #include "basics/metrics.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
@@ -158,14 +159,13 @@ class HttpSession final
   // authenticated the request that first touched the connection.
   duckdb::Connection& Connection() override {
     if (!_conn) {
-      const auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
       const auto dbname = StaticStrings::kDefaultDatabase;
-      auto database = snapshot->GetDatabase(dbname);
+      auto database = connector::FindDatabase(nullptr, dbname);
       SDB_ENSURE(database);
-      const auto database_id = database->GetId();
+      const auto database_id = database.Id();
       const std::string_view user =
         _user.empty() ? StaticStrings::kDefaultUser : _user;
-      auto login = sdb::pg::RequireLoginRole(*snapshot, user, *database);
+      auto login = sdb::pg::RequireLoginRole(user, dbname, database.perm);
       if (!login.role) {
         THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
       }
@@ -173,9 +173,8 @@ class HttpSession final
 
       _conn = DuckDBEngine::Instance().CreateConnection();
       _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, role->GetId(), dbname, database_id,
-        std::move(database), nullptr, nullptr,
-        static_cast<int32_t>(_cancel_key >> 32), _cancel);
+        *_conn->context, user, role->GetId(), dbname, database_id, nullptr,
+        nullptr, static_cast<int32_t>(_cancel_key >> 32), _cancel);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
@@ -213,8 +212,6 @@ class HttpSession final
     // as an ErrorData result too, not an escaped exception.
     try {
       auto& conn = Connection();
-      auto& ctx = connector::GetSereneDBContext(*conn.context);
-      ctx.AcquireCatalogSnapshot();
       auto pending = conn.PendingQuery(sql, /*allow_stream_result=*/false);
       if (!pending->HasError()) {
         // In debug interleave queries more often to see more bugs.

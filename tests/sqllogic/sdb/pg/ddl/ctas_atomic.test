@@ -1,7 +1,8 @@
-# CREATE TABLE AS in SereneDB is a separate atomic operation, not transactional
-# with the surrounding statement: its SELECT reads only COMMITTED data, and its
-# result commits independently (survives a ROLLBACK). This diverges from
-# PostgreSQL (whose DDL is transactional), so the test is serenedb-only.
+# CREATE TABLE AS reads and writes on the transaction that issued it, the way
+# PostgreSQL's does: its SELECT sees that transaction's own uncommitted writes,
+# and the rows it lands are readable before the COMMIT. The table is
+# transactional too -- a CTAS inside a transaction block disappears with a
+# ROLLBACK, rows and relation together.
 
 statement ok
 CREATE TABLE vedernikoff_src (id INTEGER, v TEXT);
@@ -10,7 +11,7 @@ statement ok
 INSERT INTO vedernikoff_src VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 
-# CTAS does not observe the user's open/uncommitted writes.
+# CTAS observes the issuing transaction's open writes.
 statement ok
 BEGIN;
 
@@ -20,30 +21,37 @@ INSERT INTO vedernikoff_src VALUES (99, 'z');
 statement ok
 CREATE TABLE clickclack_iso AS SELECT * FROM vedernikoff_src;
 
+# And what it landed is readable straight away, still inside the transaction.
+query
+SELECT count(*) FROM clickclack_iso;
+----
+count
+4
+
 statement ok
 COMMIT;
 
-# The committed INSERT is now visible in the source...
 query
 SELECT count(*) FROM vedernikoff_src;
 ----
 count
 4
 
-# ...but the CTAS snapshot excluded the (then-uncommitted) row.
 query
 SELECT count(*) FROM clickclack_iso ORDER BY 1;
 ----
 count
-3
+4
 
 query
 SELECT id FROM clickclack_iso WHERE id = 99;
 ----
 id
+99
 
 
-# DDL is atomic, not transactional: a CTAS inside a transaction survives ROLLBACK.
+# The table is transactional (PG 18): a CTAS inside a transaction block is
+# undone by the ROLLBACK, table and rows together.
 statement ok
 BEGIN;
 
@@ -52,6 +60,29 @@ CREATE TABLE babsky_rb AS SELECT * FROM vedernikoff_src WHERE id < 10;
 
 statement ok
 ROLLBACK;
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'babsky_rb';
+----
+n
+0
+
+statement error
+SELECT count(*) FROM babsky_rb;
+----
+db error: ERROR: Table with name babsky_rb does not exist!
+<slt:ignore>
+
+
+# Committed, it behaves like any other table.
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE babsky_rb AS SELECT * FROM vedernikoff_src WHERE id < 10;
+
+statement ok
+COMMIT;
 
 query
 SELECT count(*) FROM babsky_rb;
@@ -77,6 +108,7 @@ id	v
 1	X
 3	c
 4	d
+99	z
 
 
 statement ok

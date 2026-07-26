@@ -20,6 +20,8 @@
 
 #include "sql_utils.h"
 
+#include "pg/sql_exception_macro.h"
+
 namespace sdb::pg {
 
 std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept {
@@ -38,8 +40,48 @@ std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept {
       return "function";
     case TYPE_ENTRY:
       return "type";
+    case SEQUENCE_ENTRY:
+      return "sequence";
+    case DATABASE_ENTRY:
+      return "database";
+    case TOKENIZER_ENTRY:
+      return "text search dictionary";
+    case FOREIGN_SERVER_ENTRY:
+      return "foreign server";
+    case ROLE_ENTRY:
+      return "role";
     default:
       return "object";
+  }
+}
+
+void ThrowUndefinedObject(duckdb::CatalogType type, std::string_view name) {
+  switch (type) {
+    using enum duckdb::CatalogType;
+    case MACRO_ENTRY:
+    case TABLE_MACRO_ENTRY:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+                      ERR_MSG("function \"", name, "\" does not exist"));
+    case TYPE_ENTRY:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("type \"", name, "\" does not exist"));
+    case TOKENIZER_ENTRY:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("text search dictionary \"", name, "\" does not exist"));
+    case FOREIGN_SERVER_ENTRY:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("server \"", name, "\" does not exist"));
+    case SEQUENCE_ENTRY:
+    case INDEX_ENTRY:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                      ERR_MSG("relation \"", name, "\" does not exist"));
+    case VIEW_ENTRY:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                      ERR_MSG("view \"", name, "\" does not exist"));
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                      ERR_MSG("table \"", name, "\" does not exist"));
   }
 }
 

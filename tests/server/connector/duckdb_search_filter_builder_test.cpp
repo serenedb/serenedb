@@ -72,8 +72,8 @@ using sdb::connector::SearchColumnInfo;
 // outside `[1, kMaxRealIdValue]` (the real-column range) and outside the
 // {PK, score, offsets} synthetics so it can never collide with anything
 // the catalog or filter machinery might allocate.
-constexpr catalog::Column::Id kTestTokenizerColumnId =
-  catalog::Column::Id{catalog::Column::kMaxRealIdValue + 4};
+constexpr catalog::ColumnId kTestTokenizerColumnId =
+  catalog::ColumnId{catalog::kMaxRealColumnIdValue + 4};
 
 // ---------------------------------------------------------------------------
 // Plan capture: the production MakeSearchFilter runs from an OptimizerExtension
@@ -141,9 +141,9 @@ struct ColumnSpec {
 using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 
 catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
-  static catalog::Tokenizer gStringTokenizer(
-    catalog::Permissions{}, ObjectId{0}, ObjectId{12345},
-    "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
+  static catalog::CreateTokenizerInfo gStringTokenizer(
+    ObjectId{12345}, ObjectId{0}, "test_string_verbartim", {},
+    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
   return {.analyzer = std::move(tokenizer),
@@ -152,9 +152,9 @@ catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
 
 template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
-  static catalog::Tokenizer gStringTokenizer(
-    catalog::Permissions{}, ObjectId{0}, ObjectId{12346}, "test_segmentation",
-    {}, DEFAULT_ROW_GROUP_SIZE,
+  static catalog::CreateTokenizerInfo gStringTokenizer(
+    ObjectId{12346}, ObjectId{0}, "test_segmentation", {},
+    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::SegmentationTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
@@ -173,9 +173,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     .preserve_original = false,
     .stream_bytes_type = irs::analysis::NGramTokenizerBase::InputType::UTF8,
   };
-  static catalog::Tokenizer gNgramTokenizer(
-    catalog::Permissions{}, ObjectId{0}, ObjectId{12347}, "test_ngram", {},
-    DEFAULT_ROW_GROUP_SIZE,
+  static catalog::CreateTokenizerInfo gNgramTokenizer(
+    ObjectId{12347}, ObjectId{0}, "test_ngram", {}, DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   return {.analyzer = std::move(tokenizer),
@@ -189,9 +188,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
                                        irs::StringTokenizer::Options{}}),
     .ngram_size = 3,
   };
-  static catalog::Tokenizer gWildcardTokenizer(
-    catalog::Permissions{}, ObjectId{0}, ObjectId{12348}, "test_wildcard", {},
-    DEFAULT_ROW_GROUP_SIZE,
+  static catalog::CreateTokenizerInfo gWildcardTokenizer(
+    ObjectId{12348}, ObjectId{0}, "test_wildcard", {}, DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
   return {
@@ -202,9 +200,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
 }
 
 [[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
-  static catalog::Tokenizer gGeoTokenizer(
-    catalog::Permissions{}, ObjectId{0}, ObjectId{12349}, "test_geojson", {},
-    DEFAULT_ROW_GROUP_SIZE,
+  static catalog::CreateTokenizerInfo gGeoTokenizer(
+    ObjectId{12349}, ObjectId{0}, "test_geojson", {}, DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonAnalyzer::Options{}});
   auto tokenizer = gGeoTokenizer.GetTokenizer();

@@ -8,8 +8,8 @@ target_sources(
         schema.cpp
         databases.cpp
         catalog.cpp
-        object.cpp
-        table_options.cpp
+        deferred_writes.cpp
+        entry.cpp
         search_analyzer_impl.cpp
         table.cpp
         index.cpp
@@ -20,7 +20,11 @@ target_sources(
         secondary_index.cpp
         inverted_index.cpp
         scorer_options.cpp
+        store/data_store.cpp
         store/store.cpp
+        store/store_op.cpp
+        store/wal.cpp
+        store/wal_entry.cpp
         tokenizer.cpp
         foreign_server.cpp
 )

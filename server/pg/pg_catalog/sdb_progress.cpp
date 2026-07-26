@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/sdb_progress.h"
 
+#include "auth/role_closure.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::pg {
@@ -115,7 +116,8 @@ catalog::MaterializedData SystemTableSnapshot<SdbProgress>::GetTableData() {
         mask &= ~kPercentNullBit;
       }
     }
-    WriteData(result, value, mask, row++, *_config.CatalogSnapshot());
+    WriteData(result, value, mask, row++,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), snapshots.size()};
 }

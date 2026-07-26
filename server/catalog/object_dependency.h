@@ -440,11 +440,8 @@ struct RoleDependency : DependencyMixin<RoleDependency> {
   static constexpr std::array<Edge<RoleDependency>, 0> kEdges{};
 };
 
-struct ForeignServerDependency : ObjectDependencyBase {
-  std::shared_ptr<ObjectDependencyBase> Clone() const final {
-    return std::make_shared<ForeignServerDependency>(*this);
-  }
-  void Emit(DropEmitter& e, ObjectId self) const final {}
+struct ForeignServerDependency : DependencyMixin<ForeignServerDependency> {
+  static constexpr std::array<Edge<ForeignServerDependency>, 0> kEdges{};
 };
 
 inline DropPlan DropEmitter::ComputePlan() && {

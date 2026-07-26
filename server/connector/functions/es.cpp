@@ -179,10 +179,11 @@ CreateIndexRequest ParseCreateIndexBody(std::string_view index,
   simdjson::padded_string padded{body};
   simdjson::ondemand::parser parser;
   simdjson::ondemand::document doc;
-  if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-      ERR_MSG("Failed to parse mapping for index [", index, "]: invalid JSON"));
+  if (const auto ec = parser.iterate(padded).get(doc);
+      ec != simdjson::SUCCESS) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                    ERR_MSG("Failed to parse mapping for index [", index,
+                            "]: ", simdjson::error_message(ec)));
   }
   try {
     basics::JsonSource source{doc};
@@ -856,10 +857,11 @@ void EsDocExecute(duckdb::ClientContext& context,
   simdjson::padded_string padded{data.body};
   simdjson::ondemand::parser parser;
   simdjson::ondemand::document doc;
-  if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-      ERR_MSG("failed to parse document for index [", data.index, "]"));
+  if (const auto ec = parser.iterate(padded).get(doc);
+      ec != simdjson::SUCCESS) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                    ERR_MSG("failed to parse document for index [", data.index,
+                            "]: ", simdjson::error_message(ec)));
   }
   WriteDocRow(data, doc, data.id, data.body, output, 0);
   output.SetChildCardinality(1);

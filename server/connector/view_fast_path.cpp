@@ -20,6 +20,7 @@
 
 #include "connector/view_fast_path.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
@@ -412,33 +413,26 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     // ClickHouse: part+offset ids die on merges, so key on the single-BIGINT
     // MergeTree PK column (v1; anything else -> no fast path). That "PK" is
     // only a sorting prefix: duplicate keys each index their own document.
-    std::optional<std::string> pk_name;
-    for (const auto& constraint : entry.GetConstraints()) {
-      if (constraint->type != duckdb::ConstraintType::UNIQUE) {
-        continue;
-      }
-      const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
-      if (!unique.IsPrimaryKey()) {
-        continue;
-      }
-      const auto& names = unique.GetColumnNames();
-      if (names.size() != 1) {
-        return std::nullopt;
-      }
-      pk_name = names[0].GetIdentifierName();
-      // The connector emits at most one primary-key constraint
-      // (clickhouse_schema_entry.cpp, is_primary_key=true, pushed once), so
-      // there is nothing further to look at. Note the arity check above: a
-      // composite ORDER BY arrives as this one constraint with several column
-      // names, and v1 declines it.
-      break;
+    const auto& constraints = entry.GetConstraints();
+    const auto pk = absl::c_find_if(
+      constraints, [](const duckdb::unique_ptr<duckdb::Constraint>& c) {
+        return c->type == duckdb::ConstraintType::UNIQUE &&
+               c->Cast<duckdb::UniqueConstraint>().IsPrimaryKey();
+      });
+    if (pk == constraints.end()) {
+      return std::nullopt;
     }
-    if (!pk_name) {
+    const auto& names =
+      (*pk)->Cast<duckdb::UniqueConstraint>().GetColumnNames();
+    // A composite ORDER BY arrives as this one constraint carrying several
+    // names; v1 keys a posting on a single int64, so decline on arity before
+    // the type is even considered.
+    if (names.size() != 1) {
       return std::nullopt;
     }
     // v1: a signed 64-bit key -- both the int64 storage and the re-fetch are
     // exact only for BIGINT.
-    auto key = FindKeyColumn(entry, *pk_name);
+    auto key = FindKeyColumn(entry, names[0].GetIdentifierName());
     if (!key || key->type.id() != duckdb::LogicalTypeId::BIGINT) {
       return std::nullopt;
     }

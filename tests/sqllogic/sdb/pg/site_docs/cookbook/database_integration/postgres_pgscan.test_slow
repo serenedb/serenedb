@@ -22,17 +22,17 @@ ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__
 # DOCS_TEST: example_002
 
 statement ok
-CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_app;
+CREATE SCHEMA pg_${__DATABASE__}.s${__DATABASE__}_app;
 
 statement ok
-CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_app.users (
+CREATE TABLE pg_${__DATABASE__}.s${__DATABASE__}_app.users (
   id      INTEGER PRIMARY KEY,
   name    TEXT,
   signups INTEGER
 );
 
 statement ok
-INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_app.users VALUES
+INSERT INTO pg_${__DATABASE__}.s${__DATABASE__}_app.users VALUES
   (1, 'alice', 12),
   (2, 'bob',   7),
   (3, 'carol', 23);
@@ -43,7 +43,7 @@ INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_app.users VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT id, name, signups FROM pg_${__DATABASE__}.${__DATABASE__}_app.users ORDER BY id;
+SELECT id, name, signups FROM pg_${__DATABASE__}.s${__DATABASE__}_app.users ORDER BY id;
 ----
 id	name	signups
 1	alice	12
@@ -60,7 +60,7 @@ id	name	signups
 
 query ?? rowsort
 SELECT id, name
-FROM postgres_scan('host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}', '${__DATABASE__}_app', 'users');
+FROM postgres_scan('host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}', 's${__DATABASE__}_app', 'users');
 ----
 id	name
 1	alice
@@ -76,15 +76,15 @@ id	name
 # DOCS_TEST_BODY
 
 statement ok
-INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_app.users VALUES (4, 'dave', 5);
+INSERT INTO pg_${__DATABASE__}.s${__DATABASE__}_app.users VALUES (4, 'dave', 5);
 
 # DOCS_TEST: example_004
 
 statement ok
-DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_app.users;
+DROP TABLE pg_${__DATABASE__}.s${__DATABASE__}_app.users;
 
 statement ok
-DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_app;
+DROP SCHEMA pg_${__DATABASE__}.s${__DATABASE__}_app;
 
 # DOCS_TEST_RAW
 #| DETACH pg;

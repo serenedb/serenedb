@@ -90,7 +90,11 @@ bool IsSupportedFdw(std::string_view fdw_name);
 // The outcome of RunForeignServerAttach: the FDW is not one we implement, the
 // attach succeeded, or the connector rejected it (Failed carries the message).
 struct ForeignServerAttachResult {
-  enum class Status : uint8_t { Unsupported, Attached, Failed };
+  enum class Status : uint8_t {
+    Unsupported,
+    Attached,
+    Failed,
+  };
   Status status = Status::Unsupported;
   std::string error;
 };

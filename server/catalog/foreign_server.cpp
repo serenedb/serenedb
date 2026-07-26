@@ -104,10 +104,10 @@ void DropForeignServerSecret(duckdb::ClientContext& context,
   context.RunFunctionInTransaction([&] {
     auto transaction =
       duckdb::CatalogTransaction::GetSystemCatalogTransaction(context);
-    secret_manager.DropSecretByName(
-      transaction, duckdb::Identifier{secret_name},
-      duckdb::OnEntryNotFound::RETURN_NULL,
-      duckdb::SecretPersistType::TEMPORARY);
+    secret_manager.DropSecretByName(transaction,
+                                    duckdb::Identifier{secret_name},
+                                    duckdb::OnEntryNotFound::RETURN_NULL,
+                                    duckdb::SecretPersistType::TEMPORARY);
   });
 }
 

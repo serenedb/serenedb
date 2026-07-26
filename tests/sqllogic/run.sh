@@ -457,10 +457,12 @@ launch_postgres() {
 
 # Launches a clickhouse-server container, used by tests that read a real
 # ClickHouse via the clickhouse_scanner connector (filename suffix `_chscan.`).
-# The image runs /docker-entrypoint-initdb.d/*.sql at startup, so shared
-# read-only fixtures are pre-seeded by bind-mounting the fixtures dir there;
-# they deliberately include ClickHouse-native column types the connector's
-# write path cannot create (LowCardinality, IPv4, FixedString, plain
+# Shared read-only fixtures are piped in with `docker exec` once the server is
+# up, rather than bind-mounted into /docker-entrypoint-initdb.d: in CI this
+# script runs inside the tests container and talks to the host's docker daemon,
+# so a mount source would have to be a host path, which the container cannot
+# name. The fixtures deliberately include ClickHouse-native column types the
+# connector's write path cannot create (LowCardinality, IPv4, FixedString, plain
 # Date/DateTime), keeping read-decode coverage independent of the write path.
 # Write tests create their own tables in `default` through the connector.
 launch_clickhouse() {
@@ -468,8 +470,11 @@ launch_clickhouse() {
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	CLICKHOUSE_CONTAINER_NAME="${prefix}-serenedb-test-clickhouse-$$"
 	CLICKHOUSE_LOG_FILE="${LOG_DIR:-/tmp}/${CLICKHOUSE_CONTAINER_NAME}.log"
-	local fixtures_dir
-	fixtures_dir="$(cd "${SCRIPT_DIR}/../clickhouse_scanner/fixtures" && pwd)"
+	local fixtures_sql="${SCRIPT_DIR}/fixtures/clickhouse/01_init.sql"
+	if [[ ! -f "$fixtures_sql" ]]; then
+		echo "ERROR: clickhouse fixtures missing at $fixtures_sql" >&2
+		exit 1
+	fi
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -497,7 +502,6 @@ launch_clickhouse() {
 		--name "$CLICKHOUSE_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-e CLICKHOUSE_SKIP_USER_SETUP=1 \
-		-v "${fixtures_dir}:/docker-entrypoint-initdb.d:ro" \
 		clickhouse/clickhouse-server:24.8
 
 	echo "Waiting for clickhouse to be ready..."
@@ -513,6 +517,13 @@ launch_clickhouse() {
 		fi
 		sleep 1
 	done
+
+	echo "Loading clickhouse fixtures..."
+	if ! docker exec -i "$CLICKHOUSE_CONTAINER_NAME" \
+		clickhouse-client --multiquery <"$fixtures_sql"; then
+		echo "ERROR: failed to load clickhouse fixtures from $fixtures_sql" >&2
+		exit 1
+	fi
 
 	echo "Waiting for clickhouse fixtures to load..."
 	for i in $(seq 1 60); do

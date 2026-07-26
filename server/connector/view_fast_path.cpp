@@ -426,7 +426,12 @@ std::optional<ViewFastPath> ResolveViewFastPath(
         return std::nullopt;
       }
       pk_name = names[0].GetIdentifierName();
-      break;  // a table has at most one primary key
+      // The connector emits at most one primary-key constraint
+      // (clickhouse_schema_entry.cpp, is_primary_key=true, pushed once), so
+      // there is nothing further to look at. Note the arity check above: a
+      // composite ORDER BY arrives as this one constraint with several column
+      // names, and v1 declines it.
+      break;
     }
     if (!pk_name) {
       return std::nullopt;

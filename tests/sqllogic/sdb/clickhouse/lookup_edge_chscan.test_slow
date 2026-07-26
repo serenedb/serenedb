@@ -20,8 +20,10 @@ control substitution on
 #       present but the wrong shape, so the fast path declines exactly like (a).
 #   (c) a positive control: vedernikoff.id is Int64, so the SAME shape of query
 #       materialises real columns. This is the one supported case; the
-#       unsupported PK shapes (UInt32 / UInt8 / string / composite) are
-#       documented in comments and asserted only where SQL can observe them.
+#       unsupported PK shapes (UInt32 / UInt8 / string) are documented in
+#       comments and asserted only where SQL can observe them.
+#   (d) a COMPOSITE metadata PK -- rejected on arity, not type -- alongside the
+#       explicit key_columns override that DOES accept the same two columns.
 #
 # Unique attach name (chlke) so the global catalog name does not collide with
 # other parallel _chscan files. Unique object names (chlke_*) for the same
@@ -223,6 +225,97 @@ vedernikoff kostya
 # =====================================================================
 # Cleanup
 # =====================================================================
+
+# =====================================================================
+# (d) ATTACHed table with a COMPOSITE primary key -> ORDER BY (a, b).
+#     The PK metadata is present and BOTH columns are BIGINT, so this is not
+#     the type rejection of (b1)/(b2): the v1 metadata path keys a posting on a
+#     single int64, so a 2-column key is declined on ARITY
+#     (view_fast_path.cpp, names.size() != 1) before the type is looked at.
+#     Degrades like the others: counts flow off iresearch, materialisation
+#     declines.
+#
+#     The second half is the control that makes the boundary precise: an
+#     explicit WITH (key_columns = 'a, b') over the SAME table DOES materialise,
+#     because the user-key path packs any number of columns into one struct.
+#     So arity is a limit of the metadata default only, not of external keying.
+# =====================================================================
+
+statement ok
+CREATE TABLE chlke.chtest.chlke_pair (
+  a BIGINT, b BIGINT, body VARCHAR, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO chlke.chtest.chlke_pair
+  VALUES (1, 10, 'pudge hooks'), (1, 11, 'pudge rots'), (2, 20, 'kostya waits');
+
+statement ok
+CREATE VIEW chlke_pair_v AS SELECT * FROM chlke.chtest.chlke_pair;
+
+# No key_columns: the composite metadata PK is the only candidate, and it is
+# declined.
+statement ok
+CREATE INDEX chlke_pair_idx ON chlke_pair_v USING inverted(a, body chlke_en);
+
+query
+SELECT count(*) FROM chlke_pair_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(*) FROM chlke_pair_idx WHERE body @@ ts_phrase('kostya');
+----
+count
+1
+
+# BM25 is an iresearch virtual column -- no source materialisation.
+query
+SELECT BM25(chlke_pair_idx.tableoid) > 0 AS has_score
+FROM chlke_pair_idx WHERE body @@ ts_phrase('pudge')
+ORDER BY BM25(chlke_pair_idx.tableoid) DESC LIMIT 1;
+----
+has_score
+t
+
+# Materialising a real source column declines: no fast path was resolved. Bare
+# `statement error` matches the other cases in this file; the error raised here
+# was checked to be the FEATURE_NOT_SUPPORTED "materialising real columns ... is
+# not yet supported" decline (sqlstate 0A000), not an unrelated failure.
+statement error
+SELECT a, body FROM chlke_pair_idx WHERE body @@ ts_phrase('pudge') ORDER BY a;
+
+# Control: the same two columns, named explicitly, DO materialise.
+statement ok
+CREATE VIEW chlke_pair_ok_v AS SELECT * FROM chlke.chtest.chlke_pair;
+
+statement ok
+CREATE INDEX chlke_pair_ok_idx ON chlke_pair_ok_v
+  USING inverted(a, body chlke_en) WITH (key_columns = 'a, b');
+
+query
+SELECT a, body FROM chlke_pair_ok_idx
+WHERE body @@ ts_phrase('pudge') ORDER BY a, body;
+----
+a	body
+1	pudge hooks
+1	pudge rots
+
+
+statement ok
+DROP INDEX chlke_pair_ok_idx;
+
+statement ok
+DROP VIEW chlke_pair_ok_v;
+
+statement ok
+DROP INDEX chlke_pair_idx;
+
+statement ok
+DROP VIEW chlke_pair_v;
+
+statement ok
+DROP TABLE chlke.chtest.chlke_pair;
 
 statement ok
 DROP INDEX chlke_ved_idx;

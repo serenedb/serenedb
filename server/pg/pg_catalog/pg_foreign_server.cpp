@@ -47,9 +47,10 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
 
   // srvoptions is an Array<Text> spanning opt_views, whose Text elements point
   // into the owned "key=value" strings in opt_bytes; both outlive the WriteData
-  // loop and must not reallocate (hence the reserves). Rendered verbatim (unlike
-  // PG's world-readable pg_foreign_server): our options may carry credentials,
-  // so this whole catalog is superuser-only instead of redacting values.
+  // loop and must not reallocate (hence the reserves). Rendered verbatim
+  // (unlike PG's world-readable pg_foreign_server): our options may carry
+  // credentials, so this whole catalog is superuser-only instead of redacting
+  // values.
   const auto servers = catalog->GetForeignServers(database_id);
   std::vector<std::vector<std::string>> opt_bytes;
   std::vector<std::vector<Text>> opt_views;

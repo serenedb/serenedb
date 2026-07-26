@@ -33,55 +33,23 @@
 namespace duckdb {
 
 class ClientContext;
+class Vector;
 
 }  // namespace duckdb
 namespace sdb::connector {
-
-struct PrimaryKeyBatch {
-  enum class Kind : uint8_t {
-    None,
-    I64,
-    I64I64,
-    Struct,
-  };
-
-  Kind kind = Kind::None;
-  std::vector<int64_t> files;
-  std::vector<int64_t> rows;
-
-  // Kind::Struct only: the key column borrowed from the pk reader (a duckdb
-  // Vector doesn't know its own row count, so it travels alongside).
-  duckdb::Vector* struct_column = nullptr;
-  duckdb::idx_t struct_column_count = 0;
-
-  size_t Size() const noexcept {
-    return kind == Kind::Struct ? struct_column_count : rows.size();
-  }
-  void Reset() {
-    files.clear();
-    rows.clear();
-    struct_column = nullptr;
-    struct_column_count = 0;
-  }
-  void Append(int64_t row) { rows.push_back(row); }
-  void Append(int64_t file, int64_t row) {
-    files.push_back(file);
-    rows.push_back(row);
-  }
-};
 
 class IndexSource {
  public:
   virtual ~IndexSource() = default;
 
-  virtual PrimaryKeyBatch::Kind PkKind() const = 0;
-
-  // Materializes the source columns for `count` pks starting at `start` and
-  // returns the number of output rows produced -- equal to `count` unless a
+  // Materializes the source columns for the `count` primary keys held in `pk`
+  // -- the stored, self-describing PK column read straight from the index: a
+  // single scalar column, or a struct of key fields. Each source reads the
+  // shape it wrote (integer fields are read regardless of signedness/width).
+  // Returns the number of output rows produced -- equal to `count` unless a
   // pushed lookup-column filter compacted the batch to survivors.
   virtual duckdb::idx_t Materialize(duckdb::ClientContext& context,
-                                    PrimaryKeyBatch& batch, duckdb::idx_t start,
-                                    duckdb::idx_t count,
+                                    duckdb::Vector& pk, duckdb::idx_t count,
                                     duckdb::DataChunk& output) = 0;
 };
 

@@ -34,9 +34,6 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	//! native external-data table `lookup` (columns k0..kN).
 	bool lookup = false;
 	bool from_query = false;
-	//! MergeTree-family engine: pushed filters render as PREWHERE (legal only
-	//! there), else WHERE. False for ad-hoc clickhouse_scan/query binds.
-	bool is_merge_tree = false;
 	vector<string> names;
 	//! DuckDB types per table column (parallel to names); used to build the local
 	//! re-apply expressions for filters the remote WHERE cannot express exactly.

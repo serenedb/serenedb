@@ -85,6 +85,7 @@
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/inverted_index_options_util.h"
+#include "connector/pg_logical_types.h"
 #include "connector/search_table_dispatch.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -924,6 +925,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
           // Real key columns of arbitrary types -- project their own types, not
           // a hardcoded BIGINT (which only fits the file/rowid int64 keys).
           pk_types.push_back(view_fast_path->key_columns[i].type);
+        } else if (view_fast_path->pk_spec ==
+                   catalog::PkSpec::ExternalPostgresCtid) {
+          // The postgres scanner emits the ctid straight as the struct.
+          pk_types.push_back(pg::CTID());
         } else {
           pk_types.push_back(duckdb::LogicalType::BIGINT);
         }
@@ -936,6 +941,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       for (size_t i = 0; i < vcols.size(); ++i) {
         leaf_get->AddColumnId(vcols[i]);
         leaf_get->types.push_back(pk_types[i]);
+        if (view_fast_path->pk_spec == catalog::PkSpec::ExternalPostgresCtid &&
+            vcols[i] == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
+          leaf_get->virtual_columns.insert_or_assign(
+            duckdb::COLUMN_IDENTIFIER_ROW_ID,
+            duckdb::TableColumn("ctid", pg::CTID()));
+        }
         // Iceberg's get_virtual_columns omits file_index even though the
         // reader produces it -- patch the map.
         if (leaf_get->virtual_columns.find(vcols[i]) ==

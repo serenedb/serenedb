@@ -35,7 +35,6 @@
 
 namespace duckdb {
 
-
 //===--------------------------------------------------------------------===//
 // Lookup keys: duckdb Vector -> native binary Block column
 //===--------------------------------------------------------------------===//
@@ -185,8 +184,8 @@ clickhouse::ColumnRef BuildLookupColumn(Vector &vec, idx_t count) {
 		return wrap(std::move(col));
 	}
 	case LogicalTypeId::DECIMAL: {
-		auto col = std::make_shared<clickhouse::ColumnDecimal>(DecimalType::GetWidth(type),
-		                                                       DecimalType::GetScale(type));
+		auto col =
+		    std::make_shared<clickhouse::ColumnDecimal>(DecimalType::GetWidth(type), DecimalType::GetScale(type));
 		for (idx_t i = 0; i < count; i++) {
 			idx_t idx;
 			col->Append(valid(i, idx) ? vec.GetValue(i).ToString() : string("0"));
@@ -232,8 +231,8 @@ bool ClickHouseBindData::ColumnPushdownUnsafe(idx_t col) const {
 
 bool ClickHouseBindData::Equals(const FunctionData &other_p) const {
 	auto &other = other_p.Cast<ClickHouseBindData>();
-	return database == other.database && table == other.table && sql == other.sql &&
-	       from_query == other.from_query && names == other.names && lookup == other.lookup;
+	return database == other.database && table == other.table && sql == other.sql && from_query == other.from_query &&
+	       names == other.names && lookup == other.lookup;
 }
 
 struct ClickHouseGlobalState : public GlobalTableFunctionState {
@@ -349,25 +348,24 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 	bind_data->database = input.inputs[1].GetValue<string>();
 	bind_data->table = input.inputs[2].GetValue<string>();
 
-	auto describe_sql =
-	    StringUtil::Format("DESCRIBE TABLE %s.%s", ClickHouseQuoteIdentifier(bind_data->database),
-	                       ClickHouseQuoteIdentifier(bind_data->table));
+	auto describe_sql = StringUtil::Format("DESCRIBE TABLE %s.%s", ClickHouseQuoteIdentifier(bind_data->database),
+	                                       ClickHouseQuoteIdentifier(bind_data->table));
 
 	Value binary_setting;
 	bool binary_as_blob =
 	    context.TryGetCurrentSetting("ch_binary_as_blob", binary_setting) && BooleanValue::Get(binary_setting);
 	try {
 		auto connection = ClickHouseConnection::Open(bind_data->params);
-		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
-		                          bind_data->stringified, bind_data->clickhouse_types);
+		ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob, bind_data->stringified,
+		                          bind_data->clickhouse_types);
 		// Cardinality estimate for the optimizer, mirroring the catalog path
 		// (clickhouse_table_entry): without it an ad-hoc clickhouse_scan reports ~1
 		// row and joins plan badly. Stats-only -- a failure must never fail the bind.
 		try {
 			string count_sql =
 			    "SELECT ifNull(total_rows, 0), total_rows IS NOT NULL FROM system.tables WHERE database = " +
-			    ClickHouseStringLiteral(bind_data->database) + " AND name = " +
-			    ClickHouseStringLiteral(bind_data->table);
+			    ClickHouseStringLiteral(bind_data->database) +
+			    " AND name = " + ClickHouseStringLiteral(bind_data->table);
 			ClickHouseConnection::LogQuery(count_sql);
 			connection.GetClient().Select(count_sql, [&](const clickhouse::Block &block) {
 				if (block.GetColumnCount() < 2 || block.GetRowCount() == 0) {
@@ -393,8 +391,7 @@ static unique_ptr<FunctionData> ClickHouseBind(ClientContext &context, TableFunc
 }
 
 static string BuildScanSQL(const ClickHouseBindData &bind_data, const vector<column_t> &column_ids,
-                                optional_ptr<TableFilterSet> filters, bool filter_pushdown,
-                                vector<idx_t> &inexact_filters) {
+                           optional_ptr<TableFilterSet> filters, bool filter_pushdown, vector<idx_t> &inexact_filters) {
 	string col_names;
 	for (auto &column_id : column_ids) {
 		if (!col_names.empty()) {
@@ -430,14 +427,14 @@ static string BuildScanSQL(const ClickHouseBindData &bind_data, const vector<col
 	}
 
 	if (filter_pushdown && filters) {
-		auto filter_string = ClickHouseFilterPushdown::TransformFilters(column_ids, filters, bind_data, inexact_filters);
+		auto filter_string =
+		    ClickHouseFilterPushdown::TransformFilters(column_ids, filters, bind_data, inexact_filters);
 		if (!filter_string.empty()) {
-			// PREWHERE reads the filter columns first and skips the wide columns for
-			// non-matching rows -- a win for selective filters (e.g. a point lookup
-			// `WHERE pk IN (...)`). It is legal only on MergeTree-family engines;
-			// elsewhere it errors, so fall back to WHERE. ClickHouse would auto-move
-			// via optimize_move_to_prewhere anyway; this just makes it explicit.
-			query += (bind_data.is_merge_tree ? " PREWHERE " : " WHERE ") + filter_string;
+			// WHERE only: ClickHouse's optimize_move_to_prewhere (on by default)
+			// moves it to PREWHERE server-side on MergeTree (verified to yield the
+			// identical Prewhere plan), and WHERE is legal on every engine whereas
+			// PREWHERE is not.
+			query += " WHERE " + filter_string;
 		}
 	}
 	// ORDER BY / LIMIT clauses the optimizer proved safe to push (see
@@ -447,9 +444,8 @@ static string BuildScanSQL(const ClickHouseBindData &bind_data, const vector<col
 	return query;
 }
 
-static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(ClientContext &context,
-                                                                              TableFunctionInitInput &input,
-                                                                              bool filter_pushdown) {
+static unique_ptr<GlobalTableFunctionState>
+ClickHouseInitGlobalStateInternal(ClientContext &context, TableFunctionInitInput &input, bool filter_pushdown) {
 	auto &bind_data = input.bind_data->Cast<ClickHouseBindData>();
 	auto result = make_uniq<ClickHouseGlobalState>();
 
@@ -499,8 +495,7 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateInternal(Cl
 					// The lookup gstate outlives the binding transaction (the caller
 					// caches it for the scan's lifetime), so it pins its own pooled
 					// connection instead of borrowing the transaction's.
-					result->connection =
-					    db->GetCatalog().Cast<ClickHouseCatalog>().GetConnectionPool().GetConnection();
+					result->connection = db->GetCatalog().Cast<ClickHouseCatalog>().GetConnectionPool().GetConnection();
 				} else {
 					result->borrowed_tx = ClickHouseTransaction::Get(context, db->GetCatalog());
 				}
@@ -699,9 +694,8 @@ static double ClickHouseScanProgress(ClientContext &context, const FunctionData 
 	if (!bind_data.has_cardinality || bind_data.approx_row_count == 0) {
 		return -1;
 	}
-	double progress =
-	    100.0 * static_cast<double>(gstate.rows_seen.load(std::memory_order_relaxed)) /
-	    static_cast<double>(bind_data.approx_row_count);
+	double progress = 100.0 * static_cast<double>(gstate.rows_seen.load(std::memory_order_relaxed)) /
+	                  static_cast<double>(bind_data.approx_row_count);
 	return MinValue<double>(100.0, progress);
 }
 

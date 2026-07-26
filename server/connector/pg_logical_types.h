@@ -133,7 +133,7 @@ inline bool IsCtid(const duckdb::LogicalType& type) {
 #ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType CTID() {
   // Matches postgres' ItemPointer: BlockNumber is uint32, OffsetNumber is
-  // uint16 -- 6 bytes, not two BIGINTs. Built once, like PkColumnType.
+  // uint16 -- 6 bytes, not two BIGINTs. Built once (static local).
   static const auto kType = [] {
     auto type = duckdb::LogicalType::STRUCT(
       {{"block_number", duckdb::LogicalType::UINTEGER},

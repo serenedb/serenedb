@@ -117,28 +117,8 @@ inline EntryInfoProvider AllStoredEntryInfoProvider() {
 
 struct PkPolicy {
   bool index_term = true;
-  catalog::PkColumnKind column = catalog::PkColumnKind::I64;
+  catalog::PkColumnKind column = catalog::PkColumnKind::None;
 };
-
-inline duckdb::LogicalType PkColumnType(catalog::PkColumnKind kind) {
-  switch (kind) {
-    case catalog::PkColumnKind::I64:
-      return duckdb::LogicalType::BIGINT;
-    case catalog::PkColumnKind::I64I64:
-      static const auto kType =
-        duckdb::LogicalType::STRUCT({{"hi", duckdb::LogicalType::BIGINT},
-                                     {"lo", duckdb::LogicalType::BIGINT}});
-      return kType;
-    case catalog::PkColumnKind::Struct:
-      // Not fixed: a user key struct's type depends on its key columns and is
-      // taken from the packed pk vector at write time (pk.column->GetType()).
-      SDB_ASSERT(false, "a struct pk has no fixed column type");
-      [[fallthrough]];
-    case catalog::PkColumnKind::None:
-    case catalog::PkColumnKind::Unable:
-      return duckdb::LogicalType::SQLNULL;
-  }
-}
 
 class SearchSinkInsertBaseImpl {
  public:

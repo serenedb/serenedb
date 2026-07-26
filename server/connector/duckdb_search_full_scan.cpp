@@ -81,7 +81,6 @@
 #include "connector/offsets_writer.hpp"
 #include "connector/search_pk_lookup.h"
 #include "iresearch/index/hit_batcher.hpp"
-#include "iresearch/index/pk_batch_helpers.hpp"
 #include "iresearch/index/table_filter_iterator.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -114,7 +113,8 @@ struct IResearchScanLocalState : public duckdb::LocalTableFunctionState {
 };
 
 struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
-  PrimaryKeyBatch pk_batch;
+  duckdb::Vector* pk_column = nullptr;
+  duckdb::idx_t pk_count = 0;
   std::shared_ptr<IndexSource> index_source;
   std::unique_ptr<HitBatcher> hit_batcher;
   // The scorer prepare phase ran (TopK / scored Stream dispatch).
@@ -2156,10 +2156,8 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                         g.projected_types, g.scan->column_ids,
                         const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
     }
-    if (l.pk_batch.kind == PrimaryKeyBatch::Kind::None) {
-      l.pk_batch.kind = l.index_source->PkKind();
-    }
-    l.pk_batch.Reset();
+    l.pk_column = nullptr;
+    l.pk_count = 0;
   }
   const auto batch = l.hit_batcher->Emit(output);
   if (batch.pk != nullptr) {
@@ -2167,7 +2165,8 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
     batch.pk->Flatten(batch.count);
-    AppendPrimaryKeysFromVector(l.pk_batch, *batch.pk, batch.count);
+    l.pk_column = batch.pk;
+    l.pk_count = batch.count;
   }
   const HitsChunk view{
     .docs = batch.docs,
@@ -2189,10 +2188,10 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx,
     return collected;
   }
   SDB_ASSERT(l.index_source);
-  SDB_ASSERT(l.pk_batch.Size() == collected);
+  SDB_ASSERT(l.pk_column && l.pk_count == collected);
   // Returns the survivor count: the lookup applies pushed lookup-column filters
   // natively and compacts to survivors (== collected when no lookup filter).
-  return l.index_source->Materialize(ctx, l.pk_batch, 0, collected, output);
+  return l.index_source->Materialize(ctx, *l.pk_column, collected, output);
 }
 
 bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx,

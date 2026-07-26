@@ -299,14 +299,12 @@ void ExternalLookupIndexSource::BuildClickHouseQuery(
 }
 
 duckdb::idx_t ExternalLookupIndexSource::Materialize(
-  duckdb::ClientContext& context, PrimaryKeyBatch& batch, duckdb::idx_t start,
-  duckdb::idx_t count, duckdb::DataChunk& output) {
+  duckdb::ClientContext& context, duckdb::Vector& pk, duckdb::idx_t count,
+  duckdb::DataChunk& output) {
   if (count == 0) {
     return 0;
   }
-  SDB_ASSERT(batch.kind == PrimaryKeyBatch::Kind::Struct);
-  SDB_ASSERT(batch.struct_column && start == 0 &&
-             count <= batch.struct_column_count);
+  SDB_ASSERT(pk.GetType().id() == duckdb::LogicalTypeId::STRUCT);
   SDB_ASSERT(count <= STANDARD_VECTOR_SIZE);
 
   AliasOutput(output);
@@ -318,7 +316,7 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
 
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _gstate.get());
-  in.lookup_keys = batch.struct_column;
+  in.lookup_keys = &pk;
   in.lookup_count = count;
   in.lookup_gate = [](void* state, int64_t ord) {
     auto& self = *static_cast<ExternalLookupIndexSource*>(state);

@@ -94,24 +94,19 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 		ClickHousePoolConnection conn;
 		try {
 			conn = ch_catalog.GetConnectionPool().GetConnection();
-			string sql = "SELECT ifNull(total_rows, 0) AS n, total_rows IS NOT NULL AS known, "
-			             "engine LIKE '%MergeTree%' AS is_mt "
-			             "FROM system.tables WHERE database = " + ClickHouseStringLiteral(database) +
-			             " AND name = " + ClickHouseStringLiteral(table);
+			string sql = "SELECT ifNull(total_rows, 0) AS n, total_rows IS NOT NULL AS known "
+			             "FROM system.tables WHERE database = " +
+			             ClickHouseStringLiteral(database) + " AND name = " + ClickHouseStringLiteral(table);
 			ClickHouseConnection::LogQuery(sql);
 			conn->GetClient().Select(sql, [&](const clickhouse::Block &block) {
-				if (block.GetColumnCount() < 3 || block.GetRowCount() == 0) {
+				if (block.GetColumnCount() < 2 || block.GetRowCount() == 0) {
 					return;
 				}
 				auto n = block[0]->As<clickhouse::ColumnUInt64>();
 				auto known = block[1]->As<clickhouse::ColumnUInt8>();
-				auto is_mt = block[2]->As<clickhouse::ColumnUInt8>();
 				if (n && known && known->At(0) != 0) {
 					cached_row_count = static_cast<idx_t>(n->At(0));
 					cached_row_count_known = true;
-				}
-				if (is_mt) {
-					cached_is_merge_tree = is_mt->At(0) != 0;
 				}
 			});
 		} catch (...) {
@@ -122,7 +117,6 @@ TableFunction ClickHouseTableEntry::GetScanFunction(ClientContext &context, uniq
 	}
 	bd->has_cardinality = cached_row_count_known;
 	bd->approx_row_count = cached_row_count;
-	bd->is_merge_tree = cached_is_merge_tree;
 
 	bind_data = std::move(bd);
 	auto function = ClickHouseScanFunctionFilterPushdown();
@@ -172,8 +166,9 @@ void VerifyRowIdCoverage(ClickHouseConnection &connection, const string &databas
 	// How many rows does `pk IN (id_list)` match on the server? More than one row per
 	// distinct key means the key is not unique: the mutation would also touch sibling
 	// rows the statement may not have matched (undetectable from here -- see header).
-	string sql = "SELECT count() FROM " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(table_name) +
-	             " WHERE " + ClickHouseQuoteIdentifier(pk_column) + " IN (" + id_list + ")";
+	string sql = "SELECT count() FROM " + ClickHouseQuoteIdentifier(database) + "." +
+	             ClickHouseQuoteIdentifier(table_name) + " WHERE " + ClickHouseQuoteIdentifier(pk_column) + " IN (" +
+	             id_list + ")";
 	ClickHouseConnection::LogQuery(sql);
 	uint64_t table_count = 0;
 	try {

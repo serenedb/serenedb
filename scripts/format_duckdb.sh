@@ -37,7 +37,11 @@ SUBMODULES=(duckdb duckdb_avro duckdb_inet duckdb_httpfs duckdb_iceberg duckdb_p
 # discovery and status run against the MAIN repo, scoped to their path.
 INTREE=(duckdb_clickhouse)
 ALL_DIRS=("${SUBMODULES[@]}" "${INTREE[@]}")
-is_intree() { local d; for d in "${INTREE[@]}"; do [[ "$d" == "$1" ]] && return 0; done; return 1; }
+is_intree() {
+	local d
+	for d in "${INTREE[@]}"; do [[ "$d" == "$1" ]] && return 0; done
+	return 1
+}
 # Track duckdb's own CI (CheckIssueForCodeFormatting.yml uses Python 3.12).
 IMAGE="python:3.12-slim"
 

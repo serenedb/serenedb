@@ -206,7 +206,7 @@ DROP VIEW pg_artk_v_${__DATABASE__};
 
 # ===== composite (multi-column) user key: WITH (key_columns = 'shard, id') =====
 # Two columns form the lookup key. They are stored together as ONE struct column
-# (PkColumnKind::Struct) of their own types and matched rows re-fetch via
+# of their own types and matched rows re-fetch via
 # `WHERE (shard = .. AND id = ..) OR ...` -- generic over any multi-column key,
 # pushed down through the connector's AND/OR filter pushdown. The real columns
 # (body -- indexed, not stored -- and views) are materialised by the composite

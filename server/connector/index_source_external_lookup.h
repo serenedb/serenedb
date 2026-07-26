@@ -43,17 +43,15 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     std::span<const duckdb::LogicalType> projected_types,
     std::span<const catalog::Column::Id> bind_column_ids);
 
-  PrimaryKeyBatch::Kind PkKind() const final {
-    return PrimaryKeyBatch::Kind::Struct;
-  }
-
-  duckdb::idx_t Materialize(duckdb::ClientContext& context,
-                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
                             duckdb::idx_t count,
                             duckdb::DataChunk& output) final;
 
  private:
-  enum class Dialect : uint8_t { Postgres, ClickHouse, };
+  enum class Dialect : uint8_t {
+    Postgres,
+    ClickHouse,
+  };
 
   void BuildQuery(duckdb::ClientContext& context, const CatalogTableRef& ref,
                   const std::vector<std::string>& select_names);

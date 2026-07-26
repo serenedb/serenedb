@@ -45,6 +45,7 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
+#include <ranges>
 
 #include "catalog/store/store.h"
 #include "catalog/table.h"
@@ -594,14 +595,11 @@ std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }
   if (fp.pk_spec == catalog::PkSpec::ExternalColumnKey) {
-    // Project the key columns in order so the index sink can key postings by
-    // their values (the ctid rowid as one BIGINT; key columns as a struct).
-    std::vector<duckdb::column_t> ids;
-    ids.reserve(fp.key_columns.size());
-    for (const auto& kc : fp.key_columns) {
-      ids.push_back(kc.source_index);
-    }
-    return ids;
+    // Project the key columns in resolution order: the sink packs them into one
+    // struct in that order, and the re-fetch matches on it positionally.
+    return fp.key_columns |
+           std::views::transform(&ExternalKeyColumn::source_index) |
+           std::ranges::to<std::vector>();
   }
   if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};

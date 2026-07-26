@@ -34,6 +34,9 @@
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/main/secret/secret.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
@@ -53,14 +56,23 @@ using persistence::ForeignServerData;
 
 absl::Mutex g_ddl_mutex;
 
+constexpr std::string_view kClickHouseStorage = "clickhouse";
+constexpr std::string_view kPostgresStorage = "postgres";
+
 std::string_view StorageTypeForFdw(std::string_view fdw) {
   if (fdw == "clickhouse_fdw") {
-    return "clickhouse";
+    return kClickHouseStorage;
   }
   if (fdw == "postgres_fdw") {
-    return "postgres";
+    return kPostgresStorage;
   }
   return {};
+}
+
+// The attached catalog types a foreign server can own -- each connector's
+// Catalog::GetCatalogType() returns exactly the storage type above.
+bool IsForeignServerStorage(std::string_view catalog_type) {
+  return catalog_type == kClickHouseStorage || catalog_type == kPostgresStorage;
 }
 
 std::string_view CanonicalOptionKey(std::string_view storage,
@@ -223,6 +235,18 @@ ForeignServerAttachResult RunForeignServerAttach(duckdb::Connection& conn,
 
 void DetachForeignServerAttachment(std::string_view server_name) {
   auto conn = DuckDBEngine::Instance().CreateConnection();
+  // Detach ONLY a foreign-server attachment. The alias namespace is shared with
+  // serenedb databases, so a blind DETACH of a name that happens to be a
+  // database would tear that database down -- and its OnDetach would re-enter
+  // this file's DDL lock on this very thread (absl::Mutex is not recursive) and
+  // drop the database with NoAccessCheck, past its ownership check.
+  auto attached = duckdb::DatabaseManager::Get(*conn->context)
+                    .GetDatabase(duckdb::Identifier{server_name});
+  if (!attached ||
+      !IsForeignServerStorage(attached->GetCatalog().GetCatalogType())) {
+    return;
+  }
+  attached.reset();
   conn->Query(absl::StrCat("DETACH ", QuoteSqlIdentifier(server_name)));
 }
 

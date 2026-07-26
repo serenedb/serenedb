@@ -3028,6 +3028,16 @@ bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
   // database's attachment). The attach cannot catch this -- it only collides
   // while the first server's attachment is live, not when its remote is down.
   for (const auto& db : _snapshot->GetDatabases()) {
+    // A database shares the alias namespace with foreign servers, so a server
+    // named after one would make DROP SERVER's detach tear the database down.
+    if (db->GetName() == foreign_server->GetName()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("database \"", db->GetName(),
+                "\" already exists, so a server cannot take that name"),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
     if (db->GetId() != database_id &&
         _snapshot->GetForeignServer(db->GetId(), foreign_server->GetName())) {
       THROW_SQL_ERROR(

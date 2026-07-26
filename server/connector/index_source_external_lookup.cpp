@@ -316,9 +316,9 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
 
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _gstate.get());
-  in.lookup_keys = &pk;
-  in.lookup_count = count;
-  in.lookup_gate = [](void* state, int64_t ord) {
+  in.lookup.keys = &pk;
+  in.lookup.count = count;
+  in.lookup.gate = [](void* state, int64_t ord) {
     auto& self = *static_cast<ExternalLookupIndexSource*>(state);
     if (ord < 1 || ord > self._gate_limit || self._filled[ord - 1]) {
       return false;
@@ -327,13 +327,13 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
     self._survivor_idx[self._gate_count++] = ord - 1;
     return true;
   };
-  in.lookup_gate_state = this;
+  in.lookup.gate_state = this;
 
   duckdb::idx_t before;
   do {
     before = _tf_target.size();
     _lookup_func.function(context, in, _tf_target);
-    in.lookup_keys = nullptr;
+    in.lookup.Drained();
   } while (_tf_target.size() != before);
   const auto rows = _tf_target.size();
   SDB_ASSERT(rows == _gate_count);

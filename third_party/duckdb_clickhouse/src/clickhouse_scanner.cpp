@@ -539,15 +539,15 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateFilterPushd
 static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<ClickHouseGlobalState>();
 	try {
-		if (data.lookup_keys) {
-			auto &keys = StructVector::GetEntries(*data.lookup_keys);
+		if (data.lookup.Executing()) {
+			auto &keys = StructVector::GetEntries(*data.lookup.keys);
 			if (!gstate.done) {
 				while (gstate.Conn().GetClient().NextBlock()) {
 				}
 			}
 			clickhouse::Block block;
 			for (idx_t c = 0; c < keys.size(); c++) {
-				block.AppendColumn(absl::StrCat("k", c), BuildLookupColumn(keys[c], data.lookup_count));
+				block.AppendColumn(absl::StrCat("k", c), BuildLookupColumn(keys[c], data.lookup.count));
 			}
 			clickhouse::ExternalTables external_tables;
 			external_tables.push_back({"lookup", block});
@@ -580,7 +580,7 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 				continue;
 			}
 			auto &block = *gstate.current_block;
-			if (data.lookup_gate) {
+			if (data.lookup.HasGate()) {
 				// Gated lookup drain: block column 0 is the gate key (consumed per
 				// row, never emitted); the survivors of columns [1, N] materialize
 				// into output columns [0, N-1] as maximal runs, so the bulk column
@@ -605,7 +605,7 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 				};
 				while (gstate.block_offset < block_rows && dst + run_len < STANDARD_VECTOR_SIZE) {
 					const auto row = gstate.block_offset;
-					if (data.lookup_gate(data.lookup_gate_state, ord_col->At(row))) {
+					if (data.lookup.Accept(ord_col->At(row))) {
 						if (run_len == 0) {
 							run_start = row;
 						}

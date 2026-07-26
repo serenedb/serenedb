@@ -30,7 +30,7 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	string sql;
 	//! Set by clickhouse_query's bind for lookup := true: the scan holds a
 	//! connection pinned for its lifetime and re-runs the statement per
-	//! TableFunctionInput::lookup_keys chunk, shipping the key columns as the
+	//! TableFunctionInput::lookup batch, shipping the key columns as the
 	//! native external-data table `lookup` (columns k0..kN).
 	bool lookup = false;
 	bool from_query = false;

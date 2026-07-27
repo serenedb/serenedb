@@ -1,0 +1,87 @@
+control substitution on
+
+# Type roundtrip through the clickhouse connector's clickhouse_query table
+# function. Reads the pre-seeded chtest.types_all fixture (the connector is
+# read-only; the row was loaded by the container init script) and asserts
+# each ClickHouse type maps to the expected DuckDB type / text rendering.
+#
+# Nested types (Array, Map) and the UUID are cast ::VARCHAR for a stable,
+# wire-independent DuckDB rendering: [1, 2, 3], {x=1, y=2}, and the
+# canonical 8-4-4-4-12 uuid form.
+
+# Scalar numeric / bool / string / fixedstring columns, ordered for
+# determinism. UInt8 -> UTINYINT, Int64 -> BIGINT (incl. min/max),
+# Float64 -> DOUBLE, Bool -> BOOLEAN (t/f), String / FixedString -> VARCHAR.
+query
+SELECT c_uint8, c_int64, c_float64, c_bool, c_string, c_fixedstr
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT * FROM chtest.types_all ORDER BY c_uint8')
+ORDER BY c_uint8;
+----
+c_uint8	c_int64	c_float64	c_bool	c_string	c_fixedstr
+1	9223372036854775807	3.5	1	hello	abcd
+2	-9223372036854775807	-1.25	0	world	wxyz
+
+
+# Temporal columns. Date -> DATE, DateTime -> TIMESTAMP (second precision),
+# DateTime64(3) -> TIMESTAMP (millisecond fraction retained).
+query
+SELECT c_uint8, c_date, c_datetime, c_datetime64
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT * FROM chtest.types_all ORDER BY c_uint8')
+ORDER BY c_uint8;
+----
+c_uint8	c_date	c_datetime	c_datetime64
+1	2021-01-01	2021-01-01 12:00:00	2021-01-01 12:00:00.123
+2	2022-12-31	2022-12-31 23:59:59	2022-12-31 23:59:59.999
+
+
+# Decimal(18,4) -> DECIMAL(18,4); enum8 comes back as its label string
+# (a/b), not the stored ordinal.
+query
+SELECT c_uint8, c_decimal, c_enum8
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT * FROM chtest.types_all ORDER BY c_uint8')
+ORDER BY c_uint8;
+----
+c_uint8	c_decimal	c_enum8
+1	12345.6789	a
+2	-0.0001	b
+
+
+# UUID -> canonical 8-4-4-4-12 string; IPv4 -> dotted-quad string.
+query
+SELECT c_uint8, c_uuid::VARCHAR, c_ipv4
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT * FROM chtest.types_all ORDER BY c_uint8')
+ORDER BY c_uint8;
+----
+c_uint8	c_uuid	c_ipv4
+1	00000000-0000-0000-0000-000000000001	192.168.0.1
+2	00000000-0000-0000-0000-000000000002	10.0.0.255
+
+
+# Array(Int32) -> LIST, Map(String,Int32) -> MAP; ::VARCHAR for the
+# deterministic DuckDB rendering, including the empty array / empty map.
+query
+SELECT c_uint8, c_array_int32::VARCHAR, c_map::VARCHAR
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT * FROM chtest.types_all ORDER BY c_uint8')
+ORDER BY c_uint8;
+----
+c_uint8	c_array_int32	c_map
+1	[1, 2, 3]	{x=1, y=2}
+2	[]	{}
+
+
+# LowCardinality(String) -> VARCHAR; Nullable(Int32) -> INTEGER with a
+# genuine NULL on the second row.
+query
+SELECT c_uint8, c_lowcard, c_nullable
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT * FROM chtest.types_all ORDER BY c_uint8')
+ORDER BY c_uint8;
+----
+c_uint8	c_lowcard	c_nullable
+1	low	42
+2	high	NULL

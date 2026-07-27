@@ -87,7 +87,7 @@ enum class IOAdvice : uint32_t {
   ReadonceRandom = 6,
 
   // File is opened for non-buffered reads
-  DirectRead = 8
+  DirectRead = 8,
 };
 
 ENABLE_BITMASK_ENUM(IOAdvice);  // enable bitmap operations on the enum

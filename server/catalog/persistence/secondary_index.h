@@ -38,6 +38,7 @@ struct SecondaryIndexData {
   // duckdb ART key list, an ordered prefix index.
   std::vector<Column::Id> columns;
   std::vector<ExpressionData> expressions;
+  std::string comment;
 };
 
 }  // namespace sdb::catalog::persistence

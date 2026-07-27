@@ -1,0 +1,232 @@
+# duckdb introspection works for every SereneDB relation kind: transactional
+# (facade) tables, search tables, inverted-index and secondary-index
+# FROM-index entries, and views -- via the table-function, PRAGMA, and CALL
+# spellings of pragma_table_info / pragma_storage_info / pragma_database_size.
+
+statement ok
+CREATE TABLE pin_txn (i INTEGER PRIMARY KEY, s VARCHAR USING COMPRESSION zstd, j INTEGER);
+
+statement ok
+INSERT INTO pin_txn SELECT i, md5(i::VARCHAR), i * 2 FROM generate_series(0, 4999) t(i);
+
+statement ok
+CREATE TABLE pin_search (i INTEGER PRIMARY KEY, s VARCHAR, tags VARCHAR[], info STRUCT(a INTEGER, b VARCHAR), maybe INTEGER) WITH (storage = 'search');
+
+statement ok
+INSERT INTO pin_search SELECT i, 'v' || i, ['x', 'y'], {'a': i, 'b': 'w' || i}, CASE WHEN i % 2 = 0 THEN i ELSE NULL END FROM generate_series(0, 1999) t(i);
+
+statement ok
+CREATE INDEX pin_inv ON pin_txn USING inverted (s);
+
+statement ok
+CREATE INDEX pin_inc ON pin_txn USING inverted (s, j included());
+
+statement ok
+CREATE INDEX pin_sec ON pin_txn (j);
+
+statement ok
+CREATE VIEW pin_view AS SELECT i, s FROM pin_txn;
+
+
+# --- pragma_table_info: every relation kind + both spellings ---------------
+
+query
+SELECT * FROM pragma_table_info('pin_txn');
+----
+cid	name	type	notnull	dflt_value	pk
+0	i	INTEGER	t	NULL	t
+1	s	VARCHAR	f	NULL	f
+2	j	INTEGER	f	NULL	f
+
+
+query
+PRAGMA table_info('pin_search');
+----
+cid	name	type	notnull	dflt_value	pk
+0	i	INTEGER	t	NULL	t
+1	s	VARCHAR	f	NULL	f
+2	tags	VARCHAR[]	f	NULL	f
+3	info	STRUCT(a INTEGER, b VARCHAR)	f	NULL	f
+4	maybe	INTEGER	f	NULL	f
+
+
+# FROM-index entries expose the indexed table's columns.
+query
+SELECT * FROM pragma_table_info('pin_inv');
+----
+cid	name	type	notnull	dflt_value	pk
+0	i	INTEGER	t	NULL	t
+1	s	VARCHAR	f	NULL	f
+2	j	INTEGER	f	NULL	f
+
+
+query
+SELECT * FROM pragma_table_info('pin_sec');
+----
+cid	name	type	notnull	dflt_value	pk
+0	i	INTEGER	t	NULL	t
+1	s	VARCHAR	f	NULL	f
+2	j	INTEGER	f	NULL	f
+
+
+query
+SELECT * FROM pragma_table_info('pin_view');
+----
+cid	name	type	notnull	dflt_value	pk
+0	i	INTEGER	f	NULL	f
+1	s	VARCHAR	f	NULL	f
+
+
+# --- pragma_storage_info: transactional facade table -----------------------
+
+# CHECKPOINT compresses appended rows so the forced zstd column is observable.
+statement ok
+CHECKPOINT;
+
+query
+SELECT DISTINCT column_name, compression FROM pragma_storage_info('pin_txn') WHERE segment_type = 'VARCHAR';
+----
+column_name	compression
+s	ZSTD
+
+
+query
+SELECT DISTINCT column_name FROM pragma_storage_info('pin_txn') ORDER BY 1;
+----
+column_name
+i
+j
+s
+
+
+# --- pragma_storage_info: search table (iresearch .col metadata) -----------
+
+# Flush the staged rows into iresearch segments deterministically.
+statement ok
+VACUUM (REFRESH_TABLE) pin_search;
+
+query
+SELECT row_group_id, column_name, column_id, column_path, segment_type, start, count, persistent, block_id FROM pragma_storage_info('pin_search') ORDER BY column_id, column_path;
+----
+row_group_id	column_name	column_id	column_path	segment_type	start	count	persistent	block_id
+0	i	0	[0]	INTEGER	0	2000	t	-1
+0	s	1	[1]	VARCHAR	0	2000	t	-1
+0	tags	2	[2, 1]	VARCHAR	0	4000	t	-1
+0	tags	2	[2]	VARCHAR[]	0	2000	t	-1
+0	info	3	[3, 1]	INTEGER	0	2000	t	-1
+0	info	3	[3, 2]	VARCHAR	0	2000	t	-1
+0	maybe	4	[4, 0]	VALIDITY	0	2000	t	-1
+0	maybe	4	[4]	INTEGER	0	2000	t	-1
+
+
+# Stats and block offsets are populated for synthesized rows.
+query
+SELECT count(*) FROM pragma_storage_info('pin_search') WHERE stats IS NULL OR block_offset IS NULL;
+----
+count
+0
+
+
+# A search table without a declared PK stores a synthetic generated PK; it
+# surfaces under the "rowid" virtual column with a NULL column_id.
+statement ok
+CREATE TABLE pin_nopk (s VARCHAR) WITH (storage = 'search');
+
+statement ok
+INSERT INTO pin_nopk VALUES ('a'), ('b');
+
+statement ok
+VACUUM (REFRESH_TABLE) pin_nopk;
+
+query
+SELECT row_group_id, column_name, column_id, column_path, segment_type, count FROM pragma_storage_info('pin_nopk') ORDER BY column_path;
+----
+row_group_id	column_name	column_id	column_path	segment_type	count
+0	s	0	[0]	VARCHAR	2
+0	rowid	NULL	[rowid]	BIGINT	2
+
+
+# --- pragma_storage_info: FROM-index entries -------------------------------
+
+# The INCLUDE column is stored in the inverted index's column store, next to
+# the encoded-primary-key column that carries row identity (no physical
+# column backs it, so it surfaces under the row-identity virtual column --
+# named after the PK column -- with a NULL column_id).
+statement ok
+VACUUM (REFRESH_TABLE) pin_txn;
+
+query
+SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inc') ORDER BY column_path;
+----
+row_group_id	column_name	column_id	column_path	segment_type	count	persistent
+0	j	2	[2]	INTEGER	5000	t
+0	i	NULL	[i]	BIGINT	5000	t
+
+
+# A plain inverted index stores values only for the encoded primary key.
+query
+SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inv');
+----
+row_group_id	column_name	column_id	column_path	segment_type	count	persistent
+0	i	NULL	[i]	BIGINT	5000	t
+
+
+# A secondary index is a native ART on the store table; it has no column
+# storage of its own, so it reports no segments.
+query
+SELECT count(*) FROM pragma_storage_info('pin_sec');
+----
+count
+0
+
+
+# Views have no storage.
+statement error
+PRAGMA storage_info('pin_view');
+----
+db error: ERROR: pin_view is not an table
+
+
+# --- CALL spelling ----------------------------------------------------------
+
+query
+SELECT count(*) > 0 FROM (SELECT * FROM pragma_storage_info('pin_search'));
+----
+?column?
+t
+
+
+# --- pragma_database_size ---------------------------------------------------
+
+# One row per attached database, including the internal store database. The
+# current database's size covers the shared store plus this database's search
+# data, so it is non-zero here.
+query
+SELECT count(*) FROM pragma_database_size() WHERE database_name = current_database();
+----
+count
+1
+
+
+query
+SELECT count(*) FROM pragma_database_size() WHERE database_name = '__sdb_store';
+----
+count
+1
+
+
+query
+SELECT database_size <> '0 bytes', block_size > 0 FROM pragma_database_size() WHERE database_name = current_database();
+----
+?column?	?column?
+t	t
+
+
+statement ok
+DROP TABLE pin_txn CASCADE;
+
+statement ok
+DROP TABLE pin_search;
+
+statement ok
+DROP TABLE pin_nopk;

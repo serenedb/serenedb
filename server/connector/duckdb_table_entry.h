@@ -22,10 +22,36 @@
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/storage/table/row_group_collection.hpp>
+#include <span>
 
 #include "catalog/table.h"
 
+namespace irs {
+
+class DirectoryReader;
+class IndexReader;
+
+}  // namespace irs
 namespace sdb::connector {
+
+struct IResearchColumnBinding {
+  duckdb::idx_t column_id;
+  uint64_t field;
+};
+
+bool ScanIResearchColumnSegmentInfo(
+  const irs::IndexReader& reader,
+  std::span<const IResearchColumnBinding> bindings,
+  const duckdb::virtual_column_map_t& virtual_columns,
+  duckdb::ColumnSegmentInfoScanState& state,
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result);
+
+void BuildIResearchColumnSegmentInfo(
+  const irs::IndexReader& reader,
+  std::span<const IResearchColumnBinding> bindings,
+  const duckdb::virtual_column_map_t& virtual_columns,
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result);
 
 // Virtual column ID for tableoid (PG system column). Always returns 0.
 // Placed in the special-identifier range alongside COLUMN_IDENTIFIER_ROW_*.
@@ -74,6 +100,14 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
+  duckdb::vector<duckdb::ColumnSegmentInfo> GetColumnSegmentInfo(
+    const duckdb::QueryContext& context,
+    const duckdb::ColumnSegmentInfoScanOptions& options) final;
+  bool ScanColumnSegmentInfo(
+    const duckdb::QueryContext& context,
+    duckdb::ColumnSegmentInfoScanState& state,
+    duckdb::vector<duckdb::ColumnSegmentInfo>& result) final;
+
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
                              duckdb::LogicalProjection& proj,
                              duckdb::LogicalUpdate& update,
@@ -97,12 +131,17 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
   // Convert a virtual column ID (VIRTUAL_COLUMN_START + i) back to a real
   // column index. Returns DConstants::INVALID_INDEX if not a PK virtual col.
   static duckdb::column_t VirtualToPKColumnIndex(duckdb::column_t virtual_id);
+  static duckdb::column_t RowIdentityColumnId(const catalog::Table& table);
 
   const std::shared_ptr<catalog::Table>& GetSereneDBTable() const {
     return _sdb_table;
   }
 
  private:
+  std::vector<IResearchColumnBinding> SearchSegmentInfoBindings() const;
+  std::shared_ptr<irs::DirectoryReader> SearchSegmentInfoReader(
+    duckdb::ClientContext& context);
+
   std::shared_ptr<catalog::Table> _sdb_table;
   std::vector<size_t> _indexed_col_indices;
 };

@@ -58,7 +58,11 @@ struct BlockWindow {
 // child alone answers it, so GatherFilter can skip the data decode -- except
 // on blocks whose codec self-describes nulls (NO_VALIDITY_REQUIRED, e.g.
 // dict_fsst), where the data segment is the only truth.
-enum class NullCheckKind : uint8_t { None, IsNull, IsNotNull };
+enum class NullCheckKind : uint8_t {
+  None,
+  IsNull,
+  IsNotNull,
+};
 
 struct IotaRange {
   using contiguous_range_tag = void;

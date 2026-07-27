@@ -39,8 +39,15 @@
 
 namespace sdb {
 
-enum class Conjunction { Or, And };
-enum class Modifier { None, Required, Not };
+enum class Conjunction {
+  Or,
+  And,
+};
+enum class Modifier {
+  None,
+  Required,
+  Not,
+};
 
 struct ParserContext {
   irs::field_id default_field_id{irs::field_limits::invalid()};

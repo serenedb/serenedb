@@ -20,9 +20,12 @@
 
 #include "iresearch/formats/column/internal/write_context.hpp"
 
+#include <duckdb/common/types/string_type.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
+#include <limits>
 
+#include "iresearch/types.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
@@ -32,19 +35,34 @@ WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out)
 
 WriteContext::~WriteContext() = default;
 
+void WriteContext::WriteString(
+  duckdb::UncompressedStringSegmentState& /*state*/, duckdb::string_t string,
+  duckdb::block_id_t& result_block, int32_t& result_offset) {
+  result_block = static_cast<duckdb::block_id_t>(_out->Position());
+  result_offset = 0;
+  const auto len = string.GetSize();
+  SDB_ENSURE(len <= std::numeric_limits<uint32_t>::max(),
+             "string too long for overflow format");
+  _out->WriteU32(len);
+  _out->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), len);
+}
+
+duckdb::idx_t WriteContext::Position() const {
+  return static_cast<duckdb::idx_t>(_out->Position());
+}
+
+void WriteContext::Append(duckdb::const_data_ptr_t data, duckdb::idx_t size) {
+  _out->WriteData(reinterpret_cast<const byte_type*>(data), size);
+}
+
 duckdb::block_id_t WriteContext::GetFreeBlockId() {
-  const auto cursor = static_cast<duckdb::block_id_t>(_out->Position());
-  if (_next_id < cursor) {
-    _next_id = cursor;
-  }
-  const auto id = _next_id;
-  _next_id += static_cast<duckdb::block_id_t>(GetBlockAllocSize());
-  return id;
+  THROW_SQL_ERROR(
+    ERR_MSG("WriteContext::GetFreeBlockId: column data goes "
+            "through ColumnStreamWriter, not blocks"));
 }
 
 duckdb::block_id_t WriteContext::PeekFreeBlockId() {
-  const auto cursor = static_cast<duckdb::block_id_t>(_out->Position());
-  return _next_id < cursor ? cursor : _next_id;
+  THROW_SQL_ERROR(ERR_MSG("WriteContext::PeekFreeBlockId"));
 }
 
 void WriteContext::Write(duckdb::FileBuffer& block,
@@ -53,14 +71,11 @@ void WriteContext::Write(duckdb::FileBuffer& block,
 }
 
 void WriteContext::Write(duckdb::QueryContext /*context*/,
-                         duckdb::FileBuffer& block,
-                         duckdb::block_id_t block_id) {
-  const auto cursor = static_cast<duckdb::block_id_t>(_out->Position());
-  SDB_ENSURE(cursor == block_id,
-             "WriteContext::Write out-of-order: cursor=", cursor,
-             " expected=", block_id);
-  _out->WriteData(reinterpret_cast<const byte_type*>(block.InternalBuffer()),
-                  block.AllocSize());
+                         duckdb::FileBuffer& /*block*/,
+                         duckdb::block_id_t /*block_id*/) {
+  THROW_SQL_ERROR(
+    ERR_MSG("WriteContext::Write: column data goes through "
+            "ColumnStreamWriter, not blocks"));
 }
 
 void WriteContext::Read(duckdb::QueryContext /*context*/,
@@ -88,8 +103,6 @@ void WriteContext::WriteHeader(duckdb::QueryContext /*context*/,
   THROW_SQL_ERROR(ERR_MSG("WriteContext::WriteHeader"));
 }
 
-duckdb::idx_t WriteContext::TotalBlocks() {
-  return static_cast<duckdb::idx_t>(_next_id / GetBlockAllocSize());
-}
+duckdb::idx_t WriteContext::TotalBlocks() { return 0; }
 
 }  // namespace irs

@@ -39,6 +39,19 @@ bytea_output	hex	Sets the output format for bytea.
 ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
 cache_local_files	off	Whether the external file cache also caches local files (remote files are always cached)
 catalog_error_max_schemas	100	The maximum number of schemas the system will scan for "did you mean..." style errors in the catalog
+ch_binary_as_blob	off	Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR
+ch_connection_cache	on	Whether to reuse (pool) ClickHouse connections across statements; setting this to false bypasses the connection pool entirely (dynamic kill switch)
+ch_debug_show_queries	off	DEBUG SETTING: print all queries sent to ClickHouse to stdout
+ch_experimental_filter_pushdown	on	Whether or not to use filter pushdown
+ch_order_pushdown	on	Push ORDER BY and LIMIT clauses to ClickHouse (default: true)
+ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (always connect, ignore pool limit), 'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)
+ch_pool_enable_reaper_thread	on	Whether to run the pool reaper thread that periodically closes connections exceeding 'ch_pool_max_lifetime_millis' or 'ch_pool_idle_timeout_millis'
+ch_pool_enable_thread_local_cache	off	Whether to enable the connection caching in thread-local cache. Such connections are pinned to their threads and are not made available to other threads, while still taking a place in the pool
+ch_pool_idle_timeout_millis	60000	Maximum number of milliseconds a connection can sit idle in the pool; checked on lease and, with the reaper thread enabled, in the background
+ch_pool_max_connections	32	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
+ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
+ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
+ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED always checkpoints, DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes. Per-index WITH (cleanup_interval_step = ...) overrides. 0 disables cleanup. Default: 1.
@@ -348,6 +361,19 @@ bytea_output	hex	Sets the output format for bytea.
 ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
 cache_local_files	off	Whether the external file cache also caches local files (remote files are always cached)
 catalog_error_max_schemas	100	The maximum number of schemas the system will scan for "did you mean..." style errors in the catalog
+ch_binary_as_blob	off	Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR
+ch_connection_cache	on	Whether to reuse (pool) ClickHouse connections across statements; setting this to false bypasses the connection pool entirely (dynamic kill switch)
+ch_debug_show_queries	off	DEBUG SETTING: print all queries sent to ClickHouse to stdout
+ch_experimental_filter_pushdown	on	Whether or not to use filter pushdown
+ch_order_pushdown	on	Push ORDER BY and LIMIT clauses to ClickHouse (default: true)
+ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (always connect, ignore pool limit), 'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)
+ch_pool_enable_reaper_thread	on	Whether to run the pool reaper thread that periodically closes connections exceeding 'ch_pool_max_lifetime_millis' or 'ch_pool_idle_timeout_millis'
+ch_pool_enable_thread_local_cache	off	Whether to enable the connection caching in thread-local cache. Such connections are pinned to their threads and are not made available to other threads, while still taking a place in the pool
+ch_pool_idle_timeout_millis	60000	Maximum number of milliseconds a connection can sit idle in the pool; checked on lease and, with the reaper thread enabled, in the background
+ch_pool_max_connections	32	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
+ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
+ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
+ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED always checkpoints, DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes. Per-index WITH (cleanup_interval_step = ...) overrides. 0 disables cleanup. Default: 1.

@@ -20,58 +20,29 @@
 
 #pragma once
 
-#include <cstring>
-#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/storage/arena_allocator.hpp>
-#include <limits>
-#include <memory>
-#include <string_view>
-#include <vector>
 
 namespace duckdb {
 
 class ClientContext;
+class Vector;
 
 }  // namespace duckdb
 namespace sdb::connector {
-
-struct PrimaryKeyBatch {
-  enum class Kind : uint8_t {
-    None,
-    I64,
-    I64I64,
-  };
-
-  Kind kind = Kind::None;
-  std::vector<int64_t> files;
-  std::vector<int64_t> rows;
-
-  size_t Size() const noexcept { return rows.size(); }
-  void Reset() {
-    files.clear();
-    rows.clear();
-  }
-  void Append(int64_t row) { rows.push_back(row); }
-  void Append(int64_t file, int64_t row) {
-    files.push_back(file);
-    rows.push_back(row);
-  }
-};
 
 class IndexSource {
  public:
   virtual ~IndexSource() = default;
 
-  virtual PrimaryKeyBatch::Kind PkKind() const = 0;
-
-  // Materializes the source columns for `count` pks starting at `start` and
-  // returns the number of output rows produced -- equal to `count` unless a
+  // Materializes the source columns for the `count` primary keys held in `pk`
+  // -- the stored, self-describing PK column read straight from the index: a
+  // single scalar column, or a struct of key fields. Each source reads the
+  // shape it wrote (integer fields are read regardless of signedness/width).
+  // Returns the number of output rows produced -- equal to `count` unless a
   // pushed lookup-column filter compacted the batch to survivors.
   virtual duckdb::idx_t Materialize(duckdb::ClientContext& context,
-                                    PrimaryKeyBatch& batch, duckdb::idx_t start,
-                                    duckdb::idx_t count,
+                                    duckdb::Vector& pk, duckdb::idx_t count,
                                     duckdb::DataChunk& output) = 0;
 };
 

@@ -61,7 +61,10 @@
 
 namespace {
 
-enum class Shape { Bigint, VarcharDict };
+enum class Shape {
+  Bigint,
+  VarcharDict,
+};
 
 // Row count is env-tunable so the column can be grown without recompiling.
 // Default 2M => ~16 row groups of DEFAULT_ROW_GROUP_SIZE and ~1000 vectors.

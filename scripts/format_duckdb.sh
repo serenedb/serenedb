@@ -3,7 +3,10 @@
 # duckdb's own scripts/format.py enforces) inside a docker container, so no
 # local clang-format-11 install is required.
 #
-# Covered submodules: duckdb, duckdb_avro, duckdb_httpfs, duckdb_iceberg.
+# Covered submodules: duckdb, duckdb_avro, duckdb_httpfs, duckdb_iceberg,
+# duckdb_inet, duckdb_postgres, database-connector. Also covers
+# duckdb_clickhouse, which is IN-TREE (part of this repo, not a submodule) --
+# its changed-file discovery and status use the main repo's git.
 #
 # Usage:
 #   scripts/format_duckdb.sh                # format files changed vs each
@@ -14,6 +17,8 @@
 #                                             relative to third_party/, e.g.
 #                                             'duckdb/src/foo.cpp')
 #   scripts/format_duckdb.sh --check        # report diffs only, do not write
+#   scripts/format_duckdb.sh --staged       # scope to git-staged changes
+#                                             (for the pre-commit hook)
 #
 # Scoping rules (mirrors third_party/duckdb/scripts/format.py):
 #   - only files under: src/ benchmark/ test/ tools/ examples/ extension/ scripts/
@@ -28,13 +33,35 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
 SUBMODULES=(duckdb duckdb_avro duckdb_inet duckdb_httpfs duckdb_iceberg duckdb_postgres database-connector)
+# In-tree directories (part of this repo, not submodules): their changed-file
+# discovery and status run against the MAIN repo, scoped to their path.
+INTREE=(duckdb_clickhouse)
+ALL_DIRS=("${SUBMODULES[@]}" "${INTREE[@]}")
+is_intree() {
+	local d
+	for d in "${INTREE[@]}"; do [[ "$d" == "$1" ]] && return 0; done
+	return 1
+}
 # Track duckdb's own CI (CheckIssueForCodeFormatting.yml uses Python 3.12).
 IMAGE="python:3.12-slim"
 
+# An uninitialized submodule has no working tree, so it cannot have changed
+# files to format -- skip it rather than failing. CI checks out with
+# submodules: false, where every submodule is an empty directory.
+present=()
 for sm in "${SUBMODULES[@]}"; do
 	sm_dir="$THIRD_PARTY/$sm"
 	if [[ ! -d "$sm_dir/.git" && ! -f "$sm_dir/.git" ]]; then
-		echo "error: $sm_dir is not a git checkout" >&2
+		echo "note: skipping $sm (not a git checkout)" >&2
+		continue
+	fi
+	present+=("$sm")
+done
+SUBMODULES=("${present[@]+"${present[@]}"}")
+ALL_DIRS=("${SUBMODULES[@]+"${SUBMODULES[@]}"}" "${INTREE[@]}")
+for sm in "${INTREE[@]}"; do
+	if [[ ! -d "$THIRD_PARTY/$sm" ]]; then
+		echo "error: $THIRD_PARTY/$sm does not exist" >&2
 		exit 1
 	fi
 done
@@ -43,6 +70,7 @@ done
 # default branch is not 'main', so a single hardcoded ref wouldn't work).
 BASE_REF=""
 CHECK_ONLY=0
+STAGED=0
 EXPLICIT_FILES=()
 
 while [[ $# -gt 0 ]]; do
@@ -53,6 +81,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--check)
 		CHECK_ONLY=1
+		shift
+		;;
+	--staged)
+		STAGED=1
 		shift
 		;;
 	--files)
@@ -106,7 +138,7 @@ LOCAL_IGNORED_PATHS_RE='^(src/catalog/default/default_types\.cpp|src/main/config
 # Output paths in $FILES_TO_FORMAT are relative to $THIRD_PARTY (e.g. duckdb/src/foo.cpp)
 : >"$FILES_TO_FORMAT"
 TOTAL=0
-for sm in "${SUBMODULES[@]}"; do
+for sm in "${ALL_DIRS[@]}"; do
 	sm_dir="$THIRD_PARTY/$sm"
 	raw="$TMP_DIR/$sm.raw"
 	cand="$TMP_DIR/$sm.cand"
@@ -118,6 +150,16 @@ for sm in "${SUBMODULES[@]}"; do
 				printf '%s\n' "${f#"$sm/"}" >>"$raw"
 			fi
 		done
+	elif is_intree "$sm"; then
+		# In-tree dir: discover via the MAIN repo, scoped to its path, then
+		# strip the leading third_party/ so paths match the submodule form.
+		if [[ "$STAGED" -eq 1 ]]; then
+			git -C "$REPO_ROOT" diff --cached --name-only -- "third_party/$sm" | sed "s#^third_party/$sm/##" >"$raw"
+		else
+			git -C "$REPO_ROOT" diff --name-only "${BASE_REF:-origin/HEAD}...HEAD" -- "third_party/$sm" | sed "s#^third_party/$sm/##" >"$raw"
+		fi
+	elif [[ "$STAGED" -eq 1 ]]; then
+		git -C "$sm_dir" diff --cached --name-only >"$raw"
 	else
 		git -C "$sm_dir" diff --name-only "${BASE_REF:-origin/HEAD}...HEAD" >"$raw"
 	fi
@@ -234,8 +276,13 @@ docker run --rm \
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
 	echo "check passed."
 else
-	for sm in "${SUBMODULES[@]}"; do
-		modified=$(git -C "$THIRD_PARTY/$sm" diff --name-only | wc -l | tr -d ' ')
-		echo "$sm: $modified file(s) modified (review with 'git -C third_party/$sm diff')"
+	for sm in "${ALL_DIRS[@]}"; do
+		if is_intree "$sm"; then
+			modified=$(git -C "$REPO_ROOT" diff --name-only -- "third_party/$sm" | wc -l | tr -d ' ')
+			echo "$sm: $modified file(s) modified (review with 'git -C \"$REPO_ROOT\" diff -- third_party/$sm')"
+		else
+			modified=$(git -C "$THIRD_PARTY/$sm" diff --name-only | wc -l | tr -d ' ')
+			echo "$sm: $modified file(s) modified (review with 'git -C third_party/$sm diff')"
+		fi
 	done
 fi

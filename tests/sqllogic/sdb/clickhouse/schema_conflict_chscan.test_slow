@@ -1,0 +1,45 @@
+control substitution on
+
+# CREATE SCHEMA conflict handling is delegated to ClickHouse. Previously the
+# connector ALWAYS emitted CREATE DATABASE IF NOT EXISTS, so a plain CREATE SCHEMA
+# on an existing database silently no-opped instead of erroring. Now IF NOT EXISTS
+# is rendered only when asked for; a plain re-create is ClickHouse's own loud
+# "already exists" error, and CREATE OR REPLACE SCHEMA is refused (no atomic CH
+# analog -- it would silently drop every table).
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chsc (TYPE clickhouse);
+
+statement ok
+CREATE SCHEMA chsc.sc_ved;
+
+# Plain re-create of an existing schema -> delegated ClickHouse error (was a
+# silent no-op before the fix).
+statement error
+CREATE SCHEMA chsc.sc_ved;
+
+# IF NOT EXISTS is the intended no-op form.
+statement ok
+CREATE SCHEMA IF NOT EXISTS chsc.sc_ved;
+
+# The schema is real and usable.
+statement ok
+CREATE TABLE chsc.sc_ved.t (id BIGINT PRIMARY KEY, v VARCHAR);
+
+statement ok
+INSERT INTO chsc.sc_ved.t VALUES (1, 'x');
+
+query
+SELECT id, v FROM chsc.sc_ved.t;
+----
+id	v
+1	x
+
+statement ok
+DROP TABLE chsc.sc_ved.t;
+
+statement ok
+DROP SCHEMA chsc.sc_ved;
+
+statement ok
+DETACH chsc;

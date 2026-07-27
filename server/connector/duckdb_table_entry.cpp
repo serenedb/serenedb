@@ -20,8 +20,12 @@
 
 #include "connector/duckdb_table_entry.h"
 
+#include <absl/strings/str_cat.h>
+
+#include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/constraints/bound_check_constraint.hpp>
@@ -34,7 +38,11 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/table_filter.hpp>
+#include <duckdb/storage/table/row_group_collection.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/index/index_reader.hpp>
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
@@ -362,6 +370,197 @@ duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(
 duckdb::TableStorageInfo SereneDBTableEntry::GetStorageInfo(
   duckdb::ClientContext& context) {
   return BuildStorageInfo(*_sdb_table);
+}
+
+namespace {
+
+void AppendIResearchBlockRows(
+  const irs::ColumnReader& node, duckdb::idx_t column_id,
+  std::vector<duckdb::idx_t>& path, std::string_view type_name, size_t segment,
+  uint64_t row_base, const duckdb::virtual_column_map_t& virtual_columns,
+  duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
+  const auto blocks = node.DataBlocks();
+  std::string path_str = "[";
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (i > 0) {
+      path_str += ", ";
+    }
+    const auto vc = path[i] >= duckdb::VIRTUAL_COLUMN_START
+                      ? virtual_columns.find(path[i])
+                      : virtual_columns.end();
+    if (vc != virtual_columns.end()) {
+      absl::StrAppend(&path_str, vc->second.name.GetIdentifierName());
+    } else {
+      absl::StrAppend(&path_str, path[i]);
+    }
+  }
+  path_str += "]";
+  for (size_t block = 0; block < blocks.size(); ++block) {
+    const auto& meta = blocks[block];
+    auto& info = out.emplace_back();
+    info.row_group_index = segment;
+    info.column_id = column_id;
+    info.column_path = path_str;
+    info.segment_idx = segment;
+    info.segment_type = std::string{type_name};
+    info.segment_start = row_base + node.DataBlockFirstRow(block);
+    info.segment_count = meta.tuple_count;
+    info.compression_type =
+      meta.codec ? duckdb::CompressionTypeToString(meta.codec->type)
+                 : std::string{"Uncompressed"};
+    info.segment_stats = meta.statistics.ToStruct();
+    info.has_updates = false;
+    info.persistent = true;
+    info.block_id = INVALID_BLOCK;
+    info.block_offset = meta.file_offset;
+  }
+}
+
+void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
+                         std::vector<duckdb::idx_t>& path, size_t segment,
+                         uint64_t row_base,
+                         const duckdb::virtual_column_map_t& virtual_columns,
+                         duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
+  AppendIResearchBlockRows(node, column_id, path, node.Type().ToString(),
+                           segment, row_base, virtual_columns, out);
+  if (const auto* validity = node.Validity()) {
+    path.push_back(0);
+    AppendIResearchBlockRows(*validity, column_id, path, "VALIDITY", segment,
+                             row_base, virtual_columns, out);
+    path.pop_back();
+  }
+  if (node.Type().id() == duckdb::LogicalTypeId::STRUCT) {
+    for (size_t i = 0; i < node.StructFieldCount(); ++i) {
+      path.push_back(i + 1);
+      WalkIResearchColumn(node.StructField(i), column_id, path, segment,
+                          row_base, virtual_columns, out);
+      path.pop_back();
+    }
+  } else if (const auto* child = node.Child()) {
+    path.push_back(1);
+    WalkIResearchColumn(*child, column_id, path, segment, row_base,
+                        virtual_columns, out);
+    path.pop_back();
+  }
+}
+
+}  // namespace
+
+bool ScanIResearchColumnSegmentInfo(
+  const irs::IndexReader& reader,
+  std::span<const IResearchColumnBinding> bindings,
+  const duckdb::virtual_column_map_t& virtual_columns,
+  duckdb::ColumnSegmentInfoScanState& state,
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result) {
+  if (state.position >= reader.size()) {
+    return false;
+  }
+  const auto segment = state.position++;
+  const auto& sub_reader = reader[segment];
+  const auto* col_reader = sub_reader.GetColReader();
+  if (!col_reader) {
+    return true;
+  }
+  uint64_t row_base = 0;
+  for (size_t s = 0; s < segment; ++s) {
+    row_base += reader[s].docs_count();
+  }
+  for (const auto& binding : bindings) {
+    const auto* column =
+      col_reader->Column(static_cast<irs::field_id>(binding.field));
+    if (!column) {
+      continue;
+    }
+    std::vector<duckdb::idx_t> path{binding.column_id};
+    WalkIResearchColumn(*column, binding.column_id, path, segment, row_base,
+                        virtual_columns, result);
+  }
+  return true;
+}
+
+void BuildIResearchColumnSegmentInfo(
+  const irs::IndexReader& reader,
+  std::span<const IResearchColumnBinding> bindings,
+  const duckdb::virtual_column_map_t& virtual_columns,
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result) {
+  duckdb::ColumnSegmentInfoScanState state;
+  while (ScanIResearchColumnSegmentInfo(reader, bindings, virtual_columns,
+                                        state, result)) {
+  }
+}
+
+std::vector<IResearchColumnBinding>
+SereneDBTableEntry::SearchSegmentInfoBindings() const {
+  std::vector<IResearchColumnBinding> bindings;
+  for (const auto& col : GetColumns().Physical()) {
+    for (const auto& sdb_col : _sdb_table->Columns()) {
+      if (sdb_col.GetName() == col.Name().GetIdentifierName()) {
+        bindings.push_back({col.Physical().index, sdb_col.GetId().id()});
+        break;
+      }
+    }
+  }
+  bindings.push_back(
+    {RowIdentityColumnId(*_sdb_table), catalog::Column::kGeneratedPKId.id()});
+  return bindings;
+}
+
+duckdb::column_t SereneDBTableEntry::RowIdentityColumnId(
+  const catalog::Table& table) {
+  const auto& pk_col_ids = table.PKColumns();
+  if (!pk_col_ids.empty()) {
+    const auto pos = table.ColumnPosById(pk_col_ids.front());
+    if (pos < table.Columns().size()) {
+      return duckdb::VIRTUAL_COLUMN_START + pos;
+    }
+  }
+  return kColumnIdentifierGeneratedPk;
+}
+
+std::shared_ptr<irs::DirectoryReader>
+SereneDBTableEntry::SearchSegmentInfoReader(duckdb::ClientContext& context) {
+  auto& conn_ctx = GetSereneDBContext(context);
+  const auto& search = _sdb_table->GetData();
+  return conn_ctx.SearchTxn().EnsureSearchTableReader(
+    _sdb_table->GetId(), [&] { return search->GetDirectoryReader(); });
+}
+
+duckdb::vector<duckdb::ColumnSegmentInfo>
+SereneDBTableEntry::GetColumnSegmentInfo(
+  const duckdb::QueryContext& context,
+  const duckdb::ColumnSegmentInfoScanOptions& options) {
+  auto client = context.GetClientContext();
+  if (!client) {
+    return {};
+  }
+  if (_sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    duckdb::vector<duckdb::ColumnSegmentInfo> result;
+    BuildIResearchColumnSegmentInfo(*SearchSegmentInfoReader(*client),
+                                    SearchSegmentInfoBindings(),
+                                    GetVirtualColumns(), result);
+    return result;
+  }
+  return ResolveStoreEntry(*client).GetColumnSegmentInfo(context, options);
+}
+
+bool SereneDBTableEntry::ScanColumnSegmentInfo(
+  const duckdb::QueryContext& context,
+  duckdb::ColumnSegmentInfoScanState& state,
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result) {
+  auto client = context.GetClientContext();
+  if (!client) {
+    return false;
+  }
+  if (_sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    return ScanIResearchColumnSegmentInfo(*SearchSegmentInfoReader(*client),
+                                          SearchSegmentInfoBindings(),
+                                          GetVirtualColumns(), state, result);
+  }
+  auto& store_entry = ResolveStoreEntry(*client);
+  if (!state.row_groups) {
+    store_entry.InitializeColumnSegmentInfoScan(state);
+  }
+  return store_entry.ScanColumnSegmentInfo(context, state, result);
 }
 
 }  // namespace sdb::connector

@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -273,7 +274,8 @@ StoreTableDef MakeStoreTableDef(std::string_view database,
       continue;
     }
     mirror_pos[i] = def.columns.size();
-    def.columns.push_back({std::string{col.GetName()}, col.type});
+    def.columns.push_back(
+      {std::string{col.GetName()}, col.type, col.compression});
   }
   for (const auto& constraint : table.CheckConstraints()) {
     if (auto idx = constraint.IsNotNull(cols)) {
@@ -431,10 +433,9 @@ void CatalogStore::WriteContext::DropStoreColumn(std::string table,
   });
 }
 
-void CatalogStore::WriteContext::AddStoreColumn(std::string table,
-                                                std::string name,
-                                                std::string type_sql,
-                                                std::string default_sql) {
+void CatalogStore::WriteContext::AddStoreColumn(
+  std::string table, std::string name, std::string type_sql,
+  std::string default_sql, duckdb::CompressionType compression) {
   _entries.push_back({
     .op = Op::AddStoreColumn,
     .def = std::move(default_sql),
@@ -444,6 +445,7 @@ void CatalogStore::WriteContext::AddStoreColumn(std::string table,
       },
     .name_a = std::move(name),
     .name_b = std::move(type_sql),
+    .compression = compression,
   });
 }
 
@@ -922,6 +924,11 @@ absl::Status CatalogStore::ExecuteEntries(
             absl::StrCat("ALTER TABLE \"", kStoreAlias, "\".main.",
                          QuotedIdent(entry.store_table.name), " ADD COLUMN ",
                          QuotedIdent(entry.name_a), " ", entry.name_b);
+          if (entry.compression != duckdb::CompressionType::COMPRESSION_AUTO) {
+            absl::StrAppend(&base, " USING COMPRESSION ",
+                            duckdb::EnumUtil::ToChars<duckdb::CompressionType>(
+                              entry.compression));
+          }
           std::string sql = base;
           if (!entry.def.empty()) {
             absl::StrAppend(&sql, " DEFAULT ", entry.def);
@@ -985,8 +992,9 @@ absl::Status CatalogStore::ExecuteCreateStoreTableImpl(const StoreTableDef& def,
     duckdb::Identifier{kStoreAlias}, duckdb::Identifier{"main"},
     duckdb::Identifier{def.name}});
   for (const auto& col : def.columns) {
-    info->columns.AddColumn(
-      duckdb::ColumnDefinition{duckdb::Identifier{col.name}, col.type});
+    duckdb::ColumnDefinition cd{duckdb::Identifier{col.name}, col.type};
+    cd.SetCompressionType(col.compression);
+    info->columns.AddColumn(std::move(cd));
   }
   for (auto idx : def.not_null) {
     info->constraints.push_back(

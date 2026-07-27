@@ -1,0 +1,32 @@
+control substitution on
+
+# Regression (bug finder): a table containing a LowCardinality(Nullable(<numeric>))
+# column used to be UNREADABLE at bind time. ClickHouseTypeStringToLogicalType parses
+# each column's type via CreateColumnByType, and constructing a
+# LowCardinality(Nullable(<numeric>)) column throws while building its null-placeholder
+# dictionary (a clickhouse-cpp quirk) -- so DESCRIBE-ing the table failed and *every*
+# column became unreadable. The fix strips the storage-only LowCardinality wrapper
+# before parsing the type, restoring whole-table bind.
+#
+# NOTE: reading the VALUES of a LowCardinality(Nullable(<numeric>)) column is a
+# separate clickhouse-cpp deserialization limitation (the vendored client cannot
+# materialize that column at all), so this test reads the table's sibling column.
+# LowCardinality(String) -- the common, non-"suspicious" case -- reads fine and is
+# exercised by types_chscan (chtest.types_all.c_lowcard).
+#
+# Fixture chtest.lc_nullable: id BIGINT + three LowCardinality(Nullable(<numeric>)) cols.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chlc (TYPE clickhouse);
+
+# The table now binds and its non-LowCardinality column reads (this errored at bind
+# with an ItemView assertion before the fix).
+query
+SELECT id FROM chlc.chtest.lc_nullable ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+DETACH chlc;

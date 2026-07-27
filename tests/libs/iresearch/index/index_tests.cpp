@@ -1252,7 +1252,7 @@ class IndexTestCase : public tests::IndexTestBase {
     // 1-st iteration: noncached
     // 2-nd iteration: cached
     for (size_t i = 0; i < 2; ++i) {
-      auto read_columns = [&expected_docs, &reader]() {
+      auto read_columns = [&expected_docs, &reader] {
         size_t i = 0;
         for (auto& segment : reader) {
           auto* column = segment.Column(kNameColumnId);
@@ -1282,7 +1282,7 @@ class IndexTestCase : public tests::IndexTestBase {
       bool ready = false;
       std::condition_variable ready_cv;
 
-      auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+      auto wait_for_all = [&mutex, &ready, &ready_cv] {
         // wait for all threads to be registered
         std::unique_lock lock(mutex);
         while (!ready) {
@@ -1296,11 +1296,10 @@ class IndexTestCase : public tests::IndexTestBase {
 
       for (size_t i = 0; i < thread_count; ++i) {
         auto& result = results[i];
-        pool.emplace_back(
-          std::thread([&wait_for_all, &result, &read_columns]() {
-            wait_for_all();
-            result = static_cast<int>(read_columns());
-          }));
+        pool.emplace_back(std::thread([&wait_for_all, &result, &read_columns] {
+          wait_for_all();
+          result = static_cast<int>(read_columns());
+        }));
       }
 
       // all threads registered... go, go, go...
@@ -1907,7 +1906,7 @@ TEST_P(IndexTestCase, writer_commit_cleanup_interleaved) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
-  auto clean = [this]() { irs::directory_utils::RemoveAllUnreferenced(dir()); };
+  auto clean = [this] { irs::directory_utils::RemoveAllUnreferenced(dir()); };
 
   {
     tests::CallbackDirectory synced_dir(dir(), clean);
@@ -2114,13 +2113,13 @@ TEST_P(IndexTestCase, concurrent_add_mt) {
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
-    std::thread thread0([&writer, docs]() {
+    std::thread thread0([&writer, docs] {
       for (size_t i = 0, count = docs.size(); i < count; i += 2) {
         auto& doc = docs[i];
         ASSERT_TRUE(InsertWithName(*writer, *doc));
       }
     });
-    std::thread thread1([&writer, docs]() {
+    std::thread thread1([&writer, docs] {
       for (size_t i = 1, count = docs.size(); i < count; i += 2) {
         auto& doc = docs[i];
         ASSERT_TRUE(InsertWithName(*writer, *doc));
@@ -2166,7 +2165,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
     auto writer =
       open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
-    std::thread thread0([&writer, docs, &first_doc]() {
+    std::thread thread0([&writer, docs, &first_doc] {
       auto& doc = docs[0];
       InsertWithName(*writer, *doc);
       first_doc = true;
@@ -2177,13 +2176,13 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
         InsertWithName(*writer, *doc);
       }
     });
-    std::thread thread1([&writer, docs]() {
+    std::thread thread1([&writer, docs] {
       for (size_t i = 1, count = docs.size(); i < count; i += 2) {
         auto& doc = docs[i];
         InsertWithName(*writer, *doc);
       }
     });
-    std::thread thread2([&writer, &query_doc1, &first_doc]() {
+    std::thread thread2([&writer, &query_doc1, &first_doc] {
       while (!first_doc)
         ;  // busy-wait until first document loaded
       tests::Remove(*writer, std::move(query_doc1));
@@ -5902,7 +5901,7 @@ TEST_P(IndexTestCase, import_concurrent) {
   std::condition_variable ready_cv;
   bool ready = false;
 
-  auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+  auto wait_for_all = [&mutex, &ready, &ready_cv] {
     // wait for all threads to be registered
     std::unique_lock<std::remove_reference<decltype(mutex)>::type> lock(mutex);
     while (!ready) {
@@ -5915,7 +5914,7 @@ TEST_P(IndexTestCase, import_concurrent) {
     dir, codec(), irs::kOmCreate, irs::tests::DefaultWriterOptions());
 
   for (auto& store : stores) {
-    workers.emplace_back([&wait_for_all, &writer, &store]() {
+    workers.emplace_back([&wait_for_all, &writer, &store] {
       wait_for_all();
       writer->Import(store.reader);
     });
@@ -6016,7 +6015,7 @@ TEST_P(IndexTestCase, concurrent_compaction) {
   bool ready = false;
   std::condition_variable ready_cv;
 
-  auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+  auto wait_for_all = [&mutex, &ready, &ready_cv] {
     // wait for all threads to be registered
     std::unique_lock lock(mutex);
     while (!ready) {
@@ -6130,7 +6129,7 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
   bool ready = false;
   std::condition_variable ready_cv;
 
-  auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+  auto wait_for_all = [&mutex, &ready, &ready_cv] {
     // wait for all threads to be registered
     std::unique_lock lock(mutex);
     while (!ready) {
@@ -6165,7 +6164,7 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
 
   // add dedicated commit thread
   std::atomic<bool> shutdown(false);
-  std::thread commit_thread([&]() {
+  std::thread commit_thread([&] {
     wait_for_all();
 
     while (!shutdown.load()) {
@@ -6258,7 +6257,7 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
   bool ready = false;
   std::condition_variable ready_cv;
 
-  auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+  auto wait_for_all = [&mutex, &ready, &ready_cv] {
     // wait for all threads to be registered
     std::unique_lock lock(mutex);
     while (!ready) {
@@ -6293,7 +6292,7 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
 
   // add dedicated commit thread
   std::atomic<bool> shutdown(false);
-  std::thread commit_thread([&]() {
+  std::thread commit_thread([&] {
     wait_for_all();
 
     while (!shutdown.load()) {
@@ -6388,7 +6387,7 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
   bool ready = false;
   std::condition_variable ready_cv;
 
-  auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+  auto wait_for_all = [&mutex, &ready, &ready_cv] {
     // wait for all threads to be registered
     std::unique_lock lock(mutex);
     while (!ready) {
@@ -6658,7 +6657,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // acquire directory lock, and block compaction
     dir.intermediate_commits_lock.lock();
 
-    std::thread compaction_thread([&writer]() {
+    std::thread compaction_thread([&writer] {
       // compact
       ASSERT_TRUE(writer->Compact(
         irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
@@ -6822,7 +6821,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // acquire directory lock, and block compaction
     dir.intermediate_commits_lock.lock();
 
-    std::thread compaction_thread([&writer]() {
+    std::thread compaction_thread([&writer] {
       // A concurrent commit removed a doc from a candidate, so the merge can't
       // be reconciled against the moved snapshot: transient Busy, not Fail.
       ASSERT_EQ(irs::CompactionError::Busy,
@@ -6980,7 +6979,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // acquire directory lock, and block compaction
     dir.intermediate_commits_lock.lock();
 
-    std::thread compaction_thread([&writer]() {
+    std::thread compaction_thread([&writer] {
       // compaction will fail because of
       ASSERT_TRUE(writer->Compact(
         irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
@@ -7124,7 +7123,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     dir.intermediate_commits_lock
       .lock();  // acquire directory lock, and block compaction
 
-    std::thread compaction_thread([&writer]() {
+    std::thread compaction_thread([&writer] {
       // compaction will fail because of
       ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
         irs::index_utils::CompactionCount())));  // compact

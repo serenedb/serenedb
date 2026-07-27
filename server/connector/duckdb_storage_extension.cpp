@@ -29,6 +29,7 @@
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/databases.h"
+#include "catalog/foreign_server.h"
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
@@ -104,9 +105,16 @@ void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
     conn_ctx.DropCatalogSnapshot();
   }
 
+  // The cascade removes the servers' catalog rows but not their instance-global
+  // DuckDB attachments; DropDatabase returns each one's name and the attachment
+  // identity it saw (both captured under the catalog lock) so the detach below
+  // can only remove exactly those attachments.
   duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  catalog::DropDatabase(ax, GetName().GetIdentifierName(),
-                        std::move(keep_alive));
+  const auto detach_servers = catalog::DropDatabase(
+    ax, GetName().GetIdentifierName(), std::move(keep_alive));
+  for (const auto& server : detach_servers) {
+    catalog::DetachForeignServerAttachment(server.name, server.attachment_id);
+  }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
 }
 

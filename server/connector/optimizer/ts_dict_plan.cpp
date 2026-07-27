@@ -78,7 +78,13 @@
 namespace sdb::optimizer {
 namespace {
 
-enum class TsDictColKind { Term, TermRaw, Count, Freq, Score };
+enum class TsDictColKind {
+  Term,
+  TermRaw,
+  Count,
+  Freq,
+  Score,
+};
 
 constexpr TsDictColKind kAllTsDictColKinds[]{
   TsDictColKind::Term, TsDictColKind::TermRaw, TsDictColKind::Count,

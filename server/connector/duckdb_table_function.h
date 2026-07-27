@@ -42,6 +42,7 @@
 #include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
+#include "connector/view_fast_path.h"
 
 namespace irs {
 
@@ -149,7 +150,10 @@ enum class ScanEntryKind : uint8_t {
 constexpr catalog::Column::Id kInvalidColumnId = catalog::Column::kInvalidId;
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
-  enum class Kind : uint8_t { Table, View };
+  enum class Kind : uint8_t {
+    Table,
+    View,
+  };
 
   std::vector<catalog::Column::Id> column_ids;
   std::vector<duckdb::LogicalType> column_types;
@@ -301,6 +305,7 @@ struct TableScanBindData final : public SereneDBScanBindData {
 
 struct ViewScanBindData final : public SereneDBScanBindData {
   std::shared_ptr<const catalog::PgSqlView> view;
+  std::optional<ViewFastPath> fast_path;
 
   ViewScanBindData() : SereneDBScanBindData(Kind::View) {}
 

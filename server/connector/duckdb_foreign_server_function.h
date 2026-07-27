@@ -1,0 +1,32 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <duckdb/main/database.hpp>
+
+namespace sdb::connector {
+
+// Registers the create_foreign_server / drop_foreign_server pragmas. These are
+// the execution target the CREATE SERVER / DROP SERVER grammar rewrites to (and
+// can be CALLed directly).
+void RegisterForeignServerPragma(duckdb::DatabaseInstance& db);
+
+}  // namespace sdb::connector

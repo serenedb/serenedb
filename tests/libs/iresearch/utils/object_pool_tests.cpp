@@ -423,7 +423,7 @@ TEST(bounded_object_pool_tests, check_total_number_of_instances) {
   std::atomic<size_t> id{};
   TestSlowSobject::gTotalCount = 0;
 
-  auto job = [&mutex, &ready_cv, &pool, &ready, &id]() {
+  auto job = [&mutex, &ready_cv, &pool, &ready, &id] {
     // wait for all threads to be ready
     {
       auto lock = std::unique_lock(mutex);
@@ -436,7 +436,7 @@ TEST(bounded_object_pool_tests, check_total_number_of_instances) {
     pool.emplace(id++);
   };
 
-  auto job_shared = [&mutex, &ready_cv, &pool, &ready, &id]() {
+  auto job_shared = [&mutex, &ready_cv, &pool, &ready, &id] {
     // wait for all threads to be ready
     {
       auto lock = std::unique_lock(mutex);
@@ -731,7 +731,7 @@ TEST(unbounded_object_pool_tests, check_total_number_of_cached_instances) {
   std::atomic<size_t> id{};
   TestUobject::gTotalCount = 0;
 
-  auto job = [&mutex, &ready_cv, &pool, &ready, &id]() {
+  auto job = [&mutex, &ready_cv, &pool, &ready, &id] {
     // wait for all threads to be ready
     {
       auto lock = std::unique_lock(mutex);
@@ -747,7 +747,7 @@ TEST(unbounded_object_pool_tests, check_total_number_of_cached_instances) {
     }
   };
 
-  auto job_shared = [&mutex, &ready_cv, &pool, &ready, &id]() {
+  auto job_shared = [&mutex, &ready_cv, &pool, &ready, &id] {
     // wait for all threads to be ready
     {
       auto lock = std::unique_lock(mutex);
@@ -1547,7 +1547,7 @@ TEST(unbounded_object_pool_volatile_tests,
   std::atomic<size_t> id{};
   TestUobject::gTotalCount = 0;
 
-  auto job = [&mutex, &ready_cv, &pool, &ready, &id]() {
+  auto job = [&mutex, &ready_cv, &pool, &ready, &id] {
     // wait for all threads to be ready
     {
       auto lock = std::unique_lock(mutex);
@@ -1563,7 +1563,7 @@ TEST(unbounded_object_pool_volatile_tests,
     }
   };
 
-  auto job_shared = [&mutex, &ready_cv, &pool, &ready, &id]() {
+  auto job_shared = [&mutex, &ready_cv, &pool, &ready, &id] {
     // wait for all threads to be ready
     {
       auto lock = std::unique_lock(mutex);
@@ -1755,7 +1755,7 @@ TEST(concurrent_linked_list_test, concurrent_pop) {
   std::condition_variable ready_cv;
   bool ready = false;
 
-  auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+  auto wait_for_all = [&mutex, &ready, &ready_cv] {
     // wait for all threads to be registered
     std::unique_lock<std::remove_reference<decltype(mutex)>::type> lock(mutex);
     while (!ready) {
@@ -1768,7 +1768,7 @@ TEST(concurrent_linked_list_test, concurrent_pop) {
     auto lock = std::unique_lock(mutex);
     for (size_t i = 0; i < threads_data.size(); ++i) {
       auto& thread_data = threads_data[i];
-      threads.emplace_back([&list, &wait_for_all, &thread_data]() {
+      threads.emplace_back([&list, &wait_for_all, &thread_data] {
         wait_for_all();
 
         while (auto* head = list.pop()) {
@@ -1824,7 +1824,7 @@ TEST(concurrent_linked_list_test, concurrent_push) {
   std::condition_variable ready_cv;
   bool ready = false;
 
-  auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+  auto wait_for_all = [&mutex, &ready, &ready_cv] {
     // wait for all threads to be registered
     auto lock = std::unique_lock(mutex);
     while (!ready) {
@@ -1837,7 +1837,7 @@ TEST(concurrent_linked_list_test, concurrent_push) {
     auto lock = std::unique_lock(mutex);
     for (size_t i = 0; i < threads_data.size(); ++i) {
       auto& thread_data = threads_data[i];
-      threads.emplace_back([&list, &wait_for_all, &thread_data]() {
+      threads.emplace_back([&list, &wait_for_all, &thread_data] {
         wait_for_all();
 
         size_t idx = 0;
@@ -1902,7 +1902,7 @@ TEST(concurrent_linked_list_test, concurrent_pop_push) {
   std::condition_variable ready_cv;
   bool ready = false;
 
-  auto wait_for_all = [&mutex, &ready, &ready_cv]() {
+  auto wait_for_all = [&mutex, &ready, &ready_cv] {
     // wait for all threads to be registered
     auto lock = std::unique_lock(mutex);
     while (!ready) {
@@ -1914,7 +1914,7 @@ TEST(concurrent_linked_list_test, concurrent_pop_push) {
   {
     auto lock = std::unique_lock(mutex);
     for (size_t i = 0; i < kThreads; ++i) {
-      threads.emplace_back([&list, &wait_for_all]() {
+      threads.emplace_back([&list, &wait_for_all] {
         wait_for_all();
 
         // no more than NODES

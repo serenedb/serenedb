@@ -197,7 +197,12 @@ class WildcardQuery : public QueryBuilder {
 
 constexpr size_t kDefaultScoredTermsLimit = 1024;
 
-enum class WildcardNgramKind { kTerm, kPrefix, kPhrase, kConjunction };
+enum class WildcardNgramKind {
+  kTerm,
+  kPrefix,
+  kPhrase,
+  kConjunction,
+};
 
 WildcardNgramKind ClassifyKind(const ByWildcardNgramOptions& opts) {
   const auto size = opts.parts.size();

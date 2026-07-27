@@ -1,0 +1,65 @@
+control substitution on
+
+# Regression (pushdown investigation): struct/Tuple-field filters. DuckDB's
+# FilterCombiner hands these to the scan as expression filters and ERASES the local
+# Filter node, so before the fix `WHERE (s).a = 1` returned EVERY row -- the
+# translator dropped the filter and nobody applied it (silent wrong results).
+# Now: (a) struct_extract renders remotely as tupleElement(col, 'field');
+# (b) any filter the remote WHERE cannot express exactly (unsupported comparison,
+# partially-translated AND) is re-applied locally by the scan (safety net).
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chstf (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS chstf.default.sfilt;
+
+statement ok
+CREATE TABLE chstf.default.sfilt (id BIGINT PRIMARY KEY, s STRUCT(a BIGINT, b VARCHAR));
+
+statement ok
+INSERT INTO chstf.default.sfilt VALUES (1, {'a': 1, 'b': 'x'}), (2, {'a': 2, 'b': 'y'}), (3, {'a': 1, 'b': 'z'});
+
+# Struct-field equality: pushed remotely as tupleElement. Returned all 3 rows pre-fix.
+query
+SELECT id FROM chstf.default.sfilt WHERE (s).a = 1 ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT count(*) AS n FROM chstf.default.sfilt WHERE (s).a = 1;
+----
+n
+2
+
+# Unsupported comparison on a struct field: kept exact by the local safety net.
+query
+SELECT id FROM chstf.default.sfilt WHERE (s).b IS DISTINCT FROM 'x' ORDER BY id;
+----
+id
+2
+3
+
+# Partially-translatable AND on one column: the translated conjunct is pushed (a
+# superset), and the whole filter is re-applied locally for exactness.
+query
+SELECT id FROM chstf.default.sfilt WHERE (s).a > 0 AND (s).a IS DISTINCT FROM 2 ORDER BY id;
+----
+id
+1
+3
+
+# Struct-field IS NULL and IN also route through the tupleElement subject.
+query
+SELECT count(*) AS n FROM chstf.default.sfilt WHERE (s).b IN ('x', 'z');
+----
+n
+2
+
+statement ok
+DROP TABLE chstf.default.sfilt;
+
+statement ok
+DETACH chstf;

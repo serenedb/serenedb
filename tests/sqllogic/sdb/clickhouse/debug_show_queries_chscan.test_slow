@@ -1,0 +1,26 @@
+control substitution on
+
+# ch_debug_show_queries (the pg_debug_show_queries analog): a session BOOLEAN
+# setting that makes the connector print every SQL statement it sends to
+# ClickHouse to the server's stdout. sqllogic cannot read that stdout, so this
+# verifies the setting is registered, accepts a boolean, and that queries still
+# execute correctly with it enabled -- the printing itself is verified out-of-band.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chdbg (TYPE clickhouse);
+
+statement ok
+SET ch_debug_show_queries = true;
+
+# A scan still returns correct results with query logging enabled.
+query
+SELECT count(*) AS n FROM chdbg.chtest.vedernikoff;
+----
+n
+6
+
+statement ok
+SET ch_debug_show_queries = false;
+
+statement ok
+DETACH chdbg;

@@ -20,8 +20,10 @@
 
 #include "connector/view_fast_path.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -29,6 +31,7 @@
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/comparison_expression.hpp>
@@ -42,6 +45,7 @@
 #include <duckdb/parser/tableref/basetableref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
+#include <ranges>
 
 #include "catalog/store/store.h"
 #include "catalog/table.h"
@@ -199,10 +203,75 @@ duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
                           "\" has no (VARCHAR) overload"));
 }
 
+// Both overloads borrow: the argument is a live element of the caller's range,
+// and Identifier::GetIdentifierName returns a reference into it.
+std::string_view KeyColumnName(const std::string& name) { return name; }
+
+std::string_view KeyColumnName(const duckdb::Identifier& name) {
+  return name.GetIdentifierName();
+}
+
+std::optional<ExternalKeyColumn> FindKeyColumn(
+  const duckdb::TableCatalogEntry& entry, std::string_view name) {
+  const auto& columns = entry.GetColumns();
+  const duckdb::Identifier id{name};
+  if (!columns.ColumnExists(id)) {
+    return std::nullopt;
+  }
+  const auto& col = columns.GetColumn(id);
+  // ExternalKeyColumn::name outlives this scope (it drives the re-fetch), so it
+  // owns; everything up to here only reads.
+  return ExternalKeyColumn{.name = std::string{name},
+                           .source_index = col.Logical().index,
+                           .type = col.GetType()};
+}
+
+// Resolve key column names against the source table, in order. Empty means no
+// key: either `names` was empty or one of them is not a column of the table --
+// both leave nothing to key on, so callers reject the same way. Takes the
+// user's WITH (key_columns = ...) as std::string and the engine's PK metadata
+// as duckdb::Identifier.
+template<typename Names>
+std::vector<ExternalKeyColumn> FindKeyColumns(
+  const duckdb::TableCatalogEntry& entry, const Names& names) {
+  std::vector<ExternalKeyColumn> cols;
+  cols.reserve(names.size());
+  for (const auto& name : names) {
+    auto col = FindKeyColumn(entry, KeyColumnName(name));
+    if (!col) {
+      return {};
+    }
+    cols.push_back(std::move(*col));
+  }
+  return cols;
+}
+
 }  // namespace
 
+std::vector<std::string> KeyColumnsFromOptions(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
+  auto it = options.find("key_columns");
+  if (it == options.end()) {
+    return {};
+  }
+  // `text` borrows out of `value`, which owns the (possibly cast) characters
+  // for the rest of the scope -- no copy just to split it.
+  const auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR);
+  const std::string_view text = duckdb::StringValue::Get(value);
+  std::vector<std::string> cols;
+  // SkipWhitespace drops the empty and all-whitespace parts, so what survives
+  // only needs trimming. The names outlive this scope -- they are persisted in
+  // the index options -- so cols owns them rather than viewing into `value`.
+  for (std::string_view part :
+       absl::StrSplit(text, ',', absl::SkipWhitespace())) {
+    cols.emplace_back(absl::StripAsciiWhitespace(part));
+  }
+  return cols;
+}
+
 std::optional<ViewFastPath> ResolveViewFastPath(
-  duckdb::ClientContext& context, const catalog::PgSqlView& view) {
+  duckdb::ClientContext& context, const catalog::PgSqlView& view,
+  std::span<const std::string> key_columns) {
   const auto& info = view.GetInfo();
   if (!info.query) {
     return std::nullopt;
@@ -330,7 +399,65 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.projection_columns = std::move(projection_columns);
       return out;
     }
-    return std::nullopt;
+    // Everything below is an attached external DB keyed on this source table:
+    // a user key_columns override, else the connector's own default (postgres
+    // ctid / clickhouse metadata PK).
+    const bool is_postgres = cat_type == "postgres";
+    if (!is_postgres && cat_type != "clickhouse") {
+      return std::nullopt;
+    }
+    const CatalogTableRef ext_ref{
+      .catalog = entry.ParentCatalog().GetName().GetIdentifierName(),
+      .schema = entry.ParentSchema().name.GetIdentifierName(),
+      .table = entry.name.GetIdentifierName()};
+    // Exactly one of the branches below returns, so each may consume
+    // projection_columns.
+    auto external_fast_path = [&](catalog::PkSpec spec,
+                                  std::vector<ExternalKeyColumn> keys = {}) {
+      ViewFastPath out;
+      out.catalog_ref = ext_ref;
+      out.pk_spec = spec;
+      out.key_columns = std::move(keys);
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    };
+    if (!key_columns.empty()) {
+      // WITH (key_columns = '...') takes precedence over the connector default.
+      // Unknown column -> no fast path.
+      auto cols = FindKeyColumns(entry, key_columns);
+      if (cols.empty()) {
+        return std::nullopt;
+      }
+      return external_fast_path(catalog::PkSpec::ExternalColumnKey,
+                                std::move(cols));
+    }
+    if (is_postgres) {
+      // Postgres: key on ctid (the duckdb rowid) -- universal, no PRIMARY KEY
+      // needed, unique within the index snapshot. The lookup's `rowid IN (...)`
+      // is pushed down as a `ctid IN (...)` TID scan.
+      return external_fast_path(catalog::PkSpec::ExternalPostgresCtid);
+    }
+    // ClickHouse: part+offset ids die on merges, so key on the engine's PK
+    // metadata -- the whole MergeTree key in order, whatever its arity and
+    // types, since composite keys are the norm there. That key is a sorting
+    // prefix and not a uniqueness constraint, so duplicate keys each index
+    // their own document and a re-fetch returns every row sharing a key.
+    const auto& constraints = entry.GetConstraints();
+    const auto pk = absl::c_find_if(
+      constraints, [](const duckdb::unique_ptr<duckdb::Constraint>& c) {
+        return c->type == duckdb::ConstraintType::UNIQUE &&
+               c->Cast<duckdb::UniqueConstraint>().IsPrimaryKey();
+      });
+    if (pk == constraints.end()) {
+      return std::nullopt;
+    }
+    auto cols = FindKeyColumns(
+      entry, (*pk)->Cast<duckdb::UniqueConstraint>().GetColumnNames());
+    if (cols.empty()) {
+      return std::nullopt;
+    }
+    return external_fast_path(catalog::PkSpec::ExternalColumnKey,
+                              std::move(cols));
   }
   if (select_node.from_table->type !=
       duckdb::TableReferenceType::TABLE_FUNCTION) {
@@ -463,6 +590,17 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
+  if (fp.pk_spec == catalog::PkSpec::ExternalPostgresCtid) {
+    // Postgres ctid: the key is the virtual rowid, not a real column.
+    return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+  }
+  if (fp.pk_spec == catalog::PkSpec::ExternalColumnKey) {
+    // Project the key columns in resolution order: the sink packs them into one
+    // struct in that order, and the re-fetch matches on it positionally.
+    return fp.key_columns |
+           std::views::transform(&ExternalKeyColumn::source_index) |
+           std::ranges::to<std::vector>();
+  }
   if (fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
     return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
   }

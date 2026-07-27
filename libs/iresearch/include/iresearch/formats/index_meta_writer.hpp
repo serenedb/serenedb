@@ -38,7 +38,9 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
   static constexpr int32_t kFormatMin = 0;
   static constexpr int32_t kFormatMax = 0;
 
-  enum { kHasPayload = 1 };
+  enum {
+    kHasPayload = 1,
+  };
 
   static std::string FileName(uint64_t gen) {
     return FileName(kFormatPrefix, gen);

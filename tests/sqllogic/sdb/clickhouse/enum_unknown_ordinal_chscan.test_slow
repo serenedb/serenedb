@@ -1,0 +1,47 @@
+control substitution on
+
+# Regression (bug finder): reading a ClickHouse Enum row whose stored ordinal is no
+# longer in the Enum definition -- here after ALTER ... MODIFY COLUMN shrinks it --
+# must yield the raw ordinal as text, not abort the whole scan. (NameAt() does
+# std::map::at on the ordinal, which throws for an out-of-dictionary value.) The
+# orphaned ordinal is set up server-side via clickhouse_execute; count(*)=1 confirms
+# each statement ran.
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'DROP TABLE IF EXISTS default.m7_en');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'CREATE TABLE default.m7_en (id Int64, e Enum8(''a'' = 1, ''b'' = 2)) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'INSERT INTO default.m7_en VALUES (1, ''a''), (2, ''b'')');
+----
+n
+1
+
+# Remove 'b' = 2 from the enum while row 2 still stores ordinal 2.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'ALTER TABLE default.m7_en MODIFY COLUMN e Enum8(''a'' = 1) SETTINGS mutations_sync = 1');
+----
+n
+1
+
+# The defined ordinal resolves to its name; the orphaned one to its number -- no abort.
+query
+SELECT id, e FROM clickhouse_query('host=${CHHOST} port=${CHPORT} database=default user=default', 'SELECT id, e FROM default.m7_en ORDER BY id');
+----
+id	e
+1	a
+2	2
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'DROP TABLE default.m7_en');
+----
+n
+1

@@ -1,0 +1,110 @@
+control substitution on
+
+# Cross-database USAGE enforcement on a FOREIGN SERVER. A server is a database
+# child, but its live attachment alias is instance-global -- so a session in a
+# DIFFERENT database resolves the foreign catalog by name and can scan it. USAGE
+# must be enforced there too. The bug: the query-time check resolved the server
+# scoped to the CALLER's current database (GetForeignServer(ctx.GetDatabaseId(),
+# alias)); for a reference from another database that returned null and the gate
+# was SILENTLY SKIPPED -> any role could read the shared server's data from a
+# second database (PUBLIC has CONNECT on every database by default). The fix
+# resolves the server across ALL databases (names are globally unique). This
+# test pins that: same-database and cross-database denials/grants must match.
+#
+# Needs a live ClickHouse (the _chscan suffix launches one); a server is eagerly
+# attached at CREATE, so a permitted CREATE actually connects. Unique names
+# (xdb_*) -- tests run in parallel against one serened. Multi-line `statement
+# error` bodies end on TWO blank lines, else they swallow the rest of the file.
+
+statement ok
+DROP DATABASE IF EXISTS xdb_other;
+
+statement ok
+DROP SERVER IF EXISTS xdb_srv;
+
+statement ok
+DROP ROLE IF EXISTS xdb_user;
+
+# A plain non-superuser with LOGIN; no USAGE on any server. PUBLIC holds CONNECT
+# on every database by default, so it can open a session in either database.
+statement ok
+CREATE ROLE xdb_user LOGIN PASSWORD 'xdb_pw';
+
+# The server lives in the DEFAULT test database.
+statement ok
+CREATE SERVER xdb_srv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+# A second database the cross-database sessions connect to.
+statement ok
+CREATE DATABASE xdb_other;
+
+# The foreign catalog is instance-global: the superuser, connected to the OTHER
+# database, still resolves xdb_srv and scans it (proving cross-database
+# references reach the scan, hence the enforcement path). Superuser is exempt.
+connection c_su_other database=xdb_other
+query
+SELECT count(*) AS n FROM xdb_srv.chtest.vedernikoff;
+----
+n
+6
+
+# The non-superuser, connected to the OTHER database, has no USAGE on xdb_srv.
+# This is the bypass: the pre-fix per-database resolve found nothing here and
+# skipped the check, leaking rows. The global resolve now denies.
+connection c_user_other user=xdb_user password=xdb_pw database=xdb_other
+statement error
+SELECT count(*) FROM xdb_srv.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server xdb_srv<slt:ignore>
+
+
+# Same denial in the server's OWN database (behaviour was already correct here).
+connection c_user_home user=xdb_user password=xdb_pw
+statement error
+SELECT count(*) FROM xdb_srv.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server xdb_srv<slt:ignore>
+
+
+# GRANT USAGE lets both the cross-database and home sessions through.
+connection default
+statement ok
+GRANT USAGE ON FOREIGN SERVER xdb_srv TO xdb_user;
+
+connection c_user_other user=xdb_user password=xdb_pw database=xdb_other
+query
+SELECT count(*) AS n FROM xdb_srv.chtest.vedernikoff;
+----
+n
+6
+
+connection c_user_home user=xdb_user password=xdb_pw
+query
+SELECT count(*) AS n FROM xdb_srv.chtest.vedernikoff;
+----
+n
+6
+
+# REVOKE denies again from the second database.
+connection default
+statement ok
+REVOKE USAGE ON FOREIGN SERVER xdb_srv FROM xdb_user;
+
+connection c_user_other user=xdb_user password=xdb_pw database=xdb_other
+statement error
+SELECT count(*) FROM xdb_srv.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server xdb_srv<slt:ignore>
+
+
+# Cleanup.
+connection default
+statement ok
+DROP DATABASE xdb_other;
+
+statement ok
+DROP SERVER xdb_srv;
+
+statement ok
+DROP ROLE xdb_user;

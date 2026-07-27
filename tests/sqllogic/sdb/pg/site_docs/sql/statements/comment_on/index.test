@@ -40,61 +40,43 @@ COMMENT ON COLUMN test_table.title IS 'very nice column';
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 COMMENT ON VIEW test_view IS 'very nice view';
-----
-db error: ERROR: "test_view" is not a table
-
 
 # DOCS_TEST: example_004
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 COMMENT ON INDEX test_index IS 'very nice index';
-----
-db error: ERROR: "test_index" is not a table
-
 
 # DOCS_TEST: example_005
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 COMMENT ON SEQUENCE test_sequence IS 'very nice sequence';
-----
-db error: ERROR: "test_sequence" is not a table
-
 
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 COMMENT ON TYPE test_type IS 'very nice type';
-----
-db error: ERROR: relation "test_type" does not exist
-
 
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 COMMENT ON MACRO test_macro IS 'very nice macro';
-----
-db error: ERROR: relation "test_macro" does not exist
-
 
 # DOCS_TEST: example_008
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 COMMENT ON MACRO TABLE test_table_macro IS 'very nice table macro';
-----
-db error: ERROR: relation "test_table_macro" does not exist
-
 
 # DOCS_TEST: example_009
 

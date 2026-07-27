@@ -1,0 +1,288 @@
+control substitution on
+
+# Catalog persistence for the DDL attributes that ride the SereneDB catalog
+# serde: object comments (table, table column, view, view column, sequence,
+# type, macro, secondary index, inverted index), per-column USING COMPRESSION
+# (CREATE TABLE and ALTER TABLE ADD COLUMN), and COLLATE (inline and
+# ALTER-added). Everything is created and verified, then serened crashes and
+# every attribute must read back identically from the recovered catalog --
+# including that post-restart inserts still compress with the persisted
+# per-column codec and still compare with the persisted collation.
+
+statement ok
+CREATE TABLE rda_t (
+  a INTEGER,
+  b VARCHAR USING COMPRESSION zstd,
+  c VARCHAR COLLATE NOCASE
+);
+
+statement ok
+ALTER TABLE rda_t ADD COLUMN d VARCHAR USING COMPRESSION zstd DEFAULT 'x';
+
+statement ok
+ALTER TABLE rda_t ADD COLUMN e VARCHAR COLLATE NOCASE;
+
+statement ok
+INSERT INTO rda_t
+  SELECT i, md5(i::VARCHAR), 'ABC', md5((i * 7)::VARCHAR), 'DeF'
+  FROM generate_series(1, 5000) t(i);
+
+statement ok
+CHECKPOINT;
+
+query
+SELECT DISTINCT column_name, compression FROM pragma_storage_info('rda_t')
+WHERE column_name IN ('b', 'd') AND segment_type = 'VARCHAR' ORDER BY 1;
+----
+column_name	compression
+b	ZSTD
+d	ZSTD
+
+
+query
+SELECT count(*) FILTER (WHERE c = 'abc') AS ci, count(*) FILTER (WHERE e = 'def') AS ce FROM rda_t;
+----
+ci	ce
+5000	5000
+
+
+statement ok
+CREATE VIEW rda_v (av, bv) AS SELECT a, b FROM rda_t;
+
+statement ok
+CREATE SEQUENCE rda_seq START 5;
+
+statement ok
+CREATE TYPE rda_mood AS ENUM ('sad', 'happy');
+
+statement ok
+CREATE MACRO rda_add1(x) AS x + 1;
+
+statement ok
+CREATE INDEX rda_sec ON rda_t (a);
+
+statement ok
+CREATE INDEX rda_inv ON rda_t USING inverted (b);
+
+statement ok
+COMMENT ON TABLE rda_t IS 'table note';
+
+statement ok
+COMMENT ON COLUMN rda_t.a IS 'table col note';
+
+statement ok
+COMMENT ON VIEW rda_v IS 'view note';
+
+statement ok
+COMMENT ON COLUMN rda_v.bv IS 'view col note';
+
+statement ok
+COMMENT ON SEQUENCE rda_seq IS 'seq note';
+
+statement ok
+COMMENT ON TYPE rda_mood IS 'type note';
+
+statement ok
+COMMENT ON MACRO rda_add1 IS 'macro note';
+
+statement ok
+COMMENT ON INDEX rda_sec IS 'secondary note';
+
+statement ok
+COMMENT ON INDEX rda_inv IS 'inverted note';
+
+query
+SELECT nextval('rda_seq');
+----
+nextval
+5
+
+
+query
+SELECT comment FROM duckdb_tables() WHERE table_name = 'rda_t';
+----
+comment
+table note
+
+
+query
+SELECT comment FROM duckdb_columns() WHERE table_name = 'rda_t' AND column_name = 'a';
+----
+comment
+table col note
+
+
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'rda_v';
+----
+comment
+view note
+
+
+query
+SELECT comment FROM duckdb_columns() WHERE table_name = 'rda_v' AND column_name = 'bv';
+----
+comment
+view col note
+
+
+query
+SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'rda_seq';
+----
+comment
+seq note
+
+
+query
+SELECT comment FROM duckdb_types() WHERE type_name = 'rda_mood';
+----
+comment
+type note
+
+
+query
+SELECT DISTINCT comment FROM duckdb_functions() WHERE function_name = 'rda_add1';
+----
+comment
+macro note
+
+
+query
+SELECT index_name, comment FROM duckdb_indexes() WHERE index_name LIKE 'rda_%' ORDER BY 1;
+----
+index_name	comment
+rda_inv	inverted note
+rda_sec	secondary note
+
+
+# =========================================================================
+# Crash + recover: every attribute above must come back from the recovered
+# catalog.
+# =========================================================================
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_tables() WHERE table_name = 'rda_t';
+----
+comment
+table note
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_columns() WHERE table_name = 'rda_t' AND column_name = 'a';
+----
+comment
+table col note
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'rda_v';
+----
+comment
+view note
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_columns() WHERE table_name = 'rda_v' AND column_name = 'bv';
+----
+comment
+view col note
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'rda_seq';
+----
+comment
+seq note
+
+
+connection after_crash
+query
+SELECT comment FROM duckdb_types() WHERE type_name = 'rda_mood';
+----
+comment
+type note
+
+
+connection after_crash
+query
+SELECT DISTINCT comment FROM duckdb_functions() WHERE function_name = 'rda_add1';
+----
+comment
+macro note
+
+
+connection after_crash
+query
+SELECT index_name, comment FROM duckdb_indexes() WHERE index_name LIKE 'rda_%' ORDER BY 1;
+----
+index_name	comment
+rda_inv	inverted note
+rda_sec	secondary note
+
+
+# The sequence continues past the pre-crash value (never rewinds to its seed).
+connection after_crash
+query
+SELECT nextval('rda_seq') > 5;
+----
+?column?
+t
+
+
+# The reconstructed CREATE TABLE still carries the per-column compression.
+connection after_crash
+query
+SELECT sql LIKE '%USING COMPRESSION ZSTD%' FROM duckdb_tables() WHERE table_name = 'rda_t';
+----
+?column?
+t
+
+
+# New rows written after recovery still compress with the persisted codec.
+connection after_crash
+statement ok
+INSERT INTO rda_t
+  SELECT i, md5(i::VARCHAR), 'aBc', md5((i * 13)::VARCHAR), 'dEf'
+  FROM generate_series(5001, 10000) t(i);
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+connection after_crash
+query
+SELECT DISTINCT column_name, compression FROM pragma_storage_info('rda_t')
+WHERE column_name IN ('b', 'd') AND segment_type = 'VARCHAR' ORDER BY 1;
+----
+column_name	compression
+b	ZSTD
+d	ZSTD
+
+
+# Both collated columns (inline and ALTER-added) still compare
+# case-insensitively, covering the pre- and post-crash rows.
+connection after_crash
+query
+SELECT count(*) FILTER (WHERE c = 'abc') AS ci, count(*) FILTER (WHERE e = 'def') AS ce FROM rda_t;
+----
+ci	ce
+10000	10000

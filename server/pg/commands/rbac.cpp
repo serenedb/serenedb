@@ -526,12 +526,17 @@ std::shared_ptr<catalog::Object> ResolveGrantTarget(
   catalog::ObjectType type, std::string_view raw_name, std::string& out_schema,
   std::string& out_name) {
   if (type == catalog::ObjectType::Database) {
-    out_name = std::string{raw_name};
+    out_name = raw_name;
     return snap.GetDatabase(raw_name);
   }
   if (type == catalog::ObjectType::Schema) {
-    out_name = std::string{raw_name};
+    out_name = raw_name;
     return snap.GetSchema(ctx.GetDatabaseId(), raw_name);
+  }
+  if (type == catalog::ObjectType::ForeignServer) {
+    // A foreign server is a database child with no schema (PG-shape).
+    out_name = raw_name;
+    return snap.GetForeignServer(ctx.GetDatabaseId(), raw_name);
   }
   const std::string current_schema = ctx.GetCurrentSchema();
   const auto parsed = ParseObjectName(raw_name, current_schema);

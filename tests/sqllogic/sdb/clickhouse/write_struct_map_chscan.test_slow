@@ -1,0 +1,58 @@
+control substitution on
+
+# Write-side ClickHouse Tuple + Map: a DuckDB STRUCT maps to a named Tuple(name T,
+# ...) (scalar fields Nullable), and a DuckDB MAP maps to Map(K, V) (physically
+# Array(Tuple(K,V))). Both round-trip through a read via field / key access.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chsm (TYPE clickhouse);
+
+# --- Tuple (STRUCT) ---
+statement ok
+DROP TABLE IF EXISTS chsm.default.tup_ved;
+
+statement ok
+CREATE TABLE chsm.default.tup_ved (id BIGINT PRIMARY KEY, info STRUCT(a INTEGER, b VARCHAR));
+
+statement ok
+INSERT INTO chsm.default.tup_ved VALUES
+  (1, {'a': 10, 'b': 'alpha'}),
+  (2, {'a': 20, 'b': 'beta'});
+
+query
+SELECT id, info.a AS a, info.b AS b FROM chsm.default.tup_ved ORDER BY id;
+----
+id	a	b
+1	10	alpha
+2	20	beta
+
+# --- Map ---
+statement ok
+DROP TABLE IF EXISTS chsm.default.map_ved;
+
+statement ok
+CREATE TABLE chsm.default.map_ved (id BIGINT PRIMARY KEY, attrs MAP(VARCHAR, INTEGER));
+
+statement ok
+INSERT INTO chsm.default.map_ved VALUES
+  (1, MAP {'x': 10, 'y': 20}),
+  (2, MAP {'z': 30});
+
+query
+SELECT id, len(map_keys(attrs)) AS nk,
+       coalesce(map_extract(attrs, 'x')[1], -1) AS vx,
+       coalesce(map_extract(attrs, 'z')[1], -1) AS vz
+FROM chsm.default.map_ved ORDER BY id;
+----
+id	nk	vx	vz
+1	2	10	-1
+2	1	-1	30
+
+statement ok
+DROP TABLE chsm.default.tup_ved;
+
+statement ok
+DROP TABLE chsm.default.map_ved;
+
+statement ok
+DETACH chsm;

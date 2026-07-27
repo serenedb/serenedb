@@ -1,0 +1,189 @@
+# COMMENT ON for non-table catalog objects: views (and view columns),
+# sequences, types, macros/functions, and indexes. Each comment persists in
+# the SereneDB catalog and surfaces through the matching duckdb_*() function.
+# COMMENT ON TABLE also accepts a view (PG and native duckdb behavior).
+# tables and table columns are covered by comment.test.
+
+statement ok
+CREATE TABLE cob_t (a INTEGER, b VARCHAR);
+
+statement ok
+CREATE VIEW cob_v (av, bv) AS SELECT a, b FROM cob_t;
+
+statement ok
+CREATE SEQUENCE cob_seq START 5;
+
+statement ok
+CREATE TYPE cob_mood AS ENUM ('sad', 'happy');
+
+statement ok
+CREATE MACRO cob_add1(x) AS x + 1;
+
+statement ok
+CREATE INDEX cob_sec ON cob_t (a);
+
+statement ok
+CREATE INDEX cob_inv ON cob_t USING inverted (b);
+
+
+# --- views ------------------------------------------------------------------
+
+statement ok
+COMMENT ON VIEW cob_v IS 'view note';
+
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v';
+----
+comment
+view note
+
+
+# COMMENT ON TABLE on a view targets the view.
+statement ok
+COMMENT ON TABLE cob_v IS 'view via table form';
+
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v';
+----
+comment
+view via table form
+
+
+# View column comments resolve aliases to the underlying query column.
+statement ok
+COMMENT ON COLUMN cob_v.bv IS 'view col note';
+
+query
+SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'cob_v' ORDER BY 1;
+----
+column_name	comment
+av	NULL
+bv	view col note
+
+
+statement error
+COMMENT ON COLUMN cob_v.nope IS 'x';
+----
+db error: ERROR: column "nope" of relation "cob_v" does not exist
+
+
+# COMMENT ON VIEW rejects non-views.
+statement error
+COMMENT ON VIEW cob_t IS 'x';
+----
+db error: ERROR: "cob_t" is not a view
+
+
+# --- sequences ---------------------------------------------------------------
+
+statement ok
+COMMENT ON SEQUENCE cob_seq IS 'seq note';
+
+query
+SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'cob_seq';
+----
+comment
+seq note
+
+
+# The live counter survives the comment update.
+query
+SELECT nextval('cob_seq');
+----
+nextval
+5
+
+
+# --- types -------------------------------------------------------------------
+
+statement ok
+COMMENT ON TYPE cob_mood IS 'type note';
+
+query
+SELECT comment FROM duckdb_types() WHERE type_name = 'cob_mood';
+----
+comment
+type note
+
+
+# --- macros / functions ------------------------------------------------------
+
+statement ok
+COMMENT ON MACRO cob_add1 IS 'macro note';
+
+query
+SELECT DISTINCT comment FROM duckdb_functions() WHERE function_name = 'cob_add1';
+----
+comment
+macro note
+
+
+# --- indexes -----------------------------------------------------------------
+
+statement ok
+COMMENT ON INDEX cob_sec IS 'secondary note';
+
+statement ok
+COMMENT ON INDEX cob_inv IS 'inverted note';
+
+query
+SELECT index_name, comment FROM duckdb_indexes() WHERE index_name LIKE 'cob_%' ORDER BY 1;
+----
+index_name	comment
+cob_inv	inverted note
+cob_sec	secondary note
+
+
+# --- IS NULL clears ----------------------------------------------------------
+
+statement ok
+COMMENT ON VIEW cob_v IS NULL;
+
+statement ok
+COMMENT ON COLUMN cob_v.bv IS NULL;
+
+statement ok
+COMMENT ON SEQUENCE cob_seq IS NULL;
+
+statement ok
+COMMENT ON INDEX cob_inv IS NULL;
+
+query
+SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v';
+----
+comment
+NULL
+
+
+query
+SELECT comment FROM duckdb_columns() WHERE table_name = 'cob_v' AND column_name = 'bv';
+----
+comment
+NULL
+
+
+query
+SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'cob_seq';
+----
+comment
+NULL
+
+
+query
+SELECT comment FROM duckdb_indexes() WHERE index_name = 'cob_inv';
+----
+comment
+NULL
+
+
+statement ok
+DROP TABLE cob_t CASCADE;
+
+statement ok
+DROP SEQUENCE cob_seq;
+
+statement ok
+DROP TYPE cob_mood;
+
+statement ok
+DROP MACRO cob_add1;

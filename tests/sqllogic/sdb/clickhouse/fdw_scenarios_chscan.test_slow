@@ -1,0 +1,127 @@
+control substitution on
+
+# Situational coverage for FOREIGN SERVER behavior in the ClickHouse-style model
+# (credentials in OPTIONS, no USER MAPPINGs) that the create_server / fdw_creds /
+# fdw_permissions tests don't reach: the transient attach secret never lingering
+# in duckdb_secrets(), several servers coexisting with independent OPTIONS
+# credentials and attachments, the superuser-only pg_foreign_server showing the
+# `password` server-OPTIONS key verbatim, and that a DROP SERVER takes its USAGE
+# grants with it (a re-created
+# same-named server does not inherit a stale grant). Superuser (default
+# connection) except where a login role is needed. Needs a live ClickHouse
+# (_chscan). Unique names (fs_*).
+#
+# The fixture user `scanner` (password 'pass word') exercises the password paths;
+# the auth-free `default` user cannot (it rejects a non-empty password).
+
+statement ok
+DROP SERVER IF EXISTS fs_a;
+
+statement ok
+DROP SERVER IF EXISTS fs_b;
+
+statement ok
+DROP SERVER IF EXISTS fs_g;
+
+statement ok
+DROP ROLE IF EXISTS fs_grantee;
+
+# ===== the transient attach secret is dropped after CREATE SERVER =====
+
+statement ok
+CREATE SERVER fs_a FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+# Nothing lingers. Retried: a CONCURRENT fdw test (shared single-port server)
+# legitimately holds its own transient secret for the duration of its ATTACH.
+query ok retry 10 backoff 200ms
+SELECT count(*) AS n FROM duckdb_secrets() WHERE name LIKE '__sdb_fdw_secret_%';
+----
+n
+0
+
+# ===== several servers coexist, each with its own OPTIONS credentials =====
+# fs_b connects as the fixture user `scanner`; fs_a uses the auth-free default.
+statement ok
+CREATE SERVER fs_b FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest',
+           user 'scanner', password 'pass word');
+
+query
+SELECT count(*) AS n FROM fs_a.chtest.vedernikoff;
+----
+n
+6
+
+query
+SELECT count(*) AS n FROM fs_b.chtest.vedernikoff;
+----
+n
+6
+
+# ===== password in SERVER OPTIONS is shown verbatim in srvoptions =====
+# pg_foreign_server is superuser-only (OPTIONS carry credentials), so there is no
+# per-value redaction: the superuser default connection sees the full password.
+query
+SELECT array_to_string(srvoptions, ' ') LIKE '%password=pass word%' AS pw_visible
+FROM pg_foreign_server WHERE srvname = 'fs_b';
+----
+pw_visible
+t
+
+# Dropping one server leaves the other's attachment untouched.
+statement ok
+DROP SERVER fs_a;
+
+query
+SELECT count(*) AS n FROM fs_b.chtest.vedernikoff;
+----
+n
+6
+
+statement ok
+DROP SERVER fs_b;
+
+# ===== DROP SERVER takes its USAGE grants with it (no stale-grant inheritance) =====
+
+statement ok
+CREATE ROLE fs_grantee LOGIN PASSWORD 'grantee_pw';
+
+statement ok
+CREATE SERVER fs_g FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER fs_g TO fs_grantee;
+
+# With USAGE, the grantee queries through it.
+connection c_grantee user=fs_grantee password=grantee_pw
+query
+SELECT count(*) AS n FROM fs_g.chtest.vedernikoff;
+----
+n
+6
+
+# Drop and re-create the same-named server: the old grant is gone, so the
+# grantee is denied again (a leaked grant would keep it queryable).
+connection default
+statement ok
+DROP SERVER fs_g;
+
+statement ok
+CREATE SERVER fs_g FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+connection c_grantee user=fs_grantee password=grantee_pw
+statement error
+SELECT count(*) FROM fs_g.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server fs_g<slt:ignore>
+
+
+connection default
+statement ok
+DROP SERVER fs_g;
+
+statement ok
+DROP ROLE fs_grantee;

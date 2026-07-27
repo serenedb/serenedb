@@ -1,0 +1,57 @@
+control substitution on
+
+# Constant column DEFAULTs are rendered into the ClickHouse CREATE TABLE, so a
+# partial INSERT (omitting the column) is filled server-side with the default
+# rather than NULL. Non-constant defaults (functions such as now()) are dropped
+# rather than mistranslated -- matching the postgres connector, which only
+# forwards defaults it can render safely.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chdef (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS chdef.default.dd_ved;
+
+statement ok
+CREATE TABLE chdef.default.dd_ved (id BIGINT PRIMARY KEY, status VARCHAR DEFAULT 'active', qty INTEGER DEFAULT 7, ratio DOUBLE DEFAULT 1.5);
+
+# Partial INSERT: only id is supplied -> the three constant defaults fill.
+statement ok
+INSERT INTO chdef.default.dd_ved (id) VALUES (1);
+
+# Full INSERT: explicit values override the defaults.
+statement ok
+INSERT INTO chdef.default.dd_ved VALUES (2, 'retired', 99, 3.25);
+
+query
+SELECT id, status, qty, ratio FROM chdef.default.dd_ved ORDER BY id;
+----
+id	status	qty	ratio
+1	active	7	1.5
+2	retired	99	3.25
+
+# A non-constant default (now()) is dropped: CREATE TABLE still succeeds and the
+# column carries no server-side default, so a partial INSERT leaves it NULL.
+statement ok
+DROP TABLE IF EXISTS chdef.default.dd_fn;
+
+statement ok
+CREATE TABLE chdef.default.dd_fn (id BIGINT PRIMARY KEY, created TIMESTAMP DEFAULT now());
+
+statement ok
+INSERT INTO chdef.default.dd_fn (id) VALUES (1);
+
+query
+SELECT id, (created IS NULL)::INTEGER AS created_is_null FROM chdef.default.dd_fn;
+----
+id	created_is_null
+1	1
+
+statement ok
+DROP TABLE chdef.default.dd_ved;
+
+statement ok
+DROP TABLE chdef.default.dd_fn;
+
+statement ok
+DETACH chdef;

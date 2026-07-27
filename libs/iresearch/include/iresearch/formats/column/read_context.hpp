@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <vector>
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
@@ -35,7 +36,9 @@ namespace irs {
 
 class ColReader;
 
-class ReadContext final : public BlockManager {
+class ReadContext final : public BlockManager,
+                          public duckdb::OverflowStringReader,
+                          public duckdb::ColumnStreamReader {
  public:
   explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
   explicit ReadContext(const ColReader& reader);
@@ -52,6 +55,14 @@ class ReadContext final : public BlockManager {
   IndexInput& In() noexcept { return *_in; }
   const IndexInput& In() const noexcept { return *_in; }
   bool HasIn() const noexcept { return _in != nullptr; }
+
+  duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
+                              int32_t offset) final;
+
+  duckdb::const_data_ptr_t TryReadStable(duckdb::idx_t position,
+                                         duckdb::idx_t size) final;
+  void Read(duckdb::idx_t position, duckdb::data_ptr_t target,
+            duckdb::idx_t size) final;
 
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
                                                            uint64_t size);

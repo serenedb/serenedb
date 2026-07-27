@@ -586,13 +586,11 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
   }
   _document.emplace(_trx.Insert(false, batch_size, commit_on_flush));
   _pk_column_writer = nullptr;
-  if (_pk_policy.column == catalog::PkColumnKind::I64 ||
-      _pk_policy.column == catalog::PkColumnKind::I64I64) {
-    _pk_column_writer = EnsurePerRowColumnWriter(
-      catalog::term_dict::kPKFieldId, PkColumnType(_pk_policy.column));
+  if (_pk_policy.column == catalog::PkColumnKind::Has && pk.column) {
+    _pk_column_writer = EnsurePerRowColumnWriter(catalog::term_dict::kPKFieldId,
+                                                 pk.column->GetType());
   }
   if (_pk_column_writer && pk.column) {
-    SDB_ASSERT(pk.column->GetType() == PkColumnType(_pk_policy.column));
     AppendPkColumn(*pk.column, batch_size);
   }
   if (_pk_policy.index_term && !pk.keys.empty()) {

@@ -210,17 +210,14 @@ TableRowIdIndexSource::TableRowIdIndexSource(
 }
 
 duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
-                                                 PrimaryKeyBatch& batch,
-                                                 duckdb::idx_t start,
+                                                 duckdb::Vector& pk,
                                                  duckdb::idx_t count,
                                                  duckdb::DataChunk& output) {
   if (count == 0) {
     return 0;
   }
-  auto& pk = batch;
-  SDB_ASSERT(start + count <= pk.rows.size());
 
-  SortRows(pk, start, count);
+  const auto keys = SortRows(pk, count);
   AliasOutput(output);
 
   auto& storage = _table->Cast<duckdb::DuckTableEntry>().GetStorage();
@@ -234,9 +231,9 @@ duckdb::idx_t RowIdFetchIndexSource::Materialize(duckdb::ClientContext& context,
   // like a filtered-out row: it is dropped from the batch.
   _survivor_idx.resize(count);
   const auto rows = storage.LookupScan(
-    transaction, context, _fetch_columns, _pushed_filters.get(),
-    _sorted_rows.data(), _sorted_rows.data() + count, _survivor_idx.data(),
-    _col_to_fetch.data(), _fetch_chunk, _tf_target, _lookup_scan_state);
+    transaction, context, _fetch_columns, _pushed_filters.get(), keys.data(),
+    keys.data() + keys.size(), _survivor_idx.data(), _col_to_fetch.data(),
+    _fetch_chunk, _tf_target, _lookup_scan_state);
   _tf_target.SetCardinality(rows);
 
   RunCastPass(output, rows);

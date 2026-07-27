@@ -229,6 +229,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ViewScanBindData::Copy() const {
   auto copy = duckdb::make_uniq<ViewScanBindData>();
   CopyCommon(*this, *copy);
   copy->view = view;
+  copy->fast_path = fast_path;
   return copy;
 }
 

@@ -157,8 +157,16 @@ struct Deep3 {
   bool operator==(const Deep3&) const = default;
 };
 
-enum class Color : uint8_t { Red, Green, Blue };
-enum class Signed : int16_t { Neg = -3, Zero = 0, Pos = 7 };
+enum class Color : uint8_t {
+  Red,
+  Green,
+  Blue,
+};
+enum class Signed : int16_t {
+  Neg = -3,
+  Zero = 0,
+  Pos = 7,
+};
 
 struct Everything {
   bool b{};

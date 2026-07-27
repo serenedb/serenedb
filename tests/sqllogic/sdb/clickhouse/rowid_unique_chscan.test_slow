@@ -1,0 +1,70 @@
+control substitution on
+
+# A ClickHouse MergeTree ORDER BY key is a sorting prefix, NOT a uniqueness
+# constraint, yet the connector uses a single integer key as the UPDATE/DELETE row
+# identifier via `WHERE pk IN (ids)`. The guard is STRICT: a mutation may touch at
+# most one server row per distinct key. Merely matching counts is unsound -- a join
+# (UPDATE .. FROM / DELETE .. USING) can emit the same rowid several times, inflating
+# the matched count until unmatched sibling rows slip through silently -- so any
+# mutation touching a duplicated key is refused with a clear error.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chu (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS chu.default.dup;
+
+statement ok
+CREATE TABLE chu.default.dup (id BIGINT PRIMARY KEY, val VARCHAR);
+
+# id=1 is duplicated; id=2 is unique.
+statement ok
+INSERT INTO chu.default.dup VALUES (1, 'a'), (1, 'b'), (2, 'c');
+
+# DELETE targeting ONE row of the shared key -> refused.
+statement error
+DELETE FROM chu.default.dup WHERE val = 'a';
+
+# DELETE by the duplicated key value -> also refused (key-based identity cannot
+# distinguish this from a join that matched only one of the rows).
+statement error
+DELETE FROM chu.default.dup WHERE id = 1;
+
+# ...and the table is untouched.
+query
+SELECT count(*) AS n FROM chu.default.dup;
+----
+n
+3
+
+# UPDATE on the duplicated key -> refused, both constant and per-row values.
+statement error
+UPDATE chu.default.dup SET val = 'same' WHERE id = 1;
+
+statement error
+UPDATE chu.default.dup SET val = val || '!' WHERE id = 1;
+
+# Mutations keyed on the UNIQUE id work normally.
+statement ok
+UPDATE chu.default.dup SET val = 'updated' WHERE id = 2;
+
+query
+SELECT val FROM chu.default.dup WHERE id = 2;
+----
+val
+updated
+
+statement ok
+DELETE FROM chu.default.dup WHERE id = 2;
+
+query
+SELECT count(*) AS n FROM chu.default.dup;
+----
+n
+2
+
+statement ok
+DROP TABLE chu.default.dup;
+
+statement ok
+DETACH chu;

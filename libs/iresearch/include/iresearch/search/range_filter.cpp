@@ -39,7 +39,11 @@ namespace {}  // namespace
 
 namespace {
 
-enum class RangeKind { Term, Empty, Range };
+enum class RangeKind {
+  Term,
+  Empty,
+  Range,
+};
 
 RangeKind Classify(const ByRangeOptions::range_type& rng) noexcept {
   if (rng.min_type != BoundType::Unbounded &&

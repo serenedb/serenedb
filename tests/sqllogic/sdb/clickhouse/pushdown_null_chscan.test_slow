@@ -1,0 +1,47 @@
+control substitution on
+
+# A NULL constant in a comparison / IN list is kept LOCAL (not pushed as a
+# textual "col <op> NULL" that could error or mis-match remotely); the results
+# follow SQL three-valued logic. IS NULL / IS NOT NULL (not NULL constants) are
+# still pushed and correct.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chn (TYPE clickhouse);
+
+# `= NULL` is UNKNOWN for every row -> no rows, and no remote error.
+query
+SELECT count(*) AS n FROM chn.chtest.vedernikoff WHERE val = NULL;
+----
+n
+0
+
+# A NULL inside IN is ignored; the real members still match.
+query
+SELECT id FROM chn.chtest.vedernikoff WHERE id IN (1, NULL, 3) ORDER BY id;
+----
+id
+1
+3
+
+# IS NULL on a Nullable column (widgets.note is NULL for 2 of 5 rows).
+query
+SELECT count(*) AS n FROM chn.chtest.widgets WHERE note IS NULL;
+----
+n
+2
+
+# IS NOT NULL -> the complement.
+query
+SELECT count(*) AS n FROM chn.chtest.widgets WHERE note IS NOT NULL;
+----
+n
+3
+
+# A NULL constant combined with a real predicate: the real one still filters.
+query
+SELECT id FROM chn.chtest.vedernikoff WHERE id > 3 AND val <> NULL ORDER BY id;
+----
+id
+
+statement ok
+DETACH chn;

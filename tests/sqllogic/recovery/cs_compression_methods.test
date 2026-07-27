@@ -243,6 +243,45 @@ n	lo	hi
 4096	128	128
 
 
+# --- 14. ZSTD multi-vector streams (github issue #970) -------------------
+# Unlike section 13 (repeat()-compressible, tiny streams), these bodies are
+# ~2KB of md5 garbage per row and span multiple zstd vectors (2048 rows
+# each), so the columnstore writes several multi-hundred-KB compressed runs
+# plus their string-length arrays through ColumnStreamWriter. The absolute
+# positions stored in the segment metadata must resolve zero-copy on a cold
+# re-open after the crash below.
+statement ok
+CREATE TABLE cs_zstd_mp (pk INTEGER PRIMARY KEY, v VARCHAR, txt VARCHAR);
+
+statement ok
+INSERT INTO cs_zstd_mp
+  SELECT i,
+         (SELECT string_agg(md5((i * 100 + j)::VARCHAR), ' ')
+          FROM generate_series(1, 60) g(j)),
+         'm' || i::VARCHAR
+  FROM range(2500) t(i);
+
+statement ok
+CREATE INDEX cs_zstd_mp_idx ON cs_zstd_mp USING inverted(txt cs_eng)
+  INCLUDE (pk, v included (compression = 'zstd'));
+
+query
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE length(v) <> 1979) AS bad_len
+FROM cs_zstd_mp_idx;
+----
+n	bad_len
+2500	0
+
+query
+SELECT count(*) AS mismatches
+FROM cs_zstd_mp_idx i JOIN cs_zstd_mp s ON i.pk = s.pk
+WHERE i.v IS DISTINCT FROM s.v;
+----
+mismatches
+0
+
+
 # =========================================================================
 # Crash + recover. Everything above written through the cs writer; the
 # post-crash queries below re-open each `.cs` from disk and must read the
@@ -330,3 +369,14 @@ SELECT count(*) AS n, min(length(v)) AS lo, max(length(v)) AS hi FROM cs_zstd_id
 ----
 n	lo	hi
 4096	128	128
+
+
+# Chained zstd pages materialise byte-for-byte from the cold .col file.
+connection after_crash
+query
+SELECT count(*) AS mismatches
+FROM cs_zstd_mp_idx i JOIN cs_zstd_mp s ON i.pk = s.pk
+WHERE i.v IS DISTINCT FROM s.v;
+----
+mismatches
+0

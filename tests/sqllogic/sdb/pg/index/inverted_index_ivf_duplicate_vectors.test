@@ -1,0 +1,139 @@
+control substitution on
+
+# ============================================================================
+# Degenerate k-means splits on duplicate vectors must terminate.
+#
+# A group of identical vectors cannot be separated by any centroid set: every
+# point picks the same argmax centroid, so an internal node re-splits into one
+# full-size child plus empty siblings. Without a guard the centroids builder
+# re-enqueues that same child forever (livelock at segment flush / CREATE INDEX
+# backfill). The guard detects the no-progress split and slices the group into
+# uniform posting_size chunks without training.
+#
+# posting_size = 2 forces clustering even on tiny datasets; nprobe is huge so
+# every leaf is scanned and asserted neighbors are exact.
+# ============================================================================
+
+statement ok
+SET sdb_nprobe = 100000;
+
+statement ok
+SET sdb_ivf_posting_size = 2;
+
+# ---- all-duplicates, CREATE INDEX backfill path (l2) ------------------------
+
+statement ok
+CREATE TABLE dup_all (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+INSERT INTO dup_all SELECT i, [7.0::FLOAT, 7.0::FLOAT]::FLOAT[2] FROM range(1000) t(i);
+
+statement ok
+CREATE INDEX dup_all_idx ON dup_all USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+query
+SELECT count(*) FROM dup_all_idx;
+----
+count
+1000
+
+# every row is at distance 0 from the duplicate point
+query
+SELECT count(*) FROM dup_all_idx WHERE emb <-> [7.0, 7.0]::FLOAT[2] < 0.5;
+----
+count
+1000
+
+query
+SELECT count(*) FROM dup_all_idx WHERE emb <-> [7.0, 7.0]::FLOAT[2] > 0.5;
+----
+count
+0
+
+# ---- duplicate group mixed with separable points, flush path (l2) -----------
+
+statement ok
+CREATE TABLE dup_mix (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX dup_mix_idx ON dup_mix USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO dup_mix SELECT i, [100.0::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(500) t(i);
+
+statement ok
+INSERT INTO dup_mix SELECT i, [i::FLOAT, 50.0::FLOAT]::FLOAT[2] FROM range(500, 1000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) dup_mix;
+
+query
+SELECT count(*) FROM dup_mix_idx;
+----
+count
+1000
+
+# the separable half still answers exact nearest-neighbor
+query
+SELECT pk FROM dup_mix_idx ORDER BY emb <-> [700.0, 50.0]::FLOAT[2] LIMIT 1;
+----
+pk
+700
+
+query
+SELECT pk FROM dup_mix_idx ORDER BY emb <-> [999.0, 50.0]::FLOAT[2] LIMIT 1;
+----
+pk
+999
+
+# the duplicate group is fully retrievable
+query
+SELECT count(*) FROM dup_mix_idx WHERE emb <-> [100.0, 0.0]::FLOAT[2] < 0.5;
+----
+count
+500
+
+# merge segments; the compacted tree must also terminate and stay correct
+statement ok
+VACUUM (COMPACT_TABLE) dup_mix;
+
+query
+SELECT pk FROM dup_mix_idx ORDER BY emb <-> [700.0, 50.0]::FLOAT[2] LIMIT 1;
+----
+pk
+700
+
+query
+SELECT count(*) FROM dup_mix_idx WHERE emb <-> [100.0, 0.0]::FLOAT[2] < 0.5;
+----
+count
+500
+
+# ---- all-duplicates, spherical training path (cosine) -----------------------
+
+statement ok
+CREATE TABLE dup_cos (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+statement ok
+INSERT INTO dup_cos SELECT i, [3.0::FLOAT, 4.0::FLOAT]::FLOAT[2] FROM range(600) t(i);
+
+statement ok
+CREATE INDEX dup_cos_idx ON dup_cos USING inverted(pk, emb ivf (metric = 'cosine', quant = 'none'));
+
+query
+SELECT count(*) FROM dup_cos_idx;
+----
+count
+600
+
+query
+SELECT count(*) FROM dup_cos_idx WHERE emb <=> [3.0, 4.0]::FLOAT[2] < 0.001;
+----
+count
+600
+
+statement ok
+RESET sdb_ivf_posting_size;
+
+statement ok
+RESET sdb_nprobe;

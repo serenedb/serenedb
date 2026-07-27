@@ -229,6 +229,24 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
                                    settings.metric, settings.niter, rot);
     const size_t n_built = centroids.size() / d;
 
+    size_t full_group = n_built;
+    ForEachGroup(entry.ids, n_built, [&](size_t g, size_t, size_t count) {
+      if (count == sample_size) {
+        full_group = g;
+      }
+    });
+    if (full_group != n_built) {
+      const std::vector<float> winner(centroids.begin() + full_group * d,
+                                      centroids.begin() + (full_group + 1) * d);
+      for (size_t g = 0; g < n_built; ++g) {
+        absl::c_copy(winner, centroids.begin() + g * d);
+      }
+      const size_t chunk = (sample_size + n_built - 1) / n_built;
+      for (size_t i = 0; i < sample_size; ++i) {
+        entry.ids[i] = i / chunk;
+      }
+    }
+
     if (entry.parent < nodes.size()) {
       nodes[entry.parent].children.emplace_back(nodes.size());
     }

@@ -28,10 +28,9 @@ struct ClickHouseBindData : public dbconnector::BindData {
 	string database;
 	string table;
 	string sql;
-	//! Set by clickhouse_query's bind for lookup := true: the scan holds a
-	//! connection pinned for its lifetime and re-runs the statement per
-	//! TableFunctionInput::lookup_keys chunk, shipping the key columns as the
-	//! native external-data table `lookup` (columns k0..kN).
+	//! Set by clickhouse_lookup's bind: the scan holds a connection pinned for
+	//! its lifetime and re-runs the statement per input key chunk, shipping the
+	//! key columns as the native external-data table `lookup` (columns k0..kN).
 	bool lookup = false;
 	bool from_query = false;
 	vector<string> names;
@@ -96,6 +95,17 @@ class ClickHouseQueryFunction : public TableFunction {
 public:
 	ClickHouseQueryFunction();
 };
+
+//! The value-addressed materialization TF (the parquet-lookup analogue for a
+//! remote ClickHouse): binds like clickhouse_query, scans via
+//! ClickHouseLookupScan over the in_out_function input key chunk.
+class ClickHouseLookupFunction : public TableFunction {
+public:
+	ClickHouseLookupFunction();
+};
+
+OperatorResultType ClickHouseLookupScan(ExecutionContext &context, TableFunctionInput &data, DataChunk &keys,
+                                        DataChunk &output);
 
 //! clickhouse_execute(connection_string, sql): run an arbitrary side-effecting
 //! statement (DDL/DML/OPTIMIZE/etc.) against the server, returning a single

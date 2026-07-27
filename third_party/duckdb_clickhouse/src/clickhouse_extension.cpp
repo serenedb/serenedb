@@ -65,6 +65,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	ClickHouseQueryFunction query_func;
 	loader.RegisterFunction(query_func);
 
+	ClickHouseLookupFunction lookup_func;
+	loader.RegisterFunction(lookup_func);
+
 	ClickHouseExecuteFunction execute_func;
 	loader.RegisterFunction(execute_func);
 

@@ -541,12 +541,11 @@ set(SANITIZE_DEBUG_INFO "${COLUMNS_DEBUG_INFO}")
 set(COVERAGE_DEBUG_INFO "${COLUMNS_DEBUG_INFO}")
 set(PROFILE_DEBUG_INFO "${COLUMNS_DEBUG_INFO} -fdebug-info-for-profiling")
 # TODO(mbkkt) no-eliminate-unused-debug-symbols no-eliminate-unused-debug-types unused for some reason
-if(APPLE)
-    set(FULL_DEBUG_INFO "${BASE_DEBUG_INFO} -g3 -fstandalone-debug")
-else()
-    set(FULL_DEBUG_INFO
-        "${BASE_DEBUG_INFO} -g3 -fstandalone-debug -fdebug-macro"
-    )
+set(FULL_DEBUG_INFO "${BASE_DEBUG_INFO} -g3 -fstandalone-debug")
+# -fdebug-macro leads to crash on macOS, see issue
+# https://github.com/llvm/llvm-project/issues/212345
+if(NOT APPLE)
+    set(FULL_DEBUG_INFO "${FULL_DEBUG_INFO} -fdebug-macro")
 endif()
 set(LLDB_DEBUG_INFO "${FULL_DEBUG_INFO} -glldb")
 set(GDB_DEBUG_INFO "${FULL_DEBUG_INFO} -ggdb")

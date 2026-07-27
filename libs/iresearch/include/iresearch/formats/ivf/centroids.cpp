@@ -239,7 +239,7 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
       const std::vector<float> winner(centroids.begin() + full_group * d,
                                       centroids.begin() + (full_group + 1) * d);
       for (size_t g = 0; g < n_built; ++g) {
-        std::copy_n(winner.begin(), d, centroids.begin() + g * d);
+        absl::c_copy(winner, centroids.begin() + g * d);
       }
       const size_t chunk = (sample_size + n_built - 1) / n_built;
       for (size_t i = 0; i < sample_size; ++i) {

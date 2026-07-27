@@ -65,12 +65,16 @@ jobs:
 
       - name: Install toolchain (Homebrew)
         run: |
-          brew install llvm bison bash ninja ccache pkg-config cmake
+          # NOTE: Homebrew's `llvm` formula does NOT include the lld linker --
+          # it's a separate `lld` formula. The build uses -fuse-ld=lld, so both
+          # are required.
+          brew install llvm lld bison bash ninja ccache pkg-config cmake
 
       - name: Set up PATH
         run: |
           # keg-only formulae + Homebrew bash 5 (run.sh re-execs to it)
           echo "/opt/homebrew/opt/llvm/bin"  >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/lld/bin"   >> "$GITHUB_PATH"
           echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
           echo "/opt/homebrew/bin"           >> "$GITHUB_PATH"
 

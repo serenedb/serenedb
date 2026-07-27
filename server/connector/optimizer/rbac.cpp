@@ -165,48 +165,55 @@ void RequireForeignServerUsage(const catalog::Snapshot& snapshot,
   }
 }
 
-// DML records the plan's scan table -- the store-side entry, not the user
-// facade. Map store entries back through the facades bound alongside them
-// (forward-composed store name; never parsed).
-void MapStoreOrphansToFacades(const AccessRequirements& reqs,
-                              std::vector<const catalog::Object*>& objects) {
-  containers::FlatHashMap<std::string, const catalog::Object*> facades;
-  for (size_t i = 0; i < reqs.size(); ++i) {
-    const auto* entry = reqs[i].table;
-    if (!objects[i] || !entry ||
-        !dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
-      continue;
-    }
-    facades.emplace(catalog::StoreTableName(
-                      entry->ParentCatalog().GetName().GetIdentifierName(),
-                      entry->ParentSchema().name.GetIdentifierName(),
-                      entry->name.GetIdentifierName()),
-                    objects[i]);
-  }
-  for (size_t i = 0; i < reqs.size(); ++i) {
-    if (objects[i] || !reqs[i].table || !IsStoreEntry(*reqs[i].table)) {
-      continue;
-    }
-    const auto it = facades.find(reqs[i].table->name.GetIdentifierName());
-    if (it != facades.end()) {
-      objects[i] = it->second;
-    }
-  }
+// The store-side name of a table facade, composed exactly as the store composes
+// it. Never the reverse: a store name is not split back into its parts.
+std::string StoreNameOf(const duckdb::CatalogEntry& facade) {
+  return catalog::StoreTableName(
+    facade.ParentCatalog().GetName().GetIdentifierName(),
+    facade.ParentSchema().name.GetIdentifierName(),
+    facade.name.GetIdentifierName());
 }
 
+// The catalog object each requirement grants against, indexed like `reqs`.
+//
+// A DML plan scans the store-side table, whose entry is a plain DuckTableEntry
+// that SereneDBRelation cannot resolve -- so it lands here with no object and
+// its privileges would go unchecked. Every such orphan is matched to the table
+// facade bound alongside it, whose store name it carries verbatim.
 std::vector<const catalog::Object*> CollectRelations(
   const AccessRequirements& reqs) {
-  std::vector<const catalog::Object*> objects;
-  objects.reserve(reqs.size());
-  bool store_orphans = false;
-  for (const auto& req : reqs) {
-    const catalog::Object* obj =
-      req.table ? SereneDBRelation(req.table) : nullptr;
-    objects.push_back(obj);
-    store_orphans |= !obj && req.table && IsStoreEntry(*req.table);
+  std::vector<const catalog::Object*> objects(reqs.size(), nullptr);
+  std::vector<size_t> facades;
+  std::vector<size_t> orphans;
+  for (size_t i = 0; i < reqs.size(); ++i) {
+    const auto* entry = reqs[i].table;
+    if (!entry) {
+      continue;
+    }
+    objects[i] = SereneDBRelation(entry);
+    if (!objects[i]) {
+      if (IsStoreEntry(*entry)) {
+        orphans.push_back(i);
+      }
+    } else if (dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
+      facades.push_back(i);
+    }
   }
-  if (store_orphans) {
-    MapStoreOrphansToFacades(reqs, objects);
+  // Statements that touch no store table -- everything but DML -- stop here,
+  // having composed no names.
+  if (orphans.empty()) {
+    return objects;
+  }
+  containers::FlatHashMap<std::string, const catalog::Object*> by_store_name;
+  by_store_name.reserve(facades.size());
+  for (const size_t i : facades) {
+    by_store_name.emplace(StoreNameOf(*reqs[i].table), objects[i]);
+  }
+  for (const size_t i : orphans) {
+    const auto it = by_store_name.find(reqs[i].table->name.GetIdentifierName());
+    if (it != by_store_name.end()) {
+      objects[i] = it->second;
+    }
   }
   return objects;
 }

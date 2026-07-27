@@ -20,9 +20,11 @@ void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const string &d
                                vector<LogicalType> &return_types, vector<string> &names, bool binary_as_blob,
                                vector<bool> &stringified, vector<string> &clickhouse_types);
 
-static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, TableFunctionBindInput &input,
-                                                    vector<LogicalType> &return_types, vector<string> &names) {
+static unique_ptr<FunctionData> ClickHouseQueryBindInternal(ClientContext &context, TableFunctionBindInput &input,
+                                                            vector<LogicalType> &return_types, vector<string> &names,
+                                                            bool lookup) {
 	auto bind_data = make_uniq<ClickHouseBindData>();
+	bind_data->lookup = lookup;
 
 	auto connection_string = input.inputs[0].GetValue<string>();
 	// Accept an attached-database alias (like postgres_query) or a raw
@@ -50,10 +52,6 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 	auto schema_it = input.named_parameters.find("schema_query");
 	if (schema_it != input.named_parameters.end() && !schema_it->second.IsNull()) {
 		schema_sql = schema_it->second.GetValue<string>();
-	}
-	auto lookup_it = input.named_parameters.find("lookup");
-	if (lookup_it != input.named_parameters.end() && !lookup_it->second.IsNull()) {
-		bind_data->lookup = BooleanValue::Get(lookup_it->second);
 	}
 	auto describe_sql = StringUtil::Format("DESCRIBE (%s)", schema_sql);
 
@@ -103,10 +101,19 @@ static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, Tabl
 	return std::move(bind_data);
 }
 
+static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, TableFunctionBindInput &input,
+                                                    vector<LogicalType> &return_types, vector<string> &names) {
+	return ClickHouseQueryBindInternal(context, input, return_types, names, /*lookup=*/false);
+}
+
+static unique_ptr<FunctionData> ClickHouseLookupBind(ClientContext &context, TableFunctionBindInput &input,
+                                                     vector<LogicalType> &return_types, vector<string> &names) {
+	return ClickHouseQueryBindInternal(context, input, return_types, names, /*lookup=*/true);
+}
+
 ClickHouseQueryFunction::ClickHouseQueryFunction()
     : TableFunction("clickhouse_query", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, ClickHouseQueryBind) {
 	named_parameters["schema_query"] = LogicalType::VARCHAR;
-	named_parameters["lookup"] = LogicalType::BOOLEAN;
 	ClickHouseScanFunction scan_function;
 	init_global = scan_function.init_global;
 	function = scan_function.function;
@@ -114,6 +121,14 @@ ClickHouseQueryFunction::ClickHouseQueryFunction()
 	deserialize = scan_function.deserialize;
 	to_string = scan_function.to_string;
 	projection_pushdown = true;
+}
+
+ClickHouseLookupFunction::ClickHouseLookupFunction()
+    : TableFunction("clickhouse_lookup", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, ClickHouseLookupBind) {
+	named_parameters["schema_query"] = LogicalType::VARCHAR;
+	ClickHouseScanFunction scan_function;
+	init_global = scan_function.init_global;
+	in_out_function = ClickHouseLookupScan;
 }
 
 //===--------------------------------------------------------------------===//

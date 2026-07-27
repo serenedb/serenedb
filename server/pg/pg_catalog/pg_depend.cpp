@@ -65,21 +65,9 @@ catalog::MaterializedData SystemTableSnapshot<PgDepend>::GetTableData() {
   std::vector<PgDepend> values;
   values.reserve(edges.size());
   for (const auto& e : edges) {
-    Oid objid;
-    switch (e.dependent_class) {
-      case catalog::DependClass::Rewrite:
-        objid = ViewRuleOid(e.dependent.id());
-        break;
-      case catalog::DependClass::Attrdef:
-        objid = AttrdefOid(e.dependent.id());
-        break;
-      default:
-        objid = Oid{e.dependent.id()};
-        break;
-    }
     values.push_back(PgDepend{
       ClassOid(e.dependent_class),
-      objid,
+      Oid{e.dependent.id()},
       e.dependent_sub,
       ClassOid(e.referenced_class),
       Oid{e.referenced.id()},

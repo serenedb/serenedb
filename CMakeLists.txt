@@ -355,6 +355,14 @@ include(OptimizeForArchitecture)
 if(APPLE)
     set(OS_DARWIN 1)
     set(SDB_IOURING OFF CACHE BOOL "" FORCE)
+    if(NOT CMAKE_CXX_COMPILER_AR)
+        message(
+            FATAL_ERROR
+            "llvm-ar (CMAKE_CXX_COMPILER_AR) is required on macOS"
+        )
+    endif()
+    set(CMAKE_AR "${CMAKE_CXX_COMPILER_AR}")
+    set(CMAKE_RANLIB "${CMAKE_CXX_COMPILER_RANLIB}")
 else()
     set(OS_LINUX 1)
 endif()

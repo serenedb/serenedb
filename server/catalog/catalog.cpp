@@ -535,13 +535,13 @@ void Snapshot::ModifyTableDependencies(ObjectId schema_id, const Table& table,
       }
       for (const auto& ref : refs.functions) {
         ModifyDependency(
-          Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+          Resolve<ResolveType::Function, ObjectType::Function>(
             database_id, schema_id, ref.catalog, ref.schema, ref.name),
           &PgSqlFunctionDependency::column_defaults, col.GetId(), action);
       }
       for (const auto& ref : refs.unbound_types) {
         ModifyDependency(
-          Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+          Resolve<ResolveType::Type, ObjectType::Type>(
             database_id, schema_id, ref.catalog, ref.schema, ref.name),
           &PgSqlTypeDependency::column_defaults, col.GetId(), action);
       }
@@ -563,7 +563,7 @@ void Snapshot::ModifyTableDependencies(ObjectId schema_id, const Table& table,
     auto edge = c.GetId();
     for (const auto& ref : refs.functions) {
       ModifyDependency(
-        Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+        Resolve<ResolveType::Function, ObjectType::Function>(
           database_id, schema_id, ref.catalog, ref.schema, ref.name),
         &PgSqlFunctionDependency::constraints, edge, action);
     }
@@ -573,7 +573,7 @@ void Snapshot::ModifyTableDependencies(ObjectId schema_id, const Table& table,
     }
     for (const auto& ref : refs.unbound_types) {
       ModifyDependency(
-        Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+        Resolve<ResolveType::Type, ObjectType::Type>(
           database_id, schema_id, ref.catalog, ref.schema, ref.name),
         &PgSqlTypeDependency::constraints, edge, action);
     }
@@ -634,19 +634,19 @@ void Snapshot::ModifyViewDependencies(ObjectId schema_id, const PgSqlView& view,
   for (const auto& ref : refs.relations) {
     // Table or View -- both inherit RelationDependency.views.
     ModifyDependency(
-      Resolve<ResolveType::Relation, ObjectType::Table, ObjectType::PgSqlView>(
+      Resolve<ResolveType::Relation, ObjectType::Table, ObjectType::View>(
         database_id, schema_id, ref.catalog, ref.schema, ref.name),
       &RelationDependency::views, view_id, action);
   }
   for (const auto& ref : refs.functions) {
     ModifyDependency(
-      Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+      Resolve<ResolveType::Function, ObjectType::Function>(
         database_id, schema_id, ref.catalog, ref.schema, ref.name),
       &PgSqlFunctionDependency::views, view_id, action);
   }
   for (const auto& ref : refs.unbound_types) {
     ModifyDependency(
-      Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+      Resolve<ResolveType::Type, ObjectType::Type>(
         database_id, schema_id, ref.catalog, ref.schema, ref.name),
       &PgSqlTypeDependency::views, view_id, action);
   }
@@ -666,12 +666,12 @@ void Snapshot::ModifyFunctionDependencies(ObjectId schema_id,
   }
   for (const auto& ref : refs.relations) {
     ModifyDependency(
-      Resolve<ResolveType::Relation, ObjectType::Table, ObjectType::PgSqlView>(
+      Resolve<ResolveType::Relation, ObjectType::Table, ObjectType::View>(
         database_id, schema_id, ref.catalog, ref.schema, ref.name),
       &RelationDependency::functions, fn_id, action);
   }
   for (const auto& ref : refs.functions) {
-    auto target = Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+    auto target = Resolve<ResolveType::Function, ObjectType::Function>(
       database_id, schema_id, ref.catalog, ref.schema, ref.name);
     if (target == fn_id) {
       continue;  // skip self
@@ -681,7 +681,7 @@ void Snapshot::ModifyFunctionDependencies(ObjectId schema_id,
   }
   for (const auto& ref : refs.unbound_types) {
     ModifyDependency(
-      Resolve<ResolveType::Type, ObjectType::PgSqlType>(
+      Resolve<ResolveType::Type, ObjectType::Type>(
         database_id, schema_id, ref.catalog, ref.schema, ref.name),
       &PgSqlTypeDependency::functions, fn_id, action);
   }
@@ -708,7 +708,7 @@ void Snapshot::ModifyInvertedIndexDependencies(const InvertedIndex& index,
       SDB_ASSERT(p);
       for (const auto& ref : ExtractRefs(*p, RefKinds::Functions).functions) {
         ModifyDependency(
-          Resolve<ResolveType::Function, ObjectType::PgSqlFunction>(
+          Resolve<ResolveType::Function, ObjectType::Function>(
             database_id, schema_id, ref.catalog, ref.schema, ref.name),
           &PgSqlFunctionDependency::indexes, index_id, action);
       }
@@ -806,17 +806,17 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
       }
       ModifyTableDependencies(parent_id, table, EdgeAction::Add);
     } break;
-    case ObjectType::PgSqlView:
+    case ObjectType::View:
       GetDependencyForWrite<SchemaDependency>(parent_id)->views.insert(id);
       ModifyViewDependencies(parent_id, basics::downCast<PgSqlView>(obj),
                              RefKinds::All, EdgeAction::Add);
       break;
-    case ObjectType::PgSqlFunction:
+    case ObjectType::Function:
       GetDependencyForWrite<SchemaDependency>(parent_id)->functions.insert(id);
       ModifyFunctionDependencies(
         parent_id, basics::downCast<PgSqlFunction>(obj), EdgeAction::Add);
       break;
-    case ObjectType::PgSqlType:
+    case ObjectType::Type:
       GetDependencyForWrite<SchemaDependency>(parent_id)->types.insert(id);
       break;
     case ObjectType::Sequence: {
@@ -1361,12 +1361,12 @@ void Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
       ModifyTableDependencies(parent_id, basics::downCast<Table>(*old_object),
                               EdgeAction::Delete);
       break;
-    case ObjectType::PgSqlView:
+    case ObjectType::View:
       ModifyViewDependencies(parent_id,
                              basics::downCast<PgSqlView>(*old_object),
                              RefKinds::All, EdgeAction::Delete);
       break;
-    case ObjectType::PgSqlFunction:
+    case ObjectType::Function:
       ModifyFunctionDependencies(parent_id,
                                  basics::downCast<PgSqlFunction>(*old_object),
                                  EdgeAction::Delete);
@@ -1391,12 +1391,12 @@ void Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
       }
       ModifyTableDependencies(parent_id, table, EdgeAction::Add);
     } break;
-    case ObjectType::PgSqlView:
+    case ObjectType::View:
       ModifyViewDependencies(parent_id,
                              basics::downCast<PgSqlView>(*new_object),
                              RefKinds::All, EdgeAction::Add);
       break;
-    case ObjectType::PgSqlFunction:
+    case ObjectType::Function:
       ModifyFunctionDependencies(parent_id,
                                  basics::downCast<PgSqlFunction>(*new_object),
                                  EdgeAction::Add);
@@ -1504,7 +1504,7 @@ std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
     auto ref = obj->GetId();
     switch (obj->GetType()) {
       case ObjectType::Table:
-      case ObjectType::PgSqlView:
+      case ObjectType::View:
         emit(ref, 0, DependClass::Relation, obj->GetParentId(), 0,
              DependClass::Namespace, DependType::Normal);
         break;
@@ -1514,11 +1514,11 @@ std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
                DependClass::Namespace, DependType::Normal);
         }
         break;
-      case ObjectType::PgSqlFunction:
+      case ObjectType::Function:
         emit(ref, 0, DependClass::Proc, obj->GetParentId(), 0,
              DependClass::Namespace, DependType::Normal);
         break;
-      case ObjectType::PgSqlType:
+      case ObjectType::Type:
         emit(ref, 0, DependClass::Type, obj->GetParentId(), 0,
              DependClass::Namespace, DependType::Normal);
         break;
@@ -1531,7 +1531,7 @@ std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
     }
     switch (obj->GetType()) {
       case ObjectType::Table:
-      case ObjectType::PgSqlView: {
+      case ObjectType::View: {
         const auto& rel = basics::downCast<const RelationDependency>(*dep);
         const Table* table = obj->GetType() == ObjectType::Table
                                ? &basics::downCast<const Table>(*obj)
@@ -1593,7 +1593,7 @@ std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
           emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
                DependType::Normal);
         }
-        if (obj->GetType() == ObjectType::PgSqlView) {
+        if (obj->GetType() == ObjectType::View) {
           emit(ref, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
                DependType::Internal);
         }
@@ -1613,7 +1613,7 @@ std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
                DependType::Normal);
         }
       } break;
-      case ObjectType::PgSqlType: {
+      case ObjectType::Type: {
         const auto& ty = basics::downCast<const PgSqlTypeDependency>(*dep);
         for (auto col : ty.column_types) {
           auto c = GetObject(col);
@@ -1636,7 +1636,7 @@ std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
                DependType::Normal);
         }
       } break;
-      case ObjectType::PgSqlFunction: {
+      case ObjectType::Function: {
         const auto& fnd = basics::downCast<const PgSqlFunctionDependency>(*dep);
         for (auto fn : fnd.functions) {
           emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Proc,
@@ -1758,10 +1758,10 @@ void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
     }
   }
   for (const auto& [schema_id, view_id] : plan.view_drops) {
-    ctx.DropDefinition(schema_id, ObjectType::PgSqlView, view_id);
+    ctx.DropDefinition(schema_id, ObjectType::View, view_id);
   }
   for (const auto& [schema_id, fn_id] : plan.function_drops) {
-    ctx.DropDefinition(schema_id, ObjectType::PgSqlFunction, fn_id);
+    ctx.DropDefinition(schema_id, ObjectType::Function, fn_id);
   }
 }
 
@@ -1848,7 +1848,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
             basics::downCast<InvertedIndex>(index), id, EdgeAction::Delete);
         }
       } break;
-      case ObjectType::PgSqlFunction: {
+      case ObjectType::Function: {
         GetDependencyForWrite<SchemaDependency>(parent_id)->functions.erase(id);
         ModifyFunctionDependencies(
           parent_id, basics::downCast<PgSqlFunction>(*obj), EdgeAction::Delete);
@@ -1874,12 +1874,12 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           _objects.erase(c.GetId());
         }
       } break;
-      case ObjectType::PgSqlView: {
+      case ObjectType::View: {
         GetDependencyForWrite<SchemaDependency>(parent_id)->views.erase(id);
         ModifyViewDependencies(parent_id, basics::downCast<PgSqlView>(*obj),
                                RefKinds::All, EdgeAction::Delete);
       } break;
-      case ObjectType::PgSqlType: {
+      case ObjectType::Type: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         SDB_ASSERT(schema_deps);
         schema_deps->types.erase(id);
@@ -1925,7 +1925,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
       drop_childs(schema_deps->tokenizers);
     } break;
     case ObjectType::Table:
-    case ObjectType::PgSqlView: {
+    case ObjectType::View: {
       auto relation_deps = GetDependency<RelationDependency>(id);
       if (obj->GetType() == ObjectType::Table) {
         const auto& table_deps =
@@ -1959,8 +1959,8 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::InvertedIndex:
       break;
     case ObjectType::ForeignServer:
-    case ObjectType::PgSqlFunction:
-    case ObjectType::PgSqlType:
+    case ObjectType::Function:
+    case ObjectType::Type:
     case ObjectType::Tokenizer:
     case ObjectType::UserMapping:
     case ObjectType::Sequence:
@@ -2275,7 +2275,7 @@ ResolvedIndexRelation ResolveIndexRelation(
       .relation_id = table.GetId(),
       .columns = table.Columns(),
     };
-  } else if (relation->GetType() == ObjectType::PgSqlView) {
+  } else if (relation->GetType() == ObjectType::View) {
     auto& view = basics::downCast<PgSqlView>(*relation);
     const auto& view_info = view.GetInfo();
     auto columns =
@@ -2564,7 +2564,7 @@ bool Catalog::CreateView(const AccessContext& ax, ObjectId database_id,
         .value_or(ObjectId{});
     if (existed_id.isSet()) {
       auto existing = _snapshot->GetObject<Object>(existed_id);
-      if (existing->GetType() != ObjectType::PgSqlView) {
+      if (existing->GetType() != ObjectType::View) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                         ERR_MSG("\"", view->GetName(), "\" is not a view"));
       }
@@ -2595,13 +2595,13 @@ bool Catalog::CreateView(const AccessContext& ax, ObjectId database_id,
       auto bytes = catalog::SerializeObject(*view, stream);
       if (existed_id.isSet()) {
         _engine->Write([&](auto& ctx) {
-          ctx.PutDefinition(*schema_id, ObjectType::PgSqlView, view->GetId(),
+          ctx.PutDefinition(*schema_id, ObjectType::View, view->GetId(),
                             std::string_view{bytes});
         });
         return;
       }
-      _engine->CreateDefinition(*schema_id, ObjectType::PgSqlView,
-                                view->GetId(), bytes);
+      _engine->CreateDefinition(*schema_id, ObjectType::View, view->GetId(),
+                                bytes);
     },
     [&](auto clone) {
       if (!existed_id.isSet()) {
@@ -2711,12 +2711,12 @@ bool Catalog::CreateFunction(const AccessContext& ax, ObjectId database_id,
       auto bytes = catalog::SerializeObject(*function, stream);
       if (existed_id.isSet()) {
         _engine->Write([&](auto& ctx) {
-          ctx.PutDefinition(*schema_id, ObjectType::PgSqlFunction,
-                            function->GetId(), std::string_view{bytes});
+          ctx.PutDefinition(*schema_id, ObjectType::Function, function->GetId(),
+                            std::string_view{bytes});
         });
         return;
       }
-      _engine->CreateDefinition(*schema_id, ObjectType::PgSqlFunction,
+      _engine->CreateDefinition(*schema_id, ObjectType::Function,
                                 function->GetId(), bytes);
     },
     [&](auto clone) {
@@ -3092,8 +3092,8 @@ bool Catalog::CreateType(const AccessContext& ax, ObjectId database_id,
 
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*type, stream);
-      _engine->CreateDefinition(*schema_id, ObjectType::PgSqlType,
-                                type->GetId(), bytes);
+      _engine->CreateDefinition(*schema_id, ObjectType::Type, type->GetId(),
+                                bytes);
     },
     [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
   return true;
@@ -3277,7 +3277,7 @@ void Catalog::RenameRelation(const AccessContext& ax, ObjectId database_id,
                               new_name,
                               std::static_pointer_cast<Table>(object));
       return;
-    case ObjectType::PgSqlView:
+    case ObjectType::View:
       RenameObjectImpl<PgSqlView>(*schema_id, database->GetName(), schema, name,
                                   new_name,
                                   std::static_pointer_cast<PgSqlView>(object));
@@ -3517,7 +3517,7 @@ void Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
   }
 
   // Types live in their own per-schema namespace, separate from relations.
-  if (type == ObjectType::PgSqlType) {
+  if (type == ObjectType::Type) {
     auto schema_id =
       _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
     if (!schema_id) {
@@ -3539,8 +3539,8 @@ void Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
       auto bytes = catalog::SerializeObject(*cloned, stream);
       clone->ReplaceObject<ResolveType::Type>(*schema_id, cloned->GetName(),
                                               cloned);
-      _engine->CreateDefinition(*schema_id, ObjectType::PgSqlType,
-                                cloned->GetId(), bytes);
+      _engine->CreateDefinition(*schema_id, ObjectType::Type, cloned->GetId(),
+                                bytes);
     });
     return;
   }
@@ -3638,10 +3638,10 @@ void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
     // Functions and types live in their own per-schema namespaces; everything
     // else resolves in the relation namespace.
     std::optional<ObjectId> object_id;
-    if (type == ObjectType::PgSqlFunction) {
+    if (type == ObjectType::Function) {
       object_id =
         _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
-    } else if (type == ObjectType::PgSqlType) {
+    } else if (type == ObjectType::Type) {
       object_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
     } else {
       object_id =
@@ -3696,10 +3696,10 @@ void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
                                 cloned->GetId(), bytes);
       return;
     }
-    if (type == ObjectType::PgSqlFunction) {
+    if (type == ObjectType::Function) {
       clone->ReplaceObject<ResolveType::Function>(parent, cloned->GetName(),
                                                   cloned);
-    } else if (type == ObjectType::PgSqlType) {
+    } else if (type == ObjectType::Type) {
       clone->ReplaceObject<ResolveType::Type>(parent, cloned->GetName(),
                                               cloned);
     } else {
@@ -3816,10 +3816,10 @@ void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
   std::shared_ptr<Object> obj;
   if (schema_id) {
     std::optional<ObjectId> object_id;
-    if (type == ObjectType::PgSqlFunction) {
+    if (type == ObjectType::Function) {
       object_id =
         _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
-    } else if (type == ObjectType::PgSqlType) {
+    } else if (type == ObjectType::Type) {
       object_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
     } else {
       object_id =
@@ -3834,11 +3834,11 @@ void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
       return;
     }
     switch (type) {
-      case ObjectType::PgSqlFunction:
+      case ObjectType::Function:
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
           ERR_MSG("could not find a function named \"", name, "\""));
-      case ObjectType::PgSqlType:
+      case ObjectType::Type:
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                         ERR_MSG("type \"", name, "\" does not exist"));
       default:
@@ -3852,7 +3852,7 @@ void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
   if (!matches) {
     std::string_view what = [&] {
       switch (type) {
-        case ObjectType::PgSqlView:
+        case ObjectType::View:
           return "a view";
         case ObjectType::Sequence:
           return "a sequence";
@@ -3868,7 +3868,7 @@ void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
   std::shared_ptr<Object> updated;
   ObjectId parent = *schema_id;
   switch (obj->GetType()) {
-    case ObjectType::PgSqlView: {
+    case ObjectType::View: {
       updated = obj->Clone();
       basics::downCast<PgSqlView>(*updated).GetInfo().comment =
         CommentValue(comment);
@@ -3883,12 +3883,12 @@ void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
       index.SetComment(comment);
       parent = index.GetRelationId();
     } break;
-    case ObjectType::PgSqlType: {
+    case ObjectType::Type: {
       updated = obj->Clone();
       basics::downCast<PgSqlType>(*updated).GetInfo().comment =
         CommentValue(comment);
     } break;
-    case ObjectType::PgSqlFunction: {
+    case ObjectType::Function: {
       updated = obj->Clone();
       basics::downCast<PgSqlFunction>(*updated).GetInfo().comment =
         CommentValue(comment);
@@ -3898,9 +3898,9 @@ void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
   }
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    if (type == ObjectType::PgSqlFunction) {
+    if (type == ObjectType::Function) {
       clone->ReplaceObject<ResolveType::Function>(*schema_id, name, updated);
-    } else if (type == ObjectType::PgSqlType) {
+    } else if (type == ObjectType::Type) {
       clone->ReplaceObject<ResolveType::Type>(*schema_id, name, updated);
     } else {
       clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
@@ -3937,7 +3937,7 @@ void Catalog::SetViewColumnComment(const AccessContext& ax,
                     ERR_MSG("relation \"", name, "\" does not exist"));
   }
   RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
-  if (obj->GetType() != ObjectType::PgSqlView) {
+  if (obj->GetType() != ObjectType::View) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                     ERR_MSG("\"", name, "\" is not a view"));
   }
@@ -3969,8 +3969,7 @@ void Catalog::SetViewColumnComment(const AccessContext& ax,
     duckdb::MemoryStream stream;
     auto bytes = catalog::SerializeObject(*updated, stream);
     _engine->Write([&](auto& ctx) {
-      ctx.PutDefinition(*schema_id, ObjectType::PgSqlView, updated->GetId(),
-                        bytes);
+      ctx.PutDefinition(*schema_id, ObjectType::View, updated->GetId(), bytes);
     });
   });
 }
@@ -4745,13 +4744,13 @@ bool Catalog::DropView(const AccessContext& ax, std::string_view database,
     SDB_ASSERT(clone);
     auto object = clone->GetObject(*view_id);
     SDB_ASSERT(object);
-    if (object->GetType() != ObjectType::PgSqlView) {
+    if (object->GetType() != ObjectType::View) {
       ThrowWrongObjectType(name, "view", object->GetType());
     }
     auto view = basics::downCast<PgSqlView>(std::move(object));
 
     _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*schema_id, ObjectType::PgSqlView, *view_id);
+      ctx.DropDefinition(*schema_id, ObjectType::View, *view_id);
       clone->CommitDropPlan(ctx, plan);
     });
     clone->UnregisterObject(std::move(view), *schema_id);
@@ -4866,13 +4865,13 @@ bool Catalog::DropType(const AccessContext& ax, std::string_view database,
     SDB_ASSERT(clone);
     auto object = clone->GetObject(*type_id);
     SDB_ASSERT(object);
-    if (object->GetType() != ObjectType::PgSqlType) {
+    if (object->GetType() != ObjectType::Type) {
       ThrowWrongObjectType(name, "type", object->GetType());
     }
     auto type = basics::downCast<PgSqlType>(std::move(object));
 
     _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*schema_id, ObjectType::PgSqlType, *type_id);
+      ctx.DropDefinition(*schema_id, ObjectType::Type, *type_id);
       clone->CommitDropPlan(ctx, plan);
     });
     clone->UnregisterObject(std::move(type), *schema_id);
@@ -4924,7 +4923,7 @@ bool Catalog::DropFunction(const AccessContext& ax, std::string_view database,
     SDB_ASSERT(function);
 
     _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*schema_id, ObjectType::PgSqlFunction, *function_id);
+      ctx.DropDefinition(*schema_id, ObjectType::Function, *function_id);
       clone->CommitDropPlan(ctx, plan);
     });
     clone->UnregisterObject(std::move(function), *schema_id);
@@ -5274,7 +5273,7 @@ void OpenDatabase::RegisterSchemas(ObjectId database_id) {
 
 void OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
   GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::PgSqlFunction,
+    schema_id, ObjectType::Function,
     [&](CatalogStore::Key key, std::string_view bytes) {
       auto function = catalog::DeserializeObject<catalog::PgSqlFunction>(
         bytes, {
@@ -5328,7 +5327,7 @@ void OpenDatabase::RegisterForeignServers(ObjectId db_id) {
 
 void OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::PgSqlView,
+    schema_id, ObjectType::View,
     [&](CatalogStore::Key key, std::string_view bytes) {
       auto view_id = key.id;
       auto view = catalog::DeserializeObject<PgSqlView>(
@@ -5375,7 +5374,7 @@ void OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
 
 void OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
   GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::PgSqlType,
+    schema_id, ObjectType::Type,
     [&](CatalogStore::Key key, std::string_view bytes) {
       auto type =
         catalog::DeserializeObject<PgSqlType>(bytes, {

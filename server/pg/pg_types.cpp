@@ -297,7 +297,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
     SDB_OID2TYPE(kUnion, LogicalType::VARCHAR)
     default: {
       if (auto obj = snapshot.GetObject(ObjectId{static_cast<uint64_t>(oid)});
-          obj && obj->GetType() == catalog::ObjectType::PgSqlType) {
+          obj && obj->GetType() == catalog::ObjectType::Type) {
         return basics::downCast<catalog::PgSqlType>(obj)->GetLogicalType();
       }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),

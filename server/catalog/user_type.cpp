@@ -35,7 +35,7 @@ PgSqlType::PgSqlType(Permissions perm, ObjectId schema_id, ObjectId id,
                      duckdb::unique_ptr<duckdb::CreateTypeInfo> info)
   : Object{std::move(perm), schema_id,
            id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id, name,
-           ObjectType::PgSqlType},
+           ObjectType::Type},
     _info{std::move(info)} {
   auto type_info = _info->type.AuxInfo()
                      ? _info->type.AuxInfo()->DeepCopy()

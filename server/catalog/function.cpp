@@ -34,7 +34,7 @@ PgSqlFunction::PgSqlFunction(Permissions perm, ObjectId schema_id, ObjectId id,
                              std::string_view name,
                              duckdb::unique_ptr<duckdb::CreateMacroInfo> info)
   : Object{std::move(perm), schema_id, id, std::string{name},
-           ObjectType::PgSqlFunction},
+           ObjectType::Function},
     _info{std::move(info)} {}
 
 std::shared_ptr<PgSqlFunction> PgSqlFunction::Deserialize(

@@ -98,15 +98,15 @@ struct ChangeTableOptions {
 template<typename T>
 constexpr ObjectType GetObjectType() noexcept {
   if constexpr (std::is_same_v<T, PgSqlView>) {
-    return ObjectType::PgSqlView;
+    return ObjectType::View;
   } else if constexpr (std::is_same_v<T, Database>) {
     return ObjectType::Database;
   } else if constexpr (std::is_same_v<T, Schema>) {
     return ObjectType::Schema;
   } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
-    return ObjectType::PgSqlFunction;
+    return ObjectType::Function;
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
-    return ObjectType::PgSqlType;
+    return ObjectType::Type;
   } else if constexpr (std::is_same_v<T, Table>) {
     return ObjectType::Table;
   } else if constexpr (std::is_same_v<T, SecondaryIndex>) {

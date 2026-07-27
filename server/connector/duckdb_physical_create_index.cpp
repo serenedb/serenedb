@@ -858,7 +858,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     relation = snapshot->GetRelation(catalog::NoAccessCheck(), database_id,
                                      schema_entry.name.GetIdentifierName(),
                                      op.table.name.GetIdentifierName());
-    if (!relation || relation->GetType() != catalog::ObjectType::PgSqlView) {
+    if (!relation || relation->GetType() != catalog::ObjectType::View) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("view \"", op.table.name.GetIdentifierName(),
                               "\" not found in SereneDB catalog"));

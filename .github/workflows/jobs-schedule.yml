@@ -35,6 +35,10 @@ jobs:
       SQLSMITH: true
     secrets: inherit
 
+  macos:
+    if: github.event.schedule == '0 5 * * *'
+    uses: ./.github/workflows/build-macos-reusable.yml
+
   release-check:
     if: github.event.schedule == '0 5 * * *'
     uses: ./.github/workflows/make-package.yml

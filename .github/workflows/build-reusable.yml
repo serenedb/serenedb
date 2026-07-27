@@ -147,7 +147,7 @@ jobs:
             echo "SDB_DEV=Off"             >> $GITHUB_ENV
             echo "SDB_GTEST=Off"           >> $GITHUB_ENV
             echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
-          else
+          elsec
             echo "SDB_DEV=On"              >> $GITHUB_ENV
             echo "SDB_GTEST=On"            >> $GITHUB_ENV
             echo "SDB_FAULT_INJECTION=On"  >> $GITHUB_ENV

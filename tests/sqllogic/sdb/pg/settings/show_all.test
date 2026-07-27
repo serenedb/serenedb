@@ -48,7 +48,7 @@ ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (al
 ch_pool_enable_reaper_thread	on	Whether to run the pool reaper thread that periodically closes connections exceeding 'ch_pool_max_lifetime_millis' or 'ch_pool_idle_timeout_millis'
 ch_pool_enable_thread_local_cache	off	Whether to enable the connection caching in thread-local cache. Such connections are pinned to their threads and are not made available to other threads, while still taking a place in the pool
 ch_pool_idle_timeout_millis	60000	Maximum number of milliseconds a connection can sit idle in the pool; checked on lease and, with the reaper thread enabled, in the background
-ch_pool_max_connections	32	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
+ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
@@ -370,7 +370,7 @@ ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (al
 ch_pool_enable_reaper_thread	on	Whether to run the pool reaper thread that periodically closes connections exceeding 'ch_pool_max_lifetime_millis' or 'ch_pool_idle_timeout_millis'
 ch_pool_enable_thread_local_cache	off	Whether to enable the connection caching in thread-local cache. Such connections are pinned to their threads and are not made available to other threads, while still taking a place in the pool
 ch_pool_idle_timeout_millis	60000	Maximum number of milliseconds a connection can sit idle in the pool; checked on lease and, with the reaper thread enabled, in the background
-ch_pool_max_connections	32	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
+ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)

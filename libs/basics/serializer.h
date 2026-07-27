@@ -514,7 +514,7 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       }
       b.OnNullableEnd();
     } else if constexpr (kIsVariant<T>) {
-      self(static_cast<uint64_t>(value.index()));
+      self(value.index());
       std::visit([&](const auto& v) { self(v); }, value);
     } else if constexpr (detail::IsRange<T>) {
       const size_t count = std::ranges::size(value);
@@ -543,6 +543,8 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       b.WriteValue(value);
     } else if constexpr (std::is_same_v<T, char>) {
       b.WriteValue(static_cast<uint8_t>(value));
+    } else if constexpr (std::is_same_v<T, size_t>) {
+      b.WriteValue(static_cast<uint64_t>(value));
     } else if constexpr (detail::kIsSerializableArithmetic<T>) {
       b.WriteValue(value);
     } else if constexpr (kIsString<T>) {

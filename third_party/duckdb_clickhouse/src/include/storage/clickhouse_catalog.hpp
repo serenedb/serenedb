@@ -66,6 +66,14 @@ public:
 	bool InMemory() override;
 	string GetDBPath() override;
 
+	//! This catalog is data on a remote server, like PostgresCatalog. Only
+	//! IS_REMOTE: pushdown runs through the shared dbconnector optimizer, not
+	//! duckdb's RemotePushdownOptimizer (EXECUTE_QUERY_NODE), and there is no
+	//! RemoteExecute(string) for the CONNECT chokepoint to route raw SQL to.
+	bool Supports(RemoteCapability capability) const override {
+		return capability == RemoteCapability::IS_REMOTE;
+	}
+
 	//! The shared dbconnector connection pool (the PostgresConnectionPool analog).
 	//! Lease with GetConnectionPool().GetConnection(); the RAII PooledConnection
 	//! returns to the pool on destruction. A connection that errored or was

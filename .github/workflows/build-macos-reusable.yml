@@ -41,6 +41,7 @@ jobs:
     timeout-minutes: 180
     env:
       SDB_PORT: "7777"
+      SDB_SSL_PORT: "7778"
       # ccache tuned for cross-run reuse (see below):
       #  - BASEDIR + NOHASHDIR: rewrite abs paths -> relative so hits survive
       #    checkout-path changes and the -g3 absolute paths don't bust the hash.
@@ -148,8 +149,10 @@ jobs:
           set -uo pipefail
           mkdir -p out/logs
           DATADIR="$(mktemp -d)/datadir"
+          CERT="${GITHUB_WORKSPACE}/resources/ca.pem"
           POSTGRES_PASSWORD=postgres ./build/bin/serened "$DATADIR" \
-            --listen "postgres://0.0.0.0:${SDB_PORT}" --auth_timeout=600s \
+            --listen "postgres://0.0.0.0:${SDB_PORT},postgres://0.0.0.0:${SDB_SSL_PORT}?sslmode=require&cert=${CERT}&key=${CERT}" \
+            --auth_timeout=600s \
             > out/logs/serened.log 2>&1 &
           SDB_PID=$!
 
@@ -167,7 +170,8 @@ jobs:
           rc=0
           SKIP_SLOW_TESTS=true SDB_SQLLOGIC_SCOPE=ours \
             bash tests/sqllogic/run_sdb_tests.sh \
-              --host 127.0.0.1 --single-port "${SDB_PORT}" || rc=$?
+              --host 127.0.0.1 --single-port "${SDB_PORT}" \
+              --single-port-ssl "${SDB_SSL_PORT}" || rc=$?
 
           kill "$SDB_PID" 2>/dev/null || true
           exit $rc

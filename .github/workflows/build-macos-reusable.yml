@@ -5,17 +5,8 @@ name: task | serenedb macos build & test
 # locally-started serened. Reusable + manually dispatchable; wired into the
 # nightly schedule (jobs-schedule.yml).
 
-# ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║ ATTENTION — TEMPORARY: the `push:` trigger below exists ONLY so this        ║
-# ║ workflow can be tested on the `mkornaukhov/build-on-mac` branch BEFORE it   ║
-# ║ is on `main` (workflow_dispatch/schedule only work once the file is on the  ║
-# ║ default branch).                                                            ║
-# ║ >>> REMOVE the `push:` block before merging to main. <<<                    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 on:
-  # TEMPORARY — remove before merge: pre-merge testing on the feature branch.
-  push:
-    branches: [mkornaukhov/build-on-mac]
   workflow_call:
     inputs:
       PR_SHA:

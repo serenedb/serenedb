@@ -48,6 +48,7 @@ class PgSqlType final : public Object {
   std::shared_ptr<Object> Clone() const final;
 
   const duckdb::CreateTypeInfo& GetInfo() const noexcept { return *_info; }
+  duckdb::CreateTypeInfo& GetInfo() noexcept { return *_info; }
 
   static constexpr ObjectId ToArrayOid(ObjectId scalar) noexcept {
     return ObjectId{scalar.id() - 1};

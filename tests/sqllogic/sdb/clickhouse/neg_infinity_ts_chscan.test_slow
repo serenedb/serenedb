@@ -1,0 +1,47 @@
+control substitution on
+
+# Writing an infinite TIMESTAMP to a ClickHouse DateTime64 column must be
+# rejected up front rather than silently corrupting the stored value. DuckDB
+# TIMESTAMP maps to DateTime64(6) on write. The finiteness guard at
+# clickhouse_types.cpp:845 tests `micros == INT64_MAX || micros == INT64_MIN`,
+# but DuckDB's negative-infinity sentinel is -INT64_MAX (-9223372036854775807),
+# NOT INT64_MIN, so '-infinity'::TIMESTAMP slips through and is written raw as
+# a garbage tick count. Positive '+infinity' (INT64_MAX) IS caught, so the two
+# infinities behave inconsistently -- this test pins both.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS cherr3 (TYPE clickhouse);
+
+statement ok
+DROP TABLE IF EXISTS cherr3.default.err_ninf;
+
+statement ok
+CREATE TABLE cherr3.default.err_ninf (id BIGINT PRIMARY KEY, ts TIMESTAMP);
+
+# Positive infinity is rejected (already handled by the INT64_MAX branch).
+statement error
+INSERT INTO cherr3.default.err_ninf VALUES (1, 'infinity'::TIMESTAMP);
+
+# NEGATIVE infinity must ALSO be rejected. Pre-fix this INSERT silently
+# succeeds and writes ticks == -9223372036854775807 (garbage), because the
+# guard misses ninfinity()'s value of -INT64_MAX. This is the line that
+# catches the bug.
+statement error
+INSERT INTO cherr3.default.err_ninf VALUES (2, '-infinity'::TIMESTAMP);
+
+# A finite row still inserts; the two rejected inserts sent nothing, so the
+# table holds exactly one row (would be >1 pre-fix if the bad row leaked).
+statement ok
+INSERT INTO cherr3.default.err_ninf VALUES (3, TIMESTAMP '2021-06-19 12:00:00');
+
+query
+SELECT count(*) AS n FROM cherr3.default.err_ninf;
+----
+n
+1
+
+statement ok
+DROP TABLE cherr3.default.err_ninf;
+
+statement ok
+DETACH cherr3;

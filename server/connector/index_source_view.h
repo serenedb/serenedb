@@ -49,10 +49,9 @@ class ViewIndexSourceBase : public IndexSource {
     absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
     absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column);
 
-  void SortRows(const PrimaryKeyBatch& pk, duckdb::idx_t start,
-                duckdb::idx_t count);
-  void SortFilesRows(const PrimaryKeyBatch& pk, duckdb::idx_t start,
-                     duckdb::idx_t count);
+  std::span<const int64_t> SortRows(const duckdb::Vector& pk,
+                                    duckdb::idx_t count);
+  void SortFilesRows(const duckdb::Vector& pk, duckdb::idx_t count);
 
   void AliasOutput(duckdb::DataChunk& output);
   void RunCastPass(duckdb::DataChunk& output, duckdb::idx_t row_count);

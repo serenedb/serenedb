@@ -83,7 +83,7 @@ class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
     None,
     WithoutMarkers,
     WithStartMarker,
-    WithEndMarker
+    WithEndMarker,
   };
 
   EmitOriginal _emit_original{EmitOriginal::None};

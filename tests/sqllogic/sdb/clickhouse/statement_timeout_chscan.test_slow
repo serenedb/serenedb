@@ -1,0 +1,46 @@
+control substitution on
+
+# ch_statement_timeout_millis bounds how long a scan/execute query may run on the
+# server (the pg_statement_timeout_millis analog). Rendered as ClickHouse's
+# per-query SETTINGS max_execution_time (seconds) by ClickHouseConnection::MakeQuery
+# -- so it never sticks to the pooled connection. 0/unset = unlimited.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chto (TYPE clickhouse);
+
+# Unlimited by default: a normal scan works.
+query
+SELECT count(*) AS n FROM chto.chtest.vedernikoff;
+----
+n
+6
+
+# A tight timeout makes a deliberately slow server-side query fail (sleep(3) far
+# exceeds 100ms). The error surfaces through ClickHouseConnection::ThrowError.
+statement ok
+SET ch_statement_timeout_millis = 100;
+
+statement error
+SELECT count(*) FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT sleep(3)');
+
+# A fast query under the same tight timeout still succeeds (bound is per-query,
+# not a blanket failure).
+query
+SELECT count(*) AS n FROM chto.chtest.vedernikoff;
+----
+n
+6
+
+# Clearing it restores unlimited execution.
+statement ok
+SET ch_statement_timeout_millis = 0;
+
+query
+SELECT count(*) AS n FROM chto.chtest.vedernikoff;
+----
+n
+6
+
+statement ok
+DETACH chto;

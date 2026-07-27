@@ -1,0 +1,60 @@
+# ALTER TABLE ADD COLUMN carries the per-column attributes duckdb's grammar
+# accepts there: USING COMPRESSION propagates to the catalog and the store
+# table (visible in pragma_storage_info after CHECKPOINT and in the
+# reconstructed CREATE TABLE sql), and COLLATE rewrites the column type just
+# like the CREATE TABLE path. Unknown WITH options on a plain CREATE INDEX
+# are rejected instead of silently dropped.
+
+statement ok
+CREATE TABLE aca_t (i INTEGER);
+
+statement ok
+ALTER TABLE aca_t ADD COLUMN d VARCHAR USING COMPRESSION zstd DEFAULT 'x';
+
+statement ok
+INSERT INTO aca_t SELECT i, md5(i::VARCHAR) FROM generate_series(1, 5000) t(i);
+
+statement ok
+CHECKPOINT;
+
+query
+SELECT DISTINCT column_name, compression FROM pragma_storage_info('aca_t') WHERE segment_type = 'VARCHAR';
+----
+column_name	compression
+d	ZSTD
+
+
+query
+SELECT sql LIKE '%USING COMPRESSION ZSTD%' FROM duckdb_tables() WHERE table_name = 'aca_t';
+----
+?column?
+t
+
+
+statement ok
+ALTER TABLE aca_t ADD COLUMN c VARCHAR COLLATE NOCASE;
+
+statement ok
+INSERT INTO aca_t (i, c) VALUES (0, 'ABC');
+
+query
+SELECT count(*) FROM aca_t WHERE c = 'abc';
+----
+count
+1
+
+
+statement error
+ALTER TABLE aca_t ADD COLUMN e VARCHAR USING COMPRESSION auto;
+----
+db error: ERROR: Unrecognized option for column compression, expected none, uncompressed, rle, dictionary, pfor, bitpacking, fsst, chimp, patas, zstd, alp, alprd or roaring
+
+
+statement error
+CREATE INDEX aca_idx ON aca_t (i) WITH (foo = 1);
+----
+db error: ERROR: unrecognized parameter "foo"
+
+
+statement ok
+DROP TABLE aca_t;

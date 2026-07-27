@@ -160,7 +160,9 @@ static char* server_text(PGconn* c, const char* pg_typname, const char* sample,
 static int run_inline(PGconn* c, const Case* cs, char** actual_out) {
   // sql holds the escaped sample (up to ESC_MAX) plus the cast wrapper and type
   // name; size it above esc so snprintf can't truncate (-Wformat-truncation).
-  enum { ESC_MAX = 4096 };
+  enum {
+    ESC_MAX = 4096,
+  };
   char sql[ESC_MAX + 256];
   if (!cs->has_sample) {
     snprintf(sql, sizeof(sql), "SELECT NULL::%s::text AS v", cs->pg_typname);

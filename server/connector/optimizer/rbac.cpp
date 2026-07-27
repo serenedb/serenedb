@@ -35,6 +35,7 @@
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/foreign_server.h"
 #include "catalog/object.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
@@ -149,6 +150,40 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
 
   const auto& properties = binder.GetStatementProperties();
   const auto& reqs = properties.access_requirements;
+
+  // Foreign-server USAGE: a foreign-catalog relation's parent catalog is the
+  // attach alias, i.e. the foreign server's name. The querying role needs
+  // USAGE (or ownership) on that server (PG-style); the remote enforces the
+  // rest. The attachment is instance-global, so resolve the server across ALL
+  // databases (names are globally unique), never scoped to the caller's own
+  // database -- a server created in one database must still be gated when
+  // referenced from a session in another (else the check silently skips ->
+  // cross-database bypass). Checked once per distinct catalog alias, on the
+  // caller's own role. A null resolve means the catalog is a regular database,
+  // a system/temp catalog, or a raw ATTACH foreign catalog with no CREATE
+  // SERVER object -- none are governed by foreign-server USAGE.
+  containers::FlatHashSet<std::string> checked_catalogs;
+  for (const auto& req : reqs) {
+    if (!req.table) {
+      continue;
+    }
+    const auto catalog_name =
+      req.table->ParentCatalog().GetName().GetIdentifierName();
+    if (!checked_catalogs.insert(catalog_name).second) {
+      continue;
+    }
+    auto server = snapshot->GetForeignServer(catalog_name);
+    if (!server) {
+      continue;
+    }
+    const auto& closure = snapshot->ClosureFor(caller);
+    if (!closure.Owns(*server) &&
+        !closure.Can(*server, catalog::AclMode::Usage)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied for foreign server ", server->GetName()));
+    }
+  }
 
   std::vector<const catalog::Object*> objects;
   objects.reserve(reqs.size());

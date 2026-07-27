@@ -106,7 +106,11 @@ namespace sdb::network::pg {
 // SocketKind::MaybeTls and answers SSLRequest with 'S' + an in-band upgrade.
 // `credentials` is the role-decoupled auth seam (null => trust everyone, as
 // today); a future RBAC layer supplies a real provider.
-enum class AuthMethod : uint8_t { Scram, Md5, Cleartext };
+enum class AuthMethod : uint8_t {
+  Scram,
+  Md5,
+  Cleartext,
+};
 
 struct PgServerContext {
   asio_ns::ssl::context* ssl = nullptr;
@@ -133,7 +137,12 @@ struct PgServerContext {
 // COPY wire format, from info->format (the lowercased copy-function name).
 // Binary and text are serenedb's own (de)serialized PG COPY formats; parquet
 // needs a seekable file; Other (csv / no FORMAT) goes through DuckDB's writer.
-enum class CopyFormat : uint8_t { Other, Text, Binary, Parquet };
+enum class CopyFormat : uint8_t {
+  Other,
+  Text,
+  Binary,
+  Parquet,
+};
 
 // Portal / PageCursor / PortalState live in protocol_state.h (with the stores
 // that own them).
@@ -231,7 +240,10 @@ class PgWireSession final
   // Whether the startup negotiation produced a session to proceed with, or a
   // terminal outcome (frame error / SSL or GSS reply / CancelRequest / bad
   // version / replication) where Run just closes the socket.
-  enum class StartupOutcome : bool { Proceed, Close };
+  enum class StartupOutcome : bool {
+    Proceed,
+    Close,
+  };
   // The SSL/GSS/Cancel/version/_pq_ negotiation loop, lifted out of Run so the
   // pure decode (ParseStartup) and the co_await IO read as one sequence. Fills
   // `startup` and returns Proceed on a real StartupMessage.
@@ -366,7 +378,10 @@ class PgWireSession final
   // extended-protocol message the backend drops every following frame until the
   // next Sync. Simple Query is self-syncing, so it never enters
   // DiscardUntilSync.
-  enum class PostError : bool { Resync = false, DiscardUntilSync = true };
+  enum class PostError : bool {
+    Resync = false,
+    DiscardUntilSync = true,
+  };
   // The one per-command error funnel: convert any thrown exception to the wire
   // (one ErrorResponse), then apply the transaction transition (implicit ->
   // roll back inline; explicit -> invalidate so the next statement surfaces

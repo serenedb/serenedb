@@ -59,6 +59,8 @@ enum class ObjectType : uint8_t {
   Schema,
   // Under schema - dependencies first
   Tokenizer,
+  ForeignServer,
+  UserMapping,
   PgSqlFunction,
   PgSqlType,
   PgSqlView,

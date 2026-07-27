@@ -173,7 +173,13 @@ const Blk& GetBlk(size_t shape_idx, uint64_t w) {
   return *slot;
 }
 
-enum class Arm { Fetch, Select, Entire, Partial1, PartialRun };
+enum class Arm {
+  Fetch,
+  Select,
+  Entire,
+  Partial1,
+  PartialRun,
+};
 
 const char* ArmName(Arm a) {
   switch (a) {

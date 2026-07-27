@@ -1,0 +1,62 @@
+control substitution on
+
+# Recovery counterpart to sdb/clickhouse/create_server_chscan.test_slow and the
+# mirror of catalog_attach.test: a plain ATTACH is ephemeral and vanishes on
+# restart (catalog_attach.test asserts that); a CREATE SERVER is persisted
+# catalog DDL, so it MUST survive a serened crash and auto re-attach on boot.
+# ClickHouse-style model: the server's credentials live in its OPTIONS (the
+# default user needs no auth) and there are no USER MAPPINGs.
+#
+# This is the first recovery test that needs an external service. It works by
+# reusing run.sh's existing launch_clickhouse(): the `_chscan.` filename makes
+# run.sh start a ClickHouse container for the run, and that container is a
+# separate process that stays up across serened's crash + restart, so the boot
+# replay can re-ATTACH to it. Fixture chtest.vedernikoff (6 rows) is pre-seeded.
+
+statement ok
+CREATE SERVER chrec FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+# Pre-crash: the server is in the catalog and queryable through the connector.
+query
+SELECT srvname FROM pg_foreign_server WHERE srvname = 'chrec';
+----
+srvname
+chrec
+
+query
+SELECT count(*) FROM chrec.chtest.vedernikoff;
+----
+count
+6
+
+# Crash serened mid-connection; run_serened_loop.sh restarts it on the same
+# datadir, triggering catalog load + foreign-server boot replay.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+# Post-restart: unlike ATTACH, the SERVER persisted -- its catalog row is back...
+connection after_crash
+query
+SELECT srvname FROM pg_foreign_server WHERE srvname = 'chrec';
+----
+srvname
+chrec
+
+# ...and boot replay re-ATTACHed to ClickHouse, so queries through it still work.
+connection after_crash
+query
+SELECT count(*) FROM chrec.chtest.vedernikoff;
+----
+count
+6

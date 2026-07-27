@@ -1,0 +1,115 @@
+control substitution on
+
+# A ClickHouse column type with no DuckDB mapping (here Int256) must not make the
+# WHOLE table unreadable. Discovery degrades such a column to VARCHAR and the scan
+# projects toString(col), so the wire carries a plain String; filter subjects on the
+# column are wrapped the same way, keeping comparisons exact. Seeded server-side via
+# clickhouse_execute (the write path deliberately cannot create Int256).
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'DROP TABLE IF EXISTS default.h6_exotic');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'CREATE TABLE default.h6_exotic (id Int64, big Int256, note String) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'INSERT INTO default.h6_exotic VALUES (1, toInt256(''123456789012345678901234567890123456789''), ''a''), (2, toInt256(''5''), ''b'')');
+----
+n
+1
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chx (TYPE clickhouse);
+
+# The mapped columns read normally (before the fix the whole table failed at bind).
+query
+SELECT id, note FROM chx.default.h6_exotic ORDER BY id;
+----
+id	note
+1	a
+2	b
+
+# The exotic column surfaces as VARCHAR carrying its text form.
+query
+SELECT big, typeof(big) AS t FROM chx.default.h6_exotic ORDER BY id;
+----
+big	t
+123456789012345678901234567890123456789	VARCHAR
+5	VARCHAR
+
+# Filters on the stringified column compare its text form exactly.
+query
+SELECT id FROM chx.default.h6_exotic WHERE big = '5';
+----
+id
+2
+
+# The ad-hoc clickhouse_query path degrades the same way.
+query
+SELECT id, big FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default', 'SELECT id, big FROM default.h6_exotic ORDER BY id');
+----
+id	big
+1	123456789012345678901234567890123456789
+2	5
+
+statement ok
+DETACH chx;
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default', 'DROP TABLE default.h6_exotic');
+----
+n
+1
+
+# Decimal precision > 38 exceeds DuckDB's maximum AND clickhouse-cpp's native
+# read (16-byte Int128 storage vs 32 wire bytes would desync the block), so the
+# column degrades to the same toString() projection as other unmapped types.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default',
+  'DROP TABLE IF EXISTS default.h6_bigdec');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default',
+  'CREATE TABLE default.h6_bigdec (id Int64, d Decimal(76, 10)) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default',
+  'INSERT INTO default.h6_bigdec VALUES (1, 12345678901234567890123456789.5), (2, -0.0000000001)');
+----
+n
+1
+
+query
+SELECT id, d FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'default', 'h6_bigdec')
+ORDER BY id;
+----
+id	d
+1	12345678901234567890123456789.5
+2	-0.0000000001
+
+# A filter on the degraded column stays local and returns the right rows.
+query
+SELECT id FROM clickhouse_scan('host=${CHHOST} port=${CHPORT} user=default', 'default', 'h6_bigdec')
+WHERE d = '-0.0000000001';
+----
+id
+2
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} user=default',
+  'DROP TABLE default.h6_bigdec');
+----
+n
+1

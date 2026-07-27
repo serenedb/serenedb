@@ -1,0 +1,65 @@
+control substitution on
+
+# Auto-recovery from remote schema drift. Unlike clickhouse_clear_cache (which the
+# user must call manually), a COLUMN_NOT_FOUND binder error against a stale cached
+# ClickHouse catalog now clears the caches and retries the bind once
+# (ClickHouseExtensionState::OnPlanningError, the PostgresExtensionState analog).
+# So a column added on the server becomes visible on the NEXT query with no manual
+# cache clear. Unique table (rb_ved) for parallel-run safety.
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE IF EXISTS default.rb_ved');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT} database=default',
+  'CREATE TABLE default.rb_ved (id Int64) ENGINE = MergeTree ORDER BY id');
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'INSERT INTO default.rb_ved VALUES (1), (2)');
+----
+n
+1
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chrb (TYPE clickhouse);
+
+# Bind + read -> caches the 1-column (id) schema.
+query
+SELECT count(*) AS n FROM chrb.default.rb_ved;
+----
+n
+2
+
+# Drift the remote schema: add a column with a default.
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'ALTER TABLE default.rb_ved ADD COLUMN val String DEFAULT ''pudge''');
+----
+n
+1
+
+# Query the NEW column with NO clickhouse_clear_cache(): the COLUMN_NOT_FOUND
+# binder error auto-clears the cache and retries, so the fresh (2-column) schema
+# is read and the query succeeds.
+query
+SELECT val FROM chrb.default.rb_ved ORDER BY id;
+----
+val
+pudge
+pudge
+
+statement ok
+DETACH chrb;
+
+query
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}', 'DROP TABLE default.rb_ved');
+----
+n
+1

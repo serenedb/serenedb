@@ -42,7 +42,10 @@ namespace {
 // JsonParser -- ported from server/pg/functions/json.tpp
 // ---------------------------------------------------------------------------
 
-enum class JsonOutputType { JSON, TEXT };
+enum class JsonOutputType {
+  JSON,
+  TEXT,
+};
 
 class JsonParser {
  public:

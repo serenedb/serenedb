@@ -10,11 +10,11 @@ ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__
 
 
 statement ok
-CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_types;
+CREATE SCHEMA pg_${__DATABASE__}.s${__DATABASE__}_types;
 
 
 statement ok
-CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_types.assorted (
+CREATE TABLE pg_${__DATABASE__}.s${__DATABASE__}_types.assorted (
   i32     INTEGER,
   i64     BIGINT,
   txt     TEXT,
@@ -25,7 +25,7 @@ CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_types.assorted (
 
 
 statement count 3
-INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_types.assorted VALUES
+INSERT INTO pg_${__DATABASE__}.s${__DATABASE__}_types.assorted VALUES
   (1,  9223372036854775806, 'alpha', true,  123.456,   3.141592653589793),
   (-2, -1,                   '',      false, -0.001,    0.0),
   (NULL, NULL,                NULL,    NULL,  NULL,     NULL);
@@ -33,7 +33,7 @@ INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_types.assorted VALUES
 
 query
 SELECT i32, i64, txt, flag, amount, big
-FROM pg_${__DATABASE__}.${__DATABASE__}_types.assorted
+FROM pg_${__DATABASE__}.s${__DATABASE__}_types.assorted
 ORDER BY i32 NULLS LAST;
 ----
 i32	i64	txt	flag	amount	big
@@ -43,11 +43,11 @@ NULL	NULL	NULL	NULL	NULL	NULL
 
 
 statement ok
-DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_types.assorted;
+DROP TABLE pg_${__DATABASE__}.s${__DATABASE__}_types.assorted;
 
 
 statement ok
-DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_types;
+DROP SCHEMA pg_${__DATABASE__}.s${__DATABASE__}_types;
 
 
 statement ok

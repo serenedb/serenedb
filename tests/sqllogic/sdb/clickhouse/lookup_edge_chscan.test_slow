@@ -1,0 +1,359 @@
+control substitution on
+
+# Where metadata-PK materialisation over ClickHouse engages, and where it does
+# not.
+#
+# Full-row retrieval ("materialise real source columns") off a view-backed
+# inverted index only engages when ResolveViewFastPath recognises the source
+# (server/connector/view_fast_path.cpp). For an ATTACHed ClickHouse *table* that
+# means the engine has PK metadata at all (system.columns.is_in_primary_key -> a
+# PRIMARY KEY constraint). The key itself is taken as it comes: the whole
+# MergeTree key, any arity, any column types -- composite keys are the norm in
+# ClickHouse. Without such metadata there is no key to re-fetch by, so the index
+# degrades to the generic-view shape: count(*)/BM25 still flow off the iresearch
+# index, but materialising real columns raises a clean FEATURE_NOT_SUPPORTED.
+#
+# This file pins that boundary:
+#   (a) inverted index over a clickhouse_query() VIEW -- a generic function with
+#       no engine metadata at all, so it declines (mirrors
+#       inverted_index_chscan.test_slow). This is the case that still degrades.
+#   (b) PK types other than BIGINT materialise: widgets.id is UInt32, and
+#       types_all's key c_uint8 is UInt8. The key travels as its own type in the
+#       stored struct, so nothing requires it to be a signed 64-bit integer.
+#   (c) vedernikoff.id is Int64 -- the plain single-BIGINT case.
+#   (d) a COMPOSITE metadata PK (ORDER BY (a, b)) materialises as well, and the
+#       explicit key_columns override over the same two columns still agrees.
+#
+# Unique attach name (chlke) so the global catalog name does not collide with
+# other parallel _chscan files. Unique object names (chlke_*) for the same
+# reason.
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chlke (TYPE clickhouse);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY chlke_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# =====================================================================
+# (a) Inverted index over a clickhouse_query() VIEW.
+#     clickhouse_query is a generic table function (not a registered fast-path
+#     reader and not an attached catalog table), so the view carries no engine
+#     metadata. count(*)/BM25 flow off iresearch; real-column retrieval is
+#     unsupported. Same behaviour as inverted_index_chscan.test_slow.
+# =====================================================================
+
+statement ok
+CREATE VIEW chlke_q_v AS
+  SELECT * FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+                                 'SELECT id, val FROM chtest.vedernikoff ORDER BY id');
+
+statement ok
+CREATE INDEX chlke_q_idx ON chlke_q_v USING inverted(id, val chlke_en);
+
+# count(*) flows from iresearch doc-id counting -- no source materialisation.
+query
+SELECT count(*) FROM chlke_q_idx WHERE val @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+query
+SELECT count(1) FROM chlke_q_idx WHERE val @@ ts_phrase('kostya');
+----
+count
+2
+
+query
+SELECT count(*) FROM chlke_q_idx WHERE val @@ ts_phrase('pudge');
+----
+count
+2
+
+# A term that matches no row -> empty postings -> count 0.
+query
+SELECT count(*) FROM chlke_q_idx WHERE val @@ ts_phrase('zhidky');
+----
+count
+0
+
+# BM25 score is emitted directly by iresearch (a virtual column), so it works
+# without materialising any real source column.
+query
+SELECT BM25(chlke_q_idx.tableoid) > 0 AS has_score
+FROM chlke_q_idx WHERE val @@ ts_phrase('vedernikoff')
+ORDER BY BM25(chlke_q_idx.tableoid) DESC LIMIT 1;
+----
+has_score
+t
+
+# Materialising real source columns through the generic view is not wired:
+# clickhouse_query is not a recognised fast-path source, so the lookup declines.
+statement error
+SELECT id, val FROM chlke_q_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id;
+
+# Even a single non-key column triggers the same materialisation path / error.
+statement error
+SELECT val FROM chlke_q_idx WHERE val @@ ts_phrase('pudge') ORDER BY val;
+
+
+# =====================================================================
+# (b1) Inverted index over an ATTACHed table whose PK is UInt32 (not BIGINT).
+#      chtest.widgets is `id UInt32 ... ORDER BY id`. The PK surfaces as a
+#      PRIMARY KEY constraint, but the v1 external-key path requires the key
+#      column to be BIGINT (PkSpec::ExternalDBKey keys postings + builds the
+#      `WHERE pk IN (...)` list as int64). UInt32 -> ResolveViewFastPath returns
+#      nullopt -> the index degrades to the generic-view shape: count works,
+#      materialisation declines. (Contrast inverted_index_attach_chscan.test_slow,
+#      where vedernikoff's Int64 PK DOES materialise.)
+# =====================================================================
+
+statement ok
+CREATE VIEW chlke_widgets_v AS SELECT * FROM chlke.chtest.widgets;
+
+statement ok
+CREATE INDEX chlke_widgets_idx ON chlke_widgets_v USING inverted(id, name chlke_en);
+
+# count(*) still flows off the iresearch index. widgets has two 'gadget' rows.
+query
+SELECT count(*) FROM chlke_widgets_idx WHERE name @@ ts_phrase('gadget');
+----
+count
+2
+
+query
+SELECT count(*) FROM chlke_widgets_idx WHERE name @@ ts_phrase('widget');
+----
+count
+1
+
+query
+SELECT count(*) FROM chlke_widgets_idx WHERE name @@ ts_phrase('gizmo');
+----
+count
+1
+
+# UInt32 PK is the wrong shape for the v1 fast path -> real-column retrieval
+# declines with the generic-view error (the PK exists but is not a single BIGINT).
+# The UInt32 key materialises: the key travels as its own type in the stored
+# struct and the re-fetch renders it as-is, so nothing needs it to be BIGINT.
+# widgets holds gadget at id 1 and id 4.
+query
+SELECT id, name FROM chlke_widgets_idx WHERE name @@ ts_phrase('gadget') ORDER BY id;
+----
+id	name
+1	gadget
+4	gadget
+
+
+# =====================================================================
+# (b2) Inverted index over an ATTACHed table whose key is UInt8 (not BIGINT).
+#      chtest.types_all is `... ORDER BY c_uint8` (UInt8). Same outcome as (b1):
+#      count works, materialisation declines.
+# =====================================================================
+
+statement ok
+CREATE VIEW chlke_types_v AS SELECT * FROM chlke.chtest.types_all;
+
+statement ok
+CREATE INDEX chlke_types_idx ON chlke_types_v USING inverted(c_uint8, c_string chlke_en);
+
+query
+SELECT count(*) FROM chlke_types_idx WHERE c_string @@ ts_phrase('hello');
+----
+count
+1
+
+query
+SELECT count(*) FROM chlke_types_idx WHERE c_string @@ ts_phrase('world');
+----
+count
+1
+
+# Likewise the UInt8 key: 'hello' is the c_uint8 = 1 row.
+query
+SELECT c_uint8, c_string FROM chlke_types_idx WHERE c_string @@ ts_phrase('hello') ORDER BY c_uint8;
+----
+c_uint8	c_string
+1	hello
+
+
+# =====================================================================
+# (c) Positive control: the ONE supported PK shape -- a single BIGINT (CH Int64).
+#     chtest.vedernikoff.id is Int64, so the same query shape that failed above
+#     materialises real source columns by re-fetching matched rows through the
+#     connector (`WHERE id IN (...)`). This proves the failures above are about
+#     the PK shape, not about ClickHouse attach views in general.
+#
+#     Other unsupported PK shapes that have no SQL-observable surface here (a
+#     pre-seeded fixture cannot create them, the connector is read-only) and so
+#     are only documented, not asserted: UInt64 (UBIGINT, can overflow int64),
+#     a string PK, and a composite/multi-column PK. ResolveViewFastPath returns
+#     nullopt for each (single-column + BIGINT only), giving the same count-only
+#     degradation. The write-path analogue is covered in write_pk_chscan.test_slow.
+# =====================================================================
+
+statement ok
+CREATE VIEW chlke_ved_v AS SELECT * FROM chlke.chtest.vedernikoff;
+
+statement ok
+CREATE INDEX chlke_ved_idx ON chlke_ved_v USING inverted(id, val chlke_en);
+
+query
+SELECT count(*) FROM chlke_ved_idx WHERE val @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# Int64 PK -> full row retrieval succeeds (matched rows re-fetched by the PK).
+query
+SELECT id, val FROM chlke_ved_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id;
+----
+id	val
+3	vedernikoff pudge
+5	vedernikoff kostya
+
+# Projection subset: the PK still drives the lookup even though it is not in the
+# SELECT list.
+query
+SELECT val FROM chlke_ved_idx WHERE val @@ ts_phrase('kostya') ORDER BY val;
+----
+val
+deadinside kostya
+vedernikoff kostya
+
+
+# =====================================================================
+# Cleanup
+# =====================================================================
+
+# =====================================================================
+# (d) ATTACHed table with a COMPOSITE primary key -> ORDER BY (a, b).
+#     The PK metadata is present and BOTH columns are BIGINT, so this is not
+#     the type rejection of (b1)/(b2): the v1 metadata path keys a posting on a
+#     single int64, so a 2-column key is declined on ARITY
+#     (view_fast_path.cpp, names.size() != 1) before the type is looked at.
+#     Degrades like the others: counts flow off iresearch, materialisation
+#     declines.
+#
+#     The second half is the control that makes the boundary precise: an
+#     explicit WITH (key_columns = 'a, b') over the SAME table DOES materialise,
+#     because the user-key path packs any number of columns into one struct.
+#     So arity is a limit of the metadata default only, not of external keying.
+# =====================================================================
+
+statement ok
+CREATE TABLE chlke.chtest.chlke_pair (
+  a BIGINT, b BIGINT, body VARCHAR, PRIMARY KEY (a, b));
+
+statement ok
+INSERT INTO chlke.chtest.chlke_pair
+  VALUES (1, 10, 'pudge hooks'), (1, 11, 'pudge rots'), (2, 20, 'kostya waits');
+
+statement ok
+CREATE VIEW chlke_pair_v AS SELECT * FROM chlke.chtest.chlke_pair;
+
+# No key_columns: the composite metadata PK is the only candidate, and it is
+# declined.
+statement ok
+CREATE INDEX chlke_pair_idx ON chlke_pair_v USING inverted(a, body chlke_en);
+
+query
+SELECT count(*) FROM chlke_pair_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(*) FROM chlke_pair_idx WHERE body @@ ts_phrase('kostya');
+----
+count
+1
+
+# BM25 is an iresearch virtual column -- no source materialisation.
+query
+SELECT BM25(chlke_pair_idx.tableoid) > 0 AS has_score
+FROM chlke_pair_idx WHERE body @@ ts_phrase('pudge')
+ORDER BY BM25(chlke_pair_idx.tableoid) DESC LIMIT 1;
+----
+has_score
+t
+
+# The composite key materialises through the default too: both key columns are
+# stored and the re-fetch matches on the pair.
+query
+SELECT a, b, body FROM chlke_pair_idx WHERE body @@ ts_phrase('pudge') ORDER BY a, b;
+----
+a	b	body
+1	10	pudge hooks
+1	11	pudge rots
+
+# Control: the same two columns, named explicitly, DO materialise.
+statement ok
+CREATE VIEW chlke_pair_ok_v AS SELECT * FROM chlke.chtest.chlke_pair;
+
+statement ok
+CREATE INDEX chlke_pair_ok_idx ON chlke_pair_ok_v
+  USING inverted(a, body chlke_en) WITH (key_columns = 'a, b');
+
+query
+SELECT a, body FROM chlke_pair_ok_idx
+WHERE body @@ ts_phrase('pudge') ORDER BY a, body;
+----
+a	body
+1	pudge hooks
+1	pudge rots
+
+
+statement ok
+DROP INDEX chlke_pair_ok_idx;
+
+statement ok
+DROP VIEW chlke_pair_ok_v;
+
+statement ok
+DROP INDEX chlke_pair_idx;
+
+statement ok
+DROP VIEW chlke_pair_v;
+
+statement ok
+DROP TABLE chlke.chtest.chlke_pair;
+
+statement ok
+DROP INDEX chlke_ved_idx;
+
+statement ok
+DROP VIEW chlke_ved_v;
+
+statement ok
+DROP INDEX chlke_types_idx;
+
+statement ok
+DROP VIEW chlke_types_v;
+
+statement ok
+DROP INDEX chlke_widgets_idx;
+
+statement ok
+DROP VIEW chlke_widgets_v;
+
+statement ok
+DROP INDEX chlke_q_idx;
+
+statement ok
+DROP VIEW chlke_q_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY chlke_en;
+
+statement ok
+DETACH chlke;

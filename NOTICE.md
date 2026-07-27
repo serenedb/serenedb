@@ -25,3 +25,11 @@ Some code is based on [ArangoDB](https://github.com/arangodb/arangodb), specific
 The original work is licensed under the Apache 2.0 license.
 
 Modifications and new code added are licensed under corresponding [license](LICENSE).
+
+#### clickhouse-cpp
+
+[clickhouse-cpp](third_party/clickhouse-cpp) is the C++ client library for
+ClickHouse, used by the ClickHouse connector. Copyright 2018-2023 ClickHouse,
+Inc. and Copyright 2017 Pavel Artemkin, licensed under the Apache 2.0 license.
+
+Modifications and new code added are licensed under corresponding [license](LICENSE).

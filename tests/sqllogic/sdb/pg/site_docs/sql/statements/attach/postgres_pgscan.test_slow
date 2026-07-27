@@ -23,17 +23,17 @@ ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__
 # DOCS_TEST: example_002
 
 statement ok
-CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_shop;
+CREATE SCHEMA pg_${__DATABASE__}.s${__DATABASE__}_shop;
 
 statement ok
-CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_shop.products (
+CREATE TABLE pg_${__DATABASE__}.s${__DATABASE__}_shop.products (
   id    INTEGER PRIMARY KEY,
   name  TEXT,
   price NUMERIC(10,2)
 );
 
 statement ok
-INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_shop.products VALUES
+INSERT INTO pg_${__DATABASE__}.s${__DATABASE__}_shop.products VALUES
   (1, 'widget', 9.99),
   (2, 'gadget', 19.99),
   (3, 'gizmo',  4.25);
@@ -44,7 +44,7 @@ INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_shop.products VALUES
 # DOCS_TEST_BODY
 
 query
-SELECT id, name, price FROM pg_${__DATABASE__}.${__DATABASE__}_shop.products ORDER BY id;
+SELECT id, name, price FROM pg_${__DATABASE__}.s${__DATABASE__}_shop.products ORDER BY id;
 ----
 id	name	price
 1	widget	9.99
@@ -70,10 +70,10 @@ DETACH pg_readonly_${__DATABASE__};
 # DOCS_TEST: example_004
 
 statement ok
-DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_shop.products;
+DROP TABLE pg_${__DATABASE__}.s${__DATABASE__}_shop.products;
 
 statement ok
-DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_shop;
+DROP SCHEMA pg_${__DATABASE__}.s${__DATABASE__}_shop;
 
 # DOCS_TEST_RAW
 #| DETACH pg;

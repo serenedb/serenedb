@@ -28,7 +28,11 @@
 namespace sdb::network::pg {
 namespace {
 
-enum class ReplicationKind : uint8_t { Off, On, Invalid };
+enum class ReplicationKind : uint8_t {
+  Off,
+  On,
+  Invalid,
+};
 
 ReplicationKind ClassifyReplication(std::string_view value) {
   // PG parses `replication` as parse_bool() plus the special "database" mode

@@ -44,7 +44,12 @@
 namespace irs {
 namespace {
 
-enum class PhraseQueryKind { kEmpty, kSingleWord, kFixed, kVariadic };
+enum class PhraseQueryKind {
+  kEmpty,
+  kSingleWord,
+  kFixed,
+  kVariadic,
+};
 
 // A phrase with a single non-term part (prefix/wildcard/range/...) reduces to
 // that part's own filter: position matching is a no-op for one word.

@@ -82,10 +82,12 @@ InvertedIndexData PackEntries(std::string_view name,
                               const std::vector<Column::Id>& columns,
                               const std::vector<ExpressionKey>& expression_keys,
                               const InvertedIndex::Entries& entries,
-                              const InvertedIndexOptions& options) {
+                              const InvertedIndexOptions& options,
+                              const ExpressionData& predicate) {
   InvertedIndexData data;
   data.name = std::string{name};
   data.options = options;
+  data.predicate = predicate;
   data.columns.assign(columns.begin(), columns.end());
   data.expression_keys.assign(expression_keys.begin(), expression_keys.end());
   data.entries.reserve(entries.size());
@@ -116,11 +118,13 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
                                 .numeric_field_id = cfg.numeric_field_id,
                               });
   }
-  return std::make_shared<InvertedIndex>(
+  auto index = std::make_shared<InvertedIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
     std::move(data.name), std::move(data.columns),
     std::move(data.expression_keys), std::move(entries),
-    std::move(data.options));
+    std::move(data.options), std::move(data.predicate));
+  index->SetComment(data.comment);
+  return index;
 }
 
 }  // namespace
@@ -133,8 +137,9 @@ std::shared_ptr<InvertedIndex> InvertedIndex::Deserialize(
 }
 
 void InvertedIndex::Serialize(duckdb::Serializer& sink) const {
-  auto data =
-    PackEntries(GetName(), GetColumns(), _expression_keys, _entries, _options);
+  auto data = PackEntries(GetName(), GetColumns(), _expression_keys, _entries,
+                          _options, _predicate);
+  data.comment = Comment();
   basics::WriteTuple(sink, data);
 }
 

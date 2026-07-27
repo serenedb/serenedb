@@ -41,6 +41,21 @@ repos:
       - id: gersemi
         name: CMake formatter
 
+  # Rewriting fixers -- must run before clang-format so it reflows their
+  # output in the same pass.
+  - repo: local
+    hooks:
+      - id: fix-enum-trailing-comma
+        name: Fix enum trailing comma
+        language: python
+        entry: python3 scripts/fix_enum_trailing_comma.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: fix-lambda-empty-parens
+        name: Fix lambda empty parameter list
+        language: python
+        entry: python3 scripts/fix_lambda_empty_parens.py
+        files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v21.1.8
     hooks:
@@ -105,13 +120,37 @@ repos:
         entry: python3 scripts/check_cpp_extensions.py
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|c\+\+|h\+\+)$
         exclude: ^tests/drivers/c/
-      - id: check-no-throw-duckdb
-        name: Check no raw duckdb exceptions in server code
+      - id: check-no-raw-throw
+        name: Check no raw throw in server code
         language: python
-        entry: python3 scripts/check_no_throw_duckdb.py
+        entry: python3 scripts/check_no_raw_throw.py
         files: ^server/.*\.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
       - id: check-api-keys
         name: Scan for hard-coded API keys
         language: python
         entry: python3 scripts/check_api_keys.py
         exclude_types: [binary]
+      - id: format-duckdb
+        name: Format duckdb-family C++ (clang-format 11, docker)
+        # The duckdb-style extensions (duckdb, duckdb_postgres, duckdb_clickhouse,
+        # ...) are excluded from the standard clang-format hook above (global
+        # `exclude: third_party/.*/.*`) and need clang-format 11 in duckdb's own
+        # style, so they are formatted by scripts/format_duckdb.sh (docker-based).
+        # always_run + pass_filenames because the global exclude filters every
+        # third_party path out of the hook's file list; the script self-discovers
+        # the staged duckdb-family files (--staged) and exits without launching
+        # docker when none changed.
+        language: script
+        entry: scripts/format_duckdb.sh --staged
+        pass_filenames: false
+        always_run: true
+      - id: check-submodule-pointers
+        name: Check submodule gitlinks (on a version branch, not older than main)
+        language: python
+        entry: python3 scripts/check_submodule_pointers.py
+        # pre-commit filters submodule gitlinks out of its file lists, so a
+        # files: pattern on third_party/duckdb never matches; the script
+        # no-ops instantly (two local git calls) when the gitlink equals
+        # origin/main's, so unconditional runs are cheap.
+        always_run: true
+        pass_filenames: false

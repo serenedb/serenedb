@@ -36,7 +36,11 @@ class ReadContext;
 
 void NormalizeRows(float* data, size_t n, uint32_t d);
 
-enum class ClusteringAlgo { Auto, Lloyd, FlatSuperKMeans };
+enum class ClusteringAlgo {
+  Auto,
+  Lloyd,
+  FlatSuperKMeans,
+};
 
 std::vector<float> MakeRotation(uint32_t d, uint32_t seed);
 

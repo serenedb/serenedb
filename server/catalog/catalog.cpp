@@ -66,6 +66,7 @@
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
+#include "catalog/foreign_server.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -135,6 +136,9 @@ template<ResolveType Type>
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
       ERR_MSG("text search dictionary \"", name, "\" already exists"));
+  } else if constexpr (Type == ResolveType::ForeignServer) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("server \"", name, "\" already exists"));
   } else {
     static_assert(Type == ResolveType::Role);
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
@@ -400,6 +404,10 @@ void Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     AddToResolution<ResolveType::Tokenizer>(parent_id, object->GetId(),
                                             object->GetName(), replace);
     AddObjectDefinition<TokenizerDependency>(parent_id, object);
+  } else if constexpr (std::is_same_v<T, ForeignServer>) {
+    AddToResolution<ResolveType::ForeignServer>(parent_id, object->GetId(),
+                                                object->GetName(), replace);
+    AddObjectDefinition<ForeignServerDependency>(parent_id, object);
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
     AddToResolution<ResolveType::Type>(parent_id, object->GetId(),
                                        object->GetName(), replace);
@@ -445,6 +453,9 @@ void Snapshot::UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
   } else if constexpr (std::is_same_v<T, Tokenizer>) {
     RemoveFromResolution<ResolveType::Tokenizer>(parent_id, object->GetName(),
                                                  maybe_not_found);
+  } else if constexpr (std::is_same_v<T, ForeignServer>) {
+    RemoveFromResolution<ResolveType::ForeignServer>(
+      parent_id, object->GetName(), maybe_not_found);
   } else if constexpr (std::is_same_v<T, PgSqlType>) {
     RemoveFromResolution<ResolveType::Type>(parent_id, object->GetName(),
                                             maybe_not_found);
@@ -774,6 +785,12 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
     case ObjectType::Tokenizer:
       GetDependencyForWrite<SchemaDependency>(parent_id)->tokenizers.insert(id);
       break;
+    case ObjectType::ForeignServer:
+      GetDependencyForWrite<DatabaseDependency>(parent_id)
+        ->foreign_servers.insert(id);
+      break;
+    case ObjectType::UserMapping:
+      break;
     case ObjectType::Table: {
       GetDependencyForWrite<SchemaDependency>(parent_id)->tables.insert(id);
       const auto& table = basics::downCast<Table>(obj);
@@ -1064,6 +1081,16 @@ std::vector<std::shared_ptr<Tokenizer>> Snapshot::GetTokenizers(
     .value_or(std::vector<std::shared_ptr<Tokenizer>>{});
 }
 
+std::vector<std::shared_ptr<ForeignServer>> Snapshot::GetForeignServers(
+  ObjectId db_id) const {
+  return _resolution_table.GetForeignServerIds(db_id) |
+         std::views::transform(
+           [&](ObjectId server_id) -> std::shared_ptr<ForeignServer> {
+             return GetObject<ForeignServer>(server_id);
+           }) |
+         std::ranges::to<std::vector>();
+}
+
 std::vector<std::shared_ptr<PgSqlType>> Snapshot::GetTypes(
   ObjectId db_id, std::string_view schema) const {
   return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
@@ -1217,6 +1244,28 @@ std::shared_ptr<Tokenizer> Snapshot::GetTokenizer(const AccessContext& ax,
     }
   }
   return EnforceRead(ax, std::move(tok));
+}
+
+std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
+  ObjectId db_id, std::string_view name) const {
+  auto id =
+    _resolution_table.ResolveObject<ResolveType::ForeignServer>(db_id, name);
+  if (!id) {
+    return nullptr;
+  }
+  return GetObject<ForeignServer>(*id);
+}
+
+std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
+  std::string_view name) const {
+  // Server names are unique instance-wide (CreateForeignServer rejects a
+  // same-named server in any database), so the first match is the only match.
+  for (const auto& db : GetDatabases()) {
+    if (auto server = GetForeignServer(db->GetId(), name)) {
+      return server;
+    }
+  }
+  return nullptr;
 }
 
 std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
@@ -1808,6 +1857,12 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
         GetDependencyForWrite<SchemaDependency>(parent_id)->tokenizers.erase(
           id);
         break;
+      case ObjectType::ForeignServer:
+        GetDependencyForWrite<DatabaseDependency>(parent_id)
+          ->foreign_servers.erase(id);
+        break;
+      case ObjectType::UserMapping:
+        break;
       case ObjectType::Table: {
         GetDependencyForWrite<SchemaDependency>(parent_id)->tables.erase(id);
         const auto& t = basics::downCast<Table>(*obj);
@@ -1856,6 +1911,7 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::Database: {
       auto db_deps = GetDependency<DatabaseDependency>(id);
       drop_childs(db_deps->schemas);
+      drop_childs(db_deps->foreign_servers);
     } break;
     case ObjectType::Role:
       break;
@@ -1902,9 +1958,11 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
       break;
+    case ObjectType::ForeignServer:
     case ObjectType::PgSqlFunction:
     case ObjectType::PgSqlType:
     case ObjectType::Tokenizer:
+    case ObjectType::UserMapping:
     case ObjectType::Sequence:
       break;
     case ObjectType::Invalid:
@@ -2010,6 +2068,14 @@ void Catalog::RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   Apply(_snapshot, [&](auto& clone) {
     clone->RegisterObject(std::move(tokenizer), schema_id, false);
+  });
+}
+
+void Catalog::RegisterForeignServer(
+  ObjectId database_id, std::shared_ptr<ForeignServer> foreign_server) {
+  absl::MutexLock lock{&_mutex};
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RegisterObject(std::move(foreign_server), database_id, false);
   });
 }
 
@@ -2430,7 +2496,7 @@ bool Catalog::CreateInvertedIndex(
   const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
   std::string_view schema, std::string_view relation, std::string name,
   std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
-  CreateIndexOperationOptions operation_options) {
+  ExpressionData predicate, CreateIndexOperationOptions operation_options) {
   if (columns.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Cannot create index without columns"));
@@ -2471,7 +2537,8 @@ bool Catalog::CreateInvertedIndex(
   }
   auto index = catalog::CreateInvertedIndex(
     context, database_id, schema, *schema_id, ObjectId{0}, resolved.relation_id,
-    std::move(name), std::move(columns), _snapshot, std::move(options));
+    std::move(name), std::move(columns), _snapshot, std::move(options),
+    std::move(predicate));
   CreateIndexImpl(schema, std::move(index), operation_options);
   return true;
 }
@@ -2929,6 +2996,72 @@ bool Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
                                 dict->GetId(), bytes);
     },
     [&](auto& clone) { clone->UnregisterObject(dict, *schema_id, true); });
+  return true;
+}
+
+bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
+                                  std::shared_ptr<ForeignServer> foreign_server,
+                                  bool if_not_exists) {
+  absl::MutexLock lock{&_mutex};
+  // Servers are database children, like PG (no schema). Gated on CREATE on
+  // the database, same as CREATE SCHEMA -- PG gates on FDW USAGE instead, but
+  // serenedb has no foreign-data-wrapper catalog object to hang an ACL on.
+  RequireCreateOn(*_snapshot, ax.role, database_id);
+  if (!IsSupportedFdw(foreign_server->GetFdwName())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("foreign-data wrapper \"", foreign_server->GetFdwName(),
+              "\" is not supported"),
+      ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
+  }
+  if (_snapshot->GetForeignServer(database_id, foreign_server->GetName())) {
+    if (if_not_exists) {
+      return false;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+      ERR_MSG("server \"", foreign_server->GetName(), "\" already exists"));
+  }
+  // Catalog names are per-database, but the live attachment alias is
+  // instance-global: a second same-named server would race the first for it
+  // (nondeterministic boot winner; DROP DATABASE detaching the other
+  // database's attachment). The attach cannot catch this -- it only collides
+  // while the first server's attachment is live, not when its remote is down.
+  for (const auto& db : _snapshot->GetDatabases()) {
+    // A database shares the alias namespace with foreign servers, so a server
+    // named after one would make DROP SERVER's detach tear the database down.
+    if (db->GetName() == foreign_server->GetName()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("database \"", db->GetName(),
+                "\" already exists, so a server cannot take that name"),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+    if (db->GetId() != database_id &&
+        _snapshot->GetForeignServer(db->GetId(), foreign_server->GetName())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("server \"", foreign_server->GetName(),
+                "\" already exists in database \"", db->GetName(), "\""),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+  }
+  foreign_server->SetParentId(database_id);
+
+  Apply(
+    _snapshot,
+    [&](std::shared_ptr<Snapshot>& clone) {
+      clone->RegisterObject(foreign_server, database_id, false);
+      duckdb::MemoryStream stream;
+      auto bytes = catalog::SerializeObject(*foreign_server, stream);
+      _engine->CreateDefinition(database_id, ObjectType::ForeignServer,
+                                foreign_server->GetId(), bytes);
+    },
+    [&](auto& clone) {
+      clone->UnregisterObject(foreign_server, database_id, true);
+    });
   return true;
 }
 
@@ -3474,6 +3607,16 @@ void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
   ObjectId parent;
   if (type == ObjectType::Database) {
     obj = _snapshot->GetObject(database_id);
+  } else if (type == ObjectType::ForeignServer) {
+    // A foreign server is a database child with no schema; `name` is its name.
+    auto server_id =
+      _snapshot->GetObjectId<ResolveType::ForeignServer>(database_id, name);
+    if (!server_id) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("server \"", name, "\" does not exist"));
+    }
+    obj = _snapshot->GetObject(*server_id);
+    parent = database_id;
   } else if (type == ObjectType::Schema) {
     // For a schema target the schema's own name arrives in `name`; `schema` is
     // empty (it has no containing schema).
@@ -3544,6 +3687,13 @@ void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
                                                 cloned);
       _engine->CreateDefinition(parent, ObjectType::Schema, cloned->GetId(),
                                 bytes);
+      return;
+    }
+    if (type == ObjectType::ForeignServer) {
+      clone->ReplaceObject<ResolveType::ForeignServer>(
+        parent, cloned->GetName(), cloned);
+      _engine->CreateDefinition(parent, ObjectType::ForeignServer,
+                                cloned->GetId(), bytes);
       return;
     }
     if (type == ObjectType::PgSqlFunction) {
@@ -3648,6 +3798,183 @@ void Catalog::AlterInvertedIndexOptions(
   }
 }
 
+namespace {
+
+duckdb::Value CommentValue(std::string_view comment) {
+  return comment.empty() ? duckdb::Value{} : duckdb::Value{comment};
+}
+
+}  // namespace
+
+void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
+                               std::string_view schema, std::string_view name,
+                               ObjectType type, std::string_view comment,
+                               bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  std::shared_ptr<Object> obj;
+  if (schema_id) {
+    std::optional<ObjectId> object_id;
+    if (type == ObjectType::PgSqlFunction) {
+      object_id =
+        _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
+    } else if (type == ObjectType::PgSqlType) {
+      object_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
+    } else {
+      object_id =
+        _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+    }
+    if (object_id) {
+      obj = _snapshot->GetObject(*object_id);
+    }
+  }
+  if (!obj) {
+    if (missing_ok) {
+      return;
+    }
+    switch (type) {
+      case ObjectType::PgSqlFunction:
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", name, "\""));
+      case ObjectType::PgSqlType:
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("type \"", name, "\" does not exist"));
+      default:
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", name, "\" does not exist"));
+    }
+  }
+  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
+  const bool matches =
+    IsIndex(type) ? IsIndex(obj->GetType()) : obj->GetType() == type;
+  if (!matches) {
+    std::string_view what = [&] {
+      switch (type) {
+        case ObjectType::PgSqlView:
+          return "a view";
+        case ObjectType::Sequence:
+          return "a sequence";
+        default:
+          SDB_ASSERT(IsIndex(type));
+          return "an index";
+      }
+    }();
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not ", what));
+  }
+
+  std::shared_ptr<Object> updated;
+  ObjectId parent = *schema_id;
+  switch (obj->GetType()) {
+    case ObjectType::PgSqlView: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlView>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    case ObjectType::Sequence: {
+      updated = basics::downCast<Sequence>(*obj).CloneWithComment(comment);
+    } break;
+    case ObjectType::SecondaryIndex:
+    case ObjectType::InvertedIndex: {
+      updated = obj->Clone();
+      auto& index = basics::downCast<Index>(*updated);
+      index.SetComment(comment);
+      parent = index.GetRelationId();
+    } break;
+    case ObjectType::PgSqlType: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlType>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    case ObjectType::PgSqlFunction: {
+      updated = obj->Clone();
+      basics::downCast<PgSqlFunction>(*updated).GetInfo().comment =
+        CommentValue(comment);
+    } break;
+    default:
+      SDB_UNREACHABLE();
+  }
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    if (type == ObjectType::PgSqlFunction) {
+      clone->ReplaceObject<ResolveType::Function>(*schema_id, name, updated);
+    } else if (type == ObjectType::PgSqlType) {
+      clone->ReplaceObject<ResolveType::Type>(*schema_id, name, updated);
+    } else {
+      clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
+    }
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->Write([&](auto& ctx) {
+      ctx.PutDefinition(parent, updated->GetType(), updated->GetId(), bytes);
+    });
+  });
+}
+
+void Catalog::SetViewColumnComment(const AccessContext& ax,
+                                   ObjectId database_id,
+                                   std::string_view schema,
+                                   std::string_view name,
+                                   std::string_view column,
+                                   std::string_view comment, bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  std::shared_ptr<Object> obj;
+  if (schema_id) {
+    if (auto object_id =
+          _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
+      obj = _snapshot->GetObject(*object_id);
+    }
+  }
+  if (!obj) {
+    if (missing_ok) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", name, "\" does not exist"));
+  }
+  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
+  if (obj->GetType() != ObjectType::PgSqlView) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not a view"));
+  }
+
+  auto updated = std::static_pointer_cast<PgSqlView>(obj->Clone());
+  auto& info = updated->GetInfo();
+  duckdb::Identifier resolved{column};
+  const auto name_it = absl::c_find(info.names, resolved);
+  if (name_it == info.names.end()) {
+    const auto alias_it = absl::c_find(info.aliases, resolved);
+    if (alias_it == info.aliases.end()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", column, "\" of relation \"", name,
+                              "\" does not exist"));
+    }
+    const auto alias_index =
+      static_cast<size_t>(std::distance(info.aliases.begin(), alias_it));
+    SDB_ASSERT(alias_index < info.names.size());
+    resolved = info.names[alias_index];
+  }
+  if (comment.empty()) {
+    info.column_comments_map.erase(resolved);
+  } else {
+    info.column_comments_map[resolved] = duckdb::Value(std::string{comment});
+  }
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->Write([&](auto& ctx) {
+      ctx.PutDefinition(*schema_id, ObjectType::PgSqlView, updated->GetId(),
+                        bytes);
+    });
+  });
+}
+
 void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
                           std::string_view schema, std::string_view name,
                           ChangeCallback<Table> new_table,
@@ -3741,7 +4068,8 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
             default_sql = new_col.expr->GetExpr().ToString();
           }
           ctx.AddStoreColumn(store_name, std::string{new_col.GetName()},
-                             new_col.type.ToString(), std::move(default_sql));
+                             new_col.type.ToString(), std::move(default_sql),
+                             new_col.compression);
         }
         if (renamed_columns) {
           // Mirrored index definitions embed column names;
@@ -3935,8 +4263,9 @@ bool Catalog::DropRole(const AccessContext& ax, std::string_view role,
   return true;
 }
 
-void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
-                           duckdb::shared_ptr<void> keep_alive) {
+std::vector<ForeignServerAttachment> Catalog::DropDatabase(
+  const AccessContext& ax, std::string_view name,
+  duckdb::shared_ptr<void> keep_alive) {
   absl::MutexLock lock{&_mutex};
   auto database_id =
     _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, name);
@@ -3944,6 +4273,18 @@ void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
     THROW_SQL_ERROR(ERR_MSG("database \"", name, "\" does not exist"));
   }
   RequireObjectOwner(*_snapshot, ax.role, *database_id);
+
+  // Collected under the lock, atomic with the drop: the cascade removes the
+  // servers' catalog rows but not their instance-global DuckDB attachments. The
+  // attachment identity is captured here too, so the detach afterwards can only
+  // remove what this drop actually saw -- never an attachment a concurrent
+  // same-named CREATE SERVER put there in between.
+  std::vector<ForeignServerAttachment> detach_servers;
+  for (const auto& server : _snapshot->GetForeignServers(*database_id)) {
+    auto server_name = std::string{server->GetName()};
+    detach_servers.emplace_back(ForeignServerAttachment{
+      server_name, ForeignServerAttachmentId(server_name)});
+  }
 
   auto plan = _snapshot->ComputeDropPlan(*database_id);
 
@@ -3965,6 +4306,7 @@ void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
     SDB_IF_FAILURE("crash_on_drop") { return; }
     DropTask::Schedule(std::move(task)).Detach();
   });
+  return detach_servers;
 }
 
 bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
@@ -4646,6 +4988,47 @@ bool Catalog::DropTokenizer(std::string_view database, std::string_view schema,
   return true;
 }
 
+bool Catalog::DropForeignServer(const AccessContext& ax,
+                                std::string_view database,
+                                std::string_view name, bool cascade,
+                                bool missing_ok) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  const auto foreign_server_id =
+    database_id
+      ? _snapshot->GetObjectId<ResolveType::ForeignServer>(*database_id, name)
+      : std::nullopt;
+  if (!foreign_server_id) {
+    if (missing_ok) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("server \"", name, "\" does not exist"));
+  }
+  // PG semantics: only the server's owner (or a superuser) may drop it.
+  RequireObjectOwner(*_snapshot, ax.role, *foreign_server_id);
+
+  auto plan = _snapshot->ComputeDropPlan(*foreign_server_id);
+
+  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    SDB_ASSERT(clone);
+    auto foreign_server = clone->GetObject<ForeignServer>(*foreign_server_id);
+    SDB_ASSERT(foreign_server);
+
+    _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(*database_id, ObjectType::ForeignServer,
+                         *foreign_server_id);
+      clone->CommitDropPlan(ctx, plan);
+    });
+
+    clone->UnregisterObject(std::move(foreign_server), *database_id);
+    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
+  });
+  return true;
+}
+
 void Catalog::FinalizeLoad() {
   absl::MutexLock lock{&_mutex};
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
@@ -4774,6 +5157,7 @@ class OpenDatabase {
   void RegisterSchemas(ObjectId database_id);
   void RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   void RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
+  void RegisterForeignServers(ObjectId database_id);
   void RegisterViews(ObjectId database_id, ObjectId schema_id);
   // Sequences load in two passes: standalone before tables/views (so refs
   // to them resolve at the referrer's own registration), owned after
@@ -4854,6 +5238,7 @@ void OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
     ClearDeletedDefinitions(DeletedScope::Database);
   };
   RegisterSchemas(database_id);
+  RegisterForeignServers(database_id);
 }
 
 void OpenDatabase::RegisterDatabases() {
@@ -4919,6 +5304,24 @@ void OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
         THROW_SQL_ERROR(ERR_MSG("Failed to read tokenizer definition"));
       }
       _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
+      return true;
+    });
+}
+
+// Foreign servers live flat under the database in the store (PG shape).
+void OpenDatabase::RegisterForeignServers(ObjectId db_id) {
+  GetCatalogStore().VisitBoot(
+    db_id, ObjectType::ForeignServer,
+    [&](CatalogStore::Key key, std::string_view bytes) {
+      auto foreign_server =
+        catalog::DeserializeObject<ForeignServer>(bytes, {
+                                                           .id = key.id,
+                                                           .database_id = db_id,
+                                                         });
+      if (!foreign_server) {
+        THROW_SQL_ERROR(ERR_MSG("Failed to read foreign server definition"));
+      }
+      _catalog.RegisterForeignServer(db_id, std::move(foreign_server));
       return true;
     });
 }
@@ -5193,6 +5596,24 @@ void InitCatalog() {
       if (result->HasError()) {
         SDB_FATAL(GENERAL, "Failed to attach database ", db->GetName(), ": ",
                   result->GetError());
+      }
+    }
+  }
+
+  // Re-attach persisted foreign servers (external DBs: clickhouse/postgres) so
+  // they survive restart, the same way the databases above do. Unlike a local
+  // database, a remote being unreachable must NOT abort startup -- warn and
+  // continue; the server stays defined and a later access will surface it.
+  {
+    auto snapshot = GetCatalog().GetCatalogSnapshot();
+    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+    for (auto& db : snapshot->GetDatabases()) {
+      for (auto& server : snapshot->GetForeignServers(db->GetId())) {
+        auto res = RunForeignServerAttach(*conn, *server);
+        if (res.status == ForeignServerAttachResult::Status::Failed) {
+          SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
+                   server->GetName(), ": ", res.error);
+        }
       }
     }
   }

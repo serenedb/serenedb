@@ -431,12 +431,12 @@ TEST(thread_pool_test, test_schedule_seq_mt) {
 }
 
 TEST(thread_pool_test, test_stop_long_running_run_after_stop_mt) {
-  std::function<void()> func = []() { EXPECT_FALSE(true); };
+  std::function<void()> func = [] { EXPECT_FALSE(true); };
 
   std::mutex mtx;
   std::condition_variable cv;
   std::atomic<size_t> count{0};
-  auto long_running_task = [&mtx, &count]() {
+  auto long_running_task = [&mtx, &count] {
     {
       auto lock = std::lock_guard(mtx);
     }
@@ -474,7 +474,7 @@ TEST(thread_pool_test, test_stop_long_running_run_after_stop_mt) {
 TEST(thread_pool_test, test_stop_long_ruuning_run_skip_pending_mt) {
   std::mutex mtx;
   std::atomic<size_t> count{0};
-  auto long_running_task = [&mtx, &count]() {
+  auto long_running_task = [&mtx, &count] {
     {
       auto lock = std::lock_guard(mtx);
     }
@@ -502,7 +502,7 @@ TEST(thread_pool_test, test_stop_long_ruuning_run_skip_pending_mt) {
     ASSERT_EQ(std::make_tuple(size_t(1), size_t(0), size_t(1)), pool.stats());
 
     for (size_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(pool.run([&count]() { ++count; }, absl::Milliseconds(10)));
+      ASSERT_TRUE(pool.run([&count] { ++count; }, absl::Milliseconds(10)));
     }
 
     ASSERT_EQ(1, pool.tasks_active());

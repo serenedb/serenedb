@@ -140,7 +140,7 @@ enum yysymbol_kind_t
   YYSYMBOL_base_term = 35,                 /* base_term  */
   YYSYMBOL_36_2 = 36,                      /* @2  */
   YYSYMBOL_range_expr = 37,                /* range_expr  */
-  YYSYMBOL_range_bound = 38                /* range_bound  */
+  YYSYMBOL_range_bound = 38,                /* range_bound  */
 };
 typedef enum yysymbol_kind_t yysymbol_kind_t;
 
@@ -684,7 +684,7 @@ static const yytype_int8 yyr2[] =
 };
 
 
-enum { YYENOMEM = -2 };
+enum { YYENOMEM = -2, };
 
 #define yyerrok         (yyerrstatus = 0)
 #define yyclearin       (yychar = YYEMPTY)

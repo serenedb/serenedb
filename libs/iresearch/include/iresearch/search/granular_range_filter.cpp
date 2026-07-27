@@ -37,7 +37,11 @@
 namespace irs {
 namespace {
 
-enum class RangeKind { Term, Empty, Range };
+enum class RangeKind {
+  Term,
+  Empty,
+  Range,
+};
 
 RangeKind Classify(const ByGranularRangeOptions& options) noexcept {
   const auto& rng = options.range;

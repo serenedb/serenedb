@@ -179,7 +179,10 @@ struct NestedInvariant {
   bool operator==(const NestedInvariant&) const = default;
 };
 
-enum class SomeEnum { Value1 = 1, Value2 = 5 };
+enum class SomeEnum {
+  Value1 = 1,
+  Value2 = 5,
+};
 
 struct Null {
   bool operator==(const Null&) const = default;

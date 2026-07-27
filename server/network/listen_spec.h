@@ -29,9 +29,15 @@
 
 namespace sdb::network {
 
-enum class ListenProtocol : uint8_t { Pg, Http };
+enum class ListenProtocol : uint8_t {
+  Pg,
+  Http,
+};
 
-enum class ListenTransport : uint8_t { Tcp, Unix };
+enum class ListenTransport : uint8_t {
+  Tcp,
+  Unix,
+};
 
 enum class SslMode : uint8_t {
   Disable,
@@ -42,7 +48,11 @@ enum class SslMode : uint8_t {
   VerifyFull,
 };
 
-enum class ProxyMode : uint8_t { Off, Optional, Require };
+enum class ProxyMode : uint8_t {
+  Off,
+  Optional,
+  Require,
+};
 
 struct ListenSpec {
   std::string url;

@@ -28,6 +28,7 @@
 #include "catalog/object.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
+#include "connector/duckdb_table_entry.h"
 
 namespace sdb::connector {
 
@@ -50,11 +51,25 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
 };
 
 class InvertedIndexScanEntry : public SereneDBIndexScanEntry {
+ public:
+  duckdb::vector<duckdb::ColumnSegmentInfo> GetColumnSegmentInfo(
+    const duckdb::QueryContext& context,
+    const duckdb::ColumnSegmentInfoScanOptions& options) final;
+  bool ScanColumnSegmentInfo(
+    const duckdb::QueryContext& context,
+    duckdb::ColumnSegmentInfoScanState& state,
+    duckdb::vector<duckdb::ColumnSegmentInfo>& result) final;
+
  protected:
   InvertedIndexScanEntry(
     duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
     duckdb::CreateTableInfo& info, std::vector<size_t> indexed_col_indices,
     std::shared_ptr<const catalog::InvertedIndex> inverted_index);
+
+  virtual std::vector<IResearchColumnBinding> SegmentInfoBindings() const = 0;
+  virtual duckdb::column_t RowIdentityColumnId() const = 0;
+
+  std::vector<IResearchColumnBinding> IndexSegmentInfoBindings() const;
 
   std::shared_ptr<const catalog::InvertedIndex> _inverted_index;
 };
@@ -75,6 +90,10 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
+
+ protected:
+  std::vector<IResearchColumnBinding> SegmentInfoBindings() const final;
+  duckdb::column_t RowIdentityColumnId() const final;
 
  private:
   std::shared_ptr<catalog::Table> _sdb_table;
@@ -97,6 +116,10 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
+
+ protected:
+  std::vector<IResearchColumnBinding> SegmentInfoBindings() const final;
+  duckdb::column_t RowIdentityColumnId() const final;
 
  private:
   std::shared_ptr<const catalog::PgSqlView> _sdb_view;
@@ -133,6 +156,9 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
  private:
+  duckdb::TableCatalogEntry& ResolveStoreEntry(
+    duckdb::ClientContext& context) const;
+
   std::shared_ptr<catalog::Table> _sdb_table;
 };
 

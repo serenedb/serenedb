@@ -117,6 +117,26 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
 
 #undef DECLARE_PG_TYPE
 
+inline constexpr std::string_view kCtidAlias = "ctid";
+
+inline bool IsCtid(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetAlias() == kCtidAlias;
+}
+
+#ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
+inline duckdb::LogicalType CTID() {
+  static const auto kType = [] {
+    auto type = duckdb::LogicalType::STRUCT(
+      {{"block_number", duckdb::LogicalType::UINTEGER},
+       {"tuple_offset", duckdb::LogicalType::USMALLINT}});
+    type.SetAlias(std::string{kCtidAlias});
+    return type;
+  }();
+  return kType;
+}
+#endif
+
 inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
 
 inline bool IsInet(const duckdb::LogicalType& type) {

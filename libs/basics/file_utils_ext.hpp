@@ -130,7 +130,12 @@ bool ExistsFile(bool& result, const path_char_t* file) noexcept;
 
 bool Mtime(time_t& result, const path_char_t* file) noexcept;
 
-enum class OpenMode : uint16_t { Invalid = 0, Read = 1, Write = 2, Direct = 4 };
+enum class OpenMode : uint16_t {
+  Invalid = 0,
+  Read = 1,
+  Write = 2,
+  Direct = 4,
+};
 
 ENABLE_BITMASK_ENUM(OpenMode);
 

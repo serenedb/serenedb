@@ -1,6 +1,29 @@
 services:
+  # recovery/*_chscan.test_slow need a real ClickHouse with the shared fixtures.
+  # Unlike the sqllogic kind, this harness has no docker socket, so run.sh cannot
+  # start one -- compose provides it as a sibling service instead, and the
+  # fixtures bind-mount works because compose resolves paths on the host.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      - CLICKHOUSE_SKIP_USER_SETUP=1
+    volumes:
+      - "${SQLLOGIC_DIR}/fixtures/clickhouse:/docker-entrypoint-initdb.d:ro"
+    healthcheck:
+      test:
+        - CMD
+        - clickhouse-client
+        - --query
+        - SELECT throwIf(count() < 3) FROM system.tables WHERE database = 'chtest'
+      interval: 2s
+      timeout: 5s
+      retries: 45
+
   tests:
     image: ${BUILD_IMAGE}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     security_opt:
       - seccomp:unconfined
@@ -30,5 +53,8 @@ services:
       - SDB_TIMING_KEY
       - TMPDIR=/recovery_data
       - SKIP_SLOW_TESTS
+      - CHHOST=clickhouse
+      - CHPORT=9000
+      - CHUSER=default
     working_dir: /sqllogic
     command: ./run_recovery_tests.sh --runner /sqllogictest-rs

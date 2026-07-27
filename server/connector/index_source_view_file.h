@@ -61,11 +61,7 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
     std::span<const catalog::Column::Id> bind_column_ids,
     duckdb::TableFilterSet* pushed_filters = nullptr);
 
-  PrimaryKeyBatch::Kind PkKind() const final {
-    return PrimaryKeyBatch::Kind::I64;
-  }
-  duckdb::idx_t Materialize(duckdb::ClientContext& context,
-                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
                             duckdb::idx_t count,
                             duckdb::DataChunk& output) final;
 
@@ -82,11 +78,7 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
                           std::span<const catalog::Column::Id> bind_column_ids,
                           duckdb::TableFilterSet* pushed_filters = nullptr);
 
-  PrimaryKeyBatch::Kind PkKind() const final {
-    return PrimaryKeyBatch::Kind::I64I64;
-  }
-  duckdb::idx_t Materialize(duckdb::ClientContext& context,
-                            PrimaryKeyBatch& batch, duckdb::idx_t start,
+  duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
                             duckdb::idx_t count,
                             duckdb::DataChunk& output) final;
 

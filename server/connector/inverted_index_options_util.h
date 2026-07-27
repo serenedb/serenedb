@@ -66,12 +66,13 @@ inline constexpr std::array<std::string_view, 10> kNumericInvertedOptions = {
 // Everything CREATE INDEX ... WITH accepts: the numeric options plus the
 // create-time-only string options.
 inline constexpr auto kCreateInvertedOptions = [] {
-  std::array<std::string_view, kNumericInvertedOptions.size() + 2> all{};
+  std::array<std::string_view, kNumericInvertedOptions.size() + 3> all{};
   for (size_t i = 0; i < kNumericInvertedOptions.size(); ++i) {
     all[i] = kNumericInvertedOptions[i];
   }
   all[kNumericInvertedOptions.size()] = "optimize_top_k";
   all[kNumericInvertedOptions.size() + 1] = "store_pk";
+  all[kNumericInvertedOptions.size() + 2] = "key_columns";
   return all;
 }();
 

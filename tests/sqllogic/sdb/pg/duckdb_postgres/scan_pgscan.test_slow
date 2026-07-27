@@ -13,11 +13,11 @@ ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pg_${__
 
 
 statement ok
-CREATE SCHEMA pg_${__DATABASE__}.${__DATABASE__}_data;
+CREATE SCHEMA pg_${__DATABASE__}.s${__DATABASE__}_data;
 
 
 statement ok
-CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_data.widgets (
+CREATE TABLE pg_${__DATABASE__}.s${__DATABASE__}_data.widgets (
   id    INTEGER PRIMARY KEY,
   name  TEXT,
   price NUMERIC(10,2),
@@ -26,7 +26,7 @@ CREATE TABLE pg_${__DATABASE__}.${__DATABASE__}_data.widgets (
 
 
 statement count 4
-INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_data.widgets VALUES
+INSERT INTO pg_${__DATABASE__}.s${__DATABASE__}_data.widgets VALUES
   (1, 'gadget',      9.99,  10),
   (2, 'gizmo',      19.99,  0),
   (3, 'thingamajig', NULL,  5),
@@ -36,7 +36,7 @@ INSERT INTO pg_${__DATABASE__}.${__DATABASE__}_data.widgets VALUES
 # Full scan, ordered for determinism.
 query
 SELECT id, name, price, stock
-FROM pg_${__DATABASE__}.${__DATABASE__}_data.widgets
+FROM pg_${__DATABASE__}.s${__DATABASE__}_data.widgets
 ORDER BY id;
 ----
 id	name	price	stock
@@ -49,7 +49,7 @@ id	name	price	stock
 # Projection (subset of columns).
 query
 SELECT name, stock
-FROM pg_${__DATABASE__}.${__DATABASE__}_data.widgets
+FROM pg_${__DATABASE__}.s${__DATABASE__}_data.widgets
 ORDER BY id;
 ----
 name	stock
@@ -61,7 +61,7 @@ gadget	3
 
 # Equality pushdown.
 query
-SELECT id FROM pg_${__DATABASE__}.${__DATABASE__}_data.widgets
+SELECT id FROM pg_${__DATABASE__}.s${__DATABASE__}_data.widgets
 WHERE name = 'gadget'
 ORDER BY id;
 ----
@@ -72,7 +72,7 @@ id
 
 # IN pushdown.
 query
-SELECT id FROM pg_${__DATABASE__}.${__DATABASE__}_data.widgets
+SELECT id FROM pg_${__DATABASE__}.s${__DATABASE__}_data.widgets
 WHERE id IN (2, 3)
 ORDER BY id;
 ----
@@ -83,7 +83,7 @@ id
 
 # IS NULL pushdown.
 query
-SELECT id FROM pg_${__DATABASE__}.${__DATABASE__}_data.widgets
+SELECT id FROM pg_${__DATABASE__}.s${__DATABASE__}_data.widgets
 WHERE price IS NULL;
 ----
 id
@@ -91,11 +91,11 @@ id
 
 
 statement ok
-DROP TABLE pg_${__DATABASE__}.${__DATABASE__}_data.widgets;
+DROP TABLE pg_${__DATABASE__}.s${__DATABASE__}_data.widgets;
 
 
 statement ok
-DROP SCHEMA pg_${__DATABASE__}.${__DATABASE__}_data;
+DROP SCHEMA pg_${__DATABASE__}.s${__DATABASE__}_data;
 
 
 statement ok

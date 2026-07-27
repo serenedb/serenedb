@@ -31,11 +31,14 @@
 
 namespace sdb::catalog::persistence {
 
+// Whether an inverted index stores a per-row primary key hits can be mapped
+// back through. The key's SHAPE (single int, file/row pair, composite or ctid
+// struct) is NOT recorded here -- the stored PK column self-describes its type
+// and the runtime index source knows how to read it.
 enum class PkColumnKind : uint8_t {
-  None,
-  I64,
-  I64I64,
-  Unable,
+  None,    // store_pk = 'none': no PK stored (count / BM25 / INCLUDE only).
+  Unable,  // no materialisable PK resolved (unrecognised view source).
+  Has,     // a PK column is stored; its type comes from the column itself.
 };
 
 // The initializers ARE the built-in defaults: options always hold concrete
@@ -54,7 +57,8 @@ struct InvertedIndexOptions {
   uint64_t compaction_max_segments_bytes = uint64_t{5} << 30;
   uint64_t compaction_floor_segment_bytes = uint64_t{2} << 20;
   bool pk_term = true;
-  PkColumnKind pk_column = PkColumnKind::I64;
+  PkColumnKind pk_column = PkColumnKind::Has;
+  std::vector<std::string> key_columns;
   std::optional<ScorerOptions> topk_scorer;
 };
 

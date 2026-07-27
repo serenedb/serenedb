@@ -32,7 +32,18 @@ enum class PkSpec : uint8_t {
   // Native duckdb files read via read_duckdb: the duckdb rowid is the PK.
   DuckDBRowId,
   FileIndexPlusDuckDBRowId,
+  // Attached external DB (pg/CH): matched rows re-fetch by value via SQL.
+  //   ExternalPostgresCtid -- the postgres ctid (travels as the duckdb rowid).
+  //   ExternalColumnKey    -- 1..N real columns (engine PK metadata or
+  //   key_columns).
+  ExternalPostgresCtid,
+  ExternalColumnKey,
 };
+
+constexpr bool IsExternalPK(PkSpec spec) noexcept {
+  return spec == PkSpec::ExternalPostgresCtid ||
+         spec == PkSpec::ExternalColumnKey;
+}
 
 constexpr bool IsGlobPK(PkSpec spec) noexcept {
   return spec == PkSpec::FileIndexPlusRowNumber ||

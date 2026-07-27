@@ -204,4 +204,6 @@ struct FilterVisitor;
 using field_visitor =
   absl::AnyInvocable<void(const SubReader&, const TermReader&, FilterVisitor&)>;
 
+[[noreturn]] void ThrowMissingTokenizerStore(irs::field_id store_field_id);
+
 }  // namespace irs

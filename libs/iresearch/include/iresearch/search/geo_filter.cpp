@@ -533,7 +533,7 @@ GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
   }
   const auto* stored_field = segment.Column(store_field_id);
   if (!stored_field) {
-    return state;
+    ThrowMissingTokenizerStore(store_field_id);
   }
   auto terms = reader->iterator(SeekMode::NORMAL);
   if (!terms) [[unlikely]] {

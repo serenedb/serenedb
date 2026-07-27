@@ -24,6 +24,8 @@
 
 #include "basics/singleton.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -71,6 +73,16 @@ TermIterator::ptr Filter::CompileTermIterator(const TermReader& reader) const {
 QueryBuilder::ptr Empty::PrepareSegment(const SubReader&,
                                         const PrepareContext&) const {
   return QueryBuilder::Empty();
+}
+
+void ThrowMissingTokenizerStore(irs::field_id store_field_id) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+    ERR_MSG("inverted index segment has indexed terms for a tokenizer that "
+            "requires a stored-token column, but column id ",
+            store_field_id, " is missing from the segment"),
+    ERR_HINT("The index was written without the tokenizer store. Rebuild it "
+             "with REINDEX."));
 }
 
 }  // namespace irs

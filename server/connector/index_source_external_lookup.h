@@ -64,6 +64,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
   void PrepareLookup(duckdb::ClientContext& context, const std::string& catalog,
                      const std::string& inner,
                      duckdb::named_parameter_map_t named);
+  void BorrowKeyColumns(duckdb::Vector& pk, duckdb::idx_t count);
 
   duckdb::idx_t _num_proj_cols = 0;
   duckdb::idx_t _num_key_cols = 0;
@@ -73,10 +74,8 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
   duckdb::TableFunction _lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> _bind_data;
   duckdb::unique_ptr<duckdb::GlobalTableFunctionState> _gstate;
-
-  std::vector<uint8_t> _filled;
-  duckdb::idx_t _gate_count = 0;
-  duckdb::idx_t _gate_limit = 0;
+  //! Key columns referencing the current batch's pk; refilled per batch.
+  duckdb::DataChunk _key_chunk;
 };
 
 }  // namespace sdb::connector

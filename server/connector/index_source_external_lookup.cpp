@@ -35,8 +35,10 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/common/vector_size.hpp>
+#include <duckdb/execution/execution_context.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/parallel/thread_context.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <string>
@@ -120,7 +122,6 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
 
   BuildQuery(context, ref, select_names);
 
-  _filled.reserve(STANDARD_VECTOR_SIZE);
   _sort_perm.resize(STANDARD_VECTOR_SIZE);
   absl::c_iota(_sort_perm, duckdb::idx_t{0});
 }
@@ -139,7 +140,7 @@ void ExternalLookupIndexSource::PrepareLookup(
   duckdb::ClientContext& context, const std::string& catalog,
   const std::string& inner, duckdb::named_parameter_map_t named) {
   const std::string_view func_name =
-    _dialect == Dialect::Postgres ? "postgres_query" : "clickhouse_query";
+    _dialect == Dialect::Postgres ? "postgres_lookup" : "clickhouse_lookup";
   auto& sys = duckdb::Catalog::GetSystemCatalog(context);
   auto tx = duckdb::CatalogTransaction::GetSystemTransaction(*context.db);
   auto& schema = sys.GetSchema(tx, DEFAULT_SCHEMA);
@@ -158,7 +159,6 @@ void ExternalLookupIndexSource::PrepareLookup(
   }
   SDB_ASSERT(found);
 
-  named.emplace("lookup", duckdb::Value::BOOLEAN(true));
   duckdb::vector<duckdb::Value> inputs;
   inputs.emplace_back(catalog);
   inputs.emplace_back(inner);
@@ -298,6 +298,24 @@ void ExternalLookupIndexSource::BuildClickHouseQuery(
   PrepareLookup(context, ref.catalog, inner, std::move(named));
 }
 
+// The value-addressed analogue of ViewIndexSourceBase::SortRows: request column
+// k is key column k. A ctid is one wire value, so the struct vector itself is
+// the only key column; any other key spreads its children across a column each.
+// The columns reference the pk's buffers, so nothing is copied.
+void ExternalLookupIndexSource::BorrowKeyColumns(duckdb::Vector& pk,
+                                                 duckdb::idx_t count) {
+  const std::span<duckdb::Vector> sources =
+    _postgres_ctid ? std::span{&pk, 1}
+                   : std::span{duckdb::StructVector::GetEntries(pk)};
+  // Refilled, not rebuilt: clear() keeps the column vector's capacity, so only
+  // the first batch allocates (the same reason SortRows resizes members).
+  _key_chunk.data.clear();
+  for (const auto& source : sources) {
+    _key_chunk.data.emplace_back(duckdb::Vector::Ref(source));
+  }
+  _key_chunk.SetCardinality(count);
+}
+
 duckdb::idx_t ExternalLookupIndexSource::Materialize(
   duckdb::ClientContext& context, duckdb::Vector& pk, duckdb::idx_t count,
   duckdb::DataChunk& output) {
@@ -309,34 +327,22 @@ duckdb::idx_t ExternalLookupIndexSource::Materialize(
 
   AliasOutput(output);
 
-  _survivor_idx.resize(count);
-  _filled.assign(count, 0);
-  _gate_count = 0;
-  _gate_limit = count;
+  BorrowKeyColumns(pk, count);
 
+  _survivor_idx.resize(count);
   duckdb::TableFunctionInput in(_bind_data.get(), /*local_state=*/nullptr,
                                 _gstate.get());
-  in.lookup_keys = &pk;
-  in.lookup_count = count;
-  in.lookup_gate = [](void* state, int64_t ord) {
-    auto& self = *static_cast<ExternalLookupIndexSource*>(state);
-    if (ord < 1 || ord > self._gate_limit || self._filled[ord - 1]) {
-      return false;
-    }
-    self._filled[ord - 1] = 1;
-    self._survivor_idx[self._gate_count++] = ord - 1;
-    return true;
-  };
-  in.lookup_gate_state = this;
+  in.pk_survivors = _survivor_idx;
 
-  duckdb::idx_t before;
-  do {
-    before = _tf_target.size();
-    _lookup_func.function(context, in, _tf_target);
-    in.lookup_keys = nullptr;
-  } while (_tf_target.size() != before);
+  // The remote lookup is an in-out TF: keys go in as a chunk, and it reports
+  // HAVE_MORE_OUTPUT until this request is drained. We drive it directly rather
+  // than through a pipeline, so we supply the execution context ourselves.
+  duckdb::ThreadContext thread_context{context};
+  duckdb::ExecutionContext exec{context, thread_context, /*pipeline=*/nullptr};
+  while (_lookup_func.in_out_function(exec, in, _key_chunk, _tf_target) ==
+         duckdb::OperatorResultType::HAVE_MORE_OUTPUT) {
+  }
   const auto rows = _tf_target.size();
-  SDB_ASSERT(rows == _gate_count);
 
   RunCastPass(output, rows);
   GatherNonLookupColumns(output, rows, _survivor_idx.data());

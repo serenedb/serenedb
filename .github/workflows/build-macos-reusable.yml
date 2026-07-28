@@ -5,15 +5,6 @@ name: task | serenedb macos build & test
 # locally-started serened. Reusable + manually dispatchable; wired into the
 # nightly schedule (jobs-schedule.yml).
 on:
-  # ┌─────────────────────────────────────────────────────────────────────────┐
-  # │ ATTENTION — TEMPORARY. This `push` trigger runs the macOS build on every │
-  # │ push to the port branch so CI can be validated before it lands on main / │
-  # │ the nightly schedule. REMOVE this whole `push:` block before merging to  │
-  # │ main — the nightly schedule (jobs-schedule.yml) is the permanent hook.   │
-  # └─────────────────────────────────────────────────────────────────────────┘
-  push:
-    branches:
-      - mkornaukhov/build-on-mac
   workflow_call:
     inputs:
       PR_SHA:

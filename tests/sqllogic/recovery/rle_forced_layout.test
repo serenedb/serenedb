@@ -4,9 +4,8 @@
 # frame-of-reference'd and bitpacked; native duckdb storage keeps them raw. The layouts are
 # distinguished by the top bit of the leading uint64, which is free natively because that field is a
 # byte offset within one block. Forcing the codec is what makes the layout choice observable on data
-# RLE would not otherwise win, and force_compression is a global setting -- which is why this lives
-# in recovery, where each test file gets its own serened instance, rather than in the shared sdb
-# suite.
+# RLE would not otherwise win, and force_compression is a global setting, so it needs a test file
+# with its own serened instance.
 #
 # It also crashes the server and re-attaches both databases afterwards, so the packed segments are
 # decoded from disk rather than from whatever the writer left in memory.

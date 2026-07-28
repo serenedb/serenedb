@@ -7,8 +7,7 @@
 # The shape below is what exposes it: a few hundred shared prefixes (i % 500) each carrying a unique
 # tail, so the cleave keeps repartitioning as entries arrive and the segment sits close to the block
 # for a long stretch. It needs enough rows to reach that stretch -- 3M reproduces, 2.5M does not.
-# No forced mode: this is the default path for serenedb-owned storage. force_dict_fsst_mode is
-# global-scope, so setting it here would fight the other tests sharing this suite's server.
+# No forced mode: this is the default path for serenedb-owned storage.
 
 control substitution on
 

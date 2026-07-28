@@ -160,10 +160,37 @@ NULL
 NULL
 
 
+# --- a column whose runs outgrow one segment -------------------------------------
+# Both streams are padded up to a bitpacking group per segment, so the size the analyze phase
+# reports has to charge that padding once per segment rather than once per column. Runs of two rows
+# put more runs in a row group than fit in one RLE segment, which is what makes the two differ.
+statement ok
+CREATE TABLE rle_own.multiseg AS SELECT ((i // 2) % 100)::INTEGER AS v FROM range(2000000) t(i);
+
+
+statement ok
+CHECKPOINT rle_own;
+
+
+query
+SELECT count(*) FILTER (WHERE compression='RLE') > count(DISTINCT row_group_id) AS spans_segments,
+       count(*) FILTER (WHERE compression='RLE') > 0 AS still_rle
+  FROM pragma_storage_info('rle_own.multiseg');
+----
+spans_segments	still_rle
+t	t
+
+
+query
+SELECT count(*) AS n, sum(v::HUGEINT) AS checksum FROM rle_own.multiseg;
+----
+n	checksum
+2000000	99000000
+
+
 # --- and is not picked when every run is one value -------------------------------
 # RLE would only match a plain bitpack of the values there while fragmenting into far more segments.
-# That it also refuses when explicitly forced is covered in recovery/rle_forced_layout.test, which
-# gets its own server and can safely set the global force_compression.
+# That it also refuses when explicitly forced is covered in rle_forced_layout.test.
 statement ok
 CREATE TABLE rle_own.singleton AS SELECT (i * 100003 % 2000000000)::INTEGER AS v FROM range(300000) t(i);
 

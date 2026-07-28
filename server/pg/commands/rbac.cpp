@@ -397,10 +397,10 @@ catalog::ObjectType DefaultAclObjType(std::string_view objtype_char) {
     return catalog::ObjectType::Sequence;
   }
   if (objtype_char == "f") {
-    return catalog::ObjectType::PgSqlFunction;
+    return catalog::ObjectType::Function;
   }
   if (objtype_char == "T") {
-    return catalog::ObjectType::PgSqlType;
+    return catalog::ObjectType::Type;
   }
   if (objtype_char == "n") {
     return catalog::ObjectType::Schema;
@@ -542,11 +542,11 @@ std::shared_ptr<catalog::Object> ResolveGrantTarget(
   const auto parsed = ParseObjectName(raw_name, current_schema);
   out_schema = parsed.schema;
   out_name = parsed.relation;
-  if (type == catalog::ObjectType::PgSqlFunction) {
+  if (type == catalog::ObjectType::Function) {
     return snap.GetFunction(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
                             parsed.schema, parsed.relation);
   }
-  if (type == catalog::ObjectType::PgSqlType) {
+  if (type == catalog::ObjectType::Type) {
     return snap.GetType(catalog::NoAccessCheck(), ctx.GetDatabaseId(),
                         parsed.schema, parsed.relation);
   }
@@ -703,14 +703,14 @@ void GrantObject(ConnectionContext& ctx, catalog::ObjectType type,
   auto target =
     ResolveGrantTarget(ctx, *snapshot, type, obj_name, schema_name, rel_name);
   if (!target) {
-    if (type == catalog::ObjectType::PgSqlType &&
+    if (type == catalog::ObjectType::Type &&
         RegtypeIn(rel_name) != kInvalidOid) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("cannot change privileges of built-in type ", rel_name));
     }
     const bool is_relation = type == catalog::ObjectType::Table ||
-                             type == catalog::ObjectType::PgSqlView ||
+                             type == catalog::ObjectType::View ||
                              type == catalog::ObjectType::Sequence;
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG(is_relation ? "relation" : ToPgObjectTypeName(type),
@@ -794,7 +794,7 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, catalog::ObjectType type,
 
   std::vector<std::string> names;
   const ObjectId db = ctx.GetDatabaseId();
-  if (type == catalog::ObjectType::PgSqlFunction) {
+  if (type == catalog::ObjectType::Function) {
     for (const auto& fn : snapshot->GetFunctions(db, schema_name)) {
       names.push_back(std::string{fn->GetName()});
     }

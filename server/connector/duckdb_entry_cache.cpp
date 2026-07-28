@@ -70,7 +70,7 @@ std::shared_ptr<const catalog::PgSqlView> FindView(
   }
   auto relation =
     snapshot.GetRelation(catalog::NoAccessCheck(), db_id, schema_name, name);
-  if (relation && relation->GetType() == catalog::ObjectType::PgSqlView) {
+  if (relation && relation->GetType() == catalog::ObjectType::View) {
     return std::static_pointer_cast<const catalog::PgSqlView>(relation);
   }
   return nullptr;
@@ -357,7 +357,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
   if (!relation_obj) {
     return nullptr;
   }
-  if (relation_obj->GetType() == catalog::ObjectType::PgSqlView) {
+  if (relation_obj->GetType() == catalog::ObjectType::View) {
     auto view =
       std::static_pointer_cast<const catalog::PgSqlView>(relation_obj);
     const auto& vinfo = view->GetInfo();
@@ -673,7 +673,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntryObject(
                                    snapshot);
           }
           return nullptr;
-        case catalog::ObjectType::PgSqlView:
+        case catalog::ObjectType::View:
           if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
             return MakeViewEntry(
               catalog, entry, schema,

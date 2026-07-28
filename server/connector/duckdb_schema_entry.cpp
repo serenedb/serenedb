@@ -131,9 +131,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
     if (object && name.GetIdentifierName() != StaticStrings::kPgCatalogSchema) {
       const auto need = [&] {
         switch (object->GetType()) {
-          case catalog::ObjectType::PgSqlFunction:
+          case catalog::ObjectType::Function:
             return catalog::AclMode::Execute;
-          case catalog::ObjectType::PgSqlType:
+          case catalog::ObjectType::Type:
             return catalog::AclMode::Usage;
           default:
             return catalog::AclMode::NoRights;
@@ -908,11 +908,11 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         auto relation = catalog_impl.GetCatalogSnapshot()->GetRelation(
           catalog::NoAccessCheck(), db, name.GetIdentifierName(),
           info.GetQualifiedName().Name().GetIdentifierName());
-        if (relation && relation->GetType() == catalog::ObjectType::PgSqlView) {
+        if (relation && relation->GetType() == catalog::ObjectType::View) {
           catalog_impl.SetObjectComment(
             ax, db, name.GetIdentifierName(),
             info.GetQualifiedName().Name().GetIdentifierName(),
-            catalog::ObjectType::PgSqlView, comment, missing_ok);
+            catalog::ObjectType::View, comment, missing_ok);
           return;
         }
         catalog_impl.ChangeTable(
@@ -929,7 +929,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         catalog_impl.SetObjectComment(
           ax, db, name.GetIdentifierName(),
           info.GetQualifiedName().Name().GetIdentifierName(),
-          catalog::ObjectType::PgSqlView, comment, missing_ok);
+          catalog::ObjectType::View, comment, missing_ok);
         return;
       case duckdb::CatalogType::SEQUENCE_ENTRY:
         catalog_impl.SetObjectComment(
@@ -947,14 +947,14 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         catalog_impl.SetObjectComment(
           ax, db, name.GetIdentifierName(),
           info.GetQualifiedName().Name().GetIdentifierName(),
-          catalog::ObjectType::PgSqlType, comment, missing_ok);
+          catalog::ObjectType::Type, comment, missing_ok);
         return;
       case duckdb::CatalogType::MACRO_ENTRY:
       case duckdb::CatalogType::TABLE_MACRO_ENTRY:
         catalog_impl.SetObjectComment(
           ax, db, name.GetIdentifierName(),
           info.GetQualifiedName().Name().GetIdentifierName(),
-          catalog::ObjectType::PgSqlFunction, comment, missing_ok);
+          catalog::ObjectType::Function, comment, missing_ok);
         return;
       default:
         THROW_SQL_ERROR(

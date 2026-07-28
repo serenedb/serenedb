@@ -904,8 +904,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                             target.ParentSchema().name.GetIdentifierName(),
                             target.name.GetIdentifierName());
     std::optional<ViewFastPath> fp;
-    if (relation_obj &&
-        relation_obj->GetType() == catalog::ObjectType::PgSqlView) {
+    if (relation_obj && relation_obj->GetType() == catalog::ObjectType::View) {
       auto view =
         std::static_pointer_cast<const catalog::PgSqlView>(relation_obj);
       auto key_cols = KeyColumnsFromOptions(

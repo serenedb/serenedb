@@ -62,9 +62,9 @@ AclMode ClassPrivs(ObjectType type) noexcept {
       return AclMode::Create | AclMode::CreateTemp | AclMode::Connect;
     case ObjectType::Schema:
       return AclMode::Usage | AclMode::Create;
-    case ObjectType::PgSqlFunction:
+    case ObjectType::Function:
       return AclMode::Execute;
-    case ObjectType::PgSqlType:
+    case ObjectType::Type:
       return AclMode::Usage;
     // A FOREIGN SERVER carries USAGE (PG-style); a USER MAPPING has no ACL of
     // its own -- access is governed through its server and owner.
@@ -75,7 +75,7 @@ AclMode ClassPrivs(ObjectType type) noexcept {
     case ObjectType::Tombstone:
     case ObjectType::Role:
     case ObjectType::Tokenizer:
-    case ObjectType::PgSqlView:
+    case ObjectType::View:
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
     case ObjectType::Column:
@@ -94,9 +94,9 @@ AclMode PublicDefaultPrivs(ObjectType type) noexcept {
   switch (type) {
     case ObjectType::Database:
       return AclMode::Connect | AclMode::CreateTemp;
-    case ObjectType::PgSqlFunction:
+    case ObjectType::Function:
       return AclMode::Execute;
-    case ObjectType::PgSqlType:
+    case ObjectType::Type:
       return AclMode::Usage;
     case ObjectType::Table:
     case ObjectType::Sequence:
@@ -107,7 +107,7 @@ AclMode PublicDefaultPrivs(ObjectType type) noexcept {
     case ObjectType::Tombstone:
     case ObjectType::Role:
     case ObjectType::Tokenizer:
-    case ObjectType::PgSqlView:
+    case ObjectType::View:
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
     case ObjectType::Column:

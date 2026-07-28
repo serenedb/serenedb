@@ -873,7 +873,7 @@ const char* ObjectClassWord(catalog::ObjectType type) {
       return "schema";
     case catalog::ObjectType::Sequence:
       return "relation";
-    case catalog::ObjectType::PgSqlFunction:
+    case catalog::ObjectType::Function:
       return "function";
     case catalog::ObjectType::Database:
       return "database";
@@ -893,14 +893,14 @@ std::shared_ptr<catalog::Object> ResolveObjectByName(
     return snapshot.GetSchema(db_id, obj_name);
   }
   const auto current_schema = conn_ctx.GetCurrentSchema();
-  if (type == catalog::ObjectType::PgSqlFunction) {
+  if (type == catalog::ObjectType::Function) {
     const auto bare = obj_name.substr(0, obj_name.find('('));
     const auto name =
       pg::ParseObjectName(absl::StripAsciiWhitespace(bare), current_schema);
     return snapshot.GetFunction(catalog::NoAccessCheck(), db_id, name.schema,
                                 name.relation);
   }
-  if (type == catalog::ObjectType::PgSqlType) {
+  if (type == catalog::ObjectType::Type) {
     const auto name = pg::ParseObjectName(obj_name, current_schema);
     return snapshot.GetType(catalog::NoAccessCheck(), db_id, name.schema,
                             name.relation);
@@ -935,8 +935,8 @@ bool HasObjectPrivilegeByName(const catalog::Snapshot& snapshot,
     // functions, USAGE on types and (for the owner/PUBLIC defaults) sequences,
     // so serenedb reports an unresolved object of these classes as held rather
     // than erroring on a name it cannot resolve.
-    if (type == catalog::ObjectType::PgSqlFunction ||
-        type == catalog::ObjectType::PgSqlType ||
+    if (type == catalog::ObjectType::Function ||
+        type == catalog::ObjectType::Type ||
         type == catalog::ObjectType::Sequence) {
       return true;
     }
@@ -2183,11 +2183,11 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     "has_schema_privilege");
   register_object_priv.operator()<catalog::ObjectType::Sequence>(
     "has_sequence_privilege");
-  register_object_priv.operator()<catalog::ObjectType::PgSqlFunction>(
+  register_object_priv.operator()<catalog::ObjectType::Function>(
     "has_function_privilege");
   register_object_priv.operator()<catalog::ObjectType::Database>(
     "has_database_privilege");
-  register_object_priv.operator()<catalog::ObjectType::PgSqlType>(
+  register_object_priv.operator()<catalog::ObjectType::Type>(
     "has_type_privilege");
 
   loader.RegisterFunction(duckdb::ScalarFunction{

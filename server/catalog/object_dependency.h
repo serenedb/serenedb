@@ -141,7 +141,7 @@ class DropEmitter {
       return;
     }
     auto obj = _lookup(view_id);
-    SDB_ASSERT(obj && obj->GetType() == ObjectType::PgSqlView);
+    SDB_ASSERT(obj && obj->GetType() == ObjectType::View);
     _plan.view_drops.emplace_back(obj->GetParentId(), view_id);
     _stack.push_back(view_id);
   }
@@ -151,7 +151,7 @@ class DropEmitter {
       return;
     }
     auto obj = _lookup(fn_id);
-    SDB_ASSERT(obj && obj->GetType() == ObjectType::PgSqlFunction);
+    SDB_ASSERT(obj && obj->GetType() == ObjectType::Function);
     _plan.function_drops.emplace_back(obj->GetParentId(), fn_id);
     _stack.push_back(fn_id);
   }

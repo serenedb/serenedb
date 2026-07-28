@@ -54,7 +54,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
           continue;
         }
         values.push_back(PgAttrdef{
-          AttrdefOid(col.GetId().id()),
+          Oid{col.GetId().id()},
           Oid{table->GetId().id()},
           static_cast<int16_t>(pos + 1),
           {},

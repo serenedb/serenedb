@@ -83,9 +83,13 @@ list(APPEND AWS_CHECKSUMS_SRC ${AWS_CHECKSUMS_ARCH_SRC})
 # --- aws-c-cal ---
 set(AWS_C_CAL_DIR "${AWS_DIR}/aws-c-cal")
 file(GLOB AWS_C_CAL_SRC "${AWS_C_CAL_DIR}/source/*.c")
-file(GLOB AWS_C_CAL_UNIX_SRC "${AWS_C_CAL_DIR}/source/unix/*.c")
 file(GLOB AWS_C_CAL_SHARED_SRC "${AWS_C_CAL_DIR}/source/shared/*.c")
-list(APPEND AWS_C_CAL_SRC ${AWS_C_CAL_UNIX_SRC} ${AWS_C_CAL_SHARED_SRC})
+if(OS_DARWIN)
+    file(GLOB AWS_C_CAL_OS_SRC "${AWS_C_CAL_DIR}/source/darwin/*.c")
+else()
+    file(GLOB AWS_C_CAL_OS_SRC "${AWS_C_CAL_DIR}/source/unix/*.c")
+endif()
+list(APPEND AWS_C_CAL_SRC ${AWS_C_CAL_OS_SRC} ${AWS_C_CAL_SHARED_SRC})
 
 # --- aws-c-io ---
 set(AWS_C_IO_DIR "${AWS_DIR}/aws-c-io")
@@ -319,10 +323,5 @@ aws_set_thread_affinity_method(_aws)
 aws_set_thread_name_method(_aws)
 
 if(OS_DARWIN)
-    target_link_options(_aws INTERFACE
-        -Wl,-U,_HMAC_CTX_init
-        -Wl,-U,_HMAC_CTX_cleanup
-        -Wl,-U,_EVP_MD_CTX_create
-        -Wl,-U,_EVP_MD_CTX_destroy
-    )
+    target_link_libraries(_aws PUBLIC "-framework CoreFoundation" "-framework Security")
 endif()

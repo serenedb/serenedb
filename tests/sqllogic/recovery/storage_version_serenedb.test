@@ -1,0 +1,119 @@
+# serenedb-specific storage versions. SERENEDB_V1 is what gates the formats vanilla duckdb cannot
+# read (FSST+ string modes, the bitpacked RLE layout), and it is selected per database through the
+# ordinary STORAGE_VERSION attach option rather than a bespoke flag. In memory a version is
+# <duckdb version> * 2^32 + <serenedb sequence>; on disk the shift is dropped when the sequence is
+# zero, so a duckdb database still stores duckdb's own number and stays openable by duckdb, while a
+# serenedb version stores the whole value, which duckdb rejects as out of range.
+#
+# The reopen case below is a regression guard: the guard that rejects a too-new file once compared
+# against duckdb's latest, so a serenedb-versioned datadir could not be reopened by the engine that
+# wrote it.
+
+control substitution on
+
+
+# --- 1. both serenedb spellings attach, and report the version they are on ------
+statement ok
+ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_ver1 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/sv_latest.db' AS sv_verl (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');
+
+
+query
+SELECT database_name, tags::VARCHAR LIKE '%serenedb_v1%' AS tagged
+  FROM duckdb_databases(include_hidden := true) WHERE database_name IN ('sv_ver1', 'sv_verl') ORDER BY 1;
+----
+database_name	tagged
+sv_ver1	t
+sv_verl	t
+
+
+# --- 2. a serenedb-versioned database can be reopened by the engine that wrote it ---
+statement ok
+CREATE TABLE sv_ver1.t AS SELECT i, 'row_' || i::VARCHAR AS s FROM range(20000) t(i);
+
+
+statement ok
+CHECKPOINT sv_ver1;
+
+
+statement ok
+DETACH sv_ver1;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_reopened (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+query
+SELECT count(*) AS n, sum(i) AS sum_i, max(length(s)) AS max_len FROM sv_reopened.t;
+----
+n	sum_i	max_len
+20000	199990000	9
+
+
+# reopening without naming a version at all picks the version up from the file
+statement ok
+DETACH sv_reopened;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_implicit (TYPE duckdb);
+
+
+query
+SELECT tags::VARCHAR LIKE '%serenedb_v1%' AS kept_version, (SELECT count(*) FROM sv_implicit.t) AS n
+  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_implicit';
+----
+kept_version	n
+t	20000
+
+
+# --- 3. raising a duckdb-versioned database to serenedb_v1 is allowed ------------
+statement ok
+ATTACH '${__TEST_DIR__}/sv_native.db' AS sv_nat (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
+
+
+statement ok
+CREATE TABLE sv_nat.t AS SELECT 42 AS x;
+
+
+statement ok
+CHECKPOINT sv_nat;
+
+
+statement ok
+DETACH sv_nat;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/sv_native.db' AS sv_raised (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+query
+SELECT tags::VARCHAR LIKE '%serenedb_v1%' AS raised_ok, (SELECT x FROM sv_raised.t) AS x
+  FROM duckdb_databases(include_hidden := true) WHERE database_name = 'sv_raised';
+----
+raised_ok	x
+t	42
+
+
+statement ok
+DETACH sv_raised;
+
+
+# --- 4. lowering below what the file uses is refused, naming both versions -------
+statement ok
+DETACH sv_implicit;
+
+
+# the message names both versions, and each as a name plus its on-disk number. The datadir path in
+# it is random per run, so this one is matched rather than quoted verbatim.
+statement error version v2\.0\.0 \(69\).*serenedb_v1 \(296352743425\).*cannot be lowered
+ATTACH '${__TEST_DIR__}/sv_v1.db' AS sv_lowered (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
+
+
+statement ok
+DETACH sv_verl;

@@ -40,6 +40,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "basics/serialization.h"
 #include "basics/serializer.h"
 
 namespace {
@@ -50,7 +51,7 @@ template<typename T, typename Arg = sdb::basics::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     sdb::basics::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -68,7 +69,7 @@ template<typename T, typename Input>
 void ExpectReadFails(const Input& in) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     sdb::basics::WriteTuple(sink, in);
   }
   stream.Rewind();
@@ -255,7 +256,7 @@ TEST(SerializerTest, testRange) {
 
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     sdb::basics::WriteTuple(sink, view);
   }
   stream.Rewind();

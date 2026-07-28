@@ -37,6 +37,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
@@ -604,7 +605,18 @@ void CatalogStore::Initialize(std::string_view database_directory) {
     // ("__sdb_store".main.x) still resolve.
     ExecOrFatal(
       *_conn, absl::StrCat("ATTACH '", absl::StrReplaceAll(file, {{"'", "''"}}),
-                           "' AS \"", kStoreAlias, "\" (HIDDEN true)"));
+                           "' AS \"", kStoreAlias,
+                           "\" (HIDDEN true, STORAGE_VERSION 'serenedb_v1')"));
+
+    // DuckDB always has a main database, so an unused in-memory "memory" one
+    // exists until something is attached; the store supersedes it. The default
+    // has to move first -- DETACH refuses the default database, and detaching
+    // does not repoint it, so a connection with no search path would resolve a
+    // name that is gone.
+    auto& context = *_conn->context;
+    duckdb::DatabaseManager::Get(context).SetDefaultDatabase(
+      context, std::string{kStoreAlias});
+    ExecOrFatal(*_conn, "DETACH \"memory\"");
     ExecOrFatal(*_conn,
                 absl::StrCat("CREATE TABLE IF NOT EXISTS ", kCatalogTable,
                              " (parent_id UBIGINT, type UTINYINT, id UBIGINT, "

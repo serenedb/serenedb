@@ -145,6 +145,7 @@ file_search_path	(empty)	A comma separated list of directories to search for inp
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
+force_dict_fsst_mode	DEFAULT	DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned-> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'
 force_download	off	Forces upfront download of file
 force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
 force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
@@ -467,6 +468,7 @@ file_search_path	(empty)	A comma separated list of directories to search for inp
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
+force_dict_fsst_mode	DEFAULT	DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned-> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'
 force_download	off	Forces upfront download of file
 force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
 force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)

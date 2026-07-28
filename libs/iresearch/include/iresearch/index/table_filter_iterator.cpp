@@ -82,13 +82,13 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
     const auto* reader = col_reader.Column(spec.field);
     SDB_ASSERT(reader != nullptr,
                "classification resolves filters on absent columns");
-    // A structured column's own blocks (if any) belong to its plumbing -- a
-    // list parent's blocks are its offsets -- so their statistics do not
-    // describe the column's values: only same-typed block statistics form a
-    // usable zonemap.
-    const auto blocks = reader->DataBlocks();
-    const bool has_zonemap =
-      !blocks.empty() && blocks.front().statistics.GetType() == reader->Type();
+    const auto type_id = reader->Type().id();
+    const bool list_like = type_id == duckdb::LogicalTypeId::LIST ||
+                           type_id == duckdb::LogicalTypeId::MAP;
+    const bool nested = list_like || type_id == duckdb::LogicalTypeId::ARRAY ||
+                        type_id == duckdb::LogicalTypeId::STRUCT ||
+                        type_id == duckdb::LogicalTypeId::UNION ||
+                        type_id == duckdb::LogicalTypeId::VARIANT;
     _cols.push_back(Col{
       .reader = reader,
       .field = spec.field,
@@ -96,9 +96,8 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       .expr = &spec.filter->Cast<duckdb::ExpressionFilter>(),
       .is_dynamic = spec.is_dynamic,
       .null_check = spec.null_check,
-      .has_blocks = has_zonemap,
-      .list_like = reader->Type().id() == duckdb::LogicalTypeId::LIST ||
-                   reader->Type().id() == duckdb::LogicalTypeId::MAP,
+      .list_like = list_like,
+      .nested = nested,
       .state = &states.State(context, *spec.filter),
       .scan = reader->InitScan(ctx),
     });
@@ -110,7 +109,7 @@ bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
     // A children-backed column filters on a compact decode whose scan state
     // ends past the window -- it cannot double as the slot's materialization;
     // the caller scans it as a plain projected column instead.
-    if (c.field == field && c.has_blocks) {
+    if (c.field == field && !c.nested) {
       c.output_slots.push_back(slot);
       return true;
     }
@@ -163,7 +162,7 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
     // re-evaluates them per window on every scan path, and a dynamic bound
     // only tightens -- every dynamic filter is advisory (prune-only), so a
     // one-window-stale verdict merely under-prunes, never drops a live row.
-    if (f.has_blocks && (anchor >= f.checked.end || anchor < f.checked.begin)) {
+    if (!f.nested && (anchor >= f.checked.end || anchor < f.checked.begin)) {
       f.checked = f.reader->Locate(anchor, f.checked);
       const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
@@ -184,7 +183,7 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       f.deferred = !f.output_slots.empty();
       continue;
     }
-    if (!f.has_blocks) {
+    if (f.nested) {
       // Children-backed column (struct/list parent): GatherFilter's codec /
       // segment machinery does not apply. Decode the current survivors through
       // the virtual gather the materialization path uses, narrow on the
@@ -267,7 +266,7 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
 uint64_t ColFilterChain::DeadUntil(uint64_t row) {
   uint64_t dead_end = 0;
   for (auto& f : _cols) {
-    if (!f.has_blocks || row >= f.reader->RowCount()) {
+    if (f.nested || row >= f.reader->RowCount()) {
       continue;
     }
     const bool stale = row >= f.checked.end || row < f.checked.begin;

@@ -44,6 +44,7 @@
 
 #include "basics/assert.h"
 #include "basics/log.h"
+#include "basics/serialization.h"
 #include "basics/zstd_context.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -371,7 +372,8 @@ void SearchDbWal::ChunkWriter::Append(duckdb::DataChunk& chunk,
                                       uint64_t pk_base) {
   SDB_ASSERT(_writer);
   _stream->Rewind();
-  duckdb::BinarySerializer serializer{*_stream};
+  duckdb::BinarySerializer serializer{*_stream,
+                                      duckdb::VersionStorageOptions()};
   serializer.Begin();
   chunk.Serialize(serializer);
   serializer.End();
@@ -524,7 +526,8 @@ uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
           payload.Write<uint64_t>(pk.count);
         }
         tmp.Rewind();
-        duckdb::BinarySerializer serializer{tmp};
+        duckdb::BinarySerializer serializer{tmp,
+                                            duckdb::VersionStorageOptions()};
         serializer.Begin();
         op.inline_data->Serialize(serializer);
         serializer.End();

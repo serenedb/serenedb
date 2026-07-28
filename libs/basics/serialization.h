@@ -29,7 +29,7 @@ namespace duckdb {
 inline SerializationOptions VersionStorageOptions() {
   SerializationOptions opts;
   opts.storage_compatibility =
-    StorageCompatibility::FromIndex(StorageVersion::V2_0_0);
+    StorageCompatibility::FromIndex(StorageVersion::SERENEDB_V1);
   return opts;
 }
 

@@ -66,7 +66,7 @@ fs::path FixturePath(std::string_view name) {
 template<typename T>
 std::string Serialize(const T& value) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
+  duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
   basics::WriteTuple(serializer, value);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};

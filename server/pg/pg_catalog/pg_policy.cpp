@@ -39,6 +39,9 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgPolicy::polroles),
 });
 
+constexpr size_t kQualIndex = GetIndex(&PgPolicy::polqual);
+constexpr size_t kWithCheckIndex = GetIndex(&PgPolicy::polwithcheck);
+
 PgPolicy::Polcmd ToPolcmd(catalog::persistence::PolicyCommand cmd) {
   switch (cmd) {
     case catalog::persistence::PolicyCommand::Select:
@@ -62,6 +65,7 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
   auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgPolicy> values;
+  std::vector<uint64_t> null_masks;
   // Stable backing storage for the polroles spans referenced by `values`.
   std::vector<std::vector<Oid>> roles_storage;
 
@@ -84,6 +88,21 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
           }
         }
         roles_storage.push_back(std::move(roles));
+
+        // The stored USING/CHECK text is already parenthesized, matching how
+        // pg_get_expr renders a policy expression, e.g. "(v > 0)".
+        uint64_t null_mask = kNullMask;
+        Text qual;
+        Text with_check;
+        if (policy->HasUsing()) {
+          qual = policy->UsingText();
+          null_mask &= ~(uint64_t{1} << kQualIndex);
+        }
+        if (policy->HasCheck()) {
+          with_check = policy->CheckText();
+          null_mask &= ~(uint64_t{1} << kWithCheckIndex);
+        }
+        null_masks.push_back(null_mask);
         values.push_back({
           .oid = policy->GetId().id(),
           .polname = policy->GetName(),
@@ -91,6 +110,8 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
           .polcmd = ToPolcmd(policy->Command()),
           .polpermissive = policy->Permissive(),
           .polroles = roles_storage.back(),
+          .polqual = qual,
+          .polwithcheck = with_check,
         });
       }
     }
@@ -98,7 +119,8 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
 
   auto result = CreateColumns<PgPolicy>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], null_masks[row], row,
+              *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

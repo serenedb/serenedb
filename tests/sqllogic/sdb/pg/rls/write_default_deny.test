@@ -1,0 +1,100 @@
+# serenedb-only RLS: an INSERT into an RLS-enabled table is default-deny. With no
+# PERMISSIVE policy applicable to the write verb, every candidate row is rejected
+# -- a FOR SELECT policy does not authorize a write, and neither does a
+# RESTRICTIVE policy on its own.
+#
+# Regression: writes with no applicable permissive write policy were allowed
+# through instead of being denied.
+#
+# The UPDATE counterpart is NOT covered here: a constant deny carries no column
+# references, and the UPDATE constraint verifier skips any check whose columns are
+# absent from the SET list, so the deny never runs. See rls_problems.md (G2).
+#
+# Lore: the clickclack ledger admits no row the mop cannot vouch for.
+
+statement ok
+DROP TABLE IF EXISTS wdd_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS wdd_mop;
+
+
+statement ok
+CREATE TABLE wdd_ledger (owner text, amount int);
+
+
+statement ok
+INSERT INTO wdd_ledger VALUES ('vedernikoff', 1);
+
+
+statement ok
+CREATE ROLE wdd_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON wdd_ledger TO wdd_mop;
+
+
+statement ok
+ALTER TABLE wdd_ledger ENABLE ROW LEVEL SECURITY;
+
+
+# Only a FOR SELECT policy exists -- nothing authorizes writes.
+statement ok
+CREATE POLICY p_read ON wdd_ledger FOR SELECT USING (true);
+
+
+# INSERT is denied: no permissive write policy applies.
+connection c_ins user=wdd_mop password=pw
+statement error
+INSERT INTO wdd_ledger VALUES ('wdd_mop', 5);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+# A RESTRICTIVE write policy still does not authorize the write on its own.
+statement ok
+CREATE POLICY p_restr ON wdd_ledger AS RESTRICTIVE FOR INSERT WITH CHECK (amount > 0);
+
+
+connection c_ins2 user=wdd_mop password=pw
+statement error
+INSERT INTO wdd_ledger VALUES ('wdd_mop', 5);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+# Adding a PERMISSIVE write policy authorizes it, and the RESTRICTIVE one still
+# constrains it.
+statement ok
+CREATE POLICY p_write ON wdd_ledger FOR INSERT WITH CHECK (owner = current_user);
+
+
+connection c_ok user=wdd_mop password=pw
+statement ok
+INSERT INTO wdd_ledger VALUES ('wdd_mop', 5);
+
+
+# ...but the restrictive amount > 0 still rejects a non-positive amount.
+connection c_restr user=wdd_mop password=pw
+statement error
+INSERT INTO wdd_ledger VALUES ('wdd_mop', -5);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+query TI
+SELECT owner, amount FROM wdd_ledger ORDER BY owner;
+----
+owner	amount
+vedernikoff	1
+wdd_mop	5
+
+
+statement ok
+DROP TABLE wdd_ledger;
+
+
+statement ok
+DROP ROLE wdd_mop;

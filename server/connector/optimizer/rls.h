@@ -33,6 +33,14 @@ class TableCatalogEntry;
 class BoundConstraint;
 }  // namespace duckdb
 
+namespace sdb {
+class ObjectId;
+}
+namespace sdb::catalog {
+struct Snapshot;
+class Table;
+}  // namespace sdb::catalog
+
 namespace sdb::connector {
 
 // Installs the DBConfig::rls_wrap_scan hook that wraps a base-table scan in the
@@ -44,6 +52,11 @@ void RegisterRlsEnforcement(duckdb::DatabaseInstance& db);
 duckdb::unique_ptr<duckdb::LogicalOperator> RlsWrapScan(
   duckdb::ClientContext& context, duckdb::Binder& binder, duckdb::LogicalGet& get,
   duckdb::TableCatalogEntry& table, duckdb::unique_ptr<duckdb::LogicalOperator> plan);
+
+// Refuses TRUNCATE on a table whose policies apply to `role`. TRUNCATE cannot be
+// row-filtered, so allowing it would bypass row-level security outright.
+void RlsGuardTruncate(const catalog::Snapshot& snapshot,
+                      const catalog::Table& table, ObjectId role);
 
 // Appends BoundCheckConstraints validating the INSERT/UPDATE post-image against
 // the table's WITH CHECK policies.

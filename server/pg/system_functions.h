@@ -953,8 +953,8 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_get_triggerdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_constraintdef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_constraintdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid, pretty_bool) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(node_text AS TEXT)"},
+  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid, pretty_bool) AS CAST(node_text AS TEXT)"},
   // pg_get_userbyid(oid): role name for a role oid, or PG's
   {"pg_catalog", "pg_get_userbyid",
    R"((role_oid) AS COALESCE(

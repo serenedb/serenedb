@@ -1,0 +1,133 @@
+# serenedb-only RLS: a user predicate must never be evaluated on a row the policy
+# hides. This is a CANARY, not a feature test -- nothing in serened implements the
+# ordering guarantee. It is inherited from duckdb, which refuses to push a
+# potentially-throwing filter into a scan that already carries another filter
+# (src/optimizer/pushdown/pushdown_get.cpp: `expr.CanThrow() && filters.size() > 1`)
+# and refuses to reorder or adaptively permute conjunctions containing one
+# (expression_heuristics.cpp, adaptive_filter.cpp). Because an RLS-enabled scan
+# always contributes its own filter, a throwing user qual is forced above it.
+#
+# Upstream's contract for that flag is "this function can throw an error", NOT
+# "this is a security barrier". If a duckdb bump narrows those guards -- e.g. only
+# bailing when the throwing qual would move earlier -- the guarantee silently
+# disappears with no other test noticing. This file is that alarm.
+#
+# See rls_problems.md P1.
+#
+# Lore: the mop must not learn vedernikoff's balance by asking which row makes the
+# arithmetic explode.
+
+statement ok
+DROP TABLE IF EXISTS poc_ledger;
+
+
+statement ok
+DROP TABLE IF EXISTS poc_sink;
+
+
+statement ok
+DROP ROLE IF EXISTS poc_mop;
+
+
+statement ok
+CREATE TABLE poc_ledger (id int, balance int, owner text);
+
+
+# The mop owns exactly one row. vedernikoff's hidden row holds balance = 1000,
+# the value that makes the attacker's divisor zero.
+statement ok
+INSERT INTO poc_ledger VALUES (1, 1000, 'vedernikoff'), (2, 5, 'poc_mop'), (3, 7777, 'clickclack');
+
+
+statement ok
+CREATE ROLE poc_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON poc_ledger TO poc_mop;
+
+
+statement ok
+ALTER TABLE poc_ledger ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p_self ON poc_ledger FOR SELECT USING (owner = current_user);
+
+
+# The mop sees only its own row.
+connection c_base user=poc_mop password=pw
+query II
+SELECT id, balance FROM poc_ledger ORDER BY id;
+----
+id	balance
+2	5
+
+
+# ATTACK 1 -- a throwing predicate. Evaluated on the hidden balance = 1000 row it
+# divides by zero; the error itself would reveal that such a row exists. It must
+# never see that row, so the query returns no rows and raises nothing.
+connection c_div user=poc_mop password=pw
+query I
+SELECT id FROM poc_ledger WHERE 1/(balance-1000) > 0;
+----
+id
+
+
+# ATTACK 2 -- same, shaped to look highly selective so a cost- or
+# selectivity-driven reorder would prefer running it first.
+connection c_div2 user=poc_mop password=pw
+query I
+SELECT id FROM poc_ledger WHERE 1/(balance-1000) = 999999999;
+----
+id
+
+
+# ATTACK 3 -- a side-effecting predicate. A SQL-bodied function that records what
+# it is shown must only ever be shown the mop's own row.
+statement ok
+CREATE TABLE poc_sink (v int);
+
+
+statement ok
+GRANT INSERT ON poc_sink TO poc_mop;
+
+
+statement ok
+GRANT SELECT ON poc_sink TO poc_mop;
+
+
+statement ok
+CREATE FUNCTION poc_tap(x int) RETURNS int LANGUAGE sql AS 'INSERT INTO poc_sink VALUES (x) RETURNING 1';
+
+
+connection c_tap user=poc_mop password=pw
+query I
+SELECT id FROM poc_ledger WHERE poc_tap(balance) > 0;
+----
+id
+2
+
+
+# Only the mop's own balance reached the function -- not 1000, not 7777.
+query I
+SELECT v FROM poc_sink ORDER BY v;
+----
+v
+5
+
+
+statement ok
+DROP FUNCTION poc_tap;
+
+
+statement ok
+DROP TABLE poc_sink;
+
+
+statement ok
+DROP TABLE poc_ledger;
+
+
+statement ok
+DROP ROLE poc_mop;

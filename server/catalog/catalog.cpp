@@ -71,10 +71,10 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
-#include "catalog/policy.h"
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/persistence/role.h"
+#include "catalog/policy.h"
 #include "catalog/resolution_table.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
@@ -752,6 +752,10 @@ void Snapshot::ModifyRoleDependencies(const Object& obj, EdgeAction action) {
   if (obj.GetType() == ObjectType::Table) {
     for (const auto& col : basics::downCast<const Table>(obj).Columns()) {
       touch_acl(col.GetAcl());
+    }
+  } else if (obj.GetType() == ObjectType::Policy) {
+    for (const auto& role : basics::downCast<const Policy>(obj).Roles()) {
+      touch(role);
     }
   } else if (obj.GetType() == ObjectType::Role) {
     const auto& defaults = basics::downCast<const Role>(obj).DefaultAcls();
@@ -2581,6 +2585,13 @@ std::shared_ptr<Policy> FindPolicy(const Snapshot& snap, ObjectId table_id,
   return nullptr;
 }
 
+void RequireTableRelation(const Object& rel, std::string_view name) {
+  if (rel.GetType() != ObjectType::Table) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not a table"));
+  }
+}
+
 }  // namespace
 
 void Catalog::CreatePolicy(const AccessContext& ax, ObjectId database_id,
@@ -2593,6 +2604,7 @@ void Catalog::CreatePolicy(const AccessContext& ax, ObjectId database_id,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", relation, "\" does not exist"));
   }
+  RequireTableRelation(*rel, relation);
   RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
   if (FindPolicy(*_snapshot, rel->GetId(), data.name)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
@@ -2615,8 +2627,8 @@ void Catalog::AlterPolicy(const AccessContext& ax, ObjectId database_id,
                           std::string_view schema, std::string_view relation,
                           std::string_view name, std::string_view new_name,
                           bool has_roles, std::vector<ObjectId> roles,
-                          bool has_using, std::string using_text, bool has_check,
-                          std::string check_text) {
+                          bool has_using, std::string using_text,
+                          bool has_check, std::string check_text) {
   absl::MutexLock lock{&_mutex};
   auto rel =
     _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
@@ -2624,6 +2636,7 @@ void Catalog::AlterPolicy(const AccessContext& ax, ObjectId database_id,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", relation, "\" does not exist"));
   }
+  RequireTableRelation(*rel, relation);
   RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
   auto existing = FindPolicy(*_snapshot, rel->GetId(), name);
   if (!existing) {
@@ -2678,6 +2691,7 @@ void Catalog::DropPolicy(const AccessContext& ax, ObjectId database_id,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", relation, "\" does not exist"));
   }
+  RequireTableRelation(*rel, relation);
   RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
   auto existing = FindPolicy(*_snapshot, rel->GetId(), name);
   if (!existing) {
@@ -2707,6 +2721,7 @@ void Catalog::SetRowSecurity(const AccessContext& ax, ObjectId database_id,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", relation, "\" does not exist"));
   }
+  RequireTableRelation(*rel, relation);
   RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
   auto table_id = rel->GetId();
   auto deps = _snapshot->GetDependency<TableDependency>(table_id);
@@ -2723,8 +2738,8 @@ void Catalog::SetRowSecurity(const AccessContext& ax, ObjectId database_id,
   }
   auto existing_id = deps ? deps->row_security_id : ObjectId::none();
   auto rs_id = existing_id.isSet() ? existing_id : NextId();
-  auto rs = std::make_shared<RowSecurity>(database_id, rel->GetParentId(), rs_id,
-                                          table_id, data);
+  auto rs = std::make_shared<RowSecurity>(database_id, rel->GetParentId(),
+                                          rs_id, table_id, data);
   Apply(_snapshot, [&](auto& clone) {
     if (existing_id.isSet()) {
       clone->RemoveObjectDefinition(table_id, existing_id, /*root=*/true);
@@ -2735,7 +2750,6 @@ void Catalog::SetRowSecurity(const AccessContext& ax, ObjectId database_id,
     _engine->CreateDefinition(table_id, ObjectType::RowSecurity, rs_id, bytes);
   });
 }
-
 
 bool Catalog::CreateInvertedIndex(
   const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
@@ -5741,11 +5755,11 @@ void OpenDatabase::RegisterPolicies(ObjectId db_id, ObjectId schema_id,
       if (IsDeleted(key.id, DeletedScope::Relation)) {
         return true;
       }
-      auto policy = catalog::DeserializeObject<Policy>(
-        bytes, {.id = key.id,
-                .database_id = db_id,
-                .schema_id = schema_id,
-                .relation_id = table_id});
+      auto policy =
+        catalog::DeserializeObject<Policy>(bytes, {.id = key.id,
+                                                   .database_id = db_id,
+                                                   .schema_id = schema_id,
+                                                   .relation_id = table_id});
       if (policy) {
         _catalog.RegisterPolicy(std::move(policy));
       }

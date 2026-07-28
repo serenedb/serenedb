@@ -1,0 +1,61 @@
+# serenedb-only RLS: pg_policies renders each policy's USING expression as `qual`
+# and its WITH CHECK expression as `with_check`. A policy without a USING clause
+# has a NULL qual; one without WITH CHECK has a NULL with_check. ALTER POLICY that
+# changes an expression is reflected in the rendered text.
+#
+# Regression: qual and with_check were always NULL because polqual/polwithcheck
+# were never populated and pg_get_expr was a NULL stub.
+#
+# Lore: the catalog reads back the clickclack guard clauses as written.
+
+statement ok
+DROP TABLE IF EXISTS pqt_ledger;
+
+
+statement ok
+CREATE TABLE pqt_ledger (owner text, amount int);
+
+
+statement ok
+ALTER TABLE pqt_ledger ENABLE ROW LEVEL SECURITY;
+
+
+# USING only (SELECT): qual populated, with_check NULL.
+statement ok
+CREATE POLICY p_sel ON pqt_ledger FOR SELECT USING (amount >= 0);
+
+
+# WITH CHECK only (INSERT): qual NULL, with_check populated.
+statement ok
+CREATE POLICY p_ins ON pqt_ledger FOR INSERT WITH CHECK (amount > 0);
+
+
+# Both (UPDATE): qual and with_check populated.
+statement ok
+CREATE POLICY p_upd ON pqt_ledger FOR UPDATE USING (owner = current_user) WITH CHECK (amount > 0);
+
+
+query TTT
+SELECT policyname, qual, with_check FROM pg_catalog.pg_policies
+WHERE tablename = 'pqt_ledger' ORDER BY policyname;
+----
+policyname	qual	with_check
+p_ins	NULL	(amount > 0)
+p_sel	(amount >= 0)	NULL
+p_upd	("owner" = current_user)	(amount > 0)
+
+
+# ALTER POLICY changes the USING text; the rendered qual follows.
+statement ok
+ALTER POLICY p_sel ON pqt_ledger USING (amount >= 100);
+
+
+query TT
+SELECT qual, with_check FROM pg_catalog.pg_policies WHERE policyname = 'p_sel';
+----
+qual	with_check
+(amount >= 100)	NULL
+
+
+statement ok
+DROP TABLE pqt_ledger;

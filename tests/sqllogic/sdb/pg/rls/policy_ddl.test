@@ -54,7 +54,7 @@ policyname
 p1_renamed
 
 
-# ALTER POLICY change the USING expression.
+# ALTER POLICY change the USING expression: pg_policies.qual reflects the new text.
 statement ok
 ALTER POLICY p1_renamed ON pd_t USING (amount > 100);
 
@@ -63,7 +63,7 @@ query ?
 SELECT qual FROM pg_catalog.pg_policies WHERE policyname = 'p1_renamed';
 ----
 qual
-NULL
+(amount > 100)
 
 
 # DROP the policy.

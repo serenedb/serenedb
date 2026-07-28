@@ -45,14 +45,7 @@ file(GLOB AWS_C_COMMON_SRC "${AWS_C_COMMON_DIR}/source/*.c")
 file(GLOB AWS_C_COMMON_EXTERNAL_SRC "${AWS_C_COMMON_DIR}/source/external/*.c")
 file(GLOB_RECURSE AWS_C_COMMON_LIBCBOR_SRC "${AWS_C_COMMON_DIR}/source/external/libcbor/*.c")
 file(GLOB AWS_C_COMMON_POSIX_SRC "${AWS_C_COMMON_DIR}/source/posix/*.c")
-if(OS_DARWIN)
-    set(AWS_C_COMMON_OS_SRC
-        "${AWS_C_COMMON_DIR}/source/platform_fallback_stubs/system_info.c"
-        "${AWS_C_COMMON_DIR}/source/platform_fallback_stubs/file_direct_io.c"
-    )
-else()
-    file(GLOB AWS_C_COMMON_OS_SRC "${AWS_C_COMMON_DIR}/source/linux/*.c")
-endif()
+file(GLOB AWS_C_COMMON_OS_SRC "${AWS_C_COMMON_DIR}/source/linux/*.c")
 
 file(GLOB AWS_C_COMMON_ARCH_GENERIC_SRC "${AWS_C_COMMON_DIR}/source/arch/generic/*.c")
 

@@ -1,6 +1,7 @@
 # Pre-aggregation projection dedupes equal non-volatile aggregate inputs and
-# filters into a single slot. Distinct aggregates keep their own input column,
-# and volatile inputs are never shared.
+# filters into a single slot, distinct aggregates included: distinct aggregates
+# that end up on the same slot share one distinct radix table, which the finalize
+# scans once for all of them. Volatile inputs are never shared.
 
 statement ok
 SET profiling_renderer_settings = {'deterministic': true};
@@ -22,12 +23,115 @@ sum	avg	min	max
 8	2	1	3
 
 
-# Two distinct aggregates over the same input keep independent columns.
+# Two distinct aggregates over the same input share a slot and a radix table.
 query
 SELECT count(DISTINCT x), sum(DISTINCT x) FROM agg_dedupe;
 ----
 count	sum
 3	6
+
+
+# Many distinct aggregates over one input: all fed from a single scan.
+query
+SELECT count(DISTINCT x), sum(DISTINCT x), min(DISTINCT x), max(DISTINCT x), avg(DISTINCT x) FROM agg_dedupe;
+----
+count	sum	min	max	avg
+3	6	1	3	2
+
+
+# Distinct aggregates over different inputs keep their own tables.
+query
+SELECT count(DISTINCT x), sum(DISTINCT y) FROM agg_dedupe;
+----
+count	sum
+3	100
+
+
+# Distinct aggregates sharing an input and a filter.
+query
+SELECT count(DISTINCT x) FILTER (WHERE y > 15), sum(DISTINCT x) FILTER (WHERE y > 15) FROM agg_dedupe;
+----
+count	sum
+2	5
+
+
+# Distinct aggregates with different filters over the same input are not merged.
+query
+SELECT count(DISTINCT x) FILTER (WHERE y > 15), count(DISTINCT x) FILTER (WHERE y < 25) FROM agg_dedupe;
+----
+count	count
+2	2
+
+
+# Grouped: shared distinct input per group.
+query
+SELECT y, count(DISTINCT x) AS c, sum(DISTINCT x) AS s FROM agg_dedupe GROUP BY y ORDER BY y;
+----
+y	c	s
+10	1	1
+20	1	2
+30	1	3
+40	0	NULL
+
+
+# Grouping sets over shared distinct inputs.
+query
+SELECT y, count(DISTINCT x) AS c, sum(DISTINCT x) AS s
+FROM agg_dedupe GROUP BY GROUPING SETS ((y), ()) ORDER BY y NULLS LAST;
+----
+y	c	s
+10	1	1
+20	1	2
+30	1	3
+40	0	NULL
+NULL	3	6
+
+
+# Identical distinct aggregates collapse before physical planning.
+query
+SELECT count(DISTINCT x), count(DISTINCT x) FROM agg_dedupe;
+----
+count	count
+3	3
+
+
+# Two independent shared inputs in one query: x sharers and y sharers.
+query
+SELECT count(DISTINCT x), sum(DISTINCT x), count(DISTINCT y), sum(DISTINCT y) FROM agg_dedupe;
+----
+count	sum	count	sum
+3	6	4	100
+
+
+# ROLLUP over shared distinct inputs.
+query
+SELECT y, count(DISTINCT x) AS c, sum(DISTINCT x) AS s
+FROM agg_dedupe GROUP BY ROLLUP(y) ORDER BY y NULLS LAST;
+----
+y	c	s
+10	1	1
+20	1	2
+30	1	3
+40	0	NULL
+NULL	3	6
+
+
+# HAVING on a shared distinct aggregate.
+query
+SELECT y FROM agg_dedupe GROUP BY y HAVING count(DISTINCT x) > 0 ORDER BY y;
+----
+y
+10
+20
+30
+
+
+# Sorted distinct aggregate over a shared input.
+query
+SELECT string_agg(DISTINCT x::VARCHAR, ',' ORDER BY x::VARCHAR) AS s, count(DISTINCT x) AS c FROM agg_dedupe;
+----
+s	c
+1,2,3	3
 
 
 # Mixed distinct + non-distinct over the same input.
@@ -57,6 +161,91 @@ x	sum	avg
 NULL	NULL	NULL
 
 
+# Multi-child distinct aggregates: sharing a table with two input columns per
+# aggregate, so payload offsets advance by more than one slot at a time.
+
+statement ok
+CREATE TABLE agg_pair(x INTEGER, y INTEGER, g INTEGER);
+
+
+statement count 7
+INSERT INTO agg_pair VALUES (1, 10, 1), (2, 20, 1), (2, 20, 1), (3, 30, 2), (4, 50, 2), (NULL, 60, 2), (5, NULL, 1);
+
+
+# Three two-child distinct aggregates over the same pair share one table.
+# Floating point results are rounded: the exact low-order digits depend on the
+# order in which partitions are combined.
+query
+SELECT covar_pop(DISTINCT x, y) AS cp, round(corr(DISTINCT x, y), 12) AS cr, regr_sxy(DISTINCT x, y) AS sxy
+FROM agg_pair;
+----
+cp	cr	sxy
+16.25	0.982707629824	65
+
+
+# Mixed child counts: single-child aggregates and two-child sharers together.
+query
+SELECT count(DISTINCT x) AS c, covar_pop(DISTINCT x, y) AS cp, round(corr(DISTINCT x, y), 12) AS cr,
+       sum(DISTINCT x) AS s
+FROM agg_pair;
+----
+c	cp	cr	s
+5	16.25	0.982707629824	15
+
+
+# Two-child distinct aggregates per group.
+query
+SELECT g, covar_pop(DISTINCT x, y) AS cp, round(corr(DISTINCT x, y), 12) AS cr, count(DISTINCT x) AS c
+FROM agg_pair GROUP BY g ORDER BY g;
+----
+g	cp	cr	c
+1	2.5	1	3
+2	5	1	2
+
+
+# Swapped arguments are a different input list, so each gets its own table.
+query
+SELECT covar_pop(DISTINCT x, y) AS xy, covar_pop(DISTINCT y, x) AS yx FROM agg_pair;
+----
+xy	yx
+16.25	16.25
+
+
+# More rows than one vector, so a shared table is scanned across many chunks.
+
+statement ok
+CREATE TABLE agg_chunks AS
+SELECT (i % 1500)::INTEGER x, (i % 97)::INTEGER y, (i % 5)::INTEGER g FROM range(20000) t(i);
+
+
+query
+SELECT count(DISTINCT x) AS c, sum(DISTINCT x) AS s, min(DISTINCT x) AS mn, max(DISTINCT x) AS mx FROM agg_chunks;
+----
+c	s	mn	mx
+1500	1124250	0	1499
+
+
+query
+SELECT count(DISTINCT x) AS c, sum(DISTINCT x) AS s, round(covar_pop(DISTINCT x, y), 6) AS cp,
+       round(corr(DISTINCT x, y), 12) AS cr
+FROM agg_chunks;
+----
+c	s	cp	cr
+1500	1124250	16.1317	0.001323126588
+
+
+query
+SELECT g, count(DISTINCT x) AS c, sum(DISTINCT x) AS s, max(DISTINCT x) AS mx
+FROM agg_chunks GROUP BY g ORDER BY g;
+----
+g	c	s	mx
+0	300	224250	1495
+1	300	224550	1496
+2	300	224850	1497
+3	300	225150	1498
+4	300	225450	1499
+
+
 # Plan: equal non-volatile inputs collapse to one slot -- min and max both read #0.
 query
 EXPLAIN SELECT min(x + 1), max(x + 1) FROM agg_dedupe;
@@ -77,6 +266,66 @@ QUERY PLAN
 │ Projections: x        │
 │ ~5 rows               │
 ╰───────────────────────╯
+
+
+# Plan: distinct aggregates over one input share the slot too.
+query
+EXPLAIN SELECT count(DISTINCT x), sum(DISTINCT x), min(DISTINCT x) FROM agg_dedupe;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────────────────────╮
+│ Aggregates: count(DISTINCT #0),           │
+│             sum_no_overflow(DISTINCT #0), │
+│             min(#0)                       │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ SEQ_SCAN ──────────┴─────────────────────╮
+│ Table: agg_dedupe                         │
+│ Type: Sequential Scan                     │
+│ Projections: x                            │
+│ ~5 rows                                   │
+╰───────────────────────────────────────────╯
+
+
+# Plan: distinct aggregates over different inputs get a slot each.
+query
+EXPLAIN SELECT count(DISTINCT x), sum(DISTINCT y) FROM agg_dedupe;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────────────────────╮
+│ Aggregates: count(DISTINCT #0),           │
+│             sum_no_overflow(DISTINCT #1)  │
+│ ~1 row                                    │
+╰─────────────────────┬─────────────────────╯
+╭─ SEQ_SCAN ──────────┴─────────────────────╮
+│ Table: agg_dedupe                         │
+│ Type: Sequential Scan                     │
+│ Projections: x, y                         │
+│ ~5 rows                                   │
+╰───────────────────────────────────────────╯
+
+
+# Plan: same input but different filters -- separate slots for the filters.
+query
+EXPLAIN SELECT count(DISTINCT x) FILTER (WHERE y > 15), sum(DISTINCT x) FILTER (WHERE y < 25) FROM agg_dedupe;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────────────────────────╮
+│ Aggregates:                                                │
+│ count(DISTINCT #0) FILTER (WHERE #1) Filter: #1,           │
+│ sum_no_overflow(DISTINCT #0) FILTER (WHERE #2) Filter: #2  │
+│ ~1 row                                                     │
+╰──────────────────────────────┬─────────────────────────────╯
+╭─ PROJECTION ─────────────────┴─────────────────────────────╮
+│ Projections: x, y > 15, y < 25                             │
+│ ~5 rows                                                    │
+╰──────────────────────────────┬─────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────┴─────────────────────────────╮
+│ Table: agg_dedupe                                          │
+│ Type: Sequential Scan                                      │
+│ Projections: y, x                                          │
+│ ~5 rows                                                    │
+╰────────────────────────────────────────────────────────────╯
 
 
 # Plan: volatile inputs are never shared -- min reads #0, max reads #1.

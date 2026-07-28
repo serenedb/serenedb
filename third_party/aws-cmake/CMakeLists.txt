@@ -318,7 +318,7 @@ target_link_libraries(_aws PUBLIC
 aws_set_thread_affinity_method(_aws)
 aws_set_thread_name_method(_aws)
 
-if(APPLE)
+if(OS_DARWIN)
     target_link_options(_aws INTERFACE
         -Wl,-U,_HMAC_CTX_init
         -Wl,-U,_HMAC_CTX_cleanup

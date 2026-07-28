@@ -552,7 +552,7 @@ set(PROFILE_DEBUG_INFO "${COLUMNS_DEBUG_INFO} -fdebug-info-for-profiling")
 set(FULL_DEBUG_INFO "${BASE_DEBUG_INFO} -g3 -fstandalone-debug")
 # -fdebug-macro leads to crash on macOS, see issue
 # https://github.com/llvm/llvm-project/issues/212345
-if(NOT APPLE)
+if(NOT OS_DARWIN)
     set(FULL_DEBUG_INFO "${FULL_DEBUG_INFO} -fdebug-macro")
 endif()
 set(LLDB_DEBUG_INFO "${FULL_DEBUG_INFO} -glldb")

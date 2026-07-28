@@ -293,7 +293,7 @@ PRAGMA metadata_info;
 # DOCS_TEST: example_024
 
 statement ok
-USE memory;
+USE postgres;
 
 statement ok
 DETACH db171;

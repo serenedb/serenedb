@@ -45,7 +45,7 @@ file(GLOB AWS_C_COMMON_SRC "${AWS_C_COMMON_DIR}/source/*.c")
 file(GLOB AWS_C_COMMON_EXTERNAL_SRC "${AWS_C_COMMON_DIR}/source/external/*.c")
 file(GLOB_RECURSE AWS_C_COMMON_LIBCBOR_SRC "${AWS_C_COMMON_DIR}/source/external/libcbor/*.c")
 file(GLOB AWS_C_COMMON_POSIX_SRC "${AWS_C_COMMON_DIR}/source/posix/*.c")
-file(GLOB AWS_C_COMMON_OS_SRC "${AWS_C_COMMON_DIR}/source/linux/*.c")
+file(GLOB AWS_C_COMMON_LINUX_SRC "${AWS_C_COMMON_DIR}/source/linux/*.c")
 
 file(GLOB AWS_C_COMMON_ARCH_GENERIC_SRC "${AWS_C_COMMON_DIR}/source/arch/generic/*.c")
 
@@ -54,7 +54,7 @@ set(AWS_C_COMMON_ALL_SRC
     ${AWS_C_COMMON_EXTERNAL_SRC}
     ${AWS_C_COMMON_LIBCBOR_SRC}
     ${AWS_C_COMMON_POSIX_SRC}
-    ${AWS_C_COMMON_OS_SRC}
+    ${AWS_C_COMMON_LINUX_SRC}
     ${AWS_C_COMMON_ARCH_GENERIC_SRC}
 )
 

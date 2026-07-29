@@ -82,7 +82,9 @@ size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
 constexpr int64_t kRaBitQRotationSeed = 0x5a17b17c5eed5eedULL;
 
-uint32_t RotatedDim(uint32_t d) noexcept { return std::bit_ceil(d); }
+uint32_t RotatedDim(uint32_t d) noexcept {
+  return std::max<uint32_t>(kFastScanBits, std::bit_ceil(d));
+}
 
 void GenerateSigns(uint32_t rotated_d, int64_t seed,
                    std::vector<float>& signs) {
@@ -627,7 +629,8 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
       _metric{FaissMetric(metric)},
       _storage{
         faiss::rabitq_utils::compute_per_vector_storage_size(nb_bits, _rd)},
-      _ex_code_size{(static_cast<size_t>(_rd) * _ex_bits + 7) / 8} {
+      _ex_code_size{(static_cast<size_t>(_rd) * _ex_bits + 7) / 8},
+      _sign_stride{FastScanNsq(_rd / kFastScanBits) / 2} {
     GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
     _stats.resize(sizeof(RaBitQStatsHeader));
     WritePodHeader(RaBitQStatsHeader{nb_bits, d}, _stats.data());
@@ -641,7 +644,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   }
 
   void BeginCluster(size_t total_docs) final {
-    _sign_codes.assign(total_docs * (_rd / 8), 0);
+    _sign_codes.assign(total_docs * _sign_stride, 0);
     _aux.assign(total_docs * _storage, 0);
     _filled = 0;
   }
@@ -652,7 +655,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
       return;
     }
     SDB_ASSERT(_centroid.size() == _rd);
-    const size_t sign_stride = _rd / 8;
+    const size_t sign_stride = _sign_stride;
     std::vector<float> rotated(_rd);
     std::vector<float> residual(_rd);
     for (size_t i = 0; i < n; ++i) {
@@ -724,6 +727,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   faiss::MetricType _metric;
   size_t _storage;
   size_t _ex_code_size;
+  size_t _sign_stride;
   std::vector<float> _signs;
   std::vector<float> _centroid;
   std::vector<byte_type> _stats;

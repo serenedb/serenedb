@@ -2837,11 +2837,12 @@ bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
       std::make_shared<Sequence>(*schema_id, ObjectId{}, std::move(seq_opts)));
   }
 
-  // Tables without an explicit PK get an auto-PK owned sequence. Table
-  // holds its id directly so the insert path doesn't have to scan
-  // owned_sequences for it.
+  // Tables without an explicit PK -- and every Search table, which always uses
+  // a synthetic sequence rowid as its DML handle -- get an auto-PK owned
+  // sequence. Table holds its id directly so the insert path doesn't have to
+  // scan owned_sequences for it.
   ObjectId generated_pk_seq_id;
-  if (options.pk_columns.empty()) {
+  if (options.pk_columns.empty() || options.engine == TableEngine::Search) {
     auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));
     SequenceOptions opts;
     opts.name = resolved;

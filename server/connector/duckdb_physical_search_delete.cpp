@@ -26,11 +26,11 @@
 #include <string>
 #include <vector>
 
+#include "basics/primary_key.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -43,7 +43,6 @@ struct SearchDeleteGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
-  std::vector<duckdb_primary_key::PKColumn> pk_columns;
   std::shared_lock<std::shared_mutex> table_lock;
   duckdb::idx_t delete_count = 0;
 };
@@ -74,26 +73,7 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->search_table = _table->GetData();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
-  // Map each PK chunk position to its type (PlanDelete's layout): explicit-PK
-  // columns by their declared type; the no-PK generated rowid as BIGINT.
-  const auto& columns = _table->Columns();
-  const auto& pk_col_ids = _table->PKColumns();
-  for (size_t i = 0; i < _pk_col_indices.size(); ++i) {
-    duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
-    if (i < pk_col_ids.size()) {
-      for (const auto& col : columns) {
-        if (col.GetId() == pk_col_ids[i]) {
-          pk_type = col.type;
-          break;
-        }
-      }
-    }
-    state->pk_columns.push_back(duckdb_primary_key::PKColumn{
-      .input_col_idx = _pk_col_indices[i],
-      .type = pk_type,
-    });
-  }
-
+  SDB_ASSERT(_pk_col_indices.size() == 1);
   state->sdb_txn = &conn_ctx;
   return state;
 }
@@ -109,21 +89,23 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
     gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
 
-  // The removal term is the bare PK, encoded exactly as the insert wrote it
-  // (Create -> AppendPKValue). For a no-PK table the rowid column holds the
-  // generated PK (materialised by the scan), so the same encoding matches.
+  // The removal key is the row's synthetic generated PK, read from the single
+  // rowid slot the scan materialised and encoded with AppendSigned exactly as
+  // the insert wrote it.
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(num_rows);
 
-  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-  duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+  duckdb::UnifiedVectorFormat gen_pk;
+  chunk.data[_pk_col_indices[0]].ToUnifiedFormat(num_rows, gen_pk);
+  const auto* gen_pk_data =
+    duckdb::UnifiedVectorFormat::GetData<int64_t>(gen_pk);
 
   std::vector<std::string> wal_pks;
   wal_pks.reserve(num_rows);
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     pk.clear();
-    duckdb_primary_key::Create(pk_formats, gstate.pk_columns, row, pk);
+    primary_key::AppendSigned(pk, gen_pk_data[gen_pk.sel->get_index(row)]);
     remover.DeleteRowImpl(pk);  // live iresearch removal
     wal_pks.emplace_back(pk);   // WAL delete payload
   }

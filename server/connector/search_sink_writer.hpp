@@ -43,7 +43,6 @@
 #include "basics/primary_key.hpp"
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
 #include "search/inverted_index_storage.h"
@@ -352,10 +351,9 @@ inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None});
 }
 
-void WriteChunkToSearchSink(
-  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::Column::Id> column_ids,
-  std::span<const duckdb_primary_key::PKColumn> pk_columns,
-  bool uses_generated_pk, uint64_t pk_base);
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const catalog::Column::Id> column_ids,
+                            uint64_t pk_base);
 
 }  // namespace sdb::connector

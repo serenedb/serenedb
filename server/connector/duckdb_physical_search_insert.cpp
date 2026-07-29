@@ -44,7 +44,6 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_dispatch.h"
@@ -62,7 +61,6 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
   std::vector<catalog::Column::Id> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  std::vector<duckdb_primary_key::PKColumn> pk_columns;
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
 
@@ -233,11 +231,9 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->search_table = table->GetData();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
-  if (table->PKColumns().empty()) {
-    state->generated_pk_seq =
-      snapshot->GetObject<catalog::Sequence>(table->GetGeneratedPkSeqId());
-    SDB_ASSERT(state->generated_pk_seq);
-  }
+  state->generated_pk_seq =
+    snapshot->GetObject<catalog::Sequence>(table->GetGeneratedPkSeqId());
+  SDB_ASSERT(state->generated_pk_seq);
 
   state->column_ids.reserve(table->Columns().size());
   state->chunk_types.reserve(table->Columns().size());
@@ -248,8 +244,6 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->column_ids.push_back(col.GetId());
     state->chunk_types.push_back(col.type);
   }
-
-  state->pk_columns = duckdb_primary_key::BuildPKColumns(*table);
 
   state->sdb_txn = &conn_ctx;
 
@@ -300,8 +294,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   const uint64_t pk_base =
     uses_generated_pk ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
                       : 0;
-  WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids,
-                         gstate.pk_columns, uses_generated_pk, pk_base);
+  WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids, pk_base);
 
   if (lstate->bulk) {
     if (!lstate->chunk_writer) {

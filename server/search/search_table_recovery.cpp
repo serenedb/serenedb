@@ -41,7 +41,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -64,8 +63,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     std::shared_ptr<SearchTable> shard;  // keeps the table store alive
     SearchTable* search = nullptr;
     std::vector<catalog::Column::Id> column_ids;
-    std::vector<connector::duckdb_primary_key::PKColumn> pk_columns;
-    bool uses_generated_pk = false;
   };
   // Per-shard replay context: one open iresearch trx accumulated across all of
   // the shard's records, with an insert sink and a delete sink that share it.
@@ -98,8 +95,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
           }
           info.column_ids.push_back(col.GetId());
         }
-        info.pk_columns = connector::duckdb_primary_key::BuildPKColumns(*table);
-        info.uses_generated_pk = table->PKColumns().empty();
         shards.emplace(table->GetId(), std::move(info));
       }
     }
@@ -137,8 +132,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
       connector::WriteChunkToSearchSink(*ctx.insert_sink, chunk,
-                                        info.column_ids, info.pk_columns,
-                                        info.uses_generated_pk, pk_base);
+                                        info.column_ids, pk_base);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     // Each DELETE op replays as one removal batch on the shared trx; feeding it

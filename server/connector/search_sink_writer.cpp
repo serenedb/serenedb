@@ -29,6 +29,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/primary_key.hpp"
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "pg/errcodes.h"
@@ -791,29 +792,22 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
   _remove_filter.reset();
 }
 
-void WriteChunkToSearchSink(
-  SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
-  std::span<const catalog::Column::Id> column_ids,
-  std::span<const duckdb_primary_key::PKColumn> pk_columns,
-  bool uses_generated_pk, uint64_t pk_base) {
+void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
+                            duckdb::DataChunk& chunk,
+                            std::span<const catalog::Column::Id> column_ids,
+                            uint64_t pk_base) {
   const auto num_rows = chunk.size();
 
   auto& scratch = sink.GetKeyScratch();
-  auto& pk_formats = scratch.pk_formats;
   auto& row_keys = scratch.row_keys;
   auto& key_views = scratch.key_views;
-  duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
   row_keys.resize(num_rows);
   key_views.clear();
   key_views.reserve(num_rows);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     auto& key = row_keys[row];
     key.clear();
-    if (uses_generated_pk) {
-      duckdb_primary_key::AppendGenerated(key, pk_base + row);
-    } else {
-      duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
-    }
+    primary_key::AppendSigned(key, static_cast<int64_t>(pk_base + row));
     key_views.emplace_back(key);
   }
 
@@ -822,16 +816,14 @@ void WriteChunkToSearchSink(
     sink.SwitchFieldImpl(static_cast<irs::field_id>(column_ids[col]),
                          chunk.data[col].GetType(), chunk.data[col], num_rows);
   }
-  if (uses_generated_pk) {
-    duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
-    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      data[row] = static_cast<int64_t>(pk_base + row);
-    }
-    sink.SwitchFieldImpl(
-      static_cast<irs::field_id>(catalog::Column::kGeneratedPKId.id()),
-      duckdb::LogicalType::BIGINT, gen_pk, num_rows);
+  duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
+  auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    data[row] = static_cast<int64_t>(pk_base + row);
   }
+  sink.SwitchFieldImpl(
+    static_cast<irs::field_id>(catalog::Column::kGeneratedPKId.id()),
+    duckdb::LogicalType::BIGINT, gen_pk, num_rows);
   sink.FinishImpl();
 }
 

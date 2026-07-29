@@ -89,7 +89,7 @@ struct PgClass {
   Xid relminmxid;
   AclColumn relacl;
   Array<Text> reloptions;
-  PgNodeTree relpartbound;
+  Text relpartbound;
 };
 // NOLINTEND
 

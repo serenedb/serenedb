@@ -81,8 +81,8 @@ struct PgIndex {
   Array<Oid> indcollation;
   Array<Oid> indclass;
   Array<int16_t> indoption;
-  PgNodeTree indexprs;
-  PgNodeTree indpred;
+  Text indexprs;
+  Text indpred;
 };
 // NOLINTEND
 

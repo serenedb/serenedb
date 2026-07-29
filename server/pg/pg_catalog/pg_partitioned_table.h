@@ -43,7 +43,7 @@ struct PgPartitionedTable {
   Array<int16_t> partattrs;
   Array<Oid> partclass;
   Array<Oid> partcollation;
-  PgNodeTree partexprs;
+  Text partexprs;
 };
 // NOLINTEND
 

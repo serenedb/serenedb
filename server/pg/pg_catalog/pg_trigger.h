@@ -53,7 +53,7 @@ struct PgTrigger {
   int16_t tgnargs;
   Array<int16_t> tgattr;
   Bytea tgargs;
-  PgNodeTree tgqual;
+  Text tgqual;
   Name tgoldtable;
   Name tgnewtable;
 };

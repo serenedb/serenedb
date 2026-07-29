@@ -77,11 +77,11 @@ struct PgProc {
   Array<Oid> proallargtypes;
   Array<Proargmode> proargmodes;
   Array<Text> proargnames;
-  PgNodeTree proargdefaults;
+  Text proargdefaults;
   Array<Oid> protrftypes;
   Text prosrc;
   Text probin;
-  PgNodeTree prosqlbody;
+  Text prosqlbody;
   Array<Text> proconfig;
   AclColumn proacl;
 };

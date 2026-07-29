@@ -90,13 +90,13 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
         // pg_get_expr renders a policy expression, e.g. "(v > 0)", so it is
         // never empty when present -- empty means the clause is absent and the
         // row's null mask marks the column NULL.
-        PgNodeTree qual;
-        PgNodeTree with_check;
+        Text qual;
+        Text with_check;
         if (policy->HasUsing()) {
-          qual = {policy->UsingText()};
+          qual = policy->UsingText();
         }
         if (policy->HasCheck()) {
-          with_check = {policy->CheckText()};
+          with_check = policy->CheckText();
         }
         values.push_back({
           .oid = policy->GetId().id(),
@@ -116,8 +116,8 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
   for (size_t row = 0; row < values.size(); ++row) {
     const auto& value = values[row];
     const uint64_t mask = kNullMask |
-                          (value.polqual.v.empty() ? kQualNull : 0) |
-                          (value.polwithcheck.v.empty() ? kCheckNull : 0);
+                          (value.polqual.empty() ? kQualNull : 0) |
+                          (value.polwithcheck.empty() ? kCheckNull : 0);
     WriteData(result, value, mask, row, *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};

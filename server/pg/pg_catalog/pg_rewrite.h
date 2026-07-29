@@ -50,8 +50,8 @@ struct PgRewrite {
   EvType ev_type;
   EvEnabled ev_enabled;
   bool is_instead;
-  PgNodeTree ev_qual;
-  PgNodeTree ev_action;
+  Text ev_qual;
+  Text ev_action;
 };
 // NOLINTEND
 

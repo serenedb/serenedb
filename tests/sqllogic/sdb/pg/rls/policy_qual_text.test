@@ -57,5 +57,29 @@ qual	with_check
 (amount >= 100)	NULL
 
 
+# serened types polqual/polwithcheck `text` and stores the predicate as SQL text.
+# PG types them pg_node_tree (OID 194) and stores a serialized node tree, so this
+# is a deliberate divergence: the supported reader, pg_get_expr, agrees on both.
+query TTT
+SELECT attname, format_type(atttypid, atttypmod) AS typ, atttypid
+FROM pg_catalog.pg_attribute
+WHERE attrelid = 'pg_catalog.pg_policy'::regclass
+  AND attname IN ('polqual', 'polwithcheck')
+ORDER BY attname;
+----
+attname	typ	atttypid
+polqual	text	25
+polwithcheck	text	25
+
+
+# The raw column is readable directly, not only through pg_get_expr.
+query TT
+SELECT polqual, polwithcheck FROM pg_catalog.pg_policy
+WHERE polrelid = 'pqt_ledger'::regclass AND polname = 'p_upd';
+----
+polqual	polwithcheck
+("owner" = current_user)	(amount > 0)
+
+
 statement ok
 DROP TABLE pqt_ledger;

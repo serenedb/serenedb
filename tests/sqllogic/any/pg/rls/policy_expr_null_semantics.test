@@ -1,14 +1,14 @@
 # Oracle-verified against PostgreSQL 18.3: pg_policy.polqual and polwithcheck are
-# declared pg_node_tree (OID 194), not text, and are NULL exactly when the policy
-# omits the corresponding clause. The rendered expression text itself is NOT
-# asserted here -- serened stores the predicate as SQL text while PG stores a
-# serialized node tree, so the raw column contents differ by design (see
-# sdb/pg/rls/policy_qual_text.test). Everything a client can portably observe --
-# the column type and the NULL pattern -- must match.
+# NULL exactly when the policy omits the corresponding clause -- never an empty
+# string -- and pg_get_expr propagates that NULL rather than raising.
 #
-# Regression: the two columns were typed `Empty`, which resolved to SQLNULL and
-# fell through Logical2Pg to `unknown` (OID 705) while being unconditionally NULL,
-# so no policy predicate was readable at all.
+# Only the NULL pattern is asserted here. The column's declared type is NOT: PG
+# types these columns pg_node_tree and stores a serialized node tree, serened
+# types them text and stores the predicate as SQL text. See
+# sdb/pg/rls/policy_qual_text.test for the serened-side type and contents.
+#
+# Regression: both columns were typed `Empty`, which is unconditionally NULL, so
+# no policy predicate was readable at all.
 #
 # Lore: vedernikoff's clickclack guard clauses, inspected through the catalog.
 
@@ -39,20 +39,6 @@ statement ok
 CREATE POLICY pect_upd ON pect_clickclack FOR UPDATE USING (owner = current_user) WITH CHECK (mops > 0);
 
 
-# The declared column type is pg_node_tree, matching PG's catalog definition.
-query TT
-SELECT attname, format_type(atttypid, atttypmod) AS typ
-FROM pg_catalog.pg_attribute
-WHERE attrelid = 'pg_catalog.pg_policy'::regclass
-  AND attname IN ('polqual', 'polwithcheck')
-ORDER BY attname;
-----
-attname	typ
-polqual	pg_node_tree
-polwithcheck	pg_node_tree
-
-
-# NULL exactly when the clause is absent -- never an empty string.
 query TTT
 SELECT polname, polqual IS NULL AS qual_is_null, polwithcheck IS NULL AS check_is_null
 FROM pg_catalog.pg_policy

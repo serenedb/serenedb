@@ -79,7 +79,7 @@ struct PgConstraint {
   Array<Oid> conffeqop;
   Array<int16_t> confdelsetcols;
   Array<Oid> conexclop;
-  PgNodeTree conbin;
+  Text conbin;
 };
 // NOLINTEND
 

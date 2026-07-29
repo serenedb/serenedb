@@ -45,7 +45,7 @@ struct PgStatisticExt {
   Array<int16_t> stxkeys;
   int16_t stxstattarget;
   Array<Stxkind> stxkind;
-  PgNodeTree stxexprs;
+  Text stxexprs;
 };
 // NOLINTEND
 

@@ -59,9 +59,6 @@ struct Name {
 };
 
 struct Empty {};
-struct PgNodeTree {
-  std::string_view v;
-};
 struct Aclitem {};
 using Anyarray = Empty;
 struct Timestamptz {

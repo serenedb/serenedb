@@ -40,6 +40,10 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgPolicy::polwithcheck),
 });
 
+constexpr uint64_t kQualNull = MaskFromNulls({GetIndex(&PgPolicy::polqual)});
+constexpr uint64_t kCheckNull =
+  MaskFromNulls({GetIndex(&PgPolicy::polwithcheck)});
+
 PgPolicy::Polcmd ToPolcmd(catalog::persistence::PolicyCommand cmd) {
   switch (cmd) {
     case catalog::persistence::PolicyCommand::Select:
@@ -83,15 +87,16 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
         roles_storage.push_back(std::move(roles));
 
         // The stored USING/CHECK text is already parenthesized, matching how
-        // pg_get_expr renders a policy expression, e.g. "(v > 0)". A policy
-        // without the clause leaves the field default-constructed, i.e. NULL.
+        // pg_get_expr renders a policy expression, e.g. "(v > 0)", so it is
+        // never empty when present -- empty means the clause is absent and the
+        // row's null mask marks the column NULL.
         PgNodeTree qual;
         PgNodeTree with_check;
         if (policy->HasUsing()) {
-          qual = {policy->UsingText(), false};
+          qual = {policy->UsingText()};
         }
         if (policy->HasCheck()) {
-          with_check = {policy->CheckText(), false};
+          with_check = {policy->CheckText()};
         }
         values.push_back({
           .oid = policy->GetId().id(),
@@ -109,7 +114,11 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
 
   auto result = CreateColumns<PgPolicy>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    const auto& value = values[row];
+    const uint64_t mask = kNullMask |
+                          (value.polqual.v.empty() ? kQualNull : 0) |
+                          (value.polwithcheck.v.empty() ? kCheckNull : 0);
+    WriteData(result, value, mask, row, *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

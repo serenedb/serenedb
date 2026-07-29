@@ -61,7 +61,6 @@ struct Name {
 struct Empty {};
 struct PgNodeTree {
   std::string_view v;
-  bool is_null = true;
 };
 struct Aclitem {};
 using Anyarray = Empty;

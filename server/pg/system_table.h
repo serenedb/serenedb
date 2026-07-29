@@ -206,12 +206,8 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
       duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] = field.micros;
     }
   } else if constexpr (std::is_same_v<Field, PgNodeTree>) {
-    if (field.is_null) {
-      duckdb::FlatVector::ValidityMutable(vec).SetInvalid(row);
-    } else {
-      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
-        duckdb::StringVector::AddString(vec, field.v.data(), field.v.size());
-    }
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
+      duckdb::StringVector::AddString(vec, field.v.data(), field.v.size());
   } else if constexpr (std::is_same_v<Field, Empty>) {
     duckdb::FlatVector::ValidityMutable(vec).SetInvalid(row);
   } else {

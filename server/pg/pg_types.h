@@ -93,6 +93,7 @@ enum PgTypeOID : int32_t {
   kXml = 142,
   kXmlArray = 143,
   kPgNodeTree = 194,
+  kPgNodeTreeArray = 195,
   kPgNdistinct = 3361,
   kPgDependencies = 3402,
   kPgMcvList = 5017,

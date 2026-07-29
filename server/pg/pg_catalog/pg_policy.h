@@ -44,8 +44,8 @@ struct PgPolicy {
   Polcmd polcmd;
   bool polpermissive;
   Array<Oid> polroles;
-  Text polqual;
-  Text polwithcheck;
+  PgNodeTree polqual;
+  PgNodeTree polwithcheck;
 };
 // NOLINTEND
 

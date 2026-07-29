@@ -36,10 +36,9 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgPolicy::polcmd),
   GetIndex(&PgPolicy::polpermissive),
   GetIndex(&PgPolicy::polroles),
+  GetIndex(&PgPolicy::polqual),
+  GetIndex(&PgPolicy::polwithcheck),
 });
-
-constexpr size_t kQualIndex = GetIndex(&PgPolicy::polqual);
-constexpr size_t kWithCheckIndex = GetIndex(&PgPolicy::polwithcheck);
 
 PgPolicy::Polcmd ToPolcmd(catalog::persistence::PolicyCommand cmd) {
   switch (cmd) {
@@ -64,7 +63,6 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
   auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgPolicy> values;
-  std::vector<uint64_t> null_masks;
   // Stable backing storage for the polroles spans referenced by `values`.
   std::vector<std::vector<Oid>> roles_storage;
 
@@ -85,19 +83,16 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
         roles_storage.push_back(std::move(roles));
 
         // The stored USING/CHECK text is already parenthesized, matching how
-        // pg_get_expr renders a policy expression, e.g. "(v > 0)".
-        uint64_t null_mask = kNullMask;
-        Text qual;
-        Text with_check;
+        // pg_get_expr renders a policy expression, e.g. "(v > 0)". A policy
+        // without the clause leaves the field default-constructed, i.e. NULL.
+        PgNodeTree qual;
+        PgNodeTree with_check;
         if (policy->HasUsing()) {
-          qual = policy->UsingText();
-          null_mask &= ~(uint64_t{1} << kQualIndex);
+          qual = {policy->UsingText(), false};
         }
         if (policy->HasCheck()) {
-          with_check = policy->CheckText();
-          null_mask &= ~(uint64_t{1} << kWithCheckIndex);
+          with_check = {policy->CheckText(), false};
         }
-        null_masks.push_back(null_mask);
         values.push_back({
           .oid = policy->GetId().id(),
           .polname = policy->GetName(),
@@ -114,8 +109,7 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
 
   auto result = CreateColumns<PgPolicy>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], null_masks[row], row,
-              *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
   }
   return {std::move(result), values.size()};
 }

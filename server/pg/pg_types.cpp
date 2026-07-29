@@ -230,6 +230,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       if (IsChar(type)) {
         return make(kChar, kCharArray, 1);
       }
+      if (IsPgNodeTree(type)) {
+        return make(kPgNodeTree, kPgNodeTreeArray, -1);
+      }
       return make(kText, kTextArray, -1);
     }
     case UBIGINT:
@@ -329,7 +332,7 @@ std::string RegtypeOut(uint64_t oid) {
     SDB_REGTYPE_WITH_ARRAY_OUT(kPgClass, "pg_class")
     SDB_REGTYPE_WITH_ARRAY_OUT(kJson, "json")
     SDB_REGTYPE_WITH_ARRAY_OUT(kXml, "xml")
-    SDB_REGTYPE_OUT(kPgNodeTree, "pg_node_tree")
+    SDB_REGTYPE_WITH_ARRAY_OUT(kPgNodeTree, "pg_node_tree")
     SDB_REGTYPE_OUT(kPgNdistinct, "pg_ndistinct")
     SDB_REGTYPE_OUT(kPgDependencies, "pg_dependencies")
     SDB_REGTYPE_OUT(kPgMcvList, "pg_mcv_list")
@@ -460,7 +463,7 @@ static const containers::FlatHashMap<std::string_view, PgTypeOID>
       .SDB_REGTYPE_WITH_ARRAY_IN("pg_class", kPgClass)
       .SDB_REGTYPE_WITH_ARRAY_IN("json", kJson)
       .SDB_REGTYPE_WITH_ARRAY_IN("xml", kXml)
-      .SDB_REGTYPE_IN("pg_node_tree", kPgNodeTree)
+      .SDB_REGTYPE_WITH_ARRAY_IN("pg_node_tree", kPgNodeTree)
       .SDB_REGTYPE_IN("pg_ndistinct", kPgNdistinct)
       .SDB_REGTYPE_IN("pg_dependencies", kPgDependencies)
       .SDB_REGTYPE_IN("pg_mcv_list", kPgMcvList)

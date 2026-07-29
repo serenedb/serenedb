@@ -905,9 +905,7 @@ catalog::persistence::PolicyCommand ParsePolicyCommand(std::string_view cmd) {
 // Resolve policy role names to ids. PUBLIC (or an empty list) -> empty vector,
 // which the enforcement path treats as "applies to every role".
 std::vector<ObjectId> ResolvePolicyRoles(
-  ConnectionContext& ctx, const catalog::Snapshot& snap,
-  std::span<const std::string> roles) {
-  (void)ctx;
+  const catalog::Snapshot& snap, std::span<const std::string> roles) {
   std::vector<ObjectId> out;
   for (const auto& role : roles) {
     auto id = ResolveGranteeId(snap, role);
@@ -931,7 +929,7 @@ void CreatePolicy(ConnectionContext& ctx, std::string_view name,
   data.name = std::string{name};
   data.command = ParsePolicyCommand(opts.cmd);
   data.permissive = opts.permissive;
-  data.roles = ResolvePolicyRoles(ctx, *snapshot, opts.roles);
+  data.roles = ResolvePolicyRoles(*snapshot, opts.roles);
   data.has_using = opts.has_using;
   data.using_text = opts.using_text;
   data.has_check = opts.has_check;
@@ -949,7 +947,7 @@ void AlterPolicy(ConnectionContext& ctx, std::string_view name,
 
   std::vector<ObjectId> roles;
   if (opts.has_roles) {
-    roles = ResolvePolicyRoles(ctx, *FreshSnapshot(), opts.roles);
+    roles = ResolvePolicyRoles(*FreshSnapshot(), opts.roles);
   }
   GlobalCatalog().AlterPolicy(
     catalog::ActingAs(ctx.GetRoleId()), ctx.GetDatabaseId(), parsed.schema,

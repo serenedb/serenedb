@@ -20,17 +20,8 @@
 
 #pragma once
 
-#include <duckdb/common/unique_ptr.hpp>
-#include <duckdb/common/vector.hpp>
-
 namespace duckdb {
 class DatabaseInstance;
-class ClientContext;
-class Binder;
-class LogicalGet;
-class LogicalOperator;
-class TableCatalogEntry;
-class BoundConstraint;
 }  // namespace duckdb
 
 namespace sdb {
@@ -53,12 +44,5 @@ void RegisterRlsEnforcement(duckdb::DatabaseInstance& db);
 // row-filtered, so allowing it would bypass row-level security outright.
 void RlsGuardTruncate(const catalog::Snapshot& snapshot,
                       const catalog::Table& table, ObjectId role);
-
-// Appends BoundCheckConstraints validating the INSERT/UPDATE post-image against
-// the table's WITH CHECK policies.
-void RlsAppendCheckConstraints(
-  duckdb::ClientContext& context, duckdb::Binder& binder,
-  duckdb::TableCatalogEntry& table, bool is_update,
-  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>& bound_constraints);
 
 }  // namespace sdb::connector

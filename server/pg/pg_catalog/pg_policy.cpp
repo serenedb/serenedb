@@ -21,7 +21,6 @@
 #include "pg/pg_catalog/pg_policy.h"
 
 #include "app/app_server.h"
-#include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/policy.h"
 #include "pg/pg_catalog/fwd.h"
@@ -70,14 +69,10 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
   std::vector<std::vector<Oid>> roles_storage;
 
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
-    SDB_ASSERT(schema);
     for (const auto& table :
          catalog->GetTables(GetDatabaseId(), schema->GetName())) {
       for (auto policy_id : catalog->PolicyIds(table->GetId())) {
         auto policy = catalog->GetObject<catalog::Policy>(policy_id);
-        if (!policy) {
-          continue;
-        }
         std::vector<Oid> roles;
         // PUBLIC is rendered as the singleton role oid 0 (PG convention).
         if (policy->AppliesToPublic()) {

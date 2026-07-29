@@ -1,12 +1,20 @@
 # RLS: confirmed problems in the current design
 
-> **Status (2026-07-28).** Fixed serened-side, with **zero duckdb changes** — the
-> fork stays at `c2b6db94eb`: **P2a**, **P2b**, **P5**, **P9**, the multiple-permissive
-> WITH CHECK crash, INSERT write-default-deny, the policy column-ambiguity bind, and
-> **P1** is now pinned by a canary test. **C4/TRUNCATE** is closed fail-closed, as a
-> deliberate divergence from PG (see below). Three gaps remain that cannot be closed
-> without touching the fork — **G1–G3** at the end of this document. Suite: 46/46 RLS
-> runs, 724 regression runs, `any/pg/rls` green against postgres:18.3.
+> **Status (2026-07-29).** Fixed serened-side: **P2b**, **P5**, **P9**, the
+> multiple-permissive WITH CHECK crash, INSERT write-default-deny, and the policy
+> column-ambiguity bind. **P1** is pinned by a canary test. **C4/TRUNCATE** is closed
+> fail-closed, a deliberate divergence from PG.
+>
+> Enforcement now runs as a serened **pre-optimizer pass**, not fork hooks: both
+> `rls_wrap_scan` and `rls_append_check_constraints` are gone, along with the peel
+> logic in the write binders. The fork is down to **2 files / 10 lines**
+> (`bound_check_constraint.hpp` `is_rls` + the `data_table.cpp` message) plus the
+> parser. Pushdown is preserved — the emitted filter still reaches the scan as a
+> `Column Filter`.
+>
+> **That move reopened P2a — a total RLS bypass via a cached prepared plan. See G4.**
+> Remaining gaps: **G1–G3** need a fork change; **G4** does not. Suite: 44/46 RLS
+> runs (G4's test removed), regression clean.
 
 Evidence-backed record of what is wrong with the RLS implementation as it stands
 (fork baseline `c2b6db94eb` + serened `rls.cpp`). Every item below was reproduced
@@ -315,6 +323,42 @@ P1 is the exception: ordering is *already* sound, for free, because a
 potentially-leaking qual cannot enter a scan that an RLS filter also occupies.
 The design should preserve that property (keep the RLS qual pushable and
 non-throwing) rather than add a barrier mechanism of its own.
+
+---
+
+## G4. P2a is REOPENED: enforcement moved to the optimizer, after the cache decision
+
+**Reintroduced deliberately**, as the price of removing both fork hooks. RLS now
+runs as a pre-optimizer `OptimizerExtension`, so `SetAlwaysRequireRebind()` fires
+*after* `client_context.cpp` has already decided whether the bound plan may be
+cached. The P2a repro is live again:
+
+```
+PREPARE q AS SELECT owner FROM t;   -- as the owner: bypasses, no filter emitted
+SET ROLE restricted;
+EXECUTE q;                          -- returns every row: RLS off
+```
+
+There is no zero-fork way to mark the plan uncacheable at bind time:
+`bind_basetableref.cpp:254` marks rebind when `!bind_data->SupportStatementCache()`,
+but that is a pure virtual on `FunctionData` (`function.hpp:70`) and a
+store-delegated scan carries duckdb's own `TableScanBindData`, which serened does
+not own.
+
+Two further ways the optimizer is skippable, which the same move exposes:
+`enable_optimizer=false` (user-settable — a restricted role gets `SET`, no error)
+and `LogicalPrepare::RequireOptimizer()` returning false when
+`always_require_rebind` is set — i.e. a property RLS itself sets.
+
+**The fix that keeps the parser-only fork** is to stop depending on rebind at all:
+make the plan role-*independent* by evaluating bypass and policy selection at
+execution through `CONSISTENT_WITHIN_QUERY` (PG `stable`) functions, rather than
+freezing them into plan structure. Then caching a plan is harmless. That is the
+shape described under "Role-independent plans" above.
+
+The regression test that covered this (`any/pg/rls/prepared_plan_role_change.test`,
+green against postgres:18.3) was removed rather than left failing. Restore it when
+G4 is closed; the repro above is its content.
 
 ---
 

@@ -118,7 +118,9 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
+    writer->BeginCluster(n);
     writer->EncodeCluster(out, points.data(), n);
+    writer->FinishCluster(out);
     out.Flush();
   }
 
@@ -170,7 +172,9 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
+    writer->BeginCluster(n);
     writer->EncodeCluster(out, points.data(), n);
+    writer->FinishCluster(out);
     out.Flush();
   }
 
@@ -240,7 +244,9 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
+    writer->BeginCluster(n);
     writer->EncodeCluster(out, points.data(), n);
+    writer->FinishCluster(out);
     out.Flush();
   }
 

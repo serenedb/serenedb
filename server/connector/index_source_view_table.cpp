@@ -145,18 +145,18 @@ ViewTableIndexSource::ViewTableIndexSource(
   // alive for the query even if it is detached concurrently.
   duckdb::DuckTransaction::Get(context, table.ParentCatalog());
   const auto& columns = table.GetColumns();
-  containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_col;
+  duckdb::identifier_map_t<duckdb::idx_t> name_to_col;
   if (!_fast_path.projection_columns.empty()) {
     name_to_col.reserve(columns.LogicalColumnCount());
     duckdb::idx_t logical = 0;
     for (const auto& col : columns.Logical()) {
-      name_to_col.emplace(col.Name().GetIdentifierName(), logical++);
+      name_to_col.emplace(col.Name(), logical++);
     }
   }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
     [&](std::string_view name) {
-      auto it = name_to_col.find(name);
+      auto it = name_to_col.find(duckdb::Identifier{name});
       SDB_ASSERT(it != name_to_col.end());
       return it->second;
     },

@@ -82,11 +82,11 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   auto names = entry.GetColumns().GetColumnNames();
   auto types = entry.GetColumns().GetColumnTypes();
 
-  containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_col;
+  duckdb::identifier_map_t<duckdb::idx_t> name_to_col;
   if (!_fast_path.projection_columns.empty()) {
     name_to_col.reserve(names.size());
     for (duckdb::idx_t i = 0; i < names.size(); ++i) {
-      name_to_col.emplace(names[i], i);
+      name_to_col.emplace(duckdb::Identifier{names[i]}, i);
     }
   }
   std::vector<std::string> select_names;
@@ -94,7 +94,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
     [&](std::string_view name) {
-      auto it = name_to_col.find(name);
+      auto it = name_to_col.find(duckdb::Identifier{name});
       SDB_ASSERT(it != name_to_col.end());
       return it->second;
     },

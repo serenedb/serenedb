@@ -219,9 +219,11 @@ std::optional<ExternalKeyColumn> FindKeyColumn(
     return std::nullopt;
   }
   const auto& col = columns.GetColumn(id);
-  // ExternalKeyColumn::name outlives this scope (it drives the re-fetch), so it
-  // owns; everything up to here only reads.
-  return ExternalKeyColumn{.name = std::string{name},
+  // ExternalKeyColumn::name outlives this scope (it drives the re-fetch), so
+  // it owns. Store the catalog's spelling, not the caller's: the name is
+  // persisted and later quoted verbatim into remote SQL, where a
+  // case-divergent user spelling breaks the (case-sensitive) remote lookup.
+  return ExternalKeyColumn{.name = std::string{col.Name().GetIdentifierName()},
                            .source_index = col.Logical().index,
                            .type = col.GetType()};
 }

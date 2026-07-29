@@ -49,12 +49,6 @@
 namespace sdb::pg {
 namespace {
 
-// The access context every mutating catalog call runs under (the caller's role).
-catalog::AccessContext Acting(ConnectionContext& ctx) {
-  const ObjectId role = ctx.GetRoleId();
-  return catalog::ActingAs(role);
-}
-
 auto FindAclItem(catalog::Acl& acl, ObjectId grantee, ObjectId grantor) {
   return std::ranges::find_if(acl, [&](const catalog::AclItem& item) {
     return item.grantee == grantee && item.grantor == grantor;
@@ -943,7 +937,8 @@ void CreatePolicy(ConnectionContext& ctx, std::string_view name,
   data.has_check = opts.has_check;
   data.check_text = opts.check_text;
 
-  GlobalCatalog().CreatePolicy(Acting(ctx), ctx.GetDatabaseId(), parsed.schema,
+  GlobalCatalog().CreatePolicy(catalog::ActingAs(ctx.GetRoleId()),
+                               ctx.GetDatabaseId(), parsed.schema,
                                parsed.relation, std::move(data));
 }
 
@@ -957,7 +952,8 @@ void AlterPolicy(ConnectionContext& ctx, std::string_view name,
     roles = ResolvePolicyRoles(ctx, *FreshSnapshot(), opts.roles);
   }
   GlobalCatalog().AlterPolicy(
-    Acting(ctx), ctx.GetDatabaseId(), parsed.schema, parsed.relation, name,
+    catalog::ActingAs(ctx.GetRoleId()), ctx.GetDatabaseId(), parsed.schema,
+    parsed.relation, name,
     opts.is_rename ? opts.new_name : std::string_view{}, opts.has_roles,
     std::move(roles), opts.has_using, opts.using_text, opts.has_check,
     opts.check_text);
@@ -967,7 +963,8 @@ void DropPolicy(ConnectionContext& ctx, std::string_view name,
                 std::string_view table, bool if_exists) {
   const std::string current_schema = ctx.GetCurrentSchema();
   const auto parsed = ParseObjectName(table, current_schema);
-  GlobalCatalog().DropPolicy(Acting(ctx), ctx.GetDatabaseId(), parsed.schema,
+  GlobalCatalog().DropPolicy(catalog::ActingAs(ctx.GetRoleId()),
+                             ctx.GetDatabaseId(), parsed.schema,
                              parsed.relation, name, if_exists);
 }
 
@@ -986,9 +983,9 @@ void SetTableRowSecurity(ConnectionContext& ctx, std::string_view table,
   } else if (action == "NOFORCE") {
     forced = false;
   }
-  GlobalCatalog().SetRowSecurity(Acting(ctx), ctx.GetDatabaseId(),
-                                 parsed.schema, parsed.relation, enabled,
-                                 forced);
+  GlobalCatalog().SetRowSecurity(catalog::ActingAs(ctx.GetRoleId()),
+                                 ctx.GetDatabaseId(), parsed.schema,
+                                 parsed.relation, enabled, forced);
 }
 
 }  // namespace sdb::pg

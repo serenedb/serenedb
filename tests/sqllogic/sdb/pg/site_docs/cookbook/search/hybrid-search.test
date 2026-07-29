@@ -79,14 +79,14 @@ id	name
 
 query
 WITH fused AS (
-    SELECT id, ROW_NUMBER() OVER (ORDER BY s DESC) AS rank FROM (
+    SELECT id, RANK() OVER (ORDER BY s DESC) AS rank FROM (
         SELECT id, BM25(items_idx.tableoid) AS s
         FROM items_idx
         WHERE name @@ 'running'
         ORDER BY s DESC LIMIT 100
     ) lex
     UNION ALL
-    SELECT id, ROW_NUMBER() OVER (ORDER BY dist) AS rank FROM (
+    SELECT id, RANK() OVER (ORDER BY dist) AS rank FROM (
         SELECT id, emb <-> [1.0, 0.0, 0.0]::FLOAT[3] AS dist
         FROM items_idx
         ORDER BY dist LIMIT 100

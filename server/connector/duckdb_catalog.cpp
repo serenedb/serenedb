@@ -574,20 +574,17 @@ std::vector<duckdb::idx_t> ComputeKeptViewPositions(
   const duckdb::ParsedExpression* predicate,
   const duckdb::ViewColumnInfo& column_info) {
   std::vector<duckdb::idx_t> kept;
-  auto add = [&](std::string_view name) {
+  auto add = [&](const duckdb::Identifier& name) {
     for (size_t i = 0; i < column_info.names.size(); ++i) {
-      if (column_info.names[i].GetIdentifierName() == name) {
+      if (column_info.names[i] == name) {
         kept.push_back(i);
-        break;
       }
     }
   };
   auto collect = [&](this auto& self,
                      const duckdb::ParsedExpression& e) -> void {
     if (e.GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
-      add(e.Cast<duckdb::ColumnRefExpression>()
-            .GetColumnName()
-            .GetIdentifierName());
+      add(e.Cast<duckdb::ColumnRefExpression>().GetColumnName());
       return;
     }
     duckdb::ParsedExpressionIterator::EnumerateChildren(

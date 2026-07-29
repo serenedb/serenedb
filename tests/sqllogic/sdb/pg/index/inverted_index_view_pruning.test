@@ -443,3 +443,53 @@ WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_like('word0');
 ----
 count
 5
+
+
+# Case 14: view column whose declared case differs from the ref's folded
+# spelling (quoted alias "BodyText" vs unquoted ref bodytext). The kept-set
+# must match names case-insensitively like the binder does; a case-sensitive
+# match dropped the column from the prune and the remap asserted.
+
+statement ok
+CREATE VIEW prune_v14 AS
+  SELECT id, body AS "BodyText"
+  FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx14 ON prune_v14 USING inverted(
+    (lower(bodytext)) prune_en);
+
+query
+SELECT count(*) FROM prune_idx14 WHERE lower(bodytext) @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# Case 15: keyword-derived alias keeps its typed case (TIMESTAMP ->
+# "Timestamp") while the index expression's unquoted ref folds to lowercase;
+# second expression key is the one referencing the case-divergent column.
+
+statement ok
+CREATE VIEW prune_v15 AS
+  SELECT (TIMESTAMP '2024-01-01 00:00:00' + INTERVAL (id) MINUTE) AS Timestamp,
+         body AS Body
+  FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx15 ON prune_v15 USING inverted(
+    (lower(Body)) prune_en,
+    (strftime(Timestamp, '%Y-%m-%d %H:%M')) prune_kw);
+
+query
+SELECT count(*) FROM prune_idx15 WHERE lower(Body) @@ ts_phrase('pudge');
+----
+count
+3
+
+query
+SELECT count(*) FROM prune_idx15
+WHERE strftime(Timestamp, '%Y-%m-%d %H:%M') @@ ts_like('2024-01-01 00:03');
+----
+count
+1

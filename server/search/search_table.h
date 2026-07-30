@@ -32,13 +32,20 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <vector>
 
 #include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/search_table_options.h"
+#include "catalog/table_options.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 
+namespace sdb::catalog {
+
+struct InvertedIndexEntryInfo;
+
+}  // namespace sdb::catalog
 namespace sdb::search {
 
 // Per-table iresearch columnstore store for a TableEngine::Search table -- the
@@ -50,7 +57,8 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
   SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-              bool is_new, const catalog::SearchTableOptions& options);
+              bool is_new, const catalog::SearchTableOptions& options,
+              std::vector<catalog::Column::Id> pk_columns);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -61,9 +69,18 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // InvertedIndexStorage::Create.
   static std::shared_ptr<SearchTable> Create(
     ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-    const catalog::SearchTableOptions& options);
+    const catalog::SearchTableOptions& options,
+    std::vector<catalog::Column::Id> pk_columns);
 
   ObjectId GetTableId() const noexcept { return _table_id; }
+
+  // Per-column index config: each PRIMARY KEY column is term-indexed (and still
+  // stored) so PK predicates push down as iresearch term filters; nullptr for
+  // any non-indexed column. The Search-engine analogue of
+  // InvertedIndex::FindColumnInfo, consumed by the write sink + the read-side
+  // pushdown. Extends to declared indexed columns when CREATE INDEX lands.
+  const catalog::InvertedIndexEntryInfo* FindColumnInfo(
+    catalog::Column::Id id) const noexcept;
   auto& GetTableLock() noexcept { return _table_lock; }
 
   void UpdateNumRows(int64_t delta) noexcept {
@@ -180,6 +197,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   ObjectId _db_id;
   ObjectId _schema_id;
   bool _is_new;
+  std::vector<catalog::Column::Id> _pk_columns;
   std::atomic<int64_t> _num_rows{0};
   std::shared_mutex _table_lock;
   std::unique_ptr<irs::Directory> _dir;

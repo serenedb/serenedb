@@ -2929,9 +2929,9 @@ bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
       store_table->name = DroppedStoreTableName(table->GetId());
     }
   } else if (table->GetEngine() == TableEngine::Search) {
-    table->SetData(search::SearchTable::Create(database_id, *schema_id,
-                                               table->GetId(), /*is_new=*/true,
-                                               table->SearchOptions()));
+    table->SetData(search::SearchTable::Create(
+      database_id, *schema_id, table->GetId(), /*is_new=*/true,
+      table->SearchOptions(), table->PKColumns()));
   }
 
   Apply(
@@ -5426,9 +5426,9 @@ void OpenDatabase::RegisterInvertedStorage(
 
 void OpenDatabase::RegisterSearchTable(ObjectId db_id, ObjectId schema_id,
                                        const Table& table) {
-  table.SetData(search::SearchTable::Create(db_id, schema_id, table.GetId(),
-                                            /*is_new=*/false,
-                                            table.SearchOptions()));
+  table.SetData(search::SearchTable::Create(
+    db_id, schema_id, table.GetId(),
+    /*is_new=*/false, table.SearchOptions(), table.PKColumns()));
 }
 
 void OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {

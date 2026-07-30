@@ -267,7 +267,8 @@ SereneDBSearchInsert::GetLocalSinkState(
   if (lstate->bulk) {
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
       gstate->search_table->GetTransaction());
-    lstate->sink = MakeSearchTableInsertSink(*lstate->search_trx);
+    lstate->sink =
+      MakeSearchTableInsertSink(*lstate->search_trx, *gstate->search_table);
   }
   return lstate;
 }
@@ -287,7 +288,7 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
       gstate.search_table,
       [&] { return gstate.search_table->GetTransaction(); });
-    lstate->sink = MakeSearchTableInsertSink(trx);
+    lstate->sink = MakeSearchTableInsertSink(trx, *gstate.search_table);
   }
 
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;

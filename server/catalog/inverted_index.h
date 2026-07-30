@@ -167,6 +167,8 @@ struct ColumnTokenizer {
   irs::field_id tokenizer_column = irs::field_limits::invalid();
 };
 
+ColumnTokenizer DefaultColumnTokenizer();
+
 // Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding
 // config the iresearch writer consults at flush/merge. A write or compaction
 // hands the writer the index from its own DDL snapshot, so the long-lived

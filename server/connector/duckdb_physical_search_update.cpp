@@ -158,7 +158,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   new_row.SetCardinality(num_rows);
 
   if (!gstate.insert_sink) {
-    gstate.insert_sink = MakeSearchTableInsertSink(trx);
+    gstate.insert_sink = MakeSearchTableInsertSink(trx, *gstate.search_table);
   }
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =

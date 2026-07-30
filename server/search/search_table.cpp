@@ -20,6 +20,7 @@
 
 #include "search/search_table.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
@@ -38,6 +39,7 @@
 
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
+#include "catalog/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
@@ -101,20 +103,40 @@ absl::Status SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
 
 std::shared_ptr<SearchTable> SearchTable::Create(
   ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-  const catalog::SearchTableOptions& options) {
+  const catalog::SearchTableOptions& options,
+  std::vector<catalog::Column::Id> pk_columns) {
   return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
-                                       options);
+                                       options, std::move(pk_columns));
 }
 
 SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
                          bool is_new,
-                         const catalog::SearchTableOptions& options)
-  : _table_id{table_id}, _db_id{db_id}, _schema_id{schema_id}, _is_new{is_new} {
+                         const catalog::SearchTableOptions& options,
+                         std::vector<catalog::Column::Id> pk_columns)
+  : _table_id{table_id},
+    _db_id{db_id},
+    _schema_id{schema_id},
+    _is_new{is_new},
+    _pk_columns{std::move(pk_columns)} {
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
   _maint_settings.compaction_interval_msec = options.compaction_interval_ms;
   _maint_settings.cleanup_interval_step = options.cleanup_interval_step;
+}
+
+const catalog::InvertedIndexEntryInfo* SearchTable::FindColumnInfo(
+  catalog::Column::Id id) const noexcept {
+  if (!absl::c_linear_search(_pk_columns, id)) {
+    return nullptr;
+  }
+  static const catalog::InvertedIndexEntryInfo kPkIndexed = [] {
+    catalog::InvertedIndexEntryInfo e;
+    e.store_values = true;
+    e.indexed_term_dict = true;
+    return e;
+  }();
+  return &kPkIndexed;
 }
 
 SearchTable::~SearchTable() {

@@ -46,6 +46,7 @@
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 #include "search_remove_filter.hpp"
 
 namespace duckdb {
@@ -105,13 +106,31 @@ inline EntryInfoProvider NoEntryInfoProvider() {
   };
 }
 
-inline EntryInfoProvider AllStoredEntryInfoProvider() {
+inline const catalog::InvertedIndexEntryInfo* AllStoredEntry() {
   static const catalog::InvertedIndexEntryInfo kStored = [] {
     catalog::InvertedIndexEntryInfo e;
     e.store_values = true;
     return e;
   }();
-  return [](irs::field_id) { return &kStored; };
+  return &kStored;
+}
+
+inline EntryInfoProvider AllStoredEntryInfoProvider() {
+  return [](irs::field_id) { return AllStoredEntry(); };
+}
+
+inline EntryInfoProvider MakeSearchTableEntryInfoProvider(
+  const search::SearchTable& shard) {
+  return
+    [&shard](irs::field_id field_id) -> const catalog::InvertedIndexEntryInfo* {
+      const auto* entry =
+        shard.FindColumnInfo(static_cast<catalog::Column::Id>(field_id));
+      return entry ? entry : AllStoredEntry();
+    };
+}
+
+inline TokenizerProvider MakeSearchTableTokenizerProvider() {
+  return [](irs::field_id) { return catalog::DefaultColumnTokenizer(); };
 }
 
 struct PkPolicy {
@@ -344,10 +363,10 @@ class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
 };
 
 inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
-  irs::IndexWriter::Transaction& trx) {
+  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard) {
   return std::make_unique<SearchSinkInsertBaseImpl>(
-    trx, TokenizerProvider{}, AllStoredEntryInfoProvider(),
-    std::vector<IndexedExpression>{},
+    trx, MakeSearchTableTokenizerProvider(),
+    MakeSearchTableEntryInfoProvider(shard), std::vector<IndexedExpression>{},
     PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None});
 }
 

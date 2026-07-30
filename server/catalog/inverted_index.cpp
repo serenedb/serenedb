@@ -39,15 +39,20 @@
 #include "search/inverted_index_storage.h"
 
 namespace sdb::catalog {
+
+ColumnTokenizer DefaultColumnTokenizer() {
+  auto analyzer = std::make_unique<irs::StringTokenizer>();
+  return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
+                           analyzer.release(), Tokenizer::Deleter{nullptr}}};
+}
+
 namespace {
 
 ColumnTokenizer BuildColumnTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot, ObjectId text_dictionary,
   search::Features features) {
   if (!text_dictionary.isSet()) {
-    auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    return DefaultColumnTokenizer();
   }
   auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
   if (!dict) {

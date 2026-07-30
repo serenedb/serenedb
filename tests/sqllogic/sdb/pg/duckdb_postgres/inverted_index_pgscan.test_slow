@@ -260,6 +260,81 @@ statement ok
 DROP TABLE pg_${__DATABASE__}.iipgscan_docs.shards;
 
 
+# ===== key_columns spelled in a case the source catalog does not use =====
+# The persisted key column name must be the catalog's spelling, not the
+# user's: it is quoted verbatim into the remote re-fetch SQL, where postgres
+# resolves it case-sensitively.
+statement ok
+CREATE VIEW pg_kc_v_${__DATABASE__} AS
+  SELECT id, body, views FROM pg_${__DATABASE__}.iipgscan_docs.articles;
+
+
+statement ok
+CREATE INDEX pg_kc_v_idx_${__DATABASE__}
+  ON pg_kc_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__})
+  WITH (key_columns = 'ID');
+
+
+query
+SELECT body, views FROM pg_kc_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge') ORDER BY views DESC;
+----
+body	views
+pudge goes mid and dominates the lane	1200
+pudge plays again in a ranked match	870
+mom reviews pudge highlight reel	12
+
+
+statement ok
+DROP VIEW pg_kc_v_${__DATABASE__};
+
+
+# ===== remote columns whose case the view's select list does not repeat =====
+# Materialising resolves the view-typed names against the remote catalog's
+# names case-insensitively (like the binder), and the remote re-fetch SQL
+# quotes the catalog's spelling.
+statement ok
+CREATE TABLE pg_${__DATABASE__}.iipgscan_docs.cased (
+  id BIGINT PRIMARY KEY,
+  "Body" TEXT,
+  "ViewCount" INTEGER
+);
+
+
+statement count 2
+INSERT INTO pg_${__DATABASE__}.iipgscan_docs.cased VALUES
+  (1, 'pudge goes mid', 11),
+  (2, 'anchin reads manga', 22);
+
+
+statement ok
+CREATE VIEW pg_cased_v_${__DATABASE__} AS
+  SELECT id, body, viewcount FROM pg_${__DATABASE__}.iipgscan_docs.cased;
+
+
+statement ok
+CREATE INDEX pg_cased_v_idx_${__DATABASE__}
+  ON pg_cased_v_${__DATABASE__}
+  USING inverted(body pg_en_${__DATABASE__});
+
+
+query
+SELECT viewcount FROM pg_cased_v_idx_${__DATABASE__}
+WHERE body @@ ts_phrase('pudge');
+----
+viewcount
+11
+
+
+statement ok
+DROP VIEW pg_cased_v_${__DATABASE__};
+
+
+statement ok
+DROP TABLE pg_${__DATABASE__}.iipgscan_docs.cased;
+
+
 # ===== arbitrary-type user keys: VARCHAR single, and a mixed 3-column key =====
 # The key columns can be ANY types (not just BIGINT): they are stored as one
 # struct column of their own types and re-fetched with literals rendered per

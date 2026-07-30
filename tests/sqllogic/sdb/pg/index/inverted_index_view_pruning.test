@@ -443,3 +443,167 @@ WHERE (regexp_split_to_array(lower(Body), '[^a-z0-9]+')) @@ ts_like('word0');
 ----
 count
 5
+
+
+# Case 14: view column whose declared case differs from the ref's folded
+# spelling (quoted alias "BodyText" vs unquoted ref bodytext). The kept-set
+# must match names case-insensitively like the binder does; a case-sensitive
+# match dropped the column from the prune and the remap asserted.
+
+statement ok
+CREATE VIEW prune_v14 AS
+  SELECT id, body AS "BodyText"
+  FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx14 ON prune_v14 USING inverted(
+    (lower(bodytext)) prune_en);
+
+query
+SELECT count(*) FROM prune_idx14 WHERE lower(bodytext) @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# Case 15: keyword-derived alias keeps its typed case (TIMESTAMP ->
+# "Timestamp") while the index expression's unquoted ref folds to lowercase;
+# second expression key is the one referencing the case-divergent column.
+
+statement ok
+CREATE VIEW prune_v15 AS
+  SELECT (TIMESTAMP '2024-01-01 00:00:00' + INTERVAL (id) MINUTE) AS Timestamp,
+         body AS Body
+  FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx15 ON prune_v15 USING inverted(
+    (lower(Body)) prune_en,
+    (strftime(Timestamp, '%Y-%m-%d %H:%M')) prune_kw);
+
+query
+SELECT count(*) FROM prune_idx15 WHERE lower(Body) @@ ts_phrase('pudge');
+----
+count
+3
+
+query
+SELECT count(*) FROM prune_idx15
+WHERE strftime(Timestamp, '%Y-%m-%d %H:%M') @@ ts_like('2024-01-01 00:03');
+----
+count
+1
+
+
+# Case 16: struct-field expression key. The bound expression is a
+# struct_extract over column `s`, which the parsed text shows only as the
+# trailing field name -- the kept set must come from the bound refs.
+
+statement count 2
+COPY (SELECT {'f': 'hello world'} AS s, 1 AS id
+      UNION ALL SELECT {'f': 'bye now'}, 2)
+TO '${__TEST_DIR__}/struct_prune.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW prune_v16 AS
+  SELECT s, id FROM read_parquet('${__TEST_DIR__}/struct_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx16 ON prune_v16 USING inverted(
+    (lower(s.f)) prune_kw) WITH (store_pk = 'none');
+
+query
+SELECT count(*) FROM prune_idx16 WHERE lower(s.f) @@ ts_like('hello world');
+----
+count
+1
+
+
+# Case 17: positional reference key. The binder rewrites #1 into a column
+# ref the parsed expression never contains.
+
+statement ok
+CREATE VIEW prune_v17 AS
+  SELECT body, id FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx17 ON prune_v17 USING inverted((lower(#1)) prune_kw);
+
+query
+SELECT count(*) FROM prune_idx17 WHERE lower(body) @@ ts_like('pudge goes mid');
+----
+count
+1
+
+
+# Case 18: bare view name key -- binds as an implicit struct_pack over every
+# view column.
+
+statement ok
+CREATE VIEW prune_v18 AS
+  SELECT body, id FROM read_parquet('${__TEST_DIR__}/view_prune.parquet');
+
+statement ok
+CREATE INDEX prune_idx18 ON prune_v18 USING inverted(
+    (prune_v18::VARCHAR) prune_kw);
+
+query
+SELECT count(*) FROM prune_idx18;
+----
+count
+5
+
+
+# Case 19: a SELECT * view goes stale after ALTER TABLE on its base table --
+# the catalog's frozen view definition cannot resolve the new column, so
+# indexing it must fail cleanly; pre-existing columns stay indexable.
+
+statement ok
+CREATE TABLE prune_alter_base(a INTEGER, body TEXT);
+
+statement ok
+INSERT INTO prune_alter_base VALUES (1, 'hello');
+
+statement ok
+CREATE VIEW prune_v19 AS SELECT * FROM prune_alter_base;
+
+statement ok
+ALTER TABLE prune_alter_base ADD COLUMN extra TEXT;
+
+statement error
+CREATE INDEX prune_idx19 ON prune_v19 USING inverted((lower(extra)) prune_kw);
+----
+db error: ERROR: view "prune_v19" is out of date with its underlying relation; recreate the view before creating an index on it
+
+
+statement ok
+CREATE INDEX prune_idx19 ON prune_v19 USING inverted((lower(body)) prune_kw);
+
+query
+SELECT count(*) FROM prune_idx19 WHERE lower(body) @@ ts_like('hello');
+----
+count
+1
+
+
+# Case 20: source file columns with case the view's select list does not
+# repeat verbatim. Materialising a lookup column resolves the view-typed
+# names against the file's names case-insensitively, like the binder did.
+
+statement count 2
+COPY (SELECT 'aaa bbb' AS "Body", 7 AS "UserID"
+      UNION ALL SELECT 'ccc ddd', 8)
+TO '${__TEST_DIR__}/mixed_case.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW prune_v20 AS
+  SELECT body, userid FROM read_parquet('${__TEST_DIR__}/mixed_case.parquet');
+
+statement ok
+CREATE INDEX prune_idx20 ON prune_v20 USING inverted((lower(body)) prune_kw);
+
+query
+SELECT userid FROM prune_idx20 WHERE lower(body) @@ ts_like('aaa bbb');
+----
+userid
+7

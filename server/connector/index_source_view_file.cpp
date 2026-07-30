@@ -40,18 +40,18 @@ ViewFileIndexSourceBase::ViewFileIndexSourceBase(
   _lookup_func = MakeFastPathLookupFunction(_fast_path);
 
   auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
-  containers::FlatHashMap<std::string_view, duckdb::idx_t> name_to_file_col;
+  duckdb::identifier_map_t<duckdb::idx_t> name_to_file_col;
   if (!_fast_path.projection_columns.empty()) {
     name_to_file_col.reserve(multi_bd.names.size());
     for (duckdb::idx_t i = 0; i < multi_bd.names.size(); ++i) {
-      name_to_file_col.emplace(multi_bd.names[i].GetIdentifierName(), i);
+      name_to_file_col.emplace(multi_bd.names[i], i);
     }
   }
   _column_indexes.reserve(projected_columns.size());
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
     [&](std::string_view name) {
-      auto it = name_to_file_col.find(name);
+      auto it = name_to_file_col.find(duckdb::Identifier{name});
       SDB_ASSERT(it != name_to_file_col.end());
       return it->second;
     },

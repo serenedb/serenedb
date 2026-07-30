@@ -569,39 +569,46 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
 namespace {
 
 std::vector<duckdb::idx_t> ComputeKeptViewPositions(
-  const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
-    parsed_index_exprs,
-  const duckdb::ParsedExpression* predicate,
-  const duckdb::ViewColumnInfo& column_info) {
+  duckdb::Binder& binder, duckdb::CreateIndexInfo& info) {
   std::vector<duckdb::idx_t> kept;
-  auto add = [&](std::string_view name) {
-    for (size_t i = 0; i < column_info.names.size(); ++i) {
-      if (column_info.names[i].GetIdentifierName() == name) {
-        kept.push_back(i);
-        break;
-      }
+  auto collect = [&](this auto& self, const duckdb::Expression& e) -> void {
+    if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+      kept.push_back(e.Cast<duckdb::BoundColumnRefExpression>()
+                       .Binding()
+                       .column_index.GetIndex());
     }
+    duckdb::ExpressionIterator::EnumerateChildren(
+      e, [&](const duckdb::Expression& c) { self(c); });
   };
-  auto collect = [&](this auto& self,
-                     const duckdb::ParsedExpression& e) -> void {
-    if (e.GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
-      add(e.Cast<duckdb::ColumnRefExpression>()
-            .GetColumnName()
-            .GetIdentifierName());
-      return;
-    }
-    duckdb::ParsedExpressionIterator::EnumerateChildren(
-      e, [&](const duckdb::ParsedExpression& c) { self(c); });
-  };
-  for (const auto& expr : parsed_index_exprs) {
-    collect(*expr);
+  duckdb::IndexBinder index_binder(binder, binder.context);
+  for (const auto& expr : info.expressions) {
+    auto copy = expr->Copy();
+    collect(*index_binder.Bind(copy));
   }
-  if (predicate) {
-    collect(*predicate);
+  if (info.where_clause) {
+    auto copy = info.where_clause->Copy();
+    collect(*index_binder.Bind(copy));
   }
   absl::c_sort(kept);
   kept.erase(std::unique(kept.begin(), kept.end()), kept.end());
   return kept;
+}
+
+void EnsureViewDefinitionCurrent(const catalog::PgSqlView& view,
+                                 const duckdb::ViewColumnInfo& column_info,
+                                 const std::vector<duckdb::idx_t>& kept) {
+  const auto& vinfo = view.GetInfo();
+  for (const auto p : kept) {
+    if (p >= vinfo.names.size() || p >= column_info.names.size() ||
+        vinfo.names[p] != column_info.names[p] ||
+        vinfo.types[p] != column_info.types[p]) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+        ERR_MSG("view \"", view.GetName(),
+                "\" is out of date with its underlying relation; recreate "
+                "the view before creating an index on it"));
+    }
+  }
 }
 
 // Wrap `plan` in a LogicalProjection that enumerates only the kept view
@@ -881,6 +888,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   std::optional<ViewFastPath> view_fast_path;
   int64_t pinned_iceberg_snapshot_id = 0;
   std::optional<std::vector<duckdb::idx_t>> kept_view_positions;
+  std::optional<std::vector<duckdb::idx_t>> view_referenced_positions;
   const auto partial_view_index =
     !!stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause;
   std::optional<std::vector<duckdb::column_t>> vcols_opt;
@@ -1015,9 +1023,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                  "view must be bound by the time fp && leaf_get holds -- "
                  "the leaf get came from binding the view body");
       auto kept = ComputeKeptViewPositions(
-        stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
-        stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause.get(),
-        *column_info);
+        binder, stmt.info->Cast<duckdb::CreateIndexInfo>());
+      EnsureViewDefinitionCurrent(
+        basics::downCast<const catalog::PgSqlView>(*relation_obj),
+        *column_info, kept);
+      view_referenced_positions = kept;
       if (kept.size() < column_info->names.size() || partial_view_index) {
         plan = InsertBackfillFilterProjection(
           std::move(plan), kept, column_info->names.size(), vcols.size(),
@@ -1028,9 +1038,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
       if (auto column_info = view_entry.GetColumnInfo()) {
         auto kept = ComputeKeptViewPositions(
-          stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
-          stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause.get(),
-          *column_info);
+          binder, stmt.info->Cast<duckdb::CreateIndexInfo>());
+        if (relation_obj &&
+            relation_obj->GetType() == catalog::ObjectType::View) {
+          EnsureViewDefinitionCurrent(
+            basics::downCast<const catalog::PgSqlView>(*relation_obj),
+            *column_info, kept);
+        }
+        view_referenced_positions = kept;
         if (kept.size() < column_info->names.size() || partial_view_index) {
           plan = InsertBackfillFilterProjection(
             std::move(plan), kept, column_info->names.size(),
@@ -1152,11 +1167,24 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     duckdb::ParsedExpressionIterator::EnumerateChildren(
       e, [&](const duckdb::ParsedExpression& child) { self(child); });
   };
-  for (auto& expr : create_index_info->parsed_expressions) {
-    collect(*expr);
-  }
-  if (create_index_info->where_clause) {
-    collect(*create_index_info->where_clause);
+  if (view_backed && view_referenced_positions) {
+    for (const auto p : *view_referenced_positions) {
+      const auto idx =
+        kept_view_positions
+          ? static_cast<duckdb::idx_t>(std::distance(
+              kept_view_positions->begin(),
+              std::ranges::lower_bound(*kept_view_positions, p)))
+          : p;
+      create_index_info->column_ids.emplace_back(idx);
+      create_index_info->scan_types.emplace_back(rel_columns[idx].second);
+    }
+  } else {
+    for (auto& expr : create_index_info->parsed_expressions) {
+      collect(*expr);
+    }
+    if (create_index_info->where_clause) {
+      collect(*create_index_info->where_clause);
+    }
   }
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
 

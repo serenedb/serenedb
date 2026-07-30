@@ -31,7 +31,6 @@ namespace {
 TEST(MetaTransactionSnapshot, ShowAllTablesUnderConcurrentAttachDetach) {
   duckdb::DuckDB db(nullptr);
 
-  constexpr char kDupNameError[] = "was already used by a different database";
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 
   std::atomic<bool> stop{false};
@@ -44,14 +43,17 @@ TEST(MetaTransactionSnapshot, ShowAllTablesUnderConcurrentAttachDetach) {
   });
 
   duckdb::Connection reader{db};
-  int dup_name_errors = 0;
+  int errors = 0;
   int reads = 0;
+  std::string first_error;
   while (std::chrono::steady_clock::now() < deadline) {
     auto res = reader.Query("SHOW ALL TABLES");
     ++reads;
-    if (res->HasError() &&
-        res->GetError().find(kDupNameError) != std::string::npos) {
-      ++dup_name_errors;
+    if (res->HasError()) {
+      ++errors;
+      if (first_error.empty()) {
+        first_error = res->GetError();
+      }
     }
   }
 
@@ -59,7 +61,8 @@ TEST(MetaTransactionSnapshot, ShowAllTablesUnderConcurrentAttachDetach) {
   writer.join();
 
   EXPECT_GT(reads, 0);
-  EXPECT_EQ(dup_name_errors, 0);
+  EXPECT_EQ(errors, 0) << "SHOW ALL TABLES failed " << errors
+                       << " times; first error: " << first_error;
 }
 
 }  // namespace

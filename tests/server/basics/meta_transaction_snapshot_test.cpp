@@ -31,7 +31,8 @@ namespace {
 TEST(MetaTransactionSnapshot, ShowAllTablesUnderConcurrentAttachDetach) {
   duckdb::DuckDB db(nullptr);
 
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::seconds(5);
 
   std::atomic<bool> stop{false};
   std::thread writer([&] {

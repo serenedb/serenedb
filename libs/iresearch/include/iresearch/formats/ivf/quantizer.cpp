@@ -333,8 +333,11 @@ std::shared_ptr<const QuantizerCodebook> ScalarQuantizerStats::MakeCodebook(
 
 class ProductQuantizerWriter final : public QuantizerWriter {
  public:
-  ProductQuantizerWriter(uint32_t d, uint32_t m, uint32_t niter)
-    : _d{d}, _pq{d, m == 0 ? 1 : m, kPqNbits} {
+  ProductQuantizerWriter(uint32_t d, VectorMetric metric, uint32_t m,
+                         uint32_t niter)
+    : _d{d}, _metric{metric}, _pq{d, m == 0 ? 1 : m, kPqNbits} {
+    SDB_ASSERT(metric == VectorMetric::L2Sqr ||
+               metric == VectorMetric::InnerProduct);
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
     }
@@ -365,6 +368,9 @@ class ProductQuantizerWriter final : public QuantizerWriter {
 
   void BeginCluster(size_t total_docs) final {
     _cluster_codes.assign(total_docs * _pq.code_size, 0);
+    if (_metric == VectorMetric::L2Sqr) {
+      _cluster_norms.assign(total_docs, 0.f);
+    }
     _cluster_filled = 0;
   }
 
@@ -376,14 +382,28 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     SDB_ASSERT(_trained);
     SDB_ASSERT(_centroid.size() == _d);
     SDB_ASSERT((_cluster_filled + n) * _pq.code_size <= _cluster_codes.size());
+    const bool is_l2 = _metric == VectorMetric::L2Sqr;
     _res.resize(_d);
+    if (is_l2) {
+      _dec.resize(_d);
+    }
     for (size_t i = 0; i < n; ++i) {
       const float* v = vecs + i * _d;
       for (uint32_t j = 0; j < _d; ++j) {
         _res[j] = v[j] - _centroid[j];
       }
-      _pq.compute_code(_res.data(), _cluster_codes.data() +
-                                      (_cluster_filled + i) * _pq.code_size);
+      uint8_t* code =
+        _cluster_codes.data() + (_cluster_filled + i) * _pq.code_size;
+      _pq.compute_code(_res.data(), code);
+      if (is_l2) {
+        _pq.decode(code, _dec.data());
+        float norm = 0.f;
+        for (uint32_t j = 0; j < _d; ++j) {
+          const float y = _dec[j] + _centroid[j];
+          norm += y * y;
+        }
+        _cluster_norms[_cluster_filled + i] = norm;
+      }
     }
     _cluster_filled += n;
   }
@@ -391,6 +411,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   void FinishCluster(IndexOutput& out) final {
     if (_cluster_filled == 0) {
       _cluster_codes.clear();
+      _cluster_norms.clear();
       return;
     }
     const size_t m = _pq.M;
@@ -400,6 +421,11 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     faiss::pq4_pack_codes(_cluster_codes.data(), _cluster_filled, m, nb,
                           kFastScanBbs, nsq, _packed.data());
     out.WriteData(_packed.data(), _packed.size());
+    if (_metric == VectorMetric::L2Sqr) {
+      out.WriteData(reinterpret_cast<const byte_type*>(_cluster_norms.data()),
+                    _cluster_filled * sizeof(float));
+      _cluster_norms.clear();
+    }
     _cluster_codes.clear();
   }
 
@@ -426,13 +452,16 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   }
 
   uint32_t _d;
+  VectorMetric _metric;
   faiss::ProductQuantizer _pq;
   bool _trained = false;
   std::vector<byte_type> _stats;
   std::vector<float> _centroid;
   mutable std::vector<uint8_t> _cluster_codes;
+  mutable std::vector<float> _cluster_norms;
   mutable size_t _cluster_filled = 0;
   mutable std::vector<float> _res;
+  mutable std::vector<float> _dec;
   std::vector<uint8_t> _packed;
 };
 
@@ -482,21 +511,24 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   ProductQuantizerCodebook(std::shared_ptr<const ProductQuantizerStats> stats,
                            std::span<const float> query)
     : _stats{std::move(stats)}, _query(query.begin(), query.end()) {
-    if (_stats->Metric() == VectorMetric::InnerProduct) {
-      // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
-      // query-only and precomputed once per query here.
-      const faiss::ProductQuantizer& pq = _stats->Pq();
-      const size_t ksub = pq.ksub;
-      const size_t nsq = FastScanNsq(pq.M);
-      std::vector<float> ip_table(static_cast<size_t>(pq.M) * ksub);
-      pq.compute_inner_prod_table(_query.data(), ip_table.data());
-      std::vector<byte_type> lutq(nsq * ksub);
-      faiss::quantize_lut::quantize_LUT_and_bias(
-        1, pq.M, ksub, false, ip_table.data(), nullptr, lutq.data(), nsq,
-        nullptr, &_ip_a, &_ip_b);
-      _packed_ip_lut.resize(nsq * ksub);
-      faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
-                          _packed_ip_lut.data());
+    // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
+    // query-only and precomputed once per query here.
+    const faiss::ProductQuantizer& pq = _stats->Pq();
+    const size_t ksub = pq.ksub;
+    const size_t nsq = FastScanNsq(pq.M);
+    std::vector<float> ip_table(static_cast<size_t>(pq.M) * ksub);
+    pq.compute_inner_prod_table(_query.data(), ip_table.data());
+    std::vector<byte_type> lutq(nsq * ksub);
+    faiss::quantize_lut::quantize_LUT_and_bias(
+      1, pq.M, ksub, false, ip_table.data(), nullptr, lutq.data(), nsq, nullptr,
+      &_ip_a, &_ip_b);
+    _packed_ip_lut.resize(nsq * ksub);
+    faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
+                        _packed_ip_lut.data());
+    if (_stats->Metric() == VectorMetric::L2Sqr) {
+      for (const float x : _query) {
+        _query_norm2 += x * x;
+      }
     }
   }
 
@@ -509,6 +541,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   const uint8_t* PackedIpLut() const noexcept { return _packed_ip_lut.data(); }
   float IpA() const noexcept { return _ip_a; }
   float IpB() const noexcept { return _ip_b; }
+  float QueryNorm2() const noexcept { return _query_norm2; }
 
  private:
   std::shared_ptr<const ProductQuantizerStats> _stats;
@@ -516,6 +549,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   faiss::AlignedTable<uint8_t> _packed_ip_lut;
   float _ip_a = 1.f;
   float _ip_b = 0.f;
+  float _query_norm2 = 0.f;
 };
 
 class ProductQuantizerReader final : public QuantizerReader {
@@ -532,60 +566,46 @@ class ProductQuantizerReader final : public QuantizerReader {
     }
     SDB_ASSERT(centroid != nullptr);
     const faiss::ProductQuantizer& pq = _cb->Pq();
-    const size_t m = pq.M;
-    const size_t ksub = pq.ksub;
-    const size_t nsq = FastScanNsq(m);
+    const size_t nsq = FastScanNsq(pq.M);
     const std::span<const float> query = _cb->Query();
 
-    const uint8_t* packed_lut;
-    float a;
-    float b;
-    float ip_offset = 0.f;
-    const bool is_l2 = _cb->Metric() == VectorMetric::L2Sqr;
-    if (is_l2) {
-      _qr.resize(query.size());
-      for (size_t j = 0; j < query.size(); ++j) {
-        _qr[j] = query[j] - centroid[j];
-      }
-      _table.resize(m * ksub);
-      pq.compute_distance_table(_qr.data(), _table.data());
-
-      _lutq.resize(nsq * ksub);
-      faiss::quantize_lut::quantize_LUT_and_bias(
-        1, m, ksub, false, _table.data(), nullptr, _lutq.data(), nsq, nullptr,
-        &a, &b);
-      _packed_lut.resize(nsq * ksub);
-      faiss::pq4_pack_LUT(1, static_cast<int>(nsq), _lutq.data(),
-                          _packed_lut.data());
-      packed_lut = _packed_lut.data();
-    } else {
-      // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
-      // query-only and precomputed once per query in the codebook.
-      packed_lut = _cb->PackedIpLut();
-      a = _cb->IpA();
-      b = _cb->IpB();
-      for (size_t j = 0; j < query.size(); ++j) {
-        ip_offset += query[j] * centroid[j];
-      }
+    // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
+    // query-only and precomputed once per query in the codebook.
+    float qc = 0.f;
+    for (size_t j = 0; j < query.size(); ++j) {
+      qc += query[j] * centroid[j];
     }
 
+    const bool is_l2 = _cb->Metric() == VectorMetric::L2Sqr;
     const size_t nb = RoundUp(_n, kFastScanBbs);
     const size_t packed_bytes = nb * nsq / 2;
-    const byte_type* codes = _pay_in->ReadVolatile(pay_start, packed_bytes);
+    const size_t norms_bytes = is_l2 ? _n * sizeof(float) : 0;
+    const size_t total_bytes = packed_bytes + norms_bytes;
+    const byte_type* codes = _pay_in->ReadVolatile(pay_start, total_bytes);
     if (!codes) {
-      _codes_buf.resize(packed_bytes);
-      _pay_in->ReadData(pay_start, _codes_buf.data(), packed_bytes);
+      _codes_buf.resize(total_bytes);
+      _pay_in->ReadData(pay_start, _codes_buf.data(), total_bytes);
       codes = _codes_buf.data();
     }
     _accu.resize(nb);
-    faiss::accumulate_to_mem(1, nb, static_cast<int>(nsq), codes, packed_lut,
-                             _accu.data());
+    faiss::accumulate_to_mem(1, nb, static_cast<int>(nsq), codes,
+                             _cb->PackedIpLut(), _accu.data());
 
     _scores.resize(_n);
-    const float inv_a = 1.f / a;
-    for (size_t i = 0; i < _n; ++i) {
-      const float dist = static_cast<float>(_accu[i]) * inv_a + b;
-      _scores[i] = is_l2 ? -dist : dist + ip_offset;
+    const float inv_a = 1.f / _cb->IpA();
+    const float b = _cb->IpB();
+    if (is_l2) {
+      _norms.resize(_n);
+      std::memcpy(_norms.data(), codes + packed_bytes, norms_bytes);
+      const float q2 = _cb->QueryNorm2();
+      for (size_t i = 0; i < _n; ++i) {
+        const float ip = static_cast<float>(_accu[i]) * inv_a + b;
+        _scores[i] = -(q2 - 2.f * qc - 2.f * ip + _norms[i]);
+      }
+    } else {
+      for (size_t i = 0; i < _n; ++i) {
+        _scores[i] = static_cast<float>(_accu[i]) * inv_a + b + qc;
+      }
     }
   }
 
@@ -597,10 +617,7 @@ class ProductQuantizerReader final : public QuantizerReader {
  private:
   std::shared_ptr<const ProductQuantizerCodebook> _cb;
   std::unique_ptr<IndexInput> _pay_in;
-  std::vector<float> _table;
-  std::vector<float> _qr;
-  std::vector<uint8_t> _lutq;
-  faiss::AlignedTable<uint8_t> _packed_lut;
+  std::vector<float> _norms;
   std::vector<byte_type> _codes_buf;
   faiss::AlignedTable<uint16_t> _accu;
   std::vector<score_t> _scores;
@@ -987,7 +1004,8 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
     case VectorQuantization::SQ4:
       return std::make_unique<ScalarQuantizerWriter>(d, quant);
     case VectorQuantization::PQ:
-      return std::make_unique<ProductQuantizerWriter>(d, pq_m, pq_niter);
+      return std::make_unique<ProductQuantizerWriter>(d, metric, pq_m,
+                                                      pq_niter);
     case VectorQuantization::RaBitQ:
       return std::make_unique<RaBitQuantizerWriter>(d, metric, nb_bits);
   }

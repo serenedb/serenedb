@@ -335,6 +335,99 @@ TEST(pq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   EXPECT_GT(scores[1], scores[2]);
 }
 
+TEST(pq_quantizer_test, l2_ranking_with_nonzero_centroid) {
+  constexpr uint32_t d = 8;
+  constexpr uint32_t pq_m = 2;
+  const VectorMetric metric = VectorMetric::L2Sqr;
+  const std::vector<float> centroid(d, 5.f);
+
+  std::vector<float> points(3 * static_cast<size_t>(d), 5.f);
+  points[0] = 6.f;
+  points[d] = 9.f;
+  points[2 * d] = 25.f;
+  std::vector<float> query(d, 5.f);
+  query[0] = 6.5f;
+
+  const auto scores = PqRoundtrip(d, pq_m, metric, centroid, points, query);
+
+  EXPECT_GT(scores[0], scores[1]);
+  EXPECT_GT(scores[1], scores[2]);
+  EXPECT_LT(scores[0], 0.f);
+}
+
+TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
+  constexpr uint32_t d = 8;
+  constexpr uint32_t pq_m = 2;
+  const VectorMetric metric = VectorMetric::L2Sqr;
+
+  const std::vector<float> c1(d, 0.f);
+  std::vector<float> c2(d, 0.f);
+  c2[0] = 100.f;
+
+  std::vector<float> points1(2 * static_cast<size_t>(d), 0.f);
+  points1[0] = 1.f;
+  points1[d] = 4.f;
+  std::vector<float> points2(2 * static_cast<size_t>(d), 0.f);
+  points2[0] = 96.f;
+  points2[d] = 99.f;
+
+  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
+                                    /*pq_niter=*/0, /*nb_bits=*/0);
+  ASSERT_NE(writer, nullptr);
+
+  std::vector<float> train;
+  constexpr size_t kCopies = 5;
+  for (size_t c = 0; c < kCopies; ++c) {
+    for (const float r : {1.f, 4.f, -4.f, -1.f}) {
+      std::vector<float> v(d, 0.f);
+      v[0] = r;
+      train.insert(train.end(), v.begin(), v.end());
+    }
+  }
+  writer->Train(train.data(), train.size() / d);
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t pay_start1;
+  uint64_t pay_start2;
+  {
+    MemoryIndexOutput out{file};
+    pay_start1 = out.Position();
+    writer->SetClusterCentroid(c1.data());
+    writer->BeginCluster(2);
+    writer->EncodeCluster(out, points1.data(), 2);
+    writer->FinishCluster(out);
+    pay_start2 = out.Position();
+    writer->SetClusterCentroid(c2.data());
+    writer->BeginCluster(2);
+    writer->EncodeCluster(out, points2.data(), 2);
+    writer->FinishCluster(out);
+    out.Flush();
+  }
+
+  std::vector<float> query(d, 0.f);
+  query[0] = 2.f;
+  auto stats =
+    MakeQuantizerStats(VectorQuantization::PQ, d, writer->StatsBytes(), metric);
+  ASSERT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
+  ASSERT_NE(codebook, nullptr);
+
+  auto reader =
+    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  ASSERT_NE(reader, nullptr);
+
+  std::array<score_t, 4> scores{};
+  reader->StartCluster(pay_start1, 2, c1.data());
+  reader->ComputeBlock(0, 2, scores.data());
+  reader->StartCluster(pay_start2, 2, c2.data());
+  reader->ComputeBlock(0, 2, scores.data() + 2);
+
+  EXPECT_GT(scores[0], scores[1]);
+  EXPECT_GT(scores[1], scores[2]);
+  EXPECT_GT(scores[2], scores[3]);
+}
+
 // A cluster spanning more than one 32-vector fast-scan SIMD block (bbs=32),
 // with an odd M (M=3, rounded up to nsq=4 for packing/scanning) to exercise
 // the padding subquantizer. Near/far points are interleaved so both blocks

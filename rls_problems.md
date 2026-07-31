@@ -25,7 +25,8 @@ postgres:18.3.
 
 ## P1. Predicate ordering — reorderers exist, but the concrete attacks are blocked
 
-**Status: NOT currently exploitable.** An earlier draft of this document claimed
+**Status: no leak demonstrated, but the evidence is thinner than it looks —
+see the warning under "Attempted attacks". One path has no valid probe at all.** An earlier draft of this document claimed
 this was a live leak; targeted attacks disproved that. The reordering machinery
 below is real, but existing `CanThrow`-keyed guards happen to close the channels
 we could construct. What remains is *fragility*, not a hole. Kept here because
@@ -33,9 +34,17 @@ the protection is incidental and must be pinned by tests.
 
 ### Attempted attacks, both blocked
 
+> **The error-oracle row below is not a valid experiment.** duckdb returns NULL
+> for integer division by zero (`SELECT 1/0` -> NULL) rather than raising, as PG
+> does. That query returns 0 rows and no error *regardless* of evaluation order,
+> so it demonstrates nothing about ordering. A cast-overflow oracle
+> (`CAST(balance AS TINYINT)`) was tried as a replacement and is also neutralised
+> -- duckdb rewrites it into a range filter on the column, so the cast never
+> executes. **The side-effect attack is the only probe here with real signal.**
+
 | attack | result |
 |---|---|
-| `WHERE 1/(secret-1000) = 999999999` on a 200k-row table, RLS filter made deliberately unselective (50%), one *hidden* row with `secret=1000` | 0 rows, **no error** |
+| ~~`WHERE 1/(secret-1000) = 999999999` on a 200k-row table, RLS filter made deliberately unselective (50%), one *hidden* row with `secret=1000`~~ (**invalid — no signal, see above**) | 0 rows, no error |
 | side-effecting predicate: `CREATE FUNCTION leak_fn(x) RETURNS int LANGUAGE sql AS 'INSERT INTO leaked VALUES (x) RETURNING 1'`, then `WHERE leak_fn(secret) > 0` | only the caller's *own* row value (`5`) was written; hidden `1000`/`7777` never evaluated |
 
 ### Why it holds — `pushdown_get.cpp:95`

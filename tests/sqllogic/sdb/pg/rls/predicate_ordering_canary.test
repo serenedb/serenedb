@@ -14,6 +14,18 @@
 #
 # See rls_problems.md P1.
 #
+# WARNING -- the error-oracle probes below (`1/(balance-1000)`) are WEAK. duckdb
+# returns NULL for integer division by zero rather than raising (`SELECT 1/0` ->
+# NULL), so those queries return 0 rows whether or not the policy was applied
+# first. They are kept only to pin plan shape. The SIDE-EFFECT probes
+# (`poc_tap`, asserting poc_sink holds nothing but the caller's own balance) are
+# the assertions with real signal -- if you weaken this file, keep those.
+#
+# No valid probe currently exists for the case where the attacker's qual is
+# admitted INTO the scan (rls_problems.md P1 fragility item 2): an error oracle
+# has no signal, and a side-effecting function becomes a delim-join subquery
+# evaluated after the scan's filters. That path is untested, not proven safe.
+#
 # Lore: the mop must not learn vedernikoff's balance by asking which row makes the
 # arithmetic explode.
 

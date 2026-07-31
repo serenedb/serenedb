@@ -22,15 +22,12 @@
 
 namespace sdb {
 
-// Routes the Azure SDK's libcurl connection-pool cleanup loop onto
-// BackgroundScheduler instead of an SDK-owned thread (see the
-// SetCurlCleanupScheduler hook in our azure-sdk-for-cpp fork). Call once at
-// startup, after BackgroundScheduler::start() and the io pool are up.
+// Routes the Azure SDK's curl connection-pool cleanup loop onto
+// BackgroundScheduler (SetCurlCleanupScheduler hook). Call once after
+// BackgroundScheduler::start().
 void InstallAzureCleanupScheduler();
 
-// Join any armed cleanup loops. Call during shutdown after search stops and
-// before BackgroundScheduler::stop() (mirrors SearchEngine::stop()'s loop
-// join).
+// Joins armed cleanup loops. Call before BackgroundScheduler::stop().
 void StopAzureCleanupScheduler();
 
 }  // namespace sdb

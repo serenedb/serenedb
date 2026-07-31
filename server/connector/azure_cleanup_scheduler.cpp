@@ -30,11 +30,6 @@
 #include "basics/lifecycle.h"
 #include "scheduler/background_scheduler.h"
 
-// Mirrors azure/core/http/curl_cleanup_scheduler.hpp from our azure-sdk-for-cpp
-// fork, on purpose: no include path / link edge onto the vendored SDK. The
-// mangled name encodes the parameter type, so any signature drift in the fork
-// surfaces as an undefined-symbol link error (the definition lives in
-// _azure_sdk, already in serened's link closure via the azure extension).
 namespace Azure::Core::Http {
 
 using CurlCleanupScheduler = std::function<void(
@@ -45,8 +40,7 @@ void SetCurlCleanupScheduler(CurlCleanupScheduler scheduler);
 namespace sdb {
 namespace {
 
-// Armed cleanup loops, joined by StopAzureCleanupScheduler() -- the same
-// ownership shape as SearchEngine::_loops for the refresh/compaction loops.
+// Armed cleanup loops, joined by StopAzureCleanupScheduler().
 yaclib::WaitGroup<> g_loops{1};
 
 yaclib::Future<> CleanupLoop(std::chrono::milliseconds interval,
@@ -80,8 +74,7 @@ void InstallAzureCleanupScheduler() {
   Azure::Core::Http::SetCurlCleanupScheduler(
     [](std::chrono::milliseconds interval, std::function<bool()> tick) {
       if (lifecycle::IsStopping()) {
-        // Late arming during shutdown: skip the loop, pooled connections are
-        // released with the pool at exit.
+        // Pooled connections are released with the pool at exit.
         return;
       }
       g_loops.Consume(CleanupLoop(interval, std::move(tick)));

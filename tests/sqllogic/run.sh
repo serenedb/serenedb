@@ -312,93 +312,62 @@ launch_azurite() {
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	AZURITE_CONTAINER_NAME="${prefix}-serenedb-test-azurite-$$"
 	AZURITE_LOG_FILE="${LOG_DIR:-/tmp}/${AZURITE_CONTAINER_NAME}.log"
-	export AZURITE_ACCOUNT="devstoreaccount1"
-	# Azurite's well-known devstore account key (a public constant, not a secret).
-	export AZURITE_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+	# Azurite's well-known devstore account (a public constant, not a secret).
+	local account="devstoreaccount1"
+	local key="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 	export AZURITE_BLOB_CONTAINER="testcont"
 
+	local host port
 	local docker_args=(-d --name "$AZURITE_CONTAINER_NAME")
-	# Nothing else talks to Azurite by container name in local mode, so the
-	# default bridge network + a published port is enough; in compose mode the
-	# tests container reaches it by name on the shared network.
+	# Compose mode: reached by container name on the shared network; local
+	# mode: default bridge + a published port.
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
 		docker_args+=(--network "$COMPOSE_NETWORK")
-		export AZURITE_HOST="$AZURITE_CONTAINER_NAME"
-		export AZURITE_PORT=10000
+		host="$AZURITE_CONTAINER_NAME"
+		port=10000
 	else
-		AZURITE_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-		export AZURITE_HOST="localhost"
-		export AZURITE_PORT
-		docker_args+=(-p "${AZURITE_PORT}:10000")
+		port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+		host="localhost"
+		docker_args+=(-p "${port}:10000")
 	fi
 
-	echo "Starting Azurite (host=$AZURITE_HOST, port=$AZURITE_PORT)..."
+	echo "Starting Azurite (host=$host, port=$port)..."
 	# --skipApiVersionCheck: the vendored Azure SDK may speak a service API
 	# version newer than the Azurite image knows.
 	docker run "${docker_args[@]}" \
 		mcr.microsoft.com/azure-storage/azurite \
 		azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
 
-	export AZURITE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=${AZURITE_ACCOUNT};AccountKey=${AZURITE_KEY};BlobEndpoint=http://${AZURITE_HOST}:${AZURITE_PORT}/${AZURITE_ACCOUNT};"
+	export AZURITE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=${account};AccountKey=${key};BlobEndpoint=http://${host}:${port}/${account};"
 
-	echo "Waiting for Azurite to be ready..."
-	for i in $(seq 1 30); do
-		# Ready as soon as it answers HTTP at all (an unauthenticated list
-		# gets a 403 -- that still proves the listener is up).
-		if python3 -c "
-import sys, urllib.error, urllib.request
-try:
-    urllib.request.urlopen('http://${AZURITE_HOST}:${AZURITE_PORT}/${AZURITE_ACCOUNT}?comp=list', timeout=2)
-except urllib.error.HTTPError:
-    pass
-except Exception:
-    sys.exit(1)
-" >/dev/null 2>&1; then
-			echo "Azurite is ready."
-			break
-		fi
-		if [[ $i -eq 30 ]]; then
-			echo "ERROR: Azurite failed to start within 30 seconds"
-			exit 1
-		fi
-		sleep 1
-	done
-
-	# The azure extension cannot create containers; provision the test one with
-	# a SharedKey-signed PUT (Azurite ships no CLI in its image).
+	# The azure extension cannot create containers and the Azurite image ships
+	# no CLI: provision the test container with a SharedKey-signed PUT, retried
+	# while Azurite comes up (the retry loop doubles as the readiness wait).
 	echo "Creating blob container '$AZURITE_BLOB_CONTAINER'..."
-	python3 - "$AZURITE_HOST" "$AZURITE_PORT" "$AZURITE_ACCOUNT" "$AZURITE_KEY" "$AZURITE_BLOB_CONTAINER" <<'PYEOF'
-import base64, hashlib, hmac, http.client, sys
+	python3 - "$host" "$port" "$account" "$key" "$AZURITE_BLOB_CONTAINER" <<'PYEOF' || exit 1
+import base64, hashlib, hmac, http.client, sys, time
 from email.utils import formatdate
 
-host, port, account, key, container = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-date = formatdate(usegmt=True)
-version = "2021-08-06"
-string_to_sign = (
-    "PUT\n\n\n\n\n\n\n\n\n\n\n\n"
-    f"x-ms-date:{date}\nx-ms-version:{version}\n"
-    f"/{account}/{account}/{container}\nrestype:container"
-)
-sig = base64.b64encode(
-    hmac.new(base64.b64decode(key), string_to_sign.encode(), hashlib.sha256).digest()
-).decode()
-conn = http.client.HTTPConnection(host, port)
-conn.request(
-    "PUT",
-    f"/{account}/{container}?restype=container",
-    headers={
-        "x-ms-date": date,
-        "x-ms-version": version,
-        "Authorization": f"SharedKey {account}:{sig}",
-        "Content-Length": "0",
-    },
-)
-resp = conn.getresponse()
-if resp.status not in (201, 409):
-    sys.exit(f"container create failed: {resp.status} {resp.reason}")
+host, port, acc, key, cont = sys.argv[1:6]
+for _ in range(30):
+    date = formatdate(usegmt=True)
+    to_sign = (f"PUT\n\n\n\n\n\n\n\n\n\n\n\nx-ms-date:{date}\nx-ms-version:2021-08-06\n"
+               f"/{acc}/{acc}/{cont}\nrestype:container")
+    sig = base64.b64encode(hmac.new(base64.b64decode(key), to_sign.encode(), hashlib.sha256).digest()).decode()
+    try:
+        conn = http.client.HTTPConnection(host, int(port), timeout=2)
+        conn.request("PUT", f"/{acc}/{cont}?restype=container",
+                     headers={"x-ms-date": date, "x-ms-version": "2021-08-06",
+                              "Authorization": f"SharedKey {acc}:{sig}", "Content-Length": "0"})
+        status = conn.getresponse().status
+    except OSError:
+        time.sleep(1)
+        continue
+    sys.exit(0 if status in (201, 409) else f"container create failed: {status}")
+sys.exit("ERROR: Azurite failed to start within 30 seconds")
 PYEOF
 
-	echo "Azurite running (host=$AZURITE_HOST, port=$AZURITE_PORT), container '$AZURITE_BLOB_CONTAINER' created."
+	echo "Azurite running (host=$host, port=$port), container '$AZURITE_BLOB_CONTAINER' created."
 	echo
 }
 

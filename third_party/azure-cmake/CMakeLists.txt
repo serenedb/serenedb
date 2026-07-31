@@ -29,9 +29,6 @@ set(AZURE_SDK_INCLUDES
 
 add_library(_azure_sdk STATIC ${AZURE_SDK_SRC})
 
-# AZ_RTTI: headers key off it at compile time (see azure/core/rtti.hpp); we
-# build SDK and consumers in one process, so no install-time header patching.
-target_compile_definitions(_azure_sdk PUBLIC AZ_RTTI)
 target_compile_definitions(_azure_sdk PRIVATE BUILD_CURL_HTTP_TRANSPORT_ADAPTER)
 
 target_include_directories(_azure_sdk SYSTEM BEFORE PUBLIC ${AZURE_SDK_INCLUDES})

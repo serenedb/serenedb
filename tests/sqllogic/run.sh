@@ -124,6 +124,8 @@ validate_boolean() {
 # invocations (e.g. INT then EXIT) are no-ops on the second pass.
 MINIO_CONTAINER_NAME=""
 MINIO_LOG_FILE=""
+AZURITE_CONTAINER_NAME=""
+AZURITE_LOG_FILE=""
 ICEBERG_REST_CONTAINER_NAME=""
 ICEBERG_REST_LOG_FILE=""
 OLLAMA_CONTAINER_NAME=""
@@ -155,6 +157,19 @@ cleanup_minio() {
 			docker logs "$name" >"${MINIO_LOG_FILE}" 2>&1 || true
 		fi
 		echo "Stopping MinIO container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
+cleanup_azurite() {
+	if [[ -n "$AZURITE_CONTAINER_NAME" ]]; then
+		local name="$AZURITE_CONTAINER_NAME"
+		AZURITE_CONTAINER_NAME=""
+		if [[ -n "$AZURITE_LOG_FILE" ]]; then
+			echo "Saving Azurite logs to ${AZURITE_LOG_FILE}..."
+			docker logs "$name" >"${AZURITE_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping Azurite container..."
 		docker rm -fv "$name" >/dev/null 2>&1 || true
 	fi
 }
@@ -227,6 +242,7 @@ cleanup_all() {
 	cleanup_postgres
 	cleanup_clickhouse
 	cleanup_minio
+	cleanup_azurite
 	cleanup_test_network
 }
 
@@ -288,6 +304,101 @@ launch_s3() {
 		mc mb "local/$MINIO_BUCKET"
 
 	echo "MinIO running (host=$MINIO_HOST, port=$MINIO_PORT), bucket '$MINIO_BUCKET' created."
+	echo
+}
+
+launch_azurite() {
+	local prefix
+	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	AZURITE_CONTAINER_NAME="${prefix}-serenedb-test-azurite-$$"
+	AZURITE_LOG_FILE="${LOG_DIR:-/tmp}/${AZURITE_CONTAINER_NAME}.log"
+	export AZURITE_ACCOUNT="devstoreaccount1"
+	# Azurite's well-known devstore account key (a public constant, not a secret).
+	export AZURITE_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+	export AZURITE_BLOB_CONTAINER="testcont"
+
+	local docker_args=(-d --name "$AZURITE_CONTAINER_NAME")
+	# Nothing else talks to Azurite by container name in local mode, so the
+	# default bridge network + a published port is enough; in compose mode the
+	# tests container reaches it by name on the shared network.
+	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+		docker_args+=(--network "$COMPOSE_NETWORK")
+		export AZURITE_HOST="$AZURITE_CONTAINER_NAME"
+		export AZURITE_PORT=10000
+	else
+		AZURITE_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+		export AZURITE_HOST="localhost"
+		export AZURITE_PORT
+		docker_args+=(-p "${AZURITE_PORT}:10000")
+	fi
+
+	echo "Starting Azurite (host=$AZURITE_HOST, port=$AZURITE_PORT)..."
+	# --skipApiVersionCheck: the vendored Azure SDK may speak a service API
+	# version newer than the Azurite image knows.
+	docker run "${docker_args[@]}" \
+		mcr.microsoft.com/azure-storage/azurite \
+		azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+
+	export AZURITE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=${AZURITE_ACCOUNT};AccountKey=${AZURITE_KEY};BlobEndpoint=http://${AZURITE_HOST}:${AZURITE_PORT}/${AZURITE_ACCOUNT};"
+
+	echo "Waiting for Azurite to be ready..."
+	for i in $(seq 1 30); do
+		# Ready as soon as it answers HTTP at all (an unauthenticated list
+		# gets a 403 -- that still proves the listener is up).
+		if python3 -c "
+import sys, urllib.error, urllib.request
+try:
+    urllib.request.urlopen('http://${AZURITE_HOST}:${AZURITE_PORT}/${AZURITE_ACCOUNT}?comp=list', timeout=2)
+except urllib.error.HTTPError:
+    pass
+except Exception:
+    sys.exit(1)
+" >/dev/null 2>&1; then
+			echo "Azurite is ready."
+			break
+		fi
+		if [[ $i -eq 30 ]]; then
+			echo "ERROR: Azurite failed to start within 30 seconds"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	# The azure extension cannot create containers; provision the test one with
+	# a SharedKey-signed PUT (Azurite ships no CLI in its image).
+	echo "Creating blob container '$AZURITE_BLOB_CONTAINER'..."
+	python3 - "$AZURITE_HOST" "$AZURITE_PORT" "$AZURITE_ACCOUNT" "$AZURITE_KEY" "$AZURITE_BLOB_CONTAINER" <<'PYEOF'
+import base64, hashlib, hmac, http.client, sys
+from email.utils import formatdate
+
+host, port, account, key, container = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+date = formatdate(usegmt=True)
+version = "2021-08-06"
+string_to_sign = (
+    "PUT\n\n\n\n\n\n\n\n\n\n\n\n"
+    f"x-ms-date:{date}\nx-ms-version:{version}\n"
+    f"/{account}/{account}/{container}\nrestype:container"
+)
+sig = base64.b64encode(
+    hmac.new(base64.b64decode(key), string_to_sign.encode(), hashlib.sha256).digest()
+).decode()
+conn = http.client.HTTPConnection(host, port)
+conn.request(
+    "PUT",
+    f"/{account}/{container}?restype=container",
+    headers={
+        "x-ms-date": date,
+        "x-ms-version": version,
+        "Authorization": f"SharedKey {account}:{sig}",
+        "Content-Length": "0",
+    },
+)
+resp = conn.getresponse()
+if resp.status not in (201, 409):
+    sys.exit(f"container create failed: {resp.status} {resp.reason}")
+PYEOF
+
+	echo "Azurite running (host=$AZURITE_HOST, port=$AZURITE_PORT), container '$AZURITE_BLOB_CONTAINER' created."
 	echo
 }
 
@@ -607,7 +718,7 @@ PY
 launch_external() {
 	shopt -s globstar
 	local pattern test_files f
-	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false
+	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false needs_azurite=false
 	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
@@ -620,10 +731,11 @@ launch_external() {
 			# package RTA, which has no docker -- exclude it. An external-service
 			# suffix on a plain .test is a mistake; fail loudly instead of
 			# letting the service launch blow up later.
-			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test | *_chscan.test)
+			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test | *_chscan.test | *_azurite.test)
 				misnamed+=("$f")
 				;;
 			*_s3.test_slow) needs_s3=true ;;
+			*_azurite.test_slow) needs_azurite=true ;;
 			*_iceberg.test_slow) needs_iceberg=true ;;
 			*_ollama.test_slow) needs_ollama=true ;;
 			*_pgscan.test_slow) needs_postgres=true ;;
@@ -658,6 +770,9 @@ launch_external() {
 	fi
 	if [[ "$needs_s3" == "true" ]]; then
 		launch_s3
+	fi
+	if [[ "$needs_azurite" == "true" ]]; then
+		launch_azurite
 	fi
 	if [[ "$needs_iceberg" == "true" ]]; then
 		launch_iceberg_rest

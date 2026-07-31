@@ -35,6 +35,7 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "connector/azure_cleanup_scheduler.h"
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
@@ -81,7 +82,7 @@ int RunServer(int argc, char** argv) {
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
     bool up_store = false, up_background = false, up_catalog = false,
-         up_search = false, up_network = false;
+         up_search = false, up_network = false, up_azure_cleanup = false;
 
     absl::Cleanup down = [&]() noexcept {
       CrashHandler::SetState("stopping");
@@ -118,6 +119,9 @@ int RunServer(int argc, char** argv) {
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }
+      if (up_azure_cleanup) {
+        stop("azure cleanup", [&] { StopAzureCleanupScheduler(); });
+      }
       if (up_background) {
         stop("background", [&] { background.stop(); });
       }
@@ -143,6 +147,8 @@ int RunServer(int argc, char** argv) {
     // busy-spin every core, starving startup so no listener ever binds.
     network.StartIoPool();
     up_network = true;
+    InstallAzureCleanupScheduler();
+    up_azure_cleanup = true;
     search.start();
     up_search = true;
     // Accept connections only once the indexes are loaded and loops are

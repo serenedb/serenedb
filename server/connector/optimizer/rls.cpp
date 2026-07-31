@@ -45,6 +45,7 @@
 #include <optional>
 
 #include "auth/role_closure.h"
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/catalog.h"
 #include "catalog/policy.h"
 #include "catalog/table.h"
@@ -308,17 +309,33 @@ void RewriteSpecialRegisters(duckdb::unique_ptr<duckdb::ParsedExpression>& expr)
     });
 }
 
-duckdb::unique_ptr<duckdb::ParsedExpression> ParseOne(const std::string& text) {
-  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> parsed;
-  try {
-    parsed = duckdb::Parser::ParseExpressionList(text);
-  } catch (const std::exception&) {
-    return nullptr;
+// Policies are stored as text, so enforcement would otherwise re-parse every
+// predicate on every query. A parse depends on nothing but the text, so caching
+// by the text needs no invalidation: ALTER POLICY writes different text and
+// lands on a different entry. Callers mutate the result (qualification, special
+// registers), so each hands back a copy -- far cheaper than re-parsing.
+duckdb::unique_ptr<duckdb::ParsedExpression> ParsePredicate(
+  const std::string& text) {
+  static constexpr size_t kMaxCached = 1024;
+  thread_local containers::FlatHashMap<
+    std::string, duckdb::unique_ptr<duckdb::ParsedExpression>>
+    cache;
+
+  auto it = cache.find(text);
+  if (it == cache.end()) {
+    if (cache.size() >= kMaxCached) {
+      cache.clear();
+    }
+    auto parsed = duckdb::Parser::ParseExpressionList(text);
+    if (parsed.size() != 1) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("row-level security policy predicate is not a "
+                              "single expression: ",
+                              text));
+    }
+    it = cache.emplace(text, std::move(parsed[0])).first;
   }
-  if (parsed.size() != 1) {
-    return nullptr;
-  }
-  return std::move(parsed[0]);
+  return it->second->Copy();
 }
 
 // A USING predicate bound against a scan's columns, for row visibility. Null on
@@ -327,19 +344,12 @@ duckdb::unique_ptr<duckdb::ParsedExpression> ParseOne(const std::string& text) {
 duckdb::unique_ptr<duckdb::Expression> BindVisibilityExpr(
   duckdb::Binder& binder, duckdb::ClientContext& context,
   const duckdb::TableCatalogEntry& table_entry, const std::string& text) {
-  auto parsed = ParseOne(text);
-  if (!parsed) {
-    return nullptr;
-  }
+  auto parsed = ParsePredicate(text);
   if (auto target = TargetBinding(binder, table_entry)) {
     QualifyColumns(*parsed, *target);
   }
-  try {
-    duckdb::WhereBinder where_binder(binder, context);
-    return where_binder.Bind(parsed);
-  } catch (const std::exception&) {
-    return nullptr;
-  }
+  duckdb::WhereBinder where_binder(binder, context);
+  return where_binder.Bind(parsed);
 }
 
 // A WITH CHECK predicate bound against the table's columns, for a write's
@@ -350,21 +360,12 @@ duckdb::unique_ptr<duckdb::Expression> BindPostImageExpr(
   duckdb::Binder& binder, duckdb::ClientContext& context,
   duckdb::TableCatalogEntry& table, const std::string& text,
   duckdb::physical_index_set_t& bound_columns) {
-  auto parsed = ParseOne(text);
-  if (!parsed) {
-    return nullptr;
-  }
+  auto parsed = ParsePredicate(text);
   RewriteSpecialRegisters(parsed);
-  duckdb::unique_ptr<duckdb::Expression> bound;
-  try {
-    duckdb::CheckBinder check_binder(binder, context, table.name,
-                                     table.GetColumns(), bound_columns);
-    bound = check_binder.Bind(parsed);
-  } catch (const std::exception&) {
-    return nullptr;
-  }
+  duckdb::CheckBinder check_binder(binder, context, table.name,
+                                   table.GetColumns(), bound_columns);
   return duckdb::BoundCastExpression::AddDefaultCastToType(
-    std::move(bound), duckdb::LogicalType::BOOLEAN);
+    check_binder.Bind(parsed), duckdb::LogicalType::BOOLEAN);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -387,10 +388,8 @@ duckdb::unique_ptr<duckdb::Expression> ReadFilter(
       if (!policy.HasUsing()) {
         return nullptr;  // no restriction on visibility
       }
-      auto expr =
-        BindVisibilityExpr(binder, context, table_entry, policy.UsingText());
-      // A policy we cannot bind must never silently open the relation.
-      return expr ? std::move(expr) : BoolConst(false);
+      return BindVisibilityExpr(binder, context, table_entry,
+                                policy.UsingText());
     });
 }
 
@@ -418,9 +417,8 @@ void AppendWriteCheck(
       }
       const std::string& text =
         has_check ? policy.CheckText() : policy.UsingText();
-      auto expr =
-        BindPostImageExpr(binder, context, table_entry, text, bound_columns);
-      return expr ? std::move(expr) : BoolConst(false);
+      return BindPostImageExpr(binder, context, table_entry, text,
+                               bound_columns);
     });
 
   // A WITH CHECK evaluating to NULL must reject the row -- PG evaluates it as a

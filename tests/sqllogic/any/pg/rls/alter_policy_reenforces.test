@@ -1,0 +1,104 @@
+# Oracle-verified against PostgreSQL 18.3: ALTER POLICY changes what rows are
+# actually visible, not merely the catalog text. Each ALTER is followed by a
+# fresh read as the governed role.
+#
+# Regression guard for the enforcement-side predicate cache: policy predicates
+# are stored as text and parsed on demand, so a cache that outlived an ALTER
+# would keep filtering by the superseded expression while pg_policies reported
+# the new one. Keying the cache by the predicate text makes an ALTER land on a
+# different entry; this test is what proves it.
+#
+# Lore: vedernikoff keeps re-drawing the line on which clickclack mops he admits
+# to owning.
+
+statement ok
+DROP TABLE IF EXISTS ap_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS ap_vedernikoff;
+
+
+statement ok
+CREATE TABLE ap_clickclack (owner text, mops int);
+
+
+statement ok
+INSERT INTO ap_clickclack VALUES ('ap_vedernikoff', 1), ('ap_vedernikoff', 5), ('ap_vedernikoff', 50), ('ap_mop', 7);
+
+
+statement ok
+CREATE ROLE ap_vedernikoff LOGIN PASSWORD 'apw';
+
+
+statement ok
+GRANT SELECT ON ap_clickclack TO ap_vedernikoff;
+
+
+statement ok
+ALTER TABLE ap_clickclack ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY ap_own ON ap_clickclack FOR SELECT USING (owner = current_user AND mops < 10);
+
+
+# Original predicate: own rows under 10 mops.
+connection c1 user=ap_vedernikoff password=apw
+query TI
+SELECT owner, mops FROM ap_clickclack ORDER BY mops;
+----
+owner	mops
+ap_vedernikoff	1
+ap_vedernikoff	5
+
+
+# Widen the bound. The same role, same query, must now see the 50-mop row.
+statement ok
+ALTER POLICY ap_own ON ap_clickclack USING (owner = current_user AND mops < 100);
+
+
+connection c2 user=ap_vedernikoff password=apw
+query TI
+SELECT owner, mops FROM ap_clickclack ORDER BY mops;
+----
+owner	mops
+ap_vedernikoff	1
+ap_vedernikoff	5
+ap_vedernikoff	50
+
+
+# Narrow it again, to a predicate never seen before.
+statement ok
+ALTER POLICY ap_own ON ap_clickclack USING (owner = current_user AND mops > 40);
+
+
+connection c3 user=ap_vedernikoff password=apw
+query TI
+SELECT owner, mops FROM ap_clickclack ORDER BY mops;
+----
+owner	mops
+ap_vedernikoff	50
+
+
+# Back to the very first predicate: a cache keyed by text serves the original
+# entry here, which must still be the correct answer.
+statement ok
+ALTER POLICY ap_own ON ap_clickclack USING (owner = current_user AND mops < 10);
+
+
+connection c4 user=ap_vedernikoff password=apw
+query TI
+SELECT owner, mops FROM ap_clickclack ORDER BY mops;
+----
+owner	mops
+ap_vedernikoff	1
+ap_vedernikoff	5
+
+
+statement ok
+DROP TABLE ap_clickclack;
+
+
+statement ok
+DROP ROLE ap_vedernikoff;

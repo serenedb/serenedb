@@ -117,6 +117,70 @@ v
 5
 
 
+# ---------------------------------------------------------------------------
+# Second canary: a policy that cannot be pushed into the scan.
+#
+# The guard above works by asymmetry -- our predicate is pushable, the attacker's
+# is not, so theirs lands above the scan. That asymmetry is defeatable: a policy
+# whose security check is a single indivisible expression containing a throwing
+# builtin is refused entry to the scan too, and both quals end up in ONE
+# conjunction over an unfiltered scan (verified: SEQ_SCAN carries no filter).
+#
+# What saves us there is a DIFFERENT incidental property -- the policy conjunct
+# is evaluated first and short-circuits. Nothing guarantees that order; reorder
+# is merely disabled because a conjunct can throw. If that changes, this leaks
+# and the first canary above would still pass.
+# ---------------------------------------------------------------------------
+
+statement ok
+DELETE FROM poc_sink;
+
+
+# Semantically just `owner = current_user`: the second disjunct is always false
+# (1/(balance+1) is tiny). But it is one OR expression containing division, so
+# the whole check is unpushable and cannot be split into conjuncts.
+statement ok
+DROP POLICY p_self ON poc_ledger;
+
+
+statement ok
+CREATE POLICY poc_p_unpushable ON poc_ledger FOR SELECT TO poc_mop
+USING (owner = current_user OR 1/(balance+1) > 999999);
+
+
+# Visibility is unchanged: still only the mop's row.
+connection c_unpush user=poc_mop password=pw
+query III
+SELECT id, balance, owner FROM poc_ledger ORDER BY id;
+----
+id	balance	owner
+2	5	poc_mop
+
+
+# Error oracle against the hidden balance=1000 row: must not raise.
+connection c_unpush2 user=poc_mop password=pw
+query I
+SELECT id FROM poc_ledger WHERE 1/(balance-1000) = 999999999;
+----
+id
+
+
+# Side-effect probe: only the mop's own balance may reach the function.
+connection c_unpush3 user=poc_mop password=pw
+query I
+SELECT id FROM poc_ledger WHERE poc_tap(balance) > 0;
+----
+id
+2
+
+
+query I
+SELECT v FROM poc_sink ORDER BY v;
+----
+v
+5
+
+
 statement ok
 DROP FUNCTION poc_tap;
 

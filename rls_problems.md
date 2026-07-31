@@ -81,6 +81,20 @@ behaviour, not fork-local.
    set, per above), but it is the one place with no protection at all.
 4. **Timing/resource channels** are not addressed — nor are they by PostgreSQL's
    `leakproof`.
+5. **The pushdown asymmetry is defeatable, and a *second* accident covers it.**
+   The guard above assumes our predicate is pushable and the attacker's is not.
+   A policy whose security check is one indivisible expression containing a
+   throwing builtin — e.g. `USING (owner = current_user OR 1/(balance+1) >
+   999999)`, semantically just `owner = current_user` — is refused entry to the
+   scan as well. Verified by plan inspection: `SEQ_SCAN` carries **no** filter
+   and both quals sit in a single `FILTER` conjunction over every row. It still
+   does not leak, because the policy conjunct is evaluated first and
+   short-circuits (confirmed by both the error oracle and the side-effect
+   probe). Nothing *guarantees* that order — reordering is merely disabled
+   because a conjunct can throw. Note a plain AND policy does not reach this
+   state: duckdb splits conjunctions and pushes the selective part, so only an
+   indivisible expression (OR, CASE) qualifies. Pinned by the second scenario in
+   `predicate_ordering_canary.test`; the first scenario would not catch it.
 
 ### Note on `LEAKPROOF`
 

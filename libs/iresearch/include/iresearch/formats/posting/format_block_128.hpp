@@ -256,6 +256,11 @@ struct FormatTraits128 {
     bool all_same = true;
 
     uint32_t max = in[0];
+    std::array<uint8_t, 33> hist;
+    hist.fill(0);
+    int32_t max_bit_size = 0;
+    uint32_t patched_bit_required = 0;
+    uint32_t exception_count = 0;
 
     [&] IRS_FORCE_INLINE {
       const uint32_t streamvbyte_groups = (len + 3) / 4;
@@ -266,6 +271,12 @@ struct FormatTraits128 {
 
         all_same &= max == value;
         max = std::max(max, value);
+
+        auto curr_bit_width = std::bit_width(value);
+        curr_bit_width +=
+          (curr_bit_width == 0);  // bit_width(0) == 0, but want to be 1
+        ++hist[curr_bit_width];
+        max_bit_size = std::max(max_bit_size, curr_bit_width);
 
         size_streamvbyte1234 += ByteSize1234(value);
       }
@@ -298,6 +309,36 @@ struct FormatTraits128 {
           SDB_ASSERT(bits <= 31);
           best_encoding = e_bitpack_01 + (bits - 1);
           best_size = size;
+        }
+
+        // pfor
+        {
+          int32_t min_bits_count = std::max(0, max_bit_size - 8);
+          exception_count = 0;
+          patched_bit_required = max_bit_size;
+
+          for (; patched_bit_required > min_bits_count &&
+                 exception_count + hist[patched_bit_required] <= 7;
+               --patched_bit_required) {
+            exception_count += hist[patched_bit_required];
+          }
+          SDB_ASSERT(patched_bit_required > 0);
+
+          uint32_t patched_mask = (1 << patched_bit_required) - 1;
+          uint32_t new_min = in[0] & patched_mask;
+          for (size_t i = 1; i < len; ++i) {
+            new_min = std::min(new_min, in[i] & patched_mask);
+          }
+
+          const auto size =
+            1 +
+            FromBits<byte_type>(doc_limits::kBlockSize * patched_bit_required) +
+            2 * exception_count;
+          if (size < best_size) {
+            SDB_ASSERT(bits <= 31);
+            best_encoding = e_pfor;
+            best_size = size;
+          }
         }
       }
 
@@ -333,6 +374,30 @@ struct FormatTraits128 {
         SDB_ASSERT(2 + size == best_size);
         out.WriteU16(size);
         out.WriteData(reinterpret_cast<byte_type*>(buf), size);
+      } break;
+
+      case e_pfor: {
+        SDB_ASSERT(len == doc_limits::kBlockSize);
+        SDB_ASSERT(exception_count != 0);
+        uint32_t patched_mask = (1 << patched_bit_required) - 1;
+        std::array<uint8_t, 14> exceptions{};
+        uint32_t exp_i = 0;
+        for (size_t i = 0; i < doc_limits::kBlockSize; ++i) {
+          if (in[i] > patched_mask) {
+            exceptions[2 * exp_i] = i;
+            exceptions[2 * exp_i + 1] = in[i] >> patched_bit_required;
+            ++exp_i;
+            in[i] = in[i] & patched_mask;
+          }
+        }
+
+        out.WriteByte((exception_count << 5) | patched_bit_required);
+        simdpackwithoutmask(in, reinterpret_cast<__m128i*>(buf),
+                            patched_bit_required);
+        out.WriteBytes(
+          reinterpret_cast<byte_type*>(buf),
+          FromBits<byte_type>(doc_limits::kBlockSize * patched_bit_required));
+        out.WriteBytes(exceptions.data(), 2 * exception_count);
       } break;
 
       case e_bitpack_01:
@@ -593,6 +658,27 @@ struct FormatTraits128 {
         streamvbyte_decode(data, begin, len);
       } break;
 
+      case e_pfor: {
+        uint8_t control = in.ReadByte();
+        const uint32_t exception_count = control >> 5;
+        const uint32_t bits = control & 31;
+        const auto for_size =
+          FromBits<byte_type>(doc_limits::kBlockSize * bits);
+        const auto* data =
+          ReadDataImpl(for_size + exception_count * 2, in, buf);
+
+        simdunpack(reinterpret_cast<const __m128i*>(data), out, bits);
+        data += for_size;
+
+        for (size_t i = 0; i < exception_count; ++i) {
+          uint32_t curr_idx = *data;
+          ++data;
+          uint32_t value = *data;
+          out[curr_idx] |= value << bits;
+          ++data;
+        }
+      } break;
+
       case e_bitpack_01:
       case e_bitpack_02:
       case e_bitpack_03:
@@ -732,6 +818,7 @@ struct FormatTraits128 {
     e_all_same_32,
 
     e_streamvbyte1234,
+    e_pfor,
 
     // e_bitpack_00,  // covered by e_all_same_08
     e_bitpack_01,
@@ -910,6 +997,12 @@ struct FormatTraits128 {
 
       case e_streamvbyte1234:
         return static_cast<uint16_t>(in.ReadI16());
+
+      case e_pfor: {
+        uint32_t control = in.ReadByte();
+        return FromBits<byte_type>(doc_limits::kBlockSize * (control & 31)) +
+               (control >> 5) * 2;
+      }
 
       case e_bitpack_01:
       case e_bitpack_02:

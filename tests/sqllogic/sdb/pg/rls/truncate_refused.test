@@ -1,0 +1,87 @@
+# serenedb-only RLS: TRUNCATE on a table whose policies apply to the caller is
+# refused. TRUNCATE removes rows wholesale and cannot be row-filtered, so there is
+# no way to honour the policies; refusing is fail-closed. Roles that bypass RLS
+# (owner without FORCE, superuser, BYPASSRLS) truncate normally.
+#
+# Regression: a non-owner TRUNCATE was rewritten into an RLS-filtered delete, so it
+# reported success and left every row in place -- a silent no-op that misreported
+# what it did.
+#
+# DELIBERATE DIVERGENCE from PostgreSQL 18.3, which does not apply RLS to TRUNCATE
+# at all: there, a role holding the TRUNCATE privilege empties an RLS-enabled table
+# completely. serened refuses instead. See rls_problems.md.
+#
+# Lore: the mop cannot empty the whole clickclack ledger to get at the rows it was
+# never allowed to see.
+
+statement ok
+DROP TABLE IF EXISTS trf_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS trf_mop;
+
+
+statement ok
+CREATE TABLE trf_ledger (owner text, v int);
+
+
+statement ok
+INSERT INTO trf_ledger VALUES ('vedernikoff', 1), ('trf_mop', 2);
+
+
+statement ok
+CREATE ROLE trf_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON trf_ledger TO trf_mop;
+
+
+statement ok
+GRANT TRUNCATE ON trf_ledger TO trf_mop;
+
+
+statement ok
+ALTER TABLE trf_ledger ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p_self ON trf_ledger FOR SELECT USING (owner = current_user);
+
+
+# The mop holds TRUNCATE, but the policies apply to it -> refused.
+connection c_trunc user=trf_mop password=pw
+statement error
+TRUNCATE trf_ledger;
+----
+db error: ERROR: permission denied to truncate table trf_ledger<slt:ignore>
+
+
+# Nothing was removed.
+query TI
+SELECT owner, v FROM trf_ledger ORDER BY owner;
+----
+owner	v
+trf_mop	2
+vedernikoff	1
+
+
+# The owner bypasses RLS (the table is not FORCE), so TRUNCATE still works.
+statement ok
+TRUNCATE trf_ledger;
+
+
+query I
+SELECT count(*) FROM trf_ledger;
+----
+count
+0
+
+
+statement ok
+DROP TABLE trf_ledger;
+
+
+statement ok
+DROP ROLE trf_mop;

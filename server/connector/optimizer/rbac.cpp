@@ -45,6 +45,7 @@
 #include "connector/duckdb_system_table_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_view_entry.h"
+#include "connector/optimizer/rls.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -291,6 +292,12 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
     if (del != catalog::AclMode::NoRights && !closure.Can(t, del)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for table ", t.GetName()));
+    }
+    // Row-level security cannot filter a TRUNCATE, so it is refused outright for
+    // a role the policies apply to. Checked here, on the statement's own access
+    // inventory, so no write path can reach the table without being considered.
+    if (Has(req.verb, duckdb::AccessVerb::TRUNCATE)) {
+      connector::RlsGuardTruncate(*snapshot, t, role);
     }
     if (Has(req.verb, duckdb::AccessVerb::SELECT)) {
       // A DML's own-target scan reads no column, so needs no SELECT (PG);

@@ -311,12 +311,17 @@ struct RelationDependency : ObjectDependencyBase {
 struct TableDependency : DependencyMixin<TableDependency, RelationDependency> {
   containers::FlatHashSet<ObjectId> owned_sequences;
   containers::FlatHashSet<ObjectId> fk_referencing_tables;
+  containers::FlatHashSet<ObjectId> policies;
+  ObjectId row_security_id;
+  bool rls_enabled = false;
+  bool rls_forced = false;
   static constexpr std::array kEdges = {
     Edge<TableDependency>{&TableDependency::owned_sequences,
                           CascadeVerb::AutoDrop},
     Edge<TableDependency>{&TableDependency::fk_referencing_tables,
                           CascadeVerb::ForeignKey},
     Edge<TableDependency>{&TableDependency::indexes, CascadeVerb::AutoDrop},
+    Edge<TableDependency>{&TableDependency::policies, CascadeVerb::AutoDrop},
     Edge<TableDependency>{&TableDependency::views, CascadeVerb::CascadeView},
     Edge<TableDependency>{&TableDependency::functions,
                           CascadeVerb::CascadeFunction},

@@ -1,0 +1,87 @@
+# serenedb-only RLS: a WITH CHECK predicate that evaluates to NULL denies the
+# write, unlike an ordinary SQL CHECK constraint (which NULL satisfies). PG
+# evaluates WITH CHECK as a qual, where NULL means "not satisfied" -> rejected.
+#
+# Regression: a NULL WITH CHECK result was treated as satisfied (fail-open), so
+# a row whose policy expression was NULL (e.g. owner = current_user with a NULL
+# owner) was wrongly inserted.
+#
+# Lore: the clickclack ledger will not admit a row whose owner it cannot vouch
+# for -- an unknown owner is refused, not waved through.
+
+statement ok
+DROP TABLE IF EXISTS wcn_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS wcn_mop;
+
+
+statement ok
+CREATE TABLE wcn_ledger (owner text, a int, b int);
+
+
+statement ok
+CREATE ROLE wcn_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON wcn_ledger TO wcn_mop;
+
+
+statement ok
+GRANT INSERT ON wcn_ledger TO wcn_mop;
+
+
+statement ok
+ALTER TABLE wcn_ledger ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p_own ON wcn_ledger FOR INSERT WITH CHECK (owner = current_user);
+
+
+# owner IS NULL -> (owner = current_user) is NULL -> denied (not fail-open).
+connection c_null user=wcn_mop password=pw
+statement error
+INSERT INTO wcn_ledger VALUES (NULL, 1, 2);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+# A comparison that evaluates to NULL for a different reason (b IS NULL) also
+# denies. Swap to a numeric policy to isolate the NULL from the register.
+statement ok
+DROP POLICY p_own ON wcn_ledger;
+
+
+statement ok
+CREATE POLICY p_ab ON wcn_ledger FOR INSERT WITH CHECK (a > b);
+
+
+connection c_nullb user=wcn_mop password=pw
+statement error
+INSERT INTO wcn_ledger VALUES ('wcn_mop', 5, NULL);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+# A row where the predicate is TRUE is still admitted (no over-denial).
+connection c_ok user=wcn_mop password=pw
+statement ok
+INSERT INTO wcn_ledger VALUES ('wcn_mop', 5, 1);
+
+
+query TII
+SELECT owner, a, b FROM wcn_ledger ORDER BY a;
+----
+owner	a	b
+wcn_mop	5	1
+
+
+statement ok
+DROP TABLE wcn_ledger;
+
+
+statement ok
+DROP ROLE wcn_mop;

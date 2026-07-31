@@ -74,6 +74,7 @@
 #include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/persistence/role.h"
+#include "catalog/policy.h"
 #include "catalog/resolution_table.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
@@ -424,6 +425,10 @@ void Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
     AddToResolution<ResolveType::Role>(parent_id, object->GetId(),
                                        object->GetName(), replace);
     AddObjectDefinition(parent_id, std::move(object));
+  } else if constexpr (std::is_same_v<T, Policy> ||
+                       std::is_same_v<T, RowSecurity>) {
+    // Not in a resolution namespace; addressed via the table's dependency set.
+    AddObjectDefinition(parent_id, std::move(object));
   } else {
     static_assert(false);
   }
@@ -748,6 +753,10 @@ void Snapshot::ModifyRoleDependencies(const Object& obj, EdgeAction action) {
     for (const auto& col : basics::downCast<const Table>(obj).Columns()) {
       touch_acl(col.GetAcl());
     }
+  } else if (obj.GetType() == ObjectType::Policy) {
+    for (const auto& role : basics::downCast<const Policy>(obj).Roles()) {
+      touch(role);
+    }
   } else if (obj.GetType() == ObjectType::Role) {
     const auto& defaults = basics::downCast<const Role>(obj).DefaultAcls();
     if (!defaults.empty()) {
@@ -846,6 +855,18 @@ void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
         ModifyInvertedIndexDependencies(basics::downCast<InvertedIndex>(index),
                                         id, EdgeAction::Add);
       }
+    } break;
+    case ObjectType::Policy: {
+      const auto& policy = basics::downCast<Policy>(obj);
+      GetDependencyForWrite<TableDependency>(policy.GetRelationId())
+        ->policies.insert(id);
+    } break;
+    case ObjectType::RowSecurity: {
+      const auto& rs = basics::downCast<RowSecurity>(obj);
+      auto deps = GetDependencyForWrite<TableDependency>(rs.GetRelationId());
+      deps->row_security_id = rs.GetId();
+      deps->rls_enabled = rs.Enabled();
+      deps->rls_forced = rs.Forced();
     } break;
     case ObjectType::Virtual:
     case ObjectType::Column:
@@ -1898,6 +1919,21 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           schema_deps->sequences.erase(id);
         }
       } break;
+      case ObjectType::Policy: {
+        const auto& policy = basics::downCast<Policy>(*obj);
+        auto deps =
+          GetDependencyForWrite<TableDependency>(policy.GetRelationId());
+        SDB_ASSERT(deps);
+        deps->policies.erase(id);
+      } break;
+      case ObjectType::RowSecurity: {
+        const auto& rs = basics::downCast<RowSecurity>(*obj);
+        auto deps = GetDependencyForWrite<TableDependency>(rs.GetRelationId());
+        SDB_ASSERT(deps);
+        deps->row_security_id = ObjectId::none();
+        deps->rls_enabled = false;
+        deps->rls_forced = false;
+      } break;
       case ObjectType::Invalid:
       case ObjectType::Tombstone:
       case ObjectType::Column:
@@ -1954,9 +1990,22 @@ void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
           RemoveObjectDefinition(id, index_id);
         }
       }
+      if (obj->GetType() == ObjectType::Table) {
+        const auto& table_deps =
+          basics::downCast<TableDependency>(*relation_deps);
+        auto policy_ids = table_deps.policies;
+        for (auto policy_id : policy_ids) {
+          RemoveObjectDefinition(id, policy_id);
+        }
+        if (auto rs_id = table_deps.row_security_id; rs_id.isSet()) {
+          RemoveObjectDefinition(id, rs_id);
+        }
+      }
     } break;
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
+    case ObjectType::Policy:
+    case ObjectType::RowSecurity:
       break;
     case ObjectType::ForeignServer:
     case ObjectType::Function:
@@ -2203,6 +2252,20 @@ void Catalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   Apply(_snapshot, [&](auto& clone) {
     clone->RegisterObject(index, index->GetRelationId(), false);
+  });
+}
+
+void Catalog::RegisterPolicy(std::shared_ptr<Policy> policy) {
+  absl::MutexLock lock{&_mutex};
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RegisterObject(policy, policy->GetRelationId(), false);
+  });
+}
+
+void Catalog::RegisterRowSecurity(std::shared_ptr<RowSecurity> rs) {
+  absl::MutexLock lock{&_mutex};
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RegisterObject(rs, rs->GetRelationId(), false);
   });
 }
 
@@ -2490,6 +2553,202 @@ bool Catalog::CreateSecondaryIndex(
     std::move(columns), unique);
   CreateIndexImpl(schema, std::move(index), operation_options);
   return true;
+}
+
+std::vector<ObjectId> Snapshot::PolicyIds(ObjectId table_id) const {
+  std::vector<ObjectId> out;
+  auto deps = GetDependency<TableDependency>(table_id);
+  if (!deps) {
+    return out;
+  }
+  out.assign(deps->policies.begin(), deps->policies.end());
+  return out;
+}
+
+Snapshot::RowSecurityState Snapshot::GetRowSecurity(ObjectId table_id) const {
+  auto deps = GetDependency<TableDependency>(table_id);
+  if (!deps) {
+    return {};
+  }
+  return {deps->rls_enabled, deps->rls_forced};
+}
+
+namespace {
+
+std::shared_ptr<Policy> FindPolicy(const Snapshot& snap, ObjectId table_id,
+                                   std::string_view name) {
+  for (auto policy_id : snap.PolicyIds(table_id)) {
+    if (auto p = snap.GetObject<Policy>(policy_id); p && p->GetName() == name) {
+      return p;
+    }
+  }
+  return nullptr;
+}
+
+void RequireTableRelation(const Object& rel, std::string_view name) {
+  if (rel.GetType() != ObjectType::Table) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not a table"));
+  }
+}
+
+}  // namespace
+
+void Catalog::CreatePolicy(const AccessContext& ax, ObjectId database_id,
+                           std::string_view schema, std::string_view relation,
+                           persistence::PolicyData data) {
+  absl::MutexLock lock{&_mutex};
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  if (!rel) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireTableRelation(*rel, relation);
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  if (FindPolicy(*_snapshot, rel->GetId(), data.name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("policy \"", data.name, "\" for table \"", relation,
+                            "\" already exists"));
+  }
+  auto schema_id = rel->GetParentId();
+  auto policy = std::make_shared<Policy>(database_id, schema_id, NextId(),
+                                         rel->GetId(), std::move(data));
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RegisterObject(policy, policy->GetRelationId(), false);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*policy, stream);
+    _engine->CreateDefinition(policy->GetRelationId(), ObjectType::Policy,
+                              policy->GetId(), bytes);
+  });
+}
+
+void Catalog::AlterPolicy(const AccessContext& ax, ObjectId database_id,
+                          std::string_view schema, std::string_view relation,
+                          std::string_view name, std::string_view new_name,
+                          bool has_roles, std::vector<ObjectId> roles,
+                          bool has_using, std::string using_text,
+                          bool has_check, std::string check_text) {
+  absl::MutexLock lock{&_mutex};
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  if (!rel) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireTableRelation(*rel, relation);
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto existing = FindPolicy(*_snapshot, rel->GetId(), name);
+  if (!existing) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("policy \"", name, "\" for table \"", relation,
+                            "\" does not exist"));
+  }
+  if (!new_name.empty() && new_name != name &&
+      FindPolicy(*_snapshot, rel->GetId(), new_name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("policy \"", new_name, "\" for table \"", relation,
+                            "\" already exists"));
+  }
+  auto updated = std::static_pointer_cast<Policy>(existing->Clone());
+  auto& d = updated->MutableData();
+  if (!new_name.empty()) {
+    d.name = std::string(new_name);
+    updated->SetName(new_name);
+  }
+  if (has_roles) {
+    d.roles = std::move(roles);
+  }
+  if (has_using) {
+    d.has_using = true;
+    d.using_text = std::move(using_text);
+  }
+  if (has_check) {
+    d.has_check = true;
+    d.check_text = std::move(check_text);
+  }
+  auto policy_id = updated->GetId();
+  auto table_id = updated->GetRelationId();
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RemoveObjectDefinition(table_id, policy_id, /*root=*/true);
+    clone->RegisterObject(updated, table_id, false);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*updated, stream);
+    _engine->CreateDefinition(table_id, ObjectType::Policy, policy_id, bytes);
+  });
+}
+
+void Catalog::DropPolicy(const AccessContext& ax, ObjectId database_id,
+                         std::string_view schema, std::string_view relation,
+                         std::string_view name, bool if_exists) {
+  absl::MutexLock lock{&_mutex};
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  if (!rel) {
+    if (if_exists) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireTableRelation(*rel, relation);
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto existing = FindPolicy(*_snapshot, rel->GetId(), name);
+  if (!existing) {
+    if (if_exists) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("policy \"", name, "\" for table \"", relation,
+                            "\" does not exist"));
+  }
+  auto policy_id = existing->GetId();
+  auto table_id = rel->GetId();
+  Apply(_snapshot, [&](auto& clone) {
+    clone->RemoveObjectDefinition(table_id, policy_id, /*root=*/true);
+    _engine->DropDefinition(table_id, ObjectType::Policy, policy_id);
+  });
+}
+
+void Catalog::SetRowSecurity(const AccessContext& ax, ObjectId database_id,
+                             std::string_view schema, std::string_view relation,
+                             std::optional<bool> enabled,
+                             std::optional<bool> forced) {
+  absl::MutexLock lock{&_mutex};
+  auto rel =
+    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  if (!rel) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireTableRelation(*rel, relation);
+  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto table_id = rel->GetId();
+  auto deps = _snapshot->GetDependency<TableDependency>(table_id);
+  persistence::RowSecurityData data;
+  if (deps) {
+    data.enabled = deps->rls_enabled;
+    data.forced = deps->rls_forced;
+  }
+  if (enabled) {
+    data.enabled = *enabled;
+  }
+  if (forced) {
+    data.forced = *forced;
+  }
+  auto existing_id = deps ? deps->row_security_id : ObjectId::none();
+  auto rs_id = existing_id.isSet() ? existing_id : NextId();
+  auto rs = std::make_shared<RowSecurity>(database_id, rel->GetParentId(),
+                                          rs_id, table_id, data);
+  Apply(_snapshot, [&](auto& clone) {
+    if (existing_id.isSet()) {
+      clone->RemoveObjectDefinition(table_id, existing_id, /*root=*/true);
+    }
+    clone->RegisterObject(rs, table_id, false);
+    duckdb::MemoryStream stream;
+    auto bytes = catalog::SerializeObject(*rs, stream);
+    _engine->CreateDefinition(table_id, ObjectType::RowSecurity, rs_id, bytes);
+  });
 }
 
 bool Catalog::CreateInvertedIndex(
@@ -4427,7 +4686,8 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
 
 void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
                               std::string_view schema, std::string_view table,
-                              std::string_view column, bool if_exists) {
+                              std::string_view column, bool if_exists,
+                              bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto schema_id =
@@ -4462,9 +4722,38 @@ void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
   }
   const auto col_id = col_it->GetId();
 
+  // A policy naming the column depends on it. PG refuses the drop under
+  // RESTRICT and cascade-drops the policy otherwise; an index over the column
+  // is always cascaded (ComputeColumnDropPlan), matching PG's auto dependency.
+  std::vector<ObjectId> policy_drops;
+  if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
+    for (auto policy_id : td->policies) {
+      auto policy = _snapshot->GetObject<Policy>(policy_id);
+      if (!policy || !policy->ReferencesColumn(column)) {
+        continue;
+      }
+      if (!cascade) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+          ERR_MSG("cannot drop column ", column, " of table ", table,
+                  " because other objects depend on it"),
+          ERR_DETAIL("policy ", policy->GetName(), " on table ", table,
+                     " depends on column ", column, " of table ", table),
+          ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+      }
+      policy_drops.push_back(policy_id);
+    }
+  }
+
   auto plan = _snapshot->ComputeColumnDropPlan(*table_id, col_id);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    // Dependents first, so the column never disappears from under a surviving
+    // policy.
+    for (auto policy_id : policy_drops) {
+      clone->RemoveObjectDefinition(*table_id, policy_id, /*root=*/true);
+      _engine->DropDefinition(*table_id, ObjectType::Policy, policy_id);
+    }
     _engine->Write([&](auto& ctx) { clone->CommitDropPlan(ctx, plan); });
     clone->ApplyDropPlan(_pending_drops, database_id, plan);
   });
@@ -5169,6 +5458,8 @@ class OpenDatabase {
                            const Table& table);
   void RegisterIndexes(ObjectId database_id, ObjectId schema_id,
                        ObjectId table_id);
+  void RegisterPolicies(ObjectId database_id, ObjectId schema_id,
+                        ObjectId table_id);
 
   void AddDatabase(ObjectId database_id, std::string_view bytes);
   void AddSchema(ObjectId database_id, ObjectId schema_id,
@@ -5467,6 +5758,43 @@ void OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
     ClearDeletedDefinitions(DeletedScope::Relation);
   };
   RegisterIndexes(db_id, schema_id, table_id);
+  RegisterPolicies(db_id, schema_id, table_id);
+}
+
+void OpenDatabase::RegisterPolicies(ObjectId db_id, ObjectId schema_id,
+                                    ObjectId table_id) {
+  GetCatalogStore().VisitBoot(
+    table_id, ObjectType::RowSecurity,
+    [&](CatalogStore::Key key, std::string_view bytes) {
+      if (IsDeleted(key.id, DeletedScope::Relation)) {
+        return true;
+      }
+      auto rs = catalog::DeserializeObject<RowSecurity>(
+        bytes, {.id = key.id,
+                .database_id = db_id,
+                .schema_id = schema_id,
+                .relation_id = table_id});
+      if (rs) {
+        _catalog.RegisterRowSecurity(std::move(rs));
+      }
+      return true;
+    });
+  GetCatalogStore().VisitBoot(
+    table_id, ObjectType::Policy,
+    [&](CatalogStore::Key key, std::string_view bytes) {
+      if (IsDeleted(key.id, DeletedScope::Relation)) {
+        return true;
+      }
+      auto policy =
+        catalog::DeserializeObject<Policy>(bytes, {.id = key.id,
+                                                   .database_id = db_id,
+                                                   .schema_id = schema_id,
+                                                   .relation_id = table_id});
+      if (policy) {
+        _catalog.RegisterPolicy(std::move(policy));
+      }
+      return true;
+    });
 }
 
 void OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,

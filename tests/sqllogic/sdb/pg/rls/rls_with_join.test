@@ -1,0 +1,81 @@
+# serenedb-only RLS: the filter applies per base-table scan, so a join between
+# two RLS tables filters each side independently -- a role only joins rows it is
+# allowed to see on both sides.
+#
+# Lore: the clickclack ledger joined to its notes, each guarded on its own.
+
+statement ok
+DROP TABLE IF EXISTS rj_ledger;
+
+
+statement ok
+DROP TABLE IF EXISTS rj_notes;
+
+
+statement ok
+DROP ROLE IF EXISTS rj_r;
+
+
+statement ok
+CREATE TABLE rj_ledger (owner text, id int, amount int);
+
+
+statement ok
+CREATE TABLE rj_notes (owner text, id int, note text);
+
+
+statement ok
+INSERT INTO rj_ledger VALUES ('rj_r', 1, 100), ('other', 2, 200);
+
+
+statement ok
+INSERT INTO rj_notes VALUES ('rj_r', 1, 'mine'), ('other', 2, 'theirs');
+
+
+statement ok
+CREATE ROLE rj_r LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT ON rj_ledger TO rj_r;
+
+
+statement ok
+GRANT SELECT ON rj_notes TO rj_r;
+
+
+statement ok
+ALTER TABLE rj_ledger ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+ALTER TABLE rj_notes ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p1 ON rj_ledger FOR SELECT USING (owner = current_user);
+
+
+statement ok
+CREATE POLICY p2 ON rj_notes FOR SELECT USING (owner = current_user);
+
+
+# The join sees only the row-pair the role owns on both sides.
+connection c1 user=rj_r password=pw
+query
+SELECT l.amount, n.note FROM rj_ledger l JOIN rj_notes n ON l.id = n.id ORDER BY l.amount;
+----
+amount	note
+100	mine
+
+
+statement ok
+DROP TABLE rj_ledger;
+
+
+statement ok
+DROP TABLE rj_notes;
+
+
+statement ok
+DROP ROLE rj_r;

@@ -1,0 +1,77 @@
+# serenedb-only RLS: a role named in a policy's TO list is a dependency of that
+# policy. DROP ROLE is refused while any policy still targets the role; once the
+# policy is dropped (or retargeted away via ALTER POLICY ... TO), the role can be
+# dropped. This prevents a policy's TO list from dangling on a freed role oid.
+#
+# Regression: DROP ROLE succeeded even while a policy targeted the role, leaving
+# the policy referencing a role that no longer existed.
+#
+# Lore: the mop cannot be retired while a clickclack guard clause still names it.
+
+statement ok
+DROP TABLE IF EXISTS drp_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS drp_mop;
+
+
+statement ok
+DROP ROLE IF EXISTS drp_auditor;
+
+
+statement ok
+CREATE TABLE drp_ledger (owner text, amount int);
+
+
+statement ok
+CREATE ROLE drp_mop;
+
+
+statement ok
+CREATE ROLE drp_auditor;
+
+
+statement ok
+ALTER TABLE drp_ledger ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p_guard ON drp_ledger FOR SELECT TO drp_mop USING (true);
+
+
+# The role is referenced by the policy TO list -> DROP ROLE is refused.
+statement error
+DROP ROLE drp_mop;
+----
+db error: ERROR: role "drp_mop" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# ALTER POLICY retargets the guard to a different role.
+statement ok
+ALTER POLICY p_guard ON drp_ledger TO drp_auditor;
+
+
+# drp_mop is no longer referenced -> it can be dropped.
+statement ok
+DROP ROLE drp_mop;
+
+
+# drp_auditor is now the target -> dropping it is refused.
+statement error
+DROP ROLE drp_auditor;
+----
+db error: ERROR: role "drp_auditor" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+# Dropping the policy releases the last reference; then the role drops cleanly.
+statement ok
+DROP POLICY p_guard ON drp_ledger;
+
+
+statement ok
+DROP ROLE drp_auditor;
+
+
+statement ok
+DROP TABLE drp_ledger;

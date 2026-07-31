@@ -883,4 +883,111 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
                       new_owner_name);
 }
 
+namespace {
+
+catalog::persistence::PolicyCommand ParsePolicyCommand(std::string_view cmd) {
+  using PC = catalog::persistence::PolicyCommand;
+  if (cmd == "SELECT") {
+    return PC::Select;
+  }
+  if (cmd == "INSERT") {
+    return PC::Insert;
+  }
+  if (cmd == "UPDATE") {
+    return PC::Update;
+  }
+  if (cmd == "DELETE") {
+    return PC::Delete;
+  }
+  return PC::All;
+}
+
+// Resolve policy role names to ids. PUBLIC (or an empty list) -> empty vector,
+// which the enforcement path treats as "applies to every role".
+std::vector<ObjectId> ResolvePolicyRoles(
+  const catalog::Snapshot& snap, std::span<const std::string> roles) {
+  std::vector<ObjectId> out;
+  for (const auto& role : roles) {
+    auto id = ResolveGranteeId(snap, role);
+    if (id == catalog::kPublicGrantee) {
+      return {};
+    }
+    out.push_back(id);
+  }
+  return out;
+}
+
+}  // namespace
+
+void CreatePolicy(ConnectionContext& ctx, std::string_view name,
+                  std::string_view table, const CreatePolicyOptions& opts) {
+  auto& catalog = GlobalCatalog();
+  auto snapshot = FreshSnapshot();
+
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(table, current_schema);
+
+  catalog::persistence::PolicyData data;
+  data.name = std::string{name};
+  data.command = ParsePolicyCommand(opts.cmd);
+  data.permissive = opts.permissive;
+  data.roles = ResolvePolicyRoles(*snapshot, opts.roles);
+  data.has_using = opts.has_using;
+  data.using_text = opts.using_text;
+  data.has_check = opts.has_check;
+  data.check_text = opts.check_text;
+
+  catalog.CreatePolicy(catalog::ActingAs(ctx.GetRoleId()), ctx.GetDatabaseId(),
+                       parsed.schema, parsed.relation, std::move(data));
+}
+
+void AlterPolicy(ConnectionContext& ctx, std::string_view name,
+                 std::string_view table, const AlterPolicyOptions& opts) {
+  auto& catalog = GlobalCatalog();
+  auto snapshot = FreshSnapshot();
+
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(table, current_schema);
+
+  std::vector<ObjectId> roles;
+  if (opts.has_roles) {
+    roles = ResolvePolicyRoles(*snapshot, opts.roles);
+  }
+  catalog.AlterPolicy(catalog::ActingAs(ctx.GetRoleId()), ctx.GetDatabaseId(),
+                      parsed.schema, parsed.relation, name,
+                      opts.is_rename ? opts.new_name : std::string_view{},
+                      opts.has_roles, std::move(roles), opts.has_using,
+                      opts.using_text, opts.has_check, opts.check_text);
+}
+
+void DropPolicy(ConnectionContext& ctx, std::string_view name,
+                std::string_view table, bool if_exists) {
+  auto& catalog = GlobalCatalog();
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(table, current_schema);
+  catalog.DropPolicy(catalog::ActingAs(ctx.GetRoleId()), ctx.GetDatabaseId(),
+                     parsed.schema, parsed.relation, name, if_exists);
+}
+
+void SetTableRowSecurity(ConnectionContext& ctx, std::string_view table,
+                         std::string_view action) {
+  auto& catalog = GlobalCatalog();
+  const std::string current_schema = ctx.GetCurrentSchema();
+  const auto parsed = ParseObjectName(table, current_schema);
+  std::optional<bool> enabled;
+  std::optional<bool> forced;
+  if (action == "ENABLE") {
+    enabled = true;
+  } else if (action == "DISABLE") {
+    enabled = false;
+  } else if (action == "FORCE") {
+    forced = true;
+  } else if (action == "NOFORCE") {
+    forced = false;
+  }
+  catalog.SetRowSecurity(catalog::ActingAs(ctx.GetRoleId()),
+                         ctx.GetDatabaseId(), parsed.schema, parsed.relation,
+                         enabled, forced);
+}
+
 }  // namespace sdb::pg

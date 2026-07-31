@@ -59,7 +59,6 @@ struct Name {
 };
 
 struct Empty {};
-using PgNodeTree = Empty;
 struct Aclitem {};
 using Anyarray = Empty;
 struct Timestamptz {

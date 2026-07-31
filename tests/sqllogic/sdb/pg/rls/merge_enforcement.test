@@ -1,0 +1,91 @@
+# serenedb-only RLS: MERGE respects Row-Level Security. The target scan is
+# RLS-filtered (a role only matches rows it can see), and the WITH CHECK policy
+# validates every row an INSERT/UPDATE action produces.
+#
+# Lore: the mop reconciles its own clickclack rows, never vedernikoff's.
+
+statement ok
+DROP TABLE IF EXISTS mrg_tgt;
+
+
+statement ok
+DROP TABLE IF EXISTS mrg_src;
+
+
+statement ok
+DROP ROLE IF EXISTS mrg_mop;
+
+
+statement ok
+CREATE TABLE mrg_tgt (owner text, v int);
+
+
+statement ok
+INSERT INTO mrg_tgt VALUES ('mrg_mop', 1), ('other', 2);
+
+
+statement ok
+CREATE TABLE mrg_src (owner text, v int);
+
+
+statement ok
+INSERT INTO mrg_src VALUES ('mrg_mop', 100), ('other', 200);
+
+
+statement ok
+CREATE ROLE mrg_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON mrg_tgt TO mrg_mop;
+
+
+statement ok
+GRANT SELECT ON mrg_src TO mrg_mop;
+
+
+statement ok
+ALTER TABLE mrg_tgt ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p ON mrg_tgt FOR ALL USING (owner = current_user) WITH CHECK (owner = current_user);
+
+
+# A MERGE that only touches the role's own rows succeeds; the read-portion filter
+# hides 'other', so the ON clause never matches it.
+connection c1 user=mrg_mop password=pw
+statement ok
+MERGE INTO mrg_tgt USING mrg_src ON mrg_tgt.owner = mrg_src.owner
+  WHEN MATCHED THEN UPDATE SET v = mrg_src.v;
+
+
+# mop's row updated to 100; 'other' untouched (invisible to mop's MERGE).
+query
+SELECT owner, v FROM mrg_tgt ORDER BY owner;
+----
+owner	v
+mrg_mop	100
+other	2
+
+
+# A MERGE whose NOT MATCHED INSERT would create a row for another owner is
+# rejected by the WITH CHECK policy.
+connection c2 user=mrg_mop password=pw
+statement error
+MERGE INTO mrg_tgt USING mrg_src ON mrg_tgt.owner = mrg_src.owner
+  WHEN NOT MATCHED THEN INSERT VALUES (mrg_src.owner, mrg_src.v);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+statement ok
+DROP TABLE mrg_tgt;
+
+
+statement ok
+DROP TABLE mrg_src;
+
+
+statement ok
+DROP ROLE mrg_mop;

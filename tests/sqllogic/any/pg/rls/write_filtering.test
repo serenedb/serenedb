@@ -1,0 +1,78 @@
+# Oracle-verified against PostgreSQL 18.3: the read-portion of UPDATE/DELETE is
+# RLS-filtered, so a role only modifies rows it can see. Only PG-identical
+# successful-path behaviors live here (violation error text is serened-specific
+# and lives under sdb/pg/rls).
+#
+# Lore: the mop reconciles only its own clickclack rows.
+
+statement ok
+DROP TABLE IF EXISTS wf_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS wf_mop;
+
+
+statement ok
+CREATE TABLE wf_ledger (owner text, amount int);
+
+
+statement ok
+INSERT INTO wf_ledger VALUES ('wf_mop', 1), ('wf_other', 2);
+
+
+statement ok
+CREATE ROLE wf_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON wf_ledger TO wf_mop;
+
+
+statement ok
+ALTER TABLE wf_ledger ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p_self ON wf_ledger FOR ALL USING (owner = current_user) WITH CHECK (owner = current_user);
+
+
+# UPDATE targeting all rows changes only the role's own row (read-portion filter).
+connection c1 user=wf_mop password=pw
+statement ok
+UPDATE wf_ledger SET amount = 999;
+
+
+query TI
+SELECT owner, amount FROM wf_ledger ORDER BY owner;
+----
+owner	amount
+wf_mop	999
+wf_other	2
+
+
+# INSERT of an own row is allowed by WITH CHECK.
+connection c2 user=wf_mop password=pw
+statement ok
+INSERT INTO wf_ledger VALUES ('wf_mop', 5);
+
+
+# DELETE targeting all rows deletes only the role's own rows.
+connection c3 user=wf_mop password=pw
+statement ok
+DELETE FROM wf_ledger;
+
+
+query TI
+SELECT owner, amount FROM wf_ledger ORDER BY owner;
+----
+owner	amount
+wf_other	2
+
+
+statement ok
+DROP TABLE wf_ledger;
+
+
+statement ok
+DROP ROLE wf_mop;

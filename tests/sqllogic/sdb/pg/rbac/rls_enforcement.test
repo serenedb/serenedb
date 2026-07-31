@@ -1,0 +1,165 @@
+# serenedb-only: real query-path Row-Level Security enforcement. A non-superuser
+# role only sees / writes the rows its policies allow, through the binder's RLS
+# hook (a LogicalFilter wrapping the scan) and the WITH CHECK bound-constraint
+# path. Cannot run on stock PostgreSQL: the `connection ... user=` directive
+# relies on serenedb's per-role password auth, and the error-message wording for
+# WITH CHECK diverges from PG.
+#
+# Lore: vedernikoff and mop each guard their own rows in the clickclack ledger.
+
+statement ok
+DROP TABLE IF EXISTS rls_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS rls_mop;
+
+
+statement ok
+CREATE TABLE rls_ledger (owner text, amount int);
+
+
+statement ok
+INSERT INTO rls_ledger VALUES ('rls_vedernikoff', 100), ('rls_mop', 200), ('ghost', 300);
+
+
+statement ok
+CREATE ROLE rls_vedernikoff LOGIN PASSWORD 'vpw';
+
+
+statement ok
+CREATE ROLE rls_mop LOGIN PASSWORD 'mpw';
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_ledger TO rls_vedernikoff;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON rls_ledger TO rls_mop;
+
+
+# ---- RLS enabled, no policy yet: default-deny (no rows visible) ----
+
+statement ok
+ALTER TABLE rls_ledger ENABLE ROW LEVEL SECURITY;
+
+
+connection c_ved user=rls_vedernikoff password=vpw
+query
+SELECT count(*) FROM rls_ledger;
+----
+count
+0
+
+
+# The bootstrap superuser bypasses RLS entirely and still sees every row.
+query
+SELECT count(*) FROM rls_ledger;
+----
+count
+3
+
+
+# ---- A self policy: each role sees only its own row ----
+
+statement ok
+CREATE POLICY p_self ON rls_ledger FOR ALL USING (owner = current_user) WITH CHECK (owner = current_user);
+
+
+connection c_ved2 user=rls_vedernikoff password=vpw
+query
+SELECT owner, amount FROM rls_ledger ORDER BY owner;
+----
+owner	amount
+rls_vedernikoff	100
+
+
+connection c_mop user=rls_mop password=mpw
+query
+SELECT owner, amount FROM rls_ledger ORDER BY owner;
+----
+owner	amount
+rls_mop	200
+
+
+# ---- Leak defense: a user predicate cannot observe a hidden row via error ----
+# ghost(300) and mop(200) are hidden from vedernikoff; a divide-by-zero probe on
+# amount must never fire on those rows (RLS filters them before the projection).
+
+connection c_ved3 user=rls_vedernikoff password=vpw
+query
+SELECT owner, 100 / (amount - 200) FROM rls_ledger;
+----
+owner	?column?
+rls_vedernikoff	-1
+
+
+# ---- Write path: read-portion of UPDATE/DELETE is filtered ----
+
+connection c_ved4 user=rls_vedernikoff password=vpw
+statement ok
+UPDATE rls_ledger SET amount = 999;
+
+
+# Only vedernikoff's own row changed; mop and ghost are untouched.
+query
+SELECT owner, amount FROM rls_ledger ORDER BY owner;
+----
+owner	amount
+ghost	300
+rls_mop	200
+rls_vedernikoff	999
+
+
+connection c_ved5 user=rls_vedernikoff password=vpw
+statement ok
+DELETE FROM rls_ledger;
+
+
+# Only vedernikoff's row was deleted.
+query
+SELECT owner FROM rls_ledger ORDER BY owner;
+----
+owner
+ghost
+rls_mop
+
+
+# ---- WITH CHECK: cannot insert a row for another owner ----
+
+connection c_ved6 user=rls_vedernikoff password=vpw
+statement ok
+INSERT INTO rls_ledger VALUES ('rls_vedernikoff', 1);
+
+
+connection c_ved7 user=rls_vedernikoff password=vpw
+statement error
+INSERT INTO rls_ledger VALUES ('rls_mop', 2);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+# ---- WITH CHECK on UPDATE: cannot move a row out of one's own partition ----
+
+connection c_ved8 user=rls_vedernikoff password=vpw
+statement error
+UPDATE rls_ledger SET owner = 'rls_mop' WHERE owner = 'rls_vedernikoff';
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+statement ok
+DROP TABLE rls_ledger;
+
+
+statement ok
+DROP ROLE rls_vedernikoff;
+
+
+statement ok
+DROP ROLE rls_mop;

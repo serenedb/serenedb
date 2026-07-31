@@ -1,0 +1,87 @@
+# Oracle-verified against PostgreSQL 18.3: a policy predicate depends on the
+# columns it names. DROP COLUMN is refused under RESTRICT and cascade-drops the
+# dependent policy under CASCADE, leaving policies that never named the column.
+#
+# Regression: the dependency was not tracked at all, so the column dropped
+# cleanly and left the policy unbindable -- silently filtering every row out,
+# and now an error at enforcement time. The refusal belongs at DDL time.
+#
+# Lore: vedernikoff cannot retire the mops column while a clickclack policy
+# still counts mops.
+
+statement ok
+DROP TABLE IF EXISTS pcd_clickclack;
+
+
+statement ok
+CREATE TABLE pcd_clickclack (owner text, mops int, note text);
+
+
+statement ok
+INSERT INTO pcd_clickclack VALUES ('vedernikoff', 3, 'shipped');
+
+
+statement ok
+ALTER TABLE pcd_clickclack ENABLE ROW LEVEL SECURITY;
+
+
+# Names mops -> depends on it.
+statement ok
+CREATE POLICY pcd_by_mops ON pcd_clickclack FOR SELECT USING (mops < 10);
+
+
+# Names only owner -> independent of mops.
+statement ok
+CREATE POLICY pcd_by_owner ON pcd_clickclack FOR SELECT USING (owner = current_user);
+
+
+# WITH CHECK counts as a reference too, on a column no USING clause mentions.
+statement ok
+CREATE POLICY pcd_by_note ON pcd_clickclack FOR INSERT WITH CHECK (note <> '');
+
+
+statement error
+ALTER TABLE pcd_clickclack DROP COLUMN mops;
+----
+db error: ERROR: cannot drop column mops of table pcd_clickclack because other objects depend on it
+DETAIL: policy pcd_by_mops on table pcd_clickclack depends on column mops of table pcd_clickclack
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+# A WITH CHECK reference blocks the drop exactly like a USING reference.
+statement error
+ALTER TABLE pcd_clickclack DROP COLUMN note;
+----
+db error: ERROR: cannot drop column note of table pcd_clickclack because other objects depend on it
+DETAIL: policy pcd_by_note on table pcd_clickclack depends on column note of table pcd_clickclack
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+# Every policy is still intact after the refusals.
+query T
+SELECT polname FROM pg_catalog.pg_policy
+WHERE polrelid = 'pcd_clickclack'::regclass ORDER BY polname;
+----
+polname
+pcd_by_mops
+pcd_by_note
+pcd_by_owner
+
+
+# CASCADE drops only the policy that named the column.
+statement ok
+ALTER TABLE pcd_clickclack DROP COLUMN mops CASCADE;
+
+
+query T
+SELECT polname FROM pg_catalog.pg_policy
+WHERE polrelid = 'pcd_clickclack'::regclass ORDER BY polname;
+----
+polname
+pcd_by_note
+pcd_by_owner
+
+
+# The surviving policies still enforce: the row is visible to its owner.
+statement ok
+DROP TABLE pcd_clickclack;

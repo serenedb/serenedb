@@ -1,0 +1,84 @@
+# serenedb-only RLS: several permissive WITH CHECK policies on the same write
+# verb combine with OR -- a row is admitted if it satisfies any one of them, and
+# rejected only when it satisfies none. Combining the checks must not crash on
+# the BOOLEAN/INTEGER boundary of the check-constraint evaluator.
+#
+# Regression: two or more permissive WITH CHECK policies crashed the write with a
+# vector type mismatch (the OR of the checks produced BOOLEAN where an INTEGER
+# constraint vector was expected).
+#
+# Lore: the clickclack ledger accepts a row the mop OR the auditor would vouch for.
+
+statement ok
+DROP TABLE IF EXISTS mwc_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS mwc_mop;
+
+
+statement ok
+CREATE TABLE mwc_ledger (owner text, amount int);
+
+
+statement ok
+CREATE ROLE mwc_mop LOGIN PASSWORD 'pw';
+
+
+statement ok
+GRANT SELECT, INSERT ON mwc_ledger TO mwc_mop;
+
+
+statement ok
+ALTER TABLE mwc_ledger ENABLE ROW LEVEL SECURITY;
+
+
+# Two permissive INSERT policies: own-row OR positive-amount.
+statement ok
+CREATE POLICY p_own ON mwc_ledger FOR INSERT WITH CHECK (owner = current_user);
+
+
+statement ok
+CREATE POLICY p_pos ON mwc_ledger FOR INSERT WITH CHECK (amount > 0);
+
+
+# Read policy so the mop can inspect the results.
+statement ok
+CREATE POLICY p_read ON mwc_ledger FOR SELECT USING (true);
+
+
+# Row satisfying only p_own (owner=self, amount<=0): admitted, no crash.
+connection c1 user=mwc_mop password=pw
+statement ok
+INSERT INTO mwc_ledger VALUES ('mwc_mop', -5);
+
+
+# Row satisfying only p_pos (owner=other, amount>0): admitted, no crash.
+connection c2 user=mwc_mop password=pw
+statement ok
+INSERT INTO mwc_ledger VALUES ('vedernikoff', 7);
+
+
+# Row satisfying neither (owner=other, amount<=0): rejected.
+connection c3 user=mwc_mop password=pw
+statement error
+INSERT INTO mwc_ledger VALUES ('vedernikoff', -1);
+----
+db error: ERROR: new row violates row-level security policy for table <slt:ignore>
+
+
+connection c4 user=mwc_mop password=pw
+query TI
+SELECT owner, amount FROM mwc_ledger ORDER BY owner, amount;
+----
+owner	amount
+mwc_mop	-5
+vedernikoff	7
+
+
+statement ok
+DROP TABLE mwc_ledger;
+
+
+statement ok
+DROP ROLE mwc_mop;

@@ -1,0 +1,71 @@
+# Oracle-verified against PostgreSQL 18.3: pg_policy.polqual and polwithcheck are
+# NULL exactly when the policy omits the corresponding clause -- never an empty
+# string -- and pg_get_expr propagates that NULL rather than raising.
+#
+# Only the NULL pattern is asserted here. The column's declared type is NOT: PG
+# types these columns pg_node_tree and stores a serialized node tree, serened
+# types them text and stores the predicate as SQL text. See
+# sdb/pg/rls/policy_qual_text.test for the serened-side type and contents.
+#
+# Regression: both columns were typed `Empty`, which is unconditionally NULL, so
+# no policy predicate was readable at all.
+#
+# Lore: vedernikoff's clickclack guard clauses, inspected through the catalog.
+
+statement ok
+DROP TABLE IF EXISTS pect_clickclack;
+
+
+statement ok
+CREATE TABLE pect_clickclack (owner text, mops int);
+
+
+statement ok
+ALTER TABLE pect_clickclack ENABLE ROW LEVEL SECURITY;
+
+
+# USING only: polqual set, polwithcheck NULL.
+statement ok
+CREATE POLICY pect_sel ON pect_clickclack FOR SELECT USING (mops >= 0);
+
+
+# WITH CHECK only: polqual NULL, polwithcheck set.
+statement ok
+CREATE POLICY pect_ins ON pect_clickclack FOR INSERT WITH CHECK (mops > 0);
+
+
+# Both clauses present.
+statement ok
+CREATE POLICY pect_upd ON pect_clickclack FOR UPDATE USING (owner = current_user) WITH CHECK (mops > 0);
+
+
+query TTT
+SELECT polname, polqual IS NULL AS qual_is_null, polwithcheck IS NULL AS check_is_null
+FROM pg_catalog.pg_policy
+WHERE polrelid = 'pect_clickclack'::regclass
+ORDER BY polname;
+----
+polname	qual_is_null	check_is_null
+pect_ins	t	f
+pect_sel	f	t
+pect_upd	f	f
+
+
+# pg_get_expr is the portable reader for these columns, and returns NULL for an
+# absent clause rather than raising.
+query TTT
+SELECT polname,
+       pg_catalog.pg_get_expr(polqual, polrelid) IS NULL AS qual_null,
+       pg_catalog.pg_get_expr(polwithcheck, polrelid) IS NULL AS check_null
+FROM pg_catalog.pg_policy
+WHERE polrelid = 'pect_clickclack'::regclass
+ORDER BY polname;
+----
+polname	qual_null	check_null
+pect_ins	t	f
+pect_sel	f	t
+pect_upd	f	f
+
+
+statement ok
+DROP TABLE pect_clickclack;

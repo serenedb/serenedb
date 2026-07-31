@@ -33,7 +33,7 @@ struct PgAttrdef {
   Oid oid;
   Oid adrelid;
   int16_t adnum;
-  PgNodeTree adbin;
+  Text adbin;
 };
 // NOLINTEND
 

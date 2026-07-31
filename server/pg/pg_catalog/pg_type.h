@@ -102,7 +102,7 @@ struct PgType {
   int32_t typtypmod;
   int32_t typndims;
   Oid typcollation;
-  PgNodeTree typdefaultbin;
+  Text typdefaultbin;
   Text typdefault;
   AclColumn typacl;
 };

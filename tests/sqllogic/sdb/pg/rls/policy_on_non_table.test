@@ -1,0 +1,101 @@
+# serenedb-only RLS: policy DDL and ENABLE/FORCE ROW LEVEL SECURITY target only
+# base tables. Aimed at a view or sequence, they raise a clean "is not a table"
+# error and the server stays up.
+#
+# Regression: these all dereferenced the relation's dependency as a
+# TableDependency, and a view/sequence dependency failed that downcast and
+# SIGABRT'd the whole server (a trivial denial of service).
+#
+# Lore: the clickclack ledger's guard clauses attach to the ledger itself, never
+# to a view of it nor to a bare sequence.
+
+statement ok
+DROP VIEW IF EXISTS pnt_v;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS pnt_seq;
+
+
+statement ok
+DROP TABLE IF EXISTS pnt_t;
+
+
+statement ok
+CREATE TABLE pnt_t (owner text, v int);
+
+
+statement ok
+CREATE VIEW pnt_v AS SELECT owner, v FROM pnt_t;
+
+
+statement ok
+CREATE SEQUENCE pnt_seq;
+
+
+# CREATE POLICY on a view -> clean error, no crash.
+statement error
+CREATE POLICY p ON pnt_v USING (v > 0);
+----
+db error: ERROR: "pnt_v" is not a table
+
+
+# CREATE POLICY on a sequence -> clean error.
+statement error
+CREATE POLICY p ON pnt_seq USING (true);
+----
+db error: ERROR: "pnt_seq" is not a table
+
+
+# ENABLE / FORCE ROW LEVEL SECURITY on a view -> clean error.
+statement error
+ALTER TABLE pnt_v ENABLE ROW LEVEL SECURITY;
+----
+db error: ERROR: "pnt_v" is not a table
+
+
+statement error
+ALTER TABLE pnt_v FORCE ROW LEVEL SECURITY;
+----
+db error: ERROR: "pnt_v" is not a table
+
+
+# ALTER / DROP POLICY on a view -> clean error.
+statement error
+ALTER POLICY p ON pnt_v USING (v > 0);
+----
+db error: ERROR: "pnt_v" is not a table
+
+
+statement error
+DROP POLICY p ON pnt_v;
+----
+db error: ERROR: "pnt_v" is not a table
+
+
+# The server is still alive and RLS still works on a real table afterwards.
+statement ok
+ALTER TABLE pnt_t ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY p ON pnt_t FOR SELECT USING (v > 0);
+
+
+query I
+SELECT count(*) FROM pnt_t;
+----
+count
+0
+
+
+statement ok
+DROP VIEW pnt_v;
+
+
+statement ok
+DROP SEQUENCE pnt_seq;
+
+
+statement ok
+DROP TABLE pnt_t;

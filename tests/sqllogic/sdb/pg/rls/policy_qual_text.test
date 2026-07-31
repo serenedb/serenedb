@@ -1,0 +1,85 @@
+# serenedb-only RLS: pg_policies renders each policy's USING expression as `qual`
+# and its WITH CHECK expression as `with_check`. A policy without a USING clause
+# has a NULL qual; one without WITH CHECK has a NULL with_check. ALTER POLICY that
+# changes an expression is reflected in the rendered text.
+#
+# Regression: qual and with_check were always NULL because polqual/polwithcheck
+# were never populated and pg_get_expr was a NULL stub.
+#
+# Lore: the catalog reads back the clickclack guard clauses as written.
+
+statement ok
+DROP TABLE IF EXISTS pqt_ledger;
+
+
+statement ok
+CREATE TABLE pqt_ledger (owner text, amount int);
+
+
+statement ok
+ALTER TABLE pqt_ledger ENABLE ROW LEVEL SECURITY;
+
+
+# USING only (SELECT): qual populated, with_check NULL.
+statement ok
+CREATE POLICY p_sel ON pqt_ledger FOR SELECT USING (amount >= 0);
+
+
+# WITH CHECK only (INSERT): qual NULL, with_check populated.
+statement ok
+CREATE POLICY p_ins ON pqt_ledger FOR INSERT WITH CHECK (amount > 0);
+
+
+# Both (UPDATE): qual and with_check populated.
+statement ok
+CREATE POLICY p_upd ON pqt_ledger FOR UPDATE USING (owner = current_user) WITH CHECK (amount > 0);
+
+
+query TTT
+SELECT policyname, qual, with_check FROM pg_catalog.pg_policies
+WHERE tablename = 'pqt_ledger' ORDER BY policyname;
+----
+policyname	qual	with_check
+p_ins	NULL	(amount > 0)
+p_sel	(amount >= 0)	NULL
+p_upd	("owner" = current_user)	(amount > 0)
+
+
+# ALTER POLICY changes the USING text; the rendered qual follows.
+statement ok
+ALTER POLICY p_sel ON pqt_ledger USING (amount >= 100);
+
+
+query TT
+SELECT qual, with_check FROM pg_catalog.pg_policies WHERE policyname = 'p_sel';
+----
+qual	with_check
+(amount >= 100)	NULL
+
+
+# serened types polqual/polwithcheck `text` and stores the predicate as SQL text.
+# PG types them pg_node_tree (OID 194) and stores a serialized node tree, so this
+# is a deliberate divergence: the supported reader, pg_get_expr, agrees on both.
+query TTT
+SELECT attname, format_type(atttypid, atttypmod) AS typ, atttypid
+FROM pg_catalog.pg_attribute
+WHERE attrelid = 'pg_catalog.pg_policy'::regclass
+  AND attname IN ('polqual', 'polwithcheck')
+ORDER BY attname;
+----
+attname	typ	atttypid
+polqual	text	25
+polwithcheck	text	25
+
+
+# The raw column is readable directly, not only through pg_get_expr.
+query TT
+SELECT polqual, polwithcheck FROM pg_catalog.pg_policy
+WHERE polrelid = 'pqt_ledger'::regclass AND polname = 'p_upd';
+----
+polqual	polwithcheck
+("owner" = current_user)	(amount > 0)
+
+
+statement ok
+DROP TABLE pqt_ledger;

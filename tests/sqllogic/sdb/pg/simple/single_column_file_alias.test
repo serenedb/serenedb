@@ -1,0 +1,86 @@
+control substitution on
+
+# Regression: FROM 'file.parquet' makes the replacement scan set a table alias
+# (the file stem); the PG single-column alias rule must not rename the column
+# to it. Explicitly written aliases must still rename.
+
+statement ok
+COPY (SELECT 42 AS v) TO '${__TEST_DIR__}/stem.parquet' (FORMAT parquet);
+
+
+query
+SELECT v FROM '${__TEST_DIR__}/stem.parquet';
+----
+v
+42
+
+
+query
+SELECT * FROM '${__TEST_DIR__}/stem.parquet';
+----
+v
+42
+
+
+statement ok
+COPY (SELECT 42 AS v) TO '${__TEST_DIR__}/stem.csv' (FORMAT csv, HEADER true);
+
+
+query
+SELECT v FROM '${__TEST_DIR__}/stem.csv';
+----
+v
+42
+
+
+statement ok
+COPY (SELECT 42 AS v) TO '${__TEST_DIR__}/stem.json' (FORMAT json);
+
+
+query
+SELECT v FROM '${__TEST_DIR__}/stem.json';
+----
+v
+42
+
+
+# glob: the fallback alias (the whole path string) must not rename either
+
+query
+SELECT v FROM '${__TEST_DIR__}/stem*.parquet';
+----
+v
+42
+
+
+# an explicitly written alias still renames a single-column result (PG rule)
+
+query
+SELECT x FROM '${__TEST_DIR__}/stem.parquet' AS x;
+----
+x
+42
+
+
+query
+SELECT g FROM generate_series(1, 1) AS g;
+----
+g
+1
+
+
+# a table alias on a base table never renames columns
+
+statement ok
+CREATE TABLE single_v(v INTEGER);
+
+
+statement ok
+INSERT INTO single_v VALUES (42);
+
+
+query
+SELECT v FROM single_v AS t;
+----
+v
+42

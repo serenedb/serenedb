@@ -18,6 +18,11 @@ SereneDB unifies **Elasticsearch-like search** and **ClickHouse-like analytics**
 
 Search is a first-class citizen of the query engine. All search functionality is powered by [IResearch](libs/iresearch/README.md), an open-source C++ information retrieval library that core members of the SereneDB team have been developing since 2016.
 
+## Benchmarks
+
+* [SearchBench](https://serenedb.com/searchbench) - open benchmark for search and analytics: SereneDB, Elastic, OpenSearch, ParadeDB, ArangoDB
+* [Search Benchmark, The Game](https://serenedb.com/search-benchmark-game) - low-level search engine benchmark: [IResearch](libs/iresearch/README.md), Lucene, Tantivy
+
 ## Links
 
 * [Official website](https://www.serenedb.com) for a quick high-level overview of SereneDB.

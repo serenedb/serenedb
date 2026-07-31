@@ -397,12 +397,13 @@ class ProductQuantizerWriter final : public QuantizerWriter {
       _pq.compute_code(_res.data(), code);
       if (is_l2) {
         _pq.decode(code, _dec.data());
-        float norm = 0.f;
         for (uint32_t j = 0; j < _d; ++j) {
-          const float y = _dec[j] + _centroid[j];
-          norm += y * y;
+          _dec[j] += _centroid[j];
         }
-        _cluster_norms[_cluster_filled + i] = norm;
+        _cluster_norms[_cluster_filled + i] =
+          vector::L2Space<float, float, float>::Norm(
+            reinterpret_cast<const byte_type*>(_dec.data()),
+            static_cast<uint16_t>(_d));
       }
     }
     _cluster_filled += n;
@@ -526,9 +527,9 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
                         _packed_ip_lut.data());
     if (_stats->Metric() == VectorMetric::L2Sqr) {
-      for (const float x : _query) {
-        _query_norm2 += x * x;
-      }
+      _query_norm2 = vector::L2Space<float, float, float>::Norm(
+        reinterpret_cast<const byte_type*>(_query.data()),
+        static_cast<uint16_t>(_query.size()));
     }
   }
 
@@ -541,7 +542,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   const uint8_t* PackedIpLut() const noexcept { return _packed_ip_lut.data(); }
   float IpA() const noexcept { return _ip_a; }
   float IpB() const noexcept { return _ip_b; }
-  float QueryNorm2() const noexcept { return _query_norm2; }
+  float QueryNorm() const noexcept { return _query_norm2; }
 
  private:
   std::shared_ptr<const ProductQuantizerStats> _stats;
@@ -571,10 +572,8 @@ class ProductQuantizerReader final : public QuantizerReader {
 
     // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
     // query-only and precomputed once per query in the codebook.
-    float qc = 0.f;
-    for (size_t j = 0; j < query.size(); ++j) {
-      qc += query[j] * centroid[j];
-    }
+    const float qc = ComputeDistance<VectorMetric::InnerProduct>(
+      query.data(), centroid, static_cast<uint16_t>(query.size()));
 
     const bool is_l2 = _cb->Metric() == VectorMetric::L2Sqr;
     const size_t nb = RoundUp(_n, kFastScanBbs);
@@ -597,7 +596,7 @@ class ProductQuantizerReader final : public QuantizerReader {
     if (is_l2) {
       _norms.resize(_n);
       std::memcpy(_norms.data(), codes + packed_bytes, norms_bytes);
-      const float q2 = _cb->QueryNorm2();
+      const float q2 = _cb->QueryNorm();
       for (size_t i = 0; i < _n; ++i) {
         const float ip = static_cast<float>(_accu[i]) * inv_a + b;
         _scores[i] = -(q2 - 2.f * qc - 2.f * ip + _norms[i]);

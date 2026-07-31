@@ -87,6 +87,7 @@ set(iresearch-tests_sources
     ./search/geo_analyzer_test.cpp
     ./search/doc_collector_test.cpp
     ./search/merge_consistency_test.cpp
+    ./search/vector_similarity_query_test.cpp
     ./search/block_scoring_test.cpp
     ./search/boost_query_test.cpp
     ./search/wand_scoring_test.cpp

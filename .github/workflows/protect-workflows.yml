@@ -41,7 +41,9 @@ jobs:
               per_page: 100,
             });
             const workflowFiles = files.filter(f =>
-              f.filename.startsWith('.github/workflows/') || f.filename.startsWith('.github/actions/')
+              f.filename.startsWith('.github/workflows/') ||
+              f.filename.startsWith('.github/actions/') ||
+              f.filename.startsWith('scripts/ci/')
             );
             if (workflowFiles.length > 0) {
               core.setFailed(`Workflow file changes from forks are not allowed: ${workflowFiles.map(f => f.filename).join(', ')}`);

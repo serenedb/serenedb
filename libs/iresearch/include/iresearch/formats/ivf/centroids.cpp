@@ -176,6 +176,27 @@ struct BuildSettings {
   }
 };
 
+size_t RemoveEmptyCentroids(std::vector<float>& centroids,
+                            std::span<size_t> ids, size_t d) {
+  size_t kept = 0;
+  size_t prev = std::numeric_limits<size_t>::max();
+  for (auto& id : ids) {
+    SDB_ASSERT(prev == std::numeric_limits<size_t>::max() || id >= prev);
+    SDB_ASSERT((id + 1) * d <= centroids.size());
+    if (id != prev) {
+      prev = id;
+      if (kept != id) {
+        std::copy_n(centroids.begin() + id * d, d,
+                    centroids.begin() + kept * d);
+      }
+      ++kept;
+    }
+    id = kept - 1;
+  }
+  centroids.resize(kept * d);
+  return kept;
+}
+
 auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
                    size_t n_clusters, VectorMetric metric, size_t niter,
                    const float* rotation) {
@@ -184,6 +205,7 @@ auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
     static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter),
     static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rotation);
   AssignNearestGrouped(metric, centroids, d, data, ids);
+  RemoveEmptyCentroids(centroids, ids, d);
   return centroids;
 }
 
@@ -239,23 +261,24 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
                                    settings.metric, settings.niter, rot);
     const size_t n_built = centroids.size() / d;
 
-    size_t full_group = n_built;
-    ForEachGroup(entry.ids, n_built, [&](size_t g, size_t, size_t count) {
-      if (count == sample_size) {
-        full_group = g;
+    if (n_built == d) {
+      // Only one centroid
+      auto c = std::span{centroids};
+      centroids.resize(d * n_clusters);
+      for (size_t c_id = 1; c_id < n_clusters; ++c_id) {
+        absl::c_copy(c, centroids.begin() + c_id * d);
       }
-    });
-    if (full_group != n_built) {
-      const std::vector<float> winner(centroids.begin() + full_group * d,
-                                      centroids.begin() + (full_group + 1) * d);
-      for (size_t g = 0; g < n_built; ++g) {
-        absl::c_copy(winner, centroids.begin() + g * d);
-      }
-      const size_t chunk = (sample_size + n_built - 1) / n_built;
+      auto chunk = (sample_size + n_clusters - 1) / n_clusters;
       for (size_t i = 0; i < sample_size; ++i) {
         entry.ids[i] = i / chunk;
       }
     }
+
+#ifdef SDB_DEV
+    ForEachGroup(entry.ids, n_built, [&](size_t g, size_t, size_t count) {
+      SDB_ASSERT(count < sample_size);
+    });
+#endif
 
     if (entry.parent < nodes.size()) {
       nodes[entry.parent].children.emplace_back(nodes.size());

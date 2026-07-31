@@ -41,6 +41,8 @@
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -174,12 +176,10 @@ class WildcardQuery : public QueryBuilder {
     }
     SDB_ASSERT(irs::field_limits::valid(_store_field_id));
     const auto* col_reader = _segment.GetColReader();
-    if (!col_reader) {
-      return DocIterator::empty();
-    }
-    const auto* column = col_reader->Column(_store_field_id);
+    const auto* column =
+      col_reader ? col_reader->Column(_store_field_id) : nullptr;
     if (!column) {
-      return DocIterator::empty();
+      ThrowMissingTokenizerStore(_store_field_id);
     }
     return memory::make_managed<WildcardIterator>(_matcher, std::move(approx),
                                                   *column, *col_reader);

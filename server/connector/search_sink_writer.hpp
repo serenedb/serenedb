@@ -208,13 +208,15 @@ class SearchSinkInsertBaseImpl {
   void WriteScalarBatch(duckdb::idx_t count, irs::field_id tokenizer_column);
 
   template<duckdb::LogicalTypeId ChildKind>
-  void WriteListBatch(duckdb::idx_t count, duckdb::idx_t array_size);
+  void WriteListBatch(duckdb::idx_t count, duckdb::idx_t array_size,
+                      irs::field_id tokenizer_column);
 
   bool DispatchScalarBatch(duckdb::LogicalTypeId kind, duckdb::idx_t count,
                            irs::field_id tokenizer_column);
 
   bool DispatchListBatch(duckdb::LogicalTypeId child_kind, duckdb::idx_t count,
-                         duckdb::idx_t array_size);
+                         duckdb::idx_t array_size,
+                         irs::field_id tokenizer_column);
 
   void WriteJsonBatch(const duckdb::Vector& vec, duckdb::idx_t count);
 

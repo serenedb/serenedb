@@ -62,12 +62,19 @@ Attribute* WildcardAnalyzer::GetMutable(TypeInfo::type_id type) noexcept {
   return _ngram->GetMutable(type);
 }
 
+void WildcardAnalyzer::ClearStore() noexcept {
+  _terms.clear();
+  _terms_begin = begin();
+  _terms_end = _terms_begin;
+  _store.value = {};
+}
+
 bool WildcardAnalyzer::reset(std::string_view data) {
   _ngram->reset({});
   if (!_analyzer->reset(data)) {
     return false;
   }
-  _terms.clear();
+  const auto begin_offset = _terms.size();
   while (_analyzer->next()) {
     auto size = _term->value.size();
     if (size > std::numeric_limits<int32_t>::max()) {
@@ -82,8 +89,8 @@ bool WildcardAnalyzer::reset(std::string_view data) {
     auto* data = begin() + idx;
     WriteVarint<uint32_t>(static_cast<uint32_t>(size), data);
   }
-  _terms_begin = begin();
-  _terms_end = _terms_begin + _terms.size();
+  _terms_begin = begin() + begin_offset;
+  _terms_end = begin() + _terms.size();
   _store.value = ViewCast<byte_type>(std::string_view{_terms});
   return _terms_begin != _terms_end;
 }

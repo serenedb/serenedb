@@ -55,6 +55,8 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
 
   bool reset(std::string_view data) final;
 
+  void ClearStore() noexcept;
+
   bool next() final;
 
   auto& ngram() const noexcept {

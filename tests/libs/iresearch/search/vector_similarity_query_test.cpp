@@ -22,10 +22,10 @@
 #include <duckdb/common/vector/array_vector.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/vector_similarity_filter.hpp"
 #include "iresearch/store/memory_directory.hpp"
@@ -250,8 +250,8 @@ TEST_F(VectorSimilarityQueryTest, MixedAdvanceSeekMultiBlock) {
     }
     ASSERT_TRUE(irs::doc_limits::eof(it->advance()));
   }
-  for (irs::doc_id_t target : {2u, 127u, 128u, 129u, 200u, 255u, 256u, 257u,
-                               299u, 300u}) {
+  for (irs::doc_id_t target :
+       {2u, 127u, 128u, 129u, 200u, 255u, 256u, 257u, 299u, 300u}) {
     auto it = Execute();
     ASSERT_EQ(1, it->advance());
     ASSERT_EQ(target, it->seek(target));

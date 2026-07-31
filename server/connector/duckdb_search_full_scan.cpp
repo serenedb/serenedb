@@ -908,7 +908,7 @@ const irs::Filter& MatchAllFilter() {
 }
 
 uint32_t ReadRerankFactor(duckdb::ClientContext& context) {
-  return ReadBoundedIntSetting(context, "sdb_rerank_factor", 0, 4);
+  return ReadIntSetting(context, "sdb_rerank_factor");
 }
 
 void RerankHits(IResearchScanGlobalState& g, std::span<irs::ScoreDoc> hits) {

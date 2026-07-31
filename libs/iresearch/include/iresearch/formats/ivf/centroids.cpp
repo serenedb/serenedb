@@ -30,6 +30,7 @@
 #include <deque>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <utility>
@@ -44,7 +45,6 @@ namespace irs {
 namespace {
 
 constexpr size_t kTrainSeed = 42;
-constexpr double kBeamOverprobe = 3.0;
 constexpr uint64_t kSampleSegmentOversample = 4;
 constexpr size_t kMaxFanout = 1024;
 constexpr size_t kTrainPointsPerLeaf = 64;
@@ -52,6 +52,16 @@ constexpr size_t kMaxTrainSample = 4ull * 1024 * 1024;
 constexpr size_t kClusterIters = 15;
 constexpr size_t kLeafClusterIters = 8;
 constexpr size_t kClusterRedos = 1;
+
+uint32_t CeilRoot(uint32_t target, uint32_t exp) noexcept {
+  if (exp <= 1 || target <= 1) {
+    return target;
+  }
+  auto w = static_cast<uint32_t>(std::llround(
+    std::pow(static_cast<double>(target), 1.0 / static_cast<double>(exp))));
+  w = std::max<uint32_t>(w, 1);
+  return w;
+}
 
 struct LayerLayout {
   size_t n_total;
@@ -385,18 +395,22 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
   return {std::move(head), std::move(node), next_level_offset};
 }
 
+uint32_t CentroidsTree::EffectiveFanout(
+  uint32_t nprobe, uint32_t max_search_fanout) const noexcept {
+  return std::max(max_search_fanout,
+                  CeilRoot(nprobe, static_cast<uint32_t>(_root.level)));
+}
+
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                            uint32_t nprobe, std::vector<uint32_t>& out_ids,
-                           std::vector<float>* out_centroids) const {
+                           std::vector<float>* out_centroids,
+                           uint32_t max_search_fanout) const {
   if (_root.size == 0) {
     out_ids.push_back(0);
     return;
   }
-  auto beam = static_cast<uint32_t>(
-    std::ceil(kBeamOverprobe * std::sqrt(static_cast<double>(nprobe))));
-  if (_root.level >= 2) {
-    beam = std::max(beam, nprobe);
-  }
+  SDB_ASSERT(max_search_fanout > 0);
+  const auto fanout = EffectiveFanout(nprobe, max_search_fanout);
   if (_root.level > 0) {
     in.Seek(_next_level_offset);
   }
@@ -407,7 +421,7 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .size = _root.size};
   std::vector<CentroidsNode::Candidate> leaves;
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(query, in, beam, out_centroids != nullptr,
+    CentroidsNode::Search<Metric>(query, in, fanout, out_centroids != nullptr,
                                   _root.level, std::span{&root_view, 1}, 0,
                                   _root.size, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());

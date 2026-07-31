@@ -22,10 +22,45 @@
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/parser/parser.hpp>
 
 #include "basics/serializer.h"
 
 namespace sdb::catalog {
+namespace {
+
+bool ExprNamesColumn(const duckdb::ParsedExpression& expr,
+                     std::string_view column) {
+  if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+    // A qualified reference reports the column as its last name part, so this
+    // matches "t"."owner" as well as a bare owner.
+    const auto& colref = expr.Cast<duckdb::ColumnRefExpression>();
+    if (colref.GetColumnName().GetIdentifierName() == column) {
+      return true;
+    }
+  }
+  bool found = false;
+  duckdb::ParsedExpressionIterator::EnumerateChildren(
+    expr, [&](const duckdb::ParsedExpression& child) {
+      found = found || ExprNamesColumn(child, column);
+    });
+  return found;
+}
+
+bool TextNamesColumn(const std::string& text, std::string_view column) {
+  auto parsed = duckdb::Parser::ParseExpressionList(text);
+  return parsed.size() == 1 && ExprNamesColumn(*parsed[0], column);
+}
+
+}  // namespace
+
+bool Policy::ReferencesColumn(std::string_view column) const {
+  return (_data.has_using && TextNamesColumn(_data.using_text, column)) ||
+         (_data.has_check && TextNamesColumn(_data.check_text, column));
+}
+
 
 Policy::Policy(ObjectId database_id, ObjectId schema_id, ObjectId id,
                ObjectId relation_id, persistence::PolicyData data)

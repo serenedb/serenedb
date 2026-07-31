@@ -1342,7 +1342,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       catalog_impl.DropTableColumn(
         ax, db, name.GetIdentifierName(), table_name,
         remove_info.removed_column.GetIdentifierName(),
-        remove_info.if_column_exists);
+        remove_info.if_column_exists, remove_info.cascade);
       return;
     }
 

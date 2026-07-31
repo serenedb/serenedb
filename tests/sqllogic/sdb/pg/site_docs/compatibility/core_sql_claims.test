@@ -154,10 +154,11 @@ CREATE ROLE ddl_priv_inherit1 INHERIT;
 statement ok
 CREATE TABLE ddl_priv_rls_t(a int);
 
-statement error
+statement ok
 ALTER TABLE ddl_priv_rls_t ENABLE ROW LEVEL SECURITY;
-----
-db error: ERROR: Pragma Function with name serenedb_alter_table_row_security does not exist!<slt:ignore>
+
+statement ok
+CREATE POLICY ddl_priv_rls_p ON ddl_priv_rls_t USING (a > 0);
 
 
 # ddl_index: GIN

@@ -639,7 +639,7 @@ class Catalog final {
   void DropIndexById(ObjectId database_id, ObjectId index_id, bool cascade);
   void DropTableColumn(const AccessContext& ax, ObjectId database_id,
                        std::string_view schema, std::string_view table,
-                       std::string_view column, bool if_exists);
+                       std::string_view column, bool if_exists, bool cascade);
 
   void RemoveTombstone(ObjectId database_id, std::string_view schema,
                        std::string_view name);

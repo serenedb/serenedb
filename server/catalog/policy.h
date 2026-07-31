@@ -60,6 +60,11 @@ class Policy : public Object {
 
   persistence::PolicyData& MutableData() noexcept { return _data; }
 
+  // Whether the USING or WITH CHECK predicate names `column`. Parsed on demand:
+  // ALTER POLICY rewrites the text through MutableData(), so a cached answer
+  // would go stale, and the only caller is DROP COLUMN.
+  bool ReferencesColumn(std::string_view column) const;
+
  private:
   ObjectId _database_id;
   ObjectId _relation_id;

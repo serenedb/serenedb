@@ -4686,7 +4686,8 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
 
 void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
                               std::string_view schema, std::string_view table,
-                              std::string_view column, bool if_exists) {
+                              std::string_view column, bool if_exists,
+                              bool cascade) {
   absl::MutexLock lock{&_mutex};
 
   const auto schema_id =
@@ -4721,9 +4722,38 @@ void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
   }
   const auto col_id = col_it->GetId();
 
+  // A policy naming the column depends on it. PG refuses the drop under
+  // RESTRICT and cascade-drops the policy otherwise; an index over the column
+  // is always cascaded (ComputeColumnDropPlan), matching PG's auto dependency.
+  std::vector<ObjectId> policy_drops;
+  if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
+    for (auto policy_id : td->policies) {
+      auto policy = _snapshot->GetObject<Policy>(policy_id);
+      if (!policy || !policy->ReferencesColumn(column)) {
+        continue;
+      }
+      if (!cascade) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+          ERR_MSG("cannot drop column ", column, " of table ", table,
+                  " because other objects depend on it"),
+          ERR_DETAIL("policy ", policy->GetName(), " on table ", table,
+                     " depends on column ", column, " of table ", table),
+          ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
+      }
+      policy_drops.push_back(policy_id);
+    }
+  }
+
   auto plan = _snapshot->ComputeColumnDropPlan(*table_id, col_id);
 
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
+    // Dependents first, so the column never disappears from under a surviving
+    // policy.
+    for (auto policy_id : policy_drops) {
+      clone->RemoveObjectDefinition(*table_id, policy_id, /*root=*/true);
+      _engine->DropDefinition(*table_id, ObjectType::Policy, policy_id);
+    }
     _engine->Write([&](auto& ctx) { clone->CommitDropPlan(ctx, plan); });
     clone->ApplyDropPlan(_pending_drops, database_id, plan);
   });

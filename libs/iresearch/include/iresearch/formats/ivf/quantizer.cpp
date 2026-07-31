@@ -657,11 +657,16 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   void SetClusterCentroid(const float* centroid) final {
     _centroid.resize(_rd);
     RotateInto(_signs.data(), centroid, _centroid.data(), _d, _rd);
+    _centroid_sum = 0.f;
+    for (uint32_t j = 0; j < _rd; ++j) {
+      _centroid_sum += _centroid[j];
+    }
   }
 
   void BeginCluster(size_t total_docs) final {
     _sign_codes.assign(total_docs * _sign_stride, 0);
     _aux.assign(total_docs * _storage, 0);
+    _cluster_cs.assign(total_docs, 0.f);
     _filled = 0;
   }
 
@@ -672,17 +677,21 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     }
     SDB_ASSERT(_centroid.size() == _rd);
     const size_t sign_stride = _sign_stride;
+    const float inv_rd_sqrt = 1.f / std::sqrt(static_cast<float>(_rd));
     std::vector<float> rotated(_rd);
     std::vector<float> residual(_rd);
     for (size_t i = 0; i < n; ++i) {
       RotateInto(_signs.data(), vecs + i * _d, rotated.data(), _d, _rd);
       uint8_t* sign = _sign_codes.data() + (_filled + i) * sign_stride;
+      float cs_sum = 0.f;
       for (uint32_t j = 0; j < _rd; ++j) {
         residual[j] = rotated[j] - _centroid[j];
         if (residual[j] > 0.f) {
           faiss::rabitq_utils::set_bit_fastscan(sign, j);
+          cs_sum += _centroid[j];
         }
       }
+      _cluster_cs[_filled + i] = (2.f * cs_sum - _centroid_sum) * inv_rd_sqrt;
       uint8_t* aux = _aux.data() + (_filled + i) * _storage;
       const faiss::rabitq_utils::SignBitFactorsWithError f =
         faiss::rabitq_utils::compute_vector_factors(
@@ -718,8 +727,11 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
                           _packed.data());
     out.WriteData(_packed.data(), _packed.size());
     out.WriteData(_aux.data(), _filled * _storage);
+    out.WriteData(reinterpret_cast<const byte_type*>(_cluster_cs.data()),
+                  _filled * sizeof(float));
     _sign_codes.clear();
     _aux.clear();
+    _cluster_cs.clear();
     _packed.clear();
   }
 
@@ -746,9 +758,11 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   size_t _sign_stride;
   std::vector<float> _signs;
   std::vector<float> _centroid;
+  float _centroid_sum = 0.f;
   std::vector<byte_type> _stats;
   mutable std::vector<uint8_t> _sign_codes;
   mutable std::vector<uint8_t> _aux;
+  mutable std::vector<float> _cluster_cs;
   mutable std::vector<uint8_t> _packed;
   mutable size_t _filled = 0;
 };
@@ -797,10 +811,44 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
  public:
   RaBitQuantizerCodebook(std::shared_ptr<const RaBitQuantizerStats> stats,
                          std::span<const float> query)
-    : _stats{std::move(stats)} {
-    _rotated_query.resize(_stats->RotDim());
-    RotateInto(_stats->Signs().data(), query.data(), _rotated_query.data(),
-               _stats->SrcDim(), _stats->RotDim());
+    : _stats{std::move(stats)}, _query(query.begin(), query.end()) {
+    static_assert(!kRaBitQCentered);
+    const size_t rd = _stats->RotDim();
+    _rotated_query.resize(rd);
+    RotateInto(_stats->Signs().data(), _query.data(), _rotated_query.data(),
+               _stats->SrcDim(), static_cast<uint32_t>(rd));
+
+    std::vector<float> tmp_q;
+    std::vector<uint8_t> qq;
+    _qf = faiss::rabitq_utils::compute_query_factors(
+      _rotated_query.data(), rd, /*centroid=*/nullptr, kRaBitQQueryBits,
+      kRaBitQCentered, FaissMetric(_stats->Metric()), tmp_q, qq);
+
+    const size_t m = rd / kFastScanBits;
+    const size_t nsq = FastScanNsq(m);
+    std::vector<float> lut(m * kFastScanKsub);
+    for (size_t mi = 0; mi < m; ++mi) {
+      const size_t dim_start = mi * kFastScanBits;
+      for (size_t code = 0; code < kFastScanKsub; ++code) {
+        float ip = 0.f;
+        int pc = 0;
+        for (size_t off = 0; off < kFastScanBits; ++off) {
+          if ((code >> off) & 1) {
+            ip += qq[dim_start + off];
+            ++pc;
+          }
+        }
+        lut[mi * kFastScanKsub + code] =
+          _qf.c1 * ip + _qf.c2 * static_cast<float>(pc);
+      }
+    }
+    std::vector<uint8_t> lutq(nsq * kFastScanKsub);
+    faiss::quantize_lut::quantize_LUT_and_bias(1, m, kFastScanKsub, false,
+                                               lut.data(), nullptr, lutq.data(),
+                                               nsq, nullptr, &_a, &_b);
+    _packed_lut.resize(nsq * kFastScanKsub);
+    faiss::pq4_pack_LUT(1, static_cast<int>(nsq), lutq.data(),
+                        _packed_lut.data());
   }
 
   std::unique_ptr<QuantizerReader> MakeReader(
@@ -810,14 +858,26 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
   const std::vector<float>& RotatedQuery() const noexcept {
     return _rotated_query;
   }
+  std::span<const float> Query() const noexcept { return _query; }
   uint32_t SrcDim() const noexcept { return _stats->SrcDim(); }
   uint32_t RotDim() const noexcept { return _stats->RotDim(); }
   uint32_t NbBits() const noexcept { return _stats->NbBits(); }
   VectorMetric Metric() const noexcept { return _stats->Metric(); }
+  const faiss::rabitq_utils::QueryFactorsData& QueryFactors() const noexcept {
+    return _qf;
+  }
+  const uint8_t* PackedLut() const noexcept { return _packed_lut.data(); }
+  float A() const noexcept { return _a; }
+  float B() const noexcept { return _b; }
 
  private:
   std::shared_ptr<const RaBitQuantizerStats> _stats;
+  std::vector<float> _query;
   std::vector<float> _rotated_query;
+  faiss::rabitq_utils::QueryFactorsData _qf;
+  faiss::AlignedTable<uint8_t> _packed_lut;
+  float _a = 1.f;
+  float _b = 0.f;
 };
 
 class RaBitQuantizerReader final : public QuantizerReader {
@@ -827,7 +887,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
     : _cb{std::move(cb)},
       _pay_in{std::move(pay_in)},
       _rd{_cb->RotDim()},
-      _m{_rd / kFastScanBits},
       _nsq{FastScanNsq(_rd / kFastScanBits)},
       _ex_bits{_cb->NbBits() - 1},
       _storage{faiss::rabitq_utils::compute_per_vector_storage_size(
@@ -841,66 +900,46 @@ class RaBitQuantizerReader final : public QuantizerReader {
       return;
     }
     SDB_ASSERT(centroid);
-    std::vector<float> rotated_centroid(_rd);
-    RotateInto(_cb->Signs().data(), centroid, rotated_centroid.data(),
-               _cb->SrcDim(), _rd);
-
     const faiss::MetricType metric = FaissMetric(_cb->Metric());
     const bool is_l2 = _cb->Metric() == VectorMetric::L2Sqr;
-    std::vector<float> rotated_q;
-    std::vector<uint8_t> rotated_qq;
-    const faiss::rabitq_utils::QueryFactorsData qf =
-      faiss::rabitq_utils::compute_query_factors(
-        _cb->RotatedQuery().data(), _rd, rotated_centroid.data(),
-        kRaBitQQueryBits, kRaBitQCentered, metric, rotated_q, rotated_qq);
+    const std::span<const float> query = _cb->Query();
+    const auto d = static_cast<uint16_t>(query.size());
 
-    std::vector<float> lut(_m * kFastScanKsub);
-    for (size_t mi = 0; mi < _m; ++mi) {
-      const size_t dim_start = mi * kFastScanBits;
-      for (size_t code = 0; code < kFastScanKsub; ++code) {
-        float ip = 0.f;
-        int pc = 0;
-        for (size_t off = 0; off < kFastScanBits; ++off) {
-          if ((code >> off) & 1) {
-            ip += rotated_qq[dim_start + off];
-            ++pc;
-          }
-        }
-        lut[mi * kFastScanKsub + code] =
-          qf.c1 * ip + qf.c2 * static_cast<float>(pc);
-      }
+    faiss::rabitq_utils::QueryFactorsData qf = _cb->QueryFactors();
+    qf.qr_to_c_L2sqr =
+      -ComputeDistance<VectorMetric::L2Sqr>(query.data(), centroid, d);
+    qf.g_error = std::sqrt(qf.qr_to_c_L2sqr);
+    if (!is_l2) {
+      qf.q_dot_c =
+        ComputeDistance<VectorMetric::InnerProduct>(query.data(), centroid, d);
     }
-    float a;
-    float b;
-    _lutq.resize(_nsq * kFastScanKsub);
-    faiss::quantize_lut::quantize_LUT_and_bias(
-      1, _m, kFastScanKsub, false, lut.data(), nullptr, _lutq.data(), _nsq,
-      nullptr, &a, &b);
-    _packed_lut.resize(_nsq * kFastScanKsub);
-    faiss::pq4_pack_LUT(1, static_cast<int>(_nsq), _lutq.data(),
-                        _packed_lut.data());
 
     const size_t nb = RoundUp(_n, kFastScanBbs);
     const size_t packed_bytes = nb * _nsq / 2;
     const size_t aux_bytes = _n * _storage;
-    const byte_type* buf =
-      _pay_in->ReadVolatile(pay_start, packed_bytes + aux_bytes);
+    const size_t cs_bytes = _n * sizeof(float);
+    const size_t total_bytes = packed_bytes + aux_bytes + cs_bytes;
+    const byte_type* buf = _pay_in->ReadVolatile(pay_start, total_bytes);
     if (!buf) {
-      _buf.resize(packed_bytes + aux_bytes);
-      _pay_in->ReadData(pay_start, _buf.data(), packed_bytes + aux_bytes);
+      _buf.resize(total_bytes);
+      _pay_in->ReadData(pay_start, _buf.data(), total_bytes);
       buf = _buf.data();
     }
     const byte_type* codes = buf;
     const byte_type* aux = buf + packed_bytes;
+    _cs.resize(_n);
+    std::memcpy(_cs.data(), buf + packed_bytes + aux_bytes, cs_bytes);
 
     _accu.resize(nb);
     faiss::accumulate_to_mem(1, nb, static_cast<int>(_nsq), codes,
-                             _packed_lut.data(), _accu.data());
+                             _cb->PackedLut(), _accu.data());
 
     _scores.resize(_n);
-    const float inv_a = 1.f / a;
+    const float inv_a = 1.f / _cb->A();
+    const float b = _cb->B();
     for (size_t i = 0; i < _n; ++i) {
-      const float normalized = static_cast<float>(_accu[i]) * inv_a + b;
+      const float normalized =
+        static_cast<float>(_accu[i]) * inv_a + b - _cs[i];
       const auto* fac =
         reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(
           aux + i * _storage);
@@ -916,17 +955,20 @@ class RaBitQuantizerReader final : public QuantizerReader {
         threshold = is_sim ? std::numeric_limits<float>::lowest()
                            : std::numeric_limits<float>::max();
       } else {
-        std::vector<float> tmp(_scores.begin(), _scores.end());
-        auto kth = tmp.begin() + static_cast<std::ptrdiff_t>(pool - 1);
+        _threshold_tmp.assign(_scores.begin(), _scores.end());
+        auto kth =
+          _threshold_tmp.begin() + static_cast<std::ptrdiff_t>(pool - 1);
         if (is_sim) {
-          std::nth_element(tmp.begin(), kth, tmp.end(), std::greater<float>{});
+          std::nth_element(_threshold_tmp.begin(), kth, _threshold_tmp.end(),
+                           std::greater<float>{});
         } else {
-          std::nth_element(tmp.begin(), kth, tmp.end());
+          std::nth_element(_threshold_tmp.begin(), kth, _threshold_tmp.end());
         }
         threshold = *kth;
       }
-      std::vector<uint8_t> sign_bits((_rd + 7) / 8);
+      _sign_bits.resize((_rd + 7) / 8);
       const size_t block_stride = (_nsq / 2) * kFastScanBbs;
+      bool residual_ready = false;
       for (size_t i = 0; i < _n; ++i) {
         const byte_type* rec = aux + i * _storage;
         const auto* fe =
@@ -936,8 +978,19 @@ class RaBitQuantizerReader final : public QuantizerReader {
               _scores[i], fe->f_error, qf.g_error, threshold, is_sim)) {
           continue;
         }
+        if (!residual_ready) {
+          _rot_centroid.resize(_rd);
+          RotateInto(_cb->Signs().data(), centroid, _rot_centroid.data(),
+                     _cb->SrcDim(), static_cast<uint32_t>(_rd));
+          const std::vector<float>& rq = _cb->RotatedQuery();
+          _q_res.resize(_rd);
+          for (size_t j = 0; j < _rd; ++j) {
+            _q_res[j] = rq[j] - _rot_centroid[j];
+          }
+          residual_ready = true;
+        }
         faiss::rabitq_utils::unpack_sign_bits_from_packed(
-          codes, kFastScanBbs, _nsq, i, block_stride, sign_bits.data());
+          codes, kFastScanBbs, _nsq, i, block_stride, _sign_bits.data());
         const uint8_t* ex_code =
           rec + sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
         const auto* ex_fac =
@@ -945,7 +998,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
             ex_code + _ex_code_size);
         const float qr_base = is_l2 ? qf.qr_to_c_L2sqr : qf.q_dot_c;
         _scores[i] = faiss::rabitq_utils::compute_full_multibit_distance(
-          sign_bits.data(), ex_code, *ex_fac, rotated_q.data(), qr_base, _rd,
+          _sign_bits.data(), ex_code, *ex_fac, _q_res.data(), qr_base, _rd,
           _ex_bits, metric);
       }
     }
@@ -966,13 +1019,15 @@ class RaBitQuantizerReader final : public QuantizerReader {
   std::shared_ptr<const RaBitQuantizerCodebook> _cb;
   std::unique_ptr<IndexInput> _pay_in;
   size_t _rd;
-  size_t _m;
   size_t _nsq;
   uint32_t _ex_bits;
   size_t _storage;
   size_t _ex_code_size;
-  std::vector<uint8_t> _lutq;
-  faiss::AlignedTable<uint8_t> _packed_lut;
+  std::vector<float> _cs;
+  std::vector<float> _rot_centroid;
+  std::vector<float> _q_res;
+  std::vector<uint8_t> _sign_bits;
+  std::vector<float> _threshold_tmp;
   std::vector<byte_type> _buf;
   faiss::AlignedTable<uint16_t> _accu;
   std::vector<score_t> _scores;

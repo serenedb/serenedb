@@ -47,12 +47,21 @@ if (expr.CanThrow() && filters.size() > 1) {
 }
 ```
 
-Because an RLS-enabled scan *always* contributes its own filter, `filters.size()
-> 1` holds whenever a user qual is present, so a throwing user qual is **refused
-entry to the scan** and necessarily evaluates above it — i.e. after RLS.
-Confirmed by plan inspection: with `USING (lower(owner) = current_user)` the RLS
-qual is pushed *into* `SEQ_SCAN` as a Column Filter while the throwing qual
-remains in a separate `FILTER` node above.
+When the RLS qual is still in the filter set, `filters.size() > 1` holds and a
+throwing user qual is **refused entry to the scan**, so it evaluates above it —
+i.e. after RLS. Confirmed by plan inspection: with
+`USING (lower(owner) = current_user)` the RLS qual is pushed *into* `SEQ_SCAN`
+as a Column Filter while the throwing qual remains in a separate `FILTER` node
+above.
+
+**This does not hold universally.** A *fully* pushed RLS qual is erased from the
+set, so a later throwing qual can see `size() == 1` and be admitted into the
+scan alongside it — see fragility item 2 below, where a plain
+`USING (owner = current_user)` produces exactly that. Whether the guard applies
+therefore depends on the shape of the policy predicate, which the table owner
+chooses and the attacker can observe. Neither outcome leaked in testing, but
+they are protected by different mechanisms, and only one of them is the
+mechanism described here.
 
 For the conjunction case (both quals in one `LogicalFilter`) the same flag guards
 both reorderers: `ExpressionHeuristics::ReorderExpressions` returns early
@@ -71,10 +80,26 @@ behaviour, not fork-local.
    narrow these bail-outs — e.g. "only bail when the throwing qual would move
    *earlier*" — which is correct for their purpose and would silently reopen the
    channel on a duckdb bump. **A canary test is mandatory.**
-2. **Order-dependent edge.** The `filters.size() > 1` test runs inside a loop that
-   *erases* fully-pushed filters (`filters.erase_at(i)`). If the RLS qual is
-   processed and erased first, a later throwing qual could see `size() == 1` and
-   be admitted into the scan. Not reproduced, but the guard is order-sensitive.
+2. **Order-dependent edge — NOW REPRODUCED.** The `filters.size() > 1` test runs
+   inside a loop that *erases* fully-pushed filters (`filters.erase_at(i)`). If
+   the RLS qual is processed and erased first, a later throwing qual sees
+   `size() == 1` and is admitted into the scan. This *does* happen. With
+   `USING (owner = current_user)` and `WHERE 1/(balance-1000) = 999999999`:
+
+   ```
+   SEQ_SCAN
+     Column Filter:
+       (1 / (balance - 1000)) = 999999999,   <- throwing qual, INSIDE the scan, listed first
+       owner = 'mop'
+   ```
+
+   The throwing qual is not kept above the scan at all — the protection
+   described in "Why it holds" above does not apply to this shape. It still does
+   not raise, so the runtime application order is not the plan's listing order,
+   but nothing documents or tests that. Combined with item 3 (no `CanThrow`
+   guard on the `TableFilterSet` permuter) this is the least protected path in
+   the whole area: the qual is in the set, and the thing that orders the set has
+   no guard.
 3. **No guard on the scan-filter permuter.** `AdaptiveFilter(const
    TableFilterSet&)` (`adaptive_filter.cpp:30`) uses `GetInitialOrder()` with no
    `CanThrow` check. Unreachable for throwing quals today (they can't get into the

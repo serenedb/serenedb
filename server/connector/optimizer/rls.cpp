@@ -60,13 +60,10 @@ namespace {
 
 using PolicyCommand = catalog::persistence::PolicyCommand;
 
-// PG: a policy governs a verb when it is FOR ALL, or FOR that exact verb.
 bool PolicyGoverns(PolicyCommand cmd, PolicyCommand verb) {
   return cmd == PolicyCommand::All || cmd == verb;
 }
 
-// A policy applies to the acting role when it targets PUBLIC (empty role list)
-// or when the acting role is a member of one of the named roles.
 bool PolicyAppliesTo(const catalog::Policy& policy,
                      const auth::RoleClosure& closure) {
   if (policy.AppliesToPublic()) {
@@ -80,10 +77,6 @@ bool PolicyAppliesTo(const catalog::Policy& policy,
   return false;
 }
 
-// The role policies are evaluated as. A definer-rights view shifts the effective
-// principal to the view's owner (PG: a plain view reads base relations, and so
-// applies their RLS, as the view owner); an invoker view (security_invoker=true)
-// or a direct query keeps the caller. Mirrors the RBAC EffectiveRole fold.
 ObjectId EffectiveRlsRole(const duckdb::CatalogEntry* who, ObjectId caller) {
   if (const auto* view = dynamic_cast<const SereneDBViewEntry*>(who)) {
     return view->GetSereneDBView()->GetOwner();
@@ -91,8 +84,6 @@ ObjectId EffectiveRlsRole(const duckdb::CatalogEntry* who, ObjectId caller) {
   return caller;
 }
 
-// Superuser and BYPASSRLS always bypass; the owner bypasses unless the table is
-// FORCE ROW LEVEL SECURITY.
 bool BypassesRls(const catalog::Snapshot& snapshot,
                  const auth::RoleClosure& closure, ObjectId role,
                  const catalog::Table& table, bool forced) {
@@ -111,26 +102,6 @@ duckdb::unique_ptr<duckdb::Expression> BoolConst(bool value) {
     duckdb::Value::BOOLEAN(value));
 }
 
-// A volatile no-op that evaluates to true, conjoined onto every visibility
-// predicate. duckdb never pushes a volatile expression into a scan
-// (pushdown_get.cpp), so this term stays in the filter list and is never erased
-// from it.
-//
-// That is the whole point. The guard keeping a throwing user qual out of the
-// scan is `expr.CanThrow() && filters.size() > 1`. A simple policy predicate is
-// pushed *fully* and therefore erased from the set, dropping the count to 1 and
-// disarming the guard -- the user qual is then admitted into the scan beside the
-// policy, where AdaptiveFilter(const TableFilterSet&) orders the two with no
-// security check at all, and can evaluate it against rows the policy hides. That
-// is an exploitable read; see rls_problems.md P1 and
-// sdb/pg/rls/predicate_ordering_leak.test.
-//
-// This term keeps the count above 1 so the guard stays armed. The policy itself
-// is still pushed into the scan, so row-group pruning is unaffected.
-//
-// This is a mitigation, not a guarantee: it restores the arrangement that tests
-// clean rather than asserting an ordering the optimizer must honour. The real
-// fix is a barrier flag duckdb respects when ordering scan filters.
 duckdb::unique_ptr<duckdb::Expression> UnpushableMarker() {
   static const duckdb::ScalarFunction kFn = [] {
     duckdb::ScalarFunction fn(
@@ -160,12 +131,6 @@ duckdb::unique_ptr<duckdb::Expression> Conjoin(
                                                                std::move(b));
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// Everything a policy decision needs, resolved once per governed relation.
-////////////////////////////////////////////////////////////////////////////////
-
-// The per-statement pieces, resolved once by RlsOptimizePass. The session owns
-// the snapshot for the statement's duration, so this borrows rather than shares.
 struct RlsSession {
   const catalog::Snapshot& snapshot;
   ObjectId caller;
@@ -176,20 +141,13 @@ struct RlsContext {
   const auth::RoleClosure* closure = nullptr;
 };
 
-// Resolves the policy context for `table_entry`, or nullopt when RLS does not
-// apply: not a serened table, not enabled, or the acting role bypasses.
-//
-// Also marks the plan as role-specific. Which policies apply -- and whether any
-// filter is emitted at all -- depend on the role this statement was planned for,
-// so the plan must not be reused after SET ROLE. Marked before the bypass check
-// below, precisely because that is the exit that emits nothing.
 std::optional<RlsContext> ResolveRls(const RlsSession& session,
                                      duckdb::Binder& binder,
                                      const duckdb::TableCatalogEntry& table_entry,
                                      const duckdb::CatalogEntry* who) {
   const auto* facade = dynamic_cast<const SereneDBTableEntry*>(&table_entry);
   if (!facade) {
-    return std::nullopt;  // system / store / non-serened table: no RLS.
+    return std::nullopt;
   }
   const auto& table = *facade->GetSereneDBTable();
   const auto rls = session.snapshot.GetRowSecurity(table.GetId());
@@ -206,12 +164,6 @@ std::optional<RlsContext> ResolveRls(const RlsSession& session,
   return RlsContext{&table, &closure};
 }
 
-// The predicate governing `verb`: (perm1 OR perm2 ...) AND restr1 AND restr2 ...
-// `bind_one` yields a policy's bound predicate, or null when the policy carries no
-// expression and is therefore unconditionally satisfied.
-//
-// Never returns null: with no applicable PERMISSIVE policy the result is a literal
-// false, which is PG's default-deny.
 duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
   const RlsSession& session, const RlsContext& rls, PolicyCommand verb,
   absl::FunctionRef<duckdb::unique_ptr<duckdb::Expression>(
@@ -222,10 +174,6 @@ duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
   bool any_permissive = false;
 
   for (auto policy_id : session.snapshot.PolicyIds(rls.table->GetId())) {
-    // A table's policy ids are inserted and erased with the objects themselves,
-    // so every id here resolves; there is deliberately no null branch, since
-    // skipping an unresolvable policy would drop a RESTRICTIVE one and widen
-    // visibility.
     auto policy = session.snapshot.GetObject<catalog::Policy>(policy_id);
     if (!PolicyGoverns(policy->Command(), verb) ||
         !PolicyAppliesTo(*policy, *rls.closure)) {
@@ -233,13 +181,11 @@ duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
     }
     auto expr = bind_one(*policy);
     if (policy->Permissive()) {
-      // A permissive policy with no expression grants unconditionally.
       any_permissive = true;
       permissive = Conjoin(std::move(permissive),
                            expr ? std::move(expr) : BoolConst(true),
                            duckdb::ExpressionType::CONJUNCTION_OR);
     } else if (expr) {
-      // A restrictive policy with no expression constrains nothing.
       restrictive = Conjoin(std::move(restrictive), std::move(expr),
                             duckdb::ExpressionType::CONJUNCTION_AND);
     }
@@ -251,12 +197,6 @@ duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
                  duckdb::ExpressionType::CONJUNCTION_AND);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// Binding stored policy text.
-////////////////////////////////////////////////////////////////////////////////
-
-// The binding of the target table in the binder's context, or null when it is
-// absent or ambiguous (the same table joined to itself).
 duckdb::optional_ptr<duckdb::Binding> TargetBinding(
   duckdb::Binder& binder, const duckdb::TableCatalogEntry& table_entry) {
   duckdb::optional_ptr<duckdb::Binding> found;
@@ -272,11 +212,6 @@ duckdb::optional_ptr<duckdb::Binding> TargetBinding(
   return found;
 }
 
-// Qualify each unqualified reference to a target-table column with the target
-// table's alias. A policy predicate is scoped to its own table, so it must not
-// bind to a same-named column of a table joined alongside it (UPDATE ... FROM,
-// DELETE ... USING). A bare name that is not one of the table's columns -- e.g.
-// current_user -- is left alone.
 void QualifyColumns(duckdb::ParsedExpression& expr, duckdb::Binding& target) {
   const auto& alias = target.GetBindingAlias();
   if (!alias.IsSet()) {
@@ -302,10 +237,6 @@ void QualifyColumns(duckdb::ParsedExpression& expr, duckdb::Binding& target) {
     });
 }
 
-// The parser emits SQL special registers (current_user, session_user, ...) as
-// bare column refs. A WHERE binder resolves them as functions, but CheckBinder
-// treats every unqualified identifier as a column and errors. Rewrite the known
-// nullary registers to function calls before check-binding.
 bool IsSpecialRegister(const std::string& name) {
   return name == "current_user" || name == "session_user" ||
          name == "current_role" || name == "user" ||
@@ -341,9 +272,6 @@ duckdb::unique_ptr<duckdb::ParsedExpression> ParsePredicate(
   return std::move(parsed[0]);
 }
 
-// A USING predicate bound against a scan's columns, for row visibility. Null on
-// parse/bind failure, which the caller turns into a deny -- a policy we cannot
-// bind must never silently open the relation.
 duckdb::unique_ptr<duckdb::Expression> BindVisibilityExpr(
   duckdb::Binder& binder, duckdb::ClientContext& context,
   const duckdb::TableCatalogEntry& table_entry, const std::string& text) {
@@ -355,10 +283,6 @@ duckdb::unique_ptr<duckdb::Expression> BindVisibilityExpr(
   return where_binder.Bind(parsed);
 }
 
-// A WITH CHECK predicate bound against the table's columns, for a write's
-// post-image. CheckBinder yields storage-offset references, matching how ordinary
-// CHECK constraints validate the new row, and targets INTEGER -- so the result is
-// normalized to BOOLEAN for composition.
 duckdb::unique_ptr<duckdb::Expression> BindPostImageExpr(
   duckdb::Binder& binder, duckdb::ClientContext& context,
   duckdb::TableCatalogEntry& table, const std::string& text,
@@ -371,12 +295,6 @@ duckdb::unique_ptr<duckdb::Expression> BindPostImageExpr(
     check_binder.Bind(parsed), duckdb::LogicalType::BOOLEAN);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// Enforcement.
-////////////////////////////////////////////////////////////////////////////////
-
-// The row-visibility predicate for a scan of `table_entry`, or null when RLS does
-// not apply.
 duckdb::unique_ptr<duckdb::Expression> ReadFilter(
   const RlsSession& session, duckdb::ClientContext& context,
   duckdb::Binder& binder, const duckdb::TableCatalogEntry& table_entry,
@@ -389,15 +307,13 @@ duckdb::unique_ptr<duckdb::Expression> ReadFilter(
     session, *rls, PolicyCommand::Select,
     [&](const catalog::Policy& policy) -> duckdb::unique_ptr<duckdb::Expression> {
       if (!policy.HasUsing()) {
-        return nullptr;  // no restriction on visibility
+        return nullptr;
       }
       return BindVisibilityExpr(binder, context, table_entry,
                                 policy.UsingText());
     });
 }
 
-// Appends the WITH CHECK constraint validating a write's post-image for `verb`.
-// `who` is the definer view enclosing the write, if any.
 void AppendWriteCheck(
   const RlsSession& session, duckdb::ClientContext& context,
   duckdb::Binder& binder, duckdb::TableCatalogEntry& table_entry,
@@ -412,11 +328,9 @@ void AppendWriteCheck(
   auto check = CombinePolicies(
     session, *rls, verb,
     [&](const catalog::Policy& policy) -> duckdb::unique_ptr<duckdb::Expression> {
-      // WITH CHECK falls back to USING when the policy has no explicit WITH
-      // CHECK (PG semantics).
       const bool has_check = policy.HasCheck();
       if (!has_check && !policy.HasUsing()) {
-        return nullptr;  // unconditionally allowed
+        return nullptr;
       }
       const std::string& text =
         has_check ? policy.CheckText() : policy.UsingText();
@@ -424,10 +338,6 @@ void AppendWriteCheck(
                                bound_columns);
     });
 
-  // A WITH CHECK evaluating to NULL must reject the row -- PG evaluates it as a
-  // qual, where NULL means not-satisfied. The CHECK-constraint verifier this
-  // rides on instead treats a NULL result as satisfied, so route NULL to 0
-  // explicitly: a NULL condition takes the CASE's ELSE branch.
   check = duckdb::make_uniq<duckdb::BoundCaseExpression>(
     std::move(check),
     duckdb::make_uniq<duckdb::BoundConstantExpression>(
@@ -442,15 +352,6 @@ void AppendWriteCheck(
   bound_constraints.push_back(std::move(constraint));
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// The plan pass.
-////////////////////////////////////////////////////////////////////////////////
-
-// Every base-relation read is tagged by the binder with the catalog entry it
-// resolved to and the definer view enclosing it, keyed by the scan's table index.
-// That lets a plan operator be traced back to the object its policies hang off
-// without resolving any name again -- notably, a store-delegated scan reports the
-// storage table, not the facade.
 const duckdb::AccessRequirement* RequirementFor(duckdb::Binder& binder,
                                                 duckdb::idx_t table_index) {
   for (const auto& req : binder.GetStatementProperties().access_requirements) {
@@ -461,8 +362,6 @@ const duckdb::AccessRequirement* RequirementFor(duckdb::Binder& binder,
   return nullptr;
 }
 
-// The definer view enclosing the relation bound at `table_index`, or null when it
-// was reached directly.
 const duckdb::CatalogEntry* DefinerFor(duckdb::Binder& binder,
                                        duckdb::idx_t table_index) {
   const auto* req = RequirementFor(binder, table_index);
@@ -490,7 +389,6 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
       if (!filter) {
         return;
       }
-      // Policy first so it short-circuits; the marker only has to be present.
       filter = Conjoin(std::move(filter), UnpushableMarker(),
                        duckdb::ExpressionType::CONJUNCTION_AND);
       auto logical_filter =
@@ -517,13 +415,7 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
     }
     case duckdb::LogicalOperatorType::LOGICAL_MERGE_INTO: {
       auto& merge = op->Cast<duckdb::LogicalMergeInto>();
-      // MERGE records its access under the target *scan's* table index rather
-      // than its own (bind_merge_into.cpp), so the definer is not reachable from
-      // merge.table_index. Writes through a definer view are unreachable anyway
-      // while views are not updatable.
       const duckdb::CatalogEntry* who = nullptr;
-      // A MERGE produces target rows through its INSERT and UPDATE actions; each
-      // verb present needs the check for its own policy set.
       bool has_insert = false;
       bool has_update = false;
       for (auto& [condition, actions] : merge.actions) {
@@ -568,7 +460,7 @@ void RlsOptimizePass(duckdb::OptimizerExtensionInput& input,
   RlsOptimize(plan, session, input.context, input.optimizer.binder);
 }
 
-}  // namespace
+}
 
 void RlsGuardTruncate(const catalog::Snapshot& snapshot,
                       const catalog::Table& table, ObjectId role) {
@@ -580,9 +472,6 @@ void RlsGuardTruncate(const catalog::Snapshot& snapshot,
   if (BypassesRls(snapshot, closure, role, table, rls.forced)) {
     return;
   }
-  // TRUNCATE removes rows wholesale; it cannot be row-filtered, so there is no
-  // way to honour the table's policies. Refuse rather than silently ignoring
-  // them.
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
     ERR_MSG("permission denied to truncate table ", table.GetName()),
@@ -596,4 +485,4 @@ void RegisterRlsEnforcement(duckdb::DatabaseInstance& db) {
   duckdb::OptimizerExtension::Register(db.config, std::move(rls));
 }
 
-}  // namespace sdb::connector
+}

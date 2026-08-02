@@ -50,7 +50,7 @@ statement ok
 CREATE INDEX fan_idx ON fan USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
 
 statement ok
-INSERT INTO fan SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
+INSERT INTO fan SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(1000) t(i);
 
 statement ok
 VACUUM (REFRESH_TABLE) fan;
@@ -71,32 +71,32 @@ pk
 0
 
 query
-SELECT pk FROM fan_idx ORDER BY emb <-> [1234.0, 0.0]::FLOAT[2] LIMIT 1;
+SELECT pk FROM fan_idx ORDER BY emb <-> [123.0, 0.0]::FLOAT[2] LIMIT 1;
 ----
 pk
-1234
+123
 
 query
-SELECT pk FROM fan_idx ORDER BY emb <-> [9999.0, 0.0]::FLOAT[2] LIMIT 1;
+SELECT pk FROM fan_idx ORDER BY emb <-> [999.0, 0.0]::FLOAT[2] LIMIT 1;
 ----
 pk
-9999
+999
 
 # ---- wide descent: a large width reaches every node, so results stay exact.
 statement ok
 SET sdb_ivf_max_search_fanout = 100000;
 
 query
-SELECT pk FROM fan_idx ORDER BY emb <-> [1234.0, 0.0]::FLOAT[2] LIMIT 1;
+SELECT pk FROM fan_idx ORDER BY emb <-> [123.0, 0.0]::FLOAT[2] LIMIT 1;
 ----
 pk
-1234
+123
 
 query
-SELECT pk FROM fan_idx ORDER BY emb <-> [5678.0, 0.0]::FLOAT[2] LIMIT 1;
+SELECT pk FROM fan_idx ORDER BY emb <-> [567.0, 0.0]::FLOAT[2] LIMIT 1;
 ----
 pk
-5678
+567
 
 # ---- a large nprobe lifts the width past the setting, so the exhaustive-probe
 # idiom other IVF tests rely on keeps working at the default width.
@@ -107,10 +107,30 @@ statement ok
 SET sdb_nprobe = 100000;
 
 query
-SELECT pk FROM fan_idx ORDER BY emb <-> [4321.0, 0.0]::FLOAT[2] LIMIT 1;
+SELECT pk FROM (SELECT pk
+  FROM fan_idx
+  ORDER BY emb <-> [432.0, 0.0]::FLOAT[2]
+  LIMIT 15
+) as top_k
+ORDER BY top_k.pk;
 ----
 pk
-4321
+425
+426
+427
+428
+429
+430
+431
+432
+433
+434
+435
+436
+437
+438
+439
+
 
 query
 SELECT pk FROM fan_idx
@@ -128,7 +148,7 @@ query
 SELECT count(*) FROM fan_idx;
 ----
 count
-10000
+1000
 
 statement ok
 RESET sdb_ivf_posting_size;

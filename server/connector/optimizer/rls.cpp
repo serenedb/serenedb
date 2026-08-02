@@ -47,7 +47,6 @@
 #include <optional>
 
 #include "auth/role_closure.h"
-#include "basics/containers/flat_hash_map.h"
 #include "catalog/catalog.h"
 #include "catalog/policy.h"
 #include "catalog/table.h"
@@ -330,33 +329,16 @@ void RewriteSpecialRegisters(duckdb::unique_ptr<duckdb::ParsedExpression>& expr)
     });
 }
 
-// Policies are stored as text, so enforcement would otherwise re-parse every
-// predicate on every query. A parse depends on nothing but the text, so caching
-// by the text needs no invalidation: ALTER POLICY writes different text and
-// lands on a different entry. Callers mutate the result (qualification, special
-// registers), so each hands back a copy -- far cheaper than re-parsing.
 duckdb::unique_ptr<duckdb::ParsedExpression> ParsePredicate(
   const std::string& text) {
-  static constexpr size_t kMaxCached = 1024;
-  thread_local containers::FlatHashMap<
-    std::string, duckdb::unique_ptr<duckdb::ParsedExpression>>
-    cache;
-
-  auto it = cache.find(text);
-  if (it == cache.end()) {
-    if (cache.size() >= kMaxCached) {
-      cache.clear();
-    }
-    auto parsed = duckdb::Parser::ParseExpressionList(text);
-    if (parsed.size() != 1) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("row-level security policy predicate is not a "
-                              "single expression: ",
-                              text));
-    }
-    it = cache.emplace(text, std::move(parsed[0])).first;
+  auto parsed = duckdb::Parser::ParseExpressionList(text);
+  if (parsed.size() != 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("row-level security policy predicate is not a "
+                            "single expression: ",
+                            text));
   }
-  return it->second->Copy();
+  return std::move(parsed[0]);
 }
 
 // A USING predicate bound against a scan's columns, for row visibility. Null on

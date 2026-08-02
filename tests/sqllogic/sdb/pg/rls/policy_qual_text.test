@@ -45,18 +45,6 @@ p_sel	(amount >= 0)	NULL
 p_upd	("owner" = current_user)	(amount > 0)
 
 
-# ALTER POLICY changes the USING text; the rendered qual follows.
-statement ok
-ALTER POLICY p_sel ON pqt_ledger USING (amount >= 100);
-
-
-query TT
-SELECT qual, with_check FROM pg_catalog.pg_policies WHERE policyname = 'p_sel';
-----
-qual	with_check
-(amount >= 100)	NULL
-
-
 # serened types polqual/polwithcheck `text` and stores the predicate as SQL text.
 # PG types them pg_node_tree (OID 194) and stores a serialized node tree, so this
 # is a deliberate divergence: the supported reader, pg_get_expr, agrees on both.

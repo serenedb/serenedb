@@ -39,32 +39,22 @@ statement ok
 CREATE POLICY pect_upd ON pect_clickclack FOR UPDATE USING (owner = current_user) WITH CHECK (mops > 0);
 
 
-query TTT
-SELECT polname, polqual IS NULL AS qual_is_null, polwithcheck IS NULL AS check_is_null
-FROM pg_catalog.pg_policy
-WHERE polrelid = 'pect_clickclack'::regclass
-ORDER BY polname;
-----
-polname	qual_is_null	check_is_null
-pect_ins	t	f
-pect_sel	f	t
-pect_upd	f	f
-
-
-# pg_get_expr is the portable reader for these columns, and returns NULL for an
-# absent clause rather than raising.
-query TTT
+# The raw columns and pg_get_expr -- the portable reader, which returns NULL for
+# an absent clause rather than raising -- must agree.
+query TTTTT
 SELECT polname,
-       pg_catalog.pg_get_expr(polqual, polrelid) IS NULL AS qual_null,
-       pg_catalog.pg_get_expr(polwithcheck, polrelid) IS NULL AS check_null
+       polqual IS NULL AS qual_is_null,
+       pg_catalog.pg_get_expr(polqual, polrelid) IS NULL AS qual_expr_null,
+       polwithcheck IS NULL AS check_is_null,
+       pg_catalog.pg_get_expr(polwithcheck, polrelid) IS NULL AS check_expr_null
 FROM pg_catalog.pg_policy
 WHERE polrelid = 'pect_clickclack'::regclass
 ORDER BY polname;
 ----
-polname	qual_null	check_null
-pect_ins	t	f
-pect_sel	f	t
-pect_upd	f	f
+polname	qual_is_null	qual_expr_null	check_is_null	check_expr_null
+pect_ins	t	t	f	f
+pect_sel	f	f	t	t
+pect_upd	f	f	f	f
 
 
 statement ok

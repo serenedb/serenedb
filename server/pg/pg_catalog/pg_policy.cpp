@@ -84,7 +84,7 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
             roles.push_back(Oid{role_id.id()});
           }
         }
-        roles_storage.push_back(std::move(roles));
+        const auto& stored_roles = roles_storage.emplace_back(std::move(roles));
 
         // The stored USING/CHECK text is already parenthesized, matching how
         // pg_get_expr renders a policy expression, e.g. "(v > 0)", so it is
@@ -104,7 +104,7 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
           .polrelid = table->GetId().id(),
           .polcmd = ToPolcmd(policy->Command()),
           .polpermissive = policy->Permissive(),
-          .polroles = roles_storage.back(),
+          .polroles = stored_roles,
           .polqual = qual,
           .polwithcheck = with_check,
         });
@@ -118,7 +118,7 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
     const uint64_t mask = kNullMask |
                           (value.polqual.empty() ? kQualNull : 0) |
                           (value.polwithcheck.empty() ? kCheckNull : 0);
-    WriteData(result, value, mask, row, *_config.CatalogSnapshot());
+    WriteData(result, value, mask, row, *catalog);
   }
   return {std::move(result), values.size()};
 }

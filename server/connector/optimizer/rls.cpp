@@ -61,24 +61,9 @@ namespace {
 
 using PolicyCommand = catalog::persistence::PolicyCommand;
 
-// The statement verb a policy set is being collected for. SELECT covers row
-// visibility; INSERT and UPDATE cover the post-image of a write.
-enum class PolicyVerb : uint8_t { Select, Insert, Update };
-
 // PG: a policy governs a verb when it is FOR ALL, or FOR that exact verb.
-bool PolicyGoverns(PolicyCommand cmd, PolicyVerb verb) {
-  if (cmd == PolicyCommand::All) {
-    return true;
-  }
-  switch (verb) {
-    case PolicyVerb::Select:
-      return cmd == PolicyCommand::Select;
-    case PolicyVerb::Insert:
-      return cmd == PolicyCommand::Insert;
-    case PolicyVerb::Update:
-      return cmd == PolicyCommand::Update;
-  }
-  return false;
+bool PolicyGoverns(PolicyCommand cmd, PolicyCommand verb) {
+  return cmd == PolicyCommand::All || cmd == verb;
 }
 
 // A policy applies to the acting role when it targets PUBLIC (empty role list)
@@ -148,15 +133,18 @@ duckdb::unique_ptr<duckdb::Expression> BoolConst(bool value) {
 // clean rather than asserting an ordering the optimizer must honour. The real
 // fix is a barrier flag duckdb respects when ordering scan filters.
 duckdb::unique_ptr<duckdb::Expression> UnpushableMarker() {
-  duckdb::ScalarFunction fn(
-    "sdb_rls_barrier", {}, duckdb::LogicalType::BOOLEAN,
-    [](duckdb::DataChunk&, duckdb::ExpressionState&, duckdb::Vector& result) {
-      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-      duckdb::ConstantVector::GetData<bool>(result)[0] = true;
-    });
-  fn.SetStability(duckdb::FunctionStability::VOLATILE);
+  static const duckdb::ScalarFunction kFn = [] {
+    duckdb::ScalarFunction fn(
+      "sdb_rls_barrier", {}, duckdb::LogicalType::BOOLEAN,
+      [](duckdb::DataChunk&, duckdb::ExpressionState&, duckdb::Vector& result) {
+        result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+        duckdb::ConstantVector::GetData<bool>(result)[0] = true;
+      });
+    fn.SetStability(duckdb::FunctionStability::VOLATILE);
+    return fn;
+  }();
   return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::BoundScalarFunction{fn},
+    duckdb::BoundScalarFunction{kFn},
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>{}, nullptr);
 }
 
@@ -177,8 +165,14 @@ duckdb::unique_ptr<duckdb::Expression> Conjoin(
 // Everything a policy decision needs, resolved once per governed relation.
 ////////////////////////////////////////////////////////////////////////////////
 
+// The per-statement pieces, resolved once by RlsOptimizePass. The session owns
+// the snapshot for the statement's duration, so this borrows rather than shares.
+struct RlsSession {
+  const catalog::Snapshot& snapshot;
+  ObjectId caller;
+};
+
 struct RlsContext {
-  std::shared_ptr<const catalog::Snapshot> snapshot;
   const catalog::Table* table = nullptr;
   const auth::RoleClosure* closure = nullptr;
 };
@@ -190,7 +184,7 @@ struct RlsContext {
 // filter is emitted at all -- depend on the role this statement was planned for,
 // so the plan must not be reused after SET ROLE. Marked before the bypass check
 // below, precisely because that is the exit that emits nothing.
-std::optional<RlsContext> ResolveRls(duckdb::ClientContext& context,
+std::optional<RlsContext> ResolveRls(const RlsSession& session,
                                      duckdb::Binder& binder,
                                      const duckdb::TableCatalogEntry& table_entry,
                                      const duckdb::CatalogEntry* who) {
@@ -198,29 +192,19 @@ std::optional<RlsContext> ResolveRls(duckdb::ClientContext& context,
   if (!facade) {
     return std::nullopt;  // system / store / non-serened table: no RLS.
   }
-  auto state = context.registered_state->Get<SereneDBClientState>(
-    kSereneDBClientStateKey);
-  if (!state) {
-    return std::nullopt;
-  }
-  auto& conn = state->GetConnectionContext();
-  auto snapshot = conn.CatalogSnapshot();
-  if (!snapshot) {
-    return std::nullopt;
-  }
   const auto& table = *facade->GetSereneDBTable();
-  const auto rls = snapshot->GetRowSecurity(table.GetId());
+  const auto rls = session.snapshot.GetRowSecurity(table.GetId());
   if (!rls.enabled) {
     return std::nullopt;
   }
   binder.SetAlwaysRequireRebind();
 
-  const auto role = EffectiveRlsRole(who, conn.GetRoleId());
-  const auto& closure = snapshot->ClosureFor(role);
-  if (BypassesRls(*snapshot, closure, role, table, rls.forced)) {
+  const auto role = EffectiveRlsRole(who, session.caller);
+  const auto& closure = session.snapshot.ClosureFor(role);
+  if (BypassesRls(session.snapshot, closure, role, table, rls.forced)) {
     return std::nullopt;
   }
-  return RlsContext{std::move(snapshot), &table, &closure};
+  return RlsContext{&table, &closure};
 }
 
 // The predicate governing `verb`: (perm1 OR perm2 ...) AND restr1 AND restr2 ...
@@ -230,7 +214,7 @@ std::optional<RlsContext> ResolveRls(duckdb::ClientContext& context,
 // Never returns null: with no applicable PERMISSIVE policy the result is a literal
 // false, which is PG's default-deny.
 duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
-  const RlsContext& rls, PolicyVerb verb,
+  const RlsSession& session, const RlsContext& rls, PolicyCommand verb,
   absl::FunctionRef<duckdb::unique_ptr<duckdb::Expression>(
     const catalog::Policy&)>
     bind_one) {
@@ -238,12 +222,12 @@ duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
   duckdb::unique_ptr<duckdb::Expression> restrictive;
   bool any_permissive = false;
 
-  for (auto policy_id : rls.snapshot->PolicyIds(rls.table->GetId())) {
+  for (auto policy_id : session.snapshot.PolicyIds(rls.table->GetId())) {
     // A table's policy ids are inserted and erased with the objects themselves,
     // so every id here resolves; there is deliberately no null branch, since
     // skipping an unresolvable policy would drop a RESTRICTIVE one and widen
     // visibility.
-    auto policy = rls.snapshot->GetObject<catalog::Policy>(policy_id);
+    auto policy = session.snapshot.GetObject<catalog::Policy>(policy_id);
     if (!PolicyGoverns(policy->Command(), verb) ||
         !PolicyAppliesTo(*policy, *rls.closure)) {
       continue;
@@ -296,10 +280,16 @@ duckdb::optional_ptr<duckdb::Binding> TargetBinding(
 // current_user -- is left alone.
 void QualifyColumns(duckdb::ParsedExpression& expr, duckdb::Binding& target) {
   const auto& alias = target.GetBindingAlias();
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
-    auto& colref = expr.Cast<duckdb::ColumnRefExpression>();
-    if (!colref.IsQualified() && alias.IsSet() &&
-        target.HasMatchingBinding(colref.GetColumnName())) {
+  if (!alias.IsSet()) {
+    return;
+  }
+  duckdb::ParsedExpressionIterator::VisitExpressionMutable<
+    duckdb::ColumnRefExpression>(
+    expr, [&](duckdb::ColumnRefExpression& colref) {
+      if (colref.IsQualified() ||
+          !target.HasMatchingBinding(colref.GetColumnName())) {
+        return;
+      }
       duckdb::vector<duckdb::Identifier> qualified;
       if (!alias.GetCatalog().empty()) {
         qualified.emplace_back(alias.GetCatalog());
@@ -310,11 +300,7 @@ void QualifyColumns(duckdb::ParsedExpression& expr, duckdb::Binding& target) {
       qualified.emplace_back(alias.GetAlias());
       qualified.emplace_back(colref.GetColumnName());
       colref.ColumnNamesMutable() = std::move(qualified);
-    }
-  }
-  duckdb::ParsedExpressionIterator::EnumerateChildren(
-    expr,
-    [&](duckdb::ParsedExpression& child) { QualifyColumns(child, target); });
+    });
 }
 
 // The parser emits SQL special registers (current_user, session_user, ...) as
@@ -410,15 +396,15 @@ duckdb::unique_ptr<duckdb::Expression> BindPostImageExpr(
 // The row-visibility predicate for a scan of `table_entry`, or null when RLS does
 // not apply.
 duckdb::unique_ptr<duckdb::Expression> ReadFilter(
-  duckdb::ClientContext& context, duckdb::Binder& binder,
-  const duckdb::TableCatalogEntry& table_entry,
+  const RlsSession& session, duckdb::ClientContext& context,
+  duckdb::Binder& binder, const duckdb::TableCatalogEntry& table_entry,
   const duckdb::CatalogEntry* who) {
-  auto rls = ResolveRls(context, binder, table_entry, who);
+  auto rls = ResolveRls(session, binder, table_entry, who);
   if (!rls) {
     return nullptr;
   }
   return CombinePolicies(
-    *rls, PolicyVerb::Select,
+    session, *rls, PolicyCommand::Select,
     [&](const catalog::Policy& policy) -> duckdb::unique_ptr<duckdb::Expression> {
       if (!policy.HasUsing()) {
         return nullptr;  // no restriction on visibility
@@ -431,18 +417,18 @@ duckdb::unique_ptr<duckdb::Expression> ReadFilter(
 // Appends the WITH CHECK constraint validating a write's post-image for `verb`.
 // `who` is the definer view enclosing the write, if any.
 void AppendWriteCheck(
-  duckdb::ClientContext& context, duckdb::Binder& binder,
-  duckdb::TableCatalogEntry& table_entry, PolicyVerb verb,
-  const duckdb::CatalogEntry* who,
+  const RlsSession& session, duckdb::ClientContext& context,
+  duckdb::Binder& binder, duckdb::TableCatalogEntry& table_entry,
+  PolicyCommand verb, const duckdb::CatalogEntry* who,
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>&
     bound_constraints) {
-  auto rls = ResolveRls(context, binder, table_entry, who);
+  auto rls = ResolveRls(session, binder, table_entry, who);
   if (!rls) {
     return;
   }
   duckdb::physical_index_set_t bound_columns;
   auto check = CombinePolicies(
-    *rls, verb,
+    session, *rls, verb,
     [&](const catalog::Policy& policy) -> duckdb::unique_ptr<duckdb::Expression> {
       // WITH CHECK falls back to USING when the policy has no explicit WITH
       // CHECK (PG semantics).
@@ -502,9 +488,10 @@ const duckdb::CatalogEntry* DefinerFor(duckdb::Binder& binder,
 }
 
 void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
-                 duckdb::ClientContext& context, duckdb::Binder& binder) {
+                 const RlsSession& session, duckdb::ClientContext& context,
+                 duckdb::Binder& binder) {
   for (auto& child : op->children) {
-    RlsOptimize(child, context, binder);
+    RlsOptimize(child, session, context, binder);
   }
 
   switch (op->type) {
@@ -517,7 +504,7 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
       if (!table) {
         return;
       }
-      auto filter = ReadFilter(context, binder, *table, req->who);
+      auto filter = ReadFilter(session, context, binder, *table, req->who);
       if (!filter) {
         return;
       }
@@ -532,14 +519,16 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
     }
     case duckdb::LogicalOperatorType::LOGICAL_INSERT: {
       auto& insert = op->Cast<duckdb::LogicalInsert>();
-      AppendWriteCheck(context, binder, insert.table, PolicyVerb::Insert,
+      AppendWriteCheck(session, context, binder, insert.table,
+                       PolicyCommand::Insert,
                        DefinerFor(binder, insert.table_index.index),
                        insert.bound_constraints);
       return;
     }
     case duckdb::LogicalOperatorType::LOGICAL_UPDATE: {
       auto& update = op->Cast<duckdb::LogicalUpdate>();
-      AppendWriteCheck(context, binder, update.table, PolicyVerb::Update,
+      AppendWriteCheck(session, context, binder, update.table,
+                       PolicyCommand::Update,
                        DefinerFor(binder, update.table_index.index),
                        update.bound_constraints);
       return;
@@ -564,11 +553,13 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
         }
       }
       if (has_insert) {
-        AppendWriteCheck(context, binder, merge.table, PolicyVerb::Insert, who,
+        AppendWriteCheck(session, context, binder, merge.table,
+                         PolicyCommand::Insert, who,
                          merge.bound_constraints);
       }
       if (has_update) {
-        AppendWriteCheck(context, binder, merge.table, PolicyVerb::Update, who,
+        AppendWriteCheck(session, context, binder, merge.table,
+                         PolicyCommand::Update, who,
                          merge.bound_constraints);
       }
       return;
@@ -580,9 +571,19 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
 
 void RlsOptimizePass(duckdb::OptimizerExtensionInput& input,
                      duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-  if (plan) {
-    RlsOptimize(plan, input.context, input.optimizer.binder);
+  if (!plan) {
+    return;
   }
+  auto* conn = GetSereneDBContextPtr(input.context);
+  if (!conn) {
+    return;
+  }
+  const auto snapshot = conn->CatalogSnapshot();
+  if (!snapshot) {
+    return;
+  }
+  const RlsSession session{*snapshot, conn->GetRoleId()};
+  RlsOptimize(plan, session, input.context, input.optimizer.binder);
 }
 
 }  // namespace

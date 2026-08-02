@@ -288,7 +288,8 @@ struct Snapshot {
   }
 
   // RLS: the policy object ids attached to a table, and the enable/force pair.
-  std::vector<ObjectId> PolicyIds(ObjectId table_id) const;
+  const containers::FlatHashSet<ObjectId>& PolicyIds(
+    ObjectId table_id) const;
   struct RowSecurityState {
     bool enabled = false;
     bool forced = false;

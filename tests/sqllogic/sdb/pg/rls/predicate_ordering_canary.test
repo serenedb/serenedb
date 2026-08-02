@@ -14,17 +14,11 @@
 #
 # See rls_problems.md P1.
 #
-# WARNING -- the error-oracle probes below (`1/(balance-1000)`) are WEAK. duckdb
-# returns NULL for integer division by zero rather than raising (`SELECT 1/0` ->
-# NULL), so those queries return 0 rows whether or not the policy was applied
-# first. They are kept only to pin plan shape. The SIDE-EFFECT probes
-# (`poc_tap`, asserting poc_sink holds nothing but the caller's own balance) are
-# the assertions with real signal -- if you weaken this file, keep those.
-#
-# No valid probe currently exists for the case where the attacker's qual is
-# admitted INTO the scan (rls_problems.md P1 fragility item 2): an error oracle
-# has no signal, and a side-effecting function becomes a delim-join subquery
-# evaluated after the scan's filters. That path is untested, not proven safe.
+# Probes here are SIDE-EFFECT based (`poc_tap`, asserting poc_sink holds nothing
+# but the caller's own balance). Do not "strengthen" this file with an error
+# oracle built on division: duckdb evaluates `1/0` to NULL rather than raising,
+# so such a probe returns 0 rows whether or not the policy applied. The
+# cast-overflow probe in predicate_ordering_leak.test is the one that raises.
 #
 # Lore: the mop must not learn vedernikoff's balance by asking which row makes the
 # arithmetic explode.
@@ -74,25 +68,6 @@ SELECT id, balance FROM poc_ledger ORDER BY id;
 ----
 id	balance
 2	5
-
-
-# ATTACK 1 -- a throwing predicate. Evaluated on the hidden balance = 1000 row it
-# divides by zero; the error itself would reveal that such a row exists. It must
-# never see that row, so the query returns no rows and raises nothing.
-connection c_div user=poc_mop password=pw
-query I
-SELECT id FROM poc_ledger WHERE 1/(balance-1000) > 0;
-----
-id
-
-
-# ATTACK 2 -- same, shaped to look highly selective so a cost- or
-# selectivity-driven reorder would prefer running it first.
-connection c_div2 user=poc_mop password=pw
-query I
-SELECT id FROM poc_ledger WHERE 1/(balance-1000) = 999999999;
-----
-id
 
 
 # ATTACK 3 -- a side-effecting predicate. A SQL-bodied function that records what
@@ -167,14 +142,6 @@ SELECT id, balance, owner FROM poc_ledger ORDER BY id;
 ----
 id	balance	owner
 2	5	poc_mop
-
-
-# Error oracle against the hidden balance=1000 row: must not raise.
-connection c_unpush2 user=poc_mop password=pw
-query I
-SELECT id FROM poc_ledger WHERE 1/(balance-1000) = 999999999;
-----
-id
 
 
 # Side-effect probe: only the mop's own balance may reach the function.

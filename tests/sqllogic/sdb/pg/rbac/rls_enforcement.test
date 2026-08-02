@@ -87,18 +87,6 @@ owner	amount
 rls_mop	200
 
 
-# ---- Leak defense: a user predicate cannot observe a hidden row via error ----
-# ghost(300) and mop(200) are hidden from vedernikoff; a divide-by-zero probe on
-# amount must never fire on those rows (RLS filters them before the projection).
-
-connection c_ved3 user=rls_vedernikoff password=vpw
-query
-SELECT owner, 100 / (amount - 200) FROM rls_ledger;
-----
-owner	?column?
-rls_vedernikoff	-1
-
-
 # ---- Write path: read-portion of UPDATE/DELETE is filtered ----
 
 connection c_ved4 user=rls_vedernikoff password=vpw

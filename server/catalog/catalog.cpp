@@ -2555,14 +2555,11 @@ bool Catalog::CreateSecondaryIndex(
   return true;
 }
 
-std::vector<ObjectId> Snapshot::PolicyIds(ObjectId table_id) const {
-  std::vector<ObjectId> out;
+const containers::FlatHashSet<ObjectId>& Snapshot::PolicyIds(
+  ObjectId table_id) const {
+  static const containers::FlatHashSet<ObjectId> kNone;
   auto deps = GetDependency<TableDependency>(table_id);
-  if (!deps) {
-    return out;
-  }
-  out.assign(deps->policies.begin(), deps->policies.end());
-  return out;
+  return deps ? deps->policies : kNone;
 }
 
 Snapshot::RowSecurityState Snapshot::GetRowSecurity(ObjectId table_id) const {
@@ -2592,20 +2589,36 @@ void RequireTableRelation(const Object& rel, std::string_view name) {
   }
 }
 
+// The prologue every policy DDL shares: resolve the relation, require it to be a
+// table, and require the caller to own it. Null only when `missing_ok` and the
+// relation does not exist.
+std::shared_ptr<Object> ResolveOwnedTable(const Snapshot& snapshot,
+                                          ObjectId role, ObjectId database_id,
+                                          std::string_view schema,
+                                          std::string_view relation,
+                                          bool missing_ok = false) {
+  auto rel = snapshot.GetRelation(NoAccessCheck(), database_id, schema,
+                                  relation);
+  if (!rel) {
+    if (missing_ok) {
+      return nullptr;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", relation, "\" does not exist"));
+  }
+  RequireTableRelation(*rel, relation);
+  RequireObjectOwner(snapshot, role, rel->GetId());
+  return rel;
+}
+
 }  // namespace
 
 void Catalog::CreatePolicy(const AccessContext& ax, ObjectId database_id,
                            std::string_view schema, std::string_view relation,
                            persistence::PolicyData data) {
   absl::MutexLock lock{&_mutex};
-  auto rel =
-    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
-  if (!rel) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", relation, "\" does not exist"));
-  }
-  RequireTableRelation(*rel, relation);
-  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto rel = ResolveOwnedTable(*_snapshot, ax.role, database_id, schema,
+                              relation);
   if (FindPolicy(*_snapshot, rel->GetId(), data.name)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
                     ERR_MSG("policy \"", data.name, "\" for table \"", relation,
@@ -2630,14 +2643,8 @@ void Catalog::AlterPolicy(const AccessContext& ax, ObjectId database_id,
                           bool has_using, std::string using_text,
                           bool has_check, std::string check_text) {
   absl::MutexLock lock{&_mutex};
-  auto rel =
-    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
-  if (!rel) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", relation, "\" does not exist"));
-  }
-  RequireTableRelation(*rel, relation);
-  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto rel = ResolveOwnedTable(*_snapshot, ax.role, database_id, schema,
+                              relation);
   auto existing = FindPolicy(*_snapshot, rel->GetId(), name);
   if (!existing) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -2682,17 +2689,11 @@ void Catalog::DropPolicy(const AccessContext& ax, ObjectId database_id,
                          std::string_view schema, std::string_view relation,
                          std::string_view name, bool if_exists) {
   absl::MutexLock lock{&_mutex};
-  auto rel =
-    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
+  auto rel = ResolveOwnedTable(*_snapshot, ax.role, database_id, schema,
+                              relation, if_exists);
   if (!rel) {
-    if (if_exists) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", relation, "\" does not exist"));
+    return;
   }
-  RequireTableRelation(*rel, relation);
-  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
   auto existing = FindPolicy(*_snapshot, rel->GetId(), name);
   if (!existing) {
     if (if_exists) {
@@ -2715,14 +2716,8 @@ void Catalog::SetRowSecurity(const AccessContext& ax, ObjectId database_id,
                              std::optional<bool> enabled,
                              std::optional<bool> forced) {
   absl::MutexLock lock{&_mutex};
-  auto rel =
-    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
-  if (!rel) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", relation, "\" does not exist"));
-  }
-  RequireTableRelation(*rel, relation);
-  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
+  auto rel = ResolveOwnedTable(*_snapshot, ax.role, database_id, schema,
+                              relation);
   auto table_id = rel->GetId();
   auto deps = _snapshot->GetDependency<TableDependency>(table_id);
   persistence::RowSecurityData data;

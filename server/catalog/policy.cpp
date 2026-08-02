@@ -31,27 +31,19 @@
 namespace sdb::catalog {
 namespace {
 
-bool ExprNamesColumn(const duckdb::ParsedExpression& expr,
-                     std::string_view column) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
-    // A qualified reference reports the column as its last name part, so this
-    // matches "t"."owner" as well as a bare owner.
-    const auto& colref = expr.Cast<duckdb::ColumnRefExpression>();
-    if (colref.GetColumnName().GetIdentifierName() == column) {
-      return true;
-    }
-  }
-  bool found = false;
-  duckdb::ParsedExpressionIterator::EnumerateChildren(
-    expr, [&](const duckdb::ParsedExpression& child) {
-      found = found || ExprNamesColumn(child, column);
-    });
-  return found;
-}
-
 bool TextNamesColumn(const std::string& text, std::string_view column) {
   auto parsed = duckdb::Parser::ParseExpressionList(text);
-  return parsed.size() == 1 && ExprNamesColumn(*parsed[0], column);
+  if (parsed.size() != 1) {
+    return false;
+  }
+  bool found = false;
+  // A qualified reference reports the column as its last name part, so this
+  // matches "t"."owner" as well as a bare owner.
+  duckdb::ParsedExpressionIterator::VisitExpression<duckdb::ColumnRefExpression>(
+    *parsed[0], [&](const duckdb::ColumnRefExpression& colref) {
+      found = found || colref.GetColumnName().GetIdentifierName() == column;
+    });
+  return found;
 }
 
 }  // namespace

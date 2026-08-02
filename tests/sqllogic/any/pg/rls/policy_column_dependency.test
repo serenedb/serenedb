@@ -82,6 +82,5 @@ pcd_by_note
 pcd_by_owner
 
 
-# The surviving policies still enforce: the row is visible to its owner.
 statement ok
 DROP TABLE pcd_clickclack;

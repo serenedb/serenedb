@@ -27,6 +27,7 @@
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/function/scalar_function.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -34,6 +35,7 @@
 #include <duckdb/planner/expression/bound_case_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression_binder/check_binder.hpp>
 #include <duckdb/planner/expression_binder/where_binder.hpp>
@@ -123,6 +125,39 @@ bool BypassesRls(const catalog::Snapshot& snapshot,
 duckdb::unique_ptr<duckdb::Expression> BoolConst(bool value) {
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value::BOOLEAN(value));
+}
+
+// A volatile no-op that evaluates to true, conjoined onto every visibility
+// predicate. duckdb never pushes a volatile expression into a scan
+// (pushdown_get.cpp), so this term stays in the filter list and is never erased
+// from it.
+//
+// That is the whole point. The guard keeping a throwing user qual out of the
+// scan is `expr.CanThrow() && filters.size() > 1`. A simple policy predicate is
+// pushed *fully* and therefore erased from the set, dropping the count to 1 and
+// disarming the guard -- the user qual is then admitted into the scan beside the
+// policy, where AdaptiveFilter(const TableFilterSet&) orders the two with no
+// security check at all, and can evaluate it against rows the policy hides. That
+// is an exploitable read; see rls_problems.md P1 and
+// sdb/pg/rls/predicate_ordering_leak.test.
+//
+// This term keeps the count above 1 so the guard stays armed. The policy itself
+// is still pushed into the scan, so row-group pruning is unaffected.
+//
+// This is a mitigation, not a guarantee: it restores the arrangement that tests
+// clean rather than asserting an ordering the optimizer must honour. The real
+// fix is a barrier flag duckdb respects when ordering scan filters.
+duckdb::unique_ptr<duckdb::Expression> UnpushableMarker() {
+  duckdb::ScalarFunction fn(
+    "sdb_rls_barrier", {}, duckdb::LogicalType::BOOLEAN,
+    [](duckdb::DataChunk&, duckdb::ExpressionState&, duckdb::Vector& result) {
+      result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+      duckdb::ConstantVector::GetData<bool>(result)[0] = true;
+    });
+  fn.SetStability(duckdb::FunctionStability::VOLATILE);
+  return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+    duckdb::BoundScalarFunction{fn},
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>{}, nullptr);
 }
 
 duckdb::unique_ptr<duckdb::Expression> Conjoin(
@@ -486,6 +521,9 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
       if (!filter) {
         return;
       }
+      // Policy first so it short-circuits; the marker only has to be present.
+      filter = Conjoin(std::move(filter), UnpushableMarker(),
+                       duckdb::ExpressionType::CONJUNCTION_AND);
       auto logical_filter =
         duckdb::make_uniq<duckdb::LogicalFilter>(std::move(filter));
       logical_filter->AddChild(std::move(op));

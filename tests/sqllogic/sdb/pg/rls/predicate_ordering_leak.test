@@ -1,0 +1,129 @@
+# serenedb-only RLS: a user predicate must never be evaluated against a row the
+# policy hides. This is the regression test for a CONFIRMED leak, not a canary.
+#
+# The bug: an ordinary pushable policy (`USING (owner = current_user)`) is pushed
+# into the scan *fully* and therefore erased from the filter set. That drops the
+# count below duckdb's `expr.CanThrow() && filters.size() > 1` guard, so a
+# throwing user qual is admitted into the scan beside the policy -- and
+# AdaptiveFilter(const TableFilterSet&) then orders the two with no security
+# check whatsoever. The user qual runs against hidden rows and their values come
+# back in the error text. See rls_problems.md P1.
+#
+# Two properties this test depends on, both of which every earlier test lacked:
+#
+#   1. The probe must actually raise. `1/0` does NOT -- duckdb evaluates integer
+#      division by zero to NULL, so an oracle built on it returns "0 rows, no
+#      error" whether or not the policy applied, and proves nothing. A cast
+#      overflow does raise. It is wrapped in md5() so the optimizer cannot
+#      rewrite it into a range filter on the column, which would stop the cast
+#      from ever executing.
+#
+#   2. The table must span more than one row group (>122,880 rows). Below that
+#      the leak does not reproduce, which is why it went unnoticed.
+#
+# Keep both. Shrinking the table or simplifying the probe silently turns this
+# into a test that passes under a total bypass.
+#
+# Lore: the mop must not learn the size of vedernikoff's clickclack hoard by
+# asking which row makes the cast overflow.
+
+statement ok
+DROP TABLE IF EXISTS pol_hoard;
+
+
+statement ok
+DROP ROLE IF EXISTS pol_mop;
+
+
+statement ok
+CREATE TABLE pol_hoard (id int, mops int, owner text);
+
+
+# The mop's own rows all fit in TINYINT (0..99).
+statement ok
+INSERT INTO pol_hoard SELECT i, (i % 100), 'pol_mop' FROM range(1, 105001) t(i);
+
+
+# vedernikoff's hidden rows do NOT fit -- 1000 overflows TINYINT. That value
+# exists nowhere in the mop's own rows, so an overflow naming 1000 can only have
+# come from a row the policy hides.
+statement ok
+INSERT INTO pol_hoard SELECT 500000 + i, 1000, 'vedernikoff' FROM range(1, 105001) t(i);
+
+
+statement ok
+CREATE ROLE pol_mop LOGIN PASSWORD 'mpw';
+
+
+statement ok
+GRANT SELECT ON pol_hoard TO pol_mop;
+
+
+statement ok
+ALTER TABLE pol_hoard ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY pol_own ON pol_hoard FOR SELECT TO pol_mop USING (owner = current_user);
+
+
+# The mop sees only its own rows, and none of them hold 1000.
+connection c_mop user=pol_mop password=mpw
+query III
+SELECT count(*), min(mops), max(mops) FROM pol_hoard;
+----
+count	min	max
+105000	0	99
+
+
+connection c_mop2 user=pol_mop password=mpw
+query I
+SELECT count(*) FROM pol_hoard WHERE mops = 1000;
+----
+count
+0
+
+
+# THE EXPLOIT. Before the fix this raised
+#   "Type INT32 with value 1000 can't be cast ... from source column mops",
+# disclosing a hidden row's value. It must return 0 and raise nothing.
+connection c_attack user=pol_mop password=mpw
+query I
+SELECT count(*) FROM pol_hoard WHERE md5(CAST(mops AS TINYINT)::VARCHAR) = 'zzz';
+----
+count
+0
+
+
+# Repeat: the scan's filter order is chosen adaptively across executions, so a
+# single clean run is not evidence.
+connection c_attack2 user=pol_mop password=mpw
+query I
+SELECT count(*) FROM pol_hoard WHERE md5(CAST(mops AS TINYINT)::VARCHAR) = 'zzz';
+----
+count
+0
+
+
+connection c_attack3 user=pol_mop password=mpw
+query I
+SELECT count(*) FROM pol_hoard WHERE md5(CAST(mops AS TINYINT)::VARCHAR) = 'zzz';
+----
+count
+0
+
+
+# The probe is not vacuous: with the policy bypassed (owner reads its own table
+# with no RLS applied) the same expression DOES raise.
+statement error
+SELECT count(*) FROM pol_hoard WHERE md5(CAST(mops AS TINYINT)::VARCHAR) = 'zzz';
+----
+db error: ERROR: Type INT32 with value 1000 can't be cast because the value is out of range for the destination type INT8<slt:ignore>
+
+
+statement ok
+DROP TABLE pol_hoard;
+
+
+statement ok
+DROP ROLE pol_mop;

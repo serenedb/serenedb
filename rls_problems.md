@@ -25,7 +25,21 @@ postgres:18.3.
 
 ## P1. Predicate ordering — reorderers exist, but the concrete attacks are blocked
 
-**Status: CONFIRMED EXPLOITABLE.** A hidden row's value is disclosed to a role
+**Status: MITIGATED (2026-08-02), not yet structurally fixed.** The exploit
+below is closed by conjoining a volatile no-op (`sdb_rls_barrier()`) onto every
+visibility predicate: duckdb never pushes a volatile term into a scan, so it
+stays in the filter set and keeps `filters.size() > 1` true, which re-arms the
+guard that refuses a throwing user qual entry. The policy predicate itself is
+still pushed, so row-group pruning is unaffected. Pinned by
+`sdb/pg/rls/predicate_ordering_leak.test`, which fails without the mitigation.
+
+This restores the arrangement that tests clean; it does not create an invariant.
+The real fix remains a barrier flag duckdb honours when ordering scan filters
+(`ExpressionHeuristics::GetInitialOrder(TableFilterSet&)` and
+`AdaptiveFilter(const TableFilterSet&)`, neither of which has any security
+concept today).
+
+**Originally: CONFIRMED EXPLOITABLE.** A hidden row's value is disclosed to a role
 the policy denies. Earlier "not exploitable" verdicts were an artefact of an
 invalid probe (see warning below) and of test tables too small to reach the
 leaking path.

@@ -25,8 +25,53 @@ postgres:18.3.
 
 ## P1. Predicate ordering — reorderers exist, but the concrete attacks are blocked
 
-**Status: no leak demonstrated, but the evidence is thinner than it looks —
-see the warning under "Attempted attacks". One path has no valid probe at all.** An earlier draft of this document claimed
+**Status: CONFIRMED EXPLOITABLE.** A hidden row's value is disclosed to a role
+the policy denies. Earlier "not exploitable" verdicts were an artefact of an
+invalid probe (see warning below) and of test tables too small to reach the
+leaking path.
+
+### Confirmed leak — hidden value disclosed in an error message
+
+Policy is the ordinary, fully pushable shape:
+
+```sql
+CREATE POLICY p ON t FOR SELECT TO mop USING (owner = current_user);
+```
+
+`mop` owns 105,000 rows with `balance` in 0..99; `vedernikoff` owns 105,000
+hidden rows with `balance = 1000`. `mop` reads 0 of them
+(`SELECT count(*) FROM t WHERE balance = 1000` -> `0`). Then:
+
+```sql
+SELECT count(*) FROM t WHERE md5(CAST(balance AS TINYINT)::VARCHAR) = 'zzz';
+ERROR:  Type INT32 with value 1000 can't be cast because the value is out of
+        range for the destination type INT8 when casting from source column balance
+```
+
+`1000` occurs *only* in rows the policy hides. The attacker's expression was
+evaluated against hidden data and the value is quoted verbatim in the error.
+Reproduced 10/10.
+
+**Why the probe works where earlier ones did not.** The cast is wrapped in
+`md5(...)` so it cannot be rewritten into a range filter on the column, and
+unlike `1/0` (which duckdb evaluates to NULL) a cast overflow genuinely raises.
+
+**Why table size matters.** The same query on a ~10k-row table does not raise.
+The leak needs enough rows to cross row-group boundaries; every earlier
+experiment in this document used tables far below that, which is why they all
+came back clean.
+
+**Mechanism.** The policy predicate is *fully* pushed and therefore erased from
+the filter set, so the attacker's qual sees `filters.size() == 1` and is admitted
+into the scan beside it (fragility item 2). Ordering inside the scan is then
+decided by `AdaptiveFilter(const TableFilterSet&)`, which has no `CanThrow`
+guard at all (fragility item 3). The two items were recorded separately as
+theoretical; together they are this bug.
+
+**Note the inversion:** the *unpushable* policy shapes (`... OR 1/(balance+1) >
+999999`) do **not** leak under the same probe -- the predicate stays in a
+conjunction above the scan and short-circuits. It is the plain, idiomatic policy
+that is vulnerable. An earlier draft of this document claimed
 this was a live leak; targeted attacks disproved that. The reordering machinery
 below is real, but existing `CanThrow`-keyed guards happen to close the channels
 we could construct. What remains is *fragility*, not a hole. Kept here because

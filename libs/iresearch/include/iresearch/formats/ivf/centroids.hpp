@@ -157,8 +157,7 @@ class CentroidsTree {
   static CentroidsTree Deserialize(IndexInput& in, uint64_t byte_size);
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
-              std::vector<uint32_t>& out_ids,
-              std::vector<float>* out_centroids,
+              std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
               uint32_t max_search_fanout) const;
 
   uint32_t EffectiveFanout(uint32_t nprobe,

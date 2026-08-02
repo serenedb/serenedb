@@ -354,14 +354,13 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Maximum number of IVF centroid-tree children expanded per node while "
         "descending to the probed clusters. Decouples the descent width from "
         "sdb_nprobe: lower values cut centroid work on deep (multi-level) "
-        "trees at some recall cost. The width applies per node and so compounds "
-        "over the tree's levels; it is raised when smaller than the width whose "
+        "trees at some recall cost. The width applies per node and so "
+        "compounds "
+        "over the tree's levels; it is raised when smaller than the width "
+        "whose "
         "compounded value reaches sdb_nprobe, so the descent can always supply "
         "the requested number of clusters. Default 16.",
-        [] {
-          return duckdb::Value::INTEGER(
-            static_cast<int32_t>(16));
-        },
+        [] { return duckdb::Value::INTEGER(static_cast<int32_t>(16)); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (n < 1) {

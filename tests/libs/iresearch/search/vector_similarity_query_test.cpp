@@ -124,6 +124,7 @@ irs::ByVectorSimilarity MakeKnnFilter() {
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.quant = irs::VectorQuantization::SQ8;
   opts.nprobe = 1000;
+  opts.max_search_fanout = 1000;
   return filter;
 }
 

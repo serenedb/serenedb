@@ -18,17 +18,19 @@ query
 SHOW sdb_ivf_max_search_fanout;
 ----
 sdb_ivf_max_search_fanout
-9
+16
 
 statement error
 SET sdb_ivf_max_search_fanout = 0;
 ----
 db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "0"
 
+
 statement error
 SET sdb_ivf_max_search_fanout = -1;
 ----
 db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "-1"
+
 
 # ---- multi-level tree: posting_size=2, 10000 points ------------------------
 # The row count is load-bearing, not arbitrary. The build trains on

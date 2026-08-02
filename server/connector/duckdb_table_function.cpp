@@ -61,8 +61,7 @@
 
 namespace sdb::connector {
 
-uint32_t ReadIntSetting(duckdb::ClientContext& context,
-                               std::string_view name) {
+uint32_t ReadIntSetting(duckdb::ClientContext& context, std::string_view name) {
   duckdb::Value v;
   auto res = context.TryGetCurrentSetting(std::string{name}, v);
   SDB_ASSERT(res);

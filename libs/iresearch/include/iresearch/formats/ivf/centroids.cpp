@@ -57,9 +57,11 @@ uint32_t CeilRoot(uint32_t target, uint32_t exp) noexcept {
   if (exp <= 1 || target <= 1) {
     return target;
   }
-  auto w = static_cast<uint32_t>(std::llround(
+  auto w = static_cast<uint32_t>(std::ceill(
     std::pow(static_cast<double>(target), 1.0 / static_cast<double>(exp))));
   w = std::max<uint32_t>(w, 1);
+  SDB_ASSERT(std::pow(static_cast<double>(w), static_cast<double>(exp)) >=
+             target);
   return w;
 }
 
@@ -259,12 +261,12 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     const size_t n_clusters = settings.Fanout(sample_size);
     auto centroids = BuildAndSplit(entry.sample, d, entry.ids, n_clusters,
                                    settings.metric, settings.niter, rot);
-    const size_t n_built = centroids.size() / d;
+    size_t n_built = centroids.size() / d;
 
-    if (n_built == d) {
+    if (n_built == 1) {
       // Only one centroid
-      auto c = std::span{centroids};
       centroids.resize(d * n_clusters);
+      const auto c = std::span{centroids}.first(d);
       for (size_t c_id = 1; c_id < n_clusters; ++c_id) {
         absl::c_copy(c, centroids.begin() + c_id * d);
       }
@@ -272,6 +274,7 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
       for (size_t i = 0; i < sample_size; ++i) {
         entry.ids[i] = i / chunk;
       }
+      n_built = n_clusters;
     }
 
 #ifdef SDB_DEV

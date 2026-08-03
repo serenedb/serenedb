@@ -22,9 +22,6 @@
 
 #include <absl/functional/function_ref.h>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/main/config.hpp>
-#include <duckdb/optimizer/optimizer.hpp>
-#include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -432,12 +429,14 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
   }
 }
 
-void RlsOptimizePass(duckdb::OptimizerExtensionInput& input,
-                     duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+}
+
+void EnforceRls(duckdb::ClientContext& context, duckdb::Binder& binder,
+                duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (!plan) {
     return;
   }
-  auto* conn = GetSereneDBContextPtr(input.context);
+  auto* conn = GetSereneDBContextPtr(context);
   if (!conn) {
     return;
   }
@@ -446,9 +445,7 @@ void RlsOptimizePass(duckdb::OptimizerExtensionInput& input,
     return;
   }
   const RlsSession session{*snapshot, conn->GetRoleId()};
-  RlsOptimize(plan, session, input.context, input.optimizer.binder);
-}
-
+  RlsOptimize(plan, session, context, binder);
 }
 
 void RlsGuardTruncate(const catalog::Snapshot& snapshot,
@@ -466,12 +463,6 @@ void RlsGuardTruncate(const catalog::Snapshot& snapshot,
     ERR_MSG("permission denied to truncate table ", table.GetName()),
     ERR_DETAIL("row-level security is enabled and TRUNCATE cannot be filtered "
                "by policy; delete the rows instead"));
-}
-
-void RegisterRlsEnforcement(duckdb::DatabaseInstance& db) {
-  duckdb::OptimizerExtension rls;
-  rls.pre_optimize_function = RlsOptimizePass;
-  duckdb::OptimizerExtension::Register(db.config, std::move(rls));
 }
 
 }

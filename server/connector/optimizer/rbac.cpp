@@ -235,7 +235,8 @@ containers::FlatHashSet<uint64_t> CollectWriteTargets(
   return targets;
 }
 
-void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
+void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder,
+                       duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   auto state = context.registered_state->Get<connector::SereneDBClientState>(
     connector::kSereneDBClientStateKey);
   if (!state) {
@@ -315,6 +316,13 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder) {
       RequireColumns(closure, t, catalog::AclMode::Insert, req.write);
     }
   }
+
+  // Row-level security rewrites the plan once privileges are settled. It runs
+  // here rather than as an OptimizerExtension because this seam is mandatory:
+  // SET enable_optimizer=false skips the optimizer entirely, and an
+  // always_require_rebind plan reports RequireOptimizer()==false, either of
+  // which would silently disable enforcement.
+  connector::EnforceRls(context, binder, plan);
 }
 
 }  // namespace

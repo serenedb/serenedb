@@ -133,7 +133,6 @@ void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
   optimizer::RegisterWrapUnsupportedTypesExtension(db);
   optimizer::RegisterIResearchPlanOptimizer(db);
   optimizer::RegisterRbacAccessCheck(db);
-  RegisterRlsEnforcement(db);
 }
 
 }  // namespace sdb::connector

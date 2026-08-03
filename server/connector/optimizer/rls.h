@@ -20,8 +20,12 @@
 
 #pragma once
 
+#include <duckdb/common/unique_ptr.hpp>
+
 namespace duckdb {
-class DatabaseInstance;
+class Binder;
+class ClientContext;
+class LogicalOperator;
 }  // namespace duckdb
 
 namespace sdb {
@@ -34,11 +38,11 @@ class Table;
 
 namespace sdb::connector {
 
-// Installs the Row-Level Security enforcement pass: a pre-optimizer plan rewrite
-// that filters every governed scan and attaches the WITH CHECK constraints of
-// every write. Runs before the built-in optimizers, so the filters it emits are
-// still pushed into the scans.
-void RegisterRlsEnforcement(duckdb::DatabaseInstance& db);
+// Filters every governed scan and attaches the WITH CHECK constraints of every
+// write. Called from the mandatory access check, before any optimizer runs, so
+// the filters it emits are still pushed into the scans.
+void EnforceRls(duckdb::ClientContext& context, duckdb::Binder& binder,
+                duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
 
 // Refuses TRUNCATE on a table whose policies apply to `role`. TRUNCATE cannot be
 // row-filtered, so allowing it would bypass row-level security outright.

@@ -1,0 +1,114 @@
+# serenedb-only RLS: enforcement must not be disableable by a session setting.
+#
+# Regression: enforcement was registered as a duckdb OptimizerExtension, and
+# client_context.cpp only constructs the Optimizer when EnableOptimizerSetting
+# is on. So `SET enable_optimizer=false` -- available to any role -- turned RLS
+# off completely: every row visible, every write accepted. The same held for
+# PRAGMA disable_optimizer, and for any plan reporting RequireOptimizer()==false
+# (which RLS itself causes, by setting always_require_rebind).
+#
+# It now runs from DBConfig::access_check_function, the seam duckdb documents as
+# running "before (and independent of) the optimizer so it cannot be bypassed
+# via disable_optimizer". RlsGuardTruncate already used it.
+#
+# Lore: the mop may not simply ask the planner to look away.
+
+statement ok
+DROP TABLE IF EXISTS od_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS od_mop;
+
+
+statement ok
+CREATE TABLE od_clickclack (owner text, mops int);
+
+
+statement ok
+INSERT INTO od_clickclack VALUES ('od_mop', 3), ('vedernikoff', 99);
+
+
+statement ok
+CREATE ROLE od_mop LOGIN PASSWORD 'mpw';
+
+
+statement ok
+GRANT SELECT, INSERT ON od_clickclack TO od_mop;
+
+
+statement ok
+ALTER TABLE od_clickclack ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY od_own ON od_clickclack FOR ALL TO od_mop
+USING (owner = current_user) WITH CHECK (owner = current_user);
+
+
+# Baseline: only the mop's own row.
+connection c_base user=od_mop password=mpw
+query TI
+SELECT owner, mops FROM od_clickclack ORDER BY owner;
+----
+owner	mops
+od_mop	3
+
+
+# With the optimizer disabled the answer must be identical. Before the fix this
+# returned vedernikoff's row too.
+connection c_off user=od_mop password=mpw
+statement ok
+SET enable_optimizer=false;
+
+
+# Same named connection, so the SET above is still in effect.
+connection c_off user=od_mop password=mpw
+query TI
+SELECT owner, mops FROM od_clickclack ORDER BY owner;
+----
+owner	mops
+od_mop	3
+
+
+# The pragma spelling of the same switch.
+connection c_pragma user=od_mop password=mpw
+statement ok
+PRAGMA disable_optimizer;
+
+
+connection c_pragma user=od_mop password=mpw
+query TI
+SELECT owner, mops FROM od_clickclack ORDER BY owner;
+----
+owner	mops
+od_mop	3
+
+
+# The write path must stay enforced too -- this INSERT succeeded before the fix.
+connection c_write user=od_mop password=mpw
+statement ok
+SET enable_optimizer=false;
+
+
+connection c_write user=od_mop password=mpw
+statement error
+INSERT INTO od_clickclack VALUES ('vedernikoff', 1000);
+----
+db error: ERROR: new row violates row-level security policy for table<slt:ignore>
+
+
+# And the hidden row was never inserted.
+query I
+SELECT count(*) FROM od_clickclack WHERE mops = 1000;
+----
+count
+0
+
+
+statement ok
+DROP TABLE od_clickclack;
+
+
+statement ok
+DROP ROLE od_mop;

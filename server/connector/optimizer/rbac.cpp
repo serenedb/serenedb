@@ -22,6 +22,8 @@
 
 #include <absl/functional/function_ref.h>
 #include <cstdint>
+#include <ranges>
+#include <algorithm>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
@@ -130,13 +132,11 @@ bool IsStoreEntry(const duckdb::CatalogEntry& entry) {
 void RequireColumns(const auth::RoleClosure& closure,
                     const catalog::Table& table, catalog::AclMode need,
                     const duckdb::unordered_set<uint64_t>& logical) {
-  const bool ok = logical.empty()
-                    ? closure.CanAnyColumn(table, need)
-                    : closure.CanColumns(
-                        table, need, [&](uint64_t i, const catalog::Column&) {
-                          return logical.contains(i);
-                        });
-  if (ok) {
+  if (logical.empty() ? closure.CanAnyColumn(table, need)
+                      : closure.CanColumns(
+                          table, need, [&](uint64_t i, const catalog::Column&) {
+                            return logical.contains(i);
+                          })) {
     return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -161,6 +161,7 @@ using AccessRequirements = duckdb::vector<duckdb::AccessRequirement>;
 void RequireForeignServerUsage(const catalog::Snapshot& snapshot,
                                ObjectId caller,
                                const AccessRequirements& reqs) {
+  const auto& closure = snapshot.ClosureFor(caller);
   containers::FlatHashSet<std::string_view> checked;
   for (const auto& req : reqs) {
     if (!req.table) {
@@ -178,7 +179,6 @@ void RequireForeignServerUsage(const catalog::Snapshot& snapshot,
     if (!server) {
       continue;
     }
-    const auto& closure = snapshot.ClosureFor(caller);
     if (!closure.Owns(*server) &&
         !closure.Can(*server, catalog::AclMode::Usage)) {
       THROW_SQL_ERROR(
@@ -245,12 +245,11 @@ containers::FlatHashSet<uint64_t> CollectWriteTargets(
   const AccessRequirements& reqs,
   const std::vector<const catalog::Object*>& objects) {
   containers::FlatHashSet<uint64_t> targets;
-  for (size_t i = 0; i < reqs.size(); ++i) {
-    const catalog::Object* obj = objects[i];
+  for (const auto& [req, obj] : std::views::zip(reqs, objects)) {
     if (obj && obj->GetType() == catalog::ObjectType::Table &&
-        Has(reqs[i].verb,
-            duckdb::AccessVerb::INSERT | duckdb::AccessVerb::UPDATE |
-              duckdb::AccessVerb::DELETE | duckdb::AccessVerb::TRUNCATE)) {
+        Has(req.verb, duckdb::AccessVerb::INSERT | duckdb::AccessVerb::UPDATE |
+                        duckdb::AccessVerb::DELETE |
+                        duckdb::AccessVerb::TRUNCATE)) {
       targets.insert(obj->GetId().id());
     }
   }
@@ -523,11 +522,11 @@ void AppendWriteCheck(
   auto check = CombinePolicies(
     session, *rls, verb,
     [&](const catalog::Policy& policy) -> duckdb::unique_ptr<duckdb::Expression> {
-      const bool has_check = policy.HasCheck();
-      if (!has_check && !policy.HasUsing()) {
+      if (!policy.HasCheck() && !policy.HasUsing()) {
         return nullptr;
       }
-      const auto& predicate = has_check ? policy.Check() : policy.Using();
+      const auto& predicate =
+        policy.HasCheck() ? policy.Check() : policy.Using();
       return BindPostImageExpr(binder, context, table_entry, predicate,
                                bound_columns);
     });
@@ -548,12 +547,10 @@ void AppendWriteCheck(
 
 const duckdb::AccessRequirement* RequirementFor(duckdb::Binder& binder,
                                                 duckdb::idx_t table_index) {
-  for (const auto& req : binder.GetStatementProperties().access_requirements) {
-    if (req.table_index == table_index) {
-      return &req;
-    }
-  }
-  return nullptr;
+  const auto& reqs = binder.GetStatementProperties().access_requirements;
+  const auto it = std::ranges::find(reqs, table_index,
+                                    &duckdb::AccessRequirement::table_index);
+  return it == reqs.end() ? nullptr : &*it;
 }
 
 const duckdb::CatalogEntry* DefinerFor(duckdb::Binder& binder,
@@ -614,26 +611,22 @@ void Rewrite(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
     }
     case duckdb::LogicalOperatorType::LOGICAL_MERGE_INTO: {
       auto& merge = op->Cast<duckdb::LogicalMergeInto>();
-      const duckdb::CatalogEntry* who = nullptr;
-      bool has_insert = false;
-      bool has_update = false;
-      for (auto& [condition, actions] : merge.actions) {
-        for (auto& action : actions) {
-          has_insert |=
-            action->action_type == duckdb::MergeActionType::MERGE_INSERT;
-          has_update |=
-            action->action_type == duckdb::MergeActionType::MERGE_UPDATE;
+      const auto performs = [&](duckdb::MergeActionType type) {
+        return std::ranges::any_of(merge.actions, [&](const auto& entry) {
+          return std::ranges::any_of(entry.second, [&](const auto& action) {
+            return action->action_type == type;
+          });
+        });
+      };
+      for (const auto& [type, verb] :
+           {std::pair{duckdb::MergeActionType::MERGE_INSERT,
+                      PolicyCommand::Insert},
+            std::pair{duckdb::MergeActionType::MERGE_UPDATE,
+                      PolicyCommand::Update}}) {
+        if (performs(type)) {
+          AppendWriteCheck(session, context, binder, merge.table, verb,
+                           /*who=*/nullptr, merge.bound_constraints);
         }
-      }
-      if (has_insert) {
-        AppendWriteCheck(session, context, binder, merge.table,
-                         PolicyCommand::Insert, who,
-                         merge.bound_constraints);
-      }
-      if (has_update) {
-        AppendWriteCheck(session, context, binder, merge.table,
-                         PolicyCommand::Update, who,
-                         merge.bound_constraints);
       }
       return;
     }
@@ -749,9 +742,7 @@ void CollectAndEnforce(duckdb::ClientContext& context, duckdb::Binder& binder,
     if (Has(req.verb, duckdb::AccessVerb::SELECT)) {
       // A DML's own-target scan reads no column, so needs no SELECT (PG);
       // count(*) also has an empty read set but is not a write target.
-      const bool bare_dml_scan =
-        req.read.empty() && write_targets.contains(t.GetId().id());
-      if (!bare_dml_scan) {
+      if (!req.read.empty() || !write_targets.contains(t.GetId().id())) {
         RequireColumns(closure, t, catalog::AclMode::Select, req.read);
       }
     }

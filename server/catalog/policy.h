@@ -36,6 +36,10 @@ namespace sdb::catalog {
 
 using persistence::PolicyCommand;
 
+// Parses a policy predicate, which arrives as text because it travels through a
+// pragma argument. Policies store it parsed, so enforcement never parses.
+std::shared_ptr<ColumnExpr> ParsePolicyExpr(std::string_view text);
+
 class Policy : public Object {
  public:
   Policy(ObjectId database_id, ObjectId schema_id, ObjectId id,
@@ -53,10 +57,14 @@ class Policy : public Object {
   const std::vector<ObjectId>& Roles() const noexcept { return _data.roles; }
   bool AppliesToPublic() const noexcept { return _data.roles.empty(); }
 
-  bool HasUsing() const noexcept { return _data.has_using; }
-  const std::string& UsingText() const noexcept { return _data.using_text; }
-  bool HasCheck() const noexcept { return _data.has_check; }
-  const std::string& CheckText() const noexcept { return _data.check_text; }
+  bool HasUsing() const noexcept { return _data.using_expr != nullptr; }
+  const ColumnExpr& Using() const noexcept { return *_data.using_expr; }
+  bool HasCheck() const noexcept { return _data.check_expr != nullptr; }
+  const ColumnExpr& Check() const noexcept { return *_data.check_expr; }
+
+  // Rendered form, for pg_policy / pg_get_expr.
+  std::string UsingText() const { return Using().GetExpr().ToString(); }
+  std::string CheckText() const { return Check().GetExpr().ToString(); }
 
   persistence::PolicyData& MutableData() noexcept { return _data; }
 

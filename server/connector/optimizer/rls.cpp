@@ -29,7 +29,6 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
-#include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/constraints/bound_check_constraint.hpp>
 #include <duckdb/planner/expression/bound_case_expression.hpp>
@@ -261,22 +260,10 @@ void RewriteSpecialRegisters(duckdb::unique_ptr<duckdb::ParsedExpression>& expr)
     });
 }
 
-duckdb::unique_ptr<duckdb::ParsedExpression> ParsePredicate(
-  const std::string& text) {
-  auto parsed = duckdb::Parser::ParseExpressionList(text);
-  if (parsed.size() != 1) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("row-level security policy predicate is not a "
-                            "single expression: ",
-                            text));
-  }
-  return std::move(parsed[0]);
-}
-
 duckdb::unique_ptr<duckdb::Expression> BindVisibilityExpr(
   duckdb::Binder& binder, duckdb::ClientContext& context,
-  const duckdb::TableCatalogEntry& table_entry, const std::string& text) {
-  auto parsed = ParsePredicate(text);
+  const duckdb::TableCatalogEntry& table_entry, const ColumnExpr& predicate) {
+  auto parsed = predicate.GetExpr().Copy();
   if (auto target = TargetBinding(binder, table_entry)) {
     QualifyColumns(*parsed, *target);
   }
@@ -286,9 +273,9 @@ duckdb::unique_ptr<duckdb::Expression> BindVisibilityExpr(
 
 duckdb::unique_ptr<duckdb::Expression> BindPostImageExpr(
   duckdb::Binder& binder, duckdb::ClientContext& context,
-  duckdb::TableCatalogEntry& table, const std::string& text,
+  duckdb::TableCatalogEntry& table, const ColumnExpr& predicate,
   duckdb::physical_index_set_t& bound_columns) {
-  auto parsed = ParsePredicate(text);
+  auto parsed = predicate.GetExpr().Copy();
   RewriteSpecialRegisters(parsed);
   duckdb::CheckBinder check_binder(binder, context, table.name,
                                    table.GetColumns(), bound_columns);
@@ -310,8 +297,7 @@ duckdb::unique_ptr<duckdb::Expression> ReadFilter(
       if (!policy.HasUsing()) {
         return nullptr;
       }
-      return BindVisibilityExpr(binder, context, table_entry,
-                                policy.UsingText());
+      return BindVisibilityExpr(binder, context, table_entry, policy.Using());
     });
 }
 
@@ -333,9 +319,8 @@ void AppendWriteCheck(
       if (!has_check && !policy.HasUsing()) {
         return nullptr;
       }
-      const std::string& text =
-        has_check ? policy.CheckText() : policy.UsingText();
-      return BindPostImageExpr(binder, context, table_entry, text,
+      const auto& predicate = has_check ? policy.Check() : policy.Using();
+      return BindPostImageExpr(binder, context, table_entry, predicate,
                                bound_columns);
     });
 

@@ -21,8 +21,11 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "catalog/column_expr.h"
 
 #include "catalog/identifiers/object_id.h"
 
@@ -41,10 +44,9 @@ struct PolicyData {
   PolicyCommand command = PolicyCommand::All;
   bool permissive = true;
   std::vector<ObjectId> roles;
-  bool has_using = false;
-  std::string using_text;
-  bool has_check = false;
-  std::string check_text;
+  // Null when the policy omits the clause.
+  std::shared_ptr<ColumnExpr> using_expr;
+  std::shared_ptr<ColumnExpr> check_expr;
 };
 
 // Per-table RLS enable/force flags, persisted as a standalone object parented

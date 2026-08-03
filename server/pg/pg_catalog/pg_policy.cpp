@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_policy.h"
 
+#include <deque>
+
 #include "app/app_server.h"
 #include "catalog/catalog.h"
 #include "catalog/policy.h"
@@ -67,8 +69,11 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
   auto catalog = _config.CatalogSnapshot();
 
   std::vector<PgPolicy> values;
-  // Stable backing storage for the polroles spans referenced by `values`.
+  // Stable backing storage for the spans/views referenced by `values`. A deque
+  // keeps references valid across growth; a vector<string> would not, because a
+  // short string's SSO buffer moves with the string object.
   std::vector<std::vector<Oid>> roles_storage;
+  std::deque<std::string> text_storage;
 
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     for (const auto& table :
@@ -93,10 +98,10 @@ catalog::MaterializedData SystemTableSnapshot<PgPolicy>::GetTableData() {
         Text qual;
         Text with_check;
         if (policy->HasUsing()) {
-          qual = policy->UsingText();
+          qual = text_storage.emplace_back(policy->UsingText());
         }
         if (policy->HasCheck()) {
-          with_check = policy->CheckText();
+          with_check = text_storage.emplace_back(policy->CheckText());
         }
         values.push_back({
           .oid = policy->GetId().id(),

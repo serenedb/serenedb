@@ -20,27 +20,26 @@
 
 #include "catalog/policy.h"
 
+#include <duckdb/parser/parser.hpp>
+
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
+
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
-#include <duckdb/parser/parser.hpp>
 
 #include "basics/serializer.h"
 
 namespace sdb::catalog {
 namespace {
 
-bool TextNamesColumn(const std::string& text, std::string_view column) {
-  auto parsed = duckdb::Parser::ParseExpressionList(text);
-  if (parsed.size() != 1) {
-    return false;
-  }
+bool ExprNamesColumn(const duckdb::ParsedExpression& expr,
+                     std::string_view column) {
   bool found = false;
-  // A qualified reference reports the column as its last name part, so this
-  // matches "t"."owner" as well as a bare owner.
   duckdb::ParsedExpressionIterator::VisitExpression<duckdb::ColumnRefExpression>(
-    *parsed[0], [&](const duckdb::ColumnRefExpression& colref) {
+    expr, [&](const duckdb::ColumnRefExpression& colref) {
       found = found || colref.GetColumnName().GetIdentifierName() == column;
     });
   return found;
@@ -48,11 +47,20 @@ bool TextNamesColumn(const std::string& text, std::string_view column) {
 
 }  // namespace
 
-bool Policy::ReferencesColumn(std::string_view column) const {
-  return (_data.has_using && TextNamesColumn(_data.using_text, column)) ||
-         (_data.has_check && TextNamesColumn(_data.check_text, column));
+std::shared_ptr<ColumnExpr> ParsePolicyExpr(std::string_view text) {
+  auto parsed = duckdb::Parser::ParseExpressionList(std::string{text});
+  if (parsed.size() != 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("policy predicate is not a single expression: ",
+                            text));
+  }
+  return std::make_shared<ColumnExpr>(std::move(parsed[0]));
 }
 
+bool Policy::ReferencesColumn(std::string_view column) const {
+  return (HasUsing() && ExprNamesColumn(Using().GetExpr(), column)) ||
+         (HasCheck() && ExprNamesColumn(Check().GetExpr(), column));
+}
 
 Policy::Policy(ObjectId database_id, ObjectId schema_id, ObjectId id,
                ObjectId relation_id, persistence::PolicyData data)

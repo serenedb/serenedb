@@ -2667,12 +2667,10 @@ void Catalog::AlterPolicy(const AccessContext& ax, ObjectId database_id,
     d.roles = std::move(roles);
   }
   if (has_using) {
-    d.has_using = true;
-    d.using_text = std::move(using_text);
+    d.using_expr = ParsePolicyExpr(using_text);
   }
   if (has_check) {
-    d.has_check = true;
-    d.check_text = std::move(check_text);
+    d.check_expr = ParsePolicyExpr(check_text);
   }
   auto policy_id = updated->GetId();
   auto table_id = updated->GetRelationId();

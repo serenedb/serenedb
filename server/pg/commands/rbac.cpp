@@ -38,6 +38,7 @@
 #include "auth/acl.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/policy.h"
 #include "catalog/persistence/role.h"
 #include "catalog/table.h"
 #include "network/credentials.h"
@@ -932,10 +933,10 @@ void CreatePolicy(ConnectionContext& ctx, std::string_view name,
   data.command = ParsePolicyCommand(opts.cmd);
   data.permissive = opts.permissive;
   data.roles = ResolvePolicyRoles(*snapshot, opts.roles);
-  data.has_using = opts.has_using;
-  data.using_text = opts.using_text;
-  data.has_check = opts.has_check;
-  data.check_text = opts.check_text;
+  data.using_expr =
+    opts.has_using ? catalog::ParsePolicyExpr(opts.using_text) : nullptr;
+  data.check_expr =
+    opts.has_check ? catalog::ParsePolicyExpr(opts.check_text) : nullptr;
 
   catalog.CreatePolicy(catalog::ActingAs(ctx.GetRoleId()), ctx.GetDatabaseId(),
                        parsed.schema, parsed.relation, std::move(data));

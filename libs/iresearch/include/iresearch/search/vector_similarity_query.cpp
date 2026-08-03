@@ -208,6 +208,15 @@ class QVectorIterator : public VectorDistanceIterator {
     if (target <= _doc) {
       return _doc;
     }
+    if (_pos < _len && target <= _docs[_len - 1]) {
+      while (_docs[_pos] < target) {
+        ++_pos;
+      }
+      _cur_dist = _dist[_pos];
+      _doc = _docs[_pos];
+      ++_pos;
+      return _doc;
+    }
     const auto doc = _src->seek(target);
     _pos = _len = 0;
     if (doc_limits::eof(doc)) {

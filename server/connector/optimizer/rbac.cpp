@@ -444,29 +444,6 @@ void QualifyColumns(duckdb::ParsedExpression& expr, duckdb::Binding& target) {
     });
 }
 
-bool IsSpecialRegister(const std::string& name) {
-  return name == "current_user" || name == "session_user" ||
-         name == "current_role" || name == "user" ||
-         name == "current_catalog" || name == "current_database";
-}
-
-void RewriteSpecialRegisters(duckdb::unique_ptr<duckdb::ParsedExpression>& expr) {
-  if (expr->GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
-    auto& colref = expr->Cast<duckdb::ColumnRefExpression>();
-    if (!colref.IsQualified() &&
-        IsSpecialRegister(colref.GetColumnName().GetIdentifierName())) {
-      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> args;
-      expr = duckdb::make_uniq<duckdb::FunctionExpression>(
-        colref.GetColumnName(), std::move(args));
-      return;
-    }
-  }
-  duckdb::ParsedExpressionIterator::EnumerateChildren(
-    *expr, [](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
-      RewriteSpecialRegisters(child);
-    });
-}
-
 duckdb::unique_ptr<duckdb::Expression> BindVisibilityExpr(
   duckdb::Binder& binder, duckdb::ClientContext& context,
   const duckdb::TableCatalogEntry& table_entry, const ColumnExpr& predicate) {
@@ -478,16 +455,47 @@ duckdb::unique_ptr<duckdb::Expression> BindVisibilityExpr(
   return where_binder.Bind(parsed);
 }
 
+// CheckBinder exists for CHECK constraints on a table definition, where a bare
+// identifier is always a column -- so it routes every column ref to
+// BindCheckColumn, and a policy naming current_user dies there. Bare names that
+// are not columns go to the generic binder instead, which reaches duckdb's own
+// niladic-function table. The target type is BOOLEAN rather than CheckBinder's
+// INTEGER, so the result needs no cast back.
+class PolicyCheckBinder : public duckdb::CheckBinder {
+ public:
+  PolicyCheckBinder(duckdb::Binder& binder, duckdb::ClientContext& context,
+                    duckdb::Identifier table, const duckdb::ColumnList& columns,
+                    duckdb::physical_index_set_t& bound_columns)
+    : CheckBinder(binder, context, std::move(table), columns, bound_columns) {
+    target_type = duckdb::LogicalType::BOOLEAN;
+  }
+
+ protected:
+  duckdb::BindResult BindExpression(
+    duckdb::unique_ptr<duckdb::ParsedExpression>& expr_ptr, duckdb::idx_t depth,
+    bool root_expression) override {
+    const auto& expr = *expr_ptr;
+    if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+      const auto& colref = expr.Cast<duckdb::ColumnRefExpression>();
+      if (!colref.IsQualified() &&
+          !columns.ColumnExists(colref.GetColumnName())) {
+        return duckdb::ExpressionBinder::BindExpression(expr_ptr, depth,
+                                                        root_expression);
+      }
+    }
+    return duckdb::CheckBinder::BindExpression(expr_ptr, depth,
+                                               root_expression);
+  }
+};
+
 duckdb::unique_ptr<duckdb::Expression> BindPostImageExpr(
   duckdb::Binder& binder, duckdb::ClientContext& context,
   duckdb::TableCatalogEntry& table, const ColumnExpr& predicate,
   duckdb::physical_index_set_t& bound_columns) {
   auto parsed = predicate.GetExpr().Copy();
-  RewriteSpecialRegisters(parsed);
-  duckdb::CheckBinder check_binder(binder, context, table.name,
-                                   table.GetColumns(), bound_columns);
-  return duckdb::BoundCastExpression::AddDefaultCastToType(
-    check_binder.Bind(parsed), duckdb::LogicalType::BOOLEAN);
+  PolicyCheckBinder check_binder(binder, context, table.name,
+                                 table.GetColumns(), bound_columns);
+  return check_binder.Bind(parsed);
 }
 
 duckdb::unique_ptr<duckdb::Expression> ReadFilter(

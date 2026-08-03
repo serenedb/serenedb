@@ -1,0 +1,102 @@
+# serenedb-only RLS: a policy may use any SQL niladic function, not just
+# current_user.
+#
+# These are the parenthesis-less built-ins -- current_user, session_user,
+# current_schema, current_date, localtimestamp and friends. The parser cannot
+# tell them from a column of the same name, so they arrive as plain column
+# references and something has to recognise them.
+#
+# Regression: the write path bound policy text with duckdb's CheckBinder, which
+# exists for CHECK constraints on a table definition and therefore treats every
+# bare identifier as a column. A hand-copied list of six names was rewritten to
+# function calls before it ran. Anything absent from that list -- current_schema,
+# localtimestamp, current_date -- bound fine on reads and made every write to the
+# table fail with "Table does not contain column current_schema". A binder
+# subclass now defers unknown bare names to the generic binder, which reaches
+# duckdb's own table, so the list is gone and cannot drift again.
+#
+# Lore: vedernikoff files clickclack by schema as well as by owner.
+
+statement ok
+DROP TABLE IF EXISTS pnf_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS pnf_mop;
+
+
+statement ok
+CREATE TABLE pnf_clickclack (bucket text, note text);
+
+
+statement ok
+CREATE ROLE pnf_mop LOGIN PASSWORD 'mpw';
+
+
+statement ok
+GRANT SELECT, INSERT ON pnf_clickclack TO pnf_mop;
+
+
+statement ok
+ALTER TABLE pnf_clickclack ENABLE ROW LEVEL SECURITY;
+
+
+# current_schema, which the old hand-written list did not know about.
+statement ok
+CREATE POLICY pnf_bucket ON pnf_clickclack FOR ALL TO pnf_mop
+USING (bucket = current_schema) WITH CHECK (bucket = current_schema);
+
+
+# A row that satisfies the policy is accepted -- this used to fail with
+# "Table does not contain column current_schema".
+connection c_ok user=pnf_mop password=mpw
+statement ok
+INSERT INTO pnf_clickclack VALUES ('public', 'mine');
+
+
+# One that does not is rejected by the policy, not by the binder.
+connection c_bad user=pnf_mop password=mpw
+statement error
+INSERT INTO pnf_clickclack VALUES ('elsewhere', 'theirs');
+----
+db error: ERROR: new row violates row-level security policy for table<slt:ignore>
+
+
+# And the USING half filters on the same function.
+connection c_read user=pnf_mop password=mpw
+query TT
+SELECT bucket, note FROM pnf_clickclack ORDER BY note;
+----
+bucket	note
+public	mine
+
+
+# session_user resolves independently of current_user (they differ under
+# SET ROLE, and both must bind).
+statement ok
+DROP POLICY pnf_bucket ON pnf_clickclack;
+
+
+statement ok
+CREATE POLICY pnf_session ON pnf_clickclack FOR ALL TO pnf_mop
+USING (note = session_user) WITH CHECK (note = session_user);
+
+
+connection c_sess user=pnf_mop password=mpw
+statement ok
+INSERT INTO pnf_clickclack VALUES ('any', 'pnf_mop');
+
+
+connection c_sess2 user=pnf_mop password=mpw
+statement error
+INSERT INTO pnf_clickclack VALUES ('any', 'somebody_else');
+----
+db error: ERROR: new row violates row-level security policy for table<slt:ignore>
+
+
+statement ok
+DROP TABLE pnf_clickclack;
+
+
+statement ok
+DROP ROLE pnf_mop;

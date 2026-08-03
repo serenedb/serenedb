@@ -322,6 +322,19 @@ duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(val));
 }
 
+void ToRegtypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                       duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
+    args.data[0], result, args.size(),
+    [&](duckdb::string_t name) -> duckdb::optional<int64_t> {
+      auto oid = pg::RegtypeIn(name.GetString());
+      if (oid == pg::kInvalidOid) {
+        return duckdb::nullopt;
+      }
+      return static_cast<int64_t>(oid);
+    });
+}
+
 // format_type(oid, typmod) -> text
 // TODO(Pasha) Account typmod?
 // Keyed on the oid only (UnaryExecutor): psql calls format_type(oid, NULL),
@@ -1806,6 +1819,21 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                                  {pg::XID8()},
                                                  duckdb::LogicalType::VARCHAR,
                                                  not_supported});
+
+  {
+    duckdb::ScalarFunction to_regtype_fn{
+      "to_regtype",
+      {duckdb::LogicalType::VARCHAR},
+      pg::REGTYPE(),
+      ToRegtypeFunction,
+    };
+    to_regtype_fn.SetNullHandling(
+      duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    duckdb::CreateScalarFunctionInfo info{std::move(to_regtype_fn)};
+    info.SetSchema("pg_catalog");
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
+  }
 
   {
     duckdb::ScalarFunction format_type_fn{

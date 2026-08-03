@@ -1,0 +1,69 @@
+# pg_attribute's "char" columns render an unset value as the empty string.
+#
+# Postgres stores attidentity/attgenerated/attcompression as the internal
+# "char" type and outputs them through charout, which NUL-terminates: a zero
+# byte comes back as '' rather than a one-character string. Replication tools
+# read these columns to decide which columns they may write, with predicates
+# like `attgenerated != ''`. Emitting a one-byte value made every column look
+# generated, so pgstream built an INSERT with no columns and dropped the row.
+
+statement ok
+CREATE TABLE attchar(id INTEGER, name TEXT);
+
+
+query
+SELECT attname, length(attgenerated::text) AS gen_len, length(attidentity::text) AS ident_len
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'attchar') AND attnum > 0
+ORDER BY attnum;
+----
+attname	gen_len	ident_len
+id	0	0
+name	0	0
+
+
+# The predicates replication tools actually issue.
+query
+SELECT count(*) AS generated_cols
+FROM pg_attribute
+WHERE attnum > 0
+  AND attrelid = (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid WHERE c.relname = 'attchar' AND n.nspname = 'public')
+  AND attgenerated != '';
+----
+generated_cols
+0
+
+
+query
+SELECT count(*) AS identity_cols
+FROM pg_attribute
+WHERE attnum > 0
+  AND attrelid = (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid WHERE c.relname = 'attchar' AND n.nspname = 'public')
+  AND attidentity = 'a';
+----
+identity_cols
+0
+
+
+query
+SELECT attname FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'attchar') AND attnum > 0 AND attgenerated = ''
+ORDER BY attnum;
+----
+attname
+id
+name
+
+
+# A "char" column that does carry a value still renders that one character.
+query
+SELECT DISTINCT length(attstorage::text) AS storage_len
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'attchar') AND attnum > 0;
+----
+storage_len
+1
+
+
+statement ok
+DROP TABLE attchar;

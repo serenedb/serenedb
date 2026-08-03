@@ -1,0 +1,75 @@
+# INSERT ... OVERRIDING { SYSTEM | USER } VALUE.
+#
+# SQL:2003 identity-column syntax. It selects whether a user-supplied value is
+# allowed into a GENERATED ALWAYS AS IDENTITY column, or discarded in favour of
+# the generated one. SereneDB has no identity columns, so there is nothing to
+# override and the clause is a no-op -- but it must parse, because Postgres
+# logical-replication tools emit it unconditionally on every INSERT (they
+# cannot know whether the target column is GENERATED ALWAYS). Rejecting it
+# makes SereneDB unusable as a replication target.
+
+
+statement ok
+CREATE TABLE iov(id INTEGER, name TEXT);
+
+
+statement ok
+INSERT INTO iov(id, name) OVERRIDING SYSTEM VALUE VALUES (1, 'system');
+
+
+statement ok
+INSERT INTO iov(id, name) OVERRIDING USER VALUE VALUES (2, 'user');
+
+
+# The clause is positional: after the column list, before the values.
+statement ok
+INSERT INTO iov OVERRIDING SYSTEM VALUE VALUES (3, 'no column list');
+
+
+statement ok
+INSERT INTO iov(id, name) OVERRIDING SYSTEM VALUE SELECT 4, 'from select';
+
+
+statement ok
+INSERT INTO iov(id, name) OVERRIDING SYSTEM VALUE VALUES (5, 'returning') RETURNING id;
+
+
+query
+SELECT id, name FROM iov ORDER BY id;
+----
+id	name
+1	system
+2	user
+3	no column list
+4	from select
+5	returning
+
+
+# Both keywords are required, and only SYSTEM or USER are accepted.
+statement error
+INSERT INTO iov(id) OVERRIDING VALUE VALUES (6);
+----
+db error: ERROR: syntax error at or near "VALUE"
+
+
+statement error
+INSERT INTO iov(id) OVERRIDING BOGUS VALUE VALUES (6);
+----
+db error: ERROR: syntax error at or near "BOGUS"
+
+
+statement error
+INSERT INTO iov(id) OVERRIDING SYSTEM VALUES (6);
+----
+db error: ERROR: syntax error at or near "VALUES"
+
+
+# It belongs before the values, not after.
+statement error
+INSERT INTO iov(id) VALUES (6) OVERRIDING SYSTEM VALUE;
+----
+db error: ERROR: syntax error at or near "OVERRIDING"
+
+
+statement ok
+DROP TABLE iov;

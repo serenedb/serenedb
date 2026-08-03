@@ -71,7 +71,13 @@ class Policy : public Object {
   // Whether the USING or WITH CHECK predicate names `column`. Parsed on demand:
   // ALTER POLICY rewrites the text through MutableData(), so a cached answer
   // would go stale, and the only caller is DROP COLUMN.
-  bool ReferencesColumn(std::string_view column) const;
+  bool ReferencesColumn(std::string_view relation,
+                        std::string_view column) const;
+
+  // Rewrites references to `from` in this policy's predicates. Policies store a
+  // parsed expression, so a column rename is a rewrite rather than a break.
+  void RenameColumn(std::string_view relation, std::string_view from,
+                    std::string_view to);
 
  private:
   ObjectId _database_id;

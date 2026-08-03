@@ -35,14 +35,40 @@
 namespace sdb::catalog {
 namespace {
 
+// A reference names `column` of the policy's own table when it is unqualified,
+// or qualified with that table's name. A ref qualified with some other relation
+// (`other.owner`) names that relation's column, not ours.
+bool RefNamesColumn(const duckdb::ColumnRefExpression& colref,
+                    std::string_view relation, std::string_view column) {
+  if (colref.GetColumnName().GetIdentifierName() != column) {
+    return false;
+  }
+  const auto& parts = colref.ColumnNames();
+  if (parts.size() < 2) {
+    return true;
+  }
+  return parts[parts.size() - 2].GetIdentifierName() == relation;
+}
+
 bool ExprNamesColumn(const duckdb::ParsedExpression& expr,
-                     std::string_view column) {
+                     std::string_view relation, std::string_view column) {
   bool found = false;
   duckdb::ParsedExpressionIterator::VisitExpression<duckdb::ColumnRefExpression>(
     expr, [&](const duckdb::ColumnRefExpression& colref) {
-      found = found || colref.GetColumnName().GetIdentifierName() == column;
+      found = found || RefNamesColumn(colref, relation, column);
     });
   return found;
+}
+
+void RenameRefs(duckdb::ParsedExpression& expr, std::string_view relation,
+                std::string_view from, std::string_view to) {
+  duckdb::ParsedExpressionIterator::VisitExpressionMutable<
+    duckdb::ColumnRefExpression>(
+    expr, [&](duckdb::ColumnRefExpression& colref) {
+      if (RefNamesColumn(colref, relation, from)) {
+        colref.ColumnNamesMutable().back() = duckdb::Identifier(std::string{to});
+      }
+    });
 }
 
 }  // namespace
@@ -57,9 +83,20 @@ std::shared_ptr<ColumnExpr> ParsePolicyExpr(std::string_view text) {
   return std::make_shared<ColumnExpr>(std::move(parsed[0]));
 }
 
-bool Policy::ReferencesColumn(std::string_view column) const {
-  return (HasUsing() && ExprNamesColumn(Using().GetExpr(), column)) ||
-         (HasCheck() && ExprNamesColumn(Check().GetExpr(), column));
+bool Policy::ReferencesColumn(std::string_view relation,
+                             std::string_view column) const {
+  return (HasUsing() && ExprNamesColumn(Using().GetExpr(), relation, column)) ||
+         (HasCheck() && ExprNamesColumn(Check().GetExpr(), relation, column));
+}
+
+void Policy::RenameColumn(std::string_view relation, std::string_view from,
+                          std::string_view to) {
+  if (HasUsing()) {
+    RenameRefs(Using().GetExpr(), relation, from, to);
+  }
+  if (HasCheck()) {
+    RenameRefs(Check().GetExpr(), relation, from, to);
+  }
 }
 
 Policy::Policy(ObjectId database_id, ObjectId schema_id, ObjectId id,

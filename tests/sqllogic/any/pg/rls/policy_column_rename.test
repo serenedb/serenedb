@@ -1,0 +1,86 @@
+# Oracle-verified against PostgreSQL 18.3: renaming a column a policy references
+# rewrites the policy, it does not break it. The policy keeps filtering, and its
+# rendered predicate names the new column.
+#
+# Regression: policies used to store their predicate as SQL text, so a rename
+# left the text naming a column that no longer existed. The table then failed for
+# every governed role with
+#   ERROR: Referenced column "owner" not found in FROM clause!
+# which also leaked the policy's internals into the message. Predicates are now
+# stored parsed, so ChangeTable rewrites the references in the same mutation as
+# the rename.
+#
+# Lore: vedernikoff renames the column and the clickclack guard follows it.
+
+statement ok
+DROP TABLE IF EXISTS pcr_clickclack;
+
+
+statement ok
+DROP ROLE IF EXISTS pcr_mop;
+
+
+statement ok
+CREATE TABLE pcr_clickclack (owner text, mops int);
+
+
+statement ok
+INSERT INTO pcr_clickclack VALUES ('pcr_mop', 5), ('vedernikoff', 99);
+
+
+statement ok
+CREATE ROLE pcr_mop LOGIN PASSWORD 'mpw';
+
+
+statement ok
+GRANT SELECT ON pcr_clickclack TO pcr_mop;
+
+
+statement ok
+ALTER TABLE pcr_clickclack ENABLE ROW LEVEL SECURITY;
+
+
+statement ok
+CREATE POLICY pcr_own ON pcr_clickclack FOR SELECT TO pcr_mop USING (owner = current_user);
+
+
+connection c_before user=pcr_mop password=mpw
+query TI
+SELECT owner, mops FROM pcr_clickclack ORDER BY owner;
+----
+owner	mops
+pcr_mop	5
+
+
+statement ok
+ALTER TABLE pcr_clickclack RENAME COLUMN owner TO holder;
+
+
+# The policy still filters, against the renamed column.
+connection c_after user=pcr_mop password=mpw
+query TI
+SELECT holder, mops FROM pcr_clickclack ORDER BY holder;
+----
+holder	mops
+pcr_mop	5
+
+
+# A second rename, to confirm the rewrite is not one-shot.
+statement ok
+ALTER TABLE pcr_clickclack RENAME COLUMN holder TO keeper;
+
+
+connection c_after2 user=pcr_mop password=mpw
+query TI
+SELECT keeper, mops FROM pcr_clickclack ORDER BY keeper;
+----
+keeper	mops
+pcr_mop	5
+
+
+statement ok
+DROP TABLE pcr_clickclack;
+
+
+statement ok
+DROP ROLE pcr_mop;

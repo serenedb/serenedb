@@ -4274,6 +4274,34 @@ void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
   Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
     clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
 
+    // A renamed column must be rewritten inside every policy predicate that
+    // names it. Policies store a parsed expression, so this is a rewrite rather
+    // than a dangling reference; it happens here so it is atomic with the
+    // rename itself.
+    for (const auto& old_col : table->Columns()) {
+      auto it = std::ranges::find_if(updated->Columns(), [&](const auto& c) {
+        return c.GetId() == old_col.GetId();
+      });
+      if (it == updated->Columns().end() || it->GetName() == old_col.GetName()) {
+        continue;
+      }
+      for (auto policy_id : clone->PolicyIds(updated->GetId())) {
+        auto policy = clone->GetObject<Policy>(policy_id);
+        if (!policy || !policy->ReferencesColumn(name, old_col.GetName())) {
+          continue;
+        }
+        auto renamed = std::static_pointer_cast<Policy>(policy->Clone());
+        renamed->RenameColumn(name, old_col.GetName(), it->GetName());
+        clone->RemoveObjectDefinition(updated->GetId(), policy_id,
+                                      /*root=*/true);
+        clone->RegisterObject(renamed, updated->GetId(), false);
+        duckdb::MemoryStream policy_stream;
+        auto policy_bytes = catalog::SerializeObject(*renamed, policy_stream);
+        _engine->CreateDefinition(updated->GetId(), ObjectType::Policy,
+                                  policy_id, policy_bytes);
+      }
+    }
+
     {
       duckdb::MemoryStream stream;
       auto bytes = catalog::SerializeObject(*updated, stream);
@@ -4722,7 +4750,7 @@ void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
   if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
     for (auto policy_id : td->policies) {
       auto policy = _snapshot->GetObject<Policy>(policy_id);
-      if (!policy || !policy->ReferencesColumn(column)) {
+      if (!policy || !policy->ReferencesColumn(table, column)) {
         continue;
       }
       if (!cascade) {

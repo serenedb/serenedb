@@ -106,6 +106,24 @@ count
 0
 
 
+# Reset the setting on every connection that disabled it. These sessions are
+# reused, and leaving the optimizer off leaks into later tests -- an
+# inverted-index scan, for one, silently stops being rewritten.
+connection c_off user=od_mop password=mpw
+statement ok
+RESET enable_optimizer;
+
+
+connection c_pragma user=od_mop password=mpw
+statement ok
+RESET enable_optimizer;
+
+
+connection c_write user=od_mop password=mpw
+statement ok
+RESET enable_optimizer;
+
+
 statement ok
 DROP TABLE od_clickclack;
 

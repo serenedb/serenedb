@@ -93,7 +93,8 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
   TermPayloadWriter* PayloadWriter() const final {
-    return _qw != nullptr ? const_cast<IvfTermReader*>(this) : nullptr;
+    SDB_ASSERT(_qw);
+    return const_cast<IvfTermReader*>(this);
   }
 
   void WriteTermPayload(IndexOutput& out, std::span<const doc_id_t> docs) final;

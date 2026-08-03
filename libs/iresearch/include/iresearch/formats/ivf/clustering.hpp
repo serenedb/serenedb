@@ -44,6 +44,14 @@ enum class ClusteringAlgo {
 
 std::vector<float> MakeRotation(uint32_t d, uint32_t seed);
 
+// Row-major `d x d` orthonormal basis whose row `i` is the `i`-th leading
+// eigenvector of the sample's second moment, so a rotated vector carries most
+// of its energy in the leading dimensions. Empty when `n < d`.
+std::vector<float> TrainPcaRotation(const float* data, size_t n, uint32_t d);
+
+void ApplyRotation(const float* rotation, const float* in, float* out, size_t n,
+                   uint32_t d);
+
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter = 8,

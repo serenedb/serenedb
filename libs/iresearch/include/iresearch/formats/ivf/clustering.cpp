@@ -25,6 +25,7 @@
 #include <faiss/SuperKMeans.h>
 #include <faiss/VectorTransform.h>
 #include <faiss/utils/distances.h>
+#include <faiss/utils/utils.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -36,12 +37,28 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/types.hpp"
 
+// The vendored OpenBLAS exports sgemm_/sgemv_ only; faiss declares them the
+// same way in its own translation units.
+using FINTEGER = int;
+
+extern "C" {
+int sgemm_(const char* transa, const char* transb, FINTEGER* m, FINTEGER* n,
+           FINTEGER* k, const float* alpha, const float* a, FINTEGER* lda,
+           const float* b, FINTEGER* ldb, const float* beta, float* c,
+           FINTEGER* ldc);
+
+int sgemv_(const char* trans, FINTEGER* m, FINTEGER* n, const float* alpha,
+           const float* a, FINTEGER* lda, const float* x, FINTEGER* incx,
+           const float* beta, float* y, FINTEGER* incy);
+}
+
 namespace irs {
 namespace {
 
 constexpr uint32_t kSuperKMeansMinD = 32;
 constexpr uint32_t kSuperKMeansMinK = 512;
 constexpr uint32_t kSuperKMeansSphericalMinK = 4096;
+constexpr uint32_t kPcaIters = 12;
 
 void ConfigureClusteringParams(faiss::ClusteringParameters& cp, uint32_t niter,
                                uint32_t nredo, uint32_t seed, size_t n,
@@ -87,6 +104,25 @@ bool SuperKMeansGate(uint32_t d, uint32_t k, uint32_t min_k) {
   return d >= kSuperKMeansMinD && k >= min_k;
 }
 
+// Column-major `d x d` second moment of the row-major `n x d` sample. The
+// second moment, not the covariance: the basis is applied as a pure rotation
+// with no bias, so it has to be optimal for uncentered vectors.
+void SecondMoment(const float* data, size_t n, uint32_t d, float* out) {
+  FINTEGER dd = static_cast<FINTEGER>(d);
+  FINTEGER nn = static_cast<FINTEGER>(n);
+  const float one = 1.f;
+  const float zero = 0.f;
+  sgemm_("N", "T", &dd, &dd, &nn, &one, data, &dd, data, &dd, &zero, out, &dd);
+}
+
+// Column-major `c = a * b`, all `d x d`.
+void MulSquare(const float* a, const float* b, float* c, uint32_t d) {
+  FINTEGER dd = static_cast<FINTEGER>(d);
+  const float one = 1.f;
+  const float zero = 0.f;
+  sgemm_("N", "N", &dd, &dd, &dd, &one, a, &dd, b, &dd, &zero, c, &dd);
+}
+
 }  // namespace
 
 std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
@@ -94,6 +130,64 @@ std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
                                        static_cast<int>(d));
   rotation.init(static_cast<int>(seed));
   return std::move(rotation.A);
+}
+
+std::vector<float> TrainPcaRotation(const float* data, size_t n, uint32_t d) {
+  if (d == 0 || n < d) {
+    return {};
+  }
+
+  std::vector<float> moment(size_t{d} * d);
+  SecondMoment(data, n, d, moment.data());
+
+  std::vector<float> basis(size_t{d} * d, 0.f);
+  for (uint32_t i = 0; i < d; ++i) {
+    basis[i + size_t{i} * d] = 1.f;
+  }
+  std::vector<float> next(size_t{d} * d);
+  for (uint32_t iter = 0; iter < kPcaIters; ++iter) {
+    MulSquare(moment.data(), basis.data(), next.data(), d);
+    faiss::matrix_qr(static_cast<int>(d), static_cast<int>(d), next.data());
+    basis.swap(next);
+  }
+
+  MulSquare(moment.data(), basis.data(), next.data(), d);
+  std::vector<uint32_t> order(d);
+  std::iota(order.begin(), order.end(), 0u);
+  std::vector<float> eigen(d);
+  for (uint32_t j = 0; j < d; ++j) {
+    const float* q = basis.data() + size_t{j} * d;
+    const float* aq = next.data() + size_t{j} * d;
+    float sum = 0.f;
+    for (uint32_t i = 0; i < d; ++i) {
+      sum += q[i] * aq[i];
+    }
+    eigen[j] = sum;
+  }
+  std::sort(order.begin(), order.end(),
+            [&](uint32_t l, uint32_t r) { return eigen[l] > eigen[r]; });
+
+  std::vector<float> rotation(size_t{d} * d);
+  for (uint32_t i = 0; i < d; ++i) {
+    std::memcpy(rotation.data() + size_t{i} * d,
+                basis.data() + size_t{order[i]} * d, size_t{d} * sizeof(float));
+  }
+  return rotation;
+}
+
+void ApplyRotation(const float* rotation, const float* in, float* out, size_t n,
+                   uint32_t d) {
+  FINTEGER dd = static_cast<FINTEGER>(d);
+  const float one = 1.f;
+  const float zero = 0.f;
+  if (n == 1) {
+    FINTEGER inc = 1;
+    sgemv_("T", &dd, &dd, &one, rotation, &dd, in, &inc, &zero, out, &inc);
+    return;
+  }
+  FINTEGER nn = static_cast<FINTEGER>(n);
+  sgemm_("T", "N", &dd, &nn, &dd, &one, rotation, &dd, in, &dd, &zero, out,
+         &dd);
 }
 
 void NormalizeRows(float* data, size_t n, uint32_t d) {

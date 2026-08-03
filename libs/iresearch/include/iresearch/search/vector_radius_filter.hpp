@@ -37,6 +37,7 @@ struct ByRadiusOptions {
   field_id centroids_id = field_limits::invalid();
   field_id postings_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
+  VectorQuantization quant = VectorQuantization::None;
   float radius = 0.f;
   bool inclusive = false;
   std::shared_ptr<const Filter> inner;
@@ -44,8 +45,8 @@ struct ByRadiusOptions {
   bool operator==(const ByRadiusOptions& rhs) const noexcept {
     return query == rhs.query && centroids_id == rhs.centroids_id &&
            postings_id == rhs.postings_id && metric == rhs.metric &&
-           radius == rhs.radius && inclusive == rhs.inclusive &&
-           inner == rhs.inner;
+           quant == rhs.quant && radius == rhs.radius &&
+           inclusive == rhs.inclusive && inner == rhs.inner;
   }
 };
 

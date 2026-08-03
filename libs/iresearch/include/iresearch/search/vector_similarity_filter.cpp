@@ -31,7 +31,6 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/vector_filter_util.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
@@ -51,8 +50,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const auto* postings = segment.field(opts.postings_id);
   const auto* ivf = segment.Ivf(opts.centroids_id);
   const auto* vector_col = segment.Column(field_id());
-  if (!postings || !ivf || !vector_col || ivf->Empty() ||
-      opts.query.size() != ivf->Dim()) {
+  if (!postings || !ivf || ivf->Empty() || opts.query.size() != ivf->Dim()) {
     return QueryBuilder::Empty();
   }
 
@@ -61,14 +59,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  const bool has_pay = IndexFeatures::None !=
-                       (postings->meta().index_features & IndexFeatures::Pay);
-  const bool metric_ok = opts.metric == VectorMetric::L2Sqr ||
-                         opts.metric == VectorMetric::InnerProduct ||
-                         opts.metric == VectorMetric::Cosine;
-  VectorQuantization quant = (has_pay && metric_ok && ivf->HasQuantStats())
-                               ? opts.quant
-                               : VectorQuantization::None;
+  const auto quant = opts.quant;
   const uint32_t d = static_cast<uint32_t>(ivf->Dim());
 
   std::vector<float> normalized_query;
@@ -81,29 +72,13 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     query = normalized_query;
   }
 
-  std::shared_ptr<const QuantizerCodebook> codebook;
-  if (quant != VectorQuantization::None) {
-    idx_in->Seek(ivf->QuantStatsOffset());
-    const size_t stats_size = static_cast<size_t>(idx_in->ReadI64());
-    std::span<const byte_type> stats;
-    bstring owned;
-    if (const byte_type* p = idx_in->ReadVolatile(stats_size)) {
-      stats = {p, stats_size};
-    } else {
-      owned.resize(stats_size);
-      idx_in->ReadData(owned.data(), stats_size);
-      stats = owned;
-    }
-    if (auto quant_stats = MakeQuantizerStats(
-          quant, d, stats, EffectiveQuantMetric(opts.metric))) {
-      codebook = quant_stats->MakeCodebook(query);
-    }
-    if (!codebook) {
-      quant = VectorQuantization::None;
-    }
+  auto codebook = ReadQuantizerCodebook(
+    *ivf, *idx_in, quant, d, opts.metric,
+    quant == VectorQuantization::None ? opts.query : query);
+  if (!codebook) {
+    return QueryBuilder::Empty();
   }
-  const bool needs_centroids =
-    quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
+  const bool needs_centroids = QuantizerNeedsCentroid(quant);
 
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
@@ -127,10 +102,8 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   state.codebook = std::move(codebook);
 
   state.cookies.reserve(fine_ids.size());
-  if (quant != VectorQuantization::None) {
-    state.pay_starts.reserve(fine_ids.size());
-    state.cluster_counts.reserve(fine_ids.size());
-  }
+  state.pay_starts.reserve(fine_ids.size());
+  state.cluster_counts.reserve(fine_ids.size());
   if (needs_centroids) {
     state.cluster_centroids.reserve(fine_ids.size() * d);
   }
@@ -144,8 +117,6 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     }
     if (term_meta) {
       estimation += term_meta->docs_count;
-    }
-    if (quant != VectorQuantization::None) {
       state.pay_starts.push_back(
         static_cast<const TermMetaImpl*>(term_meta)->pay_start);
       state.cluster_counts.push_back(term_meta->docs_count);

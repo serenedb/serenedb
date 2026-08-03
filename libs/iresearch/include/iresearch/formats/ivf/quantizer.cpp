@@ -40,6 +40,9 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/misc.hpp"
+#include "iresearch/formats/ivf/clustering.hpp"
+#include "iresearch/formats/ivf/panorama.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 
@@ -143,6 +146,212 @@ struct RaBitQStatsHeader {
 constexpr uint8_t kRaBitQQueryBits = 8;
 constexpr bool kRaBitQCentered = false;
 constexpr size_t kRaBitQRefinePool = 64;
+
+struct PanoramaStatsHeader {
+  uint32_t level_width;
+  uint32_t d;
+};
+
+class NoneQuantizerWriter final : public QuantizerWriter {
+ public:
+  NoneQuantizerWriter(uint32_t d, VectorMetric metric)
+    : _d{d}, _metric{metric} {}
+
+  // Training the rotation is the whole switch: a writer that was never trained,
+  // or whose sample was too small, keeps emitting the legacy row-major layout
+  // with an empty stats blob.
+  void Train(const float* vecs, size_t n) final {
+    // A rotation preserves L2 and inner product, but not L1.
+    if (_d < panorama::kMinDim || _metric == VectorMetric::L1) {
+      return;
+    }
+    _rotation = TrainPcaRotation(vecs, n, _d);
+    if (_rotation.empty()) {
+      return;
+    }
+    _levels = panorama::Levels(_d);
+    _stats.resize(sizeof(PanoramaStatsHeader) +
+                  _rotation.size() * sizeof(float));
+    WritePodHeader(PanoramaStatsHeader{panorama::kLevelWidth, _d},
+                   _stats.data());
+    std::memcpy(_stats.data() + sizeof(PanoramaStatsHeader), _rotation.data(),
+                _rotation.size() * sizeof(float));
+  }
+
+  void EncodeCluster(IndexOutput& out, const float* vecs,
+                     size_t n) const final {
+    if (n == 0) {
+      return;
+    }
+    if (_levels == 0) {
+      out.WriteData(reinterpret_cast<const byte_type*>(vecs),
+                    n * size_t{_d} * sizeof(float));
+      return;
+    }
+    _rotated.resize(n * _d);
+    ApplyRotation(_rotation.data(), vecs, _rotated.data(), n, _d);
+    _tails.resize(_levels);
+    for (size_t i = 0; i < n; ++i) {
+      const float* y = _rotated.data() + i * _d;
+      panorama::ComputeTails(y, _d, _levels, _tails.data());
+      out.WriteData(reinterpret_cast<const byte_type*>(_tails.data()),
+                    _levels * sizeof(float));
+      out.WriteData(reinterpret_cast<const byte_type*>(y),
+                    size_t{_d} * sizeof(float));
+    }
+  }
+
+  std::span<const byte_type> StatsBytes() const final { return _stats; }
+
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::None;
+  }
+
+  uint32_t CodeSize() const noexcept final {
+    return panorama::RecordSize(_d, _levels);
+  }
+
+ private:
+  uint32_t _d;
+  VectorMetric _metric;
+  uint32_t _levels = 0;
+  std::vector<float> _rotation;
+  std::vector<byte_type> _stats;
+  mutable std::vector<float> _rotated;
+  mutable std::vector<float> _tails;
+};
+
+template<VectorMetric M>
+class NoneQuantizerStats final : public QuantizerStats {
+ public:
+  // `stats` only has to outlive MakeCodebook, which is where the rotation is
+  // consumed -- so a mmapped blob is read in place instead of copied per query.
+  NoneQuantizerStats(uint32_t d, std::span<const byte_type> stats) : _d{d} {
+    const size_t want = size_t{d} * d * sizeof(float);
+    if (stats.size() < sizeof(PanoramaStatsHeader) + want) {
+      return;
+    }
+    const auto header = ReadPodHeader<PanoramaStatsHeader>(stats);
+    if (header.level_width != panorama::kLevelWidth || header.d != d) {
+      return;
+    }
+    _rotation = stats.data() + sizeof(PanoramaStatsHeader);
+    _levels = panorama::Levels(d);
+  }
+
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::None;
+  }
+
+  std::shared_ptr<const QuantizerCodebook> MakeCodebook(
+    std::span<const float> query) const final;
+
+  uint32_t Dim() const noexcept { return _d; }
+  uint32_t Levels() const noexcept { return _levels; }
+  const byte_type* Rotation() const noexcept { return _rotation; }
+
+ private:
+  uint32_t _d;
+  uint32_t _levels = 0;
+  const byte_type* _rotation = nullptr;
+};
+
+template<VectorMetric M>
+class NoneQuantizerCodebook final : public QuantizerCodebook {
+ public:
+  NoneQuantizerCodebook(std::shared_ptr<const NoneQuantizerStats<M>> stats,
+                        std::span<const float> query)
+    : _stats{std::move(stats)}, _levels{_stats->Levels()} {
+    const auto d = _stats->Dim();
+    SDB_ASSERT(query.size() == d);
+    if (_levels == 0) {
+      _query.assign(query.begin(), query.end());
+      return;
+    }
+    _query.resize(d);
+    panorama::RotateQuery(_stats->Rotation(), query.data(), _query.data(), d);
+    _tails.resize(_levels);
+    panorama::ComputeTails(_query.data(), d, _levels, _tails.data());
+  }
+
+  std::unique_ptr<QuantizerReader> MakeReader(
+    std::unique_ptr<IndexInput> pay_in) const final;
+
+  uint32_t Dim() const noexcept { return _stats->Dim(); }
+  uint32_t Levels() const noexcept { return _levels; }
+  const byte_type* Query() const noexcept {
+    return reinterpret_cast<const byte_type*>(_query.data());
+  }
+  panorama::Query PanoramaQuery() const noexcept {
+    SDB_ASSERT(_levels != 0);
+    return {.data = _query.data(),
+            .tails = _tails.data(),
+            .norm = std::sqrt(_tails.front())};
+  }
+
+ private:
+  std::shared_ptr<const NoneQuantizerStats<M>> _stats;
+  uint32_t _levels;
+  std::vector<float> _query;
+  std::vector<float> _tails;
+};
+
+template<VectorMetric M>
+class NoneQuantizerReader final : public QuantizerReader {
+ public:
+  NoneQuantizerReader(std::shared_ptr<const NoneQuantizerCodebook<M>> cb,
+                      std::unique_ptr<IndexInput> pay_in)
+    : _cb{std::move(cb)},
+      _pay_in{std::move(pay_in)},
+      _d{_cb->Dim()},
+      _levels{_cb->Levels()},
+      _vecs{*_pay_in, panorama::RecordSize(_d, _levels)} {}
+
+  void StartCluster(uint64_t pay_start, size_t num_docs,
+                    const float* /*centroid*/) final {
+    _n = num_docs;
+    if (_n == 0) {
+      return;
+    }
+    _vecs.Reset(pay_start);
+  }
+
+  void SetPruningThreshold(const score_t* threshold) noexcept final {
+    _threshold = threshold;
+  }
+
+  void ComputeBlock(size_t offset, size_t count, score_t* out) final {
+    SDB_ASSERT(offset + count <= _n);
+    const byte_type* block = _vecs.Read(offset, count);
+    const size_t stride = panorama::RecordSize(_d, _levels);
+    if (_levels == 0) {
+      const byte_type* q = _cb->Query();
+      for (size_t i = 0; i < count; ++i) {
+        out[i] =
+          ComputeDistance<M>(q, block + i * stride, static_cast<uint16_t>(_d));
+      }
+      return;
+    }
+    const auto q = _cb->PanoramaQuery();
+    const score_t threshold = _threshold != nullptr
+                                ? *_threshold
+                                : std::numeric_limits<score_t>::lowest();
+    for (size_t i = 0; i < count; ++i) {
+      out[i] = panorama::ProgressiveScore<M>(
+        q, reinterpret_cast<const float*>(block + i * stride), _d, _levels,
+        threshold);
+    }
+  }
+
+ private:
+  std::shared_ptr<const NoneQuantizerCodebook<M>> _cb;
+  std::unique_ptr<IndexInput> _pay_in;
+  uint32_t _d;
+  uint32_t _levels;
+  VectorBlockReader _vecs;
+  const score_t* _threshold = nullptr;
+  size_t _n = 0;
+};
 
 class ScalarQuantizerWriter final : public QuantizerWriter {
  public:
@@ -310,6 +519,20 @@ std::shared_ptr<const QuantizerCodebook> MakeCodebookT(
   const Stats* self, std::span<const float> query) {
   return std::make_shared<const Codebook>(
     std::static_pointer_cast<const Stats>(self->shared_from_this()), query);
+}
+
+template<VectorMetric M>
+std::unique_ptr<QuantizerReader> NoneQuantizerCodebook<M>::MakeReader(
+  std::unique_ptr<IndexInput> pay_in) const {
+  return MakeReaderT<NoneQuantizerCodebook<M>, NoneQuantizerReader<M>>(
+    this, std::move(pay_in));
+}
+
+template<VectorMetric M>
+std::shared_ptr<const QuantizerCodebook> NoneQuantizerStats<M>::MakeCodebook(
+  std::span<const float> query) const {
+  return MakeCodebookT<NoneQuantizerStats<M>, NoneQuantizerCodebook<M>>(this,
+                                                                        query);
 }
 
 template<VectorMetric M>
@@ -1072,23 +1295,25 @@ std::unique_ptr<QuantizerWriter> MakeWriterWithMetric(VectorMetric metric,
   }
 }
 
+std::shared_ptr<const QuantizerStats> MakeNoneStats(
+  VectorMetric metric, uint32_t d, std::span<const byte_type> blob) {
+  std::shared_ptr<const QuantizerStats> stats;
+  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
+    stats = std::make_shared<const NoneQuantizerStats<M>>(d, blob);
+  });
+  return stats;
+}
+
 template<template<VectorMetric> class Stats, typename... Args>
 std::shared_ptr<const QuantizerStats> MakeStatsWithMetric(VectorMetric metric,
                                                           Args&&... args) {
-  const auto make = [&]<VectorMetric M> {
-    auto s = std::make_shared<const Stats<M>>(std::forward<Args>(args)...);
-    if constexpr (requires { s->Valid(); }) {
-      if (!s->Valid()) {
-        return std::shared_ptr<const QuantizerStats>{};
-      }
-    }
-    return std::shared_ptr<const QuantizerStats>{std::move(s)};
-  };
   switch (EffectiveQuantMetric(metric)) {
     case VectorMetric::L2Sqr:
-      return make.template operator()<VectorMetric::L2Sqr>();
+      return std::make_shared<const Stats<VectorMetric::L2Sqr>>(
+        std::forward<Args>(args)...);
     case VectorMetric::InnerProduct:
-      return make.template operator()<VectorMetric::InnerProduct>();
+      return std::make_shared<const Stats<VectorMetric::InnerProduct>>(
+        std::forward<Args>(args)...);
     default:
       SDB_ASSERT(false);
       return nullptr;
@@ -1102,7 +1327,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   uint32_t pq_niter, uint32_t nb_bits) {
   switch (quant) {
     case VectorQuantization::None:
-      return nullptr;
+      return std::make_unique<NoneQuantizerWriter>(d, metric);
     case VectorQuantization::SQ8:
     case VectorQuantization::SQ4:
       return std::make_unique<ScalarQuantizerWriter>(d, quant);
@@ -1120,7 +1345,7 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorMetric metric) {
   switch (quant) {
     case VectorQuantization::None:
-      return nullptr;
+      return MakeNoneStats(metric, d, stats);
     case VectorQuantization::SQ8:
     case VectorQuantization::SQ4:
       return MakeStatsWithMetric<ScalarQuantizerStats>(metric, d, quant, stats);

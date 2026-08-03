@@ -63,6 +63,7 @@ class QuantizerReader {
   virtual void StartCluster(uint64_t pay_start, size_t num_docs,
                             const float* centroid) = 0;
   virtual void ComputeBlock(size_t offset, size_t length, score_t* out) = 0;
+  virtual void SetPruningThreshold(const score_t* /*threshold*/) noexcept {}
 };
 
 class QuantizerCodebook
@@ -83,6 +84,10 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
   virtual std::shared_ptr<const QuantizerCodebook> MakeCodebook(
     std::span<const float> query) const = 0;
 };
+
+constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
+  return quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
+}
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,

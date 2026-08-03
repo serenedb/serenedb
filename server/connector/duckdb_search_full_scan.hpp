@@ -89,6 +89,10 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   const irs::IndexReader* reader = nullptr;
   size_t total_segments = 0;
   const VectorScorerOptions* vector_scorer = nullptr;
+  // Decided before DecideScanMode: a score-filtered top-k is routed to Stream
+  // when set, because the pool is then selected by the approximate score while
+  // the predicate must apply to exact ones.
+  bool vector_rerank_from_table = false;
 
   // --- The projection walk: what duckdb asked the scan for. ----------------
   std::vector<duckdb::idx_t> projected_columns;
@@ -146,6 +150,10 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
     // A filter on the computed score column (not a `.col` field): applied on
     // the score vector after scoring instead of via the columnstore codec.
     bool is_score = false;
+    // Score filters only: the predicate in the emitted (user-facing) space,
+    // for consumers that hold post-ApplyScoreEmit scores. `filter` is the
+    // raw-space form; the two differ only for a non-identity emit.
+    const duckdb::TableFilter* emitted_filter = nullptr;
     // Per-filter invariants, computed once at pushdown (see ColFilterSpec).
     bool is_dynamic = false;
     bool zonemap_only = false;

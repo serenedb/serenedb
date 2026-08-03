@@ -379,6 +379,28 @@ static std::string ColumnNameFor(const SereneDBScanBindData& bind,
   return absl::StrCat("col", col_id);
 }
 
+bool VectorRerankFromSource(const SereneDBScanBindData& bind) {
+  if (!bind.vector_scorer ||
+      bind.vector_scorer->quant == irs::VectorQuantization::None) {
+    return false;
+  }
+  if (bind.IsSearchTableEntry() || !bind.IsInvertedIndexEntry() ||
+      !bind.inverted_index) {
+    return false;
+  }
+  const auto& vs = *bind.vector_scorer;
+  const auto& index = *bind.inverted_index;
+  if (index.GetOptions().pk_column != catalog::PkColumnKind::Has ||
+      index.ExpressionByFieldId(vs.field_id) != nullptr) {
+    return false;
+  }
+  const auto type = bind.ColumnTypeById(catalog::Column::Id{vs.field_id});
+  return type.id() == duckdb::LogicalTypeId::ARRAY &&
+         duckdb::ArrayType::GetChildType(type).id() ==
+           duckdb::LogicalTypeId::FLOAT &&
+         duckdb::ArrayType::GetSize(type) == vs.query_vector.size();
+}
+
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {
@@ -390,6 +412,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     o->centroids_id = vs.centroids_id;
     o->postings_id = vs.postings_id;
     o->metric = vs.metric;
+    o->quant = vs.quant;
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
     o->inner = std::move(inner);

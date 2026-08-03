@@ -24,7 +24,9 @@
 #include <memory>
 #include <span>
 
+#include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -39,6 +41,24 @@ bool SeekClusterTerm(TermIterator& terms, uint32_t cluster_id,
   }
   terms.read();
   return true;
+}
+
+inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
+  const CentroidsTree& ivf, IndexInput& idx_in, VectorQuantization quant,
+  uint32_t d, VectorMetric metric, std::span<const float> query) {
+  idx_in.Seek(ivf.QuantStatsOffset());
+  const auto stats_size = static_cast<size_t>(idx_in.ReadI64());
+  std::span<const byte_type> stats;
+  bstring owned;
+  if (const byte_type* p = idx_in.ReadVolatile(stats_size)) {
+    stats = {p, stats_size};
+  } else {
+    owned.resize(stats_size);
+    idx_in.ReadData(owned.data(), stats_size);
+    stats = owned;
+  }
+  auto quant_stats = MakeQuantizerStats(quant, d, stats, metric);
+  return quant_stats ? quant_stats->MakeCodebook(query) : nullptr;
 }
 
 inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,

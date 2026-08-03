@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -188,6 +189,21 @@ class QVectorIterator : public VectorDistanceIterator {
     _posting = sdb::basics::downCast<QVectorPosting>(_src.get());
   }
 
+  // The collector compares boosted scores while the quantizer bounds unboosted
+  // ones, so the shared value is rescaled at every block boundary.
+  void BindThreshold(const score_t* src) noexcept {
+    if (_boost <= 0.f) {
+      return;
+    }
+    _threshold_src = src;
+    _qr->SetPruningThreshold(&_prune_threshold);
+  }
+
+  void BindConstantThreshold(score_t threshold) noexcept {
+    _prune_threshold = threshold;
+    _qr->SetPruningThreshold(&_prune_threshold);
+  }
+
   doc_id_t advance() final {
     if (_pos == _len) {
       FillDocsBlock();
@@ -226,6 +242,7 @@ class QVectorIterator : public VectorDistanceIterator {
     const uint32_t remaining = _posting->RemainingDocs();
     SDB_ASSERT(remaining < _total);
     _base = static_cast<uint32_t>(_total - 1 - remaining);
+    RefreshThreshold();
     _qr->ComputeBlock(_base, 1, &_cur_dist);
     ++_base;
     return _doc = doc;
@@ -283,9 +300,16 @@ class QVectorIterator : public VectorDistanceIterator {
   }
 
  private:
+  void RefreshThreshold() noexcept {
+    if (_threshold_src != nullptr) {
+      _prune_threshold = *_threshold_src / _boost;
+    }
+  }
+
   void FillDistancesBlock() {
     SDB_ASSERT(_len > 0);
     SDB_ASSERT(_len <= _dist.size());
+    RefreshThreshold();
     _qr->ComputeBlock(_base, _len, _dist.data());
     _base += _len;
   }
@@ -300,6 +324,8 @@ class QVectorIterator : public VectorDistanceIterator {
   CostAttr::Type _total;
   std::span<const doc_id_t> _docs;
   std::array<score_t, kPostingBlock> _dist;
+  const score_t* _threshold_src = nullptr;
+  score_t _prune_threshold = std::numeric_limits<score_t>::lowest();
   uint32_t _base = 0;
   uint16_t _len = 0;
   uint16_t _pos = 0;
@@ -459,6 +485,35 @@ bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
   return true;
 }
 
+template<bool Inclusive>
+bool BuildRangeClusterIterators(const VectorState& state, score_t boost,
+                                float threshold, ScoreAdapters& out) {
+  auto pay_root = state.reader->ReopenPayload();
+  if (!pay_root) {
+    return false;
+  }
+  out.reserve(state.cookies.size());
+  const bool has_centroids =
+    state.cluster_centroids.size() == state.cookies.size() * state.d;
+  for (size_t c = 0; c < state.cookies.size(); ++c) {
+    auto ci = MakeClusterIterator(state, c, has_centroids, *pay_root);
+    if (!ci) {
+      continue;
+    }
+    auto qit = memory::make_managed<QVectorIterator>(std::move(ci->postings),
+                                                     std::move(ci->vr), boost,
+                                                     state.cluster_counts[c]);
+    // The radius is a threshold from the first candidate on, tighter than a
+    // warming top-k: a doc whose bound cannot reach it is outside for sure.
+    qit->BindConstantThreshold(threshold);
+    out.emplace_back(
+      DocIterator::ptr{memory::make_managed<VectorRangeIterator<Inclusive>>(
+        memory::managed_ptr<VectorDistanceIterator>{std::move(qit)},
+        threshold)});
+  }
+  return true;
+}
+
 memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
   const SubReader& segment, const VectorState& state,
   std::span<const float> query, VectorMetric metric, score_t boost,
@@ -514,7 +569,11 @@ class DisjointClusterUnion : public DocIterator {
  public:
   DisjointClusterUnion(QVectorIterators&& itrs, doc_id_t docs_count,
                        score_t /*boost*/)
-    : _itrs{std::move(itrs)}, _attrs{docs_count} {}
+    : _itrs{std::move(itrs)}, _attrs{docs_count} {
+    for (auto& it : _itrs) {
+      it->BindThreshold(&_threshold.value);
+    }
+  }
 
   doc_id_t advance() final { SDB_UNREACHABLE(); }
   doc_id_t seek(doc_id_t) final { SDB_UNREACHABLE(); }
@@ -536,6 +595,9 @@ class DisjointClusterUnion : public DocIterator {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (type == Type<CostAttr>::id()) {
       return &_attrs;
+    }
+    if (type == Type<ScoreThresholdAttr>::id()) {
+      return &_threshold;
     }
     return nullptr;
   }
@@ -561,6 +623,7 @@ class DisjointClusterUnion : public DocIterator {
   QVectorIterators _itrs;
   std::vector<ScoreFunction> _scorers;
   CostAttr _attrs;
+  ScoreThresholdAttr _threshold;
 };
 
 }  // namespace
@@ -598,45 +661,41 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
   SDB_ASSERT(_state.reader);
-  SDB_ASSERT(_state.vector_column);
+  SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.codebook);
 
   const std::span<const float> query{_query};
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
 
-  if (_state.quant != VectorQuantization::None) {
-    SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
-    SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
-    SDB_ASSERT(_state.codebook);
-
-    if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
-      QVectorIterators children;
-      if (BuildClusterIterators(_state, _boost, children) &&
-          !children.empty()) {
-        return memory::make_managed<DisjointClusterUnion>(std::move(children),
-                                                          docs_count, _boost);
-      }
-    } else {
-      ScoreAdapters children;
-      if (BuildClusterIterators(_state, _boost, children) &&
-          !children.empty()) {
-        using Disjunction =
-          DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
-        DocIterator::ptr v = MakeDisjunction<Disjunction>(
-          WandContext{}, docs_count, std::move(children));
-        if (_inner) {
-          auto inner_it = _inner->Execute(ctx, stats);
-          if (!inner_it) {
-            return DocIterator::empty();
-          }
-          v = MergeWithInner(
-            std::move(v),
-            memory::make_managed<FilterIterator>(std::move(inner_it)),
-            docs_count, ScoreMergeType::Sum);
+  if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
+    QVectorIterators children;
+    if (BuildClusterIterators(_state, _boost, children) && !children.empty()) {
+      return memory::make_managed<DisjointClusterUnion>(std::move(children),
+                                                        docs_count, _boost);
+    }
+  } else {
+    ScoreAdapters children;
+    if (BuildClusterIterators(_state, _boost, children) && !children.empty()) {
+      using Disjunction =
+        DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
+      DocIterator::ptr v = MakeDisjunction<Disjunction>(
+        WandContext{}, docs_count, std::move(children));
+      if (_inner) {
+        auto inner_it = _inner->Execute(ctx, stats);
+        if (!inner_it) {
+          return DocIterator::empty();
         }
-        return ctx.top_k_collect ? std::move(v)
-                                 : WrapRawScorer(std::move(v), _segment, _state,
-                                                 query, _metric, _boost);
+        v = MergeWithInner(
+          std::move(v),
+          memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
+          ScoreMergeType::Sum);
       }
+      return ctx.top_k_collect || ctx.defer_exact_distance ||
+                 _state.quant == VectorQuantization::None
+               ? std::move(v)
+               : WrapRawScorer(std::move(v), _segment, _state, query, _metric,
+                               _boost);
     }
   }
 
@@ -651,7 +710,48 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
   SDB_ASSERT(_state.reader);
-  SDB_ASSERT(_state.vector_column);
+  SDB_ASSERT(!_state.pay_starts.empty() || _state.vector_column);
+
+  // RawVectorReader now yields "larger = nearer" scores, so map the radius into
+  // that scoring space: distance metrics (nearest = smallest) get negated.
+  const float threshold = VectorMetricIsAngular(_metric) ? _radius : -_radius;
+
+  // Gating from the payload is exact only without a quantizer; for a quantized
+  // index it just prunes, so it needs a consumer that rescores exactly.
+  const bool gate_on_pay =
+    !_state.pay_starts.empty() &&
+    (ctx.defer_exact_distance || _state.quant == VectorQuantization::None ||
+     _state.vector_column == nullptr);
+  if (gate_on_pay) {
+    const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
+    DocIterator::ptr res;
+    irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
+      ScoreAdapters children;
+      if (!BuildRangeClusterIterators<Inclusive>(_state, _boost, threshold,
+                                                 children) ||
+          children.empty()) {
+        return;
+      }
+      using Disjunction =
+        DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
+      res = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
+                                         std::move(children));
+    });
+    if (!res) {
+      return DocIterator::empty();
+    }
+    if (_inner) {
+      auto inner_it = _inner->Execute(ctx, stats);
+      if (!inner_it) {
+        return DocIterator::empty();
+      }
+      res = MergeWithInner(
+        std::move(res),
+        memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
+        ScoreMergeType::Sum);
+    }
+    return res;
+  }
 
   auto it = MakeRawReranker(_segment, _state, std::span<const float>{_query},
                             _metric, _boost, _inner.get(), ctx, stats);
@@ -659,9 +759,6 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
   DocIterator::ptr res;
-  // RawVectorReader now yields "larger = nearer" scores, so map the radius into
-  // that scoring space: distance metrics (nearest = smallest) get negated.
-  const float threshold = VectorMetricIsAngular(_metric) ? _radius : -_radius;
   irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
     auto v_it = memory::make_managed<VectorRangeIterator<Inclusive>>(
       std::move(it), threshold);

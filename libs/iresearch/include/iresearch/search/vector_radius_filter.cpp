@@ -26,6 +26,8 @@
 #include "basics/memory.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/formats_attributes.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/vector_filter_util.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
@@ -41,12 +43,36 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
 
   const auto* postings = segment.field(opts.postings_id);
   const auto* vector_col = segment.Column(field_id());
-  const auto* col_reader = segment.GetColReader();
-  if (!postings || !vector_col || !col_reader) {
+  const auto* ivf = segment.Ivf(opts.centroids_id);
+  if (!postings) {
     return QueryBuilder::Empty();
   }
-  if (opts.query.size() != vector_col->ArraySize()) {
-    return QueryBuilder::Empty();
+
+  bool use_pay =
+    ivf != nullptr && !ivf->Empty() && !QuantizerNeedsCentroid(opts.quant);
+
+  std::shared_ptr<const QuantizerCodebook> codebook;
+  uint32_t d = 0;
+  if (use_pay) {
+    d = static_cast<uint32_t>(ivf->Dim());
+    auto idx_in = segment.ReopenIvf();
+    if (!idx_in || opts.query.size() != d) {
+      return QueryBuilder::Empty();
+    }
+    codebook = ReadQuantizerCodebook(*ivf, *idx_in, opts.quant, d, opts.metric,
+                                     opts.query);
+    if (!codebook) {
+      use_pay = false;
+    }
+  }
+  const bool has_raw = vector_col != nullptr &&
+                       segment.GetColReader() != nullptr &&
+                       opts.query.size() == vector_col->ArraySize();
+  if (!use_pay) {
+    if (!has_raw) {
+      return QueryBuilder::Empty();
+    }
+    d = static_cast<uint32_t>(vector_col->ArraySize());
   }
 
   auto terms = postings->iterator(SeekMode::NORMAL);
@@ -57,13 +83,21 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
 
   VectorState state{ctx.memory};
   state.reader = postings;
-  state.vector_column = vector_col;
+  state.vector_column = has_raw ? vector_col : nullptr;
+  state.quant = opts.quant;
+  state.d = d;
+  state.codebook = std::move(codebook);
 
   CostAttr::Type estimation = 0;
   while (terms->next()) {
     terms->read();
     if (term_meta) {
       estimation += term_meta->docs_count;
+      if (use_pay) {
+        state.pay_starts.push_back(
+          static_cast<const TermMetaImpl*>(term_meta)->pay_start);
+        state.cluster_counts.push_back(term_meta->docs_count);
+      }
     }
     state.cookies.emplace_back(terms->cookie());
   }

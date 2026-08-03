@@ -126,6 +126,8 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius);
 
+bool VectorRerankFromSource(const SereneDBScanBindData& bind);
+
 enum class TsDictTermUses : uint8_t {
   kNone = 0,
   kFull = 1,

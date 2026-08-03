@@ -82,8 +82,9 @@ void HitBatcher::BeginSegment(
   // filter needs no columnstore reader; each `.col` filter binds its column.
   for (const auto& spec : filters) {
     if (spec.is_score && _track_scores) {
-      _score_filter = spec.filter;
-      _score_state = &states->State(*context, *spec.filter);
+      _score_filter =
+        spec.emitted_filter != nullptr ? spec.emitted_filter : spec.filter;
+      _score_state = &states->State(*context, *_score_filter);
     }
   }
   if (!filters.empty()) {

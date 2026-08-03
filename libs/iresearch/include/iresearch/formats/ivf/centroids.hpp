@@ -196,7 +196,7 @@ struct AssignedCentroids {
 
 struct CentroidsBuildParams {
   size_t posting_size = 0;
-  size_t max_fanout = 0;
+  size_t max_centroids = 0;
   double sample_factor = 0;
   uint64_t min_train_sample = 0;
 };

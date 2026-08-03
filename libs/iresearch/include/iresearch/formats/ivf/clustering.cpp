@@ -113,11 +113,10 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
   }
   k = static_cast<uint32_t>(std::min<size_t>(k, n));
 
-  if (VectorMetricIsAngular(metric)) {
-    const bool use_skm =
-      algo == ClusteringAlgo::FlatSuperKMeans ||
-      (algo == ClusteringAlgo::Auto && metric == VectorMetric::Cosine &&
-       SuperKMeansGate(d, k, kSuperKMeansSphericalMinK));
+  if (metric == VectorMetric::Cosine) {
+    const bool use_skm = algo == ClusteringAlgo::FlatSuperKMeans ||
+                         (algo == ClusteringAlgo::Auto &&
+                          SuperKMeansGate(d, k, kSuperKMeansSphericalMinK));
     if (use_skm) {
       auto centroids =
         RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);

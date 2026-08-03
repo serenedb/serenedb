@@ -551,12 +551,21 @@ float ReadIVFSampleFactor(duckdb::ClientContext& context) {
   return static_cast<float>(f);
 }
 
+uint32_t ReadIVFMaxCentroids(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  context.TryGetCurrentSetting("sdb_ivf_max_centroids", v);
+  SDB_ASSERT(!v.IsNull());
+  const auto n = v.GetValue<int32_t>();
+  SDB_ASSERT(n >= 0);
+  return static_cast<uint32_t>(n);
+}
+
 uint32_t ReadIVFPostingSize(duckdb::ClientContext& context) {
   duckdb::Value v;
   context.TryGetCurrentSetting("sdb_ivf_posting_size", v);
   SDB_ASSERT(!v.IsNull());
   const auto n = v.GetValue<int32_t>();
-  SDB_ASSERT(n >= 1);
+  SDB_ASSERT(n >= 0);
   return static_cast<uint32_t>(n);
 }
 
@@ -575,6 +584,7 @@ void ApplyIVFOpclass(
   ApplyIVFOptions(owner_label, *opts, cfg);
   cfg.sample_factor = ReadIVFSampleFactor(context);
   cfg.posting_size = ReadIVFPostingSize(context);
+  cfg.max_centroids = ReadIVFMaxCentroids(context);
   entry.ivf_config = cfg;
   entry.compression = cfg.compression
                         ? duckdb::CompressionType::COMPRESSION_AUTO

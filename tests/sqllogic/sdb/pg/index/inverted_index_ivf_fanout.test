@@ -32,16 +32,18 @@ SET sdb_ivf_max_search_fanout = -1;
 db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "-1"
 
 
-# ---- multi-level tree: posting_size=2, 10000 points ------------------------
-# The row count is load-bearing, not arbitrary. The build trains on
-# sample_factor * N rows with a leaf cap of tau = max(1, sample_factor *
-# posting_size) = 1, so the root only gains a second layer once that sample
-# exceeds the build fan-out cap: 0.2 * N > 1024, i.e. N > 5120. Below that every
-# root row is an early leaf, the tree is flat, and the descent never consults the
-# fanout at all -- the queries below would then pass no matter what this setting
-# did.
+# ---- multi-level tree: posting_size=2, max_centroids=1024, 10000 points -----
+# Both settings are load-bearing, not arbitrary. The tree only gains a second
+# layer when the sample-space leaf count exceeds max_centroids, and the build
+# square-roots the ideal child count while it does. Leaving max_centroids at 0
+# would pair posting_size with a root wide enough for every leaf -- a single flat
+# level -- and then the descent never consults the fanout at all, so the queries
+# below would pass no matter what this setting did.
 statement ok
 SET sdb_ivf_posting_size = 2;
+
+statement ok
+SET sdb_ivf_max_centroids = 1024;
 
 statement ok
 CREATE TABLE fan (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
@@ -152,6 +154,9 @@ count
 
 statement ok
 RESET sdb_ivf_posting_size;
+
+statement ok
+RESET sdb_ivf_max_centroids;
 
 statement ok
 RESET sdb_nprobe;

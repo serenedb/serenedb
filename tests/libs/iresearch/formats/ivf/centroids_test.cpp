@@ -105,7 +105,7 @@ std::vector<float> MakeDirClusters(uint32_t d, size_t n_clusters,
 }
 
 CentroidsBuildParams DeepParams() {
-  return {.posting_size = 4, .max_fanout = 4};
+  return {.posting_size = 4, .max_centroids = 4};
 }
 
 void WriteVectorColumn(Directory& dir, duckdb::DatabaseInstance& db,
@@ -584,7 +584,7 @@ TEST(clustering_test, cosine_centroids_are_unit_norm) {
 
 // Regression: a genuine >=3-layer tree must route every vector to the same leaf
 // id on the deserialized tree as the build-side AssignCentroids. A small
-// max_fanout square-roots the leaf count down over several layers, exercising
+// max_centroids square-roots the leaf count down over several layers, exercising
 // the descent leaf-id numbering across >=3 layers (the 2-layer case is covered
 // by multilevel_build_search_id_consistency).
 TEST(centroids_builder_test, three_level_build_search_id_consistency) {
@@ -592,7 +592,7 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
   const size_t n = data.size() / d;
 
-  const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
+  const CentroidsBuildParams params{.posting_size = 1, .max_centroids = 4};
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
   const size_t n_clusters = builder.NumClusters();
@@ -642,13 +642,13 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
 // more than n_leaves/2 == nprobe rows and the descent stays exhaustive.
 TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   constexpr uint32_t d = 8;
-  // posting_size=1 with a small max_fanout forces a deep tree whose every
+  // posting_size=1 with a small max_centroids forces a deep tree whose every
   // internal layer stays below the query nprobe, so a correct fanout visits
   // every node and Search is exact.
   const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
   const size_t n = data.size() / d;
 
-  const CentroidsBuildParams params{.posting_size = 1, .max_fanout = 4};
+  const CentroidsBuildParams params{.posting_size = 1, .max_centroids = 4};
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
 
@@ -867,7 +867,7 @@ TEST(centroids_node_test, two_layer_tree_floors_at_nprobe) {
 // Raising the fanout expands a superset of nodes at every layer, so the
 // explored leaf set can only grow and recall against brute force can only rise.
 // This is the property that makes an increase in the shipped default safe by
-// construction. Once the fanout reaches the build-side max_fanout every
+// construction. Once the fanout reaches the build-side max_centroids every
 // retained node expands all of its children, so the descent is exhaustive and
 // exact.
 TEST(centroids_builder_test, wider_fanout_does_not_lower_recall) {
@@ -876,7 +876,7 @@ TEST(centroids_builder_test, wider_fanout_does_not_lower_recall) {
   const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
 
   const CentroidsBuildParams params{.posting_size = 1,
-                                    .max_fanout = kMaxBuildFanout};
+                                    .max_centroids = kMaxBuildFanout};
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
 
@@ -1087,7 +1087,7 @@ TEST(clustering_test, superkmeans_injected_rotation_matches_self_init) {
                            injected.size() * sizeof(float)));
 }
 
-// A d>=32 build (SuperKMeans path) with a max_fanout below the leaf count
+// A d>=32 build (SuperKMeans path) with a max_centroids below the leaf count
 // yields a genuine multi-level tree whose deserialized Search routes every
 // training vector to the same leaf id as build-side AssignCentroids.
 // Well-separated blobs make greedy descent and beam search agree.
@@ -1098,7 +1098,7 @@ TEST(centroids_builder_test,
   const size_t n = data.size() / d;
   const size_t target_leaves = 1024;  // ceil(n / posting_size)
 
-  const CentroidsBuildParams params{.posting_size = 4, .max_fanout = 32};
+  const CentroidsBuildParams params{.posting_size = 4, .max_centroids = 32};
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
   const size_t n_clusters = builder.NumClusters();
@@ -1166,16 +1166,16 @@ TEST(clustering_test, superkmeans_angular_centroids_unit_norm) {
   }
 }
 
-// No node ever fans out past max_fanout, so the root is bounded by it: a large
+// No node ever fans out past max_centroids, so the root is bounded by it: a large
 // cap lets the root fan wide toward the leaf count (shallow), a small cap
 // square-roots the leaf count down over extra layers (deep).
-TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
+TEST(centroids_builder_test, root_fanout_capped_at_max_centroids) {
   constexpr uint32_t d = 8;
   const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/4);
 
-  const auto build = [&](size_t max_fanout) {
+  const auto build = [&](size_t max_centroids) {
     const CentroidsBuildParams params{.posting_size = 4,
-                                      .max_fanout = max_fanout};
+                                      .max_centroids = max_centroids};
     auto builder =
       CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
     SimpleMemoryAccounter memory;
@@ -1196,11 +1196,11 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
   };
 
   // 256 leaves <= cap -> root fans wide in one shot.
-  const auto [levels_hi, root_hi] = build(/*max_fanout=*/4096);
+  const auto [levels_hi, root_hi] = build(/*max_centroids=*/4096);
   EXPECT_LE(root_hi, 4096u);
   EXPECT_GT(root_hi, 8u);
   // 256 leaves > cap -> root bounded by the cap, tree goes multi-level.
-  const auto [levels_lo, root_lo] = build(/*max_fanout=*/8);
+  const auto [levels_lo, root_lo] = build(/*max_centroids=*/8);
   EXPECT_LE(root_lo, 8u);
   EXPECT_GE(levels_lo, 2u);
   EXPECT_GE(levels_lo, levels_hi);

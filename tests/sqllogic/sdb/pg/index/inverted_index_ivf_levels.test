@@ -1,24 +1,35 @@
 control substitution on
 
 # ============================================================================
-# Multi-level IVF centroid trees via sdb_ivf_posting_size.
+# Multi-level IVF centroid trees via sdb_ivf_posting_size + sdb_ivf_max_centroids.
 #
 # sdb_ivf_posting_size is the leaf cap t (target posting-list size, in vectors),
 # captured at CREATE INDEX. A tiny t drives the leaf count L = N/t above the
-# build-time per-node fan-out cap (1024); the top-down build then square-roots L
-# down to the cap over multiple layers, so the tree becomes multi-level and the
-# deep-descent read path is exercised. Points lie on a line so every query has a
-# unique exact-match nearest; a large nprobe also lifts the search width
-# (sdb_ivf_max_search_fanout is floored at nprobe), making the descent
-# exhaustive over leaves, so the asserted neighbor is exact.
+# per-node fan-out cap; the top-down build then square-roots L down to the cap
+# over multiple layers, so the tree becomes multi-level and the deep-descent read
+# path is exercised.
+#
+# Both settings must be pinned to get there. A tiny t on its own is not enough:
+# when sdb_ivf_max_centroids is left at 0 the build pairs it with a root wide
+# enough for L leaves (ceil(rows/t)), which is a single flat level by
+# construction. Pinning sdb_ivf_max_centroids below L is what forces the
+# square-rooting, so these tests set both.
+#
+# Points lie on a line so every query has a unique exact-match nearest; a large
+# nprobe also lifts the search width (sdb_ivf_max_search_fanout is floored at
+# nprobe), making the descent exhaustive over leaves, so the asserted neighbor is
+# exact.
 # ============================================================================
 
 statement ok
 SET sdb_nprobe = 100000;
 
-# ---- multi-level tree: posting_size=2, 10000 points (L=5000 > cap 4096) ------
+# ---- multi-level tree: posting_size=2, 10000 points (L=5000 > cap 1024) ------
 statement ok
 SET sdb_ivf_posting_size = 2;
+
+statement ok
+SET sdb_ivf_max_centroids = 1024;
 
 statement ok
 CREATE TABLE lvl3 (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
@@ -181,6 +192,9 @@ SELECT count(*) FROM mrg_idx;
 ----
 count
 2000
+
+statement ok
+RESET sdb_ivf_max_centroids;
 
 statement ok
 RESET sdb_nprobe;

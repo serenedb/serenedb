@@ -161,7 +161,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
 
 struct BuildSettings {
   size_t posting_size;
-  size_t max_fanout;
+  size_t max_centroids;
   VectorMetric metric;
   size_t niter;
 
@@ -171,7 +171,7 @@ struct BuildSettings {
 
   size_t Fanout(size_t sample_size) const noexcept {
     size_t f = (sample_size + posting_size - 1) / posting_size;
-    while (f > max_fanout) {
+    while (f > max_centroids) {
       f = static_cast<size_t>(std::ceil(std::sqrt(static_cast<double>(f))));
     }
     return std::max<size_t>(2, f);
@@ -470,10 +470,10 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
 }
 
 void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
-                                 size_t max_fanout) {
+                                 size_t max_centroids) {
   BuildSettings settings{
     .posting_size = std::max<size_t>(1, leaf_size),
-    .max_fanout = max_fanout,
+    .max_centroids = max_centroids,
     .metric = _metric,
     .niter = kClusterIters,
   };
@@ -494,12 +494,12 @@ CentroidsBuilder CentroidsBuilder::BuildFromSample(std::vector<float> sample,
                                                    uint32_t d,
                                                    VectorMetric metric,
                                                    size_t leaf_size,
-                                                   size_t max_fanout) {
+                                                   size_t max_centroids) {
   CentroidsBuilder builder;
   builder._metric = metric;
   builder._d = d;
-  builder.BuildTree(std::move(sample), leaf_size,
-                    max_fanout != 0 ? max_fanout : kMaxFanout);
+  SDB_ASSERT(max_centroids);
+  builder.BuildTree(std::move(sample), leaf_size, max_centroids);
   return builder;
 }
 
@@ -510,9 +510,9 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
   const size_t t = params.posting_size;
   SDB_ASSERT(t > 0);
 
-  size_t sample_size = params.sample_factor > 0
-                         ? static_cast<size_t>(params.sample_factor * rows)
-                         : (rows / t) * kTrainPointsPerLeaf;
+  size_t sample_size =
+    std::max<size_t>(static_cast<size_t>(params.sample_factor * rows),
+                     (rows / t) * kTrainPointsPerLeaf);
   sample_size = std::max<size_t>(sample_size, params.min_train_sample);
   sample_size = std::min<size_t>(sample_size, kMaxTrainSample);
   sample_size = std::min<size_t>(sample_size, rows);
@@ -524,7 +524,8 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
           1, static_cast<size_t>(static_cast<double>(sample_size) / rows * t));
   auto sample =
     GatherTrainingSample(vector_column, rows, d, ctx, sample_size, kTrainSeed);
-  return BuildFromSample(std::move(sample), d, metric, tau, params.max_fanout);
+  return BuildFromSample(std::move(sample), d, metric, tau,
+                         params.max_centroids);
 }
 
 CentroidsBuilder CentroidsBuilder::CreateFromSample(
@@ -532,7 +533,7 @@ CentroidsBuilder CentroidsBuilder::CreateFromSample(
   const CentroidsBuildParams& params) {
   SDB_ASSERT(params.posting_size > 0);
   return BuildFromSample(std::move(sample), d, metric, params.posting_size,
-                         params.max_fanout);
+                         params.max_centroids);
 }
 
 CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {

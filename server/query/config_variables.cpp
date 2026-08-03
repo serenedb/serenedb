@@ -392,16 +392,42 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_ivf_max_centroids",
+      {
+        LogicalTypeId::INTEGER,
+        "Cap on centroids produced by a single k-means, i.e. children per "
+        "centroid-tree node, captured into the index config at CREATE INDEX. "
+        "0 uses the built-in default (1024). Note this is not a clamp: the "
+        "build square-roots the ideal child count while it exceeds this value, "
+        "so a value above ceil(rows / sdb_ivf_posting_size) yields a single "
+        "flat level instead of a shallower tree.",
+        [] { return duckdb::Value::INTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 0) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_ivf_max_centroids\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
       "sdb_ivf_posting_size",
       {
         LogicalTypeId::INTEGER,
         "Target IVF posting-list size (leaf cap t), captured into the index "
         "config at CREATE INDEX. Smaller values force deeper multi-level "
-        "centroid trees (useful for testing). Default 1024.",
-        [] { return duckdb::Value::INTEGER(1024); },
+        "centroid trees (useful for testing). 0 derives it from the segment row "
+        "count, the vector width and the quantizer's scan cost, and pairs it "
+        "with a sdb_ivf_max_centroids wide enough for a single flat level; "
+        "setting sdb_ivf_max_centroids explicitly instead raises the derived "
+        "posting size to keep that one level. Default 0 (auto).",
+        [] { return duckdb::Value::INTEGER(0); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
-          if (n < 1) {
+          if (n < 0) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"sdb_ivf_posting_size\": \"",

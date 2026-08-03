@@ -690,13 +690,19 @@ set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
 set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 
 ################################################################################
-## Azure SDK (monolithic build) + libxml2
+## libxml2
 ################################################################################
 
 sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 add_subdirectory(libxml2-cmake)
+
+################################################################################
+## Azure SDK (monolithic build)
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
 add_subdirectory(azure-cmake)
 
 ################################################################################
@@ -773,17 +779,6 @@ target_include_directories(
     SYSTEM
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
 )
-
-# duckdb_azure pins CMAKE_CXX_STANDARD to 17 in its own CMakeLists, but our
-# abseil (pulled in via duckdb fork headers) needs the project standard.
-foreach(_azure_ext_target azure_extension azure_loadable_extension)
-    if(TARGET ${_azure_ext_target})
-        set_target_properties(
-            ${_azure_ext_target}
-            PROPERTIES CXX_STANDARD ${CMAKE_CXX_STANDARD}
-        )
-    endif()
-endforeach()
 
 # Link extension objects that aren't automatically included in duckdb_static
 target_link_libraries(

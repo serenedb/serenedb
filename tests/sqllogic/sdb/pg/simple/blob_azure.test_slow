@@ -1,6 +1,6 @@
 control substitution on
 
-# Azure blob storage over Azurite (launched by run.sh for *_azurite.test_slow):
+# Azure blob storage over Azurite (launched by run.sh for *_azure.test_slow):
 # csv/tsv/parquet COPY roundtrips, table-function scans, globbing, and corner
 # cases. Error-message expectations hardcode the launcher's container name
 # ('testcont' = AZURITE_BLOB_CONTAINER) because substitution is not applied to
@@ -353,11 +353,11 @@ statement ok
 CREATE OR REPLACE SECRET azurite_ghost_${__DATABASE__} (
   TYPE azure,
   CONNECTION_STRING '${AZURITE_CONNECTION_STRING}',
-  SCOPE 'az://corner-ghost/'
+  SCOPE 'az://absent-container/'
 );
 
 
 statement error
-SELECT * FROM read_csv('az://corner-ghost/x.csv');
+SELECT * FROM read_csv('az://absent-container/x.csv');
 ----
-db error: ERROR: AzureBlobStorageFileSystem Read to az://corner-ghost/x.csv/**/*.csv failed with ContainerNotFound Reason Phrase: The specified container does not exist.
+db error: ERROR: AzureBlobStorageFileSystem Read to az://absent-container/x.csv/**/*.csv failed with ContainerNotFound Reason Phrase: The specified container does not exist.

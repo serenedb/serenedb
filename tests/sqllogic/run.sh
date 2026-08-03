@@ -161,7 +161,7 @@ cleanup_minio() {
 	fi
 }
 
-cleanup_azurite() {
+cleanup_azure() {
 	if [[ -n "$AZURITE_CONTAINER_NAME" ]]; then
 		local name="$AZURITE_CONTAINER_NAME"
 		AZURITE_CONTAINER_NAME=""
@@ -242,7 +242,7 @@ cleanup_all() {
 	cleanup_postgres
 	cleanup_clickhouse
 	cleanup_minio
-	cleanup_azurite
+	cleanup_azure
 	cleanup_test_network
 }
 
@@ -307,7 +307,7 @@ launch_s3() {
 	echo
 }
 
-launch_azurite() {
+launch_azure() {
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	AZURITE_CONTAINER_NAME="${prefix}-serenedb-test-azurite-$$"
@@ -687,7 +687,7 @@ PY
 launch_external() {
 	shopt -s globstar
 	local pattern test_files f
-	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false needs_azurite=false
+	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false needs_azure=false
 	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
@@ -700,11 +700,11 @@ launch_external() {
 			# package RTA, which has no docker -- exclude it. An external-service
 			# suffix on a plain .test is a mistake; fail loudly instead of
 			# letting the service launch blow up later.
-			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test | *_chscan.test | *_azurite.test)
+			*_s3.test | *_iceberg.test | *_ollama.test | *_pgscan.test | *_chscan.test | *_azure.test)
 				misnamed+=("$f")
 				;;
 			*_s3.test_slow) needs_s3=true ;;
-			*_azurite.test_slow) needs_azurite=true ;;
+			*_azure.test_slow) needs_azure=true ;;
 			*_iceberg.test_slow) needs_iceberg=true ;;
 			*_ollama.test_slow) needs_ollama=true ;;
 			*_pgscan.test_slow) needs_postgres=true ;;
@@ -740,8 +740,8 @@ launch_external() {
 	if [[ "$needs_s3" == "true" ]]; then
 		launch_s3
 	fi
-	if [[ "$needs_azurite" == "true" ]]; then
-		launch_azurite
+	if [[ "$needs_azure" == "true" ]]; then
+		launch_azure
 	fi
 	if [[ "$needs_iceberg" == "true" ]]; then
 		launch_iceberg_rest

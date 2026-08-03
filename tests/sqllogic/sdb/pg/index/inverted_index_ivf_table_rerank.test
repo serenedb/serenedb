@@ -9,7 +9,8 @@ hash-threshold 100
 #     store_pk = 'none' (TopK and both Stream shapes) and an expression-keyed
 #     vector field
 #   - a score predicate, which must apply to exact scores
-#   - a radius predicate, where gating is approximate but membership is not
+#   - a radius predicate: an approximate range, where count(*) and the emitted
+#     rows must still agree because both consult the same gate
 #   - MVCC: the index snapshot and the source read must agree
 
 statement ok
@@ -211,10 +212,12 @@ pk
 2
 
 # --- a radius predicate on a quantized index ---------------------------------
-# Gating runs on the lossy payload distance, so the radius only prunes; the
-# predicate stays in the plan and is re-checked against the exact score. That
-# leaves NO false positives -- every row returned really is within the radius,
-# and the count matches -- at the cost of false negatives at the boundary.
+# A quantized index answers the range APPROXIMATELY: membership is decided by the
+# lossy payload distance alone, and the exact distance is resolved only for the
+# rows that survive. So a returned row may report a distance outside the radius,
+# and a row just inside it may be missed -- both are accepted, and the predicate
+# is therefore not kept above the scan. What must hold is consistency: every path
+# has to use the same gate, so count(*) always equals the number of rows emitted.
 
 query
 SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_flt_sq8
@@ -236,15 +239,46 @@ SELECT count(*) AS n FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 13;
 n
 3
 
-# The one visible cost of approximate gating: pk 3's exact distance IS 12, but
-# its quantized distance rounds just above the radius, so the pruning step drops
-# it and the exact re-check above the scan cannot bring it back. An unquantized
-# index returns 3 here.
+# The visible cost of an approximate range: pk 3's exact distance IS 12, but its
+# quantized distance rounds just above the radius, so the gate drops it. An
+# unquantized index returns 3 here.
 query
 SELECT count(*) AS n FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12;
 ----
 n
 2
+
+# The consistency property, which is what actually has to be enforced: counting
+# and emitting go through different scan modes, and both must ask the same gate.
+# Counting through an exact rescan while emitting used the payload gate reported
+# 3 here against 2 rows.
+query
+SELECT count(*) AS emitted FROM (
+  SELECT pk FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12
+) q;
+----
+emitted
+2
+
+# And the predicate must not survive above the scan: a Column Filter here would
+# re-check the exact score and silently turn the approximate range back into a
+# half-exact one.
+query
+EXPLAIN SELECT pk FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───╮
+│ Index: tr_flt_sq8  │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: l2     │ │
+│ │ Radius: <= 12  │ │
+│ ╰────────────────╯ │
+│ Projections: pk    │
+│ ~4 rows            │
+╰────────────────────╯
 
 statement ok
 CREATE TABLE tr_flt_n (pk INTEGER PRIMARY KEY, emb FLOAT[3])

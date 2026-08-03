@@ -1651,7 +1651,9 @@ uint32_t WhereLiveDocs(irs::TermIterator& it, const irs::SubReader& seg,
   std::vector<irs::ScoreAdapter> itrs;
   itrs.reserve(2);
   itrs.emplace_back(it.postings(irs::IndexFeatures::None));
-  itrs.emplace_back(where.Execute({}, irs::StatsBuffer::Empty()));
+  itrs.emplace_back(where.Execute(
+    {.defer_exact_distance = cf.g != nullptr && cf.g->vector_rerank_from_table},
+    irs::StatsBuffer::Empty()));
   return CountDocs(irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
                                         seg.docs_count(), std::move(itrs)),
                    seg, count_all, cf);
@@ -2417,9 +2419,14 @@ void RunCountScan(IResearchScanGlobalState& g, CountScanLocalState& l,
       continue;
     }
     const auto& seg_query = EnsureSegmentQuery(g, l, sub, seg);
-    auto doc = MaybeWrapColFilter(
-      sub.mask(seg_query.Execute({}, irs::StatsBuffer::Empty())), sub,
-      l.seg_cls.active, g, l.filter_states);
+    // Counting must define membership exactly as emitting does: a quantized
+    // vector range gates on the payload, so the count has to come from the same
+    // gate rather than from an exact rescan.
+    auto doc =
+      MaybeWrapColFilter(sub.mask(seg_query.Execute(
+                           {.defer_exact_distance = g.vector_rerank_from_table},
+                           irs::StatsBuffer::Empty())),
+                         sub, l.seg_cls.active, g, l.filter_states);
     l.local_count += doc->count();
   }
   if (l.local_emitted >= l.local_count) {
@@ -2679,9 +2686,10 @@ void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   _next_field = fields.empty() ? nullptr : fields.data();
   if (g.filter) {
     const auto& query = EnsureSegmentQuery(g, *this, seg, seg_idx);
-    auto probe =
-      MaybeWrapColFilter(query.Execute({}, irs::StatsBuffer::Empty()), seg,
-                         seg_cls.active, g, filter_states);
+    auto probe = MaybeWrapColFilter(
+      query.Execute({.defer_exact_distance = g.vector_rerank_from_table},
+                    irs::StatsBuffer::Empty()),
+      seg, seg_cls.active, g, filter_states);
     if (irs::doc_limits::eof(probe->advance())) {
       _next_field = nullptr;
       return;

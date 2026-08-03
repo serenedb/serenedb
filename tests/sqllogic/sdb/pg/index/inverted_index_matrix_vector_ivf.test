@@ -155,40 +155,36 @@ EXPLAIN SELECT pk FROM m_vec_ivf_st
   WHERE emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 1.5;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: m_vec_ivf_st            │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Vector Range ─╮             │
-│ │ Field: emb     │             │
-│ │ Metric: l2     │             │
-│ │ Radius: < 1.5  │             │
-│ ╰────────────────╯             │
-│ Column Filter:                 │
-│ sdb_inverted_index_score < 1.5 │
-│ Projections: pk                │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────╮
+│ Index: m_vec_ivf_st │
+│ Lookup: table       │
+│ Index Filter:       │
+│ ╭─ Vector Range ─╮  │
+│ │ Field: emb     │  │
+│ │ Metric: l2     │  │
+│ │ Radius: < 1.5  │  │
+│ ╰────────────────╯  │
+│ Projections: pk     │
+│ ~3 rows             │
+╰─────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM m_vec_ivf_expr_ns
   WHERE (emb) <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3] < 1.5;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: m_vec_ivf_expr_ns       │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Vector Range ─╮             │
-│ │ Field: emb     │             │
-│ │ Metric: l2     │             │
-│ │ Radius: < 1.5  │             │
-│ ╰────────────────╯             │
-│ Column Filter:                 │
-│ sdb_inverted_index_score < 1.5 │
-│ Projections: pk                │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: m_vec_ivf_expr_ns │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Vector Range ─╮       │
+│ │ Field: emb     │       │
+│ │ Metric: l2     │       │
+│ │ Radius: < 1.5  │       │
+│ ╰────────────────╯       │
+│ Projections: pk          │
+│ ~3 rows                  │
+╰──────────────────────────╯
 
 query
 SELECT pk FROM m_vec_floats_expr_ns

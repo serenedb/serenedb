@@ -137,20 +137,18 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <-> emb < 0.7;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: l2_index                │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Vector Range ─╮             │
-│ │ Field: emb     │             │
-│ │ Metric: l2     │             │
-│ │ Radius: < 0.7  │             │
-│ ╰────────────────╯             │
-│ Column Filter:                 │
-│ sdb_inverted_index_score < 0.7 │
-│ Projections: id                │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Index: l2_index    │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: l2     │ │
+│ │ Radius: < 0.7  │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 
@@ -172,24 +170,22 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE 1 > l2_distance(emb, [1, 1, 1]::FLOAT[3]) ORDER BY id;
 ----
 QUERY PLAN
-╭─ ORDER_BY ─────────────────────╮
-│ Order By: l2_index.id ASC      │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: l2_index                │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Vector Range ─╮             │
-│ │ Field: emb     │             │
-│ │ Metric: l2     │             │
-│ │ Radius: < 1    │             │
-│ ╰────────────────╯             │
-│ Column Filter:                 │
-│ sdb_inverted_index_score < 1   │
-│ Projections: id                │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ ORDER_BY ────────────────╮
+│ Order By: l2_index.id ASC │
+│ ~4 rows                   │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: l2_index           │
+│ Lookup: table             │
+│ Index Filter:             │
+│ ╭─ Vector Range ─╮        │
+│ │ Field: emb     │        │
+│ │ Metric: l2     │        │
+│ │ Radius: < 1    │        │
+│ ╰────────────────╯        │
+│ Projections: id           │
+│ ~4 rows                   │
+╰───────────────────────────╯
 
 
 query
@@ -211,24 +207,22 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id % 2 = 0;
 ----
 QUERY PLAN
-╭─ FILTER ───────────────────────╮
-│ Expression: (id % 2) = 0       │
-│ ~1 row                         │
-╰────────────────┬───────────────╯
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: l2_index                │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Vector Range ─╮             │
-│ │ Field: emb     │             │
-│ │ Metric: l2     │             │
-│ │ Radius: < 100  │             │
-│ ╰────────────────╯             │
-│ Column Filter:                 │
-│ sdb_inverted_index_score < 100 │
-│ Projections: id                │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ FILTER ─────────────────╮
+│ Expression: (id % 2) = 0 │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: l2_index          │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Vector Range ─╮       │
+│ │ Field: emb     │       │
+│ │ Metric: l2     │       │
+│ │ Radius: < 100  │       │
+│ ╰────────────────╯       │
+│ Projections: id          │
+│ ~4 rows                  │
+╰──────────────────────────╯
 
 
 
@@ -272,20 +266,18 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE emb <-> '[0, 0, 0]'::FLOAT[3] < (0.5 + 0.2);
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: l2_index                │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Vector Range ─╮             │
-│ │ Field: emb     │             │
-│ │ Metric: l2     │             │
-│ │ Radius: < 0.7  │             │
-│ ╰────────────────╯             │
-│ Column Filter:                 │
-│ sdb_inverted_index_score < 0.7 │
-│ Projections: id                │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Index: l2_index    │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: l2     │ │
+│ │ Radius: < 0.7  │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 query
@@ -533,20 +525,18 @@ query
 EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.5;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: cos_index               │
-│ Lookup: table                  │
-│ Index Filter:                  │
-│ ╭─ Vector Range ─╮             │
-│ │ Field: emb     │             │
-│ │ Metric: cosine │             │
-│ │ Radius: < 0.5  │             │
-│ ╰────────────────╯             │
-│ Column Filter:                 │
-│ sdb_inverted_index_score < 0.5 │
-│ Projections: id                │
-│ ~1 row                         │
-╰────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───╮
+│ Index: cos_index   │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: cosine │ │
+│ │ Radius: < 0.5  │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~4 rows            │
+╰────────────────────╯
 
 
 query
@@ -925,63 +915,59 @@ query
 EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 200 AND cosine_distance(emb, [0, 0, 0]::FLOAT[3]) < 0.5;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────╮
-│ Index: l2_index                        │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector Range ─╮                     │
-│ │ Field: emb     │                     │
-│ │ Metric: l2     │                     │
-│ │ Radius: < 200  │                     │
-│ ╰────────────────╯                     │
-│ Column Filter:                         │
-│ cosine_distance(emb, [0, 0, 0]) < 0.5, │
-│ sdb_inverted_index_score < 200         │
-│ Projections: id                        │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: l2_index                       │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Vector Range ─╮                    │
+│ │ Field: emb     │                    │
+│ │ Metric: l2     │                    │
+│ │ Radius: < 200  │                    │
+│ ╰────────────────╯                    │
+│ Column Filter:                        │
+│ cosine_distance(emb, [0, 0, 0]) < 0.5 │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
 
 
 query
 EXPLAIN SELECT id FROM l2_index WHERE cosine_distance(emb, [0, 0, 0]::FLOAT[3]) < 0.5 AND emb <-> [0, 0, 0]::FLOAT[3] < 200;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────╮
-│ Index: l2_index                        │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Vector Range ─╮                     │
-│ │ Field: emb     │                     │
-│ │ Metric: l2     │                     │
-│ │ Radius: < 200  │                     │
-│ ╰────────────────╯                     │
-│ Column Filter:                         │
-│ cosine_distance(emb, [0, 0, 0]) < 0.5, │
-│ sdb_inverted_index_score < 200         │
-│ Projections: id                        │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: l2_index                       │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Vector Range ─╮                    │
+│ │ Field: emb     │                    │
+│ │ Metric: l2     │                    │
+│ │ Radius: < 200  │                    │
+│ ╰────────────────╯                    │
+│ Column Filter:                        │
+│ cosine_distance(emb, [0, 0, 0]) < 0.5 │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
 
 
 query
 EXPLAIN SELECT id FROM proj_idx WHERE category = 1 AND emb <-> [0, 0, 0]::FLOAT[3] < 200;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: proj_idx                 │
-│ Lookup: table                   │
-│ Index Filter:                   │
-│ ╭─ Vector Range ─╮              │
-│ │ Field: emb     │              │
-│ │ Metric: l2     │              │
-│ │ Radius: < 200  │              │
-│ ╰────────────────╯              │
-│ Column Filter:                  │
-│ category = 1,                   │
-│ sdb_inverted_index_score < 200  │
-│ Projections: id                 │
-│ ~1 row                          │
-╰─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: proj_idx             │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Vector Range ─╮          │
+│ │ Field: emb     │          │
+│ │ Metric: l2     │          │
+│ │ Radius: < 200  │          │
+│ ╰────────────────╯          │
+│ Column Filter: category = 1 │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 
 statement ok

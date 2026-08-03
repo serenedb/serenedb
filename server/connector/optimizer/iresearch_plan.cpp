@@ -1008,14 +1008,7 @@ bool TryClaimAnnRange(
     }
     scan.vector_scorer->radius = radius;
     scan.vector_scorer->radius_inclusive = inclusive;
-    // Approximate gating only prunes, so the predicate has to stay in the plan
-    // and be re-checked against the exact score.
-    const bool approx_gating =
-      connector::VectorRerankFromSource(scan) &&
-      !irs::QuantizerNeedsCentroid(scan.vector_scorer->quant);
-    if (!approx_gating) {
-      filters.erase(filters.begin() + i);
-    }
+    filters.erase(filters.begin() + i);
     return true;
   }
   return false;

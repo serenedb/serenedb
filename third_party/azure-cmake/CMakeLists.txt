@@ -8,7 +8,6 @@ file(GLOB AZURE_SDK_SRC
     "${AZURE_SDK_LIBRARY_DIR}/core/azure-core/src/credentials/*.cpp"
     "${AZURE_SDK_LIBRARY_DIR}/core/azure-core/src/cryptography/*.cpp"
     "${AZURE_SDK_LIBRARY_DIR}/core/azure-core/src/http/*.cpp"
-    "${AZURE_SDK_LIBRARY_DIR}/core/azure-core/src/http/curl/*.cpp"
     "${AZURE_SDK_LIBRARY_DIR}/core/azure-core/src/io/*.cpp"
     "${AZURE_SDK_LIBRARY_DIR}/core/azure-core/src/tracing/*.cpp"
     "${AZURE_SDK_LIBRARY_DIR}/identity/azure-identity/src/*.cpp"
@@ -29,13 +28,13 @@ set(AZURE_SDK_INCLUDES
 
 add_library(_azure_sdk STATIC ${AZURE_SDK_SRC})
 
-target_compile_definitions(_azure_sdk PRIVATE BUILD_CURL_HTTP_TRANSPORT_ADAPTER)
+# The transport is provided by duckdb_azure (see azure_duckdb_transport.cpp),
+# resolved at final link via AzureSdkGetCustomHttpTransport.
+target_compile_definitions(_azure_sdk PRIVATE BUILD_TRANSPORT_CUSTOM_ADAPTER)
 
 target_include_directories(_azure_sdk SYSTEM BEFORE PUBLIC ${AZURE_SDK_INCLUDES})
-target_include_directories(_azure_sdk SYSTEM PRIVATE ${CURL_INCLUDE_DIRS})
 
 target_link_libraries(_azure_sdk PRIVATE
-    CURL::libcurl
     OpenSSL::Crypto
     OpenSSL::SSL
     _libxml2

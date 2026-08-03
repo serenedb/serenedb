@@ -360,4 +360,4 @@ CREATE OR REPLACE SECRET azurite_ghost_${__DATABASE__} (
 statement error
 SELECT * FROM read_csv('az://absent-container/x.csv');
 ----
-db error: ERROR: AzureBlobStorageFileSystem Read to az://absent-container/x.csv/**/*.csv failed with ContainerNotFound Reason Phrase: The specified container does not exist.
+db error: ERROR: AzureBlobStorageFileSystem Read to az://absent-container/x.csv/**/*.csv failed with ContainerNotFound Reason Phrase: Not Found

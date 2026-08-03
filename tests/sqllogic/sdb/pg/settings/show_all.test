@@ -46,7 +46,6 @@ azure_proxy_password	NULL	Http proxy password if needed.
 azure_proxy_user_name	NULL	Http proxy user name if needed.
 azure_read_buffer_size	8388608	Size of the read buffer.
 azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
-azure_transport_option_type	default	Underlying adapter to use with the Azure SDK. Read more about the adapter at https://github.com/Azure/azure-sdk-for-cpp/blob/main/doc/HttpTransportAdapter.md. Valid values are: default, curl
 azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
@@ -385,7 +384,6 @@ azure_proxy_password	NULL	Http proxy password if needed.
 azure_proxy_user_name	NULL	Http proxy user name if needed.
 azure_read_buffer_size	8388608	Size of the read buffer.
 azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
-azure_transport_option_type	default	Underlying adapter to use with the Azure SDK. Read more about the adapter at https://github.com/Azure/azure-sdk-for-cpp/blob/main/doc/HttpTransportAdapter.md. Valid values are: default, curl
 azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.

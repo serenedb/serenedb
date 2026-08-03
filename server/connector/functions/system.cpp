@@ -952,7 +952,7 @@ bool HasObjectPrivilegeByName(const catalog::Snapshot& snapshot,
             catalog::AclMode::NoRights ||
           (modes.grant_options & catalog::AclMode::Create) !=
             catalog::AclMode::NoRights) {
-        return snapshot.ClosureFor(role_id).is_superuser;
+        return snapshot.ClosureFor(role_id).IsSuperuser();
       }
       return true;
     }

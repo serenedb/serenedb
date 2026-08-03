@@ -110,7 +110,7 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
 
 void RequireHbaSuperuser(duckdb::ClientContext& ctx) {
   auto& conn = connector::GetSereneDBContext(ctx);
-  if (!conn.CatalogSnapshot()->ClosureFor(conn.GetRoleId()).is_superuser) {
+  if (!conn.CatalogSnapshot()->ClosureFor(conn.GetRoleId()).IsSuperuser()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to set parameter \"hba\""),

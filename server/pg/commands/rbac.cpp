@@ -253,7 +253,7 @@ catalog::RoleOption SetBit(catalog::RoleOption options, catalog::RoleOption bit,
 
 void SyncIsSuperuser(ConnectionContext& conn) {
   const bool super =
-    conn.CatalogSnapshot()->ClosureFor(conn.GetRoleId()).is_superuser;
+    conn.CatalogSnapshot()->ClosureFor(conn.GetRoleId()).IsSuperuser();
   conn.SetSetting("is_superuser", super ? "on" : "off", /*is_local=*/false);
 }
 
@@ -326,7 +326,7 @@ std::string SetRole(ConnectionContext& conn, std::string_view name) {
   // SET ROLE is relative to the session role, not the (possibly already
   // switched) effective role: members-of via set_option edges, or superuser.
   const ObjectId session = conn.GetSessionRoleId();
-  if (!snapshot->ClosureFor(session).is_superuser &&
+  if (!snapshot->ClosureFor(session).IsSuperuser() &&
       !auth::ComputeSetRoleClosure(*snapshot, session)
          .contains(target->GetId())) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -351,7 +351,7 @@ std::string SetSessionAuthorization(ConnectionContext& conn,
                     ERR_MSG("role \"", name, "\" does not exist"));
   }
   const bool login_super =
-    snapshot->ClosureFor(conn.GetLoginRoleId()).is_superuser;
+    snapshot->ClosureFor(conn.GetLoginRoleId()).IsSuperuser();
   if (!login_super && target->GetId() != conn.GetLoginRoleId()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -574,7 +574,7 @@ struct AclGrantContext {
 void ApplyAclGrant(const catalog::Snapshot& live, ObjectId owner,
                    catalog::Acl& acl, const AclGrantContext& gc) {
   const auto& rc = live.ClosureFor(gc.current_id);
-  const bool is_superuser = rc.is_superuser;
+  const bool is_superuser = rc.IsSuperuser();
   if (gc.granted_by_id.isSet() && !is_superuser &&
       !auth::ComputeMembershipClosure(live, gc.current_id)
          .contains(gc.granted_by_id)) {

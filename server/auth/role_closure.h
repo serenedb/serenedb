@@ -29,6 +29,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/role.h"
 
 namespace sdb::catalog {
 
@@ -58,19 +59,24 @@ struct RoleClosure {
   // The set of roles this principal acts as (its own membership closure),
   // kept sorted for binary search.
   std::vector<ObjectId> closure;
-  // A superuser bypasses every membership / ownership / privilege check. It is
-  // folded into the predicates below so callers never test it by hand -- read
-  // it directly only for non-authz needs (e.g. the is_superuser GUC, or the
-  // permission-to-SET-ROLE decision, which is about the actor, not an object).
-  bool is_superuser = false;
-  // BYPASSRLS, the start role's own attribute. Unlike is_superuser it is not
-  // folded into the predicates below -- it grants nothing except exemption from
-  // row-level security, so only RLS reads it.
-  bool bypasses_rls = false;
+  // The start role's own attributes, never inherited (PG: role attributes are
+  // not transitive through membership). Mirrors catalog::Role's own accessors.
+  catalog::RoleOption options = catalog::RoleOption::None;
+
+  bool Has(catalog::RoleOption o) const noexcept {
+    return (options & o) != catalog::RoleOption::None;
+  }
+  // Superuser is the one attribute folded into the predicates below, so callers
+  // never test it by hand -- read it directly only where the question really is
+  // about the actor (the is_superuser GUC, the permission to SET ROLE), or where
+  // an object-level rule deliberately exempts it (FORCE ROW LEVEL SECURITY).
+  bool IsSuperuser() const noexcept {
+    return Has(catalog::RoleOption::Superuser);
+  }
 
   // Does this principal act as role `r`? (member-of-or-equals; superuser: all.)
   bool MemberOf(ObjectId r) const {
-    return is_superuser || std::ranges::binary_search(closure, r);
+    return IsSuperuser() || std::ranges::binary_search(closure, r);
   }
 
   // Does this principal own an object owned by `owner`? A superuser owns

@@ -3716,7 +3716,7 @@ void Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
     const auto& rc = _snapshot->ClosureFor(ax.role);
     // A superuser bypasses every ALTER OWNER check (owner, SET-ROLE-to-new,
     // and CREATE on the target schema).
-    if (rc.is_superuser) {
+    if (rc.IsSuperuser()) {
       return;
     }
     if (!rc.Owns(obj)) {

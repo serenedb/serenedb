@@ -111,8 +111,7 @@ RoleClosure ComputeRoleClosure(const catalog::Snapshot& snapshot,
   std::ranges::sort(out.closure);
   // The superuser bit is the start role's own attribute -- never inherited.
   if (auto start = snapshot.GetObject<catalog::Role>(role)) {
-    out.is_superuser = start->IsSuperuser();
-    out.bypasses_rls = start->Has(catalog::RoleOption::BypassRls);
+    out.options = start->Options();
   }
   return out;
 }

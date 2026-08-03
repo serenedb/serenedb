@@ -104,7 +104,7 @@ bool BypassesRls(const auth::RoleClosure& closure, const catalog::Table& table,
                  bool forced) {
   // is_superuser is tested explicitly, not left to Owns() folding it in: FORCE
   // ROW LEVEL SECURITY subjects the owner to policies, but never a superuser.
-  return closure.is_superuser || closure.bypasses_rls ||
+  return closure.IsSuperuser() || closure.Has(catalog::RoleOption::BypassRls) ||
          (!forced && closure.Owns(table));
 }
 

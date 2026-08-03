@@ -26,6 +26,7 @@
 #include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/storage/table/row_group_collection.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
+#include <iresearch/index/directory_reader.hpp>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
@@ -36,6 +37,7 @@
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 
@@ -77,8 +79,7 @@ TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
 duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(_inverted_index->GetId());
+  auto& conn_ctx = GetSereneDBContext(context);
   auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
@@ -89,10 +90,25 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     data->column_types.push_back(col.type);
   }
   data->table_entry = this;
-  data->entry_kind = ScanEntryKind::InvertedIndex;
-  data->inverted_index = _inverted_index;
-  data->lookup_label = "table";
-  data->snapshot = std::move(snapshot);
+
+  if (_sdb_table->GetEngine() == catalog::TableEngine::Search) {
+    // Storage-less index: it shares the table's own iresearch store, so serve
+    // the scan exactly like a plain search-table scan -- every column from the
+    // columnstore + the generated-PK rowid, the shard's merged config (which
+    // already folds in this index) drives pushdown. No separate index reader.
+    const auto& search = _sdb_table->GetData();
+    auto reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
+      _sdb_table->GetId(), [&] { return search->GetDirectoryReader(); });
+    data->entry_kind = ScanEntryKind::SearchTable;
+    data->lookup_label = "search";
+    data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
+      irs::DirectoryReader{*reader});
+  } else {
+    data->entry_kind = ScanEntryKind::InvertedIndex;
+    data->inverted_index = _inverted_index;
+    data->lookup_label = "table";
+    data->snapshot = conn_ctx.EnsureSearchSnapshot(_inverted_index->GetId());
+  }
   bind_data = std::move(data);
   return CreateIResearchScanFunction();
 }

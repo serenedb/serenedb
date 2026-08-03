@@ -58,6 +58,8 @@ namespace {
 struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
+  // DDL snapshot the insert runs against; resolves index-column analyzers.
+  std::shared_ptr<const catalog::Snapshot> snapshot;
   query::Transaction* sdb_txn = nullptr;
   std::vector<catalog::Column::Id> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
@@ -246,6 +248,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   }
 
   state->sdb_txn = &conn_ctx;
+  state->snapshot = std::move(snapshot);
 
   return state;
 }
@@ -267,8 +270,8 @@ SereneDBSearchInsert::GetLocalSinkState(
   if (lstate->bulk) {
     lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
       gstate->search_table->GetTransaction());
-    lstate->sink =
-      MakeSearchTableInsertSink(*lstate->search_trx, *gstate->search_table);
+    lstate->sink = MakeSearchTableInsertSink(
+      *lstate->search_trx, *gstate->search_table, gstate->snapshot);
   }
   return lstate;
 }
@@ -288,7 +291,8 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
     auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
       gstate.search_table,
       [&] { return gstate.search_table->GetTransaction(); });
-    lstate->sink = MakeSearchTableInsertSink(trx, *gstate.search_table);
+    lstate->sink =
+      MakeSearchTableInsertSink(trx, *gstate.search_table, gstate.snapshot);
   }
 
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;

@@ -119,18 +119,29 @@ inline EntryInfoProvider AllStoredEntryInfoProvider() {
   return [](irs::field_id) { return AllStoredEntry(); };
 }
 
-inline EntryInfoProvider MakeSearchTableEntryInfoProvider(
-  const search::SearchTable& shard) {
-  return
-    [&shard](irs::field_id field_id) -> const catalog::InvertedIndexEntryInfo* {
-      const auto* entry =
-        shard.FindColumnInfo(static_cast<catalog::Column::Id>(field_id));
-      return entry ? entry : AllStoredEntry();
-    };
+// Providers over one immutable SearchTable index-config snapshot. Holding the
+// shared_ptr for the sink's lifetime keeps entry pointers valid even if a
+// concurrent CREATE/DROP INDEX swaps in a new config.
+inline EntryInfoProvider MakeConfigEntryInfoProvider(
+  std::shared_ptr<const catalog::InvertedIndex::Entries> config) {
+  return [config = std::move(config)](
+           irs::field_id field_id) -> const catalog::InvertedIndexEntryInfo* {
+    auto it = config->find(field_id);
+    return it != config->end() ? &it->second : AllStoredEntry();
+  };
 }
 
-inline TokenizerProvider MakeSearchTableTokenizerProvider() {
-  return [](irs::field_id) { return catalog::DefaultColumnTokenizer(); };
+inline TokenizerProvider MakeConfigTokenizerProvider(
+  std::shared_ptr<const catalog::InvertedIndex::Entries> config,
+  std::shared_ptr<const catalog::Snapshot> snapshot) {
+  return [config = std::move(config), snapshot = std::move(snapshot)](
+           irs::field_id field_id) -> catalog::ColumnTokenizer {
+    auto it = config->find(field_id);
+    if (it == config->end()) {
+      return catalog::DefaultColumnTokenizer();
+    }
+    return catalog::TokenizerForEntry(snapshot, it->second);
+  };
 }
 
 struct PkPolicy {
@@ -363,10 +374,13 @@ class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
 };
 
 inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
-  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard) {
+  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
+  std::shared_ptr<const catalog::Snapshot> snapshot) {
+  auto config = shard.GetIndexConfig();
   return std::make_unique<SearchSinkInsertBaseImpl>(
-    trx, MakeSearchTableTokenizerProvider(),
-    MakeSearchTableEntryInfoProvider(shard), std::vector<IndexedExpression>{},
+    trx, MakeConfigTokenizerProvider(config, std::move(snapshot)),
+    MakeConfigEntryInfoProvider(std::move(config)),
+    std::vector<IndexedExpression>{},
     PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None});
 }
 

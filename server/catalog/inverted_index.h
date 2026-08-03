@@ -169,6 +169,15 @@ struct ColumnTokenizer {
 
 ColumnTokenizer DefaultColumnTokenizer();
 
+// Resolves the analyzer + features for one entry: builds the tokenizer from the
+// entry's text dictionary (default string tokenizer when absent) and carries
+// its synthetic tokenizer column. Shared by InvertedIndex::GetTokenizer and the
+// Search-engine SearchTable::GetTokenizer so both resolve analyzers
+// identically.
+ColumnTokenizer TokenizerForEntry(
+  const std::shared_ptr<const Snapshot>& snapshot,
+  const InvertedIndexEntryInfo& entry);
+
 // Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding
 // config the iresearch writer consults at flush/merge. A write or compaction
 // hands the writer the index from its own DDL snapshot, so the long-lived

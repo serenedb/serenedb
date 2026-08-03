@@ -2227,16 +2227,31 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
         _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
                                   index->GetId(), bytes);
       }
+      auto table = clone->template GetObject<Table>(index->GetRelationId());
+      // An index relation is always a Table or a PgSqlView
+      // (ResolveIndexRelation enforces this before every CreateIndexImpl), so a
+      // null `table` here means a view-backed index -- never a Search table,
+      // which is a Table with engine Search. Assert that so the "not search"
+      // branch below can't silently misclassify a Search table if that
+      // invariant ever changes.
+      const bool search_backed =
+        table && table->GetEngine() == TableEngine::Search;
+      SDB_ASSERT(table || [&] {
+        auto rel = clone->GetObject(index->GetRelationId());
+        return rel && rel->GetType() == ObjectType::PgSqlView;
+      }());
       // The inverted index's mutable iresearch storage hangs off the metadata
       // object itself, so the CREATE INDEX build (GetGlobalSinkState) reaches
-      // it via the index's GetData(). Bind it here, before the build runs.
-      if (index->GetType() == ObjectType::InvertedIndex) {
+      // it via the index's GetData(). A transactional-table or view-backed
+      // index keeps its own storage, bound here before the build runs. A
+      // Search-table index shares the table's own iresearch store, so it stays
+      // storage-less (GetData() == null).
+      if (index->GetType() == ObjectType::InvertedIndex && !search_backed) {
         const auto& inverted = basics::downCast<const InvertedIndex>(*index);
         inverted.SetData(search::InvertedIndexStorage::Create(
           inverted.GetId(), inverted, /*is_new=*/true));
       }
       {
-        auto table = clone->template GetObject<Table>(index->GetRelationId());
         auto schema_obj =
           table ? clone->template GetObject<Schema>(table->GetParentId())
                 : nullptr;
@@ -2251,6 +2266,16 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
               [&](auto& ctx) { ctx.CreateStoreIndex(std::move(*def)); });
           }
         }
+      }
+      // A Search-table index term-indexes into the table's own store: fold its
+      // columns into the shard's merged config so DML term-indexes them and the
+      // table scan pushes their predicates down. Last so an earlier throw
+      // (rolled back below) can't leave the config referencing a dropped index.
+      if (index->GetType() == ObjectType::InvertedIndex && search_backed) {
+        // search_backed implies the shard is attached (Table::GetData's own
+        // invariant: _data is set iff engine is Search).
+        table->GetData()->MergeIndexConfig(
+          basics::downCast<const InvertedIndex>(*index));
       }
     },
     [&](auto& clone) {
@@ -4702,6 +4727,19 @@ void Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
                                        index->GetRelationId(), index, true);
     clone->UnregisterObject(index, schema_id);
     DropTask::Schedule(std::move(task)).Detach();
+
+    // A Search-table index shares the table's store, so dropping it can't just
+    // remove a directory -- rebuild the shard's merged config from the indexes
+    // that remain (`clone` no longer has this one) so its columns stop pushing
+    // down unless still covered by the PK or another index.
+    if (index->GetType() == ObjectType::InvertedIndex) {
+      if (auto table = clone->GetObject<Table>(index->GetRelationId());
+          table && table->GetEngine() == TableEngine::Search) {
+        // A search table always has its shard attached (Table::GetData
+        // invariant), so no null-shard guard is needed here.
+        table->GetData()->RebuildIndexConfig(*clone);
+      }
+    }
   });
 }
 
@@ -5170,7 +5208,8 @@ class OpenDatabase {
   void RegisterSearchTable(ObjectId db_id, ObjectId schema_id,
                            const Table& table);
   void RegisterIndexes(ObjectId database_id, ObjectId schema_id,
-                       ObjectId table_id);
+                       ObjectId table_id, TableEngine engine,
+                       search::SearchTable* shard);
 
   void AddDatabase(ObjectId database_id, std::string_view bytes);
   void AddSchema(ObjectId database_id, ObjectId schema_id,
@@ -5179,7 +5218,8 @@ class OpenDatabase {
                 std::shared_ptr<Table> table);
   void AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                 ObjectId index_id, ObjectType entry_type,
-                std::string_view bytes);
+                std::string_view bytes, TableEngine engine,
+                search::SearchTable* shard);
 
   bool IsDeleted(ObjectId id, DeletedScope scope) {
     return _deleted[magic_enum::enum_integer(scope)].contains(id);
@@ -5342,7 +5382,8 @@ void OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
       irs::Finally cleanup = [&] noexcept {
         ClearDeletedDefinitions(DeletedScope::Relation);
       };
-      RegisterIndexes(db_id, schema_id, view_id);
+      RegisterIndexes(db_id, schema_id, view_id, TableEngine::Transactional,
+                      /*shard=*/nullptr);
       return true;
     });
 }
@@ -5393,13 +5434,15 @@ void OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
 }
 
 void OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
-                                   ObjectId table_id) {
+                                   ObjectId table_id, TableEngine engine,
+                                   search::SearchTable* shard) {
   auto visit = [&](ObjectType type) {
     GetCatalogStore().VisitBoot(
       table_id, type, [&](CatalogStore::Key key, std::string_view bytes) {
         auto index_id = key.id;
         if (!IsDeleted(index_id, DeletedScope::Relation)) {
-          AddIndex(db_id, schema_id, table_id, index_id, type, bytes);
+          AddIndex(db_id, schema_id, table_id, index_id, type, bytes, engine,
+                   shard);
           return true;
         }
 
@@ -5463,17 +5506,23 @@ void OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
 
 void OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
                             ObjectId table_id, std::shared_ptr<Table> table) {
+  const auto engine = table->GetEngine();
+  // The shard (opened by RegisterSearchTable) is needed to fold each declared
+  // inverted index into its merged config as the index rows are read below.
+  auto* shard =
+    engine == TableEngine::Search ? table->GetData().get() : nullptr;
   _catalog.RegisterTable(db_id, schema_id, std::move(table));
   CollectDeletedDefinitions(table_id, DeletedScope::Relation);
   irs::Finally cleanup = [&] noexcept {
     ClearDeletedDefinitions(DeletedScope::Relation);
   };
-  RegisterIndexes(db_id, schema_id, table_id);
+  RegisterIndexes(db_id, schema_id, table_id, engine, shard);
 }
 
 void OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
                             ObjectId table_id, ObjectId index_id,
-                            ObjectType entry_type, std::string_view bytes) {
+                            ObjectType entry_type, std::string_view bytes,
+                            TableEngine engine, search::SearchTable* shard) {
   ReadContext ctx{.id = index_id,
                   .database_id = database_id,
                   .schema_id = schema_id,
@@ -5500,8 +5549,16 @@ void OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
   SDB_ASSERT(counter == 0);
 #endif
 
+  // A Search-table index is storage-less (it shares the table's own iresearch
+  // store): instead of reopening a directory, fold its columns into the shard's
+  // merged term-index config so replay + queries see them right after boot.
   if (entry_type == ObjectType::InvertedIndex) {
-    RegisterInvertedStorage(index);
+    if (engine == TableEngine::Search) {
+      SDB_ASSERT(shard);
+      shard->MergeIndexConfig(basics::downCast<const InvertedIndex>(*index));
+    } else {
+      RegisterInvertedStorage(index);
+    }
   }
 }
 

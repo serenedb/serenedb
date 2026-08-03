@@ -1068,7 +1068,13 @@ bool TryClaimSearchFilter(
 bool TryClaimSearchTableFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  const search::SearchTable& shard, duckdb::ClientContext& context) {
+  const search::SearchTable& shard,
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
+  duckdb::ClientContext& context) {
+  // Hold one immutable config snapshot for the whole claim so the entry
+  // pointers handed to MakeSearchColumnInfo stay valid if DDL swaps the config
+  // mid-plan.
+  auto config = shard.GetIndexConfig();
   containers::FlatHashSet<irs::field_id> analyzed_fields;
   containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
   connector::ColumnGetter getter =
@@ -1078,16 +1084,17 @@ bool TryClaimSearchTableFilter(
     if (col_id == catalog::Column::kInvalidId) {
       return std::nullopt;
     }
-    const auto* info = shard.FindColumnInfo(col_id);
-    if (!info || !info->IsTermDict()) {
+    const auto field_id = static_cast<irs::field_id>(col_id);
+    auto it = config->find(field_id);
+    if (it == config->end() || !it->second.IsTermDict()) {
       return std::nullopt;
     }
     auto type = bind_data.ColumnTypeById(col_id);
     if (type.id() == duckdb::LogicalTypeId::INVALID) {
       return std::nullopt;
     }
-    return MakeSearchColumnInfo(col_id, info, std::move(type),
-                                catalog::DefaultColumnTokenizer());
+    return MakeSearchColumnInfo(col_id, &it->second, std::move(type),
+                                shard.GetTokenizer(snapshot, field_id));
   };
   connector::ExpressionGetter expr_getter = [](const duckdb::Expression&)
     -> std::optional<connector::SearchColumnInfo> { return std::nullopt; };
@@ -1119,9 +1126,10 @@ void IResearchPushdownComplexFilter(
     if (!bind_data.stored_filter && bind_data.IsSearchTableEntry() &&
         bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table) {
       const auto& table_bd = bind_data.As<connector::TableScanBindData>();
-      if (table_bd.table && !table_bd.table->PKColumns().empty()) {
+      if (table_bd.table && table_bd.table->GetData()) {
         TryClaimSearchTableFilter(filters, get, bind_data,
-                                  *table_bd.table->GetData(), context);
+                                  *table_bd.table->GetData(),
+                                  conn_ctx.CatalogSnapshot(), context);
       }
     }
     return;

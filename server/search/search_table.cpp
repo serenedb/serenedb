@@ -35,10 +35,14 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <mutex>
+#include <shared_mutex>
 #include <system_error>
 
+#include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
+#include "catalog/catalog.h"
+#include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
@@ -109,6 +113,40 @@ std::shared_ptr<SearchTable> SearchTable::Create(
                                        options, std::move(pk_columns));
 }
 
+namespace {
+
+// Base config every search table carries independent of declared indexes: each
+// PRIMARY KEY column is term-indexed and stored so PK predicates push down.
+catalog::InvertedIndex::Entries BuildPkEntries(
+  const std::vector<catalog::Column::Id>& pk_columns) {
+  catalog::InvertedIndex::Entries entries;
+  for (auto id : pk_columns) {
+    catalog::InvertedIndexEntryInfo info;
+    info.store_values = true;
+    info.indexed_term_dict = true;
+    entries.emplace(static_cast<irs::field_id>(id), info);
+  }
+  return entries;
+}
+
+// Copy each of `index`'s plain-column entries (analyzers/features and all) into
+// `entries`, keyed by the column's field id. store_values is forced on: a
+// transactional index leaves values in the store table, but a search table's
+// columnstore *is* the table data, so every indexed column must still be stored
+// verbatim (else a projection reads back nothing).
+void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
+                    const catalog::InvertedIndex& index) {
+  for (auto col_id : index.GetColumns()) {
+    if (const auto* entry = index.FindColumnInfo(col_id)) {
+      auto merged = *entry;
+      merged.store_values = true;
+      entries.insert_or_assign(static_cast<irs::field_id>(col_id), merged);
+    }
+  }
+}
+
+}  // namespace
+
 SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
                          bool is_new,
                          const catalog::SearchTableOptions& options,
@@ -117,7 +155,9 @@ SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
     _db_id{db_id},
     _schema_id{schema_id},
     _is_new{is_new},
-    _pk_columns{std::move(pk_columns)} {
+    _pk_columns{std::move(pk_columns)},
+    _entries{std::make_shared<const catalog::InvertedIndex::Entries>(
+      BuildPkEntries(_pk_columns))} {
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
@@ -125,18 +165,44 @@ SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
   _maint_settings.cleanup_interval_step = options.cleanup_interval_step;
 }
 
-const catalog::InvertedIndexEntryInfo* SearchTable::FindColumnInfo(
-  catalog::Column::Id id) const noexcept {
-  if (!absl::c_linear_search(_pk_columns, id)) {
-    return nullptr;
+std::shared_ptr<const catalog::InvertedIndex::Entries>
+SearchTable::GetIndexConfig() const noexcept {
+  std::shared_lock lock(_table_lock);
+  return _entries;
+}
+
+catalog::ColumnTokenizer SearchTable::GetTokenizer(
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
+  irs::field_id field_id) const {
+  auto config = GetIndexConfig();
+  auto it = config->find(field_id);
+  if (it == config->end()) {
+    return catalog::DefaultColumnTokenizer();
   }
-  static const catalog::InvertedIndexEntryInfo kPkIndexed = [] {
-    catalog::InvertedIndexEntryInfo e;
-    e.store_values = true;
-    e.indexed_term_dict = true;
-    return e;
-  }();
-  return &kPkIndexed;
+  return catalog::TokenizerForEntry(snapshot, it->second);
+}
+
+void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
+  std::unique_lock lock(_table_lock);
+  auto merged =
+    std::make_shared<catalog::InvertedIndex::Entries>(*_entries);  // copy
+  MergeIndexInto(*merged, index);
+  _entries = std::move(merged);
+}
+
+void SearchTable::RebuildIndexConfig(const catalog::Snapshot& snapshot) {
+  auto merged = BuildPkEntries(_pk_columns);
+  for (const auto& index : snapshot.GetIndexesByRelation(_table_id)) {
+    if (index->GetType() != catalog::ObjectType::InvertedIndex) {
+      continue;
+    }
+    MergeIndexInto(merged,
+                   basics::downCast<const catalog::InvertedIndex>(*index));
+  }
+  auto next =
+    std::make_shared<const catalog::InvertedIndex::Entries>(std::move(merged));
+  std::unique_lock lock(_table_lock);
+  _entries = std::move(next);
 }
 
 SearchTable::~SearchTable() {

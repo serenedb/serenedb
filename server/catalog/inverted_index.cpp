@@ -372,6 +372,18 @@ void InvertedIndex::BuildFieldLookupIndex() {
   insert(term_dict::kPKFieldId, nullptr, term_dict::kPKFieldId);
 }
 
+ColumnTokenizer TokenizerForEntry(
+  const std::shared_ptr<const Snapshot>& snapshot,
+  const InvertedIndexEntryInfo& entry) {
+  auto tokenizer =
+    BuildColumnTokenizer(snapshot, entry.text_dictionary, entry.features);
+  if (!entry.features.HasFeatures(irs::IndexFeatures::Norm) &&
+      irs::field_limits::valid(entry.synthetic_column)) {
+    tokenizer.tokenizer_column = entry.synthetic_column;
+  }
+  return tokenizer;
+}
+
 ColumnTokenizer InvertedIndex::GetTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   irs::field_id field_id) const {
@@ -380,13 +392,7 @@ ColumnTokenizer InvertedIndex::GetTokenizer(
     THROW_SQL_ERROR(
       ERR_MSG("Field id ", field_id, " not found in the index definition"));
   }
-  auto tokenizer =
-    BuildColumnTokenizer(snapshot, entry->text_dictionary, entry->features);
-  if (!entry->features.HasFeatures(irs::IndexFeatures::Norm) &&
-      irs::field_limits::valid(entry->synthetic_column)) {
-    tokenizer.tokenizer_column = entry->synthetic_column;
-  }
-  return tokenizer;
+  return TokenizerForEntry(snapshot, *entry);
 }
 
 bool InvertedIndex::IsKeywordField(const Snapshot& snapshot,

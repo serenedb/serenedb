@@ -855,7 +855,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     auto& table_entry =
       RequireBaseTable(target.Cast<duckdb::TableCatalogEntry>());
     auto sdb_table = table_entry.GetSereneDBTable();
-    RejectIfSearchTable(*sdb_table, "CREATE INDEX");
+    ValidateSearchTableCreateIndex(
+      *sdb_table, stmt.info->Cast<duckdb::CreateIndexInfo>().index_type);
   }
 
   // View-backed indexes are STATIC -- captured at CREATE INDEX, no DML refresh.
@@ -1187,8 +1188,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       for (auto pos : projection) {
         get.types.push_back(rel_columns[pos].second);
       }
-      get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
-      get.types.push_back(duckdb::LogicalType::ROW_TYPE);
+      // A Search-table index is storage-less and never backfilled here (the
+      // table is empty), so it needs no base rowid to bridge doc-id spaces.
+      if (sdb_table->GetEngine() != catalog::TableEngine::Search) {
+        get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+        get.types.push_back(duckdb::LogicalType::ROW_TYPE);
+      }
     }
     SDB_ASSERT(get.bind_data,
                "base-table LogicalGet missing SereneDB bind_data");

@@ -45,6 +45,8 @@ namespace {
 struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
+  // DDL snapshot the update runs against; resolves index-column analyzers.
+  std::shared_ptr<const catalog::Snapshot> snapshot;
   query::Transaction* sdb_txn = nullptr;
 
   std::vector<catalog::Column::Id> column_ids;
@@ -117,6 +119,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   SDB_ASSERT(state->generated_pk_seq);
 
   state->sdb_txn = &conn_ctx;
+  state->snapshot = std::move(snapshot);
   return state;
 }
 
@@ -158,7 +161,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   new_row.SetCardinality(num_rows);
 
   if (!gstate.insert_sink) {
-    gstate.insert_sink = MakeSearchTableInsertSink(trx, *gstate.search_table);
+    gstate.insert_sink =
+      MakeSearchTableInsertSink(trx, *gstate.search_table, gstate.snapshot);
   }
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =

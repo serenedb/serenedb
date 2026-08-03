@@ -36,6 +36,8 @@
 #include <duckdb/planner/constraints/bound_check_constraint.hpp>
 #include <duckdb/planner/expression/bound_case_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -105,10 +107,12 @@ duckdb::unique_ptr<duckdb::Expression> BoolConst(bool value) {
     duckdb::Value::BOOLEAN(value));
 }
 
-duckdb::unique_ptr<duckdb::Expression> UnpushableMarker() {
+duckdb::unique_ptr<duckdb::Expression> UnpushableMarker(
+  duckdb::unique_ptr<duckdb::Expression> anchor) {
   static const duckdb::ScalarFunction kFn = [] {
     duckdb::ScalarFunction fn(
-      "sdb_rls_barrier", {}, duckdb::LogicalType::BOOLEAN,
+      "sdb_rls_barrier", {duckdb::LogicalType::ANY},
+      duckdb::LogicalType::BOOLEAN,
       [](duckdb::DataChunk&, duckdb::ExpressionState&, duckdb::Vector& result) {
         result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
         duckdb::ConstantVector::GetData<bool>(result)[0] = true;
@@ -116,9 +120,27 @@ duckdb::unique_ptr<duckdb::Expression> UnpushableMarker() {
     fn.SetStability(duckdb::FunctionStability::VOLATILE);
     return fn;
   }();
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
+  args.push_back(std::move(anchor));
   return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::BoundScalarFunction{kFn},
-    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>{}, nullptr);
+    duckdb::BoundScalarFunction{kFn}, std::move(args), nullptr);
+}
+
+// A column the policy predicate already reads. The marker takes it as an
+// argument so the expression is bound to this scan: a nullary marker is a
+// free-floating constant predicate, and a join will adopt it as its join
+// condition, which lifts it out of the scan's filter list -- the one place it
+// has to stay.
+duckdb::unique_ptr<duckdb::Expression> AnchorColumn(
+  const duckdb::Expression& policy) {
+  duckdb::unique_ptr<duckdb::Expression> anchor;
+  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
+    policy, [&](const duckdb::BoundColumnRefExpression& col) {
+      if (!anchor) {
+        anchor = col.Copy();
+      }
+    });
+  return anchor;
 }
 
 using ExprList = duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>;
@@ -381,11 +403,13 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
       if (!filter) {
         return;
       }
-      ExprList guarded;
-      guarded.push_back(std::move(filter));
-      guarded.push_back(UnpushableMarker());
-      filter = Combine(std::move(guarded),
-                       duckdb::ExpressionType::CONJUNCTION_AND);
+      if (auto anchor = AnchorColumn(*filter)) {
+        ExprList guarded;
+        guarded.push_back(std::move(filter));
+        guarded.push_back(UnpushableMarker(std::move(anchor)));
+        filter = Combine(std::move(guarded),
+                         duckdb::ExpressionType::CONJUNCTION_AND);
+      }
       auto logical_filter =
         duckdb::make_uniq<duckdb::LogicalFilter>(std::move(filter));
       logical_filter->AddChild(std::move(op));

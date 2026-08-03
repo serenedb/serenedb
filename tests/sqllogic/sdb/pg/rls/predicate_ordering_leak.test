@@ -113,6 +113,37 @@ count
 0
 
 
+# Through a join. The barrier term takes a column of the table for exactly this
+# case: a nullary predicate is free-floating, and a join adopts it as its join
+# condition, which lifts it out of the scan's filter list and lets the throwing
+# qual in beside the policy. Anchored to a column it cannot migrate.
+connection c_join user=pol_mop password=mpw
+query I
+SELECT count(*) FROM pol_hoard CROSS JOIN (VALUES (1),(2),(3)) v(k)
+WHERE md5(CAST(mops AS TINYINT)::VARCHAR) = 'zzz';
+----
+count
+0
+
+
+connection c_join2 user=pol_mop password=mpw
+query I
+SELECT count(*) FROM pol_hoard h JOIN (VALUES (1),(2),(3)) v(k) ON h.mops = v.k
+WHERE md5(CAST(h.mops AS TINYINT)::VARCHAR) = 'zzz';
+----
+count
+0
+
+
+connection c_join3 user=pol_mop password=mpw
+query I
+SELECT count(*) FROM pol_hoard h LEFT JOIN (VALUES (1),(2),(3)) v(k) ON h.mops = v.k
+WHERE md5(CAST(h.mops AS TINYINT)::VARCHAR) = 'zzz';
+----
+count
+0
+
+
 # The probe is not vacuous: with the policy bypassed (owner reads its own table
 # with no RLS applied) the same expression DOES raise.
 statement error

@@ -224,4 +224,20 @@ inline void AppendGenerated(std::string& key, uint64_t generated_id) {
   primary_key::AppendSigned(key, std::bit_cast<int64_t>(generated_id));
 }
 
+// One i64 PK key as a self-contained inline string_t term, byte-identical to
+// AppendSigned (big-endian store, sign bit flipped): no heap, no per-row
+// std::string. Only valid for single-i64 key shapes; composite keys keep the
+// string builders above.
+inline duckdb::string_t SignedKeyTerm(int64_t value) noexcept {
+  static_assert(sizeof(int64_t) <= duckdb::string_t::INLINE_LENGTH);
+  char buf[sizeof(int64_t)];
+  absl::big_endian::Store(buf, value);
+  buf[0] = static_cast<char>(static_cast<uint8_t>(buf[0]) ^ 0x80);
+  return duckdb::string_t{buf, sizeof buf};
+}
+
+inline duckdb::string_t GeneratedKeyTerm(uint64_t generated_id) noexcept {
+  return SignedKeyTerm(std::bit_cast<int64_t>(generated_id));
+}
+
 }  // namespace sdb::connector::duckdb_primary_key

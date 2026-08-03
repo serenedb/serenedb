@@ -368,13 +368,13 @@ VACUUM (REFRESH_TABLE) geo_plain
 statement error
 SELECT id FROM geo_plain_idx WHERE ST_Intersects(geo, '{"type":"Point","coordinates":[0,0]}')
 ----
-db error: ERROR: Analyzer for field is not a geo analyzer
+db error: ERROR: Tokenizer for field is not a geo analyzer
 
 
 statement error
 SELECT id FROM geo_plain_idx WHERE ST_Contains(geo, '{"type":"Point","coordinates":[0,0]}')
 ----
-db error: ERROR: Analyzer for field is not a geo analyzer
+db error: ERROR: Tokenizer for field is not a geo analyzer
 
 
 # --- GEOMETRY column ---

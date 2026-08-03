@@ -84,7 +84,9 @@ std::unique_ptr<DuckDBSinkIndexWriter> CreateInvertedIndexWriter(
                     "'none'"));
         }
       }
-      auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
+      auto tokenizer_provider = MakeTokenizerProvider(
+        expr_context ? *expr_context : conn_ctx.GetClientContext(), snapshot,
+        inverted_index);
       auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
       std::vector<IndexedExpression> indexed_exprs;
       if constexpr (Kind == DuckDBWriteKind::Insert) {

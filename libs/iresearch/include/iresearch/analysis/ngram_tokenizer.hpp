@@ -22,8 +22,9 @@
 
 #pragma once
 
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include <vector>
+
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs {
@@ -34,12 +35,18 @@ namespace analysis {
 /// @brief produces ngram from a specified input in a range of
 ///         [min_gram;max_gram]. Can optionally preserve the original input.
 ////////////////////////////////////////////////////////////////////////////////
-class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
-                           private util::Noncopyable {
+class NGramTokenizerBase : private util::Noncopyable {
  public:
   enum class InputType : uint8_t {
     Binary,  // input is treaten as generic bytes
     UTF8,    // input is treaten as ut8-encoded symbols
+  };
+
+  enum class NGramMode : uint8_t {
+    All,
+    Prefix,
+    Suffix,
+    PrefixAndSuffix,
   };
 
   struct Options {
@@ -50,68 +57,55 @@ class NGramTokenizerBase : public TypedAnalyzer<NGramTokenizerBase>,
     InputType stream_bytes_type{InputType::Binary};
     bstring start_marker;  // marker of ngrams at the beginning of stream
     bstring end_marker;    // marker of ngrams at the end of strem
+    NGramMode ngram_mode{NGramMode::All};
   };
 
   static constexpr std::string_view type_name() noexcept { return "ngram"; }
-  static ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts);
 
   explicit NGramTokenizerBase(Options&& options);
-
-  bool reset(std::string_view value) noexcept final;
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
 
   size_t min_gram() const noexcept { return _options.min_gram; }
   size_t max_gram() const noexcept { return _options.max_gram; }
   bool preserve_original() const noexcept { return _options.preserve_original; }
 
  protected:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  void emit_original() noexcept;
-
   Options _options;
-  bytes_view _data;  // data to process
-  attributes _attrs;
-  const byte_type* _begin{};
-  const byte_type* _data_end{};
-  const byte_type* _ngram_end{};
-  size_t _length{};
 
-  enum class EmitOriginal {
-    None,
-    WithoutMarkers,
-    WithStartMarker,
-    WithEndMarker,
-  };
+  // Plain: no markers and no preserve_original -- the marker machinery
+  // compiles out of the gram loops.
+  template<TokenLayout Layout, bool Identity, bool Plain, NGramMode Mode>
+  void EmitGrams(TokenSink& sink, bytes_view data, const uint32_t* bounds,
+                 uint32_t nsym);
+  void BuildBoundaries(bytes_view data);
 
-  EmitOriginal _emit_original{EmitOriginal::None};
-
-  // buffer for emitting ngram with start/stop marker
-  // we need continious memory for value so can not use
-  // pointers to input memory block
-  bstring _marked_term_buffer;
-
-  // increment value for next token
-  uint32_t _next_inc_val{0};
-
-  // Aux flags to speed up marker properties access;
-  bool _start_marker_empty;
-  bool _end_marker_empty;
+  std::vector<uint32_t> _fill_bounds;
 };
 
 template<NGramTokenizerBase::InputType StreamType>
-class NGramTokenizer : public NGramTokenizerBase {
+class NGramTokenizer : public TypedTokenizer<NGramTokenizer<StreamType>>,
+                       public NGramTokenizerBase {
  public:
-  static ptr make(NGramTokenizerBase::Options&& options);
+  static Tokenizer::ptr make(NGramTokenizerBase::Options&& options);
 
   explicit NGramTokenizer(NGramTokenizerBase::Options&& options);
 
-  bool next() noexcept final;
+  TokenTraits Traits() const noexcept final {
+    return {
+      .explicit_pos = true,
+      .offsets = true,
+    };
+  }
 
- private:
-  inline bool NextSymbol(const byte_type*& it) const noexcept;
+  auto PrepareBatch() const {
+    const bool plain = !_options.preserve_original &&
+                       _options.start_marker.empty() &&
+                       _options.end_marker.empty();
+    return std::tuple{plain, _options.ngram_mode};
+  }
+
+  template<TokenLayout Layout, bool Plain, NGramMode Mode>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 };
 
 }  // namespace analysis
@@ -121,4 +115,12 @@ template<analysis::NGramTokenizerBase::InputType StreamType>
 struct Type<analysis::NGramTokenizer<StreamType>>
   : Type<analysis::NGramTokenizerBase> {};
 
+namespace analysis {
+
+extern template class TypedTokenizer<
+  NGramTokenizer<NGramTokenizerBase::InputType::Binary>>;
+extern template class TypedTokenizer<
+  NGramTokenizer<NGramTokenizerBase::InputType::UTF8>>;
+
+}  // namespace analysis
 }  // namespace irs

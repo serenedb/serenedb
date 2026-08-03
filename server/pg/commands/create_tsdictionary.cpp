@@ -39,12 +39,13 @@
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
+#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
@@ -252,9 +253,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return *parsed;
   }
 
-  irs::StringTokenizer::Options BuildKeyword(
+  irs::KeywordTokenizer::Options BuildKeyword(
     std::string_view /*prefix*/,
-    const irs::StringTokenizer::Options* /*parent*/) {
+    const irs::KeywordTokenizer::Options* /*parent*/) {
     return {};
   }
 
@@ -417,6 +418,23 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
+  irs::analysis::SqlTokenizer::Options BuildSql(
+    std::string_view prefix,
+    const irs::analysis::SqlTokenizer::Options* parent) {
+    irs::analysis::SqlTokenizer::Options opts;
+    if (OptionsParser::HasOption(tokenizer_options::kSqlExpression, prefix)) {
+      opts.expression =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kSqlExpression>(
+          prefix);
+    } else if (parent) {
+      opts.expression = parent->expression;
+    } else {
+      OptionsParser::EraseOptionOrDefault<tokenizer_options::kSqlExpression>(
+        prefix);  // throws
+    }
+    return opts;
+  }
+
   irs::analysis::PathHierarchyTokenizer::Options BuildPathHierarchy(
     std::string_view prefix,
     const irs::analysis::PathHierarchyTokenizer::Options* parent) {
@@ -444,6 +462,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string_view prefix,
     const irs::analysis::NGramTokenizerBase::Options* parent) {
     using IT = irs::analysis::NGramTokenizerBase::InputType;
+    using NM = irs::analysis::NGramTokenizerBase::NGramMode;
     irs::analysis::NGramTokenizerBase::Options opts;
     int parent_min = parent ? static_cast<int>(parent->min_gram) : 0;
     int parent_max = parent ? static_cast<int>(parent->max_gram) : 0;
@@ -459,6 +478,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
       prefix, opts.start_marker, parent ? &parent->start_marker : nullptr);
     ResolveStringInto<tokenizer_options::kEndMarker>(
       prefix, opts.end_marker, parent ? &parent->end_marker : nullptr);
+    opts.ngram_mode = ResolveEnum<tokenizer_options::kMode, NM>(
+      prefix, parent ? &parent->ngram_mode : nullptr);
     return opts;
   }
 
@@ -529,6 +550,15 @@ class CreateTSDictionaryOptions : public OptionsParser {
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kStopwords>(
         prefix);  // throws
     }
+    return opts;
+  }
+
+  irs::analysis::SplitByNonAlphaTokenizer::Options BuildSplitByNonAlpha(
+    std::string_view prefix,
+    const irs::analysis::SplitByNonAlphaTokenizer::Options* parent) {
+    irs::analysis::SplitByNonAlphaTokenizer::Options opts;
+    opts.case_convert = ResolveEnum<tokenizer_options::kCase, irs::Case>(
+      prefix, parent ? &parent->case_convert : nullptr);
     return opts;
   }
 
@@ -781,6 +811,63 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
+  irs::analysis::ShingleTokenizer::Options BuildShingle(
+    std::string_view prefix,
+    const irs::analysis::ShingleTokenizer::Options* parent) {
+    irs::analysis::ShingleTokenizer::Options opts;
+    opts.base_analyzer =
+      BuildSingleChild(prefix, parent ? parent->base_analyzer.get() : nullptr);
+    int parent_min = parent ? static_cast<int>(parent->min_shingle_size) : 2;
+    opts.min_shingle_size =
+      static_cast<uint32_t>(Resolve<tokenizer_options::kMinShingleSize>(
+        prefix, parent ? &parent_min : nullptr));
+    int parent_max = parent ? static_cast<int>(parent->max_shingle_size) : 2;
+    opts.max_shingle_size =
+      static_cast<uint32_t>(Resolve<tokenizer_options::kMaxShingleSize>(
+        prefix, parent ? &parent_max : nullptr));
+    if (opts.max_shingle_size < opts.min_shingle_size) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("\"maxgram\" must be >= \"mingram\""));
+    }
+    opts.output_unigrams = Resolve<tokenizer_options::kOutputUnigrams>(
+      prefix, parent ? &parent->output_unigrams : nullptr);
+    opts.output_unigrams_if_no_shingles =
+      Resolve<tokenizer_options::kOutputUnigramsIfNoShingles>(
+        prefix, parent ? &parent->output_unigrams_if_no_shingles : nullptr);
+    opts.store_tokens = Resolve<tokenizer_options::kStoreTokens>(
+      prefix, parent ? &parent->store_tokens : nullptr);
+    if (OptionsParser::HasOption(tokenizer_options::kFrequentWords, prefix)) {
+      auto raw =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrequentWords>(
+          prefix);
+      ParseCommaSeparated(raw, [&](std::string_view w) {
+        opts.frequent_words.emplace_back(
+          reinterpret_cast<const irs::byte_type*>(w.data()), w.size());
+      });
+    } else if (parent) {
+      opts.frequent_words = parent->frequent_words;
+    }
+    if (!opts.store_tokens && !opts.frequent_words.empty()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"storetokens\" = false cannot be combined with "
+                "\"frequentwords\""),
+        ERR_HINT("Without the stored token stream every shingle size must be "
+                 "dense so phrases up to maxgram stay exact."));
+    }
+    ResolveStringInto<tokenizer_options::kFillerToken>(
+      prefix, opts.filler_token, parent ? &parent->filler_token : nullptr);
+    if (opts.filler_token.find(
+          irs::analysis::ShingleTokenizer::kDefaultSeparator) !=
+        irs::bstring::npos) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"fillertoken\" must not contain the shingle separator "
+                "byte (0xFF)"));
+    }
+    return opts;
+  }
+
   template<typename Opts>
   static const Opts* ParentOptions(const irs::analysis::TokenizerConfig* cfg) {
     if (!cfg) {
@@ -827,6 +914,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == CollationTokenizer::type_name()) {
       out.config = BuildCollation(
         prefix, ParentOptions<CollationTokenizer::Options>(parent_cfg));
+    } else if (type == SplitByNonAlphaTokenizer::type_name()) {
+      out.config = BuildSplitByNonAlpha(
+        prefix, ParentOptions<SplitByNonAlphaTokenizer::Options>(parent_cfg));
     } else if (type == DelimitedTokenizer::type_name()) {
       out.config = BuildDelimiter(
         prefix, ParentOptions<DelimitedTokenizer::Options>(parent_cfg));
@@ -851,6 +941,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == PatternTokenizer::type_name()) {
       out.config = BuildPattern(
         prefix, ParentOptions<PatternTokenizer::Options>(parent_cfg));
+    } else if (type == SqlTokenizer::type_name()) {
+      out.config =
+        BuildSql(prefix, ParentOptions<SqlTokenizer::Options>(parent_cfg));
+    } else if (type == ShingleTokenizer::type_name()) {
+      out.config = BuildShingle(
+        prefix, ParentOptions<ShingleTokenizer::Options>(parent_cfg));
     } else if (type == PathHierarchyTokenizer::type_name()) {
       out.config = BuildPathHierarchy(
         prefix, ParentOptions<PathHierarchyTokenizer::Options>(parent_cfg));
@@ -863,9 +959,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if (type == GeoJsonAnalyzer::type_name()) {
       out.config = BuildGeoJson(
         prefix, ParentOptions<GeoJsonAnalyzer::Options>(parent_cfg));
-    } else if (type == irs::StringTokenizer::type_name()) {
+    } else if (type == irs::KeywordTokenizer::type_name()) {
       out.config = BuildKeyword(
-        prefix, ParentOptions<irs::StringTokenizer::Options>(parent_cfg));
+        prefix, ParentOptions<irs::KeywordTokenizer::Options>(parent_cfg));
     } else if (type == SolrSynonymsTokenizer::type_name()) {
       out.config = BuildSolrSynonyms(
         prefix, ParentOptions<SolrSynonymsTokenizer::Options>(parent_cfg));
@@ -939,13 +1035,25 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
       CreateTSDictionaryOptions{snapshot, db_id, current_schema, options})
       .Result();
 
-  auto test_analyzer = irs::analysis::CreateAnalyzer(irs::analysis::Clone(cfg));
+  auto test_analyzer =
+    irs::analysis::CreateTokenizer(irs::analysis::Clone(cfg));
   SDB_ASSERT(test_analyzer);
+  test_analyzer->Bind(conn_ctx.GetClientContext());
 
   if (features.HasFeatures(irs::IndexFeatures::Offs) &&
-      !irs::get<irs::OffsAttr>(*test_analyzer)) {
+      !test_analyzer->Traits().offsets) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Unsupported index features are specified"));
+  }
+
+  if (features.HasFeatures(irs::IndexFeatures::Norm) &&
+      test_analyzer->Traits().store) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("the 'norm' feature cannot be combined with an analyzer that "
+              "stores a per-document blob"),
+      ERR_HINT("norm and the stored blob share one synthetic column; disable "
+               "the analyzer's token storage or drop the 'norm' feature."));
   }
 
   auto tokenizer = std::make_shared<catalog::Tokenizer>(

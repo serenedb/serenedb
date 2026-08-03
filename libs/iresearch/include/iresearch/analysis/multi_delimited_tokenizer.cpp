@@ -20,371 +20,327 @@
 
 #include "multi_delimited_tokenizer.hpp"
 
-#include <fst/union.h>
-#include <fstext/determinize-star.h>
-
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <functional>
 #include <string_view>
 
-#include "absl/container/flat_hash_map.h"
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/fstext/fst_draw.hpp"
+#include "iresearch/analysis/classify.hpp"
+#include "iresearch/analysis/term_view.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
-namespace {
 
-template<typename Derived>
-class MultiDelimitedTokenizerBase : public MultiDelimitedTokenizer {
- public:
-  MultiDelimitedTokenizerBase() = default;
+// Block-drained splitter for single-byte delimiter sets: one classification
+// mask per 32-byte block, every set bit consumed, empty tokens skipped,
+// zero-copy token views.
+template<TokenLayout Layout, typename Finder>
+void DrainSingleCharValue(TokenSink& sink, duckdb::string_t raw,
+                          const Finder& finder) {
+  const auto* p = reinterpret_cast<const byte_type*>(raw.GetData());
+  const size_t size = raw.GetSize();
+  size_t tok_begin = 0;
 
-  bool next() override {
-    while (true) {
-      if (_data.begin() == _data.end()) {
-        return false;
-      }
+  const auto emit = [&](size_t begin, size_t end) {
+    if (begin == end) {
+      return;
+    }
+    sink.Emit<Layout>(
+      MakeTermView(p + begin, static_cast<uint32_t>(end - begin), p + size),
+      Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
+  };
 
-      auto [next, skip] = static_cast<Derived*>(this)->FindNextDelim();
-
-      if (next == _data.begin()) {
-        // skip empty terms
-        SDB_ASSERT(skip <= _data.size());
-        _data = bytes_view(_data.data() + skip, _data.size() - skip);
-        continue;
-      }
-
-      auto& term = std::get<TermAttr>(_attrs);
-      term.value = bytes_view(_data.data(), std::distance(_data.begin(), next));
-      auto& offset = std::get<OffsAttr>(_attrs);
-      offset.start = std::distance(_start, _data.data());
-      offset.end = offset.start + term.value.size();
-
-      if (next == _data.end()) {
-        _data = {};
-      } else {
-        _data =
-          bytes_view(&(*next) + skip, std::distance(next, _data.end()) - skip);
-      }
-
-      return true;
+  size_t offset = 0;
+  while (size - offset >= classify::kClassifyBlock) {
+    VisitSetBits(finder.ClassifyBlock(p + offset), [&](uint32_t bit) {
+      const size_t pos = offset + bit;
+      emit(tok_begin, pos);
+      tok_begin = pos + 1;
+    });
+    offset += classify::kClassifyBlock;
+  }
+  for (; offset < size; ++offset) {
+    if (finder.IsDelimByte(p[offset])) {
+      emit(tok_begin, offset);
+      tok_begin = offset + 1;
     }
   }
-};
+  emit(tok_begin, size);
+}
 
-template<typename Derived>
-class MultiDelimitedTokenizerSingleCharsBase
-  : public MultiDelimitedTokenizerBase<
-      MultiDelimitedTokenizerSingleCharsBase<Derived>> {
- public:
-  auto FindNextDelim() {
-    auto where = static_cast<Derived*>(this)->FindNextDelim();
-    return std::make_pair(where, size_t{1});
+// Delimiter-search policies for the single flat tokenizer below. Each returns
+// {next delimiter position, bytes to skip past it}; kBlockScan finders also
+// expose the block-classification trio consumed by DrainSingleCharValue.
+
+struct NoDelimFinder {
+  static constexpr bool kBlockScan = false;
+
+  auto FindNextDelim(bytes_view data) const {
+    return std::make_pair(data.end(), size_t{0});
   }
 };
 
-template<size_t N>
-class MultiDelimitedTokenizerSingleChars final
-  : public MultiDelimitedTokenizerSingleCharsBase<
-      MultiDelimitedTokenizerSingleChars<N>> {
- public:
-  explicit MultiDelimitedTokenizerSingleChars(
-    const std::vector<bstring>& /*delimiters*/) {
-    // according to benchmarks "table" version is
-    // ~1.5x faster except cases for 0 and 1.
-    // So this should not be used.
-    SDB_ASSERT(false);
-  }
-
-  auto FindNextDelim() { return this->data.end(); }
-};
-
-template<>
-class MultiDelimitedTokenizerSingleChars<1> final
-  : public MultiDelimitedTokenizerSingleCharsBase<
-      MultiDelimitedTokenizerSingleChars<1>> {
- public:
-  explicit MultiDelimitedTokenizerSingleChars(
-    const std::vector<bstring>& delimiters) {
-    SDB_ASSERT(delimiters.size() == 1);
-    SDB_ASSERT(delimiters[0].size() == 1);
-    delim = delimiters[0][0];
-  }
-
-  auto FindNextDelim() {
-    if (auto pos = this->_data.find(delim); pos != bstring::npos) {
-      return this->_data.begin() + pos;
-    }
-    return this->_data.end();
-  }
+struct OneCharFinder {
+  static constexpr bool kBlockScan = true;
 
   byte_type delim;
-};
 
-template<>
-class MultiDelimitedTokenizerSingleChars<0> final
-  : public MultiDelimitedTokenizerSingleCharsBase<
-      MultiDelimitedTokenizerSingleChars<0>> {
- public:
-  explicit MultiDelimitedTokenizerSingleChars(
-    const std::vector<bstring>& delimiters) {
-    SDB_ASSERT(delimiters.empty());
-    (void)delimiters;
+  auto FindNextDelim(bytes_view data) const {
+    auto next = data.end();
+    if (auto pos = data.find(delim); pos != bstring::npos) {
+      next = data.begin() + pos;
+    }
+    return std::make_pair(next, size_t{1});
   }
 
-  auto FindNextDelim() { return this->_data.end(); }
+  bool CanBlockScan() const { return true; }
+  bool IsDelimByte(byte_type c) const { return c == delim; }
+  uint32_t ClassifyBlock(const byte_type* block) const {
+    return ClassifyEqBlock(block, delim);
+  }
 };
 
-class MultiDelimitedTokenizerGenericSingleChars final
-  : public MultiDelimitedTokenizerSingleCharsBase<
-      MultiDelimitedTokenizerGenericSingleChars> {
- public:
-  explicit MultiDelimitedTokenizerGenericSingleChars(
-    const std::vector<bstring>& delimiters) {
+struct ManyCharsFinder {
+  static constexpr bool kBlockScan = true;
+  static constexpr size_t kMaxBlockDelims = 8;
+
+  explicit ManyCharsFinder(const std::vector<bstring>& delimiters) {
     for (const auto& delim : delimiters) {
       SDB_ASSERT(delim.size() == 1);
+      if (delim[0] > SCHAR_MAX) {
+        // The table path never matches high bytes; keep that behavior and
+        // disable the block path so both agree.
+        high_byte_delim = true;
+        continue;
+      }
       bytes[delim[0]] = true;
+      if (ndelims < kMaxBlockDelims) {
+        delims[ndelims] = delim[0];
+      }
+      ++ndelims;
     }
   }
 
-  auto FindNextDelim() {
-    return absl::c_find_if(_data, [&](auto c) {
-      if (c > SCHAR_MAX) {
-        return false;
-      }
-      SDB_ASSERT(c <= SCHAR_MAX);
-      return bytes[c];
-    });
+  auto FindNextDelim(bytes_view data) const {
+    auto next =
+      absl::c_find_if(data, [&](auto c) { return c <= SCHAR_MAX && bytes[c]; });
+    return std::make_pair(next, size_t{1});
   }
+
+  bool CanBlockScan() const {
+    return !high_byte_delim && ndelims <= kMaxBlockDelims;
+  }
+  bool IsDelimByte(byte_type c) const { return c <= SCHAR_MAX && bytes[c]; }
+  uint32_t ClassifyBlock(const byte_type* block) const {
+    return ClassifyAnyEqBlock(block, {delims.data(), ndelims});
+  }
+
   // TODO(mbkkt) maybe use a bitset instead?
   std::array<bool, SCHAR_MAX + 1> bytes{};
+  std::array<byte_type, kMaxBlockDelims> delims{};
+  size_t ndelims = 0;
+  bool high_byte_delim = false;
 };
 
-struct TrieNode {
-  explicit TrieNode(int32_t id, int32_t depth) : state_id(id), depth(depth) {}
-  int32_t state_id;
-  int32_t depth;
-  bool is_leaf{false};
-  absl::flat_hash_map<byte_type, TrieNode*> simple_trie;
-  absl::flat_hash_map<byte_type, TrieNode*> real_trie;
+// Needle-length picks the one-string algorithm (the only construction-time
+// signal; first-byte density in the data is what really separates the
+// regimes, pinned by the multi_delimiter_str* arms): memchr-backed find
+// dominates short needles (2B: 2.4x vs boyer-moore) and rare-first-byte long
+// needles (15B: -26%), boyer-moore dominates long needles whose first byte
+// is common in the data (10B markup: 2.4x) with a bounded worst case where
+// find's blowup is not.
+inline constexpr size_t kBmNeedleThreshold = 8;
+
+struct OneStringFinder {
+  static constexpr bool kBlockScan = false;
+
+  bstring delim;
+
+  explicit OneStringFinder(bstring&& delimiter) : delim{std::move(delimiter)} {}
+
+  auto FindNextDelim(bytes_view data) const {
+    auto next = data.end();
+    if (auto pos = data.find(delim); pos != bstring::npos) {
+      next = data.begin() + pos;
+    }
+    return std::make_pair(next, delim.size());
+  }
 };
 
-bytes_view FindLongestPrefixThatIsSuffix(bytes_view s, bytes_view str) {
-  // TODO(mbkkt) this algorithm is quadratic
-  for (size_t n = s.length() - 1; n > 0; n--) {
-    auto prefix = s.substr(0, n);
-    if (str.ends_with(prefix)) {
-      return prefix;
+struct OneLongStringFinder {
+  static constexpr bool kBlockScan = false;
+
+  bstring delim;
+  std::boyer_moore_horspool_searcher<bstring::const_iterator> searcher;
+
+  explicit OneLongStringFinder(bstring&& delimiter)
+    : delim{std::move(delimiter)}, searcher{delim.begin(), delim.end()} {}
+
+  auto FindNextDelim(bytes_view data) const {
+    auto next = std::search(data.begin(), data.end(), searcher);
+    return std::make_pair(next, delim.size());
+  }
+};
+
+// The prefix-free rule (enforced by Make) means at most one delimiter can
+// match at any start position, so leftmost-first search needs no automaton:
+// scan for the next byte in the first-byte set, then verify the candidates
+// sharing it.
+struct MultiStringFinder {
+  static constexpr bool kBlockScan = false;
+
+  explicit MultiStringFinder(std::vector<bstring>&& delimiters) {
+    for (auto& d : delimiters) {
+      SDB_ASSERT(!d.empty());
+      first[d.front()] = true;
+      if (d.size() >= sizeof(uint32_t)) {
+        uint32_t p;
+        std::memcpy(&p, d.data(), sizeof p);
+        long_prefix4.push_back(p);
+        long_delims.push_back(std::move(d));
+      } else {
+        short_delims.push_back(std::move(d));
+      }
     }
   }
-  return {};
-}
 
-bytes_view FindLongestPrefixThatIsSuffix(const std::vector<bstring>& strings,
-                                         std::string_view str) {
-  bytes_view result = {};
-  for (const auto& s : strings) {
-    auto other = FindLongestPrefixThatIsSuffix(s, ViewCast<byte_type>(str));
-    if (other.length() > result.length()) {
-      result = other;
+  // Prefix-free (Make) means at most one delimiter matches at any start, so
+  // candidate order is free. Short delimiters take a bare starts_with; long
+  // ones are prefiltered by one u32 load register-compared against each
+  // delimiter's first four bytes -- a mismatching candidate family dies in a
+  // cycle instead of a memcmp (the tags_hard arm is that regime), while
+  // short-only sets never pay for the machinery (the mixed8 arm is that
+  // one). The prefilter only filters; starts_with decides, so zero-padded
+  // partial loads near the value end stay correct.
+  auto FindNextDelim(bytes_view data) const {
+    for (size_t pos = 0; pos < data.size(); ++pos) {
+      if (!first[data[pos]]) {
+        continue;
+      }
+      const auto tail = data.substr(pos);
+      for (const auto& d : short_delims) {
+        if (tail.starts_with(d)) {
+          return std::make_pair(data.begin() + pos, d.size());
+        }
+      }
+      if (!long_delims.empty()) {
+        uint32_t t4 = 0;
+        std::memcpy(&t4, tail.data(), std::min<size_t>(tail.size(), sizeof t4));
+        for (size_t j = 0; j < long_delims.size(); ++j) {
+          if (t4 == long_prefix4[j] && tail.starts_with(long_delims[j])) {
+            return std::make_pair(data.begin() + pos, long_delims[j].size());
+          }
+        }
+      }
     }
-  }
-  return result;
-}
-
-void InsertErrorTransitions(const std::vector<bstring>& strings,
-                            std::string& matched_word, TrieNode* node,
-                            TrieNode* root) {
-  if (node->is_leaf) {
-    return;
+    return std::make_pair(data.end(), size_t{0});
   }
 
-  for (size_t k = 0; k <= std::numeric_limits<byte_type>::max(); k++) {
-    if (auto it = node->simple_trie.find(k); it != node->simple_trie.end()) {
-      node->real_trie.emplace(k, it->second);
-      matched_word.push_back(static_cast<char>(k));
-      InsertErrorTransitions(strings, matched_word, it->second, root);
-      matched_word.pop_back();
-    } else {
-      // if we find a character c that we don't expect, we have to find
-      // the longest prefix of `str` that is a suffix of the already matched
-      // text including c. then go to that state.
-      matched_word.push_back(static_cast<char>(k));
-      auto prefix = FindLongestPrefixThatIsSuffix(strings, matched_word);
-      if (prefix.empty()) {
-        matched_word.pop_back();
-        continue;  // no prefix found implies going to the initial state
-      }
+  std::vector<bstring> short_delims;
+  std::vector<bstring> long_delims;
+  std::vector<uint32_t> long_prefix4;
+  std::array<bool, 256> first{};
+};
 
-      auto* dest = root;
-      for (auto c : prefix) {
-        auto itt = dest->simple_trie.find(c);
-        SDB_ASSERT(itt != dest->simple_trie.end());
-        dest = itt->second;
+template<typename Finder>
+class MultiDelimitedTokenizerImpl final
+  : public TypedTokenizer<MultiDelimitedTokenizerImpl<Finder>>,
+    public MultiDelimitedTokenizer {
+ public:
+  template<typename... Args>
+  explicit MultiDelimitedTokenizerImpl(Args&&... args)
+    : _finder{std::forward<Args>(args)...} {}
+
+  TokenTraits Traits() const noexcept final {
+    return {
+      .offsets = true,
+    };
+  }
+
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t raw, TokenSink& sink) {
+    if constexpr (Finder::kBlockScan) {
+      if (_finder.CanBlockScan()) {
+        DrainSingleCharValue<Layout>(sink, raw, _finder);
+        return true;
       }
-      node->real_trie.emplace(k, dest);
-      matched_word.pop_back();
     }
-  }
-}
+    bytes_view data{reinterpret_cast<const byte_type*>(raw.GetData()),
+                    raw.GetSize()};
+    const byte_type* const start = data.data();
+    const byte_type* const bound = start + data.size();
+    while (data.begin() != data.end()) {
+      auto [next, skip] = _finder.FindNextDelim(data);
 
-automaton MakeStringTrie(const std::vector<bstring>& strings) {
-  std::vector<std::unique_ptr<TrieNode>> nodes;
-  nodes.emplace_back(std::make_unique<TrieNode>(0, 0));
-
-  for (const auto& str : strings) {
-    TrieNode* current = nodes.front().get();
-
-    for (size_t k = 0; k < str.length(); k++) {
-      auto c = str[k];
-      if (current->is_leaf) {
-        break;
-      }
-
-      if (auto it = current->simple_trie.find(c);
-          it != current->simple_trie.end()) {
-        current = it->second;
+      if (next == data.begin()) {
+        SDB_ASSERT(skip <= data.size());
+        data = bytes_view(data.data() + skip, data.size() - skip);
         continue;
       }
 
-      auto& new_node =
-        nodes.emplace_back(std::make_unique<TrieNode>(nodes.size(), k));
-      current->simple_trie.emplace(c, new_node.get());
-      current = new_node.get();
-    }
+      const auto size =
+        static_cast<uint32_t>(std::distance(data.begin(), next));
+      const auto off = static_cast<uint32_t>(std::distance(start, data.data()));
+      sink.Emit<Layout>(MakeTermView(data.data(), size, bound),
+                        Offs{off, off + size});
 
-    current->is_leaf = true;
-  }
-
-  std::string matched_word;
-  auto* root = nodes.front().get();
-  InsertErrorTransitions(strings, matched_word, root, root);
-
-  automaton a;
-  a.AddStates(nodes.size());
-  a.SetStart(0);
-
-  for (auto& n : nodes) {
-    int64_t last_state = -1;
-    size_t last_char = 0;
-
-    if (n->is_leaf) {
-      a.SetFinal(n->state_id, {true, static_cast<byte_type>(n->depth)});
-      continue;
-    }
-
-    for (size_t k = 0; k <= std::numeric_limits<byte_type>::max(); k++) {
-      int64_t next_state = root->state_id;
-      if (auto it = n->real_trie.find(k); it != n->real_trie.end()) {
-        next_state = it->second->state_id;
-      }
-
-      if (last_state == -1) {
-        last_state = next_state;
-        last_char = k;
-      } else if (last_state != next_state) {
-        a.EmplaceArc(n->state_id, RangeLabel::From(last_char, k - 1),
-                     last_state);
-        last_state = next_state;
-        last_char = k;
+      if (next == data.end()) {
+        data = {};
+      } else {
+        data =
+          bytes_view(&(*next) + skip, std::distance(next, data.end()) - skip);
       }
     }
-
-    a.EmplaceArc(
-      n->state_id,
-      RangeLabel::From(last_char, std::numeric_limits<byte_type>::max()),
-      last_state);
+    return true;
   }
 
-  return a;
-}
-
-class MultiDelimitedTokenizerGeneric final
-  : public MultiDelimitedTokenizerBase<MultiDelimitedTokenizerGeneric> {
- public:
-  explicit MultiDelimitedTokenizerGeneric(
-    const std::vector<bstring>& delimiters)
-    : autom(MakeStringTrie(delimiters)), matcher(MakeAutomatonMatcher(autom)) {
-    // fst::drawFst(automaton_, std::cout);
-
-#ifdef SDB_DEV
-    // ensure nfa is sorted
-    static constexpr auto kExpectedNfaProperties =
-      fst::kILabelSorted | fst::kOLabelSorted | fst::kAcceptor |
-      fst::kUnweighted;
-
-    SDB_ASSERT(kExpectedNfaProperties ==
-               autom.Properties(kExpectedNfaProperties, true));
-#endif
-  }
-
-  auto FindNextDelim() {
-    auto state = matcher.GetFst().Start();
-    matcher.SetState(state);
-    for (size_t k = 0; k < _data.length(); k++) {
-      matcher.Find(_data[k]);
-
-      state = matcher.Value().nextstate;
-
-      if (matcher.Final(state)) {
-        auto length = matcher.Final(state).Payload();
-        SDB_ASSERT(length <= k);
-
-        return std::make_pair(_data.begin() + (k - length),
-                              static_cast<size_t>(length + 1));
-      }
-
-      matcher.SetState(state);
-    }
-
-    return std::make_pair(_data.end(), size_t{0});
-  }
-
-  automaton autom;
-  automaton_table_matcher matcher;
+ private:
+  [[no_unique_address]] Finder _finder;
 };
 
-class MultiDelimitedTokenizerSingle final
-  : public MultiDelimitedTokenizerBase<MultiDelimitedTokenizerSingle> {
- public:
-  explicit MultiDelimitedTokenizerSingle(std::vector<bstring>& delimiters)
-    : delim(std::move(delimiters[0])), searcher(delim.begin(), delim.end()) {}
+}  // namespace irs::analysis
+namespace irs {
 
-  auto FindNextDelim() {
-    auto next = std::search(_data.begin(), _data.end(), searcher);
-    return std::make_pair(next, delim.size());
-  }
+template<typename Finder>
+struct Type<analysis::MultiDelimitedTokenizerImpl<Finder>>
+  : Type<analysis::MultiDelimitedTokenizer> {};
 
-  bstring delim;
-  std::boyer_moore_searcher<bstring::iterator> searcher;
-};
+}  // namespace irs
+namespace irs::analysis {
+namespace {
 
-template<size_t N>
-Analyzer::ptr MakeSingleChar(std::vector<bstring>&& delimiters) {
-  if constexpr (N >= 2) {
-    return std::make_unique<MultiDelimitedTokenizerGenericSingleChars>(
-      delimiters);
-  } else if (delimiters.size() == N) {
-    return std::make_unique<MultiDelimitedTokenizerSingleChars<N>>(delimiters);
-  } else {
-    return MakeSingleChar<N + 1>(std::move(delimiters));
-  }
-}
-
-Analyzer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
+Tokenizer::ptr MakeImpl(std::vector<bstring>&& delimiters) {
   const bool single_character_case = absl::c_all_of(
     delimiters, [](const auto& delim) { return delim.size() == 1; });
   if (single_character_case) {
-    return MakeSingleChar<0>(std::move(delimiters));
+    switch (delimiters.size()) {
+      case 0:
+        return std::make_unique<MultiDelimitedTokenizerImpl<NoDelimFinder>>();
+      case 1:
+        return std::make_unique<MultiDelimitedTokenizerImpl<OneCharFinder>>(
+          delimiters[0][0]);
+      default:
+        return std::make_unique<MultiDelimitedTokenizerImpl<ManyCharsFinder>>(
+          delimiters);
+    }
   }
   if (delimiters.size() == 1) {
-    return std::make_unique<MultiDelimitedTokenizerSingle>(delimiters);
+    if (delimiters[0].size() > kBmNeedleThreshold) {
+      return std::make_unique<MultiDelimitedTokenizerImpl<OneLongStringFinder>>(
+        std::move(delimiters[0]));
+    }
+    return std::make_unique<MultiDelimitedTokenizerImpl<OneStringFinder>>(
+      std::move(delimiters[0]));
   }
-  return std::make_unique<MultiDelimitedTokenizerGeneric>(delimiters);
+  return std::make_unique<MultiDelimitedTokenizerImpl<MultiStringFinder>>(
+    std::move(delimiters));
 }
 
 }  // namespace
 
-Analyzer::ptr MultiDelimitedTokenizer::Make(
+Tokenizer::ptr MultiDelimitedTokenizer::Make(
   MultiDelimitedTokenizer::Options opts) {
   for (size_t i = 0; i < opts.delimiters.size(); ++i) {
     const bytes_view view{opts.delimiters[i]};

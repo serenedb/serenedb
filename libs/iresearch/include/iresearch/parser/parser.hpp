@@ -23,7 +23,7 @@
 #include <string>
 #include <string_view>
 
-#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/boolean_filter.hpp"
@@ -53,13 +53,13 @@ struct ParserContext {
   irs::field_id default_field_id{irs::field_limits::invalid()};
   std::string_view default_field_name;
   irs::MixedBooleanFilter* current_root;
-  irs::analysis::Analyzer* tokenizer;
+  irs::analysis::Tokenizer* tokenizer;
   std::string error_message;
   Modifier last_mod{Modifier::None};
   bool strict_field = false;
 
   ParserContext(irs::MixedBooleanFilter& root, irs::field_id field_id,
-                irs::analysis::Analyzer& tokenizer)
+                irs::analysis::Tokenizer& tokenizer)
     : default_field_id(field_id), current_root{&root}, tokenizer{&tokenizer} {}
 
   void AddClause(Conjunction conj) {
@@ -101,10 +101,13 @@ struct ParserContext {
   irs::ByPhrase& AddPhrase(std::string_view value, int slop = 0) {
     auto& f = current_root->GetOptional().add<irs::ByPhrase>();
     *f.mutable_field_id() = default_field_id;
-    tokenizer->reset(value);
-    auto token = irs::get<irs::TermAttr>(*tokenizer);
-    for (; tokenizer->next();) {
-      f.mutable_options()->push_back<irs::ByTermOptions>().term = token->value;
+    irs::TokenCollector collector{irs::TokenLayout::Terms};
+    irs::AnalyzeValue(
+      *tokenizer,
+      duckdb::string_t{value.data(), static_cast<uint32_t>(value.size())},
+      collector);
+    for (const auto& token : collector.tokens) {
+      f.mutable_options()->push_back<irs::ByTermOptions>().term = token.term;
     }
     return f;
   }

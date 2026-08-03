@@ -319,7 +319,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
                              const catalog::InvertedIndexEntryInfo* info,
                              duckdb::LogicalType type, bool column) {
     auto column_info = MakeSearchColumnInfo(
-      field_id, info, std::move(type), index.GetTokenizer(snapshot, field_id));
+      field_id, info, std::move(type),
+      index.GetTokenizer(context, snapshot, field_id));
     if (column && table &&
         column_not_null(static_cast<catalog::Column::Id>(field_id))) {
       column_info.null_field_id = irs::field_limits::invalid();
@@ -328,7 +329,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       null_markers[column_info.null_field_id] = column_info.field_id;
     }
     if (column_info.tokenizer.analyzer->type() !=
-        irs::Type<irs::StringTokenizer>::id()) {
+        irs::Type<irs::KeywordTokenizer>::id()) {
       analyzed_fields.insert(field_id);
     }
     return column_info;

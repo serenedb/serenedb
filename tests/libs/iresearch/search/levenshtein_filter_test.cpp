@@ -516,7 +516,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
   struct TextField : FieldBase {
    public:
-    TextField(irs::analysis::Analyzer& analyzer, std::string value)
+    TextField(irs::analysis::Tokenizer& analyzer, std::string value)
       : _value(std::move(value)), _analyzer(&analyzer) {
       this->Name("id");
       this->id = kIdId;
@@ -526,15 +526,13 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     bool Write(irs::DataOutput&) const noexcept final { return true; }
 
-    irs::Tokenizer& GetTokens() const final {
-      const bool res = _analyzer->reset(_value);
-      EXPECT_TRUE(res);
-      return *_analyzer;
-    }
+    irs::analysis::Tokenizer& GetTokens() const final { return *_analyzer; }
+
+    std::string_view Value() const final { return _value; }
 
    private:
     std::string _value;
-    irs::analysis::Analyzer* _analyzer;
+    irs::analysis::Tokenizer* _analyzer;
   };
 
   {

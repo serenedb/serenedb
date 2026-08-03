@@ -226,7 +226,9 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
         inverted.Predicate()->serialized_expr, *session.expr_conn.context);
     }
     session.insert_writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
-      session.trx, MakeTokenizerProvider(session.snapshot, inverted),
+      session.trx,
+      MakeTokenizerProvider(*session.expr_conn.context, session.snapshot,
+                            inverted),
       inverted.GetColumns(), MakeEntryInfoProvider(inverted),
       MakeIndexedExpressions(inverted, *session.expr_conn.context),
       PkPolicy{.index_term = inverted.GetOptions().pk_term,
@@ -248,16 +250,17 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   duckdb::UnifiedVectorFormat row_fmt;
   feed_rows.ToUnifiedFormat(count, row_fmt);
   std::vector<std::string> keys(count);
-  std::vector<std::string_view> key_views(count);
+  std::vector<duckdb::string_t> key_terms(count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
     auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
       row_fmt)[row_fmt.sel->get_index(i)];
     keys[i] = RowIdKey(row);
-    key_views[i] = keys[i];
+    key_terms[i] = duckdb::string_t{
+      keys[i].data(), static_cast<uint32_t>(keys[i].size())};
   }
 
   auto& ins = *session.insert_writer;
-  ins.Init(count, PkChunk{.keys = key_views, .column = &feed_rows});
+  ins.Init(count, PkChunk{.key_terms = key_terms, .column = &feed_rows});
   for (duckdb::idx_t k = 0; k < session.ref_positions.size(); ++k) {
     auto col_id = session.ref_col_ids[k];
     const auto* col = session.table->ColumnById(col_id);
@@ -378,15 +381,16 @@ duckdb::ErrorData InvertedStoreIndex::AppendRows(
   duckdb::UnifiedVectorFormat row_fmt;
   feed_rows.ToUnifiedFormat(count, row_fmt);
   std::vector<std::string> keys(count);
-  std::vector<std::string_view> key_views(count);
+  std::vector<duckdb::string_t> key_terms(count);
   for (duckdb::idx_t i = 0; i < count; ++i) {
     auto row = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(
       row_fmt)[row_fmt.sel->get_index(i)];
     keys[i] = RowIdKey(row);
-    key_views[i] = keys[i];
+    key_terms[i] = duckdb::string_t{
+      keys[i].data(), static_cast<uint32_t>(keys[i].size())};
   }
 
-  writer->Init(count, PkChunk{.keys = key_views, .column = &feed_rows});
+  writer->Init(count, PkChunk{.key_terms = key_terms, .column = &feed_rows});
   for (duckdb::idx_t pos = 0;
        pos < feed_chunk.ColumnCount() && pos < chunk_column_ids.size(); ++pos) {
     auto col_id = chunk_column_ids[pos];

@@ -25,16 +25,16 @@
 
 #include <absl/container/flat_hash_set.h>
 
-#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/utils/first_len_filter.hpp"
 #include "iresearch/utils/hash_utils.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs::analysis {
 
 // An analyzer capable of masking the input, treated as a single token,
 // if it is present in the configured list
-class StopwordsTokenizer final : public TypedAnalyzer<StopwordsTokenizer>,
+class StopwordsTokenizer final : public TypedTokenizer<StopwordsTokenizer>,
                                  private util::Noncopyable {
  public:
   using stopwords_set = absl::flat_hash_set<std::string>;
@@ -48,20 +48,19 @@ class StopwordsTokenizer final : public TypedAnalyzer<StopwordsTokenizer>,
   static constexpr std::string_view type_name() noexcept { return "stopwords"; }
 
   explicit StopwordsTokenizer(stopwords_set&& mask);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  TokenTraits Traits() const noexcept final { return {.offsets = true}; }
+
+  template<TokenLayout Layout>
+  bool DoFill(const duckdb::string_t& value, TokenSink& sink);
+
+  bool IsStopword(const duckdb::string_t& value) const noexcept {
+    return _stopwords.Contains({value.GetData(), value.GetSize()});
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
 
  private:
-  // token value with evaluated quotes
-
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  stopwords_set _stopwords;
-  attributes _attrs;
-  bool _term_eof = true;
+  Prefiltered<stopwords_set> _stopwords;
 };
+
+extern template class TypedTokenizer<StopwordsTokenizer>;
 
 }  // namespace irs::analysis

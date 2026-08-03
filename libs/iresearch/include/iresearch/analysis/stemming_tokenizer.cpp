@@ -27,75 +27,61 @@
 
 #include <string_view>
 
+#include "iresearch/analysis/token_batch.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
 StemmingTokenizer::StemmingTokenizer(Options options)
-  : _options{std::move(options)} {}
-
-Analyzer::ptr StemmingTokenizer::Make(Options opts) {
-  if (opts.locale.isBogus()) {
+  : _options{std::move(options)} {
+  if (_options.locale.isBogus()) {
     THROW_SQL_ERROR(ERR_MSG("stem: invalid locale"));
   }
+  // defaults to utf-8; an unsupported language leaves the stemmer null and
+  // the tokenizer passes values through unstemmed
+  _stemmer = make_stemmer_ptr(_options.locale.getLanguage(), nullptr);
+}
+
+Tokenizer::ptr StemmingTokenizer::Make(Options opts) {
   return std::make_unique<StemmingTokenizer>(std::move(opts));
 }
 
-bool StemmingTokenizer::next() {
-  if (_term_eof) {
+duckdb::string_t StemmingTokenizer::Stem(const duckdb::string_t& data) {
+  const std::string_view key{data.GetData(), data.GetSize()};
+  if (_stemmer && key.size() <= static_cast<uint32_t>(
+                                  std::numeric_limits<int32_t>::max())) {
+    if (const auto stemmed = _cache.Stem(_stemmer.get(), key)) {
+      return MakeTermView(stemmed->data(),
+                          static_cast<uint32_t>(stemmed->size()));
+    }
+  }
+  // use the value of the unstemmed token
+  return data;
+}
+
+template<TokenLayout Layout>
+bool StemmingTokenizer::DoFill(const duckdb::string_t& raw, TokenSink& sink) {
+  const auto raw_size = static_cast<uint32_t>(raw.GetSize());
+  if (_stemmer &&
+      raw_size > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
     return false;
   }
-
-  _term_eof = true;
-
+  const auto stemmed = Stem(raw);
+  const char* const data = stemmed.GetData();
+  const uint32_t size = stemmed.GetSize();
+  if (size <= duckdb::string_t::INLINE_LENGTH || data == raw.GetData()) {
+    sink.Emit<Layout>(stemmed);
+  } else {
+    sink.Emit<Layout>(
+      size,
+      [&](byte_type* mem) IRS_FORCE_INLINE {
+        std::memcpy(mem, data, size);
+        return size;
+      });
+  }
   return true;
 }
 
-bool StemmingTokenizer::reset(std::string_view data) {
-  if (!_stemmer) {
-    // defaults to utf-8
-    _stemmer = make_stemmer_ptr(_options.locale.getLanguage(), nullptr);
-  }
-
-  auto& term = std::get<TermAttr>(_attrs);
-
-  term.value = {};  // reset
-
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = static_cast<uint32_t>(data.size());
-
-  _term_eof = false;
-
-  // find the token stem
-  std::string_view utf8_data{data};
-
-  if (_stemmer) {
-    if (utf8_data.size() >
-        static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
-      return false;
-    }
-
-    static_assert(sizeof(sb_symbol) == sizeof(char));
-    const auto* value = reinterpret_cast<const sb_symbol*>(utf8_data.data());
-
-    value = sb_stemmer_stem(_stemmer.get(), value,
-                            static_cast<int>(utf8_data.size()));
-
-    if (value) {
-      static_assert(sizeof(byte_type) == sizeof(sb_symbol));
-      term.value = bytes_view(reinterpret_cast<const byte_type*>(value),
-                              sb_stemmer_length(_stemmer.get()));
-
-      return true;
-    }
-  }
-
-  // use the value of the unstemmed token
-  static_assert(sizeof(byte_type) == sizeof(char));
-  term.value = ViewCast<byte_type>(utf8_data);
-
-  return true;
-}
+template class TypedTokenizer<StemmingTokenizer>;
 
 }  // namespace irs::analysis

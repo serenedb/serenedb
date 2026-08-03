@@ -24,11 +24,15 @@
 #pragma once
 
 #include <unicode/locid.h>
+#include <unicode/normalizer2.h>
+#include <unicode/translit.h>
 
-#include "analyzer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include <memory>
+#include <tuple>
+
+#include "basics/noncopyable.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs {
 namespace analysis {
@@ -39,7 +43,7 @@ namespace analysis {
 ///        token, i.e. case conversion and accent removal
 /// @note expects UTF-8 encoded input
 ////////////////////////////////////////////////////////////////////////////////
-class NormalizingTokenizer final : public TypedAnalyzer<NormalizingTokenizer>,
+class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
                                    private util::Noncopyable {
  public:
   struct Options {
@@ -53,25 +57,45 @@ class NormalizingTokenizer final : public TypedAnalyzer<NormalizingTokenizer>,
   static constexpr std::string_view type_name() noexcept { return "norm"; }
 
   explicit NormalizingTokenizer(Options options);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+
+  TokenTraits Traits() const noexcept final {
+    return {
+      .unique = true,
+      .offsets = true,
+    };
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  // Accent == keep accents (no transliteration); its complement drives the
+  // NFD-strip transliterator, created only when accent is off.
+  std::tuple<Case, bool> PrepareBatch();
+
+  template<TokenLayout Layout, Case C, bool Accent>
+  bool DoFill(const duckdb::string_t& value, TokenSink& sink);
+
+  bool AsciiFastEligible(const duckdb::string_t& value) const noexcept;
+  bool AsciiRewrite(const duckdb::string_t& value, std::string& out) const;
+
+  // The action AsciiRewrite applies to an eligible term; Case::None means
+  // the rewrite is an identity copy, so a chain can gate on this analyzer
+  // yet skip its stage entirely.
+  Case AsciiCase() const noexcept { return _options.case_convert; }
 
  private:
-  // token value with evaluated quotes
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  template<TokenLayout Layout, Case C>
+  static void AsciiEmit(const duckdb::string_t& raw, TokenSink& sink);
+  template<TokenLayout Layout, Case C, bool Accent>
+  bool UnicodeEmit(const duckdb::string_t& raw, TokenSink& sink);
+  template<Case C, bool Accent>
+  const icu::UnicodeString& Normalize(const duckdb::string_t& data);
 
-  struct StateT;
-  struct StateDeleterT {
-    void operator()(StateT*) const noexcept;
-  };
-
-  attributes _attrs;
-  std::unique_ptr<StateT, StateDeleterT> _state;
-  bool _term_eof;
+  Options _options;
+  icu::UnicodeString _token;
+  const icu::Normalizer2* _normalizer{};  // reusable object owned by ICU
+  std::unique_ptr<icu::Transliterator> _transliterator;
+  bool _ascii_fast = false;
 };
+
+extern template class TypedTokenizer<NormalizingTokenizer>;
 
 }  // namespace analysis
 }  // namespace irs

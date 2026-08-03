@@ -29,7 +29,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_list_sink.hpp>
 #include <iresearch/utils/string.hpp>
 #include <variant>
 
@@ -61,8 +61,8 @@ std::shared_ptr<catalog::Tokenizer> LookupTokenizerDict(
 }
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
-  catalog::Tokenizer& dict) {
-  return dict.GetTokenizer();
+  duckdb::ClientContext& ctx, catalog::Tokenizer& dict) {
+  return dict.GetTokenizer(ctx);
 }
 
 struct DynamicCtx {
@@ -92,47 +92,39 @@ struct TsLexizeLocalState final : public duckdb::FunctionLocalState {
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitTsLexizeLocalState(
-  duckdb::ExpressionState& /*state*/,
+  duckdb::ExpressionState& state,
   const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData* bind_data) {
   auto& dict = std::get<std::shared_ptr<catalog::Tokenizer>>(
     bind_data->Cast<TsLexizeBindData>().state);
   auto local = duckdb::make_uniq<TsLexizeLocalState>();
-  local->wrapper = AcquireTokenizer(*dict);
+  local->wrapper = AcquireTokenizer(state.GetContext(), *dict);
   return local;
 }
 
 class ListTokenSink {
  public:
   explicit ListTokenSink(duckdb::Vector& result_list)
-    : _result_list(result_list),
-      _result_child(duckdb::ListVector::GetEntry(result_list)) {}
+    : _result_list(result_list), _sink(result_list, 0) {}
   ~ListTokenSink() { Finalize(); }
 
   duckdb::idx_t Offset() const noexcept { return _offset; }
 
-  void Push(std::string_view token) {
-    if (_offset >= duckdb::ListVector::GetListCapacity(_result_list)) {
-      duckdb::ListVector::SetListSize(_result_list, _offset);
-      duckdb::ListVector::Reserve(
-        _result_list, duckdb::ListVector::GetListCapacity(_result_list) * 2);
-    }
-    auto* data =
-      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(_result_child);
-    data[_offset] = duckdb::StringVector::AddStringOrBlob(
-      _result_child, token.data(), token.size());
-    ++_offset;
-  }
+  void Bind(irs::analysis::Tokenizer& tokenizer) { _stream = &tokenizer; }
 
-  void Push(irs::analysis::Analyzer& tokenizer, std::string_view text) {
-    if (!tokenizer.reset(text)) {
+  void Tokenize(duckdb::string_t text) {
+    SDB_ASSERT(_stream);
+    if (!_stream->Fill(text, _sink.writer, irs::TokenLayout::Terms)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("error while preparing tokenizer"));
     }
-    auto* term = irs::get<irs::TermAttr>(tokenizer);
-    while (tokenizer.next()) {
-      Push(irs::ViewCast<char>(term->value));
-    }
+    _sink.writer.Finish();
+    _offset = _sink.offset();
+  }
+
+  void Tokenize(irs::analysis::Tokenizer& tokenizer, duckdb::string_t text) {
+    Bind(tokenizer);
+    Tokenize(text);
   }
 
  private:
@@ -141,8 +133,9 @@ class ListTokenSink {
   }
 
   duckdb::Vector& _result_list;
-  duckdb::Vector& _result_child;
   duckdb::idx_t _offset = 0;
+  irs::analysis::Tokenizer* _stream = nullptr;
+  irs::ListVectorSink _sink;
 };
 
 const TsLexizeBindData& GetBindData(duckdb::ExpressionState& state) {
@@ -170,6 +163,7 @@ void TsLexizeFunctionConstant(duckdb::DataChunk& args,
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
   ListTokenSink sink{result};
+  sink.Bind(tokenizer);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto text_idx = text_format.sel->get_index(i);
@@ -179,7 +173,7 @@ void TsLexizeFunctionConstant(duckdb::DataChunk& args,
       continue;
     }
     const auto row_offset = sink.Offset();
-    sink.Push(tokenizer, AsView(text_data[text_idx]));
+    sink.Tokenize(text_data[text_idx]);
     list_entries[i] = {row_offset, sink.Offset() - row_offset};
   }
 }
@@ -210,6 +204,7 @@ void TsLexizeArrayFunctionConstant(duckdb::DataChunk& args,
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
   ListTokenSink sink{result};
+  sink.Bind(tokenizer);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto list_idx = list_format.sel->get_index(i);
@@ -225,7 +220,7 @@ void TsLexizeArrayFunctionConstant(duckdb::DataChunk& args,
       if (!child_format.validity.RowIsValid(child_idx)) {
         continue;
       }
-      sink.Push(tokenizer, AsView(child_data[child_idx]));
+      sink.Tokenize(child_data[child_idx]);
     }
     list_entries_out[i] = {row_offset, sink.Offset() - row_offset};
   }
@@ -264,9 +259,9 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
     auto dict =
       LookupTokenizerDict(*ctx.snapshot, ctx.db_id, ctx.current_schema,
                           AsView(dict_data[dict_idx]));
-    auto tokenizer = AcquireTokenizer(*dict);
+    auto tokenizer = AcquireTokenizer(state.GetContext(), *dict);
     const auto row_offset = sink.Offset();
-    sink.Push(*tokenizer, AsView(text_data[text_idx]));
+    sink.Tokenize(*tokenizer, text_data[text_idx]);
     list_entries[i] = {row_offset, sink.Offset() - row_offset};
   }
 }
@@ -311,7 +306,7 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
     auto dict =
       LookupTokenizerDict(*ctx.snapshot, ctx.db_id, ctx.current_schema,
                           AsView(dict_data[dict_idx]));
-    auto tokenizer = AcquireTokenizer(*dict);
+    auto tokenizer = AcquireTokenizer(state.GetContext(), *dict);
     const auto row_offset = sink.Offset();
     const auto& entry = list_entries_in[list_idx];
     for (duckdb::idx_t k = 0; k < entry.length; k++) {
@@ -319,7 +314,7 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
       if (!child_format.validity.RowIsValid(child_idx)) {
         continue;
       }
-      sink.Push(*tokenizer, AsView(child_data[child_idx]));
+      sink.Tokenize(*tokenizer, child_data[child_idx]);
     }
     list_entries_out[i] = {row_offset, sink.Offset() - row_offset};
   }

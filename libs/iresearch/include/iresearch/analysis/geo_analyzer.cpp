@@ -21,218 +21,165 @@
 
 #include "iresearch/analysis/geo_analyzer.hpp"
 
-#include <absl/strings/str_cat.h>
+#include <absl/base/internal/endian.h>
 #include <s2/s2latlng.h>
-#include <s2/s2point_region.h>
 
-#include <magic_enum/magic_enum.hpp>
+#include <bit>
+#include <cstring>
+#include <memory>
 #include <string>
 
 #include "basics/down_cast.h"
-#include "basics/log.h"
-#include "basics/serializer.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
 #include "geo/wkb.h"
+#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/search/geo_filter.hpp"
 #include "pg/sql_exception_macro.h"
 
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t
-customize::enum_name<irs::analysis::GeoJsonAnalyzer::Type>(
-  irs::analysis::GeoJsonAnalyzer::Type value) noexcept {
-  switch (value) {
-    case irs::analysis::GeoJsonAnalyzer::Type::Shape:
-      return "shape";
-    case irs::analysis::GeoJsonAnalyzer::Type::Centroid:
-      return "centroid";
-    case irs::analysis::GeoJsonAnalyzer::Type::Point:
-      return "point";
-  }
-  return invalid_tag;
-}
-
-template<>
-[[maybe_unused]] constexpr customize::customize_t
-customize::enum_name<irs::analysis::GeoJsonAnalyzer::Coding>(
-  irs::analysis::GeoJsonAnalyzer::Coding value) noexcept {
-  switch (value) {
-    case irs::analysis::GeoJsonAnalyzer::Coding::S2Point:
-      return "s2Point";
-    case irs::analysis::GeoJsonAnalyzer::Coding::S2LatLngF64:
-      return "s2LatLngF64";
-    case irs::analysis::GeoJsonAnalyzer::Coding::S2LatLngU32:
-      return "s2LatLngU32";
-    case irs::analysis::GeoJsonAnalyzer::Coding::Source:
-      return "source";
-  }
-  return invalid_tag;
-}
-
-}  // namespace magic_enum
 namespace irs::analysis {
-namespace {
 
 using namespace sdb;
 using namespace sdb::geo;
 
-struct S2AnalyzerData {
-  sdb::geo::coding::Options coding;
-  Encoder encoder;
-};
+namespace {
 
-// Source coding force-includes the indexed source column and re-parses it at
-// query time, so the analyzer writes no derived StoreAttr blob.
-struct SourceAnalyzerData {};
-
-template<typename Data>
-class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
- public:
-  explicit GeoJsonAnalyzerImpl(const Options& options)
-    : GeoJsonAnalyzer{options} {
-    if constexpr (kIsS2) {
-      SDB_ASSERT(options.coding != Coding::Source);
-      _data.coding =
-        sdb::geo::coding::Options{std::to_underlying(options.coding)};
-      // should be enough space for type + size or S2Point
-      _data.encoder.Ensure(30);
-    }
+// A 2D little-endian WKB point, the dominant GEOMETRY ingest shape: decoded
+// inline so point values skip ParseShapeWKB's ShapeContainer and its
+// per-value S2PointRegion allocation. Anything else (big-endian, other
+// geometry types, EWKB flags) falls through to the general parser.
+bool ParseWkbPoint(duckdb::string_t wkb, S2LatLng& out) noexcept {
+  constexpr size_t kWkbPointSize = 1 + 4 + 8 + 8;
+  const char* const data = wkb.GetData();
+  if (wkb.GetSize() != kWkbPointSize || static_cast<byte_type>(data[0]) != 1) {
+    return false;
   }
-
-  using GeoAnalyzer::reset;
-  bool reset(simdjson::ondemand::value json) final {
-    if constexpr (kIsS2) {
-      _data.encoder.clear();
-      if (!ResetImpl(json, _data.coding, &_data.encoder)) {
-        return false;
-      }
-    } else {
-      if (!ResetImpl(json, geo::coding::Options::Invalid, nullptr)) {
-        return false;
-      }
-    }
-    StoreImpl();
-    return true;
+  if (absl::little_endian::Load32(data + 1) != 1) {
+    return false;
   }
-
-  bool resetWKB(bytes_view wkb) final {
-    if constexpr (kIsS2) {
-      // WKB-based ingest currently supports only S2 codings (S2Point /
-      // S2PointShapeCompact / S2PointRegionCompact). LatLng codings
-      // (S2LatLngF64, S2LatLngU32) need a per-shape-type walker that emits
-      // LatLng-encoded bytes either fused with the WKB read or from the
-      // already-built S2 objects; S2LatLngU32 additionally needs
-      // pre-quantization. Callers must configure S2 coding before reaching
-      // here.
-      SDB_ASSERT(geo::coding::IsOptionsS2(_data.coding) &&
-                 "LatLng coding is not supported by resetWKB; "
-                 "use S2Point / S2PointShapeCompact / S2PointRegionCompact");
-      _shape = {};
-      const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
-                                   wkb.size()};
-      if (!sdb::geo::ParseShapeWKB(bytes, _shape)) {
-        return false;
-      }
-      if (_type == Type::Point &&
-          _shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
-        return false;
-      }
-      _data.encoder.clear();
-      // Match what ResetImpl's ParseShape path writes into _data.encoder.
-      // Centroid over a non-point shape skips serialization here; StoreImpl
-      // then encodes the centroid into _data.encoder itself.
-      const bool without_serialization =
-        _type == Type::Centroid &&
-        _shape.type() != sdb::geo::ShapeContainer::Type::S2Point;
-      if (!without_serialization) {
-        _shape.Encode(_data.encoder, _data.coding);
-      }
-      ComputeAndPublishTerms();
-      StoreImpl();
-      return true;
-    } else {
-      _shape = {};
-      const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
-                                   wkb.size()};
-      if (!sdb::geo::ParseShapeWKB(bytes, _shape)) {
-        return false;
-      }
-      if (_type == Type::Point &&
-          _shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
-        return false;
-      }
-      ComputeAndPublishTerms();
-      return true;
-    }
-  }
-
-  void prepare(GeoFilterOptionsBase& options) const final {
-    options.options = _indexer.options();
-    if constexpr (kIsS2) {
-      switch (_type) {
-        case Type::Shape:
-          options.stored = StoredType::S2Region;
-          break;
-        case Type::Point:
-          options.stored = StoredType::S2Point;
-          break;
-        case Type::Centroid:
-          options.stored = StoredType::S2Centroid;
-          break;
-      }
-      options.coding = _data.coding;
-    } else {
-      options.stored = StoredType::Source;
-    }
-  }
-
-  void StoreImpl() final;
-
- protected:
-  static constexpr bool kIsS2 = std::is_same_v<Data, S2AnalyzerData>;
-  Data _data;
-};
+  const double lng = absl::little_endian::Load<double>(data + 5);
+  const double lat = absl::little_endian::Load<double>(data + 13);
+  out = S2LatLng::FromDegrees(lat, lng).Normalized();
+  return true;
+}
 
 }  // namespace
 
 GeoAnalyzer::GeoAnalyzer(const S2RegionTermIndexer::Options& options)
-  : _indexer{options} {}
+  : _indexer{options} {
+  *_coverer.mutable_options() = options;
+}
 
-bool GeoAnalyzer::next() noexcept {
-  if (_begin >= _end) {
-    return false;
+bool GeoAnalyzer::IsGeoAnalyzer(const Tokenizer& tokens) noexcept {
+  return tokens.type() == irs::Type<GeoPointAnalyzer>::id() ||
+         tokens.type() == irs::Type<GeoJsonAnalyzer>::id();
+}
+
+GeoAnalyzer& GeoAnalyzer::Cast(Tokenizer& tokens) noexcept {
+  if (tokens.type() == irs::Type<GeoPointAnalyzer>::id()) {
+    return sdb::basics::downCast<GeoPointAnalyzer>(tokens);
   }
-  auto& value = *_begin++;
-  std::get<irs::TermAttr>(_attrs).value = {
-    reinterpret_cast<const irs::byte_type*>(value.data()), value.size()};
+  SDB_ASSERT(tokens.type() == irs::Type<GeoJsonAnalyzer>::id());
+  return sdb::basics::downCast<GeoJsonAnalyzer>(tokens);
+}
+
+// Replicates S2RegionTermIndexer::GetIndexTerms term-by-term (the covering
+// walk with its ancestor-dedup break, then the plain level loop for a point),
+// emitting each token straight into the sink; equality with the indexer is
+// pinned by the oracle tests.
+template<TokenLayout Layout>
+void GeoAnalyzer::EmitTerms(TokenSink& sink) {
+  const auto& opts = _indexer.options();
+  const auto emit = [&](S2CellId id, bool covering) {
+    // S2CellId::ToToken without the std::string: hex of the id with trailing
+    // zero nibbles stripped (valid cells are never 0, so no "X" case).
+    const uint64_t v = id.id();
+    SDB_ASSERT(v != 0);
+    constexpr char kHexDigits[] = "0123456789abcdef";
+    const auto len = 16 - static_cast<size_t>(std::countr_zero(v) >> 2);
+    sink.Emit<Layout>(
+      len + 1,
+      [&](byte_type* mem) IRS_FORCE_INLINE {
+        size_t n = 0;
+        if (covering) {
+          mem[n++] = static_cast<byte_type>(opts.marker_character());
+        }
+        for (size_t j = 0; j < len; ++j) {
+          mem[n + j] = static_cast<byte_type>(kHexDigits[(v >> (60 - 4 * j)) & 0xF]);
+        }
+        return static_cast<uint32_t>(n + len);
+      });
+  };
+  if (!_covering.empty()) {
+    SDB_ASSERT(!opts.index_contains_points_only());
+    S2CellId prev_id = S2CellId::None();
+    const int true_max_level = opts.true_max_level();
+    for (const S2CellId id : _covering) {
+      const int cell_level = id.level();
+      if (cell_level < true_max_level) {
+        emit(id, true);
+      }
+      if (cell_level == true_max_level || !opts.optimize_for_space()) {
+        emit(id, false);
+      }
+      for (int level = cell_level - opts.level_mod(); level >= opts.min_level();
+           level -= opts.level_mod()) {
+        const S2CellId ancestor_id = id.parent(level);
+        if (prev_id != S2CellId::None() && prev_id.level() > level &&
+            prev_id.parent(level) == ancestor_id) {
+          break;
+        }
+        emit(ancestor_id, false);
+      }
+      prev_id = id;
+    }
+  }
+  if (_point_id != S2CellId::None()) {
+    for (int level = opts.min_level(); level <= opts.max_level();
+         level += opts.level_mod()) {
+      emit(_point_id.parent(level), false);
+    }
+  }
+}
+
+template<TokenLayout Layout, bool Wkb>
+bool GeoAnalyzer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  if constexpr (Wkb) {
+    if (!resetWKB(raw)) {
+      return false;
+    }
+  } else {
+    // simdjson requires SIMDJSON_PADDING readable (not zeroed) bytes past the
+    // value; a grow-only scratch keeps the copy to one memcpy per value.
+    const size_t size = raw.GetSize();
+    const size_t needed = size + simdjson::SIMDJSON_PADDING;
+    if (needed > _json_cap) {
+      _json_buf = std::make_unique_for_overwrite<char[]>(needed);
+      _json_cap = needed;
+    }
+    std::memcpy(_json_buf.get(), raw.GetData(), size);
+    simdjson::padded_string_view padded_view{_json_buf.get(), size, _json_cap};
+    simdjson::ondemand::document doc;
+    if (_json_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
+      return false;
+    }
+    simdjson::ondemand::value json;
+    if (doc.get_value().get(json) != simdjson::SUCCESS) {
+      return false;
+    }
+    if (!reset(json)) {
+      return false;
+    }
+  }
+  EmitTerms<Layout>(sink);
+  Store(sink);
   return true;
 }
 
-void GeoAnalyzer::reset(std::vector<std::string>&& terms) noexcept {
-  _terms = std::move(terms);
-  _begin = _terms.data();
-  _end = _begin + _terms.size();
-}
+template class TypedTokenizer<GeoPointAnalyzer>;
+template class TypedTokenizer<GeoJsonAnalyzer>;
 
-bool GeoAnalyzer::reset(std::string_view value) {
-  _json_buffer.assign(value);
-  _json_buffer.append(simdjson::SIMDJSON_PADDING, '\0');
-  simdjson::padded_string_view padded_view{_json_buffer.data(), value.size(),
-                                           _json_buffer.size()};
-  simdjson::ondemand::document doc;
-  if (_json_parser.iterate(padded_view).get(doc) != simdjson::SUCCESS) {
-    return false;
-  }
-  simdjson::ondemand::value json;
-  if (doc.get_value().get(json) != simdjson::SUCCESS) {
-    return false;
-  }
-  return reset(json);
-}
-
-irs::analysis::Analyzer::ptr GeoPointAnalyzer::Make(Options opts) {
+irs::analysis::Tokenizer::ptr GeoPointAnalyzer::Make(Options opts) {
   opts.options.Validate("geo_point");
   if (opts.latitude.empty() != opts.longitude.empty()) {
     THROW_SQL_ERROR(
@@ -251,26 +198,32 @@ GeoPointAnalyzer::GeoPointAnalyzer(const Options& options)
 }
 
 bool GeoPointAnalyzer::reset(simdjson::ondemand::value json) {
-  if (!ParsePoint(json, _point)) {
+  S2LatLng point;
+  if (!ParsePoint(json, point)) {
     return false;
   }
-  GeoAnalyzer::reset(_indexer.GetIndexTerms(_point.ToPoint(), {}));
+  ClearStaged();
+  StagePoint(point.ToPoint());
   return true;
 }
 
-bool GeoPointAnalyzer::resetWKB(bytes_view wkb) {
+bool GeoPointAnalyzer::resetWKB(duckdb::string_t wkb) {
+  if (S2LatLng point; ParseWkbPoint(wkb, point)) {
+    ClearStaged();
+    StagePoint(point.ToPoint());
+    return true;
+  }
   // GeoPointAnalyzer accepts points only.
   sdb::geo::ShapeContainer shape;
-  const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
-                               wkb.size()};
-  if (!sdb::geo::ParseShapeWKB(bytes, shape)) {
+  if (!sdb::geo::ParseShapeWKB({wkb.GetData(), wkb.GetSize()}, shape)) {
     return false;
   }
   if (shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
     return false;
   }
-  _point = S2LatLng{shape.centroid()};
-  GeoAnalyzer::reset(_indexer.GetIndexTerms(_point.ToPoint(), {}));
+  const S2LatLng point{shape.centroid()};
+  ClearStaged();
+  StagePoint(point.ToPoint());
   return true;
 }
 
@@ -352,18 +305,100 @@ bool GeoPointAnalyzer::ParsePoint(simdjson::ondemand::value json,
   return true;
 }
 
-irs::analysis::Analyzer::ptr GeoJsonAnalyzer::Make(Options opts) {
+irs::analysis::Tokenizer::ptr GeoJsonAnalyzer::Make(Options opts) {
   opts.options.Validate("geo_json");
-  if (opts.coding == Coding::Source) {
-    return std::make_unique<GeoJsonAnalyzerImpl<SourceAnalyzerData>>(opts);
-  }
-  return std::make_unique<GeoJsonAnalyzerImpl<S2AnalyzerData>>(opts);
+  return std::make_unique<GeoJsonAnalyzer>(opts);
 }
 
 GeoJsonAnalyzer::GeoJsonAnalyzer(const Options& options)
   : GeoAnalyzer{S2Options(options.options, options.type != Type::Shape)},
     _type{options.type},
-    _coding{options.coding} {}
+    _coding{options.coding} {
+  if (_coding != Coding::Source) {
+    _s2_coding = sdb::geo::coding::Options{std::to_underlying(_coding)};
+    // should be enough space for type + size or S2Point
+    _encoder.Ensure(30);
+  }
+}
+
+bool GeoJsonAnalyzer::reset(simdjson::ondemand::value json) {
+  Encoder* encoder = nullptr;
+  auto coding = geo::coding::Options::Invalid;
+  if (_coding != Coding::Source) {
+    _encoder.clear();
+    encoder = &_encoder;
+    coding = _s2_coding;
+  }
+  return ResetImpl(json, coding, encoder);
+}
+
+bool GeoJsonAnalyzer::resetWKB(duckdb::string_t wkb) {
+  // WKB-based ingest currently supports only S2 codings (S2Point /
+  // S2PointShapeCompact / S2PointRegionCompact). LatLng codings
+  // (S2LatLngF64, S2LatLngU32) need a per-shape-type walker that emits
+  // LatLng-encoded bytes either fused with the WKB read or from the
+  // already-built S2 objects; S2LatLngU32 additionally needs
+  // pre-quantization. Callers must configure S2 coding before reaching
+  // here.
+  SDB_ASSERT(_coding == Coding::Source || geo::coding::IsOptionsS2(_s2_coding),
+             "LatLng coding is not supported by resetWKB; "
+             "use S2Point / S2PointShapeCompact / S2PointRegionCompact");
+  if (S2LatLng ll; ParseWkbPoint(wkb, ll)) {
+    const auto point = ll.ToPoint();
+    if (_coding != Coding::Source) {
+      _encoder.clear();
+      _encoder.Ensure(sizeof(uint8_t) + geo::coding::ToSize(_s2_coding));
+      _encoder.put8(geo::coding::ToTag(geo::coding::Type::Point, _s2_coding));
+      geo::EncodePoint(_encoder, point);
+    }
+    ClearStaged();
+    _centroid = point;
+    StagePoint(point);
+    return true;
+  }
+  _shape = {};
+  if (!sdb::geo::ParseShapeWKB({wkb.GetData(), wkb.GetSize()}, _shape)) {
+    return false;
+  }
+  if (_type == Type::Point &&
+      _shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
+    return false;
+  }
+  if (_coding != Coding::Source) {
+    _encoder.clear();
+    // Match what ResetImpl's ParseShape path writes into _encoder.
+    // Centroid over a non-point shape skips serialization here; StoreImpl
+    // then encodes the centroid into _encoder itself.
+    const bool without_serialization =
+      _type == Type::Centroid &&
+      _shape.type() != sdb::geo::ShapeContainer::Type::S2Point;
+    if (!without_serialization) {
+      _shape.Encode(_encoder, _s2_coding);
+    }
+  }
+  StageTerms();
+  return true;
+}
+
+void GeoJsonAnalyzer::prepare(GeoFilterOptionsBase& options) const {
+  options.options = _indexer.options();
+  if (_coding == Coding::Source) {
+    options.stored = StoredType::Source;
+    return;
+  }
+  switch (_type) {
+    case Type::Shape:
+      options.stored = StoredType::S2Region;
+      break;
+    case Type::Point:
+      options.stored = StoredType::S2Point;
+      break;
+    case Type::Centroid:
+      options.stored = StoredType::S2Centroid;
+      break;
+  }
+  options.coding = _s2_coding;
+}
 
 bool GeoJsonAnalyzer::ResetImpl(simdjson::ondemand::value json,
                                 geo::coding::Options options,
@@ -384,55 +419,51 @@ bool GeoJsonAnalyzer::ResetImpl(simdjson::ondemand::value json,
     return false;
   }
 
-  ComputeAndPublishTerms();
+  StageTerms();
   return true;
 }
 
-void GeoJsonAnalyzer::ComputeAndPublishTerms() {
-  // TODO(mbkkt) try to avoid allocations in append
+void GeoJsonAnalyzer::StageTerms() {
+  ClearStaged();
   _centroid = _shape.centroid();
-  std::vector<std::string> geo_terms;
-  const auto type = _shape.type();
-  if (_type == Type::Centroid || type == geo::ShapeContainer::Type::S2Point) {
-    geo_terms = _indexer.GetIndexTerms(_centroid, {});
+  if (_type == Type::Centroid ||
+      _shape.type() == geo::ShapeContainer::Type::S2Point) {
+    StagePoint(_centroid);
   } else {
-    geo_terms = _indexer.GetIndexTerms(*_shape.region(), {});
+    StageCovering(*_shape.region());
     if (!_shape.contains(_centroid)) {
-      auto terms = _indexer.GetIndexTerms(_centroid, {});
-      geo_terms.insert(geo_terms.end(), std::make_move_iterator(terms.begin()),
-                       std::make_move_iterator(terms.end()));
-      // TODO(mbkkt) do we need terms deduplication?
+      // The centroid's ancestor terms can duplicate covering ancestors;
+      // duplicates collapse to one (term, doc) posting downstream (geo
+      // fields carry no freq), so no dedup pass is needed.
+      StagePoint(_centroid);
     }
   }
-  GeoAnalyzer::reset(std::move(geo_terms));
 }
 
-template<>
-void GeoJsonAnalyzerImpl<SourceAnalyzerData>::StoreImpl() {}
-
-template<>
-void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl() {
-  if (_data.encoder.length() == 0) {
+void GeoJsonAnalyzer::Store(TokenSink& sink) {
+  if (_coding == Coding::Source) {
+    // Source coding force-includes the indexed source column and re-parses
+    // it at query time, so the analyzer writes no derived store blob.
+    return;
+  }
+  if (_encoder.length() == 0) {
     SDB_ASSERT(_type == Type::Centroid);
-    SDB_ASSERT(_data.coding != geo::coding::Options::Invalid);
-    _data.encoder.put8(0);
-    if (geo::coding::IsOptionsS2(_data.coding)) {
-      geo::EncodePoint(_data.encoder, _centroid);
+    SDB_ASSERT(_s2_coding != geo::coding::Options::Invalid);
+    _encoder.put8(0);
+    if (geo::coding::IsOptionsS2(_s2_coding)) {
+      geo::EncodePoint(_encoder, _centroid);
     } else {
       S2LatLng lat_lng{_centroid};
-      geo::EncodeLatLng(_data.encoder, lat_lng, _data.coding);
+      geo::EncodeLatLng(_encoder, lat_lng, _s2_coding);
     }
   }
-  irs::bytes_view data{
-    reinterpret_cast<const irs::byte_type*>(_data.encoder.base()),
-    _data.encoder.length()};
+  irs::bytes_view data{reinterpret_cast<const irs::byte_type*>(_encoder.base()),
+                       _encoder.length()};
   if (_type != Type::Shape) {
     // For points we do not need type
     data = data.substr(1);
   }
-  auto* store = irs::GetMutable<StoreAttr>(this);
-  SDB_ASSERT(store);
-  store->value = data;
+  sink.Store(data);
 }
 
 }  // namespace irs::analysis

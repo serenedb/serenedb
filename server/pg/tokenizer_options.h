@@ -33,13 +33,16 @@
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
+#include <iresearch/analysis/split_by_non_alpha_tokenizer.hpp>
+#include <iresearch/analysis/sql_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
@@ -48,9 +51,31 @@
 #include <variant>
 
 #include "basics/assert.h"
+#include "magic_enum/magic_enum.hpp"
 #include "pg/geo_tokenizer_options.h"
 #include "pg/option_help.h"
 
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t
+customize::enum_name<irs::analysis::NGramTokenizerBase::NGramMode>(
+  irs::analysis::NGramTokenizerBase::NGramMode value) noexcept {
+  using NGramMode = irs::analysis::NGramTokenizerBase::NGramMode;
+  switch (value) {
+    case NGramMode::All:
+      return "all";
+    case NGramMode::Prefix:
+      return "only_prefix";
+    case NGramMode::Suffix:
+      return "only_suffix";
+    case NGramMode::PrefixAndSuffix:
+      return "only_prefix_and_suffix";
+  }
+  return invalid_tag;
+}
+
+}  // namespace magic_enum
 namespace sdb::pg::tokenizer_options {
 
 using namespace std::string_view_literals;
@@ -129,6 +154,13 @@ inline constexpr OptionInfo kStartMarker{
 inline constexpr OptionInfo kEndMarker{
   "endmarker", ""sv, "Suffix marker appended at n-gram boundary"};
 
+void CheckMode(std::string_view option, std::string_view value);
+
+inline constexpr OptionInfo kMode{
+  "mode", "all"sv,
+  "Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix",
+  CheckMode};
+
 // Sparse NGram
 
 void CheckMaxNgramLength(std::string_view option, int value);
@@ -199,6 +231,42 @@ constexpr OptionInfo kTemplate{"template",
                                OptionInfo::RequiredTag<std::string_view>{},
                                "Tokenizer template type", CheckTemplate};
 
+// Shingle (word n-gram) analyzer.
+
+void CheckShingleSize(std::string_view option, int value);
+
+inline constexpr OptionInfo kMinShingleSize{
+  "mingram", 2, "Minimum shingle (word n-gram) size (minimum 2)",
+  CheckShingleSize};
+
+inline constexpr OptionInfo kMaxShingleSize{
+  "maxgram", 2, "Maximum shingle (word n-gram) size (>= mingram)",
+  CheckShingleSize};
+
+inline constexpr OptionInfo kOutputUnigrams{
+  "outputunigrams", true, "Index individual tokens alongside the shingles"};
+
+inline constexpr OptionInfo kOutputUnigramsIfNoShingles{
+  "outputunigramsifnoshingles", false,
+  "Index unigrams only when the input is too short to form a shingle"};
+
+inline constexpr OptionInfo kStoreTokens{
+  "storetokens", true,
+  "Persist the per-document token stream (verification source for phrases "
+  "longer than maxgram). When false the index stores terms only"};
+
+inline constexpr OptionInfo kFrequentWords{
+  "frequentwords", ""sv,
+  "Comma-separated words (typically stopwords). When non-empty, shingles of "
+  "mingram stay dense while wider sizes are indexed only for spans "
+  "containing one of these words (adaptive width escalation)"};
+
+inline constexpr OptionInfo kFillerToken{
+  "fillertoken", ""sv,
+  "Token standing in for positions the base analyzer removed (e.g. "
+  "stopwords) in the stored token stream; never indexed as a term. "
+  "Default '_'"};
+
 // Pattern
 
 inline constexpr OptionInfo kPattern{
@@ -226,6 +294,14 @@ inline constexpr OptionInfo kSkip{"skip", 0,
 inline constexpr OptionInfo kBufferSize{
   "buffersize", 1024, "Term buffer size hint (characters per pass)"};
 
+// Sql
+
+inline constexpr OptionInfo kSqlExpression{
+  "expression", OptionInfo::RequiredTag<std::string_view>{},
+  "DuckDB scalar expression over the pseudo-column `input` (VARCHAR), "
+  "returning VARCHAR (one token per value) or LIST(VARCHAR) (token list); "
+  "built-in functions only, no subqueries, no volatile functions"};
+
 // Synonyms (Solr / WordNet)
 
 inline constexpr OptionInfo kSolrSynonyms{
@@ -247,7 +323,8 @@ inline constexpr OptionInfo kTextOptions[] = {
   kLocale, kAccent, kStemming, kStopwords, kStopwordsPath, kCase};
 
 inline constexpr OptionInfo kNGramOptions[] = {
-  kMinGram, kMaxGram, kPreserveOriginal, kInputType, kStartMarker, kEndMarker};
+  kMinGram,   kMaxGram, kPreserveOriginal, kInputType, kStartMarker,
+  kEndMarker, kMode};
 
 inline constexpr OptionInfo kSparseNGramOptions[] = {kMaxNgramLength,
                                                      kCovering};
@@ -276,6 +353,8 @@ inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
 
 inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 
+inline constexpr OptionInfo kSplitByNonAlphaOptions[] = {kCase};
+
 inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
 
 inline constexpr OptionInfo kEdgeNGramOptions[] = {kMinGram, kMaxGram,
@@ -285,6 +364,14 @@ inline constexpr OptionInfo kPatternOptions[] = {kPattern, kGroup};
 
 inline constexpr OptionInfo kPathHierarchyOptions[] = {
   kPathDelimiter, kPathReplacement, kReverse, kSkip, kBufferSize};
+
+inline constexpr OptionInfo kSqlOptions[] = {kSqlExpression};
+
+inline constexpr OptionInfo kShingleOptions[] = {
+  kMinShingleSize, kMaxShingleSize,
+  kOutputUnigrams, kOutputUnigramsIfNoShingles,
+  kStoreTokens,    kFrequentWords,
+  kFillerToken};
 
 inline constexpr OptionInfo kSolrSynonymsOptions[] = {kSolrSynonyms};
 
@@ -375,6 +462,11 @@ inline constexpr OptionGroup kNormGroup{
   kNormOptions,
   {},
 };
+inline constexpr OptionGroup kSplitByNonAlphaGroup{
+  irs::analysis::SplitByNonAlphaTokenizer::type_name(),
+  kSplitByNonAlphaOptions,
+  {},
+};
 inline constexpr OptionGroup kSegmentationGroup{
   irs::analysis::SegmentationTokenizer::type_name(),
   kSegmentationOptions,
@@ -401,8 +493,18 @@ inline constexpr OptionGroup kUnionGroup{
   {},
 };
 inline constexpr OptionGroup kKeywordGroup{
-  irs::StringTokenizer::type_name(),
+  irs::KeywordTokenizer::type_name(),
   {},
+  {},
+};
+inline constexpr OptionGroup kSqlGroup{
+  irs::analysis::SqlTokenizer::type_name(),
+  kSqlOptions,
+  {},
+};
+inline constexpr OptionGroup kShingleGroup{
+  irs::analysis::ShingleTokenizer::type_name(),
+  kShingleOptions,
   {},
 };
 inline constexpr OptionGroup kSolrSynonymsGroup{
@@ -417,18 +519,33 @@ inline constexpr OptionGroup kWordnetSynonymsGroup{
 };
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
-  kFeaturesGroup,       kTextGroup,
-  kNGramGroup,          kNearestNeighborsGroup,
-  kStemmingGroup,       kStopwordsGroup,
-  kClassificationGroup, kCollationGroup,
-  kDelimiterGroup,      kMultiDelimiterGroup,
-  kMinHashGroup,        kWildcardGroup,
-  kNormGroup,           kSegmentationGroup,
-  kPipelineGroup,       kPatternGroup,
-  kPathHierarchyGroup,  kUnionGroup,
-  kCopyFromGroup,       kGeoPointGroup,
-  kGeoJsonGroup,        kKeywordGroup,
-  kSolrSynonymsGroup,   kWordnetSynonymsGroup,
+  kFeaturesGroup,
+  kTextGroup,
+  kNGramGroup,
+  kNearestNeighborsGroup,
+  kStemmingGroup,
+  kStopwordsGroup,
+  kClassificationGroup,
+  kCollationGroup,
+  kDelimiterGroup,
+  kMultiDelimiterGroup,
+  kMinHashGroup,
+  kWildcardGroup,
+  kNormGroup,
+  kSegmentationGroup,
+  kSplitByNonAlphaGroup,
+  kPipelineGroup,
+  kPatternGroup,
+  kPathHierarchyGroup,
+  kUnionGroup,
+  kCopyFromGroup,
+  kGeoPointGroup,
+  kGeoJsonGroup,
+  kKeywordGroup,
+  kSqlGroup,
+  kShingleGroup,
+  kSolrSynonymsGroup,
+  kWordnetSynonymsGroup,
   kSparseNGramGroup,
 };
 

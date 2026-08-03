@@ -80,16 +80,15 @@ inline constexpr irs::field_id kTextFieldId = 2;
 struct TextField {
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view text;
-  irs::analysis::Analyzer::ptr tokenizer{
+  irs::analysis::Tokenizer::ptr tokenizer{
     irs::analysis::SegmentationTokenizer::Make(
       irs::analysis::SegmentationTokenizer::Options{})};
 
   irs::field_id Id() const noexcept { return id; }
 
-  irs::Tokenizer& GetTokens() const {
-    tokenizer->reset(text);
-    return *tokenizer;
-  }
+  irs::analysis::Tokenizer& GetTokens() const { return *tokenizer; }
+
+  std::string_view Value() const noexcept { return text; }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept {
     return kTextIndexFeatures;

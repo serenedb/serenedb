@@ -21,19 +21,20 @@
 
 #pragma once
 
+#include <s2/s2cell_id.h>
 #include <s2/s2latlng.h>
+#include <s2/s2region_coverer.h>
 #include <s2/s2region_term_indexer.h>
 #include <s2/util/coding/coder.h>
 #include <simdjson.h>
 
 #include <string>
+#include <tuple>
 
-#include "basics/resource_manager.hpp"
+#include "basics/noncopyable.hpp"
 #include "geo/coding.h"
 #include "geo/shape_container.h"
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 
 namespace irs {
 
@@ -42,21 +43,39 @@ struct GeoFilterOptionsBase;
 }  // namespace irs
 namespace irs::analysis {
 
-class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
+class GeoAnalyzer : private util::Noncopyable {
  public:
-  bool next() noexcept final;
+  static bool IsGeoAnalyzer(const Tokenizer& tokens) noexcept;
 
-  bool reset(std::string_view value) final;
+  // Resolves either of the two registered geo analyzers from a type-erased
+  // tokenizer; callers guarantee IsGeoAnalyzer via catalog/column type.
+  static GeoAnalyzer& Cast(Tokenizer& tokens) noexcept;
+  static const GeoAnalyzer& Cast(const Tokenizer& tokens) noexcept {
+    return Cast(const_cast<Tokenizer&>(tokens));
+  }
+
+  static GeoAnalyzer* TryCast(Tokenizer& tokens) noexcept {
+    return IsGeoAnalyzer(tokens) ? &Cast(tokens) : nullptr;
+  }
+
+  auto PrepareBatch() const { return std::tuple{_wkb_input}; }
+
+  template<TokenLayout Layout, bool Wkb>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
+
+  // Level-1 input binding: a GEOMETRY column feeds WKB bytes, everything
+  // else GeoJSON text. Set once when the column binding is established
+  // (sink tokenizer-cache fill), reset by the pool via Unbind on lease
+  // return, never mutated during Fill.
+  void SetWkbInput(bool wkb) noexcept { _wkb_input = wkb; }
+
+  virtual ~GeoAnalyzer() = default;
 
   virtual bool reset(simdjson::ondemand::value json) = 0;
 
-  virtual bool resetWKB(bytes_view wkb) = 0;
+  virtual bool resetWKB(duckdb::string_t wkb) = 0;
 
   virtual void prepare(GeoFilterOptionsBase& options) const = 0;
-
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return irs::GetMutable(_attrs, id);
-  }
 
 #ifdef SDB_GTEST
   const auto& options() const noexcept { return _indexer.options(); }
@@ -64,29 +83,43 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
 
  protected:
   explicit GeoAnalyzer(const S2RegionTermIndexer::Options& options);
-  void reset(std::vector<std::string>&& terms) noexcept;
-  void reset() noexcept {
-    _begin = _terms.data();
-    _end = _begin;
+
+  // Ingest terms are staged as cells, not strings: EmitTerms materializes
+  // each token straight into the sink, so no per-value term vector exists.
+  void ClearStaged() noexcept {
+    _covering.clear();
+    _point_id = S2CellId::None();
   }
+  void StagePoint(const S2Point& point) noexcept {
+    _point_id = S2CellId{point};
+  }
+  void StageCovering(const S2Region& region) {
+    _coverer.GetCovering(region, &_covering);
+  }
+
+  // Per-value store hook, run by DoFill after the terms: an analyzer that
+  // derives a store blob pushes it into the sink here.
+  virtual void Store(TokenSink& /*sink*/) {}
 
   S2RegionTermIndexer _indexer;
 
  private:
-  using Attributes = std::tuple<IncAttr, TermAttr, StoreAttr>;
+  template<TokenLayout Layout>
+  void EmitTerms(TokenSink& sink);
 
-  std::vector<std::string> _terms;
-  const std::string* _begin{_terms.data()};
-  const std::string* _end{_begin};
-  OffsAttr _offset;
-  Attributes _attrs;
+  S2RegionCoverer _coverer;
+  std::vector<S2CellId> _covering;
+  S2CellId _point_id = S2CellId::None();
   simdjson::ondemand::parser _json_parser;
-  std::string _json_buffer;
+  std::unique_ptr<char[]> _json_buf;
+  size_t _json_cap = 0;
+  bool _wkb_input = false;
 };
 
 /// The analyzer capable of breaking up a valid geo point input
 /// into a set of tokens for further indexing.
-class GeoPointAnalyzer final : public GeoAnalyzer {
+class GeoPointAnalyzer final : public TypedTokenizer<GeoPointAnalyzer>,
+                               public GeoAnalyzer {
  public:
   struct Options {
     using Owner = GeoPointAnalyzer;
@@ -94,19 +127,22 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
     std::vector<std::string> latitude;
     std::vector<std::string> longitude;
   };
-  static analysis::Analyzer::ptr Make(Options opts);
+  static analysis::Tokenizer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "geopoint"; }
 
   explicit GeoPointAnalyzer(const Options& options);
 
-  TypeInfo::type_id type() const noexcept final {
-    return irs::Type<GeoPointAnalyzer>::id();
-  }
+  using GeoAnalyzer::PrepareBatch;
 
-  using GeoAnalyzer::reset;
+  // The source column itself serves the filter (prepare() points it at the
+  // lat/lng paths), so no derived store blob is ever produced.
+  TokenTraits Traits() const noexcept final { return {}; }
+
+  void Unbind() noexcept final { SetWkbInput(false); }
+
   bool reset(simdjson::ondemand::value json) final;
-  bool resetWKB(bytes_view wkb) final;
+  bool resetWKB(duckdb::string_t wkb) final;
 
   void prepare(GeoFilterOptionsBase& options) const final;
 
@@ -118,7 +154,6 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
  private:
   bool ParsePoint(simdjson::ondemand::value json, S2LatLng& out) const;
 
-  S2LatLng _point;
   bool _from_array;
   std::vector<std::string> _latitude;
   std::vector<std::string> _longitude;
@@ -126,7 +161,8 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
 
 /// The analyzer capable of breaking up a valid GeoJson input
 /// into a set of tokens for further indexing.
-class GeoJsonAnalyzer : public GeoAnalyzer {
+class GeoJsonAnalyzer final : public TypedTokenizer<GeoJsonAnalyzer>,
+                              public GeoAnalyzer {
  public:
   enum class Type : uint8_t {
     // analyzer accepts any valid GeoJson input
@@ -152,40 +188,58 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
     Type type{Type::Shape};
     Coding coding{Coding::Source};
   };
-  static analysis::Analyzer::ptr Make(Options opts);
+  static analysis::Tokenizer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "geojson"; }
 
-  TypeInfo::type_id type() const noexcept final {
-    return irs::Type<GeoJsonAnalyzer>::id();
+  explicit GeoJsonAnalyzer(const Options& options);
+
+  using GeoAnalyzer::PrepareBatch;
+
+  // Source coding force-includes the indexed source column and re-parses it
+  // at query time, so the analyzer writes no derived store blob.
+  TokenTraits Traits() const noexcept final {
+    return {
+      .store = _coding != Coding::Source,
+    };
   }
+
+  void Unbind() noexcept final { SetWkbInput(false); }
 
   // Effective coding this analyzer was configured with. Lets callers (e.g.
   // CREATE INDEX validation) decide whether the coding is compatible with a
   // given column type.
   Coding coding() const noexcept { return _coding; }
 
+  bool reset(simdjson::ondemand::value json) final;
+  bool resetWKB(duckdb::string_t wkb) final;
+
+  void prepare(GeoFilterOptionsBase& options) const final;
+
 #ifdef SDB_GTEST
   auto shapeType() const noexcept { return _type; }
 #endif
 
- protected:
-  explicit GeoJsonAnalyzer(const Options& options);
-
+ private:
   bool ResetImpl(simdjson::ondemand::value json,
                  sdb::geo::coding::Options options, Encoder* encoder);
 
-  // Shared epilogue: given _shape already populated, compute geo terms and
-  // publish them via GeoAnalyzer::reset(terms).
-  void ComputeAndPublishTerms();
+  // Shared epilogue: given _shape already populated, stage the cells whose
+  // tokens EmitTerms will emit.
+  void StageTerms();
 
-  virtual void StoreImpl() = 0;
+  void Store(TokenSink& sink) final;
 
   sdb::geo::ShapeContainer _shape;
   S2Point _centroid;
   std::vector<S2LatLng> _cache;
+  Encoder _encoder;
+  sdb::geo::coding::Options _s2_coding{sdb::geo::coding::Options::Invalid};
   Type _type;
   Coding _coding;
 };
+
+extern template class TypedTokenizer<GeoPointAnalyzer>;
+extern template class TypedTokenizer<GeoJsonAnalyzer>;
 
 }  // namespace irs::analysis

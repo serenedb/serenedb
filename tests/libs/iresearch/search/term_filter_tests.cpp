@@ -201,22 +201,19 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
             field.id = fid;
-            field.value(
-              irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+            field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
           } else if (data.is_bool() && data.b) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
             field.id = fid;
-            field.value(irs::ViewCast<irs::byte_type>(
-              irs::BooleanTokenizer::value_true()));
+            field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
           } else if (data.is_bool() && !data.b) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
             field.id = fid;
-            field.value(irs::ViewCast<irs::byte_type>(
-              irs::BooleanTokenizer::value_true()));
+            field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
           } else if (data.is_number()) {
             const double d_value = data.as_number<double_t>();
             {
@@ -265,12 +262,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // long (20)
     {
-      irs::NumericTokenizer stream;
-      stream.reset(INT64_C(20));
-      auto* term = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(stream.next());
+      irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, INT64_C(20));
 
-      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -291,12 +287,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // int (21)
     {
-      irs::NumericTokenizer stream;
-      stream.reset(INT32_C(21));
-      auto* term = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(stream.next());
+      irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, INT32_C(21));
 
-      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -317,13 +312,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // double (90.564)
     {
-      irs::NumericTokenizer stream;
-      stream.reset((double_t)90.564);
-      auto* term = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(stream.next());
+      irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double_t)90.564);
 
-      irs::ByTerm query =
-        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -344,13 +337,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // float (90.564)
     {
-      irs::NumericTokenizer stream;
-      stream.reset((float_t)90.564f);
-      auto* term = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(stream.next());
+      irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float_t)90.564f);
 
-      irs::ByTerm query =
-        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -371,13 +362,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // double (100)
     {
-      irs::NumericTokenizer stream;
-      stream.reset((double_t)100.);
-      auto* term = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(stream.next());
+      irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double_t)100.);
 
-      irs::ByTerm query =
-        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -398,13 +387,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // float_t(100)
     {
-      irs::NumericTokenizer stream;
-      stream.reset((float_t)100.f);
-      auto* term = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(stream.next());
+      irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float_t)100.f);
 
-      irs::ByTerm query =
-        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -425,13 +412,10 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // int(100)
     {
-      irs::NumericTokenizer stream;
-      stream.reset(100);
-      auto* term = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(stream.next());
+      irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto term = irs::numeric_utils::EncodeNumericTerm(stream_buf, 100);
 
-      irs::ByTerm query =
-        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -452,13 +436,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
     // long(100)
     {
-      irs::NumericTokenizer stream;
-      stream.reset(INT64_C(100));
-      auto* term = irs::get<irs::TermAttr>(stream);
-      ASSERT_TRUE(stream.next());
+      irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, INT64_C(100));
 
-      irs::ByTerm query =
-        MakeFilter(kValueId, irs::ViewCast<char>(term->value));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 

@@ -28,17 +28,15 @@
 #include <absl/container/flat_hash_set.h>
 #include <unicode/locid.h>
 
-#include "analyzer.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
-#include "token_attributes.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
 
 /// @note expects UTF-8 encoded input
-class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
+class TextTokenizer final : public TypedTokenizer<TextTokenizer>,
                             private util::Noncopyable {
  public:
   using stopwords_t = absl::flat_hash_set<std::string>;
@@ -72,32 +70,54 @@ class TextTokenizer final : public TypedAnalyzer<TextTokenizer>,
   };
   static ptr Make(Options opts);
 
-  struct StateT;
+  struct State;
 
   static const char* gStopwordPathEnvVariable;
 
   static constexpr std::string_view type_name() noexcept { return "text"; }
 
   TextTokenizer(Options options, stopwords_t stopwords);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+
+  TokenTraits Traits() const noexcept final {
+    return {
+      .explicit_pos = true,
+      .offsets = true,
+    };
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  auto PrepareBatch() const { return std::tuple{_case_convert, _search_ngram}; }
+
+  template<TokenLayout Layout, Case C, bool SearchNGram>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 
  private:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  struct StateDeleterT {
-    void operator()(StateT*) const noexcept;
+  struct StateDeleter {
+    void operator()(State*) const noexcept;
   };
 
-  bool next_word();
-  bool next_ngram();
+  struct Word {
+    std::string_view term;
+    uint32_t start{};
+    uint32_t end{};
+  };
 
-  bstring _term_buf;  // buffer for value if value cannot be referenced directly
-  attributes _attrs;
-  std::unique_ptr<StateT, StateDeleterT> _state;
+  template<Case C>
+  bool next_word(const icu::UnicodeString& data, Word& word);
+
+  template<TokenLayout Layout, Case C, bool SearchNGram>
+  void FillValue(const icu::UnicodeString& data, TokenSink& sink);
+  template<TokenLayout Layout, Case C, bool SearchNGram>
+  void AsciiFillValue(TokenSink& sink, duckdb::string_t value);
+  template<TokenLayout Layout, bool StableTerm>
+  void EmitWordNGrams(TokenSink& sink, uint32_t& pos, std::string_view term,
+                      uint32_t offs_start);
+
+  std::unique_ptr<State, StateDeleter> _state;
+  Case _case_convert = Case::Lower;
+  bool _search_ngram = false;
+  bool _ascii_fast = false;
 };
+
+extern template class TypedTokenizer<TextTokenizer>;
 
 }  // namespace irs::analysis

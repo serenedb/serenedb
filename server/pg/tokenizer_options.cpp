@@ -45,6 +45,15 @@ void CheckCase(std::string_view option, std::string_view value) {
   }
 }
 
+void CheckMode(std::string_view option, std::string_view value) {
+  if (!magic_enum::enum_cast<irs::analysis::NGramTokenizerBase::NGramMode>(
+        value, magic_enum::case_insensitive)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value in \"", option, "\" parameter"),
+                    ERR_HINT(kMode.description));
+  }
+}
+
 void CheckThreshold(std::string_view option, double value) {
   if (value < 0. || value > 1.) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -69,6 +78,13 @@ void CheckMaxNgramLength(std::string_view option, int value) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("\"", option, "\" must be at least 3"),
                     ERR_HINT(kMaxNgramLength.description));
+  }
+}
+
+void CheckShingleSize(std::string_view option, int value) {
+  if (value < 2 || value > 16) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", option, "\" must be between 2 and 16"));
   }
 }
 

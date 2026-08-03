@@ -98,7 +98,7 @@ void Split(duckdb::DataChunk& args, duckdb::Vector& result, PushRow push_row) {
       continue;
     }
     const auto row_offset = sink.Offset();
-    push_row(sink, row, AsView(text_values[text_row]));
+    push_row(sink, row, text_values[text_row]);
     list_entries[row] = {row_offset, sink.Offset() - row_offset};
   }
 }
@@ -106,7 +106,7 @@ void Split(duckdb::DataChunk& args, duckdb::Vector& result, PushRow push_row) {
 template<bool ToLower>
 void SplitConstant(duckdb::DataChunk& args, duckdb::ExpressionState&,
                    duckdb::Vector& result) {
-  Split(args, result, [](ListSink& sink, duckdb::idx_t, std::string_view text) {
+  Split(args, result, [](ListSink& sink, duckdb::idx_t, duckdb::string_t text) {
     irs::analysis::SplitByNonAlpha(
       text, [&](std::string_view token) { sink.Push<ToLower>(token); });
   });
@@ -120,7 +120,7 @@ void SplitDynamic(duckdb::DataChunk& args, duckdb::ExpressionState&,
     duckdb::UnifiedVectorFormat::GetData<bool>(to_lower_format);
 
   Split(args, result,
-        [&](ListSink& sink, duckdb::idx_t row, std::string_view text) {
+        [&](ListSink& sink, duckdb::idx_t row, duckdb::string_t text) {
           auto to_lower_row = to_lower_format.sel->get_index(row);
           const bool to_lower =
             to_lower_format.validity.RowIsValid(to_lower_row) &&

@@ -325,7 +325,6 @@ class IndexWriter : private util::Noncopyable {
     // End of field batch for current document, move to next document in batch
     void NextDocument() noexcept {
       Finish();
-      _writer.ResetNorms();
       ++_doc_id;
     }
 
@@ -334,25 +333,62 @@ class IndexWriter : private util::Noncopyable {
     // will not take any effect
     explicit operator bool() const noexcept { return _writer.valid(); }
 
-    // Inserts a field into the document for inverted indexing.
-    template<typename Field>
-    bool Insert(Field&& field) const {
-      return _writer.insert(std::forward<Field>(field), _doc_id);
+    // Block ingest: the whole field-major column in one call (docs carried by
+    // the batch's runs or the docs span, so none of these use _doc_id).
+    bool InsertBlock(field_id id, IndexFeatures features, TokenBatch& batch,
+                     DocRuns runs) const {
+      return _writer.InsertBlock(id, features, batch, runs);
     }
 
-    // Inserts the field denoted by `field` (must not be nullptr).
-    template<typename Field>
-    bool Insert(Field* field) const {
-      return _writer.insert(*field, _doc_id);
+    bool InsertKeywordBlock(field_id id, IndexFeatures features,
+                            std::span<const duckdb::string_t> values,
+                            std::span<const doc_id_t> docs) const {
+      return _writer.InsertKeywordBlock(id, features, values, docs);
     }
 
-    // Inserts the range of fields [begin; end) for inverted indexing.
-    template<typename Iterator>
-    bool Insert(Iterator begin, Iterator end) const {
-      for (; _writer.valid() && begin != end; ++begin) {
-        Insert(*begin);
-      }
-      return _writer.valid();
+    bool InsertDenseKeywordBlock(field_id id, IndexFeatures features,
+                                 std::span<const duckdb::string_t> values,
+                                 doc_id_t first_doc) const {
+      return _writer.InsertDenseKeywordBlock(id, features, values, first_doc);
+    }
+
+    bool InsertNullBlock(field_id id, IndexFeatures features,
+                         std::span<const doc_id_t> docs) const {
+      return _writer.InsertNullBlock(id, features, docs);
+    }
+
+    // Field slot for emit-time term resolution (id-mode token batches) and
+    // slot-direct block flushes.
+    FieldInverter* Field(field_id id, IndexFeatures features) const {
+      return _writer.Field(id, features);
+    }
+
+    duckdb::Allocator& Allocator() const noexcept {
+      return _writer.Allocator();
+    }
+
+    bool InsertBlock(FieldInverter& slot, TokenBatch& batch,
+                     DocRuns runs) const {
+      return _writer.InsertBlock(slot, batch, runs);
+    }
+
+    bool InsertDenseKeywordBlock(FieldInverter& slot,
+                                 std::span<const duckdb::string_t> values,
+                                 doc_id_t first_doc) const {
+      return _writer.InsertDenseKeywordBlock(slot, values, first_doc);
+    }
+
+    bool InsertUniqueKeywordBlock(FieldInverter& slot,
+                                  std::span<const duckdb::string_t> values,
+                                  doc_id_t first_doc) const {
+      return _writer.InsertUniqueKeywordBlock(slot, values, first_doc);
+    }
+
+    bool InsertStridedBlock(FieldInverter& slot,
+                            std::span<const duckdb::string_t> terms,
+                            std::span<const doc_id_t> docs,
+                            uint32_t tokens_per_doc) const {
+      return _writer.InsertStridedBlock(slot, terms, docs, tokens_per_doc);
     }
 #ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }
@@ -503,6 +539,14 @@ class IndexWriter : private util::Noncopyable {
       _field_options = std::move(options);
     }
 
+    // Expected distinct-term count for a field's dictionary, forwarded to the
+    // segment writer at each segment start. Must be ~exact-or-under (this
+    // sink's share, not the table total: a parallel operator splits rows
+    // across sinks); an empty hint list costs nothing.
+    void SetReserveHint(field_id field, uint32_t expected_terms) {
+      _reserve_hints.emplace_back(field, expected_terms);
+    }
+
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
     // refresh segment if required (guarded by FlushContext::context_mutex_)
@@ -516,6 +560,7 @@ class IndexWriter : private util::Noncopyable {
     // We can use active_.Segment()->queries_.size() for same purpose
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
+    std::vector<std::pair<field_id, uint32_t>> _reserve_hints;
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);
@@ -995,7 +1040,6 @@ class IndexWriter : private util::Noncopyable {
   // Abort transaction
   void Abort() noexcept;
 
-  IndexFeatures _wand_features{};  // Set of features required for wand
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
   // Fallback options (FunctionFieldOptions wrapping the provider callbacks),

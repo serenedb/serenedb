@@ -121,10 +121,14 @@ class AlnumTokenAssembler {
   bool _token_open = false;
 };
 
+// Emits pointer-based views into `data`'s bytes, so the handle is taken by
+// const& BY NECESSITY: with a by-value param an inline (<= 12B) value's
+// tokens would alias the callee's copy while the caller offsets against its
+// own -- two different objects.
 template<typename EmitFn>
-void SplitByNonAlpha(std::string_view data, EmitFn&& emit) {
-  const char* const input = data.data();
-  const size_t size = data.size();
+void SplitByNonAlpha(const duckdb::string_t& data, EmitFn&& emit) {
+  const char* const input = data.GetData();
+  const size_t size = data.GetSize();
 
   AlnumTokenAssembler assembler{input, emit};
   size_t offset = 0;

@@ -165,6 +165,9 @@ struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
+  // No text dictionary: the whole value is one keyword term. The sink can
+  // invert it directly via Document::InsertKeyword, skipping the tokenizer.
+  bool verbatim = false;
 };
 
 // Also an irs::IndexFieldOptions: the index IS the per-column physical-encoding
@@ -242,7 +245,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   static void AppendKindSuffix(std::string& out,
                                const duckdb::LogicalType& type);
 
-  ColumnTokenizer GetTokenizer(const std::shared_ptr<const Snapshot>& snapshot,
+  ColumnTokenizer GetTokenizer(duckdb::ClientContext& ctx,
+                               const std::shared_ptr<const Snapshot>& snapshot,
                                irs::field_id field_id) const;
 
   bool IsKeywordField(const Snapshot& snapshot,

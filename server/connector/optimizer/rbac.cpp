@@ -100,14 +100,6 @@ ObjectId EffectiveRlsRole(const duckdb::CatalogEntry* who, ObjectId caller) {
   return caller;
 }
 
-bool BypassesRls(const auth::RoleClosure& closure, const catalog::Table& table,
-                 bool forced) {
-  // is_superuser is tested explicitly, not left to Owns() folding it in: FORCE
-  // ROW LEVEL SECURITY subjects the owner to policies, but never a superuser.
-  return closure.IsSuperuser() || closure.Has(catalog::RoleOption::BypassRls) ||
-         (!forced && closure.Owns(table));
-}
-
 duckdb::unique_ptr<duckdb::Expression> BoolConst(bool value) {
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value::BOOLEAN(value));
@@ -172,7 +164,9 @@ std::optional<RlsContext> ResolveRls(const RlsSession& session,
 
   const auto role = EffectiveRlsRole(who, session.caller);
   const auto& closure = session.snapshot.ClosureFor(role);
-  if (BypassesRls(closure, table, rls.forced)) {
+  if (closure.Has(catalog::RoleOption::Superuser |
+                  catalog::RoleOption::BypassRls) ||
+      (!rls.forced && closure.Owns(table))) {
     return std::nullopt;
   }
   return RlsContext{&table, &closure};
@@ -469,7 +463,9 @@ void RlsGuardTruncate(const catalog::Snapshot& snapshot,
     return;
   }
   const auto& closure = snapshot.ClosureFor(role);
-  if (BypassesRls(closure, table, rls.forced)) {
+  if (closure.Has(catalog::RoleOption::Superuser |
+                  catalog::RoleOption::BypassRls) ||
+      (!rls.forced && closure.Owns(table))) {
     return;
   }
   THROW_SQL_ERROR(

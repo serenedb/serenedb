@@ -63,6 +63,7 @@ struct RoleClosure {
   // not transitive through membership). Mirrors catalog::Role's own accessors.
   catalog::RoleOption options = catalog::RoleOption::None;
 
+  // Any of the given attributes (`o` may be a mask), matching catalog::Role.
   bool Has(catalog::RoleOption o) const noexcept {
     return (options & o) != catalog::RoleOption::None;
   }

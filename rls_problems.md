@@ -609,3 +609,45 @@ allowing it would let any TRUNCATE-holder destroy rows the policies protect.
 This is the one intentional behavioural difference from PG in the current RLS
 implementation. Reverting to PG semantics means letting TRUNCATE bypass RLS
 outright; the decision is deliberately left open.
+
+---
+
+## TODO — places this branch diverges from how the rest of the codebase does it
+
+Found by comparing the RLS code against its established siblings. None are bugs
+today except where noted; all are "we invented a shape the codebase already has".
+
+1. **Policy predicates register no expression dependencies.** Now that
+   `PolicyData` holds a `ColumnExpr`, `GetRefs()` is available and unused.
+   Columns (`catalog.cpp:535`, `:566`) and views (`:632`) both walk their
+   expression and register sequence / function / type edges. A policy naming a
+   sequence or function therefore does not stop it being dropped.
+
+2. **`Policy::ReferencesColumn` is name-keyed; every sibling is id-keyed.**
+   `Index::ReferencesColumn(Column::Id)` (`index.h:91`) matches by id;
+   `Policy::ReferencesColumn(std::string_view)` (`policy.h:74`) matches by
+   identifier text. Two consequences: a policy referencing
+   `other_table.owner` falsely blocks dropping *this* table's `owner`, and
+   `ALTER TABLE ... RENAME COLUMN` is not covered at all -- it silently leaves
+   the policy referring to a name that no longer exists. Fixing #1 gives the ids
+   needed to key this properly.
+
+3. **The policy column-drop check is a one-off, not a drop-plan entry.**
+   Index drops go through `ComputeColumnDropPlan` / `DropEmitter`
+   (`catalog.cpp:1452`, `:1492`, `:4796`); the policy check is an inline loop in
+   `DropTableColumn` (`:4725`) that drops policies in a separate engine write
+   *before* `CommitDropPlan`, so it is not atomic with the plan, and any future
+   column-drop path gets no policy check.
+
+4. **No snapshot-level policy index.** `RoleClosureMap` (`catalog.h:447`) is the
+   model: a Snapshot member, rebuilt with the snapshot, turning a per-query
+   derivation into a hash lookup. RLS has no equivalent, so every scan of every
+   table pays a `dynamic_cast` plus a `GetRowSecurity` dependency lookup even on
+   a database with zero policies. An index also gives a global early-out.
+
+5. **Enforcement hangs off `OptimizerExtension`, which is bypassable.**
+   `SET enable_optimizer=false` disables RLS entirely (verified). The
+   un-bypassable seam is `access_check_function`, which this same branch already
+   uses for `RlsGuardTruncate` (`optimizer/rbac.cpp`), and which upstream
+   documents as running "before (and independent of) the optimizer so it cannot
+   be bypassed via disable_optimizer".

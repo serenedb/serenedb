@@ -279,45 +279,18 @@ bool PolicyAppliesTo(const catalog::Policy& policy,
   return false;
 }
 
+// Superuser and BYPASSRLS are exempt outright; the owner is too, unless the
+// table forces policies onto itself.
+bool Exempt(const auth::RoleClosure& closure, const catalog::Table& table,
+            bool forced) {
+  return closure.Has(catalog::RoleOption::Superuser |
+                     catalog::RoleOption::BypassRls) ||
+         (!forced && closure.Owns(table));
+}
+
 duckdb::unique_ptr<duckdb::Expression> BoolConst(bool value) {
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value::BOOLEAN(value));
-}
-
-duckdb::unique_ptr<duckdb::Expression> UnpushableMarker(
-  duckdb::unique_ptr<duckdb::Expression> anchor) {
-  static const duckdb::ScalarFunction kFn = [] {
-    duckdb::ScalarFunction fn(
-      "sdb_rls_barrier", {duckdb::LogicalType::ANY},
-      duckdb::LogicalType::BOOLEAN,
-      [](duckdb::DataChunk&, duckdb::ExpressionState&, duckdb::Vector& result) {
-        result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-        duckdb::ConstantVector::GetData<bool>(result)[0] = true;
-      });
-    fn.SetStability(duckdb::FunctionStability::VOLATILE);
-    return fn;
-  }();
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
-  args.push_back(std::move(anchor));
-  return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::BoundScalarFunction{kFn}, std::move(args), nullptr);
-}
-
-// A column the policy predicate already reads. The marker takes it as an
-// argument so the expression is bound to this scan: a nullary marker is a
-// free-floating constant predicate, and a join will adopt it as its join
-// condition, which lifts it out of the scan's filter list -- the one place it
-// has to stay.
-duckdb::unique_ptr<duckdb::Expression> AnchorColumn(
-  const duckdb::Expression& policy) {
-  duckdb::unique_ptr<duckdb::Expression> anchor;
-  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
-    policy, [&](const duckdb::BoundColumnRefExpression& col) {
-      if (!anchor) {
-        anchor = col.Copy();
-      }
-    });
-  return anchor;
 }
 
 using ExprList = duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>;
@@ -336,17 +309,57 @@ duckdb::unique_ptr<duckdb::Expression> Combine(ExprList parts,
   return conjunction;
 }
 
+// `filter` AND a volatile no-op taking a column the filter already reads.
+// Volatile keeps the term out of the scan, which is what stops a throwing user
+// qual being pushed in beside the policy; the column argument is what stops a
+// join adopting the term as its join condition and lifting it back out. A
+// filter that reads no column needs neither.
+duckdb::unique_ptr<duckdb::Expression> Guarded(
+  duckdb::unique_ptr<duckdb::Expression> filter) {
+  duckdb::unique_ptr<duckdb::Expression> anchor;
+  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
+    *filter, [&](const duckdb::BoundColumnRefExpression& col) {
+      if (!anchor) {
+        anchor = col.Copy();
+      }
+    });
+  if (!anchor) {
+    return filter;
+  }
+  static const duckdb::ScalarFunction kBarrier = [] {
+    duckdb::ScalarFunction fn(
+      "sdb_rls_barrier", {duckdb::LogicalType::ANY},
+      duckdb::LogicalType::BOOLEAN,
+      [](duckdb::DataChunk&, duckdb::ExpressionState&, duckdb::Vector& result) {
+        result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+        duckdb::ConstantVector::GetData<bool>(result)[0] = true;
+      });
+    fn.SetStability(duckdb::FunctionStability::VOLATILE);
+    return fn;
+  }();
+  ExprList args;
+  args.push_back(std::move(anchor));
+  ExprList parts;
+  parts.push_back(std::move(filter));
+  parts.push_back(duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+    duckdb::BoundScalarFunction{kBarrier}, std::move(args), nullptr));
+  return Combine(std::move(parts), duckdb::ExpressionType::CONJUNCTION_AND);
+}
+
 struct Session {
   const catalog::Snapshot& snapshot;
   ObjectId caller;
 };
 
-struct Context {
-  const catalog::Table* table = nullptr;
-  const auth::RoleClosure* closure = nullptr;
+// A relation whose policies govern this statement's principal. Carries the
+// snapshot so everything downstream of Resolve takes one argument, not two.
+struct Governed {
+  const catalog::Snapshot& snapshot;
+  const catalog::Table& table;
+  const auth::RoleClosure& closure;
 };
 
-std::optional<Context> Resolve(const Session& session,
+std::optional<Governed> Resolve(const Session& session,
                                      duckdb::Binder& binder,
                                      const duckdb::TableCatalogEntry& table_entry,
                                      const duckdb::CatalogEntry* who) {
@@ -363,26 +376,24 @@ std::optional<Context> Resolve(const Session& session,
 
   const auto role = EffectiveRole(session.caller, who);
   const auto& closure = session.snapshot.ClosureFor(role);
-  if (closure.Has(catalog::RoleOption::Superuser |
-                  catalog::RoleOption::BypassRls) ||
-      (!rls.forced && closure.Owns(table))) {
+  if (Exempt(closure, table, rls.forced)) {
     return std::nullopt;
   }
-  return Context{&table, &closure};
+  return Governed{session.snapshot, table, closure};
 }
 
 duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
-  const Session& session, const Context& rls, PolicyCommand verb,
+  const Governed& rls, PolicyCommand verb,
   absl::FunctionRef<duckdb::unique_ptr<duckdb::Expression>(
     const catalog::Policy&)>
     bind_one) {
   ExprList permissive;
   ExprList restrictive;
 
-  for (auto policy_id : session.snapshot.PolicyIds(rls.table->GetId())) {
-    auto policy = session.snapshot.GetObject<catalog::Policy>(policy_id);
+  for (auto policy_id : rls.snapshot.PolicyIds(rls.table.GetId())) {
+    auto policy = rls.snapshot.GetObject<catalog::Policy>(policy_id);
     if (!PolicyGoverns(policy->Command(), verb) ||
-        !PolicyAppliesTo(*policy, *rls.closure)) {
+        !PolicyAppliesTo(*policy, rls.closure)) {
       continue;
     }
     auto expr = bind_one(*policy);
@@ -505,7 +516,7 @@ duckdb::unique_ptr<duckdb::Expression> ReadFilter(
     return nullptr;
   }
   return CombinePolicies(
-    session, *rls, PolicyCommand::Select,
+    *rls, PolicyCommand::Select,
     [&](const catalog::Policy& policy) -> duckdb::unique_ptr<duckdb::Expression> {
       if (!policy.HasUsing()) {
         return nullptr;
@@ -526,7 +537,7 @@ void AppendWriteCheck(
   }
   duckdb::physical_index_set_t bound_columns;
   auto check = CombinePolicies(
-    session, *rls, verb,
+    *rls, verb,
     [&](const catalog::Policy& policy) -> duckdb::unique_ptr<duckdb::Expression> {
       if (!policy.HasCheck() && !policy.HasUsing()) {
         return nullptr;
@@ -572,6 +583,13 @@ void Rewrite(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
     Rewrite(child, session, context, binder);
   }
 
+  // LogicalInsert, LogicalUpdate and LogicalMergeInto name these members alike.
+  const auto CheckWrite = [&](auto& node, PolicyCommand verb) {
+    AppendWriteCheck(session, context, binder, node.table, verb,
+                     DefinerFor(binder, node.table_index.index),
+                     node.bound_constraints);
+  };
+
   switch (op->type) {
     case duckdb::LogicalOperatorType::LOGICAL_GET: {
       auto& get = op->Cast<duckdb::LogicalGet>();
@@ -586,35 +604,18 @@ void Rewrite(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
       if (!filter) {
         return;
       }
-      if (auto anchor = AnchorColumn(*filter)) {
-        ExprList guarded;
-        guarded.push_back(std::move(filter));
-        guarded.push_back(UnpushableMarker(std::move(anchor)));
-        filter = Combine(std::move(guarded),
-                         duckdb::ExpressionType::CONJUNCTION_AND);
-      }
       auto logical_filter =
-        duckdb::make_uniq<duckdb::LogicalFilter>(std::move(filter));
+        duckdb::make_uniq<duckdb::LogicalFilter>(Guarded(std::move(filter)));
       logical_filter->AddChild(std::move(op));
       op = std::move(logical_filter);
       return;
     }
-    case duckdb::LogicalOperatorType::LOGICAL_INSERT: {
-      auto& insert = op->Cast<duckdb::LogicalInsert>();
-      AppendWriteCheck(session, context, binder, insert.table,
-                       PolicyCommand::Insert,
-                       DefinerFor(binder, insert.table_index.index),
-                       insert.bound_constraints);
+    case duckdb::LogicalOperatorType::LOGICAL_INSERT:
+      CheckWrite(op->Cast<duckdb::LogicalInsert>(), PolicyCommand::Insert);
       return;
-    }
-    case duckdb::LogicalOperatorType::LOGICAL_UPDATE: {
-      auto& update = op->Cast<duckdb::LogicalUpdate>();
-      AppendWriteCheck(session, context, binder, update.table,
-                       PolicyCommand::Update,
-                       DefinerFor(binder, update.table_index.index),
-                       update.bound_constraints);
+    case duckdb::LogicalOperatorType::LOGICAL_UPDATE:
+      CheckWrite(op->Cast<duckdb::LogicalUpdate>(), PolicyCommand::Update);
       return;
-    }
     case duckdb::LogicalOperatorType::LOGICAL_MERGE_INTO: {
       auto& merge = op->Cast<duckdb::LogicalMergeInto>();
       const auto performs = [&](duckdb::MergeActionType type) {
@@ -666,9 +667,7 @@ void GuardTruncate(const catalog::Snapshot& snapshot,
     return;
   }
   const auto& closure = snapshot.ClosureFor(role);
-  if (closure.Has(catalog::RoleOption::Superuser |
-                  catalog::RoleOption::BypassRls) ||
-      (!rls.forced && closure.Owns(table))) {
+  if (Exempt(closure, table, rls.forced)) {
     return;
   }
   THROW_SQL_ERROR(

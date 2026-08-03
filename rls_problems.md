@@ -614,6 +614,10 @@ outright; the decision is deliberately left open.
 
 ## TODO — places this branch diverges from how the rest of the codebase does it
 
+Status: **2 of 6 done** (items 2 and 5). Items 1, 3, 4 and 6 are open; 1 and 3
+are interlocked (real dependency edges give the ids that let the column-drop
+check become a DropPlan entry).
+
 Found by comparing the RLS code against its established siblings. None are bugs
 today except where noted; all are "we invented a shape the codebase already has".
 
@@ -623,7 +627,13 @@ today except where noted; all are "we invented a shape the codebase already has"
    expression and register sequence / function / type edges. A policy naming a
    sequence or function therefore does not stop it being dropped.
 
-2. **`Policy::ReferencesColumn` is name-keyed; every sibling is id-keyed.**
+2. **[DONE 2026-08-03]** ~~`Policy::ReferencesColumn` is name-keyed~~ -- it now
+   takes the relation as well, so a ref qualified with a different relation no
+   longer matches, and `ChangeTable` rewrites policy predicates on RENAME COLUMN
+   in the same Apply as the rename (`any/pg/rls/policy_column_rename.test`,
+   oracle-verified). Original text:
+
+   **`Policy::ReferencesColumn` is name-keyed; every sibling is id-keyed.**
    `Index::ReferencesColumn(Column::Id)` (`index.h:91`) matches by id;
    `Policy::ReferencesColumn(std::string_view)` (`policy.h:74`) matches by
    identifier text. Two consequences: a policy referencing
@@ -645,7 +655,15 @@ today except where noted; all are "we invented a shape the codebase already has"
    table pays a `dynamic_cast` plus a `GetRowSecurity` dependency lookup even on
    a database with zero policies. An index also gives a global early-out.
 
-5. **Enforcement hangs off `OptimizerExtension`, which is bypassable.**
+5. **[DONE 2026-08-03]** ~~Enforcement hangs off `OptimizerExtension`~~ -- it now
+   runs from `DBConfig::access_check_function`, which the fork's
+   `access_check_function` hook was widened by one parameter to allow (it already
+   received the binder; it now also receives the plan). Verified: with
+   `SET enable_optimizer=false` a governed role saw every row and could insert
+   rows the policy forbids; it now cannot. Pinned by
+   `sdb/pg/rls/optimizer_cannot_be_disabled.test`. Original text:
+
+   **Enforcement hangs off `OptimizerExtension`, which is bypassable.**
    `SET enable_optimizer=false` disables RLS entirely (verified). The
    un-bypassable seam is `access_check_function`, which this same branch already
    uses for `RlsGuardTruncate` (`optimizer/rbac.cpp`), and which upstream

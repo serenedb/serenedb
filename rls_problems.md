@@ -651,3 +651,17 @@ today except where noted; all are "we invented a shape the codebase already has"
    uses for `RlsGuardTruncate` (`optimizer/rbac.cpp`), and which upstream
    documents as running "before (and independent of) the optimizer so it cannot
    be bypassed via disable_optimizer".
+
+6. **34 hand-written authz prologues in `catalog.cpp`.** Not duplicated *checks*
+   -- duplicated *shape*. Each DDL entry point re-writes resolve relation ->
+   require it is the right type -> require ownership by hand. This branch folded
+   four of them (the policy DDL) into `ResolveOwnedTable`; the same treatment
+   applies to the rest, removing ~250 lines and no enforcement.
+
+   Note for whoever picks this up: do **not** "simplify" by moving these checks
+   into the RBAC rule. The rule runs at plan time and the mutation happens later
+   under `Catalog::_mutex`; checking in the rule and mutating afterwards is
+   check-then-act, the TOCTOU class already fixed here by moving checks *into*
+   the catalog. The two-tier split (DML enforced once by the rule from
+   bind-collected AccessRequirements, DDL enforced in the catalog under the
+   lock) is deliberate.

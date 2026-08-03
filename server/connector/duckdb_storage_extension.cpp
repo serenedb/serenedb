@@ -35,7 +35,6 @@
 #include "connector/duckdb_transaction.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/rbac.h"
-#include "connector/optimizer/rls.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"

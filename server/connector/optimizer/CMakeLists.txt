@@ -5,5 +5,4 @@ target_sources(
         ts_dict_plan.cpp
         wrap_unsupported_types.cpp
         rbac.cpp
-        rls.cpp
 )

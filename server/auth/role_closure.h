@@ -63,6 +63,10 @@ struct RoleClosure {
   // it directly only for non-authz needs (e.g. the is_superuser GUC, or the
   // permission-to-SET-ROLE decision, which is about the actor, not an object).
   bool is_superuser = false;
+  // BYPASSRLS, the start role's own attribute. Unlike is_superuser it is not
+  // folded into the predicates below -- it grants nothing except exemption from
+  // row-level security, so only RLS reads it.
+  bool bypasses_rls = false;
 
   // Does this principal act as role `r`? (member-of-or-equals; superuser: all.)
   bool MemberOf(ObjectId r) const {

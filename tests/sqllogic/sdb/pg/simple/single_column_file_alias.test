@@ -44,6 +44,15 @@ v
 42
 
 
+# the synthesized alias still resolves qualified references
+
+query
+SELECT stem.v FROM '${__TEST_DIR__}/stem.parquet';
+----
+v
+42
+
+
 # glob: the fallback alias (the whole path string) must not rename either
 
 query
@@ -60,6 +69,49 @@ SELECT x FROM '${__TEST_DIR__}/stem.parquet' AS x;
 ----
 x
 42
+
+
+# two-column file: columns keep their names, with or without an alias
+
+statement ok
+COPY (SELECT 1 AS a, 2 AS b) TO '${__TEST_DIR__}/two.parquet' (FORMAT parquet);
+
+
+query
+SELECT a, b FROM '${__TEST_DIR__}/two.parquet';
+----
+a	b
+1	2
+
+
+query
+SELECT * FROM '${__TEST_DIR__}/two.parquet';
+----
+a	b
+1	2
+
+
+# the synthesized alias (file stem) qualifies columns and star
+
+query
+SELECT two.a, two.b FROM '${__TEST_DIR__}/two.parquet';
+----
+a	b
+1	2
+
+
+query
+SELECT two.* FROM '${__TEST_DIR__}/two.parquet';
+----
+a	b
+1	2
+
+
+query
+SELECT t.a, t.b FROM '${__TEST_DIR__}/two.parquet' AS t;
+----
+a	b
+1	2
 
 
 query

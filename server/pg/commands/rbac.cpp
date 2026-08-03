@@ -956,7 +956,7 @@ void AlterPolicy(ConnectionContext& ctx, std::string_view name,
   }
   catalog.AlterPolicy(catalog::ActingAs(ctx.GetRoleId()), ctx.GetDatabaseId(),
                       parsed.schema, parsed.relation, name,
-                      opts.is_rename ? opts.new_name : std::string_view{},
+                      opts.new_name,
                       opts.has_roles, std::move(roles), opts.has_using,
                       opts.using_text, opts.has_check, opts.check_text);
 }

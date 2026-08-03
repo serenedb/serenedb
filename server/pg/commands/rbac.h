@@ -155,7 +155,7 @@ void CreatePolicy(ConnectionContext& ctx, std::string_view name,
                   std::string_view table, const CreatePolicyOptions& opts);
 
 struct AlterPolicyOptions {
-  bool is_rename = false;
+  // Empty unless the statement is ALTER POLICY ... RENAME TO.
   std::string new_name;
   bool has_roles = false;
   std::vector<std::string> roles;

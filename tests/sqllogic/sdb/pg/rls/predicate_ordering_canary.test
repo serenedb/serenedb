@@ -12,7 +12,6 @@
 # bailing when the throwing qual would move earlier -- the guarantee silently
 # disappears with no other test noticing. This file is that alarm.
 #
-# See rls_problems.md P1.
 #
 # Probes here are SIDE-EFFECT based (`poc_tap`, asserting poc_sink holds nothing
 # but the caller's own balance). Do not "strengthen" this file with an error

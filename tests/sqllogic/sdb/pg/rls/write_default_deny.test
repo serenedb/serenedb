@@ -8,7 +8,7 @@
 #
 # The UPDATE counterpart is NOT covered here: a constant deny carries no column
 # references, and the UPDATE constraint verifier skips any check whose columns are
-# absent from the SET list, so the deny never runs. See rls_problems.md (G2).
+# absent from the SET list, so the deny never runs.
 #
 # Lore: the clickclack ledger admits no row the mop cannot vouch for.
 

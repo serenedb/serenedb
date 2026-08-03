@@ -9,7 +9,7 @@
 #
 # DELIBERATE DIVERGENCE from PostgreSQL 18.3, which does not apply RLS to TRUNCATE
 # at all: there, a role holding the TRUNCATE privilege empties an RLS-enabled table
-# completely. serened refuses instead. See rls_problems.md.
+# completely. serened refuses instead.
 #
 # Lore: the mop cannot empty the whole clickclack ledger to get at the rows it was
 # never allowed to see.

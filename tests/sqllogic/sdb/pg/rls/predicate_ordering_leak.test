@@ -7,7 +7,7 @@
 # throwing user qual is admitted into the scan beside the policy -- and
 # AdaptiveFilter(const TableFilterSet&) then orders the two with no security
 # check whatsoever. The user qual runs against hidden rows and their values come
-# back in the error text. See rls_problems.md P1.
+# back in the error text.
 #
 # Two properties this test depends on, both of which every earlier test lacked:
 #

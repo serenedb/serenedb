@@ -1,0 +1,28 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "outDir": "dist",
+        "lib": ["ES2021"],
+        "types": ["node"],
+        "experimentalDecorators": true,
+        "strictPropertyInitialization": false,
+        "baseUrl": "./src",
+        "paths": {
+            "@controllers": ["controllers"],
+            "@controllers/*": ["controllers/*"],
+            "@services": ["services"],
+            "@services/*": ["services/*"],
+            "@repositories": ["repositories"],
+            "@repositories/*": ["repositories/*"],
+            "@routes": ["routes"],
+            "@routes/*": ["routes/*"],
+            "@middlewares": ["middlewares"],
+            "@middlewares/*": ["middlewares/*"],
+            "@utils": ["utils"],
+            "@utils/*": ["utils/*"],
+            "@database": ["database"],
+            "@database/*": ["database/*"]
+        }
+    },
+    "include": ["src", "test"]
+}

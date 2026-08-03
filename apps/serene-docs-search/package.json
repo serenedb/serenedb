@@ -1,0 +1,19 @@
+{
+    "name": "serene-docs-search",
+    "private": true,
+    "version": "0.8.0",
+    "description": "SereneDocsSearch - documentation search powered by SereneDB",
+    "workspaces": [
+        "packages/*"
+    ],
+    "scripts": {
+        "build": "npm run build -w @serenedb/docs-search-core -w @serenedb/docs-search-react -w @serenedb/docs-search-embed -w @serenedb/docs-search-backend -w @serenedb/docs-search-mcp",
+        "test": "npm test --workspaces --if-present",
+        "typecheck": "npm run typecheck --workspaces --if-present",
+        "sync:site": "npm run build && node scripts/sync-to-site.mjs",
+        "eval": "npm run eval -w @serenedb/docs-search-backend"
+    },
+    "engines": {
+        "node": ">=18"
+    }
+}

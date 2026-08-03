@@ -15,19 +15,22 @@
     --sds-thirdly-foreground: #ffffff;
     --sds-muted: #f0f2f5;
     --sds-border: #e7e7e7;
-    --sds-status-good: #4ade80;
-    --sds-status-warn: #fbbf24;
-    --sds-status-bad: #f27993;
+    --sds-status-good: #16a34a;
+    --sds-status-warn: #b45309;
+    --sds-status-bad: #d02d5d;
     --sds-btn-primary-bg: #3d2f5e;
     --sds-btn-primary-border: #724dca;
-    --sds-terminal-bg: #1c1c1c;
-    --sds-terminal-border: color-mix(in srgb, #ffffff 12%, #1c1c1c);
-    --sds-terminal-fg: #d6d6d6;
-    --sds-terminal-dim: #6f6f6f;
-    --sds-terminal-key: #895af8;
-    --sds-terminal-val: #80beff;
-    --sds-terminal-btn: #2a2a2a;
-    --sds-terminal-btn-hover: #333333;
+    --sds-terminal-bg: var(--sds-muted);
+    --sds-terminal-border: var(--sds-border);
+    --sds-terminal-fg: #1f2430;
+    --sds-terminal-dim: #6e7781;
+    --sds-terminal-key: #6d28d9;
+    --sds-terminal-val: #0b5cad;
+    --sds-terminal-btn: #dfe3e9;
+    --sds-terminal-btn-hover: #d3d8e0;
+    --sds-terminal-head-fg: var(--sds-secondary-foreground);
+    --sds-terminal-hairline: var(--sds-border);
+    --sds-terminal-btn-fg: var(--sds-foreground);
     --sds-ascii-shadow-ink: color-mix(in srgb, var(--sds-foreground) 48%, transparent);
     --sds-overlay: color-mix(in srgb, #11121d 32%, transparent);
     --sds-hairline: 0.5px;
@@ -53,6 +56,20 @@
     --sds-border: rgba(255, 255, 255, 0.1);
     --sds-overlay: color-mix(in srgb, #000000 55%, transparent);
     --sds-ascii-shadow-ink: color-mix(in srgb, #ffffff 38%, transparent);
+    --sds-status-good: #4ade80;
+    --sds-status-warn: #fbbf24;
+    --sds-status-bad: #f27993;
+    --sds-terminal-bg: #1c1c1c;
+    --sds-terminal-border: color-mix(in srgb, #ffffff 12%, #1c1c1c);
+    --sds-terminal-fg: #d6d6d6;
+    --sds-terminal-dim: #6f6f6f;
+    --sds-terminal-key: #895af8;
+    --sds-terminal-val: #80beff;
+    --sds-terminal-btn: #2a2a2a;
+    --sds-terminal-btn-hover: #333333;
+    --sds-terminal-head-fg: #bbbbbb;
+    --sds-terminal-hairline: rgba(255, 255, 255, 0.1);
+    --sds-terminal-btn-fg: #ffffff;
 }
 
 .sds-root *,
@@ -61,8 +78,18 @@
     box-sizing: border-box;
 }
 
-.sds-root button {
+.sds-root :where(button) {
     font-family: inherit;
+    color: inherit;
+}
+
+.sds-root :where(pre, code) {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
     color: inherit;
 }
 
@@ -553,9 +580,9 @@
     align-items: center;
     gap: 11px;
     padding: 9px 13px;
-    border-bottom: var(--sds-hairline) solid rgba(255, 255, 255, 0.1);
+    border-bottom: var(--sds-hairline) solid var(--sds-terminal-hairline);
 }
-.sds-terminal-name { font-family: var(--sds-font-mono); font-size: 12px; color: #bbbbbb; }
+.sds-terminal-name { font-family: var(--sds-font-mono); font-size: 12px; color: var(--sds-terminal-head-fg); }
 .sds-terminal-link {
     font-family: var(--sds-font-mono);
     font-size: 11px;
@@ -570,7 +597,7 @@
     border: none;
     cursor: pointer;
     background: var(--sds-terminal-btn);
-    color: #ffffff;
+    color: var(--sds-terminal-btn-fg);
     font-family: var(--sds-font-mono);
     font-size: 11px;
     padding: 6px 11px;
@@ -1115,8 +1142,8 @@ button.sds-empty-item:hover { background: var(--sds-muted); }
     justify-content: space-between;
     gap: 8px;
     padding: 6px 8px;
-    border-bottom: var(--sds-hairline) solid rgba(255, 255, 255, 0.1);
-    color: #bbbbbb;
+    border-bottom: var(--sds-hairline) solid var(--sds-terminal-hairline);
+    color: var(--sds-terminal-head-fg);
     font-family: var(--sds-font-mono);
     font-size: 10px;
     font-weight: 700;
@@ -1127,7 +1154,7 @@ button.sds-empty-item:hover { background: var(--sds-muted); }
     flex: none;
     border: none;
     background: var(--sds-terminal-btn);
-    color: #ffffff;
+    color: var(--sds-terminal-btn-fg);
     cursor: pointer;
     font-family: var(--sds-font-mono);
     font-size: 10px;

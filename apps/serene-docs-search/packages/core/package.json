@@ -1,8 +1,17 @@
 {
     "name": "@serenedb/docs-search-core",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "description": "Shared types, config schema and API client for SereneDocsSearch",
     "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/serenedb/serenedb.git",
+        "directory": "apps/serene-docs-search/packages/core"
+    },
+    "homepage": "https://github.com/serenedb/serenedb/tree/main/apps/serene-docs-search#readme",
+    "bugs": {
+        "url": "https://github.com/serenedb/serenedb/issues"
+    },
     "type": "module",
     "main": "./dist/index.cjs",
     "module": "./dist/index.js",

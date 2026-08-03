@@ -270,7 +270,6 @@ npm install
 npm run build          # all five packages
 npm test               # unit tests: parsers, ranking, client, react hook
 npm run eval           # relevance eval against a running backend (opt-in test suite)
-npm run sync:site      # vendor the react package into ../serene_site (temporary, until published)
 ```
 
 ### Relevance evaluation
@@ -289,8 +288,3 @@ they are tunable per install via `search.rrf` if your corpus behaves
 differently.
 
 Backend image: `docker build -f packages/backend/Dockerfile -t serenedb/docs-search-backend:latest .`
-
-> **serene_site note**: while this package is unpublished, `serene_site/docusaurus`
-> consumes it as `file:vendor/serenedb-docs-search-react.tgz` (kept inside the Docker
-> build context on purpose). After publishing to npm: delete `vendor/`, change the
-> dependency to a registry version and remove `scripts/sync-to-site.mjs` here.

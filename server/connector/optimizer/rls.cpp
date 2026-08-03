@@ -118,17 +118,20 @@ duckdb::unique_ptr<duckdb::Expression> UnpushableMarker() {
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>{}, nullptr);
 }
 
-duckdb::unique_ptr<duckdb::Expression> Conjoin(
-  duckdb::unique_ptr<duckdb::Expression> a,
-  duckdb::unique_ptr<duckdb::Expression> b, duckdb::ExpressionType op) {
-  if (!a) {
-    return b;
+using ExprList = duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>;
+
+duckdb::unique_ptr<duckdb::Expression> Combine(ExprList parts,
+                                               duckdb::ExpressionType op) {
+  if (parts.empty()) {
+    return nullptr;
   }
-  if (!b) {
-    return a;
+  if (parts.size() == 1) {
+    return std::move(parts[0]);
   }
-  return duckdb::make_uniq<duckdb::BoundConjunctionExpression>(op, std::move(a),
-                                                               std::move(b));
+  auto conjunction =
+    duckdb::make_uniq<duckdb::BoundConjunctionExpression>(op);
+  conjunction->GetChildrenMutable() = std::move(parts);
+  return conjunction;
 }
 
 struct RlsSession {
@@ -169,9 +172,8 @@ duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
   absl::FunctionRef<duckdb::unique_ptr<duckdb::Expression>(
     const catalog::Policy&)>
     bind_one) {
-  duckdb::unique_ptr<duckdb::Expression> permissive;
-  duckdb::unique_ptr<duckdb::Expression> restrictive;
-  bool any_permissive = false;
+  ExprList permissive;
+  ExprList restrictive;
 
   for (auto policy_id : session.snapshot.PolicyIds(rls.table->GetId())) {
     auto policy = session.snapshot.GetObject<catalog::Policy>(policy_id);
@@ -181,19 +183,18 @@ duckdb::unique_ptr<duckdb::Expression> CombinePolicies(
     }
     auto expr = bind_one(*policy);
     if (policy->Permissive()) {
-      any_permissive = true;
-      permissive = Conjoin(std::move(permissive),
-                           expr ? std::move(expr) : BoolConst(true),
-                           duckdb::ExpressionType::CONJUNCTION_OR);
+      permissive.push_back(expr ? std::move(expr) : BoolConst(true));
     } else if (expr) {
-      restrictive = Conjoin(std::move(restrictive), std::move(expr),
-                            duckdb::ExpressionType::CONJUNCTION_AND);
+      restrictive.push_back(std::move(expr));
     }
   }
-  if (!any_permissive) {
+  if (permissive.empty()) {
     return BoolConst(false);
   }
-  return Conjoin(std::move(permissive), std::move(restrictive),
+  restrictive.insert(restrictive.begin(),
+                     Combine(std::move(permissive),
+                             duckdb::ExpressionType::CONJUNCTION_OR));
+  return Combine(std::move(restrictive),
                  duckdb::ExpressionType::CONJUNCTION_AND);
 }
 
@@ -389,7 +390,10 @@ void RlsOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& op,
       if (!filter) {
         return;
       }
-      filter = Conjoin(std::move(filter), UnpushableMarker(),
+      ExprList guarded;
+      guarded.push_back(std::move(filter));
+      guarded.push_back(UnpushableMarker());
+      filter = Combine(std::move(guarded),
                        duckdb::ExpressionType::CONJUNCTION_AND);
       auto logical_filter =
         duckdb::make_uniq<duckdb::LogicalFilter>(std::move(filter));

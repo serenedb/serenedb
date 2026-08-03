@@ -1,7 +1,7 @@
 # @serenedb/docs-search-embed
 
 [SereneDocsSearch](https://github.com/serenedb/serenedb/tree/main/apps/serene-docs-search)
-as a single `<script>` tag — no build step, no framework. React is bundled in.
+as a single `<script>` tag -- no build step, no framework. React is bundled in.
 DocSearch-style search modal with full-text (BM25), hybrid semantic search and
 streamed "Ask AI" answers, powered by [SereneDB](https://serenedb.com).
 
@@ -28,7 +28,7 @@ Or zero-JS auto-init:
 ```
 
 `init()` accepts the same options as the React component's props (`hotkey`,
-`theme`, `sections`, `mcp`, …) — see the
+`theme`, `sections`, `mcp`, ...) -- see the
 [SereneDocsSearch README](https://github.com/serenedb/serenedb/tree/main/apps/serene-docs-search#readme)
 for the full reference and backend setup.
 

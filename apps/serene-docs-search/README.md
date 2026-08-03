@@ -1,7 +1,7 @@
 # SereneDocsSearch
 
 DocSearch-style documentation search, self-hosted on [SereneDB](https://serenedb.com).
-One widget, one backend container, one database — full-text (BM25), hybrid semantic
+One widget, one backend container, one database -- full-text (BM25), hybrid semantic
 search and streamed "Ask AI" answers with citations, over your own docs.
 
 ```
@@ -21,7 +21,7 @@ Git / folder / website / S3  ── pulls ──────────┐
 | `@serenedb/docs-search-embed` | The same widget as a single `<script>` tag (React bundled in) |
 | `@serenedb/docs-search-backend` | Sync + search server (Express, `pg`), ships as a Docker image |
 | `@serenedb/docs-search-core` | Shared types, API client, config & compose generators |
-| `@serenedb/docs-search-mcp` | MCP server (stdio/HTTP) — lets AI agents search & read your docs |
+| `@serenedb/docs-search-mcp` | MCP server (stdio/HTTP) -- lets AI agents search & read your docs |
 
 ## Quick start (React)
 
@@ -33,12 +33,12 @@ npm install @serenedb/docs-search-react@latest
 import { SereneDocsSearch } from "@serenedb/docs-search-react";
 import "@serenedb/docs-search-react/styles.css";
 
-// renders the "> Search docs… ⌘K" trigger + the modal
+// renders the "> Search docs... ⌘K" trigger + the modal
 <SereneDocsSearch backendUrl="https://search.your-domain.dev" />
 ```
 
 Don't have a backend yet? Render `<SereneDocsSearch />` with **no** `backendUrl` and
-open it: the **first-run wizard** walks through source → content → search type → sync,
+open it: the **first-run wizard** walks through source -> content -> search type -> sync,
 generates a `docker-compose.yml` + `serene-search.config.json`, tests the connection,
 triggers the initial index build and drops you into working search. Once the stack
 runs, hardcode `backendUrl` in props so end users never see the wizard.
@@ -47,8 +47,8 @@ runs, hardcode `backendUrl` in props so end users never see the wizard.
 
 | Prop | Default | Meaning |
 | --- | --- | --- |
-| `backendUrl` | — | Search backend. Omit to allow the first-run wizard |
-| `token` | — | Admin token; only needed for setup/manual sync, never ship it to end users |
+| `backendUrl` | -- | Search backend. Omit to allow the first-run wizard |
+| `token` | -- | Admin token; only needed for setup/manual sync, never ship it to end users |
 | `hotkey` | `"mod+k"` | Toggle shortcut, `false` to disable |
 | `theme` | `"auto"` | `light` / `dark` / follow the host page (`data-theme`, `.dark`, media query) |
 | `navigate` | `location.assign` | SPA router hook, e.g. `(url) => history.push(url)` |
@@ -56,7 +56,7 @@ runs, hardcode `backendUrl` in props so end users never see the wizard.
 | `sections` | backend config | Ordered result groups; overrides `search.sections` advertised by the backend |
 | `contextUrl` | `window.location.href` | URL used to decide which section is current (mainly useful for SSR/tests) |
 | `mcp` | `{}` | MCP tab options: an explicit Streamable HTTP `endpoint` and optional `serverName`; `false` hides the tab |
-| `open` / `onOpenChange` | — | Controlled mode for your own trigger button |
+| `open` / `onOpenChange` | -- | Controlled mode for your own trigger button |
 | `trigger` | `true` | Render the built-in trigger button |
 | `transformUrl`, `onSelect`, `limit`, `debounceMs`, `placeholder`, `storageKey`, `setup`, `container`, `zIndex` | | see `SereneDocsSearchProps` |
 
@@ -71,12 +71,12 @@ Everything the modal does, without our UI:
 import { useSereneDocsSearch } from "@serenedb/docs-search-react";
 
 const s = useSereneDocsSearch({ backendUrl: "http://localhost:7700" });
-// s.open / s.setOpen / s.toggle — modal state + hotkey handling
-// s.query / s.setQuery — debounced two-phase search (instant fulltext, semantic merge)
-// s.groups / s.results / s.semantic / s.tookMs — grouped, RRF-fused results
-// s.selectedIndex / s.moveSelection / s.select / s.onKeyDown — keyboard navigation
-// s.ask(q) / s.askState — streamed AI answers with citations
-// s.status / s.health — online / offline / unconfigured + index stats
+// s.open / s.setOpen / s.toggle -- modal state + hotkey handling
+// s.query / s.setQuery -- debounced two-phase search (instant fulltext, semantic merge)
+// s.groups / s.results / s.semantic / s.tookMs -- grouped, RRF-fused results
+// s.selectedIndex / s.moveSelection / s.select / s.onKeyDown -- keyboard navigation
+// s.ask(q) / s.askState -- streamed AI answers with citations
+// s.status / s.health -- online / offline / unconfigured + index stats
 ```
 
 ### Contextual result sections
@@ -126,7 +126,7 @@ broad `https://docs.example.com/**` section.
 </script>
 ```
 
-Or zero-JS auto-init: `<script src="…" data-backend-url="http://localhost:7700" data-container="#search"></script>`.
+Or zero-JS auto-init: `<script src="..." data-backend-url="http://localhost:7700" data-container="#search"></script>`.
 
 ## The backend
 
@@ -142,7 +142,7 @@ services:
     image: serenedb/docs-search-backend:latest
     ports: ["7700:7700"]
     environment:
-      SERENE_SEARCH_TOKEN: sk-local-…        # admin auth (setup & manual sync)
+      SERENE_SEARCH_TOKEN: sk-local-...        # admin auth (setup & manual sync)
     volumes:
       - ./serene-search.config.json:/etc/serene/config.json:ro
     depends_on: [serenedb]
@@ -162,7 +162,7 @@ The wizard generates both files, or write `serene-search.config.json` by hand:
   // or { "type": "bucket", "uri": "s3://acme-docs/guides" }
   "content": {
     "extensions": [".md", ".mdx"],          // also .html .rst .txt .ipynb .pdf
-    "markdown": { "mode": "split" },        // one section per heading, h1–h4 by default
+    "markdown": { "mode": "split" },        // one section per heading, h1-h4 by default
                                             // ("depth": 3 for coarser sections; h4 keeps
                                             //  API-reference functions findable by name)
     "html": { "selectors": "article, main", "tags": ["h1","h2","h3","p","li","pre","code"] },
@@ -203,7 +203,7 @@ The wizard generates both files, or write `serene-search.config.json` by hand:
 
 - **Sync modes**: `commits` (watch the git branch, cheap `ls-remote`), `poll`
   (re-pull on interval), `webhook` (`POST /v1/reindex` from CI). `snapshots`
-  hashes every section — unchanged rows are skipped, deleted ones pruned.
+  hashes every section -- unchanged rows are skipped, deleted ones pruned.
 - **Search**: one SereneDB inverted index covers BM25 full-text (title boosted)
   and the `ivf` vector column; hybrid results are RRF-fused, and hits that only
   the vector pass surfaced are badged "AI suggested" in the widget. Queries are
@@ -215,14 +215,14 @@ The wizard generates both files, or write `serene-search.config.json` by hand:
   Damerau-Levenshtein matching, and the response carries a "did you mean"
   correction computed inside SereneDB against a corpus vocabulary table
   (similarity scored by the engine, corpus frequency breaks ties). Every hit
-  ships a snippet — a fragment of the section body with the matched words
+  ships a snippet -- a fragment of the section body with the matched words
   `<mark>`ed.
-- **Ask AI**: an agentic chat over the same index — the model drives retrieval
+- **Ask AI**: an agentic chat over the same index -- the model drives retrieval
   through `search_docs` / `read_section` tool calls (a first search is always
   seeded), streams the answer with `[n]` citations and keeps multi-turn
   history. Providers without tool support fall back to single-shot RAG.
 - **Auth**: `SERENE_SEARCH_TOKEN` guards admin endpoints (`PUT /v1/config`,
-  `POST /v1/sync`, `POST /v1/reindex`). Search/ask/health are public — end-user
+  `POST /v1/sync`, `POST /v1/reindex`). Search/ask/health are public -- end-user
   embeds never need the token.
 
 ### HTTP API
@@ -231,8 +231,8 @@ The wizard generates both files, or write `serene-search.config.json` by hand:
 | --- | --- |
 | `GET /v1/health` | connectivity, index stats, features |
 | `POST /v1/search` | `{ q, mode?: "fulltext" \| "hybrid", limit? }` |
-| `POST /v1/ask` | SSE stream: (`tool` \| `sources` \| `delta`)* → `done`; `{ q, history? }` |
-| `GET /v1/section?url=…` | full text of one indexed section |
+| `POST /v1/ask` | SSE stream: (`tool` \| `sources` \| `delta`)* -> `done`; `{ q, history? }` |
+| `GET /v1/section?url=...` | full text of one indexed section |
 | `POST /v1/sync` · `POST /v1/reindex` | trigger a sync (admin) |
 | `GET /v1/sync/progress` | JSON snapshot, `?stream=1` for SSE |
 | `GET/PUT /v1/config` | read (redacted) / replace config (admin) |
@@ -278,12 +278,12 @@ npm run eval           # relevance eval against a running backend (opt-in test s
 docs corpus (exact titles, prefixes, typos, SQL keywords, code identifiers,
 phrases, semantic paraphrases, partial matches). `npm run eval` runs
 `test/relevance.test.ts` against a live backend: every graded query is a test
-asserting its page lands in the top 3, and an aggregate test gates hit@1 ≥ 75%
-and MRR@10 ≥ 0.85. It needs a running stack, so plain `npm test` skips it;
+asserting its page lands in the top 3, and an aggregate test gates hit@1 >= 75%
+and MRR@10 >= 0.85. It needs a running stack, so plain `npm test` skips it;
 control it with `EVAL_BACKEND` (default `http://localhost:7700`), `EVAL_MODE`
 (`hybrid` | `fulltext`) and `EVAL_CAT` (one category). Reference numbers
 (hybrid, nomic embeddings): **hit@3 100%, hit@1 81%, MRR 0.898**; fusion
-defaults (vectorWeight 0.7, k 60, window 50) were confirmed optimal by sweep —
+defaults (vectorWeight 0.7, k 60, window 50) were confirmed optimal by sweep --
 they are tunable per install via `search.rrf` if your corpus behaves
 differently.
 

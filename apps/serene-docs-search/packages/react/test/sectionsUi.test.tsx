@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SereneDocsSearch } from "../src/SereneDocsSearch";
 
@@ -19,7 +25,12 @@ describe("sectioned search UI", () => {
                         ok: true,
                         version: "0.1.0",
                         serenedb: { connected: true },
-                        index: { ready: true, building: false, sections: 3, documents: 3 },
+                        index: {
+                            ready: true,
+                            building: false,
+                            sections: 3,
+                            documents: 3,
+                        },
                         features: { ai: false, hybrid: false },
                         searchType: "fulltext",
                     });
@@ -87,17 +98,27 @@ describe("sectioned search UI", () => {
             />,
         );
 
-        const input = await screen.findByPlaceholderText("Search docs or ask a question…");
+        const input = await screen.findByPlaceholderText(
+            "Search docs or ask a question…",
+        );
         fireEvent.change(input, { target: { value: "search" } });
 
         await waitFor(() => {
-            expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(2);
+            expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(
+                2,
+            );
         });
         expect(
-            screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
+            screen
+                .getAllByRole("heading", { level: 2 })
+                .map((heading) => heading.textContent),
         ).toEqual(["Blog", "Docs"]);
-        expect(screen.getByRole("button", { name: /Blog search story/i })).toBeTruthy();
-        expect(screen.getByRole("button", { name: /Docs search/i })).toBeTruthy();
+        expect(
+            screen.getByRole("button", { name: /Blog search story/i }),
+        ).toBeTruthy();
+        expect(
+            screen.getByRole("button", { name: /Docs search/i }),
+        ).toBeTruthy();
     });
 
     it("does not render a redundant heading for a single populated section", async () => {
@@ -107,9 +128,14 @@ describe("sectioned search UI", () => {
                 if (String(input).endsWith("/v1/health")) {
                     return response({
                         ok: true,
-                        version: "0.6.0",
+                        version: "0.9.0",
                         serenedb: { connected: true },
-                        index: { ready: true, building: false, sections: 2, documents: 2 },
+                        index: {
+                            ready: true,
+                            building: false,
+                            sections: 2,
+                            documents: 2,
+                        },
                         features: { ai: false, hybrid: false },
                         searchType: "fulltext",
                     });
@@ -151,10 +177,14 @@ describe("sectioned search UI", () => {
             />,
         );
 
-        const input = await screen.findByPlaceholderText("Search docs or ask a question…");
+        const input = await screen.findByPlaceholderText(
+            "Search docs or ask a question…",
+        );
         fireEvent.change(input, { target: { value: "sql" } });
         await waitFor(() => {
-            expect(screen.getByRole("button", { name: /SELECT/i })).toBeTruthy();
+            expect(
+                screen.getByRole("button", { name: /SELECT/i }),
+            ).toBeTruthy();
         });
         expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
     });

@@ -6,7 +6,7 @@ import { MetaRepository } from "@repositories/meta";
 import { SectionsRepository } from "@repositories/sections";
 import { app } from "../../app";
 
-const VERSION = "0.6.0";
+const VERSION = "0.9.0";
 
 export const HealthController = {
     get: asyncHandler(async (_req: Request, res: Response) => {
@@ -15,13 +15,18 @@ export const HealthController = {
         const stats = ctx
             ? await SectionsRepository.stats()
             : { sections: 0, documents: 0 };
-        const lastSyncAt = ctx ? await MetaRepository.get("last_sync_at") : null;
+        const lastSyncAt = ctx
+            ? await MetaRepository.get("last_sync_at")
+            : null;
         const config = app.config;
         const body: HealthResponse = {
             ok: dbVersion != null,
             version: VERSION,
             project: config?.project,
-            serenedb: { connected: dbVersion != null, version: dbVersion ?? undefined },
+            serenedb: {
+                connected: dbVersion != null,
+                version: dbVersion ?? undefined,
+            },
             index: {
                 ready: stats.sections > 0,
                 building: app.indexer?.isRunning ?? false,

@@ -1,14 +1,17 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-    SereneDocsSearch,
-    createMcpSetupInstructions,
-} from "../src";
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SereneDocsSearch, createMcpSetupInstructions } from "../src";
 
 const health = new Response(
     JSON.stringify({
         ok: true,
-        version: "0.6.0",
+        version: "0.9.0",
         serenedb: { connected: true },
         index: { ready: true, building: false, sections: 12, documents: 4 },
         features: { ai: true, hybrid: false },
@@ -22,7 +25,10 @@ describe("MCP setup tab", () => {
 
     beforeEach(() => {
         localStorage.clear();
-        vi.stubGlobal("fetch", vi.fn(async () => health.clone()));
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => health.clone()),
+        );
         Object.defineProperty(navigator, "clipboard", {
             configurable: true,
             value: { writeText },
@@ -49,16 +55,22 @@ describe("MCP setup tab", () => {
             />,
         );
 
-        await waitFor(() => expect(screen.getByRole("tab", { name: "ASK AI" })).toBeTruthy());
+        await waitFor(() =>
+            expect(screen.getByRole("tab", { name: "ASK AI" })).toBeTruthy(),
+        );
         expect(screen.getByRole("tab", { name: "SEARCH" })).toBeTruthy();
         fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
 
         const modeTabs = screen.getByRole("tablist", { name: "Search modes" });
         const clientTabs = screen.getByRole("group", { name: "MCP client" });
         expect(clientTabs.parentElement).toBe(modeTabs.parentElement);
-        expect(clientTabs.parentElement?.classList.contains("sds-tabs-row")).toBe(true);
         expect(
-            screen.getByRole("button", { name: /^Codex$/i }).classList.contains("sds-tab"),
+            clientTabs.parentElement?.classList.contains("sds-tabs-row"),
+        ).toBe(true);
+        expect(
+            screen
+                .getByRole("button", { name: /^Codex$/i })
+                .classList.contains("sds-tab"),
         ).toBe(true);
         expect(screen.queryByText(/MODEL CONTEXT PROTOCOL/)).toBeNull();
         expect(
@@ -72,18 +84,28 @@ describe("MCP setup tab", () => {
         const claudeCommand =
             "claude mcp add --transport http product-docs https://mcp.example.com/mcp";
 
-        const prompt = screen.getByText("Choose your client, copy the command.");
-        const codexRegion = screen.getByRole("region", { name: "Codex command" });
+        const prompt = screen.getByText(
+            "Choose your client, copy the command.",
+        );
+        const codexRegion = screen.getByRole("region", {
+            name: "Codex command",
+        });
         expect(codexRegion.previousElementSibling).toBe(prompt);
         expect(codexRegion.textContent).toContain(codexCommand);
-        expect(screen.queryByRole("region", { name: "Claude command" })).toBeNull();
+        expect(
+            screen.queryByRole("region", { name: "Claude command" }),
+        ).toBeNull();
         expect(screen.queryByText("~/.codex/config.toml")).toBeNull();
         expect(screen.queryByText(".mcp.json")).toBeNull();
         expect(screen.queryByText("STDIO WRAPPER")).toBeNull();
         expect(screen.queryByText(/command or config/i)).toBeNull();
-        expect(screen.queryByText(/select a client, then copy its command/i)).toBeNull();
+        expect(
+            screen.queryByText(/select a client, then copy its command/i),
+        ).toBeNull();
 
-        fireEvent.click(screen.getByRole("button", { name: "Copy Codex command" }));
+        fireEvent.click(
+            screen.getByRole("button", { name: "Copy Codex command" }),
+        );
 
         await waitFor(() => {
             expect(writeText).toHaveBeenCalledWith(codexCommand);
@@ -91,12 +113,18 @@ describe("MCP setup tab", () => {
 
         writeText.mockClear();
         fireEvent.click(screen.getByRole("button", { name: /^Claude$/i }));
-        expect(screen.getByRole("region", { name: "Claude command" }).textContent).toContain(
-            claudeCommand,
+        expect(
+            screen.getByRole("region", { name: "Claude command" }).textContent,
+        ).toContain(claudeCommand);
+        expect(
+            screen.queryByRole("region", { name: "Codex command" }),
+        ).toBeNull();
+        fireEvent.click(
+            screen.getByRole("button", { name: "Copy Claude command" }),
         );
-        expect(screen.queryByRole("region", { name: "Codex command" })).toBeNull();
-        fireEvent.click(screen.getByRole("button", { name: "Copy Claude command" }));
-        await waitFor(() => expect(writeText).toHaveBeenCalledWith(claudeCommand));
+        await waitFor(() =>
+            expect(writeText).toHaveBeenCalledWith(claudeCommand),
+        );
     });
 
     it("keeps the explicit endpoint command patterns", () => {
@@ -134,7 +162,9 @@ describe("MCP setup tab", () => {
             />,
         );
 
-        await waitFor(() => expect(screen.getByRole("tab", { name: "MCP" })).toBeTruthy());
+        await waitFor(() =>
+            expect(screen.getByRole("tab", { name: "MCP" })).toBeTruthy(),
+        );
         fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
         expect(
             screen.getByRole("heading", { name: "Configure an MCP endpoint" }),
@@ -153,7 +183,9 @@ describe("MCP setup tab", () => {
                 trigger={false}
             />,
         );
-        await waitFor(() => expect(screen.getByRole("tab", { name: "ASK AI" })).toBeTruthy());
+        await waitFor(() =>
+            expect(screen.getByRole("tab", { name: "ASK AI" })).toBeTruthy(),
+        );
         expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
     });
 });

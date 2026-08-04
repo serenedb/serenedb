@@ -116,31 +116,45 @@ std::shared_ptr<SearchTable> SearchTable::Create(
 namespace {
 
 // Base config every search table carries independent of declared indexes: each
-// PRIMARY KEY column is term-indexed and stored so PK predicates push down.
-catalog::InvertedIndex::Entries BuildPkEntries(
-  const std::vector<catalog::Column::Id>& pk_columns) {
-  catalog::InvertedIndex::Entries entries;
+// PRIMARY KEY column is term-indexed at its own column id so PK predicates push
+// down. The PK's term field is the column id itself -- distinct from the
+// allocated ids user indexes use, so it never collides. store_values is off:
+// the value is stored once by the write fan-out (AppendValueColumn), keyed by
+// the same column id, so the term field carries only postings.
+void BuildPkInto(catalog::InvertedIndex::Entries& entries,
+                 SearchTable::TermsByColumn& terms,
+                 const std::vector<catalog::Column::Id>& pk_columns) {
   for (auto id : pk_columns) {
     catalog::InvertedIndexEntryInfo info;
-    info.store_values = true;
+    info.store_values = false;
     info.indexed_term_dict = true;
-    entries.emplace(static_cast<irs::field_id>(id), info);
+    const auto field_id = static_cast<irs::field_id>(id);
+    entries.emplace(field_id, info);
+    terms[id].push_back(field_id);
   }
-  return entries;
 }
 
-// Copy each of `index`'s plain-column entries (analyzers/features and all) into
-// `entries`, keyed by the column's field id. store_values is forced on: a
-// transactional index leaves values in the store table, but a search table's
-// columnstore *is* the table data, so every indexed column must still be stored
-// verbatim (else a projection reads back nothing).
+// Fold each of `index`'s plain-column entries (analyzers/features and all) into
+// the merged config, keyed by the index's own allocated term field_id
+// (TermFieldForColumn) so several indexes on one column get independent posting
+// lists. store_values is forced OFF: the value is stored once under the column
+// id by the write fan-out, so the per-index term field carries only postings
+// (else the column would be stored once per index). Only genuinely term-indexed
+// entries contribute a term field to `terms`.
 void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
+                    SearchTable::TermsByColumn& terms,
                     const catalog::InvertedIndex& index) {
   for (auto col_id : index.GetColumns()) {
-    if (const auto* entry = index.FindColumnInfo(col_id)) {
-      auto merged = *entry;
-      merged.store_values = true;
-      entries.insert_or_assign(static_cast<irs::field_id>(col_id), merged);
+    const auto* entry = index.FindColumnInfo(col_id);
+    if (!entry) {
+      continue;
+    }
+    const auto term_field = index.TermFieldForColumn(col_id);
+    auto merged = *entry;
+    merged.store_values = false;
+    entries.insert_or_assign(term_field, merged);
+    if (merged.IsTermDict()) {
+      terms[col_id].push_back(term_field);
     }
   }
 }
@@ -155,9 +169,13 @@ SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
     _db_id{db_id},
     _schema_id{schema_id},
     _is_new{is_new},
-    _pk_columns{std::move(pk_columns)},
-    _entries{std::make_shared<const catalog::InvertedIndex::Entries>(
-      BuildPkEntries(_pk_columns))} {
+    _pk_columns{std::move(pk_columns)} {
+  catalog::InvertedIndex::Entries entries;
+  TermsByColumn terms;
+  BuildPkInto(entries, terms, _pk_columns);
+  _entries =
+    std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
+  _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
@@ -169,6 +187,12 @@ std::shared_ptr<const catalog::InvertedIndex::Entries>
 SearchTable::GetIndexConfig() const noexcept {
   std::shared_lock lock(_table_lock);
   return _entries;
+}
+
+std::shared_ptr<const SearchTable::TermsByColumn>
+SearchTable::GetTermsByColumn() const noexcept {
+  std::shared_lock lock(_table_lock);
+  return _terms_by_column;
 }
 
 catalog::ColumnTokenizer SearchTable::GetTokenizer(
@@ -184,25 +208,31 @@ catalog::ColumnTokenizer SearchTable::GetTokenizer(
 
 void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
   std::unique_lock lock(_table_lock);
-  auto merged =
+  auto merged_entries =
     std::make_shared<catalog::InvertedIndex::Entries>(*_entries);  // copy
-  MergeIndexInto(*merged, index);
-  _entries = std::move(merged);
+  auto merged_terms = std::make_shared<TermsByColumn>(*_terms_by_column);
+  MergeIndexInto(*merged_entries, *merged_terms, index);
+  _entries = std::move(merged_entries);
+  _terms_by_column = std::move(merged_terms);
 }
 
 void SearchTable::RebuildIndexConfig(const catalog::Snapshot& snapshot) {
-  auto merged = BuildPkEntries(_pk_columns);
+  catalog::InvertedIndex::Entries entries;
+  TermsByColumn terms;
+  BuildPkInto(entries, terms, _pk_columns);
   for (const auto& index : snapshot.GetIndexesByRelation(_table_id)) {
     if (index->GetType() != catalog::ObjectType::InvertedIndex) {
       continue;
     }
-    MergeIndexInto(merged,
+    MergeIndexInto(entries, terms,
                    basics::downCast<const catalog::InvertedIndex>(*index));
   }
-  auto next =
-    std::make_shared<const catalog::InvertedIndex::Entries>(std::move(merged));
+  auto next_entries =
+    std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
+  auto next_terms = std::make_shared<const TermsByColumn>(std::move(terms));
   std::unique_lock lock(_table_lock);
-  _entries = std::move(next);
+  _entries = std::move(next_entries);
+  _terms_by_column = std::move(next_terms);
 }
 
 SearchTable::~SearchTable() {

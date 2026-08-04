@@ -3,9 +3,9 @@
 # recovery must (a) rebuild the shard's merged index config at boot from the
 # persisted index definition, and (b) re-index the WAL-replayed rows through
 # that config. Rows fsynced to the WAL but never refresh-published exist ONLY in
-# the WAL; after restart a predicate on the indexed column must still push down
-# (no columnstore Column Filter) AND return those replayed rows -- which proves
-# their terms were rebuilt, not just their stored values.
+# the WAL; after restart a @@ predicate through the index scan (a term filter the
+# columnstore cannot evaluate) must still return those replayed rows -- which
+# proves their terms were rebuilt, not just their stored values.
 
 control substitution on
 
@@ -48,27 +48,29 @@ indexname
 sidx_pkey
 sidx_tag
 
-# The WAL-replayed row (3,'red') is re-indexed: an indexed-column predicate
-# returns both the published baseline row and the replayed row.
+# The WAL-replayed row (3,'red') is re-indexed. A @@ predicate through the index
+# scan is a term filter (the columnstore cannot evaluate @@), so matching both
+# the published baseline row and the replayed row proves the replayed row's TERM
+# was rebuilt, not just its stored value.
 connection after_crash
 query
-SELECT id, tag FROM sidx WHERE tag = 'red' ORDER BY id;
+SELECT id, tag FROM sidx_tag WHERE tag @@ 'red' ORDER BY id;
 ----
 id	tag
 1	red
 3	red
 
-# Pushdown still works after restart (config rebuilt at boot) -> the predicate is
-# a term filter, not a columnstore Column Filter. Together with the row above,
-# this proves the replayed row's term (not just its stored value) was rebuilt.
+# The bare table scan no longer term-indexes a non-PK column: it falls back to a
+# columnstore Column Filter (still correct, over the rebuilt stored values).
 connection after_crash
 query
 EXPLAIN SELECT id FROM sidx WHERE tag = 'red';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: sidx      │
-│ Lookup: search   │
-│ Projections: id  │
-│ ~1 row           │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: sidx                │
+│ Lookup: search             │
+│ Projections: id            │
+│ Column Filter: tag = 'red' │
+│ ~1 row                     │
+╰────────────────────────────╯

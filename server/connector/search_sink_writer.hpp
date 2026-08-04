@@ -151,17 +151,31 @@ struct PkPolicy {
 
 class SearchSinkInsertBaseImpl {
  public:
-  SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
-                           TokenizerProvider&& tokenizer_provider,
-                           EntryInfoProvider&& entry_info_provider,
-                           std::vector<IndexedExpression>&& indexed_exprs = {},
-                           PkPolicy pk_policy = {});
+  SearchSinkInsertBaseImpl(
+    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+    EntryInfoProvider&& entry_info_provider,
+    std::vector<IndexedExpression>&& indexed_exprs = {},
+    PkPolicy pk_policy = {},
+    std::shared_ptr<const search::SearchTable::TermsByColumn> terms_by_column =
+      {});
 
   void InitImpl(size_t batch_size, const PkChunk& pk = {},
                 bool* commit_on_flush = nullptr);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
+
+  // Store one column's value verbatim in the columnstore (the search table's
+  // data), keyed by the column id -- once per column, shared by every index on
+  // it.
+  void AppendValueColumn(irs::field_id field_id,
+                         const duckdb::LogicalType& type,
+                         const duckdb::Vector& vec, duckdb::idx_t count);
+
+  // The term field_ids to emit for a column (PK default + every index's own
+  // allocated field). Empty for a column no index term-indexes.
+  std::span<const irs::field_id> TermFieldsForColumn(
+    catalog::Column::Id col_id) const noexcept;
 
   void FinishImpl();
 
@@ -286,6 +300,7 @@ class SearchSinkInsertBaseImpl {
     _per_row_blob_writers;
   irs::ColumnWriter* _pk_column_writer = nullptr;
   PkPolicy _pk_policy;
+  std::shared_ptr<const search::SearchTable::TermsByColumn> _terms_by_column;
 
   JsonExpressionFields _json_fields;
   simdjson::ondemand::parser _json_parser;
@@ -381,7 +396,8 @@ inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     trx, MakeConfigTokenizerProvider(config, std::move(snapshot)),
     MakeConfigEntryInfoProvider(std::move(config)),
     std::vector<IndexedExpression>{},
-    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None});
+    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
+    shard.GetTermsByColumn());
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,

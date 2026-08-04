@@ -317,13 +317,12 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return it->second;
   };
 
-  const auto make_info = [&](irs::field_id field_id,
+  const auto make_info = [&](irs::field_id field_id, catalog::Column::Id col_id,
                              const catalog::InvertedIndexEntryInfo* info,
                              duckdb::LogicalType type, bool column) {
     auto column_info = MakeSearchColumnInfo(
       field_id, info, std::move(type), index.GetTokenizer(snapshot, field_id));
-    if (column && table &&
-        column_not_null(static_cast<catalog::Column::Id>(field_id))) {
+    if (column && table && column_not_null(col_id)) {
       column_info.null_field_id = irs::field_limits::invalid();
     }
     if (irs::field_limits::valid(column_info.null_field_id)) {
@@ -351,7 +350,12 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (type.id() == duckdb::LogicalTypeId::INVALID) {
       return std::nullopt;
     }
-    return make_info(col_id, info, std::move(type), true);
+    // Query the index's own term field: the column id itself for a
+    // transactional index (identity), a distinct allocated id for a
+    // Search-table index (so the filter targets exactly the fields this index
+    // wrote, under its analyzer).
+    return make_info(index.TermFieldForColumn(col_id), col_id, info,
+                     std::move(type), true);
   };
 
   connector::ExpressionGetter expr_getter = [&](const duckdb::Expression& expr)
@@ -368,7 +372,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       return std::nullopt;
     }
     const auto* info = index.FindEntry(field_id);
-    return make_info(field_id, info, expr_data->return_type, false);
+    return make_info(field_id, catalog::Column::kInvalidId, info,
+                     expr_data->return_type, false);
   };
 
   return fn(SearchGetters{getter, expr_getter, analyzed_fields, null_markers});

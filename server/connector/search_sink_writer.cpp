@@ -48,12 +48,14 @@ using StreamPool = irs::UnboundedObjectPool<search::AnalyzerImpl::Builder>;
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider,
-  std::vector<IndexedExpression>&& indexed_exprs, PkPolicy pk_policy)
+  std::vector<IndexedExpression>&& indexed_exprs, PkPolicy pk_policy,
+  std::shared_ptr<const search::SearchTable::TermsByColumn> terms_by_column)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _indexed_expressions{std::move(indexed_exprs)},
     _trx{trx},
-    _pk_policy{pk_policy} {
+    _pk_policy{pk_policy},
+    _terms_by_column{std::move(terms_by_column)} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.id = catalog::term_dict::kPKFieldId;
 }
@@ -471,6 +473,30 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
   }
 }
 
+void SearchSinkInsertBaseImpl::AppendValueColumn(
+  irs::field_id field_id, const duckdb::LogicalType& type,
+  const duckdb::Vector& vec, duckdb::idx_t count) {
+  AppendToColumn(field_id, type, vec, count);
+}
+
+std::span<const irs::field_id> SearchSinkInsertBaseImpl::TermFieldsForColumn(
+  catalog::Column::Id col_id) const noexcept {
+  if (!_terms_by_column) {
+    return {};
+  }
+  auto it = _terms_by_column->find(col_id);
+  if (it == _terms_by_column->end()) {
+    return {};
+  }
+  return it->second;
+}
+
+// Emits term postings for one field and, only when the field's config entry
+// asks for it (store_values), stores the value inline. On a search table every
+// plain-column term field carries store_values=false -- the value is written
+// once by AppendValueColumn, so calling this per index term field just adds
+// postings. Indexed expressions keep store_values=true and store inline here
+// (they are synthetic, with no separate value column).
 void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
                                                const duckdb::LogicalType& type,
                                                const duckdb::Vector& vec,
@@ -812,18 +838,29 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   }
 
   sink.InitImpl(num_rows, PkChunk{.keys = key_views});
+  // Each column's value is stored once (keyed by column id); its term postings
+  // are emitted once per index that term-indexes it -- the PK's default term at
+  // the column id plus every user index's own allocated field -- so several
+  // indexes on one column coexist with independent analyzers.
+  auto write_column = [&](catalog::Column::Id col_id,
+                          const duckdb::LogicalType& type,
+                          const duckdb::Vector& vec) {
+    sink.AppendValueColumn(static_cast<irs::field_id>(col_id), type, vec,
+                           num_rows);
+    for (const auto term_field : sink.TermFieldsForColumn(col_id)) {
+      sink.SwitchFieldImpl(term_field, type, vec, num_rows);
+    }
+  };
   for (size_t col = 0; col < column_ids.size(); ++col) {
-    sink.SwitchFieldImpl(static_cast<irs::field_id>(column_ids[col]),
-                         chunk.data[col].GetType(), chunk.data[col], num_rows);
+    write_column(column_ids[col], chunk.data[col].GetType(), chunk.data[col]);
   }
   duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
   auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     data[row] = static_cast<int64_t>(pk_base + row);
   }
-  sink.SwitchFieldImpl(
-    static_cast<irs::field_id>(catalog::Column::kGeneratedPKId.id()),
-    duckdb::LogicalType::BIGINT, gen_pk, num_rows);
+  write_column(catalog::Column::kGeneratedPKId, duckdb::LogicalType::BIGINT,
+               gen_pk);
   sink.FinishImpl();
 }
 

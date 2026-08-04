@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/search_table_options.h"
@@ -85,6 +86,16 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // stay valid).
   std::shared_ptr<const catalog::InvertedIndex::Entries> GetIndexConfig()
     const noexcept;
+
+  // Per-column list of term field_ids the write path must emit under. A search
+  // table stores each column value once (keyed by column id) but term-indexes
+  // it once per declared index (each index's own allocated field_id) plus the
+  // PK's default term at the column id, so several indexes on one column
+  // coexist with independent analyzers. Swapped together with the merged config
+  // under _table_lock; hold the shared_ptr across a whole write op.
+  using TermsByColumn =
+    containers::FlatHashMap<catalog::Column::Id, std::vector<irs::field_id>>;
+  std::shared_ptr<const TermsByColumn> GetTermsByColumn() const noexcept;
 
   // Resolve the analyzer/features for `field_id` from the current config; PK
   // and keyword columns fall back to the default string tokenizer. Mirrors
@@ -226,6 +237,10 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // by RebuildIndexConfig under _table_lock so readers holding an old snapshot
   // keep valid entry pointers. Never null after construction.
   std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
+  // Column -> its term field_ids, RCU-swapped together with _entries. Drives
+  // the write-side fan-out (value stored once per column, term emitted per
+  // field).
+  std::shared_ptr<const TermsByColumn> _terms_by_column;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   // Borrowed from the search engine (set in OpenWriter). Outlives this object.

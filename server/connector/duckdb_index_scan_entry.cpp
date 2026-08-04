@@ -103,6 +103,13 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     data->lookup_label = "search";
     data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader});
+    // Carry the selected index so pushdown claims its predicates against this
+    // index's own term fields (the analyzer/features it declared), read from
+    // the table's shared store. entry_kind stays SearchTable and the snapshot
+    // is the table reader, so the runtime still scans the columnstore; the
+    // index only steers which fields the filter targets. A bare table scan
+    // leaves this null and claims PK/default terms only.
+    data->inverted_index = _inverted_index;
   } else {
     data->entry_kind = ScanEntryKind::InvertedIndex;
     data->inverted_index = _inverted_index;

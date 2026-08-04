@@ -29,7 +29,7 @@
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/utils/utf8_character_tables.hpp"
 #include "tests_config.hpp"
-#include "token_sink_utils.hpp"
+#include "token_sink_asserts.hpp"
 
 namespace {
 

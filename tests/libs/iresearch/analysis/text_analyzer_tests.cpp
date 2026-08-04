@@ -36,7 +36,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "tests_config.hpp"
-#include "token_sink_utils.hpp"
+#include "token_sink_asserts.hpp"
 
 namespace {
 

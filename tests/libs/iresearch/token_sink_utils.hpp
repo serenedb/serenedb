@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <cctype>
 #include <cstring>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
@@ -29,8 +28,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "gtest/gtest.h"
 
 namespace tests {
 
@@ -142,30 +139,5 @@ class FnTokenSink final : public irs::TokenConsumer {
  private:
   F _fn;
 };
-
-// Ascii-vs-unicode differential for analyzers with an ascii fast tier: the
-// unicode path is input-selected by appending a non-ascii sentinel word, and
-// its output must be the ascii-tier output plus the sentinel's own tokens.
-inline void AssertAsciiMatchesUnicode(irs::analysis::Tokenizer& stream,
-                                      std::string_view value) {
-  const auto fast = Analyze(stream, value);
-  ASSERT_TRUE(fast.has_value());
-  std::string unicode_value{value};
-  if (!unicode_value.empty() &&
-      std::isgraph(static_cast<unsigned char>(unicode_value.back()))) {
-    unicode_value += ' ';
-  }
-  unicode_value += "\xCF\x89\xCF\x89\xCF\x89";
-  const auto slow = Analyze(stream, unicode_value);
-  ASSERT_TRUE(slow.has_value());
-  ASSERT_GT(slow->size(), fast->size());
-  for (size_t i = 0; i < fast->size(); ++i) {
-    SCOPED_TRACE(testing::Message() << "token=" << i);
-    ASSERT_EQ((*slow)[i].term, (*fast)[i].term);
-    ASSERT_EQ((*slow)[i].pos, (*fast)[i].pos);
-    ASSERT_EQ((*slow)[i].offs_start, (*fast)[i].offs_start);
-    ASSERT_EQ((*slow)[i].offs_end, (*fast)[i].offs_end);
-  }
-}
 
 }  // namespace tests

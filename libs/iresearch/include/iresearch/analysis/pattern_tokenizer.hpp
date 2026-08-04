@@ -25,7 +25,6 @@
 #include <tuple>
 #include <vector>
 
-#include "iresearch/utils/attribute_helper.hpp"
 #include "re2/re2.h"
 #include "tokenizer.hpp"
 

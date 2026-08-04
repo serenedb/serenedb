@@ -20,6 +20,7 @@
 
 #include "pattern_tokenizer.hpp"
 
+#include <absl/strings/ascii.h>
 #include <re2/re2.h>
 #include <re2/regexp.h>
 
@@ -66,16 +67,23 @@ void PatternTokenizer::DetectFastSplit() {
   if (re == nullptr) {
     return;
   }
-  if (re->op() == re2::kRegexpPlus && re->nsub() == 1) {
+  while (re->op() == re2::kRegexpPlus && re->nsub() == 1) {
     re = re->sub()[0];
   }
-  if ((re->parse_flags() & re2::Regexp::FoldCase) != 0) {
-    return;
-  }
+  // FoldCase is identity for uncased runes; cased runes must stay on the
+  // regex path -- Unicode simple folding gives k/s orbits beyond ASCII
+  // (U+212A, U+017F), which a byte set cannot express. Parsed char classes
+  // arrive pre-folded with the flag cleared.
+  const bool fold_case = (re->parse_flags() & re2::Regexp::FoldCase) != 0;
+  const auto foldable = [&](re2::Rune rune) {
+    return rune >= 0 && rune < 128 &&
+           !(fold_case &&
+             absl::ascii_isalpha(static_cast<unsigned char>(rune)));
+  };
   switch (re->op()) {
     case re2::kRegexpLiteral: {
       const auto rune = re->rune();
-      if (rune < 0 || rune >= 128) {
+      if (!foldable(rune)) {
         return;
       }
       _delim_bitmap[rune >> 6] |= uint64_t{1} << (rune & 63);
@@ -90,7 +98,7 @@ void PatternTokenizer::DetectFastSplit() {
       std::string literal;
       literal.reserve(static_cast<size_t>(n));
       for (int k = 0; k < n; ++k) {
-        if (runes[k] < 0 || runes[k] >= 128) {
+        if (!foldable(runes[k])) {
           return;
         }
         literal.push_back(static_cast<char>(runes[k]));
@@ -99,6 +107,9 @@ void PatternTokenizer::DetectFastSplit() {
       _mode = Mode::Literal;
     } break;
     case re2::kRegexpCharClass: {
+      if (fold_case) {
+        return;
+      }
       auto* cc = re->cc();
       if (cc == nullptr || cc->empty()) {
         return;
@@ -120,17 +131,17 @@ void PatternTokenizer::DetectFastSplit() {
   }
   if (_mode == Mode::ByteSet) {
     // sets of at most eight bytes ride the 32-byte block classifier
-    uint32_t count = 0;
-    for (uint32_t b = 0; b < 128 && count <= _block_delims.size(); ++b) {
-      if (IsDelimByte(static_cast<unsigned char>(b))) {
+    uint8_t count = 0;
+    for (byte_type b = 0; b < 128 && count <= _block_delims.size(); ++b) {
+      if (IsDelimByte(b)) {
         if (count < _block_delims.size()) {
-          _block_delims[count] = static_cast<byte_type>(b);
+          _block_delims[count] = b;
         }
         ++count;
       }
     }
     if (count <= _block_delims.size()) {
-      _nblock = static_cast<uint8_t>(count);
+      _nblock = count;
     }
   }
 }
@@ -176,7 +187,7 @@ void PatternTokenizer::FastLiteralSplitValue(TokenSink& sink,
 template<TokenLayout Layout>
 void PatternTokenizer::FastSplitValue(TokenSink& sink, duckdb::string_t value) {
   const char* const data = value.GetData();
-  const auto* p = reinterpret_cast<const unsigned char*>(data);
+  const auto* p = reinterpret_cast<const byte_type*>(data);
   const size_t n = value.GetSize();
   size_t tok_begin = 0;
   const auto emit = [&](size_t begin, size_t end) {

@@ -446,11 +446,18 @@ TEST(PatternTokenizerFastSplit, eligibility) {
   ASSERT_EQ(Mode::ByteSet, mode("[,;]+"));
   ASSERT_EQ(Mode::ByteSet, mode("[a-c]"));
   ASSERT_EQ(Mode::ByteSet, mode(" +"));
+  ASSERT_EQ(Mode::ByteSet, mode("(?:,+)+"));
+  ASSERT_EQ(Mode::Literal, mode("(?:(?:ab)+)+"));
+  ASSERT_EQ(Mode::ByteSet, mode(",|;"));
+  ASSERT_EQ(Mode::ByteSet, mode("(?i)[a-c]"));
+  ASSERT_EQ(Mode::ByteSet, mode("(?i),"));
+  ASSERT_EQ(Mode::Literal, mode("(?i)::"));
+  ASSERT_EQ(Mode::Regex, mode("(?i)a"));
+  ASSERT_EQ(Mode::Regex, mode("(?i)ab"));
   ASSERT_EQ(Mode::Literal, mode("::"));
   ASSERT_EQ(Mode::Literal, mode(", "));
   ASSERT_EQ(Mode::Literal, mode("--"));
   ASSERT_EQ(Mode::Literal, mode("ab"));
-  ASSERT_EQ(Mode::Regex, mode("(?i)::"));
   ASSERT_EQ(Mode::Regex, mode("a\xc2\xa7"
                               "b"));
   ASSERT_EQ(Mode::Regex, mode(",*"));
@@ -463,7 +470,8 @@ TEST(PatternTokenizerFastSplit, eligibility) {
 
 TEST(PatternTokenizerFastSplit, property_oracle) {
   const std::vector<std::string> patterns = {
-    ",", "\\s+", "[,;]+", "[a-c]", " +", ";", "::", ", ", "aa", "--"};
+    ",",  "\\s+", "[,;]+", "[a-c]", " +",     ";",       "::",
+    ", ", "aa",   "--",    ",|;",   "(?i)::", "(?:,+)+", "(?:ab)+"};
   uint64_t seed = 0xfa57;
   const auto next = [&] {
     seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;

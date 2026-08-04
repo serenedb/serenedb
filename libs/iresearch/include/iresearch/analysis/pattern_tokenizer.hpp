@@ -78,7 +78,7 @@ class PatternTokenizer final : public TypedTokenizer<PatternTokenizer>,
   void FastLiteralSplitValue(TokenSink& sink, duckdb::string_t value);
   void DetectFastSplit();
 
-  bool IsDelimByte(unsigned char c) const noexcept {
+  bool IsDelimByte(byte_type c) const noexcept {
     return (_delim_bitmap[c >> 6] >> (c & 63)) & 1;
   }
 

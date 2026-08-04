@@ -40,4 +40,4 @@ Backend setup and the full documentation live in the
 
 ## License
 
-MIT
+Apache-2.0

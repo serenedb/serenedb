@@ -2,7 +2,7 @@
     "name": "@serenedb/docs-search-embed",
     "version": "0.9.0",
     "description": "SereneDocsSearch as a single <script> tag — no build step, no framework",
-    "license": "MIT",
+    "license": "Apache-2.0",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/serenedb/serenedb.git",

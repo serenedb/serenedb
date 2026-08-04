@@ -2,7 +2,7 @@
     "name": "@serenedb/docs-search-backend",
     "version": "0.9.0",
     "description": "Sync + search backend for SereneDocsSearch: pulls docs, indexes them in SereneDB, serves the widget API",
-    "license": "MIT",
+    "license": "Apache-2.0",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/serenedb/serenedb.git",

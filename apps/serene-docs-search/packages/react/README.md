@@ -53,4 +53,4 @@ controlled mode, ...), backend setup and configuration reference live in the
 
 ## License
 
-MIT
+Apache-2.0

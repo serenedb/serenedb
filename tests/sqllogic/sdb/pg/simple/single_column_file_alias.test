@@ -1,8 +1,8 @@
 control substitution on
 
-# Regression: FROM 'file.parquet' makes the replacement scan set a table alias
-# (the file stem); the PG single-column alias rule must not rename the column
-# to it. Explicitly written aliases must still rename.
+# Regression: the PG single-column alias rename applies only to set-returning
+# functions (generate_series); file scans are composite-returning, so neither
+# the replacement-scan stem alias nor a user-written alias renames their column.
 
 statement ok
 COPY (SELECT 42 AS v) TO '${__TEST_DIR__}/stem.parquet' (FORMAT parquet);
@@ -62,13 +62,22 @@ v
 42
 
 
-# an explicitly written alias still renames a single-column result (PG rule)
+# a user alias on a file scan names the table only (composite result)
 
 query
-SELECT x FROM '${__TEST_DIR__}/stem.parquet' AS x;
+SELECT x.v FROM '${__TEST_DIR__}/stem.parquet' AS x;
 ----
-x
+v
 42
+
+
+# virtual columns of the underlying scan stay reachable
+
+query
+SELECT v, filename LIKE '%stem.parquet' AS f FROM '${__TEST_DIR__}/stem.parquet';
+----
+v	f
+42	t
 
 
 # two-column file: columns keep their names, with or without an alias
@@ -119,6 +128,13 @@ SELECT g FROM generate_series(1, 1) AS g;
 ----
 g
 1
+
+
+query
+SELECT u FROM unnest(ARRAY[7]) AS u;
+----
+u
+7
 
 
 # a table alias on a base table never renames columns

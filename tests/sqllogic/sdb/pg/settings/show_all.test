@@ -37,9 +37,6 @@ azure_account_name	NULL	Azure account name, when set, the extension will attempt
 azure_context_caching	1	Enable/disable the caching of some context when performing queries. This cache is by default enable, and will for a given connection keep a local context when performing a query. If you suspect that the caching is causing some side effect you can try to disable it by setting this option to false.
 azure_credential_chain	NULL	Ordered list of Azure credential providers, in string format separated by ';'. E.g. 'cli;workload_identity;managed_identity;env'
 azure_endpoint	blob.core.windows.net	Override the azure endpoint for when the Azure credential providers are used.
-azure_http_logging	1	Enable Azure HTTP request logging into the DuckDB HTTP log. When true (default), logging follows DuckDB's HTTP log settings (see enable_logging('HTTP')). Set to false to disable Azure HTTP logging.
-azure_http_logging_redact_headers	Authorization	Semicolon-separated list of header names to redact in HTTP logs (both request and response). Defaults to 'Authorization'.
-azure_http_logging_redact_query_params	sig	Semicolon-separated list of URL query parameter names to redact in HTTP logs. Defaults to 'sig'.
 azure_http_proxy	NULL	Proxy to use when login & performing request to azure. By default it will use the HTTP_PROXY environment variable if set.
 azure_http_stats	0	Include http info from the Azure Storage in the explain analyze statement.
 azure_proxy_password	NULL	Http proxy password if needed.
@@ -375,9 +372,6 @@ azure_account_name	NULL	Azure account name, when set, the extension will attempt
 azure_context_caching	1	Enable/disable the caching of some context when performing queries. This cache is by default enable, and will for a given connection keep a local context when performing a query. If you suspect that the caching is causing some side effect you can try to disable it by setting this option to false.
 azure_credential_chain	NULL	Ordered list of Azure credential providers, in string format separated by ';'. E.g. 'cli;workload_identity;managed_identity;env'
 azure_endpoint	blob.core.windows.net	Override the azure endpoint for when the Azure credential providers are used.
-azure_http_logging	1	Enable Azure HTTP request logging into the DuckDB HTTP log. When true (default), logging follows DuckDB's HTTP log settings (see enable_logging('HTTP')). Set to false to disable Azure HTTP logging.
-azure_http_logging_redact_headers	Authorization	Semicolon-separated list of header names to redact in HTTP logs (both request and response). Defaults to 'Authorization'.
-azure_http_logging_redact_query_params	sig	Semicolon-separated list of URL query parameter names to redact in HTTP logs. Defaults to 'sig'.
 azure_http_proxy	NULL	Proxy to use when login & performing request to azure. By default it will use the HTTP_PROXY environment variable if set.
 azure_http_stats	0	Include http info from the Azure Storage in the explain analyze statement.
 azure_proxy_password	NULL	Http proxy password if needed.

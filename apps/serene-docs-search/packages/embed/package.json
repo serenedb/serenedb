@@ -1,0 +1,39 @@
+{
+    "name": "@serenedb/docs-search-embed",
+    "version": "0.9.0",
+    "description": "SereneDocsSearch as a single <script> tag — no build step, no framework",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/serenedb/serenedb.git",
+        "directory": "apps/serene-docs-search/packages/embed"
+    },
+    "homepage": "https://github.com/serenedb/serenedb/tree/main/apps/serene-docs-search#readme",
+    "bugs": {
+        "url": "https://github.com/serenedb/serenedb/issues"
+    },
+    "main": "./dist/serene-docs-search.js",
+    "unpkg": "./dist/serene-docs-search.js",
+    "jsdelivr": "./dist/serene-docs-search.js",
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup src/index.tsx --format iife --global-name SereneDocsSearch --clean --minify --out-dir dist --define.process.env.NODE_ENV \\\"production\\\" && mv dist/index.global.js dist/serene-docs-search.js && cp ../react/src/styles.css dist/serene-docs-search.css",
+        "typecheck": "tsc --noEmit",
+        "prepublishOnly": "npm run build"
+    },
+    "devDependencies": {
+        "@serenedb/docs-search-core": "0.9.0",
+        "@serenedb/docs-search-react": "0.9.0",
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tsup": "^8.0.0",
+        "typescript": "^5.6.0"
+    },
+    "publishConfig": {
+        "access": "public"
+    }
+}

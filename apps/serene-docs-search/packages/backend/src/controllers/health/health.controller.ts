@@ -6,7 +6,7 @@ import { MetaRepository } from "@repositories/meta";
 import { SectionsRepository } from "@repositories/sections";
 import { app } from "../../app";
 
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 
 export const HealthController = {
     get: asyncHandler(async (_req: Request, res: Response) => {

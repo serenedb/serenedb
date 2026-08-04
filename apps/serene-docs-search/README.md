@@ -1,4 +1,16 @@
-# SereneDocsSearch
+<picture align=left>
+    <source media="(prefers-color-scheme: dark)" width="592" srcset="https://github.com/user-attachments/assets/7bcd81a5-df10-4bd3-be01-d9eaa9fd7eff">
+    <source media="(prefers-color-scheme: light)" width="592" srcset="https://github.com/user-attachments/assets/3e416648-011b-44a6-b3cc-fad0ebbbbd2f">
+    <img alt="serenedb+sereneui" width="592" src="https://github.com/user-attachments/assets/7bcd81a5-df10-4bd3-be01-d9eaa9fd7eff" />
+</picture>
+
+[![Star Us](https://img.shields.io/badge/Star%20Us-9865e8?style=for-the-badge&logo=github&logoColor=white)](https://github.com/serenedb/serenedb)
+[![Apache License 2.0](https://img.shields.io/badge/License-Apache%202.0-a2b9f4?style=for-the-badge)](LICENSE)
+[![Website](https://img.shields.io/website?up_message=VISIT&down_message=FIXING&color=fbe5f5&url=https%3A%2F%2Fwww.serenedb.com&style=for-the-badge)](https://www.serenedb.com)
+
+</div>
+
+[![Watch the video](https://github.com/user-attachments/assets/2ea82d69-7e58-4214-8d05-21146bff38fd)](https://youtu.be/hpxR1v2DXUA)
 
 DocSearch-style documentation search, self-hosted on [SereneDB](https://serenedb.com).
 One widget, one backend container, one database -- full-text (BM25), hybrid semantic

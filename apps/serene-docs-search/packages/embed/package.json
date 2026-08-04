@@ -1,8 +1,8 @@
 {
     "name": "@serenedb/docs-search-embed",
-    "version": "0.9.0",
+    "version": "0.9.1",
     "description": "SereneDocsSearch as a single <script> tag — no build step, no framework",
-    "license": "MIT",
+    "license": "Apache-2.0",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/serenedb/serenedb.git",
@@ -24,8 +24,8 @@
         "prepublishOnly": "npm run build"
     },
     "devDependencies": {
-        "@serenedb/docs-search-core": "0.9.0",
-        "@serenedb/docs-search-react": "0.9.0",
+        "@serenedb/docs-search-core": "0.9.1",
+        "@serenedb/docs-search-react": "0.9.1",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
         "react": "^19.0.0",

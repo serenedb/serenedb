@@ -1,8 +1,8 @@
 {
     "name": "@serenedb/docs-search-react",
-    "version": "0.9.0",
+    "version": "0.9.1",
     "description": "SereneDocsSearch — DocSearch-style docs search modal + headless hook, powered by SereneDB",
-    "license": "MIT",
+    "license": "Apache-2.0",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/serenedb/serenedb.git",
@@ -41,7 +41,7 @@
         "react-dom": ">=18"
     },
     "devDependencies": {
-        "@serenedb/docs-search-core": "0.9.0",
+        "@serenedb/docs-search-core": "0.9.1",
         "@testing-library/dom": "^10.4.1",
         "@testing-library/react": "^16.3.2",
         "@types/react": "^19.0.0",

@@ -37,4 +37,4 @@ Using React already? Prefer
 
 ## License
 
-MIT
+Apache-2.0

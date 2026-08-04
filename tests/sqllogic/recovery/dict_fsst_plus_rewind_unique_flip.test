@@ -1,0 +1,72 @@
+# dict_fsst FSST+ rewind after a uniqueness flip: fit_rows is a certificate for the CANDIDATE it
+# was measured under, and the rewind must not flush a different one.
+#
+# The shape that arms it: all-unique strings whose ROW-order neighbours share a prefix (grouped
+# keys with hash tails), so the row cleave wins and the segment commits PLUS_ROW -- a layout with
+# no selection buffer. Near the block, one duplicate breaks all-unique: the forced re-cleave can
+# only build the sorted candidate, which needs a selection buffer for every row and no longer
+# fits, so the cut rewinds to fit_rows. That rewind moves the duplicate out again, restoring the
+# exact all-unique state fit_rows was measured in -- but a commit poisoned to PLUS_SORTED kept the
+# row candidate dead, and the flush wrote a sorted layout the certificate never priced:
+# D_ASSERT(layout.total <= block_size) in WriteCleavedSegment, at checkpoint time.
+#
+# The duplicate sits at row 25000 so the flip lands inside the window where the row layout still
+# fits comfortably and the sorted one is already past the block. Found on the Highsail corpus,
+# where it fired on 3 of 3 fresh bootstraps; unlike the sibling tests this one needs only 25k rows.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfp_rewind.db' AS dfr_own (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+CREATE OR REPLACE TABLE dfr_own.grouped AS
+  SELECT CASE WHEN i = 25000
+              THEN 'c' || lpad('0', 7, '0') || chr(31) || substr(md5('0'), 1, 12)
+              ELSE 'c' || lpad((i // 8)::VARCHAR, 7, '0') || chr(31) || substr(md5(i::VARCHAR), 1, 12)
+         END AS c
+  FROM range(25001) t(i);
+
+
+statement ok
+CHECKPOINT dfr_own;
+
+
+# every row survived, including exactly one duplicated string
+query
+SELECT count(*) AS n, count(DISTINCT c) AS dn,
+       (SELECT sum(hash(c)) FROM dfr_own.grouped)
+         = (SELECT sum(hash(CASE WHEN i = 25000
+                                 THEN 'c' || lpad('0', 7, '0') || chr(31) || substr(md5('0'), 1, 12)
+                                 ELSE 'c' || lpad((i // 8)::VARCHAR, 7, '0') || chr(31) || substr(md5(i::VARCHAR), 1, 12)
+                            END))
+              FROM range(25001) t(i)) AS bytes_match
+  FROM dfr_own.grouped;
+----
+n	dn	bytes_match
+25001	25000	t
+
+
+# the data landed in a cleaved mode, so the rewind path under test is the one that ran
+query
+SELECT count(*) > 0 AS has_plus FROM pragma_storage_info('dfr_own.grouped', include_segment_info=true)
+  WHERE compression='DICT_FSST' AND segment_info LIKE '%PLUS%';
+----
+has_plus
+t
+
+
+# the duplicate and its original read back identically through the cleaved segments
+query
+SELECT count(*) FROM dfr_own.grouped
+  WHERE c = 'c' || lpad('0', 7, '0') || chr(31) || substr(md5('0'), 1, 12);
+----
+count
+2
+
+
+# both engines run against one server, so the alias must not outlive the file
+statement ok
+DETACH dfr_own;

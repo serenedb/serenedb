@@ -128,7 +128,7 @@ describe("sectioned search UI", () => {
                 if (String(input).endsWith("/v1/health")) {
                     return response({
                         ok: true,
-                        version: "0.9.0",
+                        version: "0.9.1",
                         serenedb: { connected: true },
                         index: {
                             ready: true,

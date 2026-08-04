@@ -41,7 +41,7 @@ export function buildServer(opts: McpOptions): McpServer {
 
     const server = new McpServer({
         name: "serene-docs-search",
-        version: "0.9.0",
+        version: "0.9.1",
     });
 
     server.tool(

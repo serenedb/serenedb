@@ -11,7 +11,7 @@ import { SereneDocsSearch, createMcpSetupInstructions } from "../src";
 const health = new Response(
     JSON.stringify({
         ok: true,
-        version: "0.9.0",
+        version: "0.9.1",
         serenedb: { connected: true },
         index: { ready: true, building: false, sections: 12, documents: 4 },
         features: { ai: true, hybrid: false },

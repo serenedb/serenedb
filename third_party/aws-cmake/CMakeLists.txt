@@ -76,16 +76,24 @@ list(APPEND AWS_CHECKSUMS_SRC ${AWS_CHECKSUMS_ARCH_SRC})
 # --- aws-c-cal ---
 set(AWS_C_CAL_DIR "${AWS_DIR}/aws-c-cal")
 file(GLOB AWS_C_CAL_SRC "${AWS_C_CAL_DIR}/source/*.c")
-file(GLOB AWS_C_CAL_UNIX_SRC "${AWS_C_CAL_DIR}/source/unix/*.c")
 file(GLOB AWS_C_CAL_SHARED_SRC "${AWS_C_CAL_DIR}/source/shared/*.c")
-list(APPEND AWS_C_CAL_SRC ${AWS_C_CAL_UNIX_SRC} ${AWS_C_CAL_SHARED_SRC})
+if(OS_DARWIN)
+    file(GLOB AWS_C_CAL_OS_SRC "${AWS_C_CAL_DIR}/source/darwin/*.c")
+else()
+    file(GLOB AWS_C_CAL_OS_SRC "${AWS_C_CAL_DIR}/source/unix/*.c")
+endif()
+list(APPEND AWS_C_CAL_SRC ${AWS_C_CAL_OS_SRC} ${AWS_C_CAL_SHARED_SRC})
 
 # --- aws-c-io ---
 set(AWS_C_IO_DIR "${AWS_DIR}/aws-c-io")
 file(GLOB AWS_C_IO_SRC "${AWS_C_IO_DIR}/source/*.c")
 file(GLOB AWS_C_IO_POSIX_SRC "${AWS_C_IO_DIR}/source/posix/*.c")
-file(GLOB AWS_C_IO_LINUX_SRC "${AWS_C_IO_DIR}/source/linux/*.c")
-list(APPEND AWS_C_IO_SRC ${AWS_C_IO_POSIX_SRC} ${AWS_C_IO_LINUX_SRC})
+if(OS_DARWIN)
+    file(GLOB AWS_C_IO_OS_SRC "${AWS_C_IO_DIR}/source/bsd/*.c")
+else()
+    file(GLOB AWS_C_IO_OS_SRC "${AWS_C_IO_DIR}/source/linux/*.c")
+endif()
+list(APPEND AWS_C_IO_SRC ${AWS_C_IO_POSIX_SRC} ${AWS_C_IO_OS_SRC})
 
 # --- aws-c-compression ---
 set(AWS_C_COMPRESSION_DIR "${AWS_DIR}/aws-c-compression")
@@ -242,11 +250,16 @@ target_compile_definitions(_aws PUBLIC
     AWS_SDK_VERSION_MINOR=11
     AWS_SDK_VERSION_PATCH=0
     AWS_DEEP_CHECKS=0
-    AWS_ENABLE_EPOLL
     INTEL_NO_ITTNOTIFY_API
     AWS_MQTT_WITH_ACCOUNT_ENDPOINTS
     AWS_CHECKSUMS_USE_HW_CRC32=0
 )
+
+if(OS_DARWIN)
+    target_compile_definitions(_aws PUBLIC AWS_ENABLE_KQUEUE)
+else()
+    target_compile_definitions(_aws PUBLIC AWS_ENABLE_EPOLL)
+endif()
 
 # Compiler flags
 target_compile_options(_aws PRIVATE
@@ -301,3 +314,7 @@ target_link_libraries(_aws PUBLIC
 
 aws_set_thread_affinity_method(_aws)
 aws_set_thread_name_method(_aws)
+
+if(OS_DARWIN)
+    target_link_libraries(_aws PUBLIC "-framework CoreFoundation" "-framework Security")
+endif()

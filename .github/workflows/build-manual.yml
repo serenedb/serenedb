@@ -63,7 +63,7 @@ jobs:
       pg: ${{ steps.classify.outputs.pg }}
       pg_tests: ${{ steps.classify.outputs.pg_tests }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 0
@@ -165,7 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for notify script)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           submodules: false

@@ -123,7 +123,7 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
       duckdb::StringVector::AddString(vec, field);
   } else if constexpr (std::is_same_v<Field, char>) {
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
-      duckdb::StringVector::AddString(vec, &field, 1);
+      duckdb::StringVector::AddString(vec, &field, field ? 1 : 0);
   } else if constexpr (std::is_same_v<Field, bool>) {
     duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, int8_t>) {

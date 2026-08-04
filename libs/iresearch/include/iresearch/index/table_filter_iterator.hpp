@@ -124,11 +124,8 @@ class ColFilterChain {
     // from the validity child alone where the block codec keeps validity
     // separate (a projected column decodes anyway, so it filters as usual).
     irs::NullCheckKind null_check = irs::NullCheckKind::None;
-    // Structured columns (struct/list parents) hold their blocks on the
-    // children (a list parent's own blocks are its offsets): no per-block
-    // zonemap, every window evaluates on a compact decode.
-    bool has_blocks = true;
     bool list_like = false;
+    bool nested = false;
     // Per-block zonemap verdict, computed once per block: windows ascend, so
     // the cache is re-filled exactly when the anchor leaves `checked`.
     irs::BlockWindow checked{};

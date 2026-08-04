@@ -1,0 +1,66 @@
+# dict_fsst FSST+ cut sizing: the cheap CleavedUpperBound that lets the compressor skip a real
+# cleave has to be a genuine upper bound on what the cleave will write. It once summed the region
+# sizes term by term while DictFSSTPlusLayout::Compute aligns six region starts, so it under-counted
+# by up to 42 bytes; a segment then kept accepting rows past the block and the checkpoint died with
+# "segment size exceeds block size in ColumnCheckpointState::FlushSegmentInternal".
+#
+# The shape below is what exposes it: a few hundred shared prefixes (i % 500) each carrying a unique
+# tail, so the cleave keeps repartitioning as entries arrive and the segment sits close to the block
+# for a long stretch. It needs enough rows to reach that stretch -- 3M reproduces, 2.5M does not.
+# No forced mode: this is the default path for serenedb-owned storage.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfp_overflow.db' AS dfo_own (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+CREATE TABLE dfo_own.grouped AS
+  SELECT 'prefix_' || (i % 500)::VARCHAR || '_body_' || i::VARCHAR AS c FROM range(3000000) t(i);
+
+
+statement ok
+CHECKPOINT dfo_own;
+
+
+# every row survived, and the bytes match the same expression recomputed from range()
+query
+SELECT count(*) AS n,
+       (SELECT sum(hash(c)) FROM dfo_own.grouped)
+         = (SELECT sum(hash('prefix_' || (i % 500)::VARCHAR || '_body_' || i::VARCHAR))
+              FROM range(3000000) t(i)) AS bytes_match
+  FROM dfo_own.grouped;
+----
+n	bytes_match
+3000000	t
+
+
+# the data did land in a cleaved mode, so the sizing path under test is the one that ran
+query
+SELECT count(*) > 0 AS has_plus FROM pragma_storage_info('dfo_own.grouped', include_segment_info=true)
+  WHERE compression='DICT_FSST' AND segment_info LIKE '%PLUS%';
+----
+has_plus
+t
+
+
+# random access through the cleaved segments still reconstructs prefix + suffix correctly
+query
+SELECT c FROM dfo_own.grouped WHERE rowid IN (0, 499, 500, 1499999, 2999999) ORDER BY c;
+----
+c
+prefix_0_body_0
+prefix_0_body_500
+prefix_499_body_1499999
+prefix_499_body_2999999
+prefix_499_body_499
+
+
+statement ok
+DROP TABLE dfo_own.grouped;
+
+
+statement ok
+DETACH dfo_own;

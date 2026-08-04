@@ -113,7 +113,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           submodules: false
@@ -180,6 +180,17 @@ jobs:
           echo "Available release packages:"
           ls -la release-packages/ 2>/dev/null || echo "  (none)"
 
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.16.4'
+
+      - name: Build helm chart
+        run: |
+          bash packages/stamp_helm_version.bash "${DOCKER_TAG}"
+          bash packages/build_helm.bash
+          cp "packages/helm/out/serenedb-${DOCKER_TAG}.tgz" release-packages/
+
       - name: Setup QEMU
         if: steps.prepare.outputs.has_tarballs == 'true'
         run: docker run --rm --privileged tonistiigi/binfmt --install all
@@ -238,10 +249,16 @@ jobs:
         run: |
           TAG="v${DOCKER_TAG}"
           TITLE="SereneDB ${TAG}"
-          BODY="Docker image: https://hub.docker.com/r/serenedb/serenedb/tags?name=${DOCKER_TAG}"
+          BODY="Docker image: https://hub.docker.com/r/serenedb/serenedb/tags?name=${DOCKER_TAG}
+
+          Helm chart:
+          \`\`\`
+          helm install mydb \\
+            https://github.com/${{ github.repository }}/releases/download/${TAG}/serenedb-${DOCKER_TAG}.tgz
+          \`\`\`"
 
           ASSETS=()
-          for f in release-packages/*.deb release-packages/*.tar.gz; do
+          for f in release-packages/*.deb release-packages/*.tar.gz release-packages/*.tgz; do
             [ -e "$f" ] && ASSETS+=("$f")
           done
 
@@ -306,15 +323,3 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/send_notification.bash
-
-  helm-chart:
-    name: Helm chart release
-    needs: [resolve-version, release]
-    # Only when the new serened image was actually pushed: the chart pins that
-    # image version as appVersion, so it must not ship ahead of the image.
-    if: needs.release.result == 'success' && inputs.PUSH_IMAGES_2_REGISTRY
-    uses: ./.github/workflows/helm-release.yml
-    with:
-      SERENEDB_VERSION: "${{ needs.resolve-version.outputs.major }}.${{ needs.resolve-version.outputs.minor }}.${{ needs.resolve-version.outputs.patch }}"
-      PUBLISH: true
-    secrets: inherit

@@ -43,7 +43,7 @@ catalog::MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData() {
     for (const auto& view :
          catalog->GetViews(GetDatabaseId(), schema->GetName())) {
       values.push_back(PgRewrite{
-        ViewRuleOid(view->GetId().id()),
+        Oid{view->GetId().id()},
         Name{"_RETURN"},
         Oid{view->GetId().id()},
         PgRewrite::EvType::Select,

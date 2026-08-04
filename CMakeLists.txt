@@ -352,6 +352,21 @@ find_package(Threads REQUIRED)
 
 include(OptimizeForArchitecture)
 
+if(APPLE)
+    set(OS_DARWIN 1)
+    set(SDB_IOURING OFF CACHE BOOL "" FORCE)
+    if(NOT CMAKE_CXX_COMPILER_AR)
+        message(
+            FATAL_ERROR
+            "llvm-ar (CMAKE_CXX_COMPILER_AR) is required on macOS"
+        )
+    endif()
+    set(CMAKE_AR "${CMAKE_CXX_COMPILER_AR}")
+    set(CMAKE_RANLIB "${CMAKE_CXX_COMPILER_RANLIB}")
+else()
+    set(OS_LINUX 1)
+endif()
+
 ################################################################################
 ## MAINTAINER MODE
 ################################################################################
@@ -534,7 +549,12 @@ set(SANITIZE_DEBUG_INFO "${COLUMNS_DEBUG_INFO}")
 set(COVERAGE_DEBUG_INFO "${COLUMNS_DEBUG_INFO}")
 set(PROFILE_DEBUG_INFO "${COLUMNS_DEBUG_INFO} -fdebug-info-for-profiling")
 # TODO(mbkkt) no-eliminate-unused-debug-symbols no-eliminate-unused-debug-types unused for some reason
-set(FULL_DEBUG_INFO "${BASE_DEBUG_INFO} -g3 -fstandalone-debug -fdebug-macro")
+set(FULL_DEBUG_INFO "${BASE_DEBUG_INFO} -g3 -fstandalone-debug")
+# -fdebug-macro leads to crash on macOS, see issue
+# https://github.com/llvm/llvm-project/issues/212345
+if(NOT OS_DARWIN)
+    set(FULL_DEBUG_INFO "${FULL_DEBUG_INFO} -fdebug-macro")
+endif()
 set(LLDB_DEBUG_INFO "${FULL_DEBUG_INFO} -glldb")
 set(GDB_DEBUG_INFO "${FULL_DEBUG_INFO} -ggdb")
 

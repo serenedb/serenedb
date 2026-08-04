@@ -8,7 +8,6 @@ add_executable(
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
     assertions_tests.cpp
-    build_id_test.cpp
     metrics_test.cpp
     number_of_cores_test.cpp
     random_test.cpp
@@ -34,6 +33,7 @@ add_executable(
     network_pg_hba_test.cpp
     network_duck_executor_test.cpp
     network_duck_pump_test.cpp
+    meta_transaction_snapshot_test.cpp
     network_pg_frames_test.cpp
 )
 

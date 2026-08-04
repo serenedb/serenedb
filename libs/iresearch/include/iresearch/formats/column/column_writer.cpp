@@ -48,7 +48,7 @@
 namespace irs {
 namespace {
 
-constexpr auto kStorageVersion = duckdb::StorageVersion::V2_0_0;
+constexpr auto kStorageVersion = duckdb::StorageVersion::SERENEDB_V1;
 
 void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
                     const uint8_t* bytes, IndexOutput& out,
@@ -60,6 +60,18 @@ void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
   ColumnBlockMeta m{segment.GetStats().Copy()};
   m.tuple_count = tuple_count;
   m.codec = &segment.GetCompressionFunction();
+  if (m.statistics.IsConstant()) {
+    auto& cfg = duckdb::DBConfig::GetConfig(segment.GetDatabase());
+    if (auto fn = cfg.TryGetCompressionFunction(
+          duckdb::CompressionType::COMPRESSION_CONSTANT,
+          segment.GetType().InternalType())) {
+      m.codec = fn.get();
+      m.file_offset = 0;
+      m.byte_size = 0;
+      sink.push_back(std::move(m));
+      return;
+    }
+  }
   if (!bytes || segment_size == 0) {
     m.file_offset = 0;
     m.byte_size = 0;
@@ -385,10 +397,9 @@ void ColumnWriter::SealList(const duckdb::LogicalType& type,
   meta.write_list_running = running;
 
   duckdb::unique_ptr<duckdb::AnalyzeState> state;
-  auto fn = PickCodec(duckdb::LogicalType::UBIGINT, offset_chunks,
+  auto fn = PickCodec(type, offset_chunks,
                       duckdb::CompressionType::COMPRESSION_AUTO, state);
-  Compress(*fn, std::move(state), duckdb::LogicalType::UBIGINT, offset_chunks,
-           meta.data);
+  Compress(*fn, std::move(state), type, offset_chunks, meta.data);
 
   SealColumn(duckdb::ListType::GetChildType(type), elem_chunks, total_elems,
              /*skip_validity=*/false, forced, meta.children[0]);

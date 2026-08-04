@@ -1581,7 +1581,7 @@ void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
     return nullptr;
   };
 
-  std::vector<uint64_t> actual_docs_ab(num_words);
+  std::vector<size_t> actual_docs_ab(num_words);
   // -1 as we exclude C term
   ASSERT_EQ(docs_count - 1,
             term_reader->BitUnion(cookie_provider, actual_docs_ab.data()));

@@ -281,6 +281,10 @@ struct ClickHouseGlobalState : public GlobalTableFunctionState {
 	unique_ptr<ExpressionExecutor> local_filter_executor;
 	//! The remote SQL this scan streams, kept for error messages.
 	string remote_sql;
+	//! Keys in the in-flight lookup request; dedups result ordinals so a
+	//! duplicate remote row cannot claim a second survivor slot.
+	idx_t lookup_key_count = 0;
+	vector<bool> lookup_seen;
 
 	// One Select cursor (NextBlock) per scan; ClickHouse parallelises server-side.
 	idx_t MaxThreads() const override {
@@ -536,28 +540,106 @@ static unique_ptr<GlobalTableFunctionState> ClickHouseInitGlobalStateFilterPushd
 	return ClickHouseInitGlobalStateInternal(context, input, true);
 }
 
-static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+//! Value-addressed materialization (the parquet-lookup analogue for a remote
+//! ClickHouse). The request's key columns ship as the native external-data
+//! table `lookup` (columns k0..kN); result column 0 is the 1-based ordinal of
+//! the requested key -- consumed into pk_survivors, never emitted -- and the
+//! survivors of columns [1, N] materialize into output columns [0, N-1] as
+//! maximal runs, so the bulk column copies stay intact.
+OperatorResultType ClickHouseLookupScan(ExecutionContext &context, TableFunctionInput &data, DataChunk &keys,
+                                        DataChunk &output) {
 	auto &gstate = data.global_state->Cast<ClickHouseGlobalState>();
 	try {
-		if (data.lookup_keys) {
-			auto &keys = StructVector::GetEntries(*data.lookup_keys);
-			if (!gstate.done) {
-				while (gstate.Conn().GetClient().NextBlock()) {
-				}
-			}
+		// `done` means no request is streaming, so these keys start a new one;
+		// otherwise this call continues draining the request the previous call
+		// began (duckdb re-invokes with the same input chunk after
+		// HAVE_MORE_OUTPUT).
+		if (gstate.done) {
 			clickhouse::Block block;
-			for (idx_t c = 0; c < keys.size(); c++) {
-				block.AppendColumn(absl::StrCat("k", c), BuildLookupColumn(keys[c], data.lookup_count));
+			for (idx_t c = 0; c < keys.ColumnCount(); c++) {
+				block.AppendColumn(absl::StrCat("k", c), BuildLookupColumn(keys.data[c], keys.size()));
 			}
 			clickhouse::ExternalTables external_tables;
 			external_tables.push_back({"lookup", block});
 			ClickHouseConnection::LogQuery(gstate.remote_sql);
 			gstate.Conn().GetClient().BeginSelectWithExternalData(
-			    ClickHouseConnection::MakeQuery(context, gstate.remote_sql), external_tables);
+			    ClickHouseConnection::MakeQuery(context.client, gstate.remote_sql), external_tables);
 			gstate.done = false;
 			gstate.current_block.reset();
 			gstate.block_offset = 0;
+			gstate.lookup_key_count = keys.size();
+			gstate.lookup_seen.assign(keys.size(), false);
 		}
+		while (true) {
+			if (gstate.done) {
+				if (output.size() == 0) {
+					output.SetChildCardinality(0);
+				}
+				return OperatorResultType::NEED_MORE_INPUT;
+			}
+			if (!gstate.current_block || gstate.block_offset >= gstate.current_block->GetRowCount()) {
+				auto block = gstate.Conn().GetClient().NextBlock();
+				if (!block) {
+					gstate.done = true;
+					if (output.size() == 0) {
+						output.SetChildCardinality(0);
+					}
+					return OperatorResultType::NEED_MORE_INPUT;
+				}
+				gstate.rows_seen.fetch_add(block->GetRowCount(), std::memory_order_relaxed);
+				gstate.current_block = std::move(block);
+				gstate.block_offset = 0;
+				continue;
+			}
+			auto &block = *gstate.current_block;
+			auto ord_col = block[0]->As<clickhouse::ColumnInt64>();
+			if (!ord_col) {
+				throw BinderException("clickhouse_lookup expects an Int64 first result column");
+			}
+			idx_t dst = output.size();
+			idx_t run_start = gstate.block_offset;
+			idx_t run_len = 0;
+			const idx_t block_rows = block.GetRowCount();
+			auto flush = [&]() {
+				if (run_len == 0) {
+					return;
+				}
+				for (idx_t c = 0; c < output.ColumnCount() && c + 1 < block.GetColumnCount(); c++) {
+					ClickHouseColumnToVector(*block[c + 1], output.data[c], run_start, run_len, dst);
+				}
+				dst += run_len;
+				run_len = 0;
+			};
+			while (gstate.block_offset < block_rows && dst + run_len < STANDARD_VECTOR_SIZE) {
+				const auto row = gstate.block_offset;
+				const auto ord = ord_col->At(row);
+				if (ord >= 1 && static_cast<idx_t>(ord) <= gstate.lookup_key_count &&
+				    !gstate.lookup_seen[ord - 1]) {
+					gstate.lookup_seen[ord - 1] = true;
+					data.pk_survivors[dst + run_len] = static_cast<idx_t>(ord) - 1;
+					if (run_len == 0) {
+						run_start = row;
+					}
+					run_len++;
+				} else {
+					flush();
+				}
+				gstate.block_offset++;
+			}
+			flush();
+			output.SetChildCardinality(dst);
+			if (output.size() == STANDARD_VECTOR_SIZE || gstate.block_offset < block_rows) {
+				return OperatorResultType::HAVE_MORE_OUTPUT;
+			}
+		}
+	} catch (const clickhouse::Error &e) {
+		ClickHouseConnection::ThrowError("during lookup", gstate.remote_sql, e);
+	}
+}
+
+static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<ClickHouseGlobalState>();
+	try {
 		while (true) {
 			if (gstate.done) {
 				if (output.size() == 0) {
@@ -580,48 +662,6 @@ static void ClickHouseScan(ClientContext &context, TableFunctionInput &data, Dat
 				continue;
 			}
 			auto &block = *gstate.current_block;
-			if (data.lookup_gate) {
-				// Gated lookup drain: block column 0 is the gate key (consumed per
-				// row, never emitted); the survivors of columns [1, N] materialize
-				// into output columns [0, N-1] as maximal runs, so the bulk column
-				// copies stay intact. Never consume a row the output cannot hold.
-				auto ord_col = block[0]->As<clickhouse::ColumnInt64>();
-				if (!ord_col) {
-					throw BinderException("clickhouse lookup expects an Int64 first result column");
-				}
-				idx_t dst = output.size();
-				idx_t run_start = gstate.block_offset;
-				idx_t run_len = 0;
-				const idx_t block_rows = block.GetRowCount();
-				auto flush = [&]() {
-					if (run_len == 0) {
-						return;
-					}
-					for (idx_t c = 0; c < output.ColumnCount() && c + 1 < block.GetColumnCount(); c++) {
-						ClickHouseColumnToVector(*block[c + 1], output.data[c], run_start, run_len, dst);
-					}
-					dst += run_len;
-					run_len = 0;
-				};
-				while (gstate.block_offset < block_rows && dst + run_len < STANDARD_VECTOR_SIZE) {
-					const auto row = gstate.block_offset;
-					if (data.lookup_gate(data.lookup_gate_state, ord_col->At(row))) {
-						if (run_len == 0) {
-							run_start = row;
-						}
-						run_len++;
-					} else {
-						flush();
-					}
-					gstate.block_offset++;
-				}
-				flush();
-				output.SetChildCardinality(dst);
-				if (output.size() == STANDARD_VECTOR_SIZE || gstate.block_offset < block_rows) {
-					return;
-				}
-				continue;
-			}
 			const idx_t base = output.size();
 			idx_t remaining = block.GetRowCount() - gstate.block_offset;
 			idx_t count = MinValue<idx_t>(remaining, STANDARD_VECTOR_SIZE - base);

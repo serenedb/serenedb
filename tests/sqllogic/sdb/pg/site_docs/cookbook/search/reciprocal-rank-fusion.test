@@ -45,12 +45,12 @@ VACUUM (REFRESH_TABLE) movies;
 
 query
 WITH fused AS (
-  SELECT id, ROW_NUMBER() OVER (ORDER BY s DESC) AS rank FROM (
+  SELECT id, RANK() OVER (ORDER BY s DESC) AS rank FROM (
     SELECT id, BM25(movies_idx.tableoid) AS s FROM movies_idx
     WHERE title @@ ts_phrase('alien') ORDER BY s DESC LIMIT 100
   ) t
   UNION ALL
-  SELECT id, ROW_NUMBER() OVER (ORDER BY s DESC) AS rank FROM (
+  SELECT id, RANK() OVER (ORDER BY s DESC) AS rank FROM (
     SELECT id, BM25(movies_idx.tableoid) AS s FROM movies_idx
     WHERE description @@ ts_phrase('alien') ORDER BY s DESC LIMIT 100
   ) t
@@ -64,3 +64,93 @@ LIMIT 5;
 id	title	rrf
 7	Star Trek: The Motion Picture	0.01639
 8	Alien	0.01639
+
+
+# DOCS_TEST: normalized_setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE articles (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR);
+
+statement ok
+INSERT INTO articles VALUES
+(1, 'Vector Search Performance in Production', 'How we keep latency low for nearest-neighbor workloads at scale.'),
+(2, 'Search-First Design: Why Search Beats Browsing', 'Our recommendation stack embeds every item as a vector and compares vector distances offline.'),
+(3, 'Vector Compression Notes', 'Quantization shrinks embeddings with little recall loss.'),
+(4, 'The Performance Handbook: Everyday Performance Wins', 'Profiling our vector search pipeline doubled throughput: fewer vector reads per search query and one performance fix in the scorer.'),
+(5, 'Notes on Query Planning', 'The planner picks a plan by estimated cost, including vector scans.'),
+(6, 'Debugging Performance Regressions', 'A checklist for bisecting slow builds and hot loops.');
+
+statement ok
+CREATE INDEX articles_idx ON articles
+    USING inverted (id, title basic_dict, body basic_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) articles;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+WITH fused AS (
+  SELECT id, RANK() OVER (ORDER BY s DESC) AS rank FROM (
+    SELECT id, BM25(articles_idx.tableoid) AS s FROM articles_idx
+    WHERE title @@ ts_any(['vector','search','performance']::TSQUERY[])
+    ORDER BY s DESC LIMIT 100
+  ) t
+  UNION ALL
+  SELECT id, RANK() OVER (ORDER BY s DESC) AS rank FROM (
+    SELECT id, BM25(articles_idx.tableoid) AS s FROM articles_idx
+    WHERE body @@ ts_any(['vector','search','performance']::TSQUERY[])
+    ORDER BY s DESC LIMIT 100
+  ) t
+)
+SELECT a.id, a.title, SUM(1.0 / (60 + rank))::DECIMAL(6,5) AS rrf_score
+FROM fused f JOIN articles a ON a.id = f.id
+GROUP BY a.id, a.title
+ORDER BY rrf_score DESC, a.id
+LIMIT 3;
+----
+id	title	rrf_score
+2	Search-First Design: Why Search Beats Browsing	0.03226
+4	The Performance Handbook: Everyday Performance Wins	0.03202
+1	Vector Search Performance in Production	0.01639
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+WITH hits AS (
+  SELECT 1 AS branch, id, s FROM (
+    SELECT id, BM25(articles_idx.tableoid) AS s FROM articles_idx
+    WHERE title @@ ts_any(['vector','search','performance']::TSQUERY[])
+    ORDER BY s DESC LIMIT 100
+  ) t
+  UNION ALL
+  SELECT 2 AS branch, id, s FROM (
+    SELECT id, BM25(articles_idx.tableoid) AS s FROM articles_idx
+    WHERE body @@ ts_any(['vector','search','performance']::TSQUERY[])
+    ORDER BY s DESC LIMIT 100
+  ) t
+),
+normed AS (
+  SELECT id,
+         CASE WHEN MAX(s) OVER w = MIN(s) OVER w THEN 1.0
+              ELSE (s - MIN(s) OVER w) / (MAX(s) OVER w - MIN(s) OVER w)
+         END AS ns
+  FROM hits
+  WINDOW w AS (PARTITION BY branch)
+)
+SELECT a.id, a.title, SUM(ns)::DECIMAL(6,5) AS fused_score
+FROM normed n JOIN articles a ON a.id = n.id
+GROUP BY a.id, a.title
+ORDER BY fused_score DESC, a.id
+LIMIT 3;
+----
+id	title	fused_score
+4	The Performance Handbook: Everyday Performance Wins	1.06655
+1	Vector Search Performance in Production	1.00000
+2	Search-First Design: Why Search Beats Browsing	0.29413

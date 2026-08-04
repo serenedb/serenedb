@@ -41,6 +41,7 @@
 #include <variant>
 #include <vector>
 
+#include "basics/serialization.h"
 #include "basics/serializer.h"
 
 namespace {
@@ -51,7 +52,7 @@ template<typename T, typename Arg = sdb::basics::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     sdb::basics::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -67,7 +68,7 @@ template<typename T, typename Arg = sdb::basics::detail::Empty>
 void RoundTripInto(const T& in, T& out, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     sdb::basics::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -350,7 +351,7 @@ TEST(DuckRoundTrip, write_invalid_enum_throws) {
     MyIntEnum v{};
   };
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer sink{stream};
+  duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
   EXPECT_ANY_THROW(
     sdb::basics::WriteTuple(sink, EnumField{static_cast<MyIntEnum>(999)}));
 }
@@ -437,7 +438,7 @@ TEST(DuckRoundTrip, truncated_payload_throws) {
 
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     sdb::basics::WriteTuple(sink, Narrow{.i = 42});
   }
   stream.Rewind();
@@ -452,7 +453,7 @@ template<typename Dst, typename Src>
 std::string ReadTupleError(const Src& in) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     sdb::basics::WriteTuple(sink, in);
   }
   stream.Rewind();

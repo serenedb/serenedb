@@ -51,6 +51,7 @@
 #include <variant>
 #include <vector>
 
+#include "basics/serialization.h"
 #include "basics/serializer.h"
 
 namespace {
@@ -62,7 +63,7 @@ template<typename T, typename Arg = sdb::basics::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -78,7 +79,7 @@ template<typename Target, typename Wire>
 std::string ReadError(const Wire& wire) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream};
+    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
     WriteTuple(sink, wire);
   }
   stream.Rewind();
@@ -229,7 +230,7 @@ TYPED_TEST(BinPrim, BareRoundTrip) {
   for (TypeParam v : Samples<TypeParam>()) {
     duckdb::MemoryStream stream;
     {
-      duckdb::BinarySerializer sink{stream};
+      duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
       WriteTuple(sink, v);
     }
     stream.Rewind();

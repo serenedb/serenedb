@@ -1,14 +1,15 @@
 #!/bin/bash
 
-# Stamps release versions into the chart's Chart.yaml (workspace only -- the
-# committed file keeps placeholder versions; real values exist only in
-# published packages).
+# Stamps the release version into the chart's Chart.yaml (workspace only --
+# the committed file keeps placeholder versions; real values exist only in
+# published packages). Chart version and appVersion are both set to the
+# SereneDB version: the chart is released only as an asset of the SereneDB
+# GitHub release, so the versions always match.
 #
 # Usage:
-#   stamp_helm_version.bash APP_VERSION CHART_VERSION
+#   stamp_helm_version.bash VERSION
 #
-#   APP_VERSION    SereneDB version being shipped, e.g. 26.07.2
-#   CHART_VERSION  chart version to publish, e.g. 0.0.7
+#   VERSION  SereneDB version being shipped, e.g. 26.07.2
 
 set -euo pipefail
 
@@ -21,16 +22,13 @@ error() {
 	exit 1
 }
 
-APP_VERSION="${1:?usage: stamp_helm_version.bash APP_VERSION CHART_VERSION}"
-CHART_VERSION="${2:?usage: stamp_helm_version.bash APP_VERSION CHART_VERSION}"
+VERSION="${1:?usage: stamp_helm_version.bash VERSION}"
 
 [[ -f "$CHART_YAML" ]] || error "$CHART_YAML not found"
-[[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-	error "APP_VERSION '$APP_VERSION' does not look like X.Y.Z"
-[[ "$CHART_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-	error "CHART_VERSION '$CHART_VERSION' does not look like X.Y.Z"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+	error "VERSION '$VERSION' does not look like X.Y.Z"
 
-sed -i "s/^appVersion: .*/appVersion: \"${APP_VERSION}\"/" "$CHART_YAML"
-sed -i "s/^version: .*/version: ${CHART_VERSION}/" "$CHART_YAML"
+sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" "$CHART_YAML"
+sed -i "s/^version: .*/version: ${VERSION}/" "$CHART_YAML"
 
-log "stamped chart version ${CHART_VERSION}, appVersion ${APP_VERSION}"
+log "stamped chart version ${VERSION}, appVersion ${VERSION}"

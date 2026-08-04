@@ -1,0 +1,138 @@
+# RLE's two on-disk layouts under an explicitly forced codec, and across a restart.
+#
+# On serenedb-owned storage both RLE streams (the run values and the run counts) are
+# frame-of-reference'd and bitpacked; native duckdb storage keeps them raw. The layouts are
+# distinguished by the top bit of the leading uint64, which is free natively because that field is a
+# byte offset within one block. Forcing the codec is what makes the layout choice observable on data
+# RLE would not otherwise win, and force_compression is a global setting, so it needs a test file
+# with its own serened instance.
+#
+# It also crashes the server and re-attaches both databases afterwards, so the packed segments are
+# decoded from disk rather than from whatever the writer left in memory.
+
+control substitution on
+
+
+statement ok
+SET force_compression='rle';
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/rlef_owned.db' AS fown (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/rlef_native.db' AS fnat (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
+
+
+statement ok
+CREATE TABLE rlef_src AS SELECT
+  (i // 40)::INTEGER      AS i32,
+  (i // 40)::BIGINT       AS i64,
+  ((i // 40) / 4.0)::DOUBLE AS f64,
+  CASE WHEN (i // 40) % 11 = 5 THEN NULL ELSE (i // 40)::SMALLINT END AS i16_nulls
+  FROM range(200000) t(i);
+
+
+statement ok
+CREATE TABLE fown.t AS SELECT * FROM rlef_src;
+
+
+statement ok
+CREATE TABLE fnat.t AS SELECT * FROM rlef_src;
+
+
+statement ok
+CHECKPOINT fown;
+
+
+statement ok
+CHECKPOINT fnat;
+
+
+# forcing took effect on both, so the two layouts are what is being compared
+query
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('fown.t') WHERE compression='RLE') AS owned_rle,
+       (SELECT count(*) > 0 FROM pragma_storage_info('fnat.t') WHERE compression='RLE') AS native_rle;
+----
+owned_rle	native_rle
+t	t
+
+
+# packed and raw agree with the source, value for value
+query
+SELECT (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM fown.t)
+         = (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM rlef_src) AS owned_matches,
+       (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM fnat.t)
+         = (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM rlef_src) AS native_matches;
+----
+owned_matches	native_matches
+t	t
+
+
+# --- forcing does not override the analyze phase's refusal ------------------------
+# When every run is a single value, RLE can only match a plain bitpack of the values while
+# fragmenting into far more segments, so it declines even under force_compression.
+statement ok
+CREATE TABLE fown.singleton AS SELECT (i * 100003 % 2000000000)::INTEGER AS v FROM range(300000) t(i);
+
+
+statement ok
+CHECKPOINT fown;
+
+
+query
+SELECT count(*) AS rle_segments FROM pragma_storage_info('fown.singleton') WHERE compression='RLE';
+----
+rle_segments
+0
+
+
+# --- both layouts survive a restart ----------------------------------------------
+# The packed layout is only decoded on read, so a segment that was written correctly but cannot be
+# re-read would pass every in-process check above and still lose data.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+statement ok
+ATTACH '${__TEST_DIR__}/rlef_owned.db' AS fown2 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+connection after_crash
+statement ok
+ATTACH '${__TEST_DIR__}/rlef_native.db' AS fnat2 (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM fown2.t) AS owned_n,
+       (SELECT count(*) FROM fnat2.t) AS native_n,
+       (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM fown2.t)
+         = (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM fnat2.t) AS layouts_agree,
+       (SELECT count(*) FROM fown2.t WHERE i16_nulls IS NULL) AS owned_nulls;
+----
+owned_n	native_n	layouts_agree	owned_nulls
+200000	200000	t	18200
+
+
+connection after_crash
+statement ok
+DETACH fown2;
+
+
+connection after_crash
+statement ok
+DETACH fnat2;

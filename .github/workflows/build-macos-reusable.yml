@@ -1,0 +1,175 @@
+name: task | serenedb macos build & test
+
+# Native macOS (Apple Silicon) build + test. Unlike the Linux pipeline this does
+# NOT use Docker: it builds with Homebrew LLVM and runs sqllogic against a
+# locally-started serened. Reusable + manually dispatchable; wired into the
+# nightly schedule (jobs-schedule.yml).
+on:
+  workflow_call:
+    inputs:
+      PR_SHA:
+        description: "Commit SHA to checkout (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch:
+    inputs:
+      PR_SHA:
+        description: "Commit SHA to checkout (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: "macos build & test"
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      SDB_PORT: "7777"
+      SDB_SSL_PORT: "7778"
+      # ccache tuned for cross-run reuse (see below):
+      #  - BASEDIR + NOHASHDIR: rewrite abs paths -> relative so hits survive
+      #    checkout-path changes and the -g3 absolute paths don't bust the hash.
+      #  - COMPILERCHECK=content: brew re-lays-down llvm each run with a fresh
+      #    mtime; hashing the compiler by content avoids a full cache miss.
+      #  - SLOPPINESS: don't invalidate on header timestamps / __DATE__/__TIME__.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: "1"
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime,pch_defines
+      CCACHE_MAXSIZE: "5G"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/cargo-target
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.PR_SHA || github.sha }}
+          submodules: true
+          fetch-depth: 1
+
+      - name: Install toolchain (Homebrew)
+        run: |
+          # NOTE: Homebrew's `llvm` formula does NOT include the lld linker --
+          # it's a separate `lld` formula. The build uses -fuse-ld=lld, so both
+          # are required.
+          brew install llvm lld bison bash ninja ccache pkg-config cmake
+
+      - name: Set up PATH
+        run: |
+          # keg-only formulae + Homebrew bash 5 (run.sh re-execs to it)
+          echo "/opt/homebrew/opt/llvm/bin"  >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/lld/bin"   >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/bin"           >> "$GITHUB_PATH"
+
+      # Cache rotates every run (unique key) and restores the newest prior match,
+      # so it rolls forward night to night. Nightly runs on the default branch, so
+      # its cache is also visible to every other branch.
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-macos15-${{ github.run_id }}
+          restore-keys: |
+            ccache-macos15-
+
+      - name: Cache cargo (sqllogictest-rs runner)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ${{ github.workspace }}/.cache/cargo-target
+          key: cargo-sqllogictest-macos15-${{ hashFiles('third_party/sqllogictest-rs/**/Cargo.lock') }}
+          restore-keys: |
+            cargo-sqllogictest-macos15-
+
+      # Mirrors the Linux CI build flags (scripts/ci/build.bash, `dev` config):
+      # RelWithDebInfo + COLUMNS debug + no IPO + ccache. macOS deltas: Homebrew
+      # LLVM compiler, STATIC_EXECUTABLES=Off (no static libc), SDB_IOURING=Off
+      # (forced off under APPLE anyway), SDB_ALLOC=SYS (jemalloc unused on macOS;
+      # Linux CI uses JE).
+      - name: Configure
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DUSE_DEBUG_INFO=COLUMNS \
+            -DUSE_IPO=Off \
+            -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
+            -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_ASM_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld \
+            -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld \
+            -DAUTO_UPDATE_MODULES=Off \
+            -DSDB_DEV=On \
+            -DSDB_GTEST=On \
+            -DSDB_FAULT_INJECTION=On \
+            -DSDB_ALLOC=SYS \
+            -DSTATIC_EXECUTABLES=Off \
+            -DSDB_IOURING=Off \
+            -DSDB_SANITIZE=
+
+      - name: Build
+        run: ninja -C build serened serenedb-tests_basics serenedb-tests_connector
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
+
+      - name: Google Test
+        run: |
+          set -euo pipefail
+          ./build/bin/serenedb-tests_basics
+          ./build/bin/serenedb-tests_connector
+
+      # Fast sqllogic: *.test only (no .test_slow), serenedb's own tests (sqlite
+      # subtree skipped), both pg-wire engines. No Docker -- start serened
+      # locally, mirroring the compose serenedb-single service, then drive the
+      # existing run_sdb_tests.sh wrapper (SKIP_SLOW_TESTS=true -> --fast).
+      - name: Fast sqllogic (*.test)
+        run: |
+          set -uo pipefail
+          mkdir -p out/logs
+          DATADIR="$(mktemp -d)/datadir"
+          CERT="${GITHUB_WORKSPACE}/resources/ca.pem"
+          POSTGRES_PASSWORD=postgres ./build/bin/serened "$DATADIR" \
+            --listen "postgres://0.0.0.0:${SDB_PORT},postgres://0.0.0.0:${SDB_SSL_PORT}?sslmode=require&cert=${CERT}&key=${CERT}" \
+            --auth_timeout=600s \
+            > out/logs/serened.log 2>&1 &
+          SDB_PID=$!
+
+          # wait for the port to accept connections (or serened to die)
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$SDB_PID" 2>/dev/null; then
+              echo "serened exited during startup:" >&2
+              cat out/logs/serened.log >&2 || true
+              exit 1
+            fi
+            nc -z 127.0.0.1 "${SDB_PORT}" && break
+            sleep 1
+          done
+
+          rc=0
+          SKIP_SLOW_TESTS=true SDB_SQLLOGIC_SCOPE=ours \
+            bash tests/sqllogic/run_sdb_tests.sh \
+              --host 127.0.0.1 --single-port "${SDB_PORT}" \
+              --single-port-ssl "${SDB_SSL_PORT}" || rc=$?
+
+          kill "$SDB_PID" 2>/dev/null || true
+          exit $rc
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-logs-${{ github.run_number }}
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -236,8 +236,8 @@ inline constexpr bool kIsSerializableArithmetic =
   std::is_same_v<T, uint8_t> || std::is_same_v<T, int16_t> ||
   std::is_same_v<T, uint16_t> || std::is_same_v<T, int32_t> ||
   std::is_same_v<T, uint32_t> || std::is_same_v<T, int64_t> ||
-  std::is_same_v<T, uint64_t> || std::is_same_v<T, float> ||
-  std::is_same_v<T, double>;
+  std::is_same_v<T, uint64_t> || std::is_same_v<T, size_t> ||
+  std::is_same_v<T, float> || std::is_same_v<T, double>;
 
 template<typename T>
 [[noreturn]] void ThrowInvalidEnum(int64_t raw) {
@@ -359,6 +359,8 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
       value = src.ReadSignedInt64();
     } else if constexpr (std::is_same_v<T, uint64_t>) {
       value = src.ReadUnsignedInt64();
+    } else if constexpr (std::is_same_v<T, size_t>) {
+      value = static_cast<size_t>(src.ReadUnsignedInt64());
     } else if constexpr (std::is_same_v<T, float>) {
       value = src.ReadFloat();
     } else if constexpr (std::is_same_v<T, double>) {
@@ -539,6 +541,8 @@ void WriteTuple(Sink& b, const U& in, const A& arg = {}) {
       b.WriteValue(value);
     } else if constexpr (std::is_same_v<T, char>) {
       b.WriteValue(static_cast<uint8_t>(value));
+    } else if constexpr (std::is_same_v<T, size_t>) {
+      b.WriteValue(static_cast<uint64_t>(value));
     } else if constexpr (detail::kIsSerializableArithmetic<T>) {
       b.WriteValue(value);
     } else if constexpr (kIsString<T>) {

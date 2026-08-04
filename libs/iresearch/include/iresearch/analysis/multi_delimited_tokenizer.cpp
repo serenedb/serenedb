@@ -343,25 +343,6 @@ class MultiDelimitedTokenizerGeneric final
   automaton_table_matcher matcher;
 };
 
-#ifdef __APPLE__
-class MultiDelimitedTokenizerSingle final
-  : public MultiDelimitedTokenizerBase<MultiDelimitedTokenizerSingle> {
- public:
-  explicit MultiDelimitedTokenizerSingle(std::vector<bstring>& delimiters)
-    : delim(std::move(delimiters[0])) {}
-
-  auto FindNextDelim() {
-    auto next = data.end();
-    if (auto pos = this->data.find(delim); pos != bstring::npos) {
-      next = this->data.begin() + pos;
-    }
-    return std::make_pair(next, delim.size());
-  }
-
-  bstring delim;
-};
-#else
-
 class MultiDelimitedTokenizerSingle final
   : public MultiDelimitedTokenizerBase<MultiDelimitedTokenizerSingle> {
  public:
@@ -376,8 +357,6 @@ class MultiDelimitedTokenizerSingle final
   bstring delim;
   std::boyer_moore_searcher<bstring::iterator> searcher;
 };
-
-#endif
 
 template<size_t N>
 Analyzer::ptr MakeSingleChar(std::vector<bstring>&& delimiters) {

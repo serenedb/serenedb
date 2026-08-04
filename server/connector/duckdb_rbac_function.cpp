@@ -195,7 +195,7 @@ std::optional<catalog::ObjectType> BulkObjTypeOf(std::string_view word) {
     return catalog::ObjectType::Sequence;
   }
   if (word == "ALL_FUNCTIONS_IN_SCHEMA") {
-    return catalog::ObjectType::PgSqlFunction;
+    return catalog::ObjectType::Function;
   }
   return std::nullopt;
 }

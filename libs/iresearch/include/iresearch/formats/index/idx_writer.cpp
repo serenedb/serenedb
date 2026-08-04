@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "basics/math_utils.hpp"
+#include "basics/serialization.h"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -134,7 +135,8 @@ void IdxWriter::Commit() {
 
   const uint64_t footer_offset = _impl->out->Position();
 
-  duckdb::BinarySerializer serializer{*_impl->out};
+  duckdb::BinarySerializer serializer{*_impl->out,
+                                      duckdb::VersionStorageOptions()};
   serializer.Begin();
   serializer.WriteList(
     kFooterSlotTermDict, "term_dict", _impl->term_dict_entries.size(),

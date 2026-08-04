@@ -1,0 +1,222 @@
+# RLE on serenedb storage frame-of-references and bitpacks both of its streams (the run values and
+# the run counts), where native duckdb storage keeps them raw. The two layouts live in the same code
+# and are told apart by the top bit of the leading uint64 -- natively a byte offset within one block,
+# so that bit is free. Every dataset below is written to both a serenedb-versioned and a native
+# database from one shared source and read back, so the packed layout has to agree with the raw one
+# value for value.
+#
+# The shapes are the ones that exercise the layout's edges: runs longer than the uint16 count can
+# hold, runs landing exactly on and one past a bitpacking group, nulls inside runs, all-null, a
+# single row, and a value range wide enough that frame-of-reference cannot shrink the width.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/rle_owned.db' AS rle_own (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/rle_native.db' AS rle_nat (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
+
+
+# --- integral types, run-heavy: RLE is picked by the analyze phase, unforced -----
+statement ok
+CREATE TABLE rle_src_ints AS SELECT
+  ((i // 100) % 100)::TINYINT AS i8,
+  (i // 100)::INTEGER      AS i32,
+  (i // 100)::BIGINT       AS i64,
+  (i // 100)::HUGEINT      AS i128,
+  (i // 100)::UBIGINT      AS u64
+  FROM range(120000) t(i);
+
+
+statement ok
+CREATE TABLE rle_own.ints AS SELECT * FROM rle_src_ints;
+
+
+statement ok
+CREATE TABLE rle_nat.ints AS SELECT * FROM rle_src_ints;
+
+
+statement ok
+CHECKPOINT rle_own;
+
+
+statement ok
+CHECKPOINT rle_nat;
+
+
+query
+SELECT (SELECT count(*) FROM rle_own.ints) AS n,
+       (SELECT bit_xor(hash(i8, i32, i64, i128, u64)) FROM rle_own.ints)
+         = (SELECT bit_xor(hash(i8, i32, i64, i128, u64)) FROM rle_src_ints) AS owned_matches,
+       (SELECT bit_xor(hash(i8, i32, i64, i128, u64)) FROM rle_nat.ints)
+         = (SELECT bit_xor(hash(i8, i32, i64, i128, u64)) FROM rle_src_ints) AS native_matches;
+----
+n	owned_matches	native_matches
+120000	t	t
+
+
+# both databases really did use RLE, so the comparison above is layout vs layout
+query
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('rle_own.ints') WHERE compression='RLE') AS owned_rle,
+       (SELECT count(*) > 0 FROM pragma_storage_info('rle_nat.ints') WHERE compression='RLE') AS native_rle;
+----
+owned_rle	native_rle
+t	t
+
+
+# --- floating point: no meaningful frame, so the codec falls back to a raw copy ---
+statement ok
+CREATE TABLE rle_src_fp AS SELECT
+  ((i // 100) / 8.0)::FLOAT  AS f32,
+  ((i // 100) / 8.0)::DOUBLE AS f64
+  FROM range(120000) t(i);
+
+
+statement ok
+CREATE TABLE rle_own.fp AS SELECT * FROM rle_src_fp;
+
+
+statement ok
+CHECKPOINT rle_own;
+
+
+query
+SELECT count(*) AS n,
+       (SELECT bit_xor(hash(f32, f64)) FROM rle_own.fp)
+         = (SELECT bit_xor(hash(f32, f64)) FROM rle_src_fp) AS matches
+  FROM rle_own.fp;
+----
+n	matches
+120000	t
+
+
+# --- layout edges ----------------------------------------------------------------
+# runs longer than rle_count_t (65535) must be split into several runs
+statement ok
+CREATE TABLE rle_own.long_runs AS SELECT (i // 200000)::INTEGER AS v FROM range(600000) t(i);
+
+
+# exactly one bitpacking group of runs, and one run past it
+statement ok
+CREATE TABLE rle_own.grp32 AS SELECT (i // 100)::INTEGER AS v FROM range(3200) t(i);
+
+
+statement ok
+CREATE TABLE rle_own.grp33 AS SELECT (i // 100)::INTEGER AS v FROM range(3300) t(i);
+
+
+# nulls inside runs, all-null, and a single row
+statement ok
+CREATE TABLE rle_own.nullruns AS
+  SELECT CASE WHEN (i // 50) % 7 = 3 THEN NULL ELSE (i // 50)::INTEGER END AS v FROM range(120000) t(i);
+
+
+statement ok
+CREATE TABLE rle_own.allnull AS SELECT NULL::INTEGER AS v FROM range(5000) t(i);
+
+
+statement ok
+CREATE TABLE rle_own.onerow AS SELECT 7::INTEGER AS v;
+
+
+# a range too wide for frame-of-reference to narrow the value width
+statement ok
+CREATE TABLE rle_own.wide AS
+  SELECT CASE WHEN i % 2 = 0 THEN (-9223372036854775808)::BIGINT ELSE 9223372036854775807::BIGINT END AS v
+  FROM range(120000) t(i);
+
+
+statement ok
+CHECKPOINT rle_own;
+
+
+query
+SELECT (SELECT count(*) FROM rle_own.long_runs) AS long_runs,
+       (SELECT count(DISTINCT v) FROM rle_own.long_runs) AS long_run_values,
+       (SELECT sum(v) FROM rle_own.grp32) AS grp32_sum,
+       (SELECT sum(v) FROM rle_own.grp33) AS grp33_sum,
+       (SELECT count(*) FROM rle_own.nullruns WHERE v IS NULL) AS nulls,
+       (SELECT sum(v) FROM rle_own.nullruns) AS notnull_sum,
+       (SELECT count(*) FROM rle_own.allnull WHERE v IS NULL) AS all_null,
+       (SELECT v FROM rle_own.onerow) AS one_row,
+       (SELECT sum(v::HUGEINT) FROM rle_own.wide) AS wide_sum;
+----
+long_runs	long_run_values	grp32_sum	grp33_sum	nulls	notnull_sum	all_null	one_row	wide_sum
+600000	3	49600	52800	17150	123360000	5000	7	-60000
+
+
+# random access into the middle of a packed segment reconstructs the same values
+query
+SELECT coalesce(v::VARCHAR, 'NULL') AS v FROM rle_own.nullruns WHERE rowid IN (0, 150, 151, 119999)
+  ORDER BY v NULLS LAST;
+----
+v
+0
+2399
+NULL
+NULL
+
+
+# --- a column whose runs outgrow one segment -------------------------------------
+# Both streams are padded up to a bitpacking group per segment, so the size the analyze phase
+# reports has to charge that padding once per segment rather than once per column. Runs of two rows
+# put more runs in a row group than fit in one RLE segment, which is what makes the two differ.
+statement ok
+CREATE TABLE rle_own.multiseg AS SELECT ((i // 2) % 100)::INTEGER AS v FROM range(2000000) t(i);
+
+
+statement ok
+CHECKPOINT rle_own;
+
+
+query
+SELECT count(*) FILTER (WHERE compression='RLE') > count(DISTINCT row_group_id) AS spans_segments,
+       count(*) FILTER (WHERE compression='RLE') > 0 AS still_rle
+  FROM pragma_storage_info('rle_own.multiseg');
+----
+spans_segments	still_rle
+t	t
+
+
+query
+SELECT count(*) AS n, sum(v::HUGEINT) AS checksum FROM rle_own.multiseg;
+----
+n	checksum
+2000000	99000000
+
+
+# --- and is not picked when every run is one value -------------------------------
+# RLE would only match a plain bitpack of the values there while fragmenting into far more segments.
+# That it also refuses when explicitly forced is covered in rle_forced_layout.test.
+statement ok
+CREATE TABLE rle_own.singleton AS SELECT (i * 100003 % 2000000000)::INTEGER AS v FROM range(300000) t(i);
+
+
+statement ok
+CHECKPOINT rle_own;
+
+
+query
+SELECT count(*) AS rle_segments FROM pragma_storage_info('rle_own.singleton') WHERE compression='RLE';
+----
+rle_segments
+0
+
+
+statement ok
+DROP TABLE rle_src_ints;
+
+
+statement ok
+DROP TABLE rle_src_fp;
+
+
+statement ok
+DETACH rle_own;
+
+
+statement ok
+DETACH rle_nat;

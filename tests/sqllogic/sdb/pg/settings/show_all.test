@@ -33,6 +33,18 @@ auto_fallback_to_full_download	on	Allows automatically falling back to full file
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
 autoinstall_known_extensions	off	Whether known extensions are allowed to be automatically installed when a query depends on them
 autoload_known_extensions	off	Whether known extensions are allowed to be automatically loaded when a query depends on them
+azure_account_name	NULL	Azure account name, when set, the extension will attempt to automatically detect credentials
+azure_context_caching	1	Enable/disable the caching of some context when performing queries. This cache is by default enable, and will for a given connection keep a local context when performing a query. If you suspect that the caching is causing some side effect you can try to disable it by setting this option to false.
+azure_credential_chain	NULL	Ordered list of Azure credential providers, in string format separated by ';'. E.g. 'cli;workload_identity;managed_identity;env'
+azure_endpoint	blob.core.windows.net	Override the azure endpoint for when the Azure credential providers are used.
+azure_http_proxy	NULL	Proxy to use when login & performing request to azure. By default it will use the HTTP_PROXY environment variable if set.
+azure_http_stats	0	Include http info from the Azure Storage in the explain analyze statement.
+azure_proxy_password	NULL	Http proxy password if needed.
+azure_proxy_user_name	NULL	Http proxy user name if needed.
+azure_read_buffer_size	8388608	Size of the read buffer.
+azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
+azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
+azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).
 bytea_output	hex	Sets the output format for bytea.
@@ -48,7 +60,7 @@ ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (al
 ch_pool_enable_reaper_thread	on	Whether to run the pool reaper thread that periodically closes connections exceeding 'ch_pool_max_lifetime_millis' or 'ch_pool_idle_timeout_millis'
 ch_pool_enable_thread_local_cache	off	Whether to enable the connection caching in thread-local cache. Such connections are pinned to their threads and are not made available to other threads, while still taking a place in the pool
 ch_pool_idle_timeout_millis	60000	Maximum number of milliseconds a connection can sit idle in the pool; checked on lease and, with the reaper thread enabled, in the background
-ch_pool_max_connections	32	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
+ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
@@ -145,6 +157,7 @@ file_search_path	(empty)	A comma separated list of directories to search for inp
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
+force_dict_fsst_mode	DEFAULT	DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'
 force_download	off	Forces upfront download of file
 force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
 force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
@@ -213,7 +226,7 @@ password	(empty)	The password to use. Ignored for legacy compatibility.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
-pg_connection_limit	32	The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases.
+pg_connection_limit	<slt:ignore>	The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases.
 pg_debug_show_queries	off	DEBUG SETTING: print all queries sent to Postgres to stdout
 pg_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 pg_idle_in_transaction_timeout_millis	NULL	Postgres idle in transaction timeout in milliseconds to set on scan connections
@@ -226,7 +239,7 @@ pg_pool_enable_reaper_thread	on	Whether to enable the connection pool reaper thr
 pg_pool_enable_thread_local_cache	off	Whether to enable the connection caching in thread-local cache. Such connections are getting pinned to the threads and are not made available to other threads, while still taking the place in the pool. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', enable_thread_local_cache=FALSE)"
 pg_pool_health_check_query	SELECT 1	The query that is used to check that the connection is healthy. Setting this option to an empty string disables the health check. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', health_check_query=SELECT 42)"
 pg_pool_idle_timeout_millis	60000	Maximum number of milliseconds the connection can be kept idle in the pool. This number is checked when the connection is taken from the pool. When the connection pool reaper thread is enabled ('pg_pool_enable_reaper_thread' option), then this number is checked in background periodically. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', idle_timeout_millis=300000)"
-pg_pool_max_connections	32	Maximum number of connections that are allowed to be cached in a connection pool for each attached Postgres database. This number can be temporary exceeded when parallel scans are used. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)"
+pg_pool_max_connections	<slt:ignore>	Maximum number of connections that are allowed to be cached in a connection pool for each attached Postgres database. This number can be temporary exceeded when parallel scans are used. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)"
 pg_pool_max_lifetime_millis	0	Maximum number of milliseconds the connection can be kept open. This number is checked when the connection is taken from the pool and returned to the pool. When the connection pool reaper thread is enabled ('pg_pool_enable_reaper_thread' option), then this number is checked in background periodically. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_lifetime_millis=600000)"
 pg_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', wait_timeout_millis=60000)"
 pg_statement_timeout_millis	NULL	Postgres statement timeout in milliseconds to set on scan connections
@@ -355,6 +368,18 @@ auto_fallback_to_full_download	on	Allows automatically falling back to full file
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
 autoinstall_known_extensions	off	Whether known extensions are allowed to be automatically installed when a query depends on them
 autoload_known_extensions	off	Whether known extensions are allowed to be automatically loaded when a query depends on them
+azure_account_name	NULL	Azure account name, when set, the extension will attempt to automatically detect credentials
+azure_context_caching	1	Enable/disable the caching of some context when performing queries. This cache is by default enable, and will for a given connection keep a local context when performing a query. If you suspect that the caching is causing some side effect you can try to disable it by setting this option to false.
+azure_credential_chain	NULL	Ordered list of Azure credential providers, in string format separated by ';'. E.g. 'cli;workload_identity;managed_identity;env'
+azure_endpoint	blob.core.windows.net	Override the azure endpoint for when the Azure credential providers are used.
+azure_http_proxy	NULL	Proxy to use when login & performing request to azure. By default it will use the HTTP_PROXY environment variable if set.
+azure_http_stats	0	Include http info from the Azure Storage in the explain analyze statement.
+azure_proxy_password	NULL	Http proxy password if needed.
+azure_proxy_user_name	NULL	Http proxy user name if needed.
+azure_read_buffer_size	8388608	Size of the read buffer.
+azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
+azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
+azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).
 bytea_output	hex	Sets the output format for bytea.
@@ -370,7 +395,7 @@ ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (al
 ch_pool_enable_reaper_thread	on	Whether to run the pool reaper thread that periodically closes connections exceeding 'ch_pool_max_lifetime_millis' or 'ch_pool_idle_timeout_millis'
 ch_pool_enable_thread_local_cache	off	Whether to enable the connection caching in thread-local cache. Such connections are pinned to their threads and are not made available to other threads, while still taking a place in the pool
 ch_pool_idle_timeout_millis	60000	Maximum number of milliseconds a connection can sit idle in the pool; checked on lease and, with the reaper thread enabled, in the background
-ch_pool_max_connections	32	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
+ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allowed to be cached in a connection pool for each attached ClickHouse database
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
@@ -467,6 +492,7 @@ file_search_path	(empty)	A comma separated list of directories to search for inp
 force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
+force_dict_fsst_mode	DEFAULT	DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'
 force_download	off	Forces upfront download of file
 force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
 force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
@@ -535,7 +561,7 @@ password	(empty)	The password to use. Ignored for legacy compatibility.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
-pg_connection_limit	32	The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases.
+pg_connection_limit	<slt:ignore>	The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases.
 pg_debug_show_queries	off	DEBUG SETTING: print all queries sent to Postgres to stdout
 pg_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 pg_idle_in_transaction_timeout_millis	NULL	Postgres idle in transaction timeout in milliseconds to set on scan connections
@@ -548,7 +574,7 @@ pg_pool_enable_reaper_thread	on	Whether to enable the connection pool reaper thr
 pg_pool_enable_thread_local_cache	off	Whether to enable the connection caching in thread-local cache. Such connections are getting pinned to the threads and are not made available to other threads, while still taking the place in the pool. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', enable_thread_local_cache=FALSE)"
 pg_pool_health_check_query	SELECT 1	The query that is used to check that the connection is healthy. Setting this option to an empty string disables the health check. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', health_check_query=SELECT 42)"
 pg_pool_idle_timeout_millis	60000	Maximum number of milliseconds the connection can be kept idle in the pool. This number is checked when the connection is taken from the pool. When the connection pool reaper thread is enabled ('pg_pool_enable_reaper_thread' option), then this number is checked in background periodically. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', idle_timeout_millis=300000)"
-pg_pool_max_connections	32	Maximum number of connections that are allowed to be cached in a connection pool for each attached Postgres database. This number can be temporary exceeded when parallel scans are used. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)"
+pg_pool_max_connections	<slt:ignore>	Maximum number of connections that are allowed to be cached in a connection pool for each attached Postgres database. This number can be temporary exceeded when parallel scans are used. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)"
 pg_pool_max_lifetime_millis	0	Maximum number of milliseconds the connection can be kept open. This number is checked when the connection is taken from the pool and returned to the pool. When the connection pool reaper thread is enabled ('pg_pool_enable_reaper_thread' option), then this number is checked in background periodically. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_lifetime_millis=600000)"
 pg_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', wait_timeout_millis=60000)"
 pg_statement_timeout_millis	NULL	Postgres statement timeout in milliseconds to set on scan connections

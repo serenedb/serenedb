@@ -1,0 +1,37 @@
+name: auto | helm lint
+
+on:
+  pull_request:
+    paths:
+      - 'packages/helm/**'
+      - 'packages/build_helm.bash'
+      - 'packages/stamp_helm_version.bash'
+      - '.github/workflows/helm-lint.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/helm/**'
+      - 'packages/build_helm.bash'
+      - 'packages/stamp_helm_version.bash'
+      - '.github/workflows/helm-lint.yml'
+
+jobs:
+  helm-lint:
+    name: Lint and package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.16.4'
+
+      - name: Lint and package
+        run: |
+          bash packages/stamp_helm_version.bash "0.0.0"
+          bash packages/build_helm.bash

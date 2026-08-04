@@ -138,22 +138,18 @@ ColumnMeta DeserializeColumnMeta(duckdb::Deserializer& d) {
   ColumnMeta meta;
   meta.id = static_cast<field_id>(d.ReadProperty<uint64_t>(0, "id"));
   meta.type = d.ReadProperty<duckdb::LogicalType>(1, "type");
-  const bool is_list_like = meta.type.id() == duckdb::LogicalTypeId::LIST ||
-                            meta.type.id() == duckdb::LogicalTypeId::MAP;
-  const duckdb::LogicalType data_stats_type =
-    is_list_like ? duckdb::LogicalType::UBIGINT : meta.type;
-  const auto data_physical = meta.type.InternalType();
-  d.Set<const duckdb::LogicalType&>(data_stats_type);
+  const auto stats_physical = meta.type.InternalType();
+  d.Set<const duckdb::LogicalType&>(meta.type);
   d.ReadList(
     2, "data", [&](duckdb::Deserializer::List& list, duckdb::idx_t /*j*/) {
       list.ReadObject([&](duckdb::Deserializer& so) {
-        meta.data.push_back(DeserializeColumnBlockMeta(so, data_physical));
+        meta.data.push_back(DeserializeColumnBlockMeta(so, stats_physical));
       });
     });
   d.Unset<const duckdb::LogicalType>();
-  const duckdb::LogicalType validity_type{duckdb::LogicalTypeId::VALIDITY};
-  const auto validity_physical = validity_type.InternalType();
-  d.Set<const duckdb::LogicalType&>(validity_type);
+  const duckdb::LogicalType validity_logical = duckdb::LogicalTypeId::VALIDITY;
+  const auto validity_physical = validity_logical.InternalType();
+  d.Set<const duckdb::LogicalType&>(validity_logical);
   d.ReadList(3, "validity",
              [&](duckdb::Deserializer::List& list, duckdb::idx_t /*j*/) {
                list.ReadObject([&](duckdb::Deserializer& so) {

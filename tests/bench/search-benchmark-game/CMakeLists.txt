@@ -14,6 +14,15 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+if(APPLE)
+    # Lets duckdb's weak duckdb_external_types hook stay unbound here,
+    # no serene engine to define it. ELF resolves it to null by default.
+    target_link_options(
+        search-benchmark-common
+        INTERFACE -Wl,-U,_duckdb_external_types
+    )
+endif()
+
 add_executable(search-benchmark-game-build build_index.cpp)
 target_link_libraries(search-benchmark-game-build search-benchmark-common)
 

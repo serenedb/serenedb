@@ -26,6 +26,7 @@
 
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
@@ -44,6 +45,7 @@
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
+#include "database/ticks.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
@@ -373,6 +375,34 @@ void SearchTable::OpenWriter() {
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (payload.size() >= sizeof(uint64_t)) {
       _last_committed_tick = absl::big_endian::Load64(payload.data());
+    }
+
+    // Floor the id allocator (gCurrentTick / NextId) from this store's own
+    // field ids. gCurrentTick is in-memory and re-derived at boot only from
+    // LIVE catalog ids, so a dropped index's field ids -- gone from the catalog
+    // but still occupying their numeric slots in this SHARED store (postings
+    // linger; no orphan cleanup in v1) -- would be re-issued to a new index and
+    // collide with the orphaned data at merge. The store is the true
+    // high-water mark. Scan BOTH the term-dict field ids AND the columnstore
+    // ids: value columns and synthetic (null/bool/numeric/norm) sub-columns
+    // share the same allocation pool, so the term ids alone under-count. Skip
+    // the reserved system fields (> kMaxRealIdValue: the PK blob, generated-PK
+    // rowid, inverted-index score/offset sentinels) -- those are NOT drawn from
+    // NextId, so flooring to them would exhaust the allocator.
+    const auto floor_from = [](irs::field_id id) {
+      if (id <= catalog::Column::kMaxRealIdValue) {
+        UpdateTickServer(id);
+      }
+    };
+    for (const auto& segment : reader) {
+      for (const auto field : segment.field_ids()) {
+        floor_from(field);
+      }
+      if (const auto* col_reader = segment.GetColReader()) {
+        for (const auto& column : col_reader->Columns()) {
+          floor_from(column->Id());
+        }
+      }
     }
   }
 

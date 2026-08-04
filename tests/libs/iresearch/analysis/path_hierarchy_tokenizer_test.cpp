@@ -941,4 +941,196 @@ TEST_F(PathHierarchyTokenizerTests, native_fills_match_pull) {
   }
 }
 
+TEST_F(PathHierarchyTokenizerTests, test_forward_skip_with_replacement) {
+  auto test = [](Options options, std::string_view data,
+                 std::vector<std::string_view> expected_tokens,
+                 std::vector<size_t> expected_starts,
+                 std::vector<size_t> expected_ends) {
+    auto stream = PathHierarchyTokenizer::Make(std::move(options));
+    ASSERT_NE(nullptr, stream);
+    std::vector<int> pos_increments(expected_tokens.size(), 1);
+    AssertTokenStreamContents(stream.get(), data, expected_tokens,
+                              expected_starts, expected_ends, pos_increments);
+  };
+
+  test(Options{.replacement = "_", .skip = 1}, "a/b/c/d",
+       {"_b", "_b_c", "_b_c_d"}, {1, 1, 1}, {3, 5, 7});
+  test(Options{.replacement = "_", .skip = 1}, "/a/b/c", {"_b", "_b_c"}, {2, 2},
+       {4, 6});
+  test(Options{.replacement = "__", .skip = 1}, "a/b/c", {"__b", "__b__c"},
+       {1, 1}, {3, 5});
+  test(Options{.replacement = "_", .skip = 2}, "/a/b/c/d/e",
+       {"_c", "_c_d", "_c_d_e"}, {4, 4, 4}, {6, 8, 10});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_forward_overlapping_delimiter) {
+  auto test = [](Options options, std::string_view data,
+                 std::vector<std::string_view> expected_tokens,
+                 std::vector<size_t> expected_starts,
+                 std::vector<size_t> expected_ends) {
+    auto stream = PathHierarchyTokenizer::Make(std::move(options));
+    ASSERT_NE(nullptr, stream);
+    std::vector<int> pos_increments(expected_tokens.size(), 1);
+    AssertTokenStreamContents(stream.get(), data, expected_tokens,
+                              expected_starts, expected_ends, pos_increments);
+  };
+
+  test(Options{.delimiter = "aa", .replacement = "aa"}, "aaXaaa",
+       {"aaX", "aaXaaa"}, {0, 0}, {3, 6});
+  test(Options{.delimiter = "aa", .replacement = "-"}, "aaXaaa", {"-X", "-X-a"},
+       {0, 0}, {3, 6});
+  test(Options{.delimiter = "aa", .replacement = "-"}, "aaaa", {"-", "--"},
+       {0, 0}, {2, 4});
+  test(Options{.delimiter = "aa", .replacement = "-"}, "XaaaaY",
+       {"X", "X-", "X--Y"}, {0, 0, 0}, {1, 3, 6});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_overlapping_delimiter) {
+  auto test = [](Options options, std::string_view data,
+                 std::vector<std::string_view> expected_tokens,
+                 std::vector<size_t> expected_starts,
+                 std::vector<size_t> expected_ends) {
+    auto stream = PathHierarchyTokenizer::Make(std::move(options));
+    ASSERT_NE(nullptr, stream);
+    std::vector<int> pos_increments(expected_tokens.size(), 1);
+    AssertTokenStreamContents(stream.get(), data, expected_tokens,
+                              expected_starts, expected_ends, pos_increments);
+  };
+
+  test(Options{.delimiter = "aa", .replacement = "aa", .reverse = true},
+       "aaXaaa", {"aaXaaa", "Xaaa", "a"}, {0, 2, 5}, {6, 6, 6});
+  test(Options{.delimiter = "aa", .replacement = "-", .reverse = true},
+       "aaXaaa", {"-X-a", "X-a", "a"}, {0, 2, 5}, {6, 6, 6});
+  test(Options{.delimiter = "aa", .replacement = "-", .reverse = true}, "aaaa",
+       {"--", "-"}, {0, 2}, {4, 4});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_skip_window_straddle) {
+  auto test = [](Options options, std::string_view data,
+                 std::vector<std::string_view> expected_tokens,
+                 std::vector<size_t> expected_starts,
+                 std::vector<size_t> expected_ends) {
+    auto stream = PathHierarchyTokenizer::Make(std::move(options));
+    ASSERT_NE(nullptr, stream);
+    std::vector<int> pos_increments(expected_tokens.size(), 1);
+    AssertTokenStreamContents(stream.get(), data, expected_tokens,
+                              expected_starts, expected_ends, pos_increments);
+  };
+
+  test(
+    Options{.delimiter = "aa", .replacement = "aa", .skip = 1, .reverse = true},
+    "aaaa", {"aaa", "a"}, {0, 2}, {3, 3});
+  test(
+    Options{.delimiter = "aa", .replacement = "-", .skip = 1, .reverse = true},
+    "aaaa", {"-a", "a"}, {0, 2}, {3, 3});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_deep_path_with_replacement) {
+  std::string data;
+  std::string expected;
+  for (int i = 0; i < 2500; ++i) {
+    data += "/d" + std::to_string(i);
+    expected += "_d" + std::to_string(i);
+  }
+
+  {
+    auto stream = PathHierarchyTokenizer::Make(Options{.replacement = "_"});
+    ASSERT_NE(nullptr, stream);
+    auto tokens = tests::Analyze(*stream, data);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(2500, tokens->size());
+    ASSERT_EQ("_d0", tokens->front().term);
+    ASSERT_EQ(0, tokens->front().offs_start);
+    ASSERT_EQ(3, tokens->front().offs_end);
+    ASSERT_EQ("_d0_d1", (*tokens)[1].term);
+    ASSERT_EQ(expected, tokens->back().term);
+    ASSERT_EQ(0, tokens->back().offs_start);
+    ASSERT_EQ(data.size(), tokens->back().offs_end);
+  }
+
+  {
+    auto stream = PathHierarchyTokenizer::Make(
+      Options{.replacement = "_", .reverse = true});
+    ASSERT_NE(nullptr, stream);
+    auto tokens = tests::Analyze(*stream, data);
+    ASSERT_TRUE(tokens.has_value());
+    ASSERT_EQ(2501, tokens->size());
+    ASSERT_EQ(expected, tokens->front().term);
+    ASSERT_EQ(0, tokens->front().offs_start);
+    ASSERT_EQ(data.size(), tokens->front().offs_end);
+    ASSERT_EQ("d2499", tokens->back().term);
+    ASSERT_EQ(data.size() - 5, tokens->back().offs_start);
+    ASSERT_EQ(data.size(), tokens->back().offs_end);
+  }
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_replaced_matches_view_tokens) {
+  const auto greedy_replace = [](std::string_view s, std::string_view delim,
+                                 std::string_view replacement) {
+    std::string out;
+    size_t pos = 0;
+    for (;;) {
+      const auto next = s.find(delim, pos);
+      if (next == std::string_view::npos) {
+        out.append(s.substr(pos));
+        return out;
+      }
+      out.append(s.substr(pos, next - pos));
+      out.append(replacement);
+      pos = next + delim.size();
+    }
+  };
+
+  std::string medium;
+  for (int i = 0; i < 64; ++i) {
+    medium += "/s" + std::to_string(i);
+  }
+  const std::vector<std::string> values = {
+    "",     "/",      "//",     "///",       "a",    "/a",
+    "a/",   "a//b",   "a/b/c",  "/a//b/c/",  "aa",   "aaa",
+    "aaaa", "aaXaaa", "XaaaaY", "a::b::c::", "::::", medium};
+
+  for (const std::string_view delim : {"/", "::", "aa"}) {
+    for (const std::string_view replacement : {"-", "__", "_/_"}) {
+      for (const uint32_t skip : {0, 1, 2}) {
+        for (const bool reverse : {false, true}) {
+          auto view_stream = PathHierarchyTokenizer::Make(
+            Options{.delimiter = std::string{delim},
+                    .replacement = std::string{delim},
+                    .skip = skip,
+                    .reverse = reverse});
+          auto replace_stream = PathHierarchyTokenizer::Make(
+            Options{.delimiter = std::string{delim},
+                    .replacement = std::string{replacement},
+                    .skip = skip,
+                    .reverse = reverse});
+          ASSERT_NE(nullptr, view_stream);
+          ASSERT_NE(nullptr, replace_stream);
+
+          for (const auto& value : values) {
+            SCOPED_TRACE(testing::Message()
+                         << "delim=" << delim << " replacement=" << replacement
+                         << " skip=" << skip << " reverse=" << reverse
+                         << " value=" << value);
+            const auto view_tokens = tests::Analyze(*view_stream, value);
+            const auto replaced_tokens = tests::Analyze(*replace_stream, value);
+            ASSERT_TRUE(view_tokens.has_value());
+            ASSERT_TRUE(replaced_tokens.has_value());
+            ASSERT_EQ(view_tokens->size(), replaced_tokens->size());
+            for (size_t i = 0; i < view_tokens->size(); ++i) {
+              SCOPED_TRACE(testing::Message() << "token=" << i);
+              const auto& v = (*view_tokens)[i];
+              const auto& r = (*replaced_tokens)[i];
+              ASSERT_EQ(greedy_replace(v.term, delim, replacement), r.term);
+              ASSERT_EQ(v.pos, r.pos);
+              ASSERT_EQ(v.offs_start, r.offs_start);
+              ASSERT_EQ(v.offs_end, r.offs_end);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 }  // namespace irs::analysis

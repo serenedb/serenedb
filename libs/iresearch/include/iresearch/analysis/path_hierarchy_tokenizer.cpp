@@ -101,28 +101,24 @@ template<TokenLayout Layout, bool SingleChar>
 void EmitPrefixViews(TokenSink& sink, std::string_view value,
                      size_t prefix_start_in_input, size_t delimiter_search_from,
                      std::string_view delimiter) {
-  bool more = true;
-  while (more) {
-    size_t token_end_position = value.size();
-    const size_t next_delimiter_position =
-      FindNextDelim<SingleChar>(value, delimiter_search_from, delimiter);
-
-    more = next_delimiter_position != std::string_view::npos;
-    if (more) {
-      token_end_position = next_delimiter_position;
-      delimiter_search_from = next_delimiter_position + delimiter.size();
-    }
-
+  const auto emit = [&](size_t token_end_position) {
     SDB_ASSERT(prefix_start_in_input <= token_end_position);
     SDB_ASSERT(token_end_position <= value.size());
-
     sink.Emit<Layout>(MakeTermView(value.data() + prefix_start_in_input,
                                    static_cast<uint32_t>(token_end_position -
                                                          prefix_start_in_input),
                                    value.data() + value.size()),
                       Offs{static_cast<uint32_t>(prefix_start_in_input),
                            static_cast<uint32_t>(token_end_position)});
+  };
+  for (size_t pos =
+         FindNextDelim<SingleChar>(value, delimiter_search_from, delimiter);
+       pos != std::string_view::npos;
+       pos =
+         FindNextDelim<SingleChar>(value, pos + delimiter.size(), delimiter)) {
+    emit(pos);
   }
+  emit(value.size());
 }
 
 // every token is a prefix of the fully converted path: the sink stages
@@ -195,10 +191,9 @@ void EmitReplacedPrefixes(TokenSink& sink, std::string_view value,
 template<TokenLayout Layout, bool SingleChar>
 void EmitSuffixViews(TokenSink& sink, std::string_view value,
                      size_t suffix_window_end, std::string_view delimiter) {
+  SDB_ASSERT(suffix_window_end <= value.size());
   size_t suffix_start_in_input = 0;
-  bool more = true;
-  while (more) {
-    SDB_ASSERT(suffix_window_end <= value.size());
+  for (;;) {
     SDB_ASSERT(suffix_start_in_input <= suffix_window_end);
 
     sink.Emit<Layout>(MakeTermView(value.data() + suffix_start_in_input,
@@ -212,12 +207,11 @@ void EmitSuffixViews(TokenSink& sink, std::string_view value,
       FindNextDelim<SingleChar>(value, suffix_start_in_input, delimiter);
     if (next_delimiter_position == std::string_view::npos ||
         next_delimiter_position >= suffix_window_end) {
-      more = false;
-    } else {
-      suffix_start_in_input = next_delimiter_position + delimiter.size();
-      if (suffix_start_in_input >= suffix_window_end) {
-        more = false;
-      }
+      return;
+    }
+    suffix_start_in_input = next_delimiter_position + delimiter.size();
+    if (suffix_start_in_input >= suffix_window_end) {
+      return;
     }
   }
 }

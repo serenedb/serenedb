@@ -518,7 +518,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ───────╮                              │
 │ │ Field: body(string) │                              │
 │ │ Target: apple       │                              │
-│ │ Max Terms: 1024     │                              │
+│ │ Max Terms: 0        │                              │
 │ ╰─────────────────────╯                              │
 │ TsDict: body                                         │
 │ Projections:                                         │

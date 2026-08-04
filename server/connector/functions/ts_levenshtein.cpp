@@ -77,13 +77,14 @@ LevenshteinArgs ParseLevenshteinArgs(
 }
 
 void FillByEditDistanceOptions(const LevenshteinArgs& args,
-                               irs::ByEditDistanceOptions& out) {
+                               irs::ByEditDistanceOptions& out,
+                               size_t max_terms) {
   out.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{args.text}));
   out.prefix.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{args.prefix}));
   out.max_distance = static_cast<uint8_t>(args.distance);
   out.with_transpositions = args.with_transpositions;
-  out.max_terms = 64;
+  out.max_terms = max_terms;
 }
 
 // Tokenises `text` via the column analyzer and pushes ByTermOptions
@@ -113,9 +114,8 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
   edit_filter.boost(ctx.boost);
   *edit_filter.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  auto& edit_opts = *edit_filter.mutable_options();
-  FillByEditDistanceOptions(args, edit_opts);
-  edit_opts.max_terms = ctx.scored_terms_limit;
+  FillByEditDistanceOptions(args, *edit_filter.mutable_options(),
+                            ctx.levenshtein_max_terms);
 }
 
 }  // namespace sdb::connector

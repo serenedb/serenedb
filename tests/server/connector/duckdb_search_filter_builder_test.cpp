@@ -378,7 +378,7 @@ irs::ByEditDistance& AddEditDistanceFilter(Filter& root, uint64_t column,
                                            std::string_view term,
                                            uint8_t max_distance,
                                            bool with_transpositions = true,
-                                           size_t max_terms = 1024,
+                                           size_t max_terms = 64,
                                            std::string_view prefix = "") {
   auto& ed = AddFilter<irs::ByEditDistance>(root);
   *ed.mutable_field_id() = ExpectedFieldId(column);
@@ -2439,7 +2439,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinWithPrefix) {
   irs::And expected;
   AddEditDistanceFilter(expected, 1, "roximate", 1,
                         /*with_transpositions=*/true,
-                        /*max_terms=*/1024, /*prefix=*/"app");
+                        /*max_terms=*/64, /*prefix=*/"app");
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ ts_levenshtein('roximate', 1, true, 'app')",
@@ -5302,7 +5302,7 @@ TEST_F(SearchFilterBuilderTest,
   irs::And expected;
   AddEditDistanceFilter(expected, 1, "roximate", 1,
                         /*with_transpositions=*/true,
-                        /*max_terms=*/1024, /*prefix=*/"app");
+                        /*max_terms=*/64, /*prefix=*/"app");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'roximate', 1, "
                "true, 'app')",

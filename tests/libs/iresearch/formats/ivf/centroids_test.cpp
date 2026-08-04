@@ -755,21 +755,21 @@ TEST(pca_rotation_test, orthonormal_preserves_distances_and_concentrates) {
   auto data = MakeAnisotropic(d, n, 11);
 
   auto rotation = TrainPcaRotation(data.data(), n, d);
-  ASSERT_EQ(rotation.size(), size_t{d} * d);
+  ASSERT_EQ(rotation.A.size(), size_t{d} * d);
 
   for (uint32_t i = 0; i < d; ++i) {
     for (uint32_t j = i; j < d; ++j) {
       double dot = 0.0;
       for (uint32_t t = 0; t < d; ++t) {
-        dot += static_cast<double>(rotation[size_t{i} * d + t]) *
-               rotation[size_t{j} * d + t];
+        dot += static_cast<double>(rotation.A[size_t{i} * d + t]) *
+               rotation.A[size_t{j} * d + t];
       }
       ASSERT_NEAR(dot, i == j ? 1.0 : 0.0, 2e-3) << "i=" << i << " j=" << j;
     }
   }
 
   std::vector<float> rotated(data.size());
-  ApplyRotation(rotation.data(), data.data(), rotated.data(), n, d);
+  rotation.apply_noalloc(n, data.data(), rotated.data());
 
   for (size_t i = 0; i + 1 < 32; ++i) {
     const float* a = data.data() + i * d;
@@ -789,7 +789,7 @@ TEST(pca_rotation_test, orthonormal_preserves_distances_and_concentrates) {
 
   // A single row must take the sgemv path and agree with the batched one.
   std::vector<float> one(d);
-  ApplyRotation(rotation.data(), data.data(), one.data(), 1, d);
+  rotation.apply_noalloc(1, data.data(), one.data());
   for (uint32_t t = 0; t < d; ++t) {
     ASSERT_NEAR(one[t], rotated[t], 1e-4) << "dim " << t;
   }
@@ -799,8 +799,6 @@ TEST(pca_rotation_test, orthonormal_preserves_distances_and_concentrates) {
   const double rot_tail = TailEnergy(rotated.data(), n, d, from);
   EXPECT_LT(rot_tail, raw_tail / 4)
     << "rotated tail " << rot_tail << " vs raw " << raw_tail;
-
-  EXPECT_TRUE(TrainPcaRotation(data.data(), d - 1, d).empty());
 }
 
 TEST(pca_rotation_test, eigenvalues_are_descending) {
@@ -808,10 +806,10 @@ TEST(pca_rotation_test, eigenvalues_are_descending) {
   const size_t n = 2048;
   auto data = MakeAnisotropic(d, n, 5);
   auto rotation = TrainPcaRotation(data.data(), n, d);
-  ASSERT_EQ(rotation.size(), size_t{d} * d);
+  ASSERT_EQ(rotation.A.size(), size_t{d} * d);
 
   std::vector<float> rotated(data.size());
-  ApplyRotation(rotation.data(), data.data(), rotated.data(), n, d);
+  rotation.apply_noalloc(n, data.data(), rotated.data());
 
   std::vector<double> energy(d, 0.0);
   for (size_t i = 0; i < n; ++i) {

@@ -357,11 +357,11 @@ TEST_P(panorama_quantizer_test, bound_never_drops_a_live_candidate) {
   auto query = MakePanoramaData(d, 1, 21);
 
   auto rotation = TrainPcaRotation(points.data(), n, d);
-  ASSERT_FALSE(rotation.empty());
+  ASSERT_FALSE(rotation.A.empty());
   std::vector<float> rotated(points.size());
-  ApplyRotation(rotation.data(), points.data(), rotated.data(), n, d);
+  rotation.apply_noalloc(n, points.data(), rotated.data());
   std::vector<float> rq(d);
-  ApplyRotation(rotation.data(), query.data(), rq.data(), 1, d);
+  rotation.apply_noalloc(1, query.data(), rq.data());
 
   std::vector<float> q_tails(levels);
   panorama::ComputeTails(rq.data(), d, levels, q_tails.data());
@@ -369,7 +369,7 @@ TEST_P(panorama_quantizer_test, bound_never_drops_a_live_candidate) {
                           .tails = q_tails.data(),
                           .norm = std::sqrt(q_tails.front())};
 
-  std::vector<float> record(panorama::RecordFloats(d, levels));
+  std::vector<float> record(size_t{d} + levels);
   uint64_t scanned = 0;
   uint64_t pruned = 0;
   ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {

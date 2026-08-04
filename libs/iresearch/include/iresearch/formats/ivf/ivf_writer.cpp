@@ -87,8 +87,6 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool needs_centroid = QuantizerNeedsCentroid(_info.quant.kind);
   const bool normalize = _info.metric == VectorMetric::Cosine &&
                          _info.quant.kind != VectorQuantization::None;
-  // A rotation preserves L2 and inner product but not L1, and it only pays for
-  // itself once the payload it prunes is much larger than the matrix itself.
   const bool pca = _info.quant.kind == VectorQuantization::None &&
                    _info.metric != VectorMetric::L1 && d >= panorama::kMinDim &&
                    rows >= std::max<size_t>(kPcaMinRows, size_t{8} * d);
@@ -123,8 +121,6 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     std::vector<std::span<const float>> cents(
       needs_centroid ? STANDARD_VECTOR_SIZE : 0);
     size_t gathered = 0;
-    // Reservoir slot for one row, or null once the buffer is full and this row
-    // lost the draw.
     const auto reservoir = [&](std::vector<float>& buf, size_t& seen,
                                size_t cap) -> float* {
       size_t slot = seen;
@@ -153,10 +149,11 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
       for (size_t j = 0; j < gathered; ++j) {
         const auto cluster = static_cast<uint32_t>(assigned.ids[j]);
         doc_cluster[base + assigned.perm[j]] = cluster;
-        if (needs_centroid && !cents[j].empty()) {
+        if (needs_centroid) {
           result.cluster_centroids.try_emplace(cluster, cents[j]);
         }
-        if (pq && !cents[j].empty()) {
+        SDB_ASSERT(!cents[j].empty());
+        if (pq) {
           const float* v = gather.data() + j * d;
           const auto c = cents[j];
           if (float* dst = reservoir(pq_train_res, pq_res_seen, pq_res_cap)) {

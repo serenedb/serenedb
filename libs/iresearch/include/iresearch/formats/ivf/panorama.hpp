@@ -32,29 +32,17 @@ namespace irs::panorama {
 
 inline constexpr uint32_t kLevelWidth = 32;
 
-// Below this the level count is too small for the bound to pay for itself.
 inline constexpr uint32_t kMinDim = 64;
 
-// Guards the tail bound against float error in the stored suffix norms: an
-// underestimated tail inflates the bound's negative term and could over-prune,
-// so the tail is scaled up before the comparison. Squared, since the tests
-// compare squares.
 inline constexpr float kTailSlack = 1.0002f;
 
 constexpr uint32_t Levels(uint32_t d) noexcept {
   return (d + kLevelWidth - 1) / kLevelWidth;
 }
-
-// A record is the `levels` suffix norms followed by the `d` rotated floats.
-constexpr uint32_t RecordFloats(uint32_t d, uint32_t levels) noexcept {
-  return d + levels;
-}
-
 constexpr uint32_t RecordSize(uint32_t d, uint32_t levels) noexcept {
-  return RecordFloats(d, levels) * static_cast<uint32_t>(sizeof(float));
+  return (d + levels) * static_cast<uint32_t>(sizeof(float));
 }
 
-// `out[l] = sum of v[j]^2 over j >= l * kLevelWidth`, for l in [0, levels).
 inline void ComputeTails(const float* v, uint32_t d, uint32_t levels,
                          float* out) {
   float acc = 0.f;
@@ -68,10 +56,6 @@ inline void ComputeTails(const float* v, uint32_t d, uint32_t levels,
   }
 }
 
-// `out = R * q` for a row-major `d x d` R held as raw bytes. Reading the matrix
-// straight out of the stats blob avoids copying `4 * d * d` bytes per query, at
-// the cost of one pass per row instead of a BLAS gemv -- the product is memory
-// bound at these sizes, so the copy was the expensive half.
 inline void RotateQuery(const byte_type* rotation, const float* q, float* out,
                         uint32_t d) {
   const auto* qb = reinterpret_cast<const byte_type*>(q);
@@ -89,10 +73,6 @@ struct Query {
   float norm = 0.f;
 };
 
-// Level-by-level distance with Cauchy-Schwarz pruning. Returns the exact score
-// for a candidate that survives every level, and otherwise an upper bound on
-// its score that is strictly below `threshold` -- so a consumer comparing
-// `score > threshold` rejects it without needing to know it was pruned.
 template<VectorMetric M, bool Count = false>
 score_t ProgressiveScore(const Query& q, const float* record, uint32_t d,
                          uint32_t levels, score_t threshold,
@@ -109,9 +89,6 @@ score_t ProgressiveScore(const Query& q, const float* record, uint32_t d,
     scale = denom;
   }
 
-  // The threshold in the space the loop accumulates in: negated squared
-  // distance for L2, raw inner product for IP, and cosine's denominator folded
-  // in so the IP-space comparison is the cosine one.
   float limit = threshold;
   if constexpr (M == VectorMetric::L2Sqr) {
     limit = -threshold;
@@ -146,8 +123,6 @@ score_t ProgressiveScore(const Query& q, const float* record, uint32_t d,
       acc += sum;
     }
 
-    // A rotation does not preserve L1, so that metric never gets a payload
-    // with levels; the branch only keeps the reader total.
     if constexpr (M == VectorMetric::L1) {
       continue;
     } else {

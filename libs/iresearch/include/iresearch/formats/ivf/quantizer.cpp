@@ -157,25 +157,20 @@ class NoneQuantizerWriter final : public QuantizerWriter {
   NoneQuantizerWriter(uint32_t d, VectorMetric metric)
     : _d{d}, _metric{metric} {}
 
-  // Training the rotation is the whole switch: a writer that was never trained,
-  // or whose sample was too small, keeps emitting the legacy row-major layout
-  // with an empty stats blob.
   void Train(const float* vecs, size_t n) final {
-    // A rotation preserves L2 and inner product, but not L1.
     if (_d < panorama::kMinDim || _metric == VectorMetric::L1) {
       return;
     }
     _rotation = TrainPcaRotation(vecs, n, _d);
-    if (_rotation.empty()) {
-      return;
-    }
+    SDB_ASSERT(!_rotation.A.empty());
     _levels = panorama::Levels(_d);
     _stats.resize(sizeof(PanoramaStatsHeader) +
-                  _rotation.size() * sizeof(float));
+                  _rotation.A.size() * sizeof(float));
     WritePodHeader(PanoramaStatsHeader{panorama::kLevelWidth, _d},
                    _stats.data());
-    std::memcpy(_stats.data() + sizeof(PanoramaStatsHeader), _rotation.data(),
-                _rotation.size() * sizeof(float));
+
+    std::memcpy(_stats.data() + sizeof(PanoramaStatsHeader), _rotation.A.data(),
+                _rotation.A.size() * sizeof(float));
   }
 
   void EncodeCluster(IndexOutput& out, const float* vecs,
@@ -189,7 +184,7 @@ class NoneQuantizerWriter final : public QuantizerWriter {
       return;
     }
     _rotated.resize(n * _d);
-    ApplyRotation(_rotation.data(), vecs, _rotated.data(), n, _d);
+    _rotation.apply_noalloc(n, vecs, _rotated.data());
     _tails.resize(_levels);
     for (size_t i = 0; i < n; ++i) {
       const float* y = _rotated.data() + i * _d;
@@ -215,7 +210,7 @@ class NoneQuantizerWriter final : public QuantizerWriter {
   uint32_t _d;
   VectorMetric _metric;
   uint32_t _levels = 0;
-  std::vector<float> _rotation;
+  faiss::PCAMatrix _rotation;
   std::vector<byte_type> _stats;
   mutable std::vector<float> _rotated;
   mutable std::vector<float> _tails;
@@ -224,8 +219,6 @@ class NoneQuantizerWriter final : public QuantizerWriter {
 template<VectorMetric M>
 class NoneQuantizerStats final : public QuantizerStats {
  public:
-  // `stats` only has to outlive MakeCodebook, which is where the rotation is
-  // consumed -- so a mmapped blob is read in place instead of copied per query.
   NoneQuantizerStats(uint32_t d, std::span<const byte_type> stats) : _d{d} {
     const size_t want = size_t{d} * d * sizeof(float);
     if (stats.size() < sizeof(PanoramaStatsHeader) + want) {

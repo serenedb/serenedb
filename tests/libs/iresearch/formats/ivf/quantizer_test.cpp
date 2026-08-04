@@ -30,7 +30,6 @@
 
 #include "basics/misc.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
-#include "iresearch/formats/ivf/panorama.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -108,7 +107,12 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   for (size_t i = 0; i < points.size(); ++i) {
     points[i] = static_cast<float>(i % 13) * 0.375f - 2.f;
   }
-  const std::vector<float> query{0.5f, -1.25f, 3.f, 0.f, 2.75f};
+  std::vector<float> query{0.5f, -1.25f, 3.f, 0.f, 2.75f};
+  // Cosine is stored normalized and scored as inner product.
+  if (metric == VectorMetric::Cosine) {
+    NormalizeRows(points.data(), n, d);
+    NormalizeRows(query.data(), 1, d);
+  }
 
   auto writer = MakeQuantizerWriter(VectorQuantization::None, d, metric,
                                     /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/0);
@@ -153,7 +157,7 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
 
   ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
     for (size_t i = 0; i < n; ++i) {
-      const score_t want = ComputeDistance<M>(
+      const score_t want = ComputeDistance<EffectiveQuantMetric(M)>(
         query.data(), points.data() + i * d, static_cast<uint16_t>(d));
       EXPECT_EQ(scores[i], want) << "row " << i;
     }
@@ -215,8 +219,14 @@ struct PanoramaIndex {
 // Trains and encodes `points` as one cluster, in several EncodeCluster batches
 // so records that straddle a batch boundary are covered.
 void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
-                   const std::vector<float>& points) {
+                   const std::vector<float>& raw) {
+  // Cosine is stored normalized and scored as inner product, exactly as
+  // IvfTermReader feeds the writer.
+  auto points = raw;
   index.n = points.size() / d;
+  if (metric == VectorMetric::Cosine) {
+    NormalizeRows(points.data(), index.n, d);
+  }
   index.writer = MakeQuantizerWriter(VectorQuantization::None, d, metric,
                                      /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/0);
   ASSERT_NE(index.writer, nullptr);
@@ -225,8 +235,7 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
     << "the rotation must have been trained for d=" << d;
   EXPECT_EQ(index.writer->StatsBytes().size(),
             2 * sizeof(uint32_t) + size_t{d} * d * sizeof(float));
-  EXPECT_EQ(index.writer->CodeSize(),
-            (d + panorama::Levels(d)) * sizeof(float));
+  EXPECT_EQ(index.writer->CodeSize(), PanoramaRecordSize(d, PanoramaLevels(d)));
 
   MemoryIndexOutput out{index.file};
   index.pay_start = out.Position();
@@ -239,12 +248,16 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
   index.writer->FinishCluster(out);
   out.Flush();
   EXPECT_EQ(out.Position() - index.pay_start,
-            index.n * panorama::RecordSize(d, panorama::Levels(d)));
+            index.n * PanoramaRecordSize(d, PanoramaLevels(d)));
 }
 
 std::unique_ptr<QuantizerReader> OpenPanorama(PanoramaIndex& index, uint32_t d,
                                               VectorMetric metric,
-                                              const std::vector<float>& query) {
+                                              const std::vector<float>& raw_q) {
+  auto query = raw_q;
+  if (metric == VectorMetric::Cosine) {
+    NormalizeRows(query.data(), 1, d);
+  }
   auto stats = MakeQuantizerStats(VectorQuantization::None, d,
                                   index.writer->StatsBytes(), metric);
   EXPECT_NE(stats, nullptr);
@@ -347,57 +360,52 @@ TEST_P(panorama_quantizer_test, pruning_preserves_topk) {
 }
 
 // A candidate is only ever dropped when its true score cannot clear the
-// threshold, and what the kernel reports instead is an upper bound on it.
+// threshold; a surviving one carries its exact score.
 TEST_P(panorama_quantizer_test, bound_never_drops_a_live_candidate) {
   const VectorMetric metric = GetParam();
   constexpr uint32_t d = 128;
   constexpr size_t n = 512;
-  constexpr uint32_t levels = panorama::Levels(d);
   auto points = MakePanoramaData(d, n, 9);
   auto query = MakePanoramaData(d, 1, 21);
 
-  auto rotation = TrainPcaRotation(points.data(), n, d);
-  ASSERT_FALSE(rotation.A.empty());
-  std::vector<float> rotated(points.size());
-  rotation.apply_noalloc(n, points.data(), rotated.data());
-  std::vector<float> rq(d);
-  rotation.apply_noalloc(1, query.data(), rq.data());
+  PanoramaIndex index;
+  BuildPanorama(index, d, metric, points);
+  ASSERT_FALSE(::testing::Test::HasFatalFailure());
 
-  std::vector<float> q_tails(levels);
-  panorama::ComputeTails(rq.data(), d, levels, q_tails.data());
-  const panorama::Query q{.data = rq.data(),
-                          .tails = q_tails.data(),
-                          .norm = std::sqrt(q_tails.front())};
-
-  std::vector<float> record(size_t{d} + levels);
-  uint64_t scanned = 0;
-  uint64_t pruned = 0;
-  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
-    for (size_t i = 0; i < n; ++i) {
-      const float* y = rotated.data() + i * d;
-      panorama::ComputeTails(y, d, levels, record.data());
-      std::copy_n(y, d, record.data() + levels);
-
-      const score_t exact = panorama::ProgressiveScore<M>(
-        q, record.data(), d, levels, std::numeric_limits<score_t>::lowest());
-
-      for (int step = -4; step <= 4; ++step) {
-        const score_t threshold =
-          exact + static_cast<score_t>(step) * 0.05f * (1.f + std::fabs(exact));
-        const score_t got = panorama::ProgressiveScore<M, true>(
-          q, record.data(), d, levels, threshold, &scanned);
-        EXPECT_GE(got, exact - 1e-4f * (1.f + std::fabs(exact)))
-          << "row " << i << " step " << step;
-        if (got != exact) {
-          ++pruned;
-          EXPECT_LE(exact, threshold) << "row " << i << " step " << step;
-        }
-      }
+  std::vector<score_t> exact(n);
+  {
+    auto reader = OpenPanorama(index, d, metric, query);
+    ASSERT_NE(reader, nullptr);
+    for (size_t b = 0; b < n; b += kPostingBlock) {
+      reader->ComputeBlock(b, std::min<size_t>(kPostingBlock, n - b),
+                           exact.data() + b);
     }
-  });
+  }
+
+  auto sorted = exact;
+  std::sort(sorted.begin(), sorted.end());
+  size_t pruned = 0;
+  std::vector<score_t> got(n);
+  // Quantiles of the score distribution, so every sweep step prunes a known
+  // fraction rather than depending on the metric's absolute scale.
+  for (size_t q = 1; q < 10; ++q) {
+    const score_t threshold = sorted[n * q / 10];
+    auto reader = OpenPanorama(index, d, metric, query);
+    ASSERT_NE(reader, nullptr);
+    reader->SetPruningThreshold(&threshold);
+    for (size_t b = 0; b < n; b += kPostingBlock) {
+      reader->ComputeBlock(b, std::min<size_t>(kPostingBlock, n - b),
+                           got.data() + b);
+    }
+    for (size_t i = 0; i < n; ++i) {
+      if (got[i] == exact[i]) {
+        continue;
+      }
+      ++pruned;
+      EXPECT_LE(exact[i], threshold) << "row " << i << " quantile " << q;
+    }
+  }
   EXPECT_GT(pruned, 0u) << "the sweep must exercise the pruning branch";
-  EXPECT_LT(scanned, uint64_t{n} * 9 * d)
-    << "pruning must read fewer dims than a full scan";
 }
 
 // L1 is absent on purpose: a rotation does not preserve it, so the writer
@@ -419,7 +427,7 @@ TEST(panorama_writer_test, l1_and_small_dims_decline_the_rotation) {
   EXPECT_TRUE(l1->StatsBytes().empty());
   EXPECT_EQ(l1->CodeSize(), d * sizeof(float));
 
-  constexpr uint32_t small = panorama::kMinDim - 1;
+  constexpr uint32_t small = kPanoramaMinDim - 1;
   auto narrow = MakePanoramaData(small, n, 17);
   auto tiny = MakeQuantizerWriter(VectorQuantization::None, small,
                                   VectorMetric::L2Sqr, /*pq_m=*/0,

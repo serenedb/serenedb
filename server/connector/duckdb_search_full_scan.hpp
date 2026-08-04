@@ -147,7 +147,6 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
     // A filter on the computed score column (not a `.col` field): applied on
     // the score vector after scoring instead of via the columnstore codec.
     bool is_score = false;
-    const duckdb::TableFilter* emitted_filter = nullptr;
     // Per-filter invariants, computed once at pushdown (see ColFilterSpec).
     bool is_dynamic = false;
     bool zonemap_only = false;

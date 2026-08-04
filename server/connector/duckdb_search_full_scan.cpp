@@ -670,10 +670,8 @@ void BuildTableFilter(IResearchScanGlobalState& state,
       pushed = owned.get();
       state.emit_score_filters.push_back(std::move(owned));
     }
-    state.col_filters.push_back({.field = 0,
-                                 .filter = pushed,
-                                 .is_score = true,
-                                 .emitted_filter = &filter});
+    state.col_filters.push_back(
+      {.field = 0, .filter = pushed, .is_score = true});
     const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
                           *pushed, "BuildTableFilter")
                           .expr;
@@ -910,9 +908,12 @@ void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
   if (!gstate.ScanScore()) {
     return;
   }
-  // Scores arrive already mapped to the user-facing value (ApplyScoreEmit runs
-  // at the emit boundary) in the batcher's staged vector: reference it.
+  // The batcher stages raw "larger = nearer" scores, the space the pushed score
+  // filter was rewritten for; this is the one place they become user-facing, in
+  // place in the staged vector the output chunk then references.
   SDB_ASSERT(scores != nullptr);
+  ApplyScoreEmit(gstate, duckdb::FlatVector::GetDataMutable<float>(*scores),
+                 num_rows);
   output.data[gstate.score_output_idx].Reference(*scores);
 }
 
@@ -1971,7 +1972,6 @@ void ClassifySegmentColFilters(
       .field = cf.field,
       .filter = cf.filter,
       .is_score = cf.is_score,
-      .emitted_filter = cf.emitted_filter,
       .is_dynamic = cf.is_dynamic,
       .zonemap_only = cf.zonemap_only,
       .null_check = cf.null_check,
@@ -2302,9 +2302,6 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
           RescoreWindow(g, *this, hit_batcher->Segment(),
                         hit_batcher->WindowHead(), hit_batcher->ScoreHead(), n);
       }
-      // User-facing scores in the batcher: the score-column filter (applied on
-      // _scores in EmitFiltered) and the output vector both see the one value.
-      ApplyScoreEmit(g, hit_batcher->ScoreHead(), n);
       hit_batcher->CommitWindow(n);
     } else {
       const auto n = streaming_doc->EmitDocs(hit_batcher->WindowHead(), cursor,
@@ -2532,12 +2529,6 @@ bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx,
         }
         ++n;
         ++current_idx;
-      }
-      // Map the collector's raw scores to the user-facing value in the batcher,
-      // symmetric with the streaming path (AccountAndWriteVirtualColumns copies
-      // them straight out).
-      if (out_scores != nullptr) {
-        ApplyScoreEmit(g, out_scores, n);
       }
       batcher.CommitWindow(n);
     }

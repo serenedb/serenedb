@@ -706,56 +706,37 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
   SDB_ASSERT(_state.reader);
-  SDB_ASSERT(!_state.pay_starts.empty() || _state.vector_column);
+  SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.codebook);
 
   const float threshold = VectorMetricIsAngular(_metric) ? _radius : -_radius;
+  const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
 
-  const bool gate_on_pay =
-    !_state.pay_starts.empty() &&
-    (ctx.defer_exact_distance || _state.quant == VectorQuantization::None ||
-     _state.vector_column == nullptr);
-  if (gate_on_pay) {
-    const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
-    DocIterator::ptr res;
-    irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
-      ScoreAdapters children;
-      if (!BuildRangeClusterIterators<Inclusive>(_state, _boost, threshold,
-                                                 children) ||
-          children.empty()) {
-        return;
-      }
-      using Disjunction =
-        DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
-      res = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
-                                         std::move(children));
-    });
-    if (!res) {
-      return DocIterator::empty();
-    }
-    if (_inner) {
-      auto inner_it = _inner->Execute(ctx, stats);
-      if (!inner_it) {
-        return DocIterator::empty();
-      }
-      res = MergeWithInner(
-        std::move(res),
-        memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
-        ScoreMergeType::Sum);
-    }
-    return res;
-  }
-
-  auto it = MakeRawReranker(_segment, _state, std::span<const float>{_query},
-                            _metric, _boost, _inner.get(), ctx, stats);
-  if (!it) {
-    return DocIterator::empty();
-  }
   DocIterator::ptr res;
   irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
-    auto v_it = memory::make_managed<VectorRangeIterator<Inclusive>>(
-      std::move(it), threshold);
-    res = std::move(v_it);
+    ScoreAdapters children;
+    if (!BuildRangeClusterIterators<Inclusive>(_state, _boost, threshold,
+                                               children) ||
+        children.empty()) {
+      return;
+    }
+    using Disjunction = DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
+    res = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
+                                       std::move(children));
   });
+  if (!res) {
+    return DocIterator::empty();
+  }
+  if (_inner) {
+    auto inner_it = _inner->Execute(ctx, stats);
+    if (!inner_it) {
+      return DocIterator::empty();
+    }
+    res = MergeWithInner(
+      std::move(res), memory::make_managed<FilterIterator>(std::move(inner_it)),
+      docs_count, ScoreMergeType::Sum);
+  }
   return res;
 }
 

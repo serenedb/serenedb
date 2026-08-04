@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/ivf/quantizer.hpp"
 
+#include <faiss/MetricType.h>
+#include <faiss/impl/Panorama.h>
 #include <faiss/impl/ProductQuantizer.h>
 #include <faiss/impl/RaBitQUtils.h>
 #include <faiss/impl/RaBitQuantizerMultiBit.h>
@@ -27,6 +29,7 @@
 #include <faiss/impl/fast_scan/fast_scan.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/distances.h>
+#include <faiss/utils/ordered_key_value.h>
 #include <faiss/utils/quantize_lut.h>
 #include <faiss/utils/random.h>
 
@@ -37,14 +40,15 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <vector>
 
 #include "basics/assert.h"
 #include "basics/misc.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
-#include "iresearch/formats/ivf/panorama.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 namespace {
@@ -148,9 +152,25 @@ constexpr bool kRaBitQCentered = false;
 constexpr size_t kRaBitQRefinePool = 64;
 
 struct PanoramaStatsHeader {
-  uint32_t level_width;
+  uint32_t n_levels;
   uint32_t d;
 };
+
+void RotateQuery(const byte_type* rotation, const float* q, float* out,
+                 uint32_t d) {
+  const auto* qb = reinterpret_cast<const byte_type*>(q);
+  const auto width = static_cast<uint16_t>(d);
+  const size_t stride = size_t{d} * sizeof(float);
+  for (uint32_t i = 0; i < d; ++i) {
+    out[i] = vector::DotProductImpl<float, float>::Compute(
+      rotation + i * stride, qb, width);
+  }
+}
+
+faiss::Panorama MakePanorama(uint32_t d, size_t batch_size) {
+  return faiss::Panorama{size_t{d} * sizeof(float), PanoramaLevels(d),
+                         batch_size};
+}
 
 class NoneQuantizerWriter final : public QuantizerWriter {
  public:
@@ -158,42 +178,62 @@ class NoneQuantizerWriter final : public QuantizerWriter {
     : _d{d}, _metric{metric} {}
 
   void Train(const float* vecs, size_t n) final {
-    if (_d < panorama::kMinDim || _metric == VectorMetric::L1) {
+    if (_d < kPanoramaMinDim || _metric == VectorMetric::L1) {
       return;
     }
     _rotation = TrainPcaRotation(vecs, n, _d);
     SDB_ASSERT(!_rotation.A.empty());
-    _levels = panorama::Levels(_d);
+    _pano = MakePanorama(_d, faiss::Panorama::kDefaultBatchSize);
+    SDB_ASSERT(_pano->n_levels == PanoramaLevels(_d));
     _stats.resize(sizeof(PanoramaStatsHeader) +
                   _rotation.A.size() * sizeof(float));
-    WritePodHeader(PanoramaStatsHeader{panorama::kLevelWidth, _d},
-                   _stats.data());
+    WritePodHeader(PanoramaStatsHeader{PanoramaLevels(_d), _d}, _stats.data());
 
     std::memcpy(_stats.data() + sizeof(PanoramaStatsHeader), _rotation.A.data(),
                 _rotation.A.size() * sizeof(float));
   }
+
+  void BeginCluster(size_t /*total_docs*/) final { _carry.clear(); }
 
   void EncodeCluster(IndexOutput& out, const float* vecs,
                      size_t n) const final {
     if (n == 0) {
       return;
     }
-    if (_levels == 0) {
+    if (!_pano) {
       out.WriteData(reinterpret_cast<const byte_type*>(vecs),
                     n * size_t{_d} * sizeof(float));
       return;
     }
     _rotated.resize(n * _d);
-    _rotation.apply_noalloc(n, vecs, _rotated.data());
-    _tails.resize(_levels);
-    for (size_t i = 0; i < n; ++i) {
-      const float* y = _rotated.data() + i * _d;
-      panorama::ComputeTails(y, _d, _levels, _tails.data());
-      out.WriteData(reinterpret_cast<const byte_type*>(_tails.data()),
-                    _levels * sizeof(float));
-      out.WriteData(reinterpret_cast<const byte_type*>(y),
-                    size_t{_d} * sizeof(float));
+    _rotation.apply_noalloc(static_cast<faiss::idx_t>(n), vecs,
+                            _rotated.data());
+    const size_t full = _pano->batch_size;
+    const float* src = _rotated.data();
+    size_t left = n;
+    if (!_carry.empty()) {
+      const size_t take = std::min(full - _carry.size() / _d, left);
+      _carry.insert(_carry.end(), src, src + take * _d);
+      src += take * _d;
+      left -= take;
+      if (_carry.size() / _d < full) {
+        return;
+      }
+      WriteBatch(out, _carry.data(), full);
+      _carry.clear();
     }
+    for (; left >= full; src += full * _d, left -= full) {
+      WriteBatch(out, src, full);
+    }
+    _carry.assign(src, src + left * _d);
+  }
+
+  void FinishCluster(IndexOutput& out) final {
+    if (_carry.empty()) {
+      return;
+    }
+    WriteBatch(out, _carry.data(), _carry.size() / _d);
+    _carry.clear();
   }
 
   std::span<const byte_type> StatsBytes() const final { return _stats; }
@@ -203,17 +243,41 @@ class NoneQuantizerWriter final : public QuantizerWriter {
   }
 
   uint32_t CodeSize() const noexcept final {
-    return panorama::RecordSize(_d, _levels);
+    return PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0);
   }
 
  private:
+  void WriteBatch(IndexOutput& out, const float* src, size_t count) const {
+    auto& pano = count == _pano->batch_size ? *_pano : TailPanorama(count);
+    _cums.assign(count * (pano.n_levels + 1), 0.f);
+    _codes.resize(count * size_t{_d});
+    pano.compute_cumulative_sums(_cums.data(), 0, count, src);
+    pano.copy_codes_to_level_layout(reinterpret_cast<uint8_t*>(_codes.data()),
+                                    0, count,
+                                    reinterpret_cast<const uint8_t*>(src));
+    out.WriteData(reinterpret_cast<const byte_type*>(_cums.data()),
+                  _cums.size() * sizeof(float));
+    out.WriteData(reinterpret_cast<const byte_type*>(_codes.data()),
+                  _codes.size() * sizeof(float));
+  }
+
+  faiss::Panorama& TailPanorama(size_t count) const {
+    if (!_tail || _tail->batch_size != count) {
+      _tail = MakePanorama(_d, count);
+    }
+    return *_tail;
+  }
+
   uint32_t _d;
   VectorMetric _metric;
-  uint32_t _levels = 0;
   faiss::PCAMatrix _rotation;
   std::vector<byte_type> _stats;
+  mutable std::optional<faiss::Panorama> _pano;
+  mutable std::optional<faiss::Panorama> _tail;
   mutable std::vector<float> _rotated;
-  mutable std::vector<float> _tails;
+  mutable std::vector<float> _carry;
+  mutable std::vector<float> _cums;
+  mutable std::vector<float> _codes;
 };
 
 template<VectorMetric M>
@@ -225,11 +289,11 @@ class NoneQuantizerStats final : public QuantizerStats {
       return;
     }
     const auto header = ReadPodHeader<PanoramaStatsHeader>(stats);
-    if (header.level_width != panorama::kLevelWidth || header.d != d) {
+    if (header.n_levels != PanoramaLevels(d) || header.d != d) {
       return;
     }
     _rotation = stats.data() + sizeof(PanoramaStatsHeader);
-    _levels = panorama::Levels(d);
+    _levels = header.n_levels;
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -262,9 +326,10 @@ class NoneQuantizerCodebook final : public QuantizerCodebook {
       return;
     }
     _query.resize(d);
-    panorama::RotateQuery(_stats->Rotation(), query.data(), _query.data(), d);
-    _tails.resize(_levels);
-    panorama::ComputeTails(_query.data(), d, _levels, _tails.data());
+    RotateQuery(_stats->Rotation(), query.data(), _query.data(), d);
+    _pano = MakePanorama(d, faiss::Panorama::kDefaultBatchSize);
+    _cums.resize(_levels + 1);
+    _pano->compute_query_cum_sums(_query.data(), _cums.data());
   }
 
   std::unique_ptr<QuantizerReader> MakeReader(
@@ -275,18 +340,19 @@ class NoneQuantizerCodebook final : public QuantizerCodebook {
   const byte_type* Query() const noexcept {
     return reinterpret_cast<const byte_type*>(_query.data());
   }
-  panorama::Query PanoramaQuery() const noexcept {
-    SDB_ASSERT(_levels != 0);
-    return {.data = _query.data(),
-            .tails = _tails.data(),
-            .norm = std::sqrt(_tails.front())};
+  const float* QueryData() const noexcept { return _query.data(); }
+  const float* QueryCums() const noexcept { return _cums.data(); }
+  const faiss::Panorama& Panorama() const noexcept {
+    SDB_ASSERT(_pano);
+    return *_pano;
   }
 
  private:
   std::shared_ptr<const NoneQuantizerStats<M>> _stats;
   uint32_t _levels;
   std::vector<float> _query;
-  std::vector<float> _tails;
+  std::vector<float> _cums;
+  std::optional<faiss::Panorama> _pano;
 };
 
 template<VectorMetric M>
@@ -298,11 +364,22 @@ class NoneQuantizerReader final : public QuantizerReader {
       _pay_in{std::move(pay_in)},
       _d{_cb->Dim()},
       _levels{_cb->Levels()},
-      _vecs{*_pay_in, panorama::RecordSize(_d, _levels)} {}
+      _vecs{*_pay_in, PanoramaRecordSize(_d, _levels)} {
+    if (_levels == 0) {
+      return;
+    }
+    const auto batch = _cb->Panorama().batch_size;
+    _active.resize(batch);
+    _byteset.resize(batch);
+    _exact.resize(batch);
+    _dots.resize(batch);
+    _scores.resize(batch);
+  }
 
   void StartCluster(uint64_t pay_start, size_t num_docs,
                     const float* /*centroid*/) final {
     _n = num_docs;
+    _cached = kNoBatch;
     if (_n == 0) {
       return;
     }
@@ -315,9 +392,9 @@ class NoneQuantizerReader final : public QuantizerReader {
 
   void ComputeBlock(size_t offset, size_t count, score_t* out) final {
     SDB_ASSERT(offset + count <= _n);
-    const byte_type* block = _vecs.Read(offset, count);
-    const size_t stride = panorama::RecordSize(_d, _levels);
     if (_levels == 0) {
+      const byte_type* block = _vecs.Read(offset, count);
+      const size_t stride = size_t{_d} * sizeof(float);
       const byte_type* q = _cb->Query();
       for (size_t i = 0; i < count; ++i) {
         out[i] =
@@ -325,18 +402,65 @@ class NoneQuantizerReader final : public QuantizerReader {
       }
       return;
     }
-    const auto q = _cb->PanoramaQuery();
-    const score_t threshold = _threshold != nullptr
-                                ? *_threshold
-                                : std::numeric_limits<score_t>::lowest();
-    for (size_t i = 0; i < count; ++i) {
-      out[i] = panorama::ProgressiveScore<M>(
-        q, reinterpret_cast<const float*>(block + i * stride), _d, _levels,
-        threshold);
+    const size_t batch_size = _cb->Panorama().batch_size;
+    while (count != 0) {
+      const size_t batch = offset / batch_size;
+      const size_t start = batch * batch_size;
+      const size_t len = std::min(batch_size, _n - start);
+      if (batch != _cached) {
+        ScoreBatch(start, len);
+        _cached = batch;
+      }
+      const size_t from = offset - start;
+      const size_t take = std::min(count, len - from);
+      std::copy_n(_scores.begin() + static_cast<ptrdiff_t>(from), take, out);
+      offset += take;
+      out += take;
+      count -= take;
     }
   }
 
  private:
+  static constexpr size_t kNoBatch = std::numeric_limits<size_t>::max();
+  static constexpr auto kMetric =
+    M == VectorMetric::L2Sqr ? faiss::METRIC_L2 : faiss::METRIC_INNER_PRODUCT;
+
+  void ScoreBatch(size_t start, size_t len) {
+    const auto& full = _cb->Panorama();
+    const auto& pano = len == full.batch_size ? full : TailPanorama(full, len);
+    const byte_type* block = _vecs.Read(start, len);
+    const auto* cums = reinterpret_cast<const float*>(block);
+    const byte_type* codes = block + len * (_levels + 1) * sizeof(float);
+    const score_t score = _threshold != nullptr
+                            ? *_threshold
+                            : std::numeric_limits<score_t>::lowest();
+    const float threshold = std::nextafter(
+      kMetric == faiss::METRIC_L2 ? -score : score,
+      kMetric == faiss::METRIC_L2 ? std::numeric_limits<float>::max()
+                                  : std::numeric_limits<float>::lowest());
+    std::fill_n(_scores.begin(), len, std::numeric_limits<score_t>::lowest());
+    faiss::PanoramaStats stats;
+    using C = std::conditional_t<kMetric == faiss::METRIC_L2,
+                                 faiss::CMax<float, int64_t>,
+                                 faiss::CMin<float, int64_t>>;
+    const size_t alive = pano.template progressive_filter_batch<C, kMetric>(
+      codes, cums, _cb->QueryData(), _cb->QueryCums(), 0, len,
+      /*sel=*/nullptr, /*ids=*/nullptr, /*use_sel=*/false, _active, _byteset,
+      _exact, _dots, threshold, stats);
+    for (size_t i = 0; i < alive; ++i) {
+      const auto idx = _active[i];
+      SDB_ASSERT(idx < len);
+      _scores[idx] = kMetric == faiss::METRIC_L2 ? -_exact[idx] : _exact[idx];
+    }
+  }
+
+  const faiss::Panorama& TailPanorama(const faiss::Panorama& full, size_t len) {
+    if (!_tail || _tail->batch_size != len) {
+      _tail = faiss::Panorama{full.code_size, full.n_levels, len};
+    }
+    return *_tail;
+  }
+
   std::shared_ptr<const NoneQuantizerCodebook<M>> _cb;
   std::unique_ptr<IndexInput> _pay_in;
   uint32_t _d;
@@ -344,6 +468,13 @@ class NoneQuantizerReader final : public QuantizerReader {
   VectorBlockReader _vecs;
   const score_t* _threshold = nullptr;
   size_t _n = 0;
+  size_t _cached = kNoBatch;
+  std::optional<faiss::Panorama> _tail;
+  std::vector<uint32_t> _active;
+  std::vector<uint8_t> _byteset;
+  std::vector<float> _exact;
+  std::vector<float> _dots;
+  std::vector<score_t> _scores;
 };
 
 class ScalarQuantizerWriter final : public QuantizerWriter {
@@ -1291,7 +1422,7 @@ std::unique_ptr<QuantizerWriter> MakeWriterWithMetric(VectorMetric metric,
 std::shared_ptr<const QuantizerStats> MakeNoneStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> blob) {
   std::shared_ptr<const QuantizerStats> stats;
-  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
+  ResolveEnum<VectorMetric>(EffectiveQuantMetric(metric), [&]<VectorMetric M> {
     stats = std::make_shared<const NoneQuantizerStats<M>>(d, blob);
   });
   return stats;

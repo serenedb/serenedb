@@ -407,3 +407,40 @@ statement error
 CREATE INDEX rabitq_bad_bits_wrong_quant ON rabitq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', rabitq_bits = 4));
 ----
 db error: ERROR: Column 'emb': ivf option 'rabitq_bits' is only valid with quant 'rabitq'
+
+
+# ===========================================================================
+# Unlimited range query: like PQ, RaBitQ decodes against its cluster centroid,
+# so a radius (which probes every cluster) must still carry one per cluster.
+# Radii sit in the gaps of the distance ladder from [11, 0, 0]:
+# 1, 9, 10.05, 14.18, 14.87.
+# ===========================================================================
+
+statement ok
+SET sdb_nprobe = 1000
+
+query
+SELECT pk FROM rabitq_l2_idx
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT pk FROM rabitq_l2_idx
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+pk
+1
+4
+6
+
+query
+SELECT count(*) FROM rabitq_l2_idx
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12;
+----
+count
+3
+
+statement ok
+RESET sdb_nprobe

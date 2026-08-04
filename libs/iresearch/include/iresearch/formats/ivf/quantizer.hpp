@@ -89,6 +89,19 @@ constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
   return quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
 }
 
+inline constexpr uint32_t kPanoramaMinDim = 64;
+
+inline constexpr uint32_t kPanoramaLevelWidth = 32;
+
+constexpr uint32_t PanoramaLevels(uint32_t d) noexcept {
+  return (d + kPanoramaLevelWidth - 1) / kPanoramaLevelWidth;
+}
+
+constexpr uint32_t PanoramaRecordSize(uint32_t d, uint32_t n_levels) noexcept {
+  return (d + (n_levels != 0 ? n_levels + 1 : 0)) *
+         static_cast<uint32_t>(sizeof(float));
+}
+
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
   uint32_t pq_niter, uint32_t nb_bits);

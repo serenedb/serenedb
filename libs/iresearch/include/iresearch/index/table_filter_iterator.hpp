@@ -51,10 +51,6 @@ struct ColFilterSpec {
   // Filter on the computed score column (applied on the score vector after
   // scoring) rather than a `.col` field.
   bool is_score = false;
-  // Score filters only: `filter` evaluates on the raw "larger = nearer" score
-  // the DocIterator computes, this one on the emitted (user-facing) score a
-  // consumer that already ran ApplyScoreEmit holds. Equal for an identity emit.
-  const duckdb::TableFilter* emitted_filter = nullptr;
   // Per-filter invariants, computed once at pushdown (walking the filter
   // expression per segment would repeat identical work):
   // a dynamic filter's bound tightens while the scan runs -- its zonemap

@@ -41,7 +41,6 @@
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
-#include "iresearch/formats/ivf/panorama.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -85,10 +84,9 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool sq_train = _info.quant.kind == VectorQuantization::SQ8 ||
                         _info.quant.kind == VectorQuantization::SQ4;
   const bool needs_centroid = QuantizerNeedsCentroid(_info.quant.kind);
-  const bool normalize = _info.metric == VectorMetric::Cosine &&
-                         _info.quant.kind != VectorQuantization::None;
+  const bool normalize = _info.metric == VectorMetric::Cosine;
   const bool pca = _info.quant.kind == VectorQuantization::None &&
-                   _info.metric != VectorMetric::L1 && d >= panorama::kMinDim &&
+                   _info.metric != VectorMetric::L1 && d >= kPanoramaMinDim &&
                    rows >= std::max<size_t>(kPcaMinRows, size_t{8} * d);
 
   auto centroids = CentroidsBuilder::Create(
@@ -448,9 +446,7 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
       _result.postings_id, _result.data.cluster_docs,
       _result.data.cluster_offsets, _result.qw.get(),
       col_reader.Column(_result.postings_id), &ctx, _result.data.d,
-      &_result.data.cluster_centroids,
-      _info.metric == VectorMetric::Cosine &&
-        _info.quant.kind != VectorQuantization::None);
+      &_result.data.cluster_centroids, _info.metric == VectorMetric::Cosine);
   }
   return _reader.get();
 }

@@ -4,8 +4,9 @@ hash-threshold 100
 # across INSERT / DELETE / UPDATE.
 #
 # SQ8 stores 8-bit per-dimension codes in the postings .pay and scores them
-# via the quantized QVectorIterator path (pure kNN, no inner filter); a kNN
-# with a WHERE filter and any range query fall back to the exact raw reranker.
+# via the quantized QVectorIterator path; a kNN with a WHERE filter falls back
+# to the exact raw reranker, while a range query gates on .pay and resolves the
+# exact distance from the table.
 # SQ8 is lossy and IVF is approximate, so determinism comes from well-separated
 # vectors plus an exhaustive nprobe; assertions check row identity/order only,
 # never the distance score. quant='sq8' supports metric l2, ip, and cosine
@@ -631,3 +632,66 @@ SELECT count(*) FROM sq8_del_mask_idx;
 ----
 count
 4
+
+# ===========================================================================
+# 8. Unlimited range query (no LIMIT): the streaming path. The .pay gate runs
+#    on the quantized distance, then the exact distance is resolved from the
+#    table and the score predicate is re-applied to it. Radii sit in the wide
+#    gaps of the distance ladder (1, 9, 10.05, 14.18, 14.87) so quantization
+#    error cannot move a row across the boundary.
+# ===========================================================================
+
+statement ok
+SET sdb_nprobe = 1000
+
+query
+SELECT pk FROM sq8_l2_idx
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 5 ORDER BY pk;
+----
+pk
+1
+
+query
+SELECT count(*) FROM sq8_l2_idx
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 5;
+----
+count
+1
+
+query
+SELECT pk FROM sq8_l2_idx
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+pk
+1
+4
+6
+
+# count(*) and the emitting form must agree: both go through the same gate.
+query
+SELECT count(*) FROM sq8_l2_idx
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12;
+----
+count
+3
+
+# The distance projected alongside the predicate is the exact one, not the
+# quantized gate value.
+query
+SELECT pk, round(emb <-> [11, 0, 0]::FLOAT[3], 3) AS d FROM sq8_l2_idx
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+pk	d
+1	1
+4	10.05
+6	9
+
+# Same predicate against the base table: the index must not change membership.
+query
+SELECT pk FROM sq8_l2
+WHERE emb <-> [11, 0, 0]::FLOAT[3] < 12 ORDER BY pk;
+----
+pk
+1
+4
+6

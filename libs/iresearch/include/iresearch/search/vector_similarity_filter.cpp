@@ -72,9 +72,8 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     query = normalized_query;
   }
 
-  auto codebook = ReadQuantizerCodebook(
-    *ivf, *idx_in, quant, d, opts.metric,
-    quant == VectorQuantization::None ? opts.query : query);
+  auto codebook =
+    ReadQuantizerCodebook(*ivf, *idx_in, quant, d, opts.metric, query);
   if (!codebook) {
     return QueryBuilder::Empty();
   }

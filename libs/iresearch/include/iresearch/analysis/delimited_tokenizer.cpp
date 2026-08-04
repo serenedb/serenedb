@@ -23,9 +23,8 @@
 
 #include "delimited_tokenizer.hpp"
 
-#include <bit>
 #include <cstring>
-#include <limits>
+#include <optional>
 #include <string_view>
 
 #include "basics/shared.hpp"
@@ -37,25 +36,25 @@ namespace irs::analysis {
 namespace {
 
 // Unescapes a quoted term straight into caller-provided memory (single copy);
-// returns -1 when the term is identity (unquoted / mismatched quotes).
-int64_t UnescapeInto(byte_type* out, bytes_view data) {
+// nullopt when the term is identity (unquoted / mismatched quotes).
+std::optional<uint32_t> UnescapeInto(byte_type* out, bytes_view data) {
   if (data.empty() || data[0] != '"') {
-    return -1;
+    return std::nullopt;
   }
   const size_t count = data.size();
   size_t out_n = 0;
   for (size_t start = 1;;) {
     const size_t pos = data.find('"', start);
     if (pos == bytes_view::npos) {
-      return -1;
+      return std::nullopt;
     }
     std::memcpy(out + out_n, data.data() + start, pos - start);
     out_n += pos - start;
     if (pos + 1 == count) {
-      return static_cast<int64_t>(out_n);
+      return static_cast<uint32_t>(out_n);
     }
     if (data[pos + 1] != '"') {
-      return -1;
+      return std::nullopt;
     }
     out[out_n++] = '"';
     start = pos + 2;
@@ -113,8 +112,8 @@ IRS_FORCE_INLINE void EmitToken(TokenSink& sink, const byte_type* cur,
     sink.Emit<Layout>(
       token_size,
       [&](byte_type* mem) IRS_FORCE_INLINE -> uint32_t {
-        if (const auto n = UnescapeInto(mem, {cur, token_size}); n >= 0) {
-          return static_cast<uint32_t>(n);
+        if (const auto n = UnescapeInto(mem, {cur, token_size})) {
+          return *n;
         }
         std::memcpy(mem, cur, token_size);
         return static_cast<uint32_t>(token_size);

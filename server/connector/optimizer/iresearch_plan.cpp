@@ -57,7 +57,6 @@
 #include "connector/optimizer/ts_dict_plan.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
-#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/optimizer/boolean_rules.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"

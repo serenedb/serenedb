@@ -787,7 +787,6 @@ TEST(pca_rotation_test, orthonormal_preserves_distances_and_concentrates) {
     ASSERT_NEAR(rip, ip, 1e-3 * (1.0 + std::fabs(ip))) << "row " << i;
   }
 
-  // A single row must take the sgemv path and agree with the batched one.
   std::vector<float> one(d);
   rotation.apply_noalloc(1, data.data(), one.data());
   for (uint32_t t = 0; t < d; ++t) {

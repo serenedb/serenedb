@@ -189,8 +189,6 @@ class QVectorIterator : public VectorDistanceIterator {
     _posting = sdb::basics::downCast<QVectorPosting>(_src.get());
   }
 
-  // The collector compares boosted scores while the quantizer bounds unboosted
-  // ones, so the shared value is rescaled at every block boundary.
   void BindThreshold(const score_t* src) noexcept {
     if (_boost <= 0.f) {
       return;
@@ -503,8 +501,6 @@ bool BuildRangeClusterIterators(const VectorState& state, score_t boost,
     auto qit = memory::make_managed<QVectorIterator>(std::move(ci->postings),
                                                      std::move(ci->vr), boost,
                                                      state.cluster_counts[c]);
-    // The radius is a threshold from the first candidate on, tighter than a
-    // warming top-k: a doc whose bound cannot reach it is outside for sure.
     qit->BindConstantThreshold(threshold);
     out.emplace_back(
       DocIterator::ptr{memory::make_managed<VectorRangeIterator<Inclusive>>(
@@ -712,12 +708,8 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
   SDB_ASSERT(_state.reader);
   SDB_ASSERT(!_state.pay_starts.empty() || _state.vector_column);
 
-  // RawVectorReader now yields "larger = nearer" scores, so map the radius into
-  // that scoring space: distance metrics (nearest = smallest) get negated.
   const float threshold = VectorMetricIsAngular(_metric) ? _radius : -_radius;
 
-  // Gating from the payload is exact only without a quantizer; for a quantized
-  // index it just prunes, so it needs a consumer that rescores exactly.
   const bool gate_on_pay =
     !_state.pay_starts.empty() &&
     (ctx.defer_exact_distance || _state.quant == VectorQuantization::None ||

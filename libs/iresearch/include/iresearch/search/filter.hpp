@@ -60,8 +60,6 @@ struct ExecutionContext {
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
   bool top_k_collect = false;
-  // The consumer rescores the emitted docs with exact distances itself, so a
-  // quantized vector iterator must not wrap itself in a raw-vector rescorer.
   bool defer_exact_distance = false;
 };
 

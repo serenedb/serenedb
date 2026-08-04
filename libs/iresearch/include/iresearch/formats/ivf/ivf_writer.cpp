@@ -150,9 +150,9 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
         const auto cluster = static_cast<uint32_t>(assigned.ids[j]);
         doc_cluster[base + assigned.perm[j]] = cluster;
         if (needs_centroid) {
+          SDB_ASSERT(!cents[j].empty());
           result.cluster_centroids.try_emplace(cluster, cents[j]);
         }
-        SDB_ASSERT(!cents[j].empty());
         if (pq) {
           const float* v = gather.data() + j * d;
           const auto c = cents[j];
@@ -198,8 +198,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     SDB_ASSERT(!pq_train_res.empty());
     qw->Train(pq_train_res.data(), pq_train_res.size() / d);
   }
-  if (pca) {
-    SDB_ASSERT(!pca_train.empty());
+  if (pca && pca_train.size() / d >= d) {
     qw->Train(pca_train.data(), pca_train.size() / d);
   }
 

@@ -427,14 +427,6 @@ TEST(panorama_writer_test, l1_and_small_dims_decline_the_rotation) {
   ASSERT_NE(tiny, nullptr);
   tiny->Train(narrow.data(), n);
   EXPECT_TRUE(tiny->StatsBytes().empty());
-
-  // Below d rows there is no basis to estimate, so it declines as well.
-  auto starved = MakeQuantizerWriter(VectorQuantization::None, d,
-                                     VectorMetric::L2Sqr, /*pq_m=*/0,
-                                     /*pq_niter=*/0, /*nb_bits=*/0);
-  ASSERT_NE(starved, nullptr);
-  starved->Train(points.data(), d - 1);
-  EXPECT_TRUE(starved->StatsBytes().empty());
 }
 
 class rabitq_quantizer_test : public ::testing::TestWithParam<uint32_t> {};

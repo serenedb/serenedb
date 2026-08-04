@@ -927,28 +927,6 @@ uint32_t ReadRerankFactor(duckdb::ClientContext& context) {
   return ReadBoundedIntSetting(context, "sdb_rerank_factor", 0, 4);
 }
 
-void RerankHits(IResearchScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
-  SDB_ASSERT(g.vector_scorer != nullptr);
-  SDB_ASSERT(g.reader != nullptr);
-  const auto& vs = *g.vector_scorer;
-  const std::span<const float> query{vs.query_vector};
-  const auto d = static_cast<uint32_t>(vs.query_vector.size());
-  size_t i = 0;
-  while (i < hits.size()) {
-    const uint32_t seg = hits[i].segment_idx;
-    size_t j = i + 1;
-    while (j < hits.size() && hits[j].segment_idx == seg) {
-      ++j;
-    }
-    const auto& sub = (*g.reader)[seg];
-    if (const auto* vec_col = sub.Column(vs.field_id); vec_col != nullptr) {
-      irs::RerankExactDistances(sub, *vec_col, d, query, vs.metric,
-                                hits.subspan(i, j - i));
-    }
-    i = j;
-  }
-}
-
 duckdb::idx_t RerankChunkRows(size_t d) {
   const auto rows = (duckdb::idx_t{1} << 20) / (d * sizeof(float));
   return std::clamp<duckdb::idx_t>(rows, 64, STANDARD_VECTOR_SIZE);
@@ -956,7 +934,8 @@ duckdb::idx_t RerankChunkRows(size_t d) {
 
 void InitRerankSource(duckdb::ClientContext& context,
                       const IResearchScanGlobalState& g,
-                      SegDocBufferedScanLocalState& l) {
+                      SegDocBufferedScanLocalState& l,
+                      duckdb::idx_t chunk_rows) {
   const auto& vs = *g.vector_scorer;
   const std::array<catalog::Column::Id, 1> ids{
     catalog::Column::Id{vs.field_id}};
@@ -965,18 +944,14 @@ void InitRerankSource(duckdb::ClientContext& context,
                                                  duckdb::LogicalType::UINTEGER};
   l.rerank_source = MakeIndexSource(context, *g.scan, proj, types, ids);
   const duckdb::vector<duckdb::LogicalType> chunk_types{types[0], types[1]};
-  l.rerank_vecs.Initialize(context, chunk_types,
-                           RerankChunkRows(vs.query_vector.size()));
+  l.rerank_vecs.Initialize(context, chunk_types, chunk_rows);
 }
 
-// `keep(i, distance)` runs in input order for every position whose row the
-// lookup source still holds; the rest must be dropped by the caller.
 void RescoreFromTable(duckdb::ClientContext& context,
                       IResearchScanGlobalState& g,
                       SegDocBufferedScanLocalState& l, uint32_t seg_idx,
                       const irs::doc_id_t* docs, size_t count,
                       absl::FunctionRef<void(size_t, irs::score_t)> keep) {
-  SDB_ASSERT(l.rerank_source);
   const auto [col_reader, pk_col] = l.PkColumnFor(*g.reader, seg_idx);
   SDB_ENSURE(pk_col != nullptr,
              "quantized vector rerank needs the segment's stored PK column");
@@ -985,10 +960,13 @@ void RescoreFromTable(duckdb::ClientContext& context,
   const auto dist = irs::ResolveScoringDistance(vs.metric);
   const auto* q =
     reinterpret_cast<const irs::byte_type*>(vs.query_vector.data());
+  const auto chunk_rows = RerankChunkRows(d);
+  if (!l.rerank_source) {
+    InitRerankSource(context, g, l, chunk_rows);
+  }
 
   auto& pk = l.rerank_pk;
   if (pk.seg != seg_idx) {
-    // Drop the old scan's block handles before its ReadContext goes away.
     pk.scan = irs::ColumnReader::ScanState{};
     pk.ctx = std::make_unique<irs::ReadContext>(*col_reader);
     pk.scan = pk_col->InitScan(*pk.ctx);
@@ -996,7 +974,6 @@ void RescoreFromTable(duckdb::ClientContext& context,
     pk.seg = seg_idx;
   }
 
-  const auto chunk_rows = RerankChunkRows(d);
   duckdb::SelectionVector sel{chunk_rows};
   std::vector<irs::score_t> dists(chunk_rows);
   std::vector<uint8_t> alive(chunk_rows);
@@ -1054,14 +1031,12 @@ void RescoreFromTable(duckdb::ClientContext& context,
 
 size_t RerankPool(IResearchScanGlobalState& g, SegDocBufferedScanLocalState& l,
                   std::span<irs::ScoreDoc> hits) {
-  if (!g.vector_rerank_from_table) {
-    RerankHits(g, hits);
-    return hits.size();
-  }
   SDB_ASSERT(g.client_context != nullptr);
-  if (!l.rerank_source) {
-    InitRerankSource(*g.client_context, g, l);
-  }
+  SDB_ASSERT(g.vector_scorer != nullptr);
+  SDB_ASSERT(g.reader != nullptr);
+  const auto& vs = *g.vector_scorer;
+  const std::span<const float> query{vs.query_vector};
+  const auto d = static_cast<uint32_t>(vs.query_vector.size());
   std::vector<irs::doc_id_t> docs;
   size_t w = 0;
   size_t i = 0;
@@ -1073,6 +1048,14 @@ size_t RerankPool(IResearchScanGlobalState& g, SegDocBufferedScanLocalState& l,
     }
     const auto run = hits.subspan(i, j - i);
     i = j;
+    const auto& sub = (*g.reader)[seg];
+    if (!g.vector_rerank_from_table) {
+      if (const auto* vec_col = sub.Column(vs.field_id); vec_col != nullptr) {
+        irs::RerankExactDistances(sub, *vec_col, d, query, vs.metric, run);
+      }
+      w += run.size();
+      continue;
+    }
     docs.resize(run.size());
     for (size_t k = 0; k < run.size(); ++k) {
       docs[k] = run[k].doc;
@@ -1094,9 +1077,6 @@ duckdb::idx_t RescoreWindow(IResearchScanGlobalState& g,
   SDB_ASSERT(g.client_context != nullptr);
   if (n == 0) {
     return n;
-  }
-  if (!l.rerank_source) {
-    InitRerankSource(*g.client_context, g, l);
   }
   duckdb::idx_t w = 0;
   RescoreFromTable(*g.client_context, g, l, seg_idx, docs, n,
@@ -1652,7 +1632,7 @@ uint32_t WhereLiveDocs(irs::TermIterator& it, const irs::SubReader& seg,
   itrs.reserve(2);
   itrs.emplace_back(it.postings(irs::IndexFeatures::None));
   itrs.emplace_back(where.Execute(
-    {.defer_exact_distance = cf.g != nullptr && cf.g->vector_rerank_from_table},
+    {.defer_exact_distance = cf.g != nullptr && cf.g->DeferExactDistance()},
     irs::StatsBuffer::Empty()));
   return CountDocs(irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
                                         seg.docs_count(), std::move(itrs)),
@@ -1777,6 +1757,11 @@ void BuildTsDictSlots(TsDictLocalState& lstate,
 
 }  // namespace
 
+size_t CollectorPoolSize(const IResearchScanGlobalState& g,
+                         const SereneDBScanBindData& bind) {
+  return g.topk.rerank_pool != 0 ? g.topk.rerank_pool : *bind.score_top_k;
+}
+
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   duckdb::ExecutionContext& /*context*/, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* state) {
@@ -1808,9 +1793,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     if (!gstate.vector_scorer) {
       lstate->local_threshold = std::numeric_limits<irs::score_t>::min();
     }
-    const size_t k =
-      gstate.topk.rerank_pool ? gstate.topk.rerank_pool : *bd.score_top_k;
-    lstate->hit_buf.resize(irs::BlockSize(k));
+    lstate->hit_buf.resize(irs::BlockSize(CollectorPoolSize(gstate, bd)));
     lstate->hit_slice = std::span<irs::ScoreDoc>{lstate->hit_buf};
     BuildOffsetsEntries(*lstate, input, bd);
     return lstate;
@@ -2057,9 +2040,8 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   using C = irs::NthPartitionScoreCollector;
   const auto& search = *g.scan;
   if (!std::holds_alternative<C>(s.collector)) {
-    const size_t k =
-      g.topk.rerank_pool ? g.topk.rerank_pool : *search.score_top_k;
-    s.collector.template emplace<C>(s.local_threshold, k, s.hit_slice);
+    s.collector.template emplace<C>(s.local_threshold,
+                                    CollectorPoolSize(g, search), s.hit_slice);
   }
   auto& collector = std::get<C>(s.collector);
 
@@ -2078,13 +2060,10 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
 
   const bool wand_enabled =
     WandEnabled(search.inverted_index.get(), search.text_scorer);
-  // Keyed on rerank_pool too: with sdb_rerank_factor = 0 nothing rescores the
-  // pool afterwards, so the iterator must keep scoring exactly itself.
   irs::DocIterator::ptr it = seg.mask(seg_query.Execute(
     {.wand = {.wand_enabled = wand_enabled},
      .top_k_collect = search.vector_scorer.has_value() && cls.active.empty(),
-     .defer_exact_distance =
-       g.vector_rerank_from_table && g.topk.rerank_pool > 0},
+     .defer_exact_distance = g.DeferExactDistance()},
     stats));
   // Filter the collected docs by the covered `.col` values, so top-k is
   // selected over survivors (codec Filter + zonemap in the wrapper).
@@ -2147,8 +2126,8 @@ void TopKScanLocalState::PrepareEmitBuffer(IResearchScanGlobalState& g) {
     collector);
   auto accepted_slice = hit_slice.subspan(0, accepted);
   size_t kept = accepted;
+  SortScoreDocsBySegDoc(accepted_slice);
   if (g.topk.rerank_pool > 0 && g.vector_scorer != nullptr) {
-    SortScoreDocsBySegDoc(accepted_slice);
     // Rerank exact distances only when the collector's scores are approximate
     // (quantized); a non-quantized pool (over-fetched only to survive a lookup
     // filter) already carries exact distances.
@@ -2169,9 +2148,9 @@ void TopKScanLocalState::PrepareEmitBuffer(IResearchScanGlobalState& g) {
                        });
       kept = kreal;
       accepted_slice = hit_slice.subspan(0, kept);
+      SortScoreDocsBySegDoc(accepted_slice);
     }
   }
-  SortScoreDocsBySegDoc(accepted_slice);
   top_hits = hit_slice.subspan(0, kept);
 }
 
@@ -2186,10 +2165,10 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   // pushed on a WAND-enabled text scorer, run WAND so below-threshold blocks
   // are skipped (PushHits seeds the threshold from the boundary before each
   // emit).
-  streaming_doc = seg.mask(
-    seg_query.Execute({.wand = {.wand_enabled = g.wand_streaming},
-                       .defer_exact_distance = g.vector_rerank_from_table},
-                      g.stats ? *g.stats : irs::StatsBuffer::Empty()));
+  streaming_doc =
+    seg.mask(seg_query.Execute({.wand = {.wand_enabled = g.wand_streaming},
+                                .defer_exact_distance = g.DeferExactDistance()},
+                               g.stats ? *g.stats : irs::StatsBuffer::Empty()));
   if (g.needs_lookup && !PkColumnFor(*g.reader, seg_idx).second) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -2318,7 +2297,7 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
       auto n = streaming_doc->EmitScoredDocs(
         hit_batcher->WindowHead(), hit_batcher->ScoreHead(), cursor + span,
         streaming_score_function, &score_fetcher, cursor);
-      if (g.vector_rerank_from_table) {
+      if (g.DeferExactDistance()) {
         n =
           RescoreWindow(g, *this, hit_batcher->Segment(),
                         hit_batcher->WindowHead(), hit_batcher->ScoreHead(), n);
@@ -2419,12 +2398,9 @@ void RunCountScan(IResearchScanGlobalState& g, CountScanLocalState& l,
       continue;
     }
     const auto& seg_query = EnsureSegmentQuery(g, l, sub, seg);
-    // Counting must define membership exactly as emitting does: a quantized
-    // vector range gates on the payload, so the count has to come from the same
-    // gate rather than from an exact rescan.
     auto doc =
       MaybeWrapColFilter(sub.mask(seg_query.Execute(
-                           {.defer_exact_distance = g.vector_rerank_from_table},
+                           {.defer_exact_distance = g.DeferExactDistance()},
                            irs::StatsBuffer::Empty())),
                          sub, l.seg_cls.active, g, l.filter_states);
     l.local_count += doc->count();
@@ -2687,7 +2663,7 @@ void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   if (g.filter) {
     const auto& query = EnsureSegmentQuery(g, *this, seg, seg_idx);
     auto probe = MaybeWrapColFilter(
-      query.Execute({.defer_exact_distance = g.vector_rerank_from_table},
+      query.Execute({.defer_exact_distance = g.DeferExactDistance()},
                     irs::StatsBuffer::Empty()),
       seg, seg_cls.active, g, filter_states);
     if (irs::doc_limits::eof(probe->advance())) {

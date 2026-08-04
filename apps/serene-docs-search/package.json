@@ -1,0 +1,27 @@
+{
+    "name": "serene-docs-search",
+    "private": true,
+    "version": "0.9.1",
+    "description": "SereneDocsSearch - documentation search powered by SereneDB",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/serenedb/serenedb.git",
+        "directory": "apps/serene-docs-search"
+    },
+    "homepage": "https://github.com/serenedb/serenedb/tree/main/apps/serene-docs-search#readme",
+    "bugs": {
+        "url": "https://github.com/serenedb/serenedb/issues"
+    },
+    "workspaces": [
+        "packages/*"
+    ],
+    "scripts": {
+        "build": "npm run build -w @serenedb/docs-search-core -w @serenedb/docs-search-react -w @serenedb/docs-search-embed -w @serenedb/docs-search-backend -w @serenedb/docs-search-mcp",
+        "test": "npm test --workspaces --if-present",
+        "typecheck": "npm run typecheck --workspaces --if-present",
+        "eval": "npm run eval -w @serenedb/docs-search-backend"
+    },
+    "engines": {
+        "node": ">=18"
+    }
+}

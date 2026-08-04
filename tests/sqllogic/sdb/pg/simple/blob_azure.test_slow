@@ -1,0 +1,363 @@
+control substitution on
+
+# Azure blob storage over Azurite (launched by run.sh for *_azure.test_slow):
+# csv/tsv/parquet COPY roundtrips, table-function scans, globbing, and corner
+# cases. Error-message expectations hardcode the launcher's container name
+# ('testcont' = AZURITE_BLOB_CONTAINER) because substitution is not applied to
+# expected blocks.
+
+statement ok
+CREATE OR REPLACE SECRET azurite_${__DATABASE__} (
+  TYPE azure,
+  CONNECTION_STRING '${AZURITE_CONNECTION_STRING}',
+  SCOPE 'az://${AZURITE_BLOB_CONTAINER}/'
+);
+
+
+# --- csv/tsv/parquet COPY roundtrips ---
+
+
+statement ok
+CREATE TABLE clickclack
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+INSERT INTO clickclack VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky'), (4, 'pudge'), (5, 'mom');
+
+
+statement count 5
+COPY clickclack TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.csv'
+WITH (FORMAT csv, HEADER true);
+
+
+statement ok
+CREATE TABLE az_csv_vedernikoff
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+COPY az_csv_vedernikoff FROM 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.csv'
+WITH (FORMAT csv, HEADER true);
+
+
+query
+SELECT *
+FROM az_csv_vedernikoff
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+statement count 5
+DELETE FROM az_csv_vedernikoff;
+
+
+statement count 3
+COPY az_csv_vedernikoff FROM 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.csv'
+WITH (FORMAT csv, HEADER true)
+WHERE id != 2 AND id != 4;
+
+
+query
+SELECT *
+FROM az_csv_vedernikoff
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+3	babsky
+5	mom
+
+
+statement count 5
+COPY clickclack TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.tsv'
+WITH (FORMAT csv, DELIMITER '	');
+
+
+statement ok
+CREATE TABLE az_tsv_vedernikoff
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+COPY az_tsv_vedernikoff FROM 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.tsv'
+WITH (FORMAT csv, DELIMITER '	');
+
+
+query
+SELECT *
+FROM az_tsv_vedernikoff
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+statement count 5
+COPY clickclack TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.parquet'
+WITH (FORMAT parquet);
+
+
+statement ok
+CREATE TABLE az_parquet_vedernikoff
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+COPY az_parquet_vedernikoff FROM 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.parquet'
+WITH (FORMAT parquet);
+
+
+query
+SELECT *
+FROM az_parquet_vedernikoff
+ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+# --- direct table-function scans over az:// paths ---
+
+
+query
+SELECT count(*) AS c, min(name) AS mn
+FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.csv');
+----
+c	mn
+5	babsky
+
+
+query
+SELECT count(*) AS c, max(name) AS mx
+FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.parquet');
+----
+c	mx
+5	vedernikoff
+
+
+# --- globbing over the blobs this test wrote ---
+
+
+query
+SELECT count(*) AS c
+FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_az_clickclack.*');
+----
+c
+3
+
+
+# --- zero-row files roundtrip (parquet and header-only csv) ---
+
+
+statement ok
+COPY (SELECT 1 AS a WHERE false) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/empty.parquet' (FORMAT parquet);
+
+
+query
+SELECT count(*) AS c FROM 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/empty.parquet';
+----
+c
+0
+
+
+statement ok
+COPY (SELECT 1 AS a WHERE false) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/empty.csv' WITH (FORMAT csv, HEADER true);
+
+
+query
+SELECT count(*) AS c
+FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/empty.csv', header=true, columns={'a': 'INTEGER'});
+----
+c
+0
+
+
+# --- file larger than the 8 MiB read buffer (multi-range streaming) ---
+
+
+statement ok
+COPY (SELECT i, md5(i::VARCHAR) AS h1, md5((i * 7)::VARCHAR) AS h2 FROM range(400000) t(i))
+TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/big.parquet' (FORMAT parquet);
+
+
+query
+SELECT count(*) AS c, sum(i) AS s, min(h1) IS NOT NULL AS ok
+FROM 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/big.parquet';
+----
+c	s	ok
+400000	79999800000	t
+
+
+# --- single value spanning many transfer chunks (also a regression check:
+# the file stem must not rename a single-column result) ---
+
+
+statement ok
+COPY (SELECT repeat('x', 5000000) AS v)
+TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/bigval.parquet' (FORMAT parquet);
+
+
+query
+SELECT length(v) AS l FROM 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/bigval.parquet';
+----
+l
+5000000
+
+
+# --- overwrite: second COPY to the same blob wins ---
+
+
+statement ok
+COPY (SELECT 'v1' AS v) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/over.csv' WITH (FORMAT csv, HEADER true);
+
+
+statement ok
+COPY (SELECT 'v2' AS v) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/over.csv' WITH (FORMAT csv, HEADER true);
+
+
+query
+SELECT v FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/over.csv', header=true);
+----
+v
+v2
+
+
+# --- deeply nested path ---
+
+
+statement ok
+COPY (SELECT 42 AS a) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/a/b/c/d/deep.csv' WITH (FORMAT csv, HEADER true);
+
+
+query
+SELECT a FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/a/b/c/d/deep.csv');
+----
+a
+42
+
+
+# --- special characters in blob names (space, unicode, plus) ---
+
+
+statement ok
+COPY (SELECT 1 AS a) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/sp ace.csv' WITH (FORMAT csv, HEADER true);
+
+
+query
+SELECT a FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/sp ace.csv');
+----
+a
+1
+
+
+statement ok
+COPY (SELECT 2 AS a) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/юникод.csv' WITH (FORMAT csv, HEADER true);
+
+
+query
+SELECT a FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/юникод.csv');
+----
+a
+2
+
+
+statement ok
+COPY (SELECT 3 AS a) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/plus+file.csv' WITH (FORMAT csv, HEADER true);
+
+
+query
+SELECT a FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/plus+file.csv');
+----
+a
+3
+
+
+# --- multi-file glob scan ---
+
+
+statement ok
+COPY (SELECT 1 AS a) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/multi_1.csv' WITH (FORMAT csv, HEADER true);
+
+
+statement ok
+COPY (SELECT 2 AS a UNION ALL SELECT 3) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/multi_2.csv' WITH (FORMAT csv, HEADER true);
+
+
+query
+SELECT count(*) AS c, sum(a) AS s FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/multi_*.csv');
+----
+c	s
+3	6
+
+
+# --- glob: '*' does not cross '/', zero matches yield an empty set ---
+
+
+query
+SELECT count(*) AS c FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/*.csv');
+----
+c
+7
+
+
+query
+SELECT count(*) AS c FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_corner/nomatch_*');
+----
+c
+0
+
+
+# --- errors: missing blob (in-scope), out-of-scope path, missing container ---
+
+
+statement error
+SELECT * FROM read_csv('az://testcont/corner_missing_definitely.csv');
+----
+db error: ERROR: No files found that match the pattern "az://testcont/corner_missing_definitely.csv"
+
+
+statement error
+SELECT * FROM read_csv('az://unscoped-container/x.csv');
+----
+db error: ERROR: No valid Azure credentials found!
+
+
+statement ok
+CREATE OR REPLACE SECRET azurite_ghost_${__DATABASE__} (
+  TYPE azure,
+  CONNECTION_STRING '${AZURITE_CONNECTION_STRING}',
+  SCOPE 'az://absent-container/'
+);
+
+
+statement error
+SELECT * FROM read_csv('az://absent-container/x.csv');
+----
+db error: ERROR: AzureBlobStorageFileSystem Read to az://absent-container/x.csv/**/*.csv failed with ContainerNotFound Reason Phrase: Not Found

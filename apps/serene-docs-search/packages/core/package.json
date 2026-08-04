@@ -1,0 +1,43 @@
+{
+    "name": "@serenedb/docs-search-core",
+    "version": "0.9.1",
+    "description": "Shared types, config schema and API client for SereneDocsSearch",
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/serenedb/serenedb.git",
+        "directory": "apps/serene-docs-search/packages/core"
+    },
+    "homepage": "https://github.com/serenedb/serenedb/tree/main/apps/serene-docs-search#readme",
+    "bugs": {
+        "url": "https://github.com/serenedb/serenedb/issues"
+    },
+    "type": "module",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "prepublishOnly": "npm run build"
+    },
+    "devDependencies": {
+        "tsup": "^8.0.0",
+        "typescript": "^5.6.0",
+        "vitest": "^2.1.0"
+    },
+    "publishConfig": {
+        "access": "public"
+    }
+}

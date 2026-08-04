@@ -23,7 +23,6 @@
 #include <re2/re2.h>
 #include <re2/regexp.h>
 
-#include <bit>
 #include <string_view>
 
 #include "iresearch/analysis/classify.hpp"
@@ -37,9 +36,22 @@ PatternTokenizer::PatternTokenizer(std::string_view pattern, int group)
   : _pattern(pattern, re2::RE2::Quiet),
     _group(group),
     _num_groups(_pattern.NumberOfCapturingGroups()) {
-  _matches.resize(std::max(1, _num_groups + 1));
+  if (pattern.empty()) {
+    THROW_SQL_ERROR(ERR_MSG("pattern: empty pattern"));
+  }
+  if (!_pattern.ok()) {
+    THROW_SQL_ERROR(ERR_MSG("pattern: invalid regex: ", _pattern.error()));
+  }
+  if (_group < -1 || _group > _num_groups) {
+    THROW_SQL_ERROR(ERR_MSG("pattern: group ", _group,
+                            " out of range, pattern has ", _num_groups,
+                            " capturing groups"));
+  }
+  _matches.resize(_num_groups + 1);
   DetectFastSplit();
 }
+
+PatternTokenizer::~PatternTokenizer() = default;
 
 // Split mode never emits empty segments, so a pattern matching exactly
 // "one byte out of a fixed ASCII set" (a literal, a character class, or
@@ -47,7 +59,7 @@ PatternTokenizer::PatternTokenizer(std::string_view pattern, int group)
 // collapse into one gap whether the regex consumed them one match at a time
 // or as a single greedy match.
 void PatternTokenizer::DetectFastSplit() {
-  if (_group >= 0 || _num_groups != 0 || !_pattern.ok()) {
+  if (_group >= 0 || _num_groups != 0) {
     return;
   }
   re2::Regexp* re = _pattern.Regexp();
@@ -67,7 +79,7 @@ void PatternTokenizer::DetectFastSplit() {
         return;
       }
       _delim_bitmap[rune >> 6] |= uint64_t{1} << (rune & 63);
-      _fast_split = true;
+      _mode = Mode::ByteSet;
     } break;
     case re2::kRegexpLiteralString: {
       const auto n = re->nrunes();
@@ -84,6 +96,7 @@ void PatternTokenizer::DetectFastSplit() {
         literal.push_back(static_cast<char>(runes[k]));
       }
       _split_literal = std::move(literal);
+      _mode = Mode::Literal;
     } break;
     case re2::kRegexpCharClass: {
       auto* cc = re->cc();
@@ -100,12 +113,12 @@ void PatternTokenizer::DetectFastSplit() {
           _delim_bitmap[r >> 6] |= uint64_t{1} << (r & 63);
         }
       }
-      _fast_split = true;
+      _mode = Mode::ByteSet;
     } break;
     default:
       break;
   }
-  if (_fast_split) {
+  if (_mode == Mode::ByteSet) {
     // sets of at most eight bytes ride the 32-byte block classifier
     uint32_t count = 0;
     for (uint32_t b = 0; b < 128 && count <= _block_delims.size(); ++b) {
@@ -135,16 +148,15 @@ void PatternTokenizer::FastLiteralSplitValue(TokenSink& sink,
       return;
     }
     sink.Emit<Layout>(
-      MakeTermView(data + begin, static_cast<uint32_t>(end - begin),
-                   data + n),
+      MakeTermView(data + begin, static_cast<uint32_t>(end - begin), data + n),
       Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
   };
   if (dn <= n) {
     const auto lead = _split_literal[0];
     const size_t last = n - dn;
     while (pos <= last) {
-      const auto* hit = static_cast<const char*>(
-        std::memchr(data + pos, lead, last - pos + 1));
+      const auto* hit =
+        static_cast<const char*>(std::memchr(data + pos, lead, last - pos + 1));
       if (hit == nullptr) {
         break;
       }
@@ -162,8 +174,7 @@ void PatternTokenizer::FastLiteralSplitValue(TokenSink& sink,
 }
 
 template<TokenLayout Layout>
-void PatternTokenizer::FastSplitValue(TokenSink& sink,
-                                      duckdb::string_t value) {
+void PatternTokenizer::FastSplitValue(TokenSink& sink, duckdb::string_t value) {
   const char* const data = value.GetData();
   const auto* p = reinterpret_cast<const unsigned char*>(data);
   const size_t n = value.GetSize();
@@ -196,16 +207,8 @@ void PatternTokenizer::FastSplitValue(TokenSink& sink,
   }
   emit(tok_begin, n);
 }
-PatternTokenizer::~PatternTokenizer() = default;
 
 Tokenizer::ptr PatternTokenizer::Make(Options opts) {
-  if (opts.pattern.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("pattern: empty pattern"));
-  }
-  re2::RE2 re(opts.pattern, re2::RE2::Quiet);
-  if (!re.ok()) {
-    THROW_SQL_ERROR(ERR_MSG("pattern: invalid regex"));
-  }
   return std::make_unique<PatternTokenizer>(opts.pattern, opts.group);
 }
 
@@ -228,7 +231,7 @@ void PatternTokenizer::FillValue(TokenSink& sink, duckdb::string_t value) {
   if (data_len == 0) {
     return;
   }
-  size_t pos = 0;
+  const re2::StringPiece text(data_base, data_len);
 
   const auto emit = [&](size_t start, size_t end) {
     sink.Emit<Layout>(
@@ -237,42 +240,28 @@ void PatternTokenizer::FillValue(TokenSink& sink, duckdb::string_t value) {
       Offs{static_cast<uint32_t>(start), static_cast<uint32_t>(end)});
   };
 
-  while (pos <= data_len) {
-    re2::StringPiece input(data_base + pos, data_len - pos);
-
-    if (!_pattern.Match(input, 0, input.size(), re2::RE2::UNANCHORED,
+  size_t tok_begin = 0;
+  size_t pos = 0;
+  while (pos <= data_len &&
+         _pattern.Match(text, pos, data_len, re2::RE2::UNANCHORED,
                         _matches.data(), _matches.size())) {
-      if (_group < 0 && pos < data_len) {
-        emit(pos, data_len);
-      }
-      return;
-    }
-
     const auto& match = _matches[0];
-    const size_t match_start = pos + (match.data() - input.data());
-    const size_t match_end = match_start + match.length();
+    const size_t match_start = static_cast<size_t>(match.data() - data_base);
+    const size_t match_end = match_start + match.size();
 
     if (_group >= 0) {
-      if (_group <= _num_groups) {
-        const auto& g = _matches[_group];
-        if (!g.empty()) {
-          const size_t start = pos + (g.data() - input.data());
-          emit(start, start + g.length());
-          pos = match_end;
-          continue;
-        }
+      if (const auto& g = _matches[_group]; !g.empty()) {
+        const size_t start = static_cast<size_t>(g.data() - data_base);
+        emit(start, start + g.size());
       }
-      pos = (match.length() == 0) ? pos + 1 : match_end;
-      continue;
+    } else if (match_start > tok_begin) {
+      emit(tok_begin, match_start);
     }
-
-    if (match_start > pos) {
-      emit(pos, match_start);
-      pos = match_end;
-      continue;
-    }
-
-    pos = (match.length() == 0) ? pos + 1 : match_end;
+    tok_begin = match_end;
+    pos = match.empty() ? match_start + 1 : match_end;
+  }
+  if (_group < 0 && tok_begin < data_len) {
+    emit(tok_begin, data_len);
   }
 }
 

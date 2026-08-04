@@ -29,11 +29,6 @@
 #include "re2/re2.h"
 #include "tokenizer.hpp"
 
-namespace re2 {
-
-class RE2;
-}
-
 namespace irs::analysis {
 
 class PatternTokenizer final : public TypedTokenizer<PatternTokenizer>,
@@ -59,33 +54,21 @@ class PatternTokenizer final : public TypedTokenizer<PatternTokenizer>,
   explicit PatternTokenizer(std::string_view pattern, int group = -1);
   ~PatternTokenizer() override;
 
-  // Which fill path a value takes -- fixed at bind (DetectFastSplit), so it
-  // resolves once per chunk instead of branching per value.
+  // Which fill path a value takes -- fixed at construction
+  // (DetectFastSplit), so it resolves once per chunk instead of branching
+  // per value.
   enum class Mode : uint8_t {
     ByteSet,  // single-byte delimiter set: block-classified scan
     Literal,  // multi-byte fixed delimiter: memchr + memcmp
     Regex,    // general RE2 match/split
   };
 
-  auto PrepareBatch() const {
-    Mode mode = Mode::Regex;
-    if (!_force_regex) {
-      mode = _fast_split               ? Mode::ByteSet
-             : !_split_literal.empty() ? Mode::Literal
-                                       : Mode::Regex;
-    }
-    return std::tuple{mode};
-  }
+  auto PrepareBatch() const { return std::tuple{_mode}; }
 
   TokenTraits Traits() const noexcept final { return {.offsets = true}; }
 
   template<TokenLayout Layout, Mode M>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
-
-  void ForceRegexPath(bool force) noexcept { _force_regex = force; }
-  bool FastSplitEligible() const noexcept {
-    return _fast_split || !_split_literal.empty();
-  }
 
  private:
   template<TokenLayout Layout>
@@ -112,8 +95,7 @@ class PatternTokenizer final : public TypedTokenizer<PatternTokenizer>,
   std::array<byte_type, 8> _block_delims{};
   uint8_t _nblock = 0;
   std::string _split_literal;  // multi-byte fixed delimiter (split mode)
-  bool _fast_split = false;
-  bool _force_regex = false;
+  Mode _mode = Mode::Regex;
 };
 
 extern template class TypedTokenizer<PatternTokenizer>;

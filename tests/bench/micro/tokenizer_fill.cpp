@@ -772,14 +772,11 @@ Tokenizer::ptr MakePattern() {
   return PatternTokenizer::Make({.pattern = "\\s+", .group = -1});
 }
 
-Tokenizer::ptr MakePatternLiteralImpl(bool force_regex) {
-  auto stream = PatternTokenizer::Make({.pattern = "::", .group = -1});
-  static_cast<PatternTokenizer*>(stream.get())->ForceRegexPath(force_regex);
-  return stream;
+Tokenizer::ptr MakePatternLiteral() {
+  return PatternTokenizer::Make({.pattern = "::", .group = -1});
 }
-Tokenizer::ptr MakePatternLiteral() { return MakePatternLiteralImpl(false); }
 Tokenizer::ptr MakePatternLiteralRegex() {
-  return MakePatternLiteralImpl(true);
+  return PatternTokenizer::Make({.pattern = ":{2}", .group = -1});
 }
 
 Tokenizer::ptr MakePathHierarchy() { return PathHierarchyTokenizer::Make({}); }

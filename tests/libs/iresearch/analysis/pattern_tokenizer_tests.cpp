@@ -21,8 +21,8 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/pattern_tokenizer.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "tests_config.hpp"
 #include "token_sink_utils.hpp"
 
@@ -142,6 +142,30 @@ TEST_F(PatternTokenizerTests, test_bad_regex) {
     irs::analysis::PatternTokenizer::Options{.pattern = "(", .group = -1}));
   ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
     irs::analysis::PatternTokenizer::Options{.pattern = "(", .group = 1}));
+}
+
+TEST_F(PatternTokenizerTests, test_group_out_of_range) {
+  ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
+    irs::analysis::PatternTokenizer::Options{.pattern = "(a)", .group = 2}));
+  ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
+    irs::analysis::PatternTokenizer::Options{.pattern = ",", .group = 1}));
+  ASSERT_ANY_THROW(irs::analysis::PatternTokenizer::Make(
+    irs::analysis::PatternTokenizer::Options{.pattern = ",", .group = -2}));
+}
+
+TEST_F(PatternTokenizerTests, test_split_empty_matches_keep_bytes) {
+  irs::analysis::PatternTokenizer stream("x*", -1);
+
+  AssertTokenStreamContents(&stream, "ab", {"a", "b"}, {0, 1}, {1, 2}, {1, 1});
+  AssertTokenStreamContents(&stream, "xaxb", {"a", "b"}, {1, 3}, {2, 4},
+                            {1, 1});
+  AssertTokenStreamContents(&stream, "xx", {}, {}, {});
+}
+
+TEST_F(PatternTokenizerTests, test_anchor_matches_text_start_only) {
+  irs::analysis::PatternTokenizer stream("^x", 0);
+
+  AssertTokenStreamContents(&stream, "xxaxx", {"x"}, {0}, {1}, {1});
 }
 
 TEST_F(PatternTokenizerTests, test_reset) {
@@ -386,12 +410,11 @@ namespace {
 
 std::vector<tests::AnalyzerToken> PatternAnalyzeWith(std::string_view pattern,
                                                      std::string_view value,
-                                                     bool force_regex) {
+                                                     bool regex_path) {
+  const std::string effective =
+    regex_path ? "(" + std::string{pattern} + ")" : std::string{pattern};
   auto stream = irs::analysis::PatternTokenizer::Make(
-    irs::analysis::PatternTokenizer::Options{.pattern = std::string{pattern}});
-  auto* pat = dynamic_cast<irs::analysis::PatternTokenizer*>(stream.get());
-  EXPECT_NE(nullptr, pat);
-  pat->ForceRegexPath(force_regex);
+    irs::analysis::PatternTokenizer::Options{.pattern = effective});
   auto tokens = tests::Analyze(*stream, value);
   EXPECT_TRUE(tokens.has_value());
   return std::move(*tokens);
@@ -414,31 +437,28 @@ void AssertPatternFastMatchesRegex(std::string_view pattern,
 }  // namespace
 
 TEST(PatternTokenizerFastSplit, eligibility) {
-  const auto eligible = [](std::string_view pattern) {
-    auto stream = irs::analysis::PatternTokenizer::Make(
-      irs::analysis::PatternTokenizer::Options{.pattern =
-                                                 std::string{pattern}});
-    return dynamic_cast<irs::analysis::PatternTokenizer*>(stream.get())
-      ->FastSplitEligible();
+  using Mode = irs::analysis::PatternTokenizer::Mode;
+  const auto mode = [](std::string_view pattern) {
+    return std::get<0>(irs::analysis::PatternTokenizer{pattern}.PrepareBatch());
   };
-  ASSERT_TRUE(eligible(","));
-  ASSERT_TRUE(eligible("\\s+"));
-  ASSERT_TRUE(eligible("[,;]+"));
-  ASSERT_TRUE(eligible("[a-c]"));
-  ASSERT_TRUE(eligible(" +"));
-  ASSERT_TRUE(eligible("::"));
-  ASSERT_TRUE(eligible(", "));
-  ASSERT_TRUE(eligible("--"));
-  ASSERT_FALSE(eligible("(?i)::"));
-  ASSERT_FALSE(
-    eligible("a\xc2\xa7"
-             "b"));
-  ASSERT_TRUE(eligible("ab"));
-  ASSERT_FALSE(eligible(",*"));
-  ASSERT_FALSE(eligible("(,)"));
-  ASSERT_FALSE(eligible(",|;;"));
-  ASSERT_FALSE(eligible("\\p{L}"));
-  ASSERT_FALSE(eligible("x?"));
+  ASSERT_EQ(Mode::ByteSet, mode(","));
+  ASSERT_EQ(Mode::ByteSet, mode("\\s+"));
+  ASSERT_EQ(Mode::ByteSet, mode("[,;]+"));
+  ASSERT_EQ(Mode::ByteSet, mode("[a-c]"));
+  ASSERT_EQ(Mode::ByteSet, mode(" +"));
+  ASSERT_EQ(Mode::Literal, mode("::"));
+  ASSERT_EQ(Mode::Literal, mode(", "));
+  ASSERT_EQ(Mode::Literal, mode("--"));
+  ASSERT_EQ(Mode::Literal, mode("ab"));
+  ASSERT_EQ(Mode::Regex, mode("(?i)::"));
+  ASSERT_EQ(Mode::Regex, mode("a\xc2\xa7"
+                              "b"));
+  ASSERT_EQ(Mode::Regex, mode(",*"));
+  ASSERT_EQ(Mode::Regex, mode("(,)"));
+  ASSERT_EQ(Mode::Regex, mode(":{2}"));
+  ASSERT_EQ(Mode::Regex, mode(",|;;"));
+  ASSERT_EQ(Mode::Regex, mode("\\p{L}"));
+  ASSERT_EQ(Mode::Regex, mode("x?"));
 }
 
 TEST(PatternTokenizerFastSplit, property_oracle) {

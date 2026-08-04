@@ -2560,10 +2560,15 @@ bool Catalog::CreateInvertedIndex(
     }
     c.catalog_column = &*it;
   }
+  // A Search-table index allocates a distinct term field per column (shared
+  // store); a transactional index keeps field_id == column id.
+  const bool search_engine =
+    rel->GetType() == ObjectType::Table &&
+    basics::downCast<const Table>(*rel).GetEngine() == TableEngine::Search;
   auto index = catalog::CreateInvertedIndex(
     context, database_id, schema, *schema_id, ObjectId{0}, resolved.relation_id,
     std::move(name), std::move(columns), _snapshot, std::move(options),
-    std::move(predicate));
+    std::move(predicate), search_engine);
   CreateIndexImpl(schema, std::move(index), operation_options);
   return true;
 }
@@ -5526,7 +5531,8 @@ void OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
   ReadContext ctx{.id = index_id,
                   .database_id = database_id,
                   .schema_id = schema_id,
-                  .relation_id = table_id};
+                  .relation_id = table_id,
+                  .engine = engine};
   std::shared_ptr<Index> index;
   if (entry_type == ObjectType::SecondaryIndex) {
     index = catalog::DeserializeObject<SecondaryIndex>(bytes, ctx);

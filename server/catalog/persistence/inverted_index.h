@@ -77,11 +77,28 @@ struct ExpressionKey {
   irs::field_id field_id = irs::field_limits::invalid();
 };
 
-struct InvertedIndexData {
+// One plain-column key: the column plus its allocated term field_id. For a
+// transactional index `field_id == column` (identity); for a Search-table index
+// the field_id is a distinct allocation, so several indexes on one column get
+// separate term fields in the shared store. The plain-column mirror of
+// ExpressionKey.
+struct ColumnKey {
+  Column::Id column = Column::kInvalidId;
+  irs::field_id field_id = irs::field_limits::invalid();
+};
+
+// Persisted inverted-index catalog tuple. Templated only on the `columns`
+// element so the two engines keep distinct on-disk layouts: a transactional
+// index serializes bare `Column::Id`s (identical to the pre-search-table
+// format, so old datadirs load unchanged), while a Search-table index
+// serializes `ColumnKey`s that also carry each column's allocated term
+// field_id. Every other field is shared, so the positional layout after
+// `columns` is byte-identical across both engines.
+template<typename ColumnEntry>
+struct InvertedIndexDataT {
   std::string name;
-  // Plain-column keys (de-duped). Each column key's field_id is its column id,
-  // so no separate field_id is stored. Order is not load-bearing for inverted.
-  std::vector<Column::Id> columns;
+  // Plain-column keys (de-duped). Order is not load-bearing for inverted.
+  std::vector<ColumnEntry> columns;
   std::vector<ExpressionKey> expression_keys;
   // Per-field iresearch config keyed by field_id.
   containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
@@ -92,5 +109,11 @@ struct InvertedIndexData {
   ExpressionData predicate;
   std::string comment;
 };
+
+// Legacy / transactional layout: bare column ids, matching the format from
+// before Search tables existed.
+using InvertedIndexData = InvertedIndexDataT<Column::Id>;
+// Search-table layout: each column carries its allocated term field_id.
+using SearchInvertedIndexData = InvertedIndexDataT<ColumnKey>;
 
 }  // namespace sdb::catalog::persistence

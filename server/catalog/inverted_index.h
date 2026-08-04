@@ -189,18 +189,22 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   using Entries =
     containers::NodeHashMap<irs::field_id, InvertedIndexEntryInfo>;
 
-  // `columns` are the de-duped plain-column keys (each key's field_id is its
-  // column id). `expression_keys` carry each expression's payload + its
-  // allocated field_id as one unit. `entries` is the per-field config keyed by
-  // field_id. `predicate` is the partial-index predicate (empty
-  // serialized_expr = full index); its dependent columns join the referenced
-  // set so the store mirror declares them and duckdb populates their chunk
-  // vectors on DML.
-  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                ObjectId relation_id, std::string name,
-                std::vector<Column::Id> columns,
-                std::vector<ExpressionKey> expression_keys, Entries entries,
-                InvertedIndexOptions options, ExpressionData predicate)
+  // `columns` are the de-duped plain-column keys. `col_to_term_field` maps each
+  // column to its allocated term field_id: empty for a transactional index
+  // (field_id == column id), populated for a Search-table index so several
+  // indexes on one column get distinct term fields in the shared store.
+  // `expression_keys` carry each expression's payload + its allocated field_id
+  // as one unit. `entries` is the per-field config keyed by field_id.
+  // `predicate` is the partial-index predicate (empty serialized_expr = full
+  // index); its dependent columns join the referenced set so the store mirror
+  // declares them and duckdb populates their chunk vectors on DML.
+  InvertedIndex(
+    ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
+    std::string name, std::vector<Column::Id> columns,
+    std::vector<ExpressionKey> expression_keys, Entries entries,
+    InvertedIndexOptions options, ExpressionData predicate,
+    containers::FlatHashMap<Column::Id, irs::field_id> col_to_term_field = {},
+    bool search_engine = false)
     : Index{database_id,
             schema_id,
             id,
@@ -215,12 +219,25 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
             ObjectType::InvertedIndex},
       _entries{std::move(entries)},
       _expression_keys{std::move(expression_keys)},
+      _col_to_term_field{std::move(col_to_term_field)},
+      _search_engine{search_engine},
       _options{std::move(options)},
       _predicate{std::move(predicate)} {
     BuildExprByFieldIdIndex();
     BuildSerializedExprIndex();
     BuildFieldLookupIndex();
     BumpTickServerForEntryIds();
+  }
+
+  // The allocated term field_id for a plain column: the per-index allocation
+  // for a Search-table index, else the column id itself (transactional
+  // identity).
+  irs::field_id TermFieldForColumn(Column::Id column) const noexcept {
+    if (auto it = _col_to_term_field.find(column);
+        it != _col_to_term_field.end()) {
+      return it->second;
+    }
+    return static_cast<irs::field_id>(column);
   }
 
   static std::shared_ptr<InvertedIndex> Deserialize(duckdb::Deserializer& src,
@@ -325,6 +342,14 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   Entries _entries;
   std::vector<ExpressionKey> _expression_keys;
+  // Per-column allocated term field_id (Search-table indexes only; empty =>
+  // identity field_id == column id). Rebuilt from the persisted ColumnKey
+  // pairs.
+  containers::FlatHashMap<Column::Id, irs::field_id> _col_to_term_field;
+  // Selects the serialized layout: a Search-table index writes ColumnKey pairs
+  // (allocated term field_ids), a transactional index the legacy bare-column
+  // format. Set from the owning table's engine at construction.
+  bool _search_engine = false;
   // Bridge: field_id -> the owning expression key's payload (nullptr-absent for
   // column keys). Pointers are stable (into the immutable _expression_keys).
   containers::FlatHashMap<irs::field_id, const ExpressionData*>

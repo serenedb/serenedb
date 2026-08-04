@@ -584,9 +584,9 @@ TEST(clustering_test, cosine_centroids_are_unit_norm) {
 
 // Regression: a genuine >=3-layer tree must route every vector to the same leaf
 // id on the deserialized tree as the build-side AssignCentroids. A small
-// max_centroids square-roots the leaf count down over several layers, exercising
-// the descent leaf-id numbering across >=3 layers (the 2-layer case is covered
-// by multilevel_build_search_id_consistency).
+// max_centroids square-roots the leaf count down over several layers,
+// exercising the descent leaf-id numbering across >=3 layers (the 2-layer case
+// is covered by multilevel_build_search_id_consistency).
 TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   constexpr uint32_t d = 8;
   const auto data = MakeClusters(d, /*n_clusters=*/256, /*per_cluster=*/1);
@@ -1166,8 +1166,8 @@ TEST(clustering_test, superkmeans_angular_centroids_unit_norm) {
   }
 }
 
-// No node ever fans out past max_centroids, so the root is bounded by it: a large
-// cap lets the root fan wide toward the leaf count (shallow), a small cap
+// No node ever fans out past max_centroids, so the root is bounded by it: a
+// large cap lets the root fan wide toward the leaf count (shallow), a small cap
 // square-roots the leaf count down over extra layers (deep).
 TEST(centroids_builder_test, root_fanout_capped_at_max_centroids) {
   constexpr uint32_t d = 8;

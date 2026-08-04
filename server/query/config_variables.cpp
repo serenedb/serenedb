@@ -419,7 +419,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::INTEGER,
         "Target IVF posting-list size (leaf cap t), captured into the index "
         "config at CREATE INDEX. Smaller values force deeper multi-level "
-        "centroid trees (useful for testing). 0 derives it from the segment row "
+        "centroid trees (useful for testing). 0 derives it from the segment "
+        "row "
         "count, the vector width and the quantizer's scan cost, and pairs it "
         "with a sdb_ivf_max_centroids wide enough for a single flat level; "
         "setting sdb_ivf_max_centroids explicitly instead raises the derived "

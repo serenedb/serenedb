@@ -39,7 +39,7 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/comparer.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -470,7 +470,7 @@ class SortingDocIteratorImpl : public DocIterator {
   Attributes _attrs;
 };
 
-class TermIteratorImpl : public irs::TermIterator {
+class TermIteratorImpl : public irs::SourceTermIterator {
  public:
   explicit TermIteratorImpl(FieldsData::postings_ref_t& postings,
                             const DocMap* docmap) noexcept
@@ -502,10 +502,6 @@ class TermIteratorImpl : public irs::TermIterator {
   }
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-
-  void read() noexcept final {
-    // Does nothing now
-  }
 
   DocIterator::ptr postings(IndexFeatures /*features*/) const final {
     SDB_ASSERT(_it != _end);
@@ -603,8 +599,8 @@ class TermReaderImpl final : public irs::BasicTermReader,
 
   FieldProperties properties() const noexcept final { return Meta(); }
 
-  irs::TermIterator::ptr iterator() const noexcept final {
-    return memory::to_managed<irs::TermIterator>(_it);
+  irs::SourceTermIterator::ptr iterator() const noexcept final {
+    return memory::to_managed<irs::SourceTermIterator>(_it);
   }
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
@@ -620,7 +616,8 @@ class TermReaderImpl final : public irs::BasicTermReader,
 FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
                      int_block_pool::inserter& int_writer,
                      IndexFeatures index_features, ColWriter* col_writer,
-                     NormColumnOptions norm_options)
+                     NormColumnOptions norm_options, uint32_t row_group_size,
+                     bool dictless)
   // Unset optional features
   : _meta{id, index_features & (~IndexFeatures::Offs)},
     _terms{*byte_writer},
@@ -629,10 +626,11 @@ FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
     _proc_table{kTermProcessingTables[0]},
     _requested_features{index_features},
     _last_doc{doc_limits::invalid()} {
+  _meta.dictless = dictless;
   if (IsSubsetOf(IndexFeatures::Norm, index_features) && col_writer &&
       field_limits::valid(norm_options.id)) {
     _col_writer = col_writer;
-    _norm_row_group_size = norm_options.row_group_size;
+    _row_group_size = row_group_size;
     _meta.norm = norm_options.id;
   }
 
@@ -643,8 +641,7 @@ FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
 void FieldData::compute_features() const {
   SDB_ASSERT(_col_writer);
   if (!_norm_writer) {
-    _norm_writer =
-      &_col_writer->OpenNormColumn(_meta.norm, _norm_row_group_size);
+    _norm_writer = &_col_writer->OpenNormColumn(_meta.norm, _row_group_size);
   }
   const auto target_row = static_cast<uint64_t>(_last_doc) - doc_limits::min();
   _norm_writer->Append(target_row, _stats.len);
@@ -1007,16 +1004,20 @@ FieldData* FieldsData::emplace(field_id id, IndexFeatures index_features) {
   }
 
   NormColumnOptions norm_options{};
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   if (_col_writer && IsSubsetOf(IndexFeatures::Norm, index_features)) {
     SDB_ASSERT(_field_options,
                "Norm-featured field requires per-field index options");
     norm_options = _field_options->GetNormColumnOptions(id);
     SDB_ASSERT(field_limits::valid(norm_options.id),
                "GetNormColumnOptions must return a valid id for field ", id);
+    row_group_size = _field_options->GetDictOptions().row_group_size;
   }
+  const bool dictless = _field_options && _field_options->IsDictlessField(id);
   try {
-    it->second = &_fields.emplace_back(
-      id, _byte_writer, _int_writer, index_features, _col_writer, norm_options);
+    it->second = &_fields.emplace_back(id, _byte_writer, _int_writer,
+                                       index_features, _col_writer,
+                                       norm_options, row_group_size, dictless);
   } catch (...) {
     _fields_map.erase(it);
     throw;
@@ -1024,7 +1025,7 @@ FieldData* FieldsData::emplace(field_id id, IndexFeatures index_features) {
   return it->second;
 }
 
-void FieldsData::flush(burst_trie::FieldWriter& fw, FlushState& state,
+void FieldsData::flush(term_dict::FieldWriter& fw, FlushState& state,
                        std::span<const BasicTermReader* const> extra) {
   IndexFeatures index_features{IndexFeatures::None};
 

@@ -22,6 +22,11 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "iresearch/formats/ivf/quantizer.hpp"
@@ -64,9 +69,8 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(3);
-    writer->EncodeCluster(out, points.data(), 3);
-    writer->FinishCluster(out);
+    writer->Encode(out, points.data(), 3);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -76,17 +80,162 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
   auto codebook = stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_start);
   EXPECT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, 3, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, 3, centroid.data());
 
   std::array<score_t, 3> scores{};
   reader->ComputeBlock(0, 3, scores.data());
   return scores;
 }
 
+struct LaneCase {
+  VectorQuantization quant;
+  uint32_t pq_m;
+  uint32_t nb_bits;
+  std::string_view name;
+};
+
+constexpr uint32_t kLaneDim = 8;
+// Two magnitudes eight orders of magnitude apart in squared distance, so a
+// document from outside the cluster cannot be mistaken for one inside it.
+constexpr float kFar = 10000.f;
+
+// Documents of the one stream: those inside `[first_lane, first_lane + n)` are
+// near, and spread over eight positions of a second dimension the far ones
+// leave alone -- so neighbouring lanes decode to different scores and a
+// shifted read shows. The rest are far along the first dimension only, which
+// keeps the near documents apart under a quantizer trained on both.
+std::vector<float> MakeLaneCorpus(size_t docs, size_t first_lane, size_t n) {
+  std::vector<float> out(docs * kLaneDim, 0.f);
+  for (size_t i = 0; i < docs; ++i) {
+    const bool inside = i >= first_lane && i < first_lane + n;
+    out[i * kLaneDim] = inside ? 1.f : kFar;
+    out[i * kLaneDim + 1] = inside ? static_cast<float>(i % 8) : 0.f;
+  }
+  return out;
+}
+
+std::vector<score_t> ReadLanes(
+  QuantizerWriter& writer, const std::shared_ptr<const QuantizerCodebook>& cb,
+  std::span<const float> corpus, const std::vector<float>& centroid,
+  uint64_t first_lane, size_t n) {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t pay_base;
+  {
+    MemoryIndexOutput out{file};
+    pay_base = out.Position();
+    writer.SetClusterCentroid(centroid.data());
+    writer.Encode(out, corpus.data(), corpus.size() / kLaneDim);
+    writer.Finish(out);
+    out.Flush();
+  }
+  auto reader =
+    MakeQuantizerReader(cb, std::make_unique<MemoryIndexInput>(file), pay_base);
+  EXPECT_NE(reader, nullptr);
+  std::vector<score_t> scores(n, 0.f);
+  reader->StartCluster(first_lane, n, centroid.data());
+  reader->ComputeBlock(0, n, scores.data());
+  return scores;
+}
+
 }  // namespace
+
+class quantizer_lane_test : public ::testing::TestWithParam<LaneCase> {};
+
+// A cluster is a lane range of a stream that keeps running past both of its
+// ends, so the read has to mask both edges: the scores it hands back must be
+// exactly the ones the same documents produce when they are the whole stream,
+// and never a neighbour's.
+TEST_P(quantizer_lane_test, cluster_reads_only_its_own_lanes) {
+  const auto& param = GetParam();
+  constexpr size_t kDocs = 200;
+  const std::vector<float> centroid(kLaneDim, 0.f);
+  const std::vector<float> query{0.5f, -1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+
+  // First lane / length pairs: pack-aligned and not, shorter and longer than a
+  // pack, straddling one boundary and several, and the stream's own tail.
+  const std::vector<std::pair<size_t, size_t>> ranges{
+    {0, 5},   {1, 3},  {31, 2},   {32, 32},       {33, 40},
+    {96, 64}, {63, 1}, {64, 128}, {kDocs - 3, 3}, {0, kDocs},
+  };
+
+  for (const auto& [first_lane, n] : ranges) {
+    ASSERT_LE(first_lane + n, kDocs);
+    const auto corpus = MakeLaneCorpus(kDocs, first_lane, n);
+    // The same documents as the whole stream: their codes and factors do not
+    // depend on the lane they land on, so the scores must match exactly.
+    const std::vector<float> alone(
+      corpus.begin() + static_cast<std::ptrdiff_t>(first_lane * kLaneDim),
+      corpus.begin() +
+        static_cast<std::ptrdiff_t>((first_lane + n) * kLaneDim));
+
+    auto writer = MakeQuantizerWriter(param.quant, kLaneDim,
+                                      VectorMetric::L2Sqr, param.pq_m,
+                                      /*pq_niter=*/0, param.nb_bits);
+    ASSERT_NE(writer, nullptr);
+    writer->SetClusterCentroid(centroid.data());
+    writer->Train(corpus.data(), kDocs);
+    auto stats = MakeQuantizerStats(param.quant, kLaneDim, writer->StatsBytes(),
+                                    VectorMetric::L2Sqr);
+    ASSERT_NE(stats, nullptr);
+    auto cb = stats->MakeCodebook(query);
+    ASSERT_NE(cb, nullptr);
+
+    const auto actual = ReadLanes(*writer, cb, corpus, centroid, first_lane, n);
+    const auto expected = ReadLanes(*writer, cb, alone, centroid, 0, n);
+    ASSERT_EQ(expected.size(), actual.size());
+    for (size_t i = 0; i != n; ++i) {
+      EXPECT_EQ(expected[i], actual[i])
+        << param.name << " lane " << (first_lane + i);
+    }
+
+    // Independent of the two reads agreeing: every score belongs to a near
+    // document. What a far one decodes to under this same quantizer is the
+    // band, so the check needs no assumption about quantization error. A
+    // cluster that is the whole stream has no neighbour to leak in, and its
+    // quantizer never saw a far document.
+    if (n != kDocs) {
+      std::vector<float> far_corpus(4 * kLaneDim, 0.f);
+      for (size_t i = 0; i != 4; ++i) {
+        far_corpus[i * kLaneDim] = kFar;
+      }
+      const auto far_scores =
+        ReadLanes(*writer, cb, far_corpus, centroid, 0, 4);
+      const score_t max_far =
+        *std::max_element(far_scores.begin(), far_scores.end());
+      for (size_t i = 0; i != n; ++i) {
+        EXPECT_GT(actual[i], max_far)
+          << param.name << " lane " << (first_lane + i);
+      }
+    }
+    // And the check has to be able to see a one-lane slip: the same length
+    // read one lane over, at either edge, must not decode to the same scores.
+    if (first_lane + n < kDocs) {
+      EXPECT_NE(ReadLanes(*writer, cb, corpus, centroid, first_lane + 1, n),
+                actual)
+        << param.name << " forward of " << first_lane;
+    }
+    if (first_lane > 0) {
+      EXPECT_NE(ReadLanes(*writer, cb, corpus, centroid, first_lane - 1, n),
+                actual)
+        << param.name << " back of " << first_lane;
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  quantizers, quantizer_lane_test,
+  ::testing::Values(LaneCase{VectorQuantization::SQ8, 0, 0, "sq8"},
+                    LaneCase{VectorQuantization::SQ4, 0, 0, "sq4"},
+                    LaneCase{VectorQuantization::PQ, 4, 0, "pq"},
+                    LaneCase{VectorQuantization::RaBitQ, 0, 1, "rabitq1"},
+                    LaneCase{VectorQuantization::RaBitQ, 0, 8, "rabitq8"}),
+  [](const ::testing::TestParamInfo<LaneCase>& info) {
+    return std::string{info.param.name};
+  });
 
 class rabitq_quantizer_test : public ::testing::TestWithParam<uint32_t> {};
 
@@ -118,9 +267,8 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -132,10 +280,10 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_start);
   ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::array<score_t, n> scores{};
   reader->ComputeBlock(0, n, scores.data());
@@ -172,9 +320,8 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -186,10 +333,10 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_start);
   ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::array<score_t, n> scores{};
   reader->ComputeBlock(0, n, scores.data());
@@ -244,9 +391,8 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -257,10 +403,10 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_start);
   ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::array<score_t, n> scores{};
   reader->ComputeBlock(0, n, scores.data());
@@ -367,9 +513,8 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -380,10 +525,10 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_start);
   ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::vector<score_t> scores(n);
   reader->ComputeBlock(0, n, scores.data());

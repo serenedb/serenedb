@@ -37,7 +37,7 @@
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -56,7 +56,9 @@ class FieldData : util::Noncopyable {
   FieldData(field_id id, byte_block_pool::inserter& byte_writer,
             int_block_pool::inserter& int_writer, IndexFeatures index_features,
             ColWriter* col_writer = nullptr,
-            NormColumnOptions norm_options = {});
+            NormColumnOptions norm_options = {},
+            uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE,
+            bool dictless = false);
 
   doc_id_t doc() const noexcept { return _last_doc; }
 
@@ -104,7 +106,7 @@ class FieldData : util::Noncopyable {
   }
 
   ColWriter* _col_writer = nullptr;
-  uint32_t _norm_row_group_size = 0;
+  uint32_t _row_group_size = 0;
   mutable NormColumnWriter* _norm_writer = nullptr;
   mutable FieldMeta _meta;
   Postings _terms;
@@ -145,7 +147,7 @@ class FieldsData : util::Noncopyable {
   size_t memory_reserved() const noexcept;
 
   size_t size() const { return _fields.size(); }
-  void flush(burst_trie::FieldWriter& fw, FlushState& state,
+  void flush(term_dict::FieldWriter& fw, FlushState& state,
              std::span<const BasicTermReader* const> extra = {});
   void reset() noexcept;
 

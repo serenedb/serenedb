@@ -1,0 +1,360 @@
+hash-threshold 100
+
+# The scan's work item is one row group of one segment, so an index compacted
+# into a SINGLE segment still spreads over every worker: each driver claims
+# row groups of that one segment, not the segment. This pins what that must
+# not change -- the answers.
+#
+# Shape: one table, two indexes. `sch_whole` has a row group spanning the
+# segment (nothing to spread, the oracle); `sch_split` is at 256 rows, and both
+# are compacted to ONE segment. Every query below runs on both, so a row group
+# claimed twice, skipped, or scored against the wrong base shows up as a
+# difference. Covered per driver: Count and CountFast, ColScan (covered
+# match-all, with and without deletes), Stream (lookup materialization),
+# TopK (BM25 and the vector path), TsDict, and the scan under a join and an
+# aggregation, which is where a worker that parks on the scored-query barrier
+# has to come back inside a larger pipeline.
+
+statement ok
+SET compaction_interval = 0
+
+
+statement ok
+SET refresh_interval = 0
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sch_kw(template = 'keyword', frequency = true)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sch_tx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true, norm = true)
+
+
+statement ok
+CREATE TABLE schbase(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
+                     svc VARCHAR NOT NULL, amount INTEGER,
+                     body VARCHAR NOT NULL, emb FLOAT[3])
+
+
+statement ok
+INSERT INTO schbase
+SELECT i,
+       CASE i % 3 WHEN 0 THEN 'ERROR' WHEN 1 THEN 'INFO' ELSE 'WARN' END,
+       CASE i % 4 WHEN 0 THEN 'frontend' WHEN 1 THEN 'backend'
+                  WHEN 2 THEN 'db' ELSE 'cache' END,
+       i % 1000,
+       'alpha doc' || i || ' beta gamma'
+         || CASE WHEN i % 7 = 0 THEN ' delta' ELSE '' END,
+       [i % 97, i % 31, i % 13]::FLOAT[3]
+FROM range(1, 4001) t(i)
+
+
+# The oracle: one row group spanning the segment.
+statement ok
+CREATE INDEX sch_whole ON schbase USING inverted(sev sch_kw, body sch_tx,
+    emb ivf (metric = 'l2')) INCLUDE (svc, amount)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 2000000000)
+
+
+# 256 rows per row group over 4000 documents: 16 row groups in one segment.
+statement ok
+CREATE INDEX sch_split ON schbase USING inverted(sev sch_kw, body sch_tx,
+    emb ivf (metric = 'l2')) INCLUDE (svc, amount)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 256)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) schbase
+
+
+# A second batch and a compaction: what the scheduler must face is ONE segment
+# holding every row group, which is what COMPACT_TABLE leaves behind.
+statement ok
+INSERT INTO schbase
+SELECT i, 'ERROR', 'frontend', i % 1000,
+       'alpha doc' || i || ' beta gamma delta epsilon',
+       [i % 97, i % 31, i % 13]::FLOAT[3]
+FROM range(5000, 6001) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) schbase
+
+
+statement ok
+VACUUM (COMPACT_TABLE) schbase
+
+
+# The premise of everything below: one segment, many row groups. `rgs=` is the
+# per-field row group count and the segment column is the reader's segment
+# index, so more than one distinct value here would mean the compaction did
+# not leave a single segment.
+query TTT
+SELECT 'segments' AS q, count(DISTINCT row_group_id)::text AS v, 't' AS ok
+  FROM pragma_storage_info('sch_split', include_segment_info := true)
+  WHERE segment_info LIKE '%rgs=%'
+UNION ALL SELECT 'row_groups',
+       max(regexp_extract(segment_info, 'rgs=([0-9]+)', 1))::text,
+       CASE WHEN max(regexp_extract(segment_info, 'rgs=([0-9]+)', 1)::INTEGER) > 1
+            THEN 't' ELSE 'f' END
+  FROM pragma_storage_info('sch_split', include_segment_info := true)
+  WHERE segment_info LIKE '%rgs=%'
+ORDER BY 1
+----
+q	v	ok
+row_groups	20	t
+segments	1	t
+
+
+# --- Count / CountFast / ColScan / Stream: every row of the one segment is
+# claimed exactly once, whichever worker claims which row group.
+query TT
+SELECT 'count_fast' AS q,
+       (SELECT count(*) FROM sch_whole) = (SELECT count(*) FROM sch_split)
+         AS same
+UNION ALL SELECT 'count_pred',
+       (SELECT count(*) FROM sch_whole WHERE body @@ ts_phrase('delta')) =
+       (SELECT count(*) FROM sch_split WHERE body @@ ts_phrase('delta'))
+UNION ALL SELECT 'count_colfilter',
+       (SELECT count(*) FROM sch_whole WHERE amount BETWEEN 100 AND 300) =
+       (SELECT count(*) FROM sch_split WHERE amount BETWEEN 100 AND 300)
+UNION ALL SELECT 'colscan',
+       (SELECT md5(string_agg(id || ':' || svc || ':' || amount, ',' ORDER BY id))
+        FROM sch_whole) =
+       (SELECT md5(string_agg(id || ':' || svc || ':' || amount, ',' ORDER BY id))
+        FROM sch_split)
+UNION ALL SELECT 'colscan_filter',
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM sch_whole
+        WHERE amount < 50) =
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM sch_split
+        WHERE amount < 50)
+UNION ALL SELECT 'stream',
+       (SELECT md5(string_agg(id || ':' || sev, ',' ORDER BY id))
+        FROM sch_whole WHERE body @@ ts_phrase('delta')) =
+       (SELECT md5(string_agg(id || ':' || sev, ',' ORDER BY id))
+        FROM sch_split WHERE body @@ ts_phrase('delta'))
+ORDER BY 1
+----
+q	same
+colscan	t
+colscan_filter	t
+count_colfilter	t
+count_fast	t
+count_pred	t
+stream	t
+
+
+# --- The scored drivers. The prepare phase is one unit here (one segment, one
+# dictionary): every other worker parks on the barrier and comes back to claim
+# row groups, so the statistics behind these scores must be the merged ones
+# either way. Scores, not ids: BM25 ties break on collection order, which a
+# row-group claim order legitimately reorders.
+query TT
+SELECT 'bm25_all' AS q,
+       (SELECT md5(string_agg(round(s::numeric, 4)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(sch_whole.tableoid) s FROM sch_whole
+              WHERE body @@ ts_phrase('delta')) t) =
+       (SELECT md5(string_agg(round(s::numeric, 4)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(sch_split.tableoid) s FROM sch_split
+              WHERE body @@ ts_phrase('delta')) t) AS same
+UNION ALL SELECT 'bm25_topk',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(sch_whole.tableoid) s FROM sch_whole
+              WHERE body @@ ts_phrase('delta') ORDER BY s DESC LIMIT 25) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(sch_split.tableoid) s FROM sch_split
+              WHERE body @@ ts_phrase('delta') ORDER BY s DESC LIMIT 25) t)
+UNION ALL SELECT 'bm25_topk_minscore',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(sch_whole.tableoid) s FROM sch_whole
+              WHERE body @@ ts_phrase('epsilon')
+              ORDER BY s DESC LIMIT 10) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(sch_split.tableoid) s FROM sch_split
+              WHERE body @@ ts_phrase('epsilon')
+              ORDER BY s DESC LIMIT 10) t)
+UNION ALL SELECT 'vector_topk',
+       -- The distances, not the ids: this corpus holds exact distance ties at
+       -- the k-th place, and which of them the collector keeps depends on the
+       -- order its row groups were claimed in -- the same tie-break freedom
+       -- BM25 has.
+       (SELECT string_agg(round(d::numeric, 5)::text, ',' ORDER BY d) FROM
+         (SELECT emb <-> [1.0, 2.0, 3.0]::FLOAT[3] d FROM sch_whole
+          ORDER BY d LIMIT 10) t) =
+       (SELECT string_agg(round(d::numeric, 5)::text, ',' ORDER BY d) FROM
+         (SELECT emb <-> [1.0, 2.0, 3.0]::FLOAT[3] d FROM sch_split
+          ORDER BY d LIMIT 10) t)
+UNION ALL SELECT 'ts_dict',
+       (SELECT md5(string_agg(d::text, ','))
+        FROM (SELECT unnest(ts_dict_agg(sev)) d FROM sch_whole ORDER BY 1) t) =
+       (SELECT md5(string_agg(d::text, ','))
+        FROM (SELECT unnest(ts_dict_agg(sev)) d FROM sch_split ORDER BY 1) t)
+ORDER BY 1
+----
+q	same
+bm25_all	t
+bm25_topk	t
+bm25_topk_minscore	t
+ts_dict	t
+vector_topk	t
+
+
+# --- Composed pipelines: the scan is a source inside a larger plan, so a
+# worker that parks on the barrier must resume and keep feeding the join /
+# aggregation above it -- and the row groups a parked worker did not claim
+# must be claimed by whoever did.
+query TT
+SELECT 'join' AS q,
+       (SELECT count(*) FROM sch_whole JOIN schbase b ON sch_whole.id = b.id
+        WHERE sch_whole.body @@ ts_phrase('delta')) =
+       (SELECT count(*) FROM sch_split JOIN schbase b ON sch_split.id = b.id
+        WHERE sch_split.body @@ ts_phrase('delta')) AS same
+UNION ALL SELECT 'group_by',
+       (SELECT md5(string_agg(g, ',' ORDER BY g)) FROM
+         (SELECT sev || ':' || count(*) || ':' || sum(amount) g
+          FROM sch_whole WHERE body @@ ts_phrase('beta') GROUP BY sev) t) =
+       (SELECT md5(string_agg(g, ',' ORDER BY g)) FROM
+         (SELECT sev || ':' || count(*) || ':' || sum(amount) g
+          FROM sch_split WHERE body @@ ts_phrase('beta') GROUP BY sev) t)
+UNION ALL SELECT 'union_all_self',
+       (SELECT count(*) FROM (SELECT id FROM sch_whole
+                              WHERE body @@ ts_phrase('delta')
+                              UNION ALL
+                              SELECT id FROM sch_whole
+                              WHERE sev @@ 'ERROR') t) =
+       (SELECT count(*) FROM (SELECT id FROM sch_split
+                              WHERE body @@ ts_phrase('delta')
+                              UNION ALL
+                              SELECT id FROM sch_split
+                              WHERE sev @@ 'ERROR') t)
+ORDER BY 1
+----
+q	same
+group_by	t
+join	t
+union_all_self	t
+
+
+
+# The same, scored: the scan feeds a join and a windowed aggregation while the
+# scored-query barrier runs, so a worker that parked has to resume into the
+# larger pipeline. `bm25()` needs the scan in its own sub-query, so the two
+# sides are CTEs rather than nested scalar sub-queries.
+query TT
+WITH wh AS (SELECT sch_whole.id id, BM25(sch_whole.tableoid) s
+            FROM sch_whole JOIN schbase b ON sch_whole.id = b.id
+            WHERE sch_whole.body @@ ts_phrase('delta')),
+     sp AS (SELECT sch_split.id id, BM25(sch_split.tableoid) s
+            FROM sch_split JOIN schbase b ON sch_split.id = b.id
+            WHERE sch_split.body @@ ts_phrase('delta')),
+     wh_agg AS (SELECT count(*) n, round(sum(s)::numeric, 4) total FROM wh),
+     sp_agg AS (SELECT count(*) n, round(sum(s)::numeric, 4) total FROM sp)
+SELECT 'join_scored' AS q,
+       (SELECT md5(string_agg(round(s::numeric, 4)::text, ',' ORDER BY id))
+          FROM wh) =
+       (SELECT md5(string_agg(round(s::numeric, 4)::text, ',' ORDER BY id))
+          FROM sp) AS same
+UNION ALL SELECT 'join_scored_agg',
+       (SELECT n || ':' || total FROM wh_agg) =
+       (SELECT n || ':' || total FROM sp_agg)
+ORDER BY 1
+----
+q	same
+join_scored	t
+join_scored_agg	t
+
+
+# --- Deletes: a segment with deletes used to be ONE work unit for the
+# columnstore scan (the masked walk could not be split); it is now one per row
+# group, and the delete mask is still segment-wide.
+statement ok
+DELETE FROM schbase WHERE id % 41 = 0
+
+
+statement ok
+VACUUM (REFRESH_TABLE) schbase
+
+
+query TT
+SELECT 'del_colscan' AS q,
+       (SELECT md5(string_agg(id || ':' || svc, ',' ORDER BY id))
+        FROM sch_whole) =
+       (SELECT md5(string_agg(id || ':' || svc, ',' ORDER BY id))
+        FROM sch_split) AS same
+UNION ALL SELECT 'del_count',
+       (SELECT count(*) FROM sch_whole) = (SELECT count(*) FROM sch_split)
+UNION ALL SELECT 'del_count_pred',
+       (SELECT count(*) FROM sch_whole WHERE body @@ ts_phrase('delta')) =
+       (SELECT count(*) FROM sch_split WHERE body @@ ts_phrase('delta'))
+UNION ALL SELECT 'del_stream',
+       (SELECT md5(string_agg(id || ':' || sev, ',' ORDER BY id))
+        FROM sch_whole WHERE body @@ ts_phrase('delta')) =
+       (SELECT md5(string_agg(id || ':' || sev, ',' ORDER BY id))
+        FROM sch_split WHERE body @@ ts_phrase('delta'))
+UNION ALL SELECT 'del_topk',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(sch_whole.tableoid) s FROM sch_whole
+              WHERE body @@ ts_phrase('delta') ORDER BY s DESC LIMIT 25) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(sch_split.tableoid) s FROM sch_split
+              WHERE body @@ ts_phrase('delta') ORDER BY s DESC LIMIT 25) t)
+UNION ALL SELECT 'del_ts_dict',
+       (SELECT md5(string_agg(d::text, ','))
+        FROM (SELECT unnest(ts_dict_agg(sev)) d FROM sch_whole ORDER BY 1) t) =
+       (SELECT md5(string_agg(d::text, ','))
+        FROM (SELECT unnest(ts_dict_agg(sev)) d FROM sch_split ORDER BY 1) t)
+ORDER BY 1
+----
+q	same
+del_colscan	t
+del_count	t
+del_count_pred	t
+del_stream	t
+del_topk	t
+del_ts_dict	t
+
+
+# --- Claim order is a policy, not an answer: ORDER BY <covered column> LIMIT
+# claims a segment's row groups best-first by their statistics, and the result
+# is still the whole-index one.
+query TT
+SELECT 'order_limit' AS q,
+       (SELECT string_agg(id::text, ',' ORDER BY id) FROM
+         (SELECT id FROM sch_whole ORDER BY amount, id LIMIT 20) t) =
+       (SELECT string_agg(id::text, ',' ORDER BY id) FROM
+         (SELECT id FROM sch_split ORDER BY amount, id LIMIT 20) t) AS same
+UNION ALL SELECT 'order_limit_desc',
+       (SELECT string_agg(id::text, ',' ORDER BY id) FROM
+         (SELECT id FROM sch_whole ORDER BY amount DESC, id LIMIT 20) t) =
+       (SELECT string_agg(id::text, ',' ORDER BY id) FROM
+         (SELECT id FROM sch_split ORDER BY amount DESC, id LIMIT 20) t)
+ORDER BY 1
+----
+q	same
+order_limit	t
+order_limit_desc	t
+
+
+statement ok
+DROP INDEX sch_split
+
+
+statement ok
+DROP INDEX sch_whole
+
+
+statement ok
+DROP TABLE schbase
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sch_tx
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sch_kw

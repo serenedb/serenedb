@@ -55,12 +55,16 @@ constexpr uint64_t kMinCentroidTrainSample = 256;
 constexpr size_t kPqTrainResiduals = 65536;
 constexpr uint32_t kPqTrainSeed = 0x51ED270Bu;
 
+// Row-group-local doc ids as the segment rows their vectors live at. The one
+// addition happens here, at the source-vector fetch: a write-side consumer
+// boundary, not a layer that hands reconstructed ids back to the index.
 struct DocRowView {
   const doc_id_t* docs;
   size_t n;
+  uint64_t rg_base;
   size_t size() const noexcept { return n; }
   uint64_t operator[](size_t i) const noexcept {
-    return static_cast<uint64_t>(docs[i]) - doc_limits::min();
+    return rg_base + docs[i] - doc_limits::min();
   }
 };
 
@@ -202,7 +206,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   return result;
 }
 
-class IvfTermIterator final : public TermIterator {
+class IvfTermIterator final : public SourceTermIterator {
  public:
   static constexpr size_t kWidth = kCentroidTermWidth;
 
@@ -221,6 +225,11 @@ class IvfTermIterator final : public TermIterator {
     return {_terms.data() + _cur * kWidth, kWidth};
   }
 
+  // A term of this field is a cluster, so the cluster the payload writer is
+  // serving is the term this iterator stands on -- for however many row groups
+  // the term's postings are cut into.
+  size_t Cluster() const noexcept { return _cur; }
+
   bool next() final {
     if (_next >= _count) {
       return false;
@@ -228,8 +237,6 @@ class IvfTermIterator final : public TermIterator {
     _cur = _next++;
     return true;
   }
-
-  void read() noexcept final {}
 
   DocIterator::ptr postings(IndexFeatures /*features*/) const final {
     const doc_id_t* p = _cluster_docs.data() + _cluster_offsets[_cur];
@@ -337,15 +344,18 @@ IvfTermReader::IvfTermReader(
 
 IvfTermReader::~IvfTermReader() = default;
 
-TermIterator::ptr IvfTermReader::iterator() const {
+SourceTermIterator::ptr IvfTermReader::iterator() const {
   _it = std::make_unique<IvfTermIterator>(_cluster_docs, _cluster_offsets);
-  return memory::to_managed<TermIterator>(*_it);
+  return memory::to_managed<SourceTermIterator>(*_it);
 }
 
 void IvfTermReader::WriteTermPayload(IndexOutput& out,
                                      std::span<const doc_id_t> docs) {
   SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
-  const size_t cluster = _term_idx++;
+  SDB_ASSERT(_it,
+             "IvfTermReader::WriteTermPayload: no term iterator in flight");
+  const size_t cluster = _it->Cluster();
+  SDB_ASSERT(cluster < _count);
   if (_cluster_centroids != nullptr) {
     const auto it = _cluster_centroids->find(static_cast<uint32_t>(cluster));
     if (it != _cluster_centroids->end()) {
@@ -357,13 +367,13 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   if (n == 0) {
     return;
   }
-  _qw->BeginCluster(n);
   ColumnReader::VectorScratch scratch{_vectors->Type()};
   auto scan = _vectors->InitScan(*_ctx);
   for (size_t b = 0; b < n; b += STANDARD_VECTOR_SIZE) {
     const auto m = std::min<size_t>(STANDARD_VECTOR_SIZE, n - b);
     auto& out_vec = scratch.Reset();
-    column_internal::GatherRows(*_vectors, scan, DocRowView{docs.data() + b, m},
+    column_internal::GatherRows(*_vectors, scan,
+                                DocRowView{docs.data() + b, m, _rg_base},
                                 out_vec, /*out_offset=*/0,
                                 /*whole_output=*/true);
     float* vecs = duckdb::FlatVector::GetDataMutable<float>(
@@ -371,12 +381,14 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     if (_normalize) {
       NormalizeRows(vecs, m, _d);
     }
-    _qw->EncodeCluster(out, vecs, m);
+    _qw->Encode(out, vecs, m);
   }
-  _qw->FinishCluster(out);
 }
 
-void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
+void IvfTermReader::Finish(IndexOutput& out) {
+  SDB_ASSERT(_qw);
+  _qw->Finish(out);
+}
 
 void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   SDB_ASSERT(_idx != nullptr,

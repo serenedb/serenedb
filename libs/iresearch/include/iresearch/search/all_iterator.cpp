@@ -37,7 +37,7 @@ AllIterator::AllIterator(uint32_t docs_count, const byte_type* stats,
 ScoreFunction AllIterator::PrepareScore(const PrepareScoreContext& ctx) {
   SDB_ASSERT(ctx.scorer);
   return ctx.scorer->PrepareScorer({
-    .segment = *ctx.segment,
+    .segment = *ctx.norms,
     .field = {},
     .doc_attrs = *this,
     .fetcher = ctx.fetcher,

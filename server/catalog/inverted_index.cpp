@@ -71,9 +71,10 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
     .ivf_config = entry.ivf_config,
     .synthetic_column = entry.synthetic_column,
     .row_group_size = entry.row_group_size,
-    .norm_row_group_size = entry.norm_row_group_size,
     .null_field_id = entry.null_field_id,
-    .bool_field_id = entry.bool_field_id,
+    .json_null_field_id = entry.json_null_field_id,
+    .true_field_id = entry.true_field_id,
+    .false_field_id = entry.false_field_id,
     .numeric_field_id = entry.numeric_field_id,
   };
 }
@@ -106,7 +107,6 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
                                 .text_dictionary = cfg.text_dictionary,
                                 .features = cfg.features,
                                 .synthetic_column = cfg.synthetic_column,
-                                .norm_row_group_size = cfg.norm_row_group_size,
                                 .store_values = cfg.store_values,
                                 .indexed_term_dict = cfg.indexed_term_dict,
                                 .hyperloglog = cfg.hyperloglog,
@@ -114,7 +114,9 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
                                 .ivf_config = std::move(cfg.ivf_config),
                                 .row_group_size = cfg.row_group_size,
                                 .null_field_id = cfg.null_field_id,
-                                .bool_field_id = cfg.bool_field_id,
+                                .json_null_field_id = cfg.json_null_field_id,
+                                .true_field_id = cfg.true_field_id,
+                                .false_field_id = cfg.false_field_id,
                                 .numeric_field_id = cfg.numeric_field_id,
                               });
   }
@@ -167,17 +169,12 @@ void InvertedIndex::BumpTickServerForEntryIds() {
     UpdateTickServer(key.field_id);
   }
   for (const auto& [field_id, entry] : _entries) {
-    if (irs::field_limits::valid(entry.synthetic_column)) {
-      UpdateTickServer(entry.synthetic_column);
-    }
-    if (irs::field_limits::valid(entry.null_field_id)) {
-      UpdateTickServer(entry.null_field_id);
-    }
-    if (irs::field_limits::valid(entry.bool_field_id)) {
-      UpdateTickServer(entry.bool_field_id);
-    }
-    if (irs::field_limits::valid(entry.numeric_field_id)) {
-      UpdateTickServer(entry.numeric_field_id);
+    for (const auto id :
+         {entry.synthetic_column, entry.null_field_id, entry.json_null_field_id,
+          entry.true_field_id, entry.false_field_id, entry.numeric_field_id}) {
+      if (irs::field_limits::valid(id)) {
+        UpdateTickServer(id);
+      }
     }
   }
 }
@@ -360,7 +357,9 @@ void InvertedIndex::BuildFieldLookupIndex() {
   for (const auto& [entry_fid, entry] : _entries) {
     insert(entry_fid, &entry, entry_fid);
     insert(entry.null_field_id, &entry, entry_fid);
-    insert(entry.bool_field_id, &entry, entry_fid);
+    insert(entry.json_null_field_id, &entry, entry_fid);
+    insert(entry.true_field_id, &entry, entry_fid);
+    insert(entry.false_field_id, &entry, entry_fid);
     insert(entry.numeric_field_id, &entry, entry_fid);
     insert(entry.synthetic_column, &entry, entry_fid);
   }
@@ -461,10 +460,17 @@ irs::NormColumnOptions InvertedIndex::GetNormColumnOptions(
              "GetNormColumnOptions: no catalog reservation; id ", id);
   SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
              "GetNormColumnOptions: catalog features lack Norm; id ", id);
-  return {
-    .id = entry->synthetic_column,
-    .row_group_size = entry->norm_row_group_size,
-  };
+  return {.id = entry->synthetic_column};
+}
+
+bool InvertedIndex::IsDictlessField(irs::field_id id) const {
+  const auto lookup = LookupField(id);
+  if (!lookup.entry) {
+    return false;
+  }
+  const auto& entry = *lookup.entry;
+  return id == entry.null_field_id || id == entry.json_null_field_id ||
+         id == entry.true_field_id || id == entry.false_field_id;
 }
 
 containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {

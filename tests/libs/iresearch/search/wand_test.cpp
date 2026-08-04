@@ -155,7 +155,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
       // EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
       score = docs->PrepareScore({
         .scorer = scorer,
-        .segment = &segment,
+        .norms = &segment,
         .fetcher = &fetcher,
       });
     } else {

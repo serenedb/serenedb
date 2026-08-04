@@ -52,10 +52,7 @@ namespace irs::tests {
 inline NormColumnOptionsProvider MakeNormColumnOptionsProvider() {
   return [next = std::make_shared<std::atomic<field_id>>(0)](
            field_id /*id*/) -> NormColumnOptions {
-    return {
-      .id = next->fetch_add(1, std::memory_order_relaxed),
-      .row_group_size = DEFAULT_ROW_GROUP_SIZE,
-    };
+    return {.id = next->fetch_add(1, std::memory_order_relaxed)};
   };
 }
 

@@ -444,6 +444,80 @@ void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
   }
 }
 
+// One row per term-dict field: the dictionary is a plane of the index just as a
+// `.col` block is, so it renders through the same pragma. `column_path` names
+// the field's role rather than an id, because a synthetic field's id is minted
+// by the catalog counter and is not stable across runs.
+void AppendIResearchDictRows(const irs::SubReader& sub_reader,
+                             const catalog::InvertedIndex& index,
+                             std::span<const IResearchColumnBinding> bindings,
+                             size_t segment, uint64_t row_base, bool walk,
+                             duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
+  for (const auto field_id : sub_reader.field_ids()) {
+    const auto* field = sub_reader.field(field_id);
+    if (!field) {
+      continue;
+    }
+    const auto info = field->StorageInfo(walk);
+    if (info.layout.empty()) {
+      continue;
+    }
+    const auto lookup = index.LookupField(field_id);
+    std::string_view role;
+    if (field_id == catalog::term_dict::kPKFieldId) {
+      role = "pk";
+    } else if (!lookup.entry) {
+      role = "unknown";
+    } else if (field_id == lookup.entry->null_field_id) {
+      role = "null";
+    } else if (field_id == lookup.entry->json_null_field_id) {
+      role = "json_null";
+    } else if (field_id == lookup.entry->true_field_id) {
+      role = "true";
+    } else if (field_id == lookup.entry->false_field_id) {
+      role = "false";
+    } else if (field_id == lookup.entry->numeric_field_id) {
+      role = "numeric";
+    } else if (index.ExpressionByFieldId(field_id)) {
+      role = "expr";
+    }
+
+    auto& row = out.emplace_back();
+    row.row_group_index = segment;
+    // A field whose key is an expression, or the PK terms, has no table column
+    // to name. `COLUMN_IDENTIFIER_ROW_ID` is above `VIRTUAL_COLUMN_START` and
+    // is never a key of the entry's virtual-column map, so the pragma reports
+    // both the name and the id as NULL and `column_path` carries the identity.
+    row.column_id = duckdb::COLUMN_IDENTIFIER_ROW_ID;
+    for (const auto& binding : bindings) {
+      if (lookup.entry && binding.field == lookup.entry_field_id) {
+        row.column_id = binding.column_id;
+        break;
+      }
+    }
+    row.column_path =
+      role.empty() ? std::string{"[dict]"} : absl::StrCat("[dict, ", role, "]");
+    row.segment_idx = segment;
+    row.segment_type = std::string{info.layout};
+    row.segment_start = row_base;
+    row.segment_count = info.docs;
+    row.compression_type = info.fsst ? "FSST" : "Uncompressed";
+    row.has_updates = false;
+    row.persistent = true;
+    row.block_id = INVALID_BLOCK;
+    row.block_offset = info.body_offset;
+    if (walk) {
+      row.segment_info = absl::StrCat(
+        "blocks=", info.blocks_size, " block_count=", info.block_count,
+        " fixed_blocks=", info.fixed_blocks, " var_blocks=", info.var_blocks,
+        " separators=", info.separators_size,
+        " fsst_table=", info.fsst_table_size, " terms=", info.terms,
+        " rgs=", info.row_groups, " rg_lists=", info.rg_lists,
+        " max_rg_per_term=", info.max_rg_per_term);
+    }
+  }
+}
+
 }  // namespace
 
 bool ScanIResearchColumnSegmentInfo(
@@ -451,19 +525,24 @@ bool ScanIResearchColumnSegmentInfo(
   std::span<const IResearchColumnBinding> bindings,
   const duckdb::virtual_column_map_t& virtual_columns,
   duckdb::ColumnSegmentInfoScanState& state,
-  duckdb::vector<duckdb::ColumnSegmentInfo>& result) {
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result,
+  const catalog::InvertedIndex* index) {
   if (state.position >= reader.size()) {
     return false;
   }
   const auto segment = state.position++;
   const auto& sub_reader = reader[segment];
-  const auto* col_reader = sub_reader.GetColReader();
-  if (!col_reader) {
-    return true;
-  }
   uint64_t row_base = 0;
   for (size_t s = 0; s < segment; ++s) {
     row_base += reader[s].docs_count();
+  }
+  if (index) {
+    AppendIResearchDictRows(sub_reader, *index, bindings, segment, row_base,
+                            state.options.include_segment_info, result);
+  }
+  const auto* col_reader = sub_reader.GetColReader();
+  if (!col_reader) {
+    return true;
   }
   for (const auto& binding : bindings) {
     const auto* column =
@@ -482,10 +561,11 @@ void BuildIResearchColumnSegmentInfo(
   const irs::IndexReader& reader,
   std::span<const IResearchColumnBinding> bindings,
   const duckdb::virtual_column_map_t& virtual_columns,
-  duckdb::vector<duckdb::ColumnSegmentInfo>& result) {
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result,
+  const catalog::InvertedIndex* index) {
   duckdb::ColumnSegmentInfoScanState state;
   while (ScanIResearchColumnSegmentInfo(reader, bindings, virtual_columns,
-                                        state, result)) {
+                                        state, result, index)) {
   }
 }
 

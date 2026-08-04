@@ -108,7 +108,7 @@ class LimitedSampleSelector : private util::Noncopyable {
         terms.emplace_back();
       }
       const uint32_t idx = it->second;
-      terms[idx].Collect(*entry.cookie);
+      terms[idx].Collect(entry.cookie.stats);
       entry.stat_offset = idx;
     }
 
@@ -177,17 +177,18 @@ class SampledMultiTermVisitor {
   // FIXME can incorporate boost into collecting logic
   bool Visit(score_t boost) {
     SDB_ASSERT(_docs_count && _terms);
-    _terms->read();
-    const uint32_t docs_count = *_docs_count;
+    // cookie() decodes the term's record whole, the stats included, so
+    // `_docs_count` is valid from the initializer after it -- a read() before
+    // would parse the same entry a second time.
     _state.Push(MultiTermState::Entry{
       .cookie = _terms->cookie(),
-      .docs_count = docs_count,
+      .docs_count = *_docs_count,
       .boost = boost,
     });
 
     if (_collector) {
       _collector->collect(_state, _state.TermsSize() - 1, *_terms,
-                          Key::Make(_offset, docs_count, boost));
+                          Key::Make(_offset, *_docs_count, boost));
     }
     ++_offset;
     return true;

@@ -162,8 +162,7 @@ irs::IndexWriterOptions MakeWriterOptions() {
   options.norm_column_options =
     [next = std::make_shared<std::atomic<irs::field_id>>(0)](
       irs::field_id) -> irs::NormColumnOptions {
-    return {.id = next->fetch_add(1, std::memory_order_relaxed),
-            .row_group_size = DEFAULT_ROW_GROUP_SIZE};
+    return {.id = next->fetch_add(1, std::memory_order_relaxed)};
   };
   return options;
 }

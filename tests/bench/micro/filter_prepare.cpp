@@ -356,6 +356,48 @@ void RunPrepare(const irs::Filter::ptr& filter,
   benchmark::DoNotOptimize(queries);
 }
 
+// The prepared side of a scan, built once so a claim row times only the claim.
+struct PreparedSegments {
+  PreparedSegments(const irs::Filter::ptr& filter,
+                   const irs::DirectoryReader& reader,
+                   const irs::Scorer* scorer) {
+    auto collector = filter->MakeCollector(scorer);
+    queries.reserve(reader.size());
+    for (const auto& sub : reader) {
+      queries.emplace_back(
+        filter->PrepareSegment(sub, {.collector = collector.get()}));
+    }
+    stats = collector->Finish(irs::IResourceManager::gNoop);
+  }
+
+  std::vector<irs::QueryBuilder::ptr> queries;
+  irs::StatsBuffer stats;
+};
+
+// What one row-group claim costs beside the documents it finds: the prepared
+// query's Execute (which builds the whole iterator tree for that row group),
+// the segment mask over it, the first advance that discovers whether anything
+// is there, and the teardown of all of it. `duckdb_search_full_scan.cpp` pays
+// this per (segment, row group) on every claim -- including the row groups the
+// query's terms do not occur in -- so it is the floor cost of the claim grid,
+// and the v3 gate had no row for it.
+size_t RunClaims(const PreparedSegments& prepared,
+                 const irs::DirectoryReader& reader) {
+  size_t claims = 0;
+  size_t q = 0;
+  for (const auto& sub : reader) {
+    const auto& query = *prepared.queries[q++];
+    const auto grid = sub.RowGroups();
+    for (uint32_t rg = 0; rg < grid.count; ++rg) {
+      auto docs = sub.mask(query.Execute({.rg = rg}, prepared.stats),
+                           grid.Base(rg) - irs::doc_limits::min());
+      benchmark::DoNotOptimize(docs->advance());
+      ++claims;
+    }
+  }
+  return claims;
+}
+
 }  // namespace
 
 #define DEFINE_FILTER_VARIANTS(Tag, Filter, Setup)                             \
@@ -399,6 +441,41 @@ void RunPrepare(const irs::Filter::ptr& filter,
   BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Tag##_Bm25_Boost)                \
     ->Name("FilterPrepareFixture/" #Tag "_Bm25_Boost")                         \
     ->Apply(ApplyArgs)
+
+// Per-claim cost, reported per row group claimed rather than per iteration --
+// the number a scheduler change has to be judged against.
+#define DEFINE_CLAIM_VARIANTS(Tag, Filter, Setup)                         \
+  BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Claim_##Tag, Filter, \
+                              Setup)                                      \
+  (benchmark::State & s) {                                                \
+    const PreparedSegments prepared{_filter, _reader, nullptr};           \
+    size_t claims = 0;                                                    \
+    for (auto _ : s) {                                                    \
+      claims += RunClaims(prepared, _reader);                             \
+    }                                                                     \
+    s.SetItemsProcessed(static_cast<int64_t>(claims));                    \
+  }                                                                       \
+  BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Claim_##Tag)                \
+    ->Name("FilterClaimFixture/" #Tag "_NoScorer")                        \
+    ->Apply(ApplyArgs);                                                   \
+  BENCHMARK_TEMPLATE_DEFINE_F(FilterPrepareFixtureT, Claim_##Tag##_Bm25,  \
+                              Filter, Setup, true)                        \
+  (benchmark::State & s) {                                                \
+    const PreparedSegments prepared{_filter, _reader, &_bm25};            \
+    size_t claims = 0;                                                    \
+    for (auto _ : s) {                                                    \
+      claims += RunClaims(prepared, _reader);                             \
+    }                                                                     \
+    s.SetItemsProcessed(static_cast<int64_t>(claims));                    \
+  }                                                                       \
+  BENCHMARK_REGISTER_F(FilterPrepareFixtureT, Claim_##Tag##_Bm25)         \
+    ->Name("FilterClaimFixture/" #Tag "_Bm25")                            \
+    ->Apply(ApplyArgs)
+
+DEFINE_CLAIM_VARIANTS(ByTerm, irs::ByTerm, SetUpTerm);
+DEFINE_CLAIM_VARIANTS(ByPrefix, irs::ByPrefix, SetUpPrefix);
+DEFINE_CLAIM_VARIANTS(Or, irs::Or, SetUpOr);
+DEFINE_CLAIM_VARIANTS(ByPhrase, irs::ByPhrase, SetUpPhrase);
 
 DEFINE_FILTER_VARIANTS(ByTerm, irs::ByTerm, SetUpTerm);
 DEFINE_FILTER_VARIANTS(ByPrefix, irs::ByPrefix, SetUpPrefix);

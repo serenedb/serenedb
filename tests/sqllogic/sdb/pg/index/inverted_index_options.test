@@ -33,9 +33,9 @@ query
 SELECT c.relname, a.amname, c.reloptions FROM pg_class c LEFT JOIN pg_am a ON a.oid = c.relam WHERE c.relname IN ('opt_tuned', 'opt_default', 'opt_sec') ORDER BY c.relname;
 ----
 relname	amname	reloptions
-opt_default	inverted	{row_group_size=122880,norm_row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+opt_default	inverted	{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
 opt_sec	secondary	{}
-opt_tuned	inverted	{row_group_size=122880,norm_row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
+opt_tuned	inverted	{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
 
 
 query
@@ -54,7 +54,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'opt_default';
 ----
 reloptions
-{row_group_size=122880,norm_row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=33554432,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=33554432,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
 
 
 # RESET re-resolves the session value (the default here), leaving the other
@@ -67,7 +67,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'opt_default';
 ----
 reloptions
-{row_group_size=122880,norm_row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=5,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
 
 
 # Maintenance intervals are alterable too.
@@ -79,7 +79,7 @@ query
 SELECT reloptions FROM pg_class WHERE relname = 'opt_tuned';
 ----
 reloptions
-{row_group_size=122880,norm_row_group_size=122880,refresh_interval=250,compaction_interval=500,cleanup_interval_step=2,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
+{row_group_size=122880,refresh_interval=250,compaction_interval=500,cleanup_interval_step=2,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
 
 
 # segment_docs_max is the one option where 0 is a real value: unlimited.
@@ -123,12 +123,6 @@ statement error
 CREATE INDEX opt_rz ON opt_t USING inverted(label) WITH (row_group_size = 0);
 ----
 db error: ERROR: invalid value for parameter "row_group_size": "0"
-
-
-statement error
-CREATE INDEX opt_rz2 ON opt_t USING inverted(label) WITH (norm_row_group_size = 0);
-----
-db error: ERROR: invalid value for parameter "norm_row_group_size": "0"
 
 
 statement error
@@ -209,6 +203,60 @@ db error: ERROR: this ALTER TABLE operation is not supported
 # The index still answers queries after the ALTERs.
 query
 SELECT count(*) FROM opt_tuned WHERE label = md5('42'::text);
+----
+count
+1
+
+
+# There is one term dictionary, so `term_dict_version` is not an option.
+statement error
+CREATE INDEX opt_td_bad ON opt_t USING inverted(label) WITH (term_dict_version = 2);
+----
+db error: ERROR: unrecognized parameter "term_dict_version"
+
+
+statement ok
+CREATE INDEX opt_td ON opt_t USING inverted(label);
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'opt_td';
+----
+reloptions
+{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
+
+
+query
+SELECT count(*) FROM opt_td WHERE label = md5('42'::text);
+----
+count
+1
+
+
+statement error
+ALTER INDEX opt_td SET (term_dict_version = 1);
+----
+db error: ERROR: option "term_dict_version" cannot be changed with ALTER INDEX
+
+
+# Rows inserted later land in a second segment; the index answers across both.
+statement ok
+INSERT INTO opt_t SELECT g, md5(g::text) FROM generate_series(1001, 1200) g;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt_t;
+
+
+query
+SELECT count(*) FROM opt_td WHERE label = md5('42'::text);
+----
+count
+1
+
+
+query
+SELECT count(*) FROM opt_td WHERE label = md5('1100'::text);
 ----
 count
 1

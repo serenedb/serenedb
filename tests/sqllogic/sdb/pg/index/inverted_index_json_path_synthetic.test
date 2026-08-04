@@ -106,40 +106,22 @@ CREATE TEXT SEARCH DICTIONARY js_norm(
     accent = false,
     frequency = true,
     position = true,
+    norm = true
+);
+
+
+# Norms follow the index's one row_group_size; the dictionary has no separate
+# knob for them.
+query error
+CREATE TEXT SEARCH DICTIONARY bad_norm(
+    template = 'text',
+    frequency = true,
     norm = true,
     norm_row_group_size = 256
 );
-
-
-query error
-CREATE TEXT SEARCH DICTIONARY bad_norm(
-    template = 'text',
-    norm = true,
-    norm_row_group_size = 0
-);
 ----
-db error: ERROR: "norm_row_group_size" must be a positive integer
-
-
-query error
-CREATE TEXT SEARCH DICTIONARY bad_norm(
-    template = 'text',
-    norm_row_group_size = 256
-);
-----
-db error: ERROR: norm_row_group_size requires norm = true
-HINT: Norm column row-group size for indexes that bind this dictionary with norm = true.
-
-
-query error
-CREATE TEXT SEARCH DICTIONARY bad_norm(
-    template = 'text',
-    norm = false,
-    norm_row_group_size = 256
-);
-----
-db error: ERROR: norm_row_group_size requires norm = true
-HINT: Norm column row-group size for indexes that bind this dictionary with norm = true.
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
+HINT: Use WITH (HELP) to see available options
 
 
 statement ok

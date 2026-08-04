@@ -48,7 +48,13 @@ struct SearchColumnInfo {
   // holds; IS NULL claims match it; invalid keeps negations plain acceptor
   // shapes and declines IS NULL claims.
   irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
+  // The JSON `null` leaf: a different fact from `IS NULL`, so a different
+  // field and a different predicate.
+  irs::field_id json_null_field_id = irs::field_limits::invalid();
+  // The two always-<X> boolean fields. A boolean predicate picks between them
+  // by VALUE (`PickBoolFieldId`); there is no field that holds both.
+  irs::field_id true_field_id = irs::field_limits::invalid();
+  irs::field_id false_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
@@ -87,6 +93,10 @@ absl::Status MakeSearchFilter(
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter = {});
 
+// The field a predicate of this kind resolves to. Booleans have no such field
+// -- the value picks one of two -- so for them this answers the key's IDENTITY
+// (the always-true field), which is what a per-kind cache wants; every boolean
+// predicate must go through `PickBoolFieldId` instead.
 inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
                                         duckdb::LogicalTypeId type_id) {
   const auto pick = [&](irs::field_id per_kind) {
@@ -94,12 +104,22 @@ inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
   };
   const auto kind = catalog::term_dict::Classify(type_id);
   if (kind == catalog::term_dict::Kind::Bool) {
-    return pick(column_info.bool_field_id);
+    return pick(column_info.true_field_id);
   }
   if (catalog::term_dict::IsNumeric(kind)) {
     return pick(column_info.numeric_field_id);
   }
   return column_info.field_id;
+}
+
+inline bool HasBoolFieldIds(const SearchColumnInfo& column_info) {
+  return irs::field_limits::valid(column_info.true_field_id) &&
+         irs::field_limits::valid(column_info.false_field_id);
+}
+
+inline irs::field_id PickBoolFieldId(const SearchColumnInfo& column_info,
+                                     bool value) {
+  return value ? column_info.true_field_id : column_info.false_field_id;
 }
 
 // True when the expression tree contains an optimizer-claimed index-only

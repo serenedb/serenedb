@@ -106,7 +106,8 @@ TEST_P(Format12TestCase, open_10_with_12) {
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
 
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
          !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -178,7 +179,8 @@ TEST_P(Format12TestCase, formats_12) {
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
 
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
          !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -206,7 +208,8 @@ TEST_P(Format12TestCase, formats_12) {
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
 
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
          !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(

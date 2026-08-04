@@ -136,6 +136,10 @@ struct ColumnSpec {
   // scoped negation and IS NULL only engage when one exists. Tests that pin
   // those shapes opt in.
   uint64_t null_field = 0;
+  // A BOOLEAN key is two always-<X> fields; a boolean predicate is only
+  // claimable when both exist. BOOLEAN-typed specs must set them.
+  uint64_t true_field = 0;
+  uint64_t false_field = 0;
 };
 
 using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
@@ -143,7 +147,7 @@ using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12345},
-    "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
+    "test_string_verbartim", {},
     irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
   return {.analyzer = std::move(tokenizer),
@@ -154,7 +158,7 @@ template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12346}, "test_segmentation",
-    {}, DEFAULT_ROW_GROUP_SIZE,
+    {},
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::SegmentationTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
@@ -175,7 +179,6 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
   static catalog::Tokenizer gNgramTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12347}, "test_ngram", {},
-    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   return {.analyzer = std::move(tokenizer),
@@ -191,7 +194,6 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
   static catalog::Tokenizer gWildcardTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12348}, "test_wildcard", {},
-    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
   return {
@@ -204,7 +206,6 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
 [[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gGeoTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12349}, "test_geojson", {},
-    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonAnalyzer::Options{}});
   auto tokenizer = gGeoTokenizer.GetTokenizer();
@@ -618,6 +619,14 @@ class SearchFilterBuilderTest : public ::testing::Test {
           columns[phys].null_field
             ? static_cast<irs::field_id>(columns[phys].null_field)
             : irs::field_limits::invalid(),
+        .true_field_id =
+          columns[phys].true_field
+            ? static_cast<irs::field_id>(columns[phys].true_field)
+            : irs::field_limits::invalid(),
+        .false_field_id =
+          columns[phys].false_field
+            ? static_cast<irs::field_id>(columns[phys].false_field)
+            : irs::field_limits::invalid(),
         .logical_type = columns[phys].type,
         .tokenizer = analyzer_provider(columns[phys].id)};
     };
@@ -798,10 +807,13 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
                  columns, true);
   }
   {
-    std::vector<ColumnSpec> columns{
-      {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
+    std::vector<ColumnSpec> columns{{.id = 1,
+                                     .type = duckdb::LogicalType::BOOLEAN,
+                                     .name = "b",
+                                     .true_field = 101,
+                                     .false_field = 102}};
     irs::And expected;
-    AddTermFilter<bool>(expected, 1, true);
+    AddTermFilter<bool>(expected, 101, true);
     AssertFilter(expected, "SELECT * FROM foo WHERE b = true", columns, true);
   }
   {
@@ -880,11 +892,15 @@ TEST_F(SearchFilterBuilderTest, test_MultipleAnd) {
   std::vector<ColumnSpec> columns{
     {.id = 1000, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2000, .type = duckdb::LogicalType::VARCHAR, .name = "b"},
-    {.id = 3000, .type = duckdb::LogicalType::BOOLEAN, .name = "c"}};
+    {.id = 3000,
+     .type = duckdb::LogicalType::BOOLEAN,
+     .name = "c",
+     .true_field = 3001,
+     .false_field = 3002}};
   irs::And expected;
   AddTermFilter<int32_t>(expected, 1000, 10);
   AddTermFilter<std::string_view>(expected, 2000, std::string_view{"test"});
-  AddTermFilter<bool>(expected, 3000, true);
+  AddTermFilter<bool>(expected, 3001, true);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE a = 10 AND b = 'test' AND c = true",
                columns, true);
@@ -1144,10 +1160,14 @@ TEST_F(SearchFilterBuilderTest, test_NotLessThanOrEqual) {
 
 TEST_F(SearchFilterBuilderTest, test_AndWithNotOr) {
   std::vector<ColumnSpec> columns{
-    {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "active"},
+    {.id = 1,
+     .type = duckdb::LogicalType::BOOLEAN,
+     .name = "active",
+     .true_field = 101,
+     .false_field = 102},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "value"}};
   irs::And expected;
-  AddTermFilter<bool>(expected, 1, true);
+  AddTermFilter<bool>(expected, 101, true);
   auto& not_filter = expected.add<irs::Not>();
   auto& or_filter = AddFilter<irs::Or>(not_filter);
   AddTermFilter<int32_t>(or_filter, 2, 10);
@@ -1188,14 +1208,18 @@ TEST_F(SearchFilterBuilderTest, test_ComplexNested) {
   std::vector<ColumnSpec> columns{
     {.id = 1024, .type = duckdb::LogicalType::INTEGER, .name = "price"},
     {.id = 2048, .type = duckdb::LogicalType::VARCHAR, .name = "tier"},
-    {.id = 4096, .type = duckdb::LogicalType::BOOLEAN, .name = "enabled"}};
+    {.id = 4096,
+     .type = duckdb::LogicalType::BOOLEAN,
+     .name = "enabled",
+     .true_field = 4097,
+     .false_field = 4098}};
   irs::And expected;
   AddRangeFilter<int32_t>(expected, 1024, 100, true, std::nullopt, false);
   auto& or_filter = expected.add<irs::Or>();
   AddTermFilter<std::string_view>(or_filter, 2048, std::string_view{"premium"});
   AddTermFilter<std::string_view>(or_filter, 2048, std::string_view{"gold"});
   auto& not_filter = expected.add<irs::Not>();
-  AddTermFilter<bool>(not_filter, 4096, false);
+  AddTermFilter<bool>(not_filter, 4098, false);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE price >= 100 AND (tier = 'premium' OR "
                "tier = 'gold') AND NOT (enabled = false)",
@@ -2146,17 +2170,47 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_IntegerColumn) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLessEq_BooleanColumn) {
-  // LESS_EQUAL on a BOOLEAN column emits irs::ByRange via BooleanTokenizer.
-  std::vector<ColumnSpec> columns{
-    {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
+  // LESS_EQUAL on a BOOLEAN column is the SET of accepted values over the two
+  // always-<X> fields: `<= true` accepts both, so the range compiles to their
+  // disjunction.
+  std::vector<ColumnSpec> columns{{.id = 1,
+                                   .type = duckdb::LogicalType::BOOLEAN,
+                                   .name = "b",
+                                   .true_field = 101,
+                                   .false_field = 102}};
   irs::And expected;
-  auto& range = expected.add<irs::ByRange>();
-  *range.mutable_field_id() = ExpectedFieldId(1);
-  auto& opts = range.mutable_options()->range;
-  opts.max.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
-  opts.max_type = irs::BoundType::Inclusive;
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<bool>(or_filter, 102, false);
+  AddTermFilter<bool>(or_filter, 101, true);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_le(true)", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermLess_BooleanColumnSingleValue) {
+  // `< true` accepts only `false`, so exactly one field's term is emitted --
+  // the by-value dispatch, visible in the built filter.
+  std::vector<ColumnSpec> columns{{.id = 1,
+                                   .type = duckdb::LogicalType::BOOLEAN,
+                                   .name = "b",
+                                   .true_field = 101,
+                                   .false_field = 102}};
+  irs::And expected;
+  AddTermFilter<bool>(expected, 102, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_lt(true)", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermLess_BooleanColumnEmptySet) {
+  // `< false` accepts nothing: the two-value domain has no member below the
+  // low bound, so the range compiles to Empty rather than to a field.
+  std::vector<ColumnSpec> columns{{.id = 1,
+                                   .type = duckdb::LogicalType::BOOLEAN,
+                                   .name = "b",
+                                   .true_field = 101,
+                                   .false_field = 102}};
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_lt(false)", columns,
                true);
 }
 
@@ -4073,22 +4127,34 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeInt) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBool) {
-  std::vector<ColumnSpec> columns{
-    {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
+  std::vector<ColumnSpec> columns{{.id = 1,
+                                   .type = duckdb::LogicalType::BOOLEAN,
+                                   .name = "b",
+                                   .true_field = 101,
+                                   .false_field = 102}};
   irs::And expected;
-  auto& range = expected.add<irs::ByRange>();
-  *range.mutable_field_id() = ExpectedFieldId(1);
-  auto& opts = range.mutable_options()->range;
-  opts.min.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(false)));
-  opts.min_type = irs::BoundType::Inclusive;
-  opts.max.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
-  opts.max_type = irs::BoundType::Inclusive;
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<bool>(or_filter, 102, false);
+  AddTermFilter<bool>(or_filter, 101, true);
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ ts_between(false, true, true, true)", columns,
     true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBoolExclusiveEmpty) {
+  // Exclusive on both ends over a two-value domain accepts nothing.
+  std::vector<ColumnSpec> columns{{.id = 1,
+                                   .type = duckdb::LogicalType::BOOLEAN,
+                                   .name = "b",
+                                   .true_field = 101,
+                                   .false_field = 102}};
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ts_between(false, true, false, false)",
+    columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBothNullMatchesAll) {
@@ -4293,16 +4359,16 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeDouble) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBoolOpenRight) {
-  // Open-right BOOLEAN range: just `false` (or unbounded above).
-  std::vector<ColumnSpec> columns{
-    {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
+  // Open-right BOOLEAN range: unbounded above, so both values are accepted.
+  std::vector<ColumnSpec> columns{{.id = 1,
+                                   .type = duckdb::LogicalType::BOOLEAN,
+                                   .name = "b",
+                                   .true_field = 101,
+                                   .false_field = 102}};
   irs::And expected;
-  auto& range = expected.add<irs::ByRange>();
-  *range.mutable_field_id() = ExpectedFieldId(1);
-  auto& opts = range.mutable_options()->range;
-  opts.min.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(false)));
-  opts.min_type = irs::BoundType::Inclusive;
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<bool>(or_filter, 102, false);
+  AddTermFilter<bool>(or_filter, 101, true);
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ ts_between(false, NULL, true, false)",

@@ -24,6 +24,7 @@
 #include <memory>
 #include <span>
 
+#include "iresearch/formats/ivf/quantizer_reader.hpp"
 #include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
@@ -35,6 +36,13 @@ class ReadContext;
 class IndexOutput;
 class IndexInput;
 
+// The field's payload is ONE stream in `.pay`, continuous across run and
+// cluster boundaries: a document's codes live at its stream ordinal (its
+// "lane"), fast-scan packs never align to run or cluster edges, and the only
+// padding is one partial pack at the stream's end. A cluster is the lanes
+// `[first_lane, first_lane + num_docs)` -- its runs are adjacent by
+// construction -- so everything is addressed by lane ordinal plus the field's
+// stream base byte.
 class QuantizerWriter {
  public:
   virtual ~QuantizerWriter() = default;
@@ -43,12 +51,11 @@ class QuantizerWriter {
 
   virtual void SetClusterCentroid(const float* /*centroid*/) {}
 
-  virtual void BeginCluster(size_t /*total_docs*/) {}
+  // Appends `n` documents' codes to the stream, flushing packs as they fill.
+  virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
 
-  virtual void EncodeCluster(IndexOutput& out, const float* vecs,
-                             size_t n) const = 0;
-
-  virtual void FinishCluster(IndexOutput& /*out*/) {}
+  // Flushes the stream's one partial pack. Called once per field.
+  virtual void Finish(IndexOutput& /*out*/) {}
 
   virtual std::span<const byte_type> StatsBytes() const = 0;
 
@@ -57,20 +64,12 @@ class QuantizerWriter {
   virtual uint32_t CodeSize() const noexcept = 0;
 };
 
-class QuantizerReader {
- public:
-  virtual ~QuantizerReader() = default;
-  virtual void StartCluster(uint64_t pay_start, size_t num_docs,
-                            const float* centroid) = 0;
-  virtual void ComputeBlock(size_t offset, size_t length, score_t* out) = 0;
-};
-
 class QuantizerCodebook
   : public std::enable_shared_from_this<QuantizerCodebook> {
  public:
   virtual ~QuantizerCodebook() = default;
   virtual std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const = 0;
+    std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) const = 0;
 };
 
 // Query-independent, deserialized quantizer statistics. Parsed once from the
@@ -94,6 +93,6 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   const std::shared_ptr<const QuantizerCodebook>& codebook,
-  std::unique_ptr<IndexInput> pay_in);
+  std::unique_ptr<IndexInput> pay_in, uint64_t pay_base);
 
 }  // namespace irs

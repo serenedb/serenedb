@@ -85,7 +85,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     bool normalize);
   ~IvfTermReader() final;
 
-  TermIterator::ptr iterator() const final;
+  SourceTermIterator::ptr iterator() const final;
   field_id id() const final { return _meta.id; }
   FieldProperties properties() const final { return _meta; }
   bytes_view(min)() const final { return _min; }
@@ -96,6 +96,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     return _qw != nullptr ? const_cast<IvfTermReader*>(this) : nullptr;
   }
 
+  void SetRowGroupBase(doc_id_t base) final { _rg_base = base; }
   void WriteTermPayload(IndexOutput& out, std::span<const doc_id_t> docs) final;
   void Finish(IndexOutput& out) final;
 
@@ -110,7 +111,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     _cluster_centroids;
   bool _normalize;
   size_t _count;
-  size_t _term_idx = 0;
+  doc_id_t _rg_base = 0;
   FieldMeta _meta;
   std::array<byte_type, 4> _min_buf;
   std::array<byte_type, 4> _max_buf;

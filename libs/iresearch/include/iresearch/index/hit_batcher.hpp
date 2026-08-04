@@ -57,6 +57,16 @@ class HitBatcher {
     duckdb::ClientContext* context, ColFilterStateCache* states = nullptr,
     std::span<const TableFilterDocIterator::FilterSpec> filters = {});
 
+  // The staged ids are local to one row group; `first_row` is that row group's
+  // first segment row, and every `.col` address the batcher forms adds it. The
+  // top-k path stages segment-wide ids out of its cross-segment hit buffer and
+  // therefore leaves the base at BeginSegment's 0.
+  void BeginRowGroup(uint64_t first_row) noexcept {
+    SDB_ASSERT(Empty(), "drain the batcher before switching row groups");
+    _rg_first_row = first_row;
+    _filters.SetRowBase(first_row);
+  }
+
   duckdb::idx_t OpenWindow(uint64_t row);
   // Batched fill: the current window's ids/scores go to [WindowHead(), ...) /
   // [ScoreHead(), ...), then CommitWindow(n) records how many were emitted.
@@ -140,7 +150,7 @@ class HitBatcher {
   duckdb::Vector& Scratch(Column& c);
   duckdb::Vector& PkOut();
   uint64_t Row(duckdb::idx_t i) const noexcept {
-    return _docs[i] - irs::doc_limits::min();
+    return _rg_first_row + _docs[i] - irs::doc_limits::min();
   }
   // Row-group window end for a group starting at `row`: the segment's row-group
   // boundary (if any) capped to a single output vector.
@@ -153,6 +163,7 @@ class HitBatcher {
   std::unique_ptr<irs::ReadContext> _ctx;
   std::vector<Column> _columns;
   uint32_t _seg_idx = 0;
+  uint64_t _rg_first_row = 0;
   const irs::ColumnReader* _rg_col = nullptr;
 
   std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE> _docs;

@@ -242,7 +242,7 @@ struct SelRows {
 };
 
 DocRows Sub(DocRows rows, size_t i, size_t n) {
-  return DocRows{rows.docs.subspan(i, n)};
+  return DocRows{rows.docs.subspan(i, n), rows.base};
 }
 irs::IotaRange Sub(irs::IotaRange rows, size_t i, size_t n) {
   return irs::IotaRange{rows.start + i, n};

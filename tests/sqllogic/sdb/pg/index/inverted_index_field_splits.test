@@ -1,0 +1,581 @@
+hash-threshold 100
+
+# A boolean value is not a term in a two-term dictionary: it is one of two
+# always-<X> fields, and the FIELD is picked by the VALUE -- at write time per
+# row, at query time per predicate. The same split separates the two null
+# facts a JSON key used to collapse into one field: `IS NULL` (the key
+# evaluates to SQL NULL -- a NULL row, or a path the document does not carry)
+# and a `null` leaf, which is a value like any other.
+#
+# Covers, at a row group spanning the segment and at a row group smaller than
+# it, before and after a merge: the field roles the pragma reports; equality,
+# inequality, range, IN and ts_* forms over a plain BOOLEAN column; a
+# BOOLEAN-returning indexed expression; a JSON key's bool leaves; `IS NULL`
+# against the JSON null value; the EXPLAIN rendering of both fields; and the
+# exact ids of the true and false sets, which differ, so selecting the wrong
+# field of the pair fails here rather than passing on equal cardinalities.
+
+statement ok
+SET compaction_interval = 0
+
+
+statement ok
+SET refresh_interval = 0
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY fs_kw(template = 'keyword', frequency = true)
+
+
+statement ok
+CREATE TABLE fs(id INTEGER PRIMARY KEY, b BOOLEAN, n INTEGER, j JSON)
+
+
+# b: 18 true, 34 false, 8 null over 60 rows -- deliberately unequal, so a
+# swapped true/false selection changes every count below.
+# j: SQL NULL, `null` leaf, `true` leaf, `false` leaf, a missing path (also SQL
+# NULL for the key) and a string leaf.
+statement ok
+INSERT INTO fs
+SELECT i,
+       CASE WHEN i % 7 = 0 THEN NULL WHEN i % 3 = 0 THEN true ELSE false END,
+       CASE WHEN i % 11 = 0 THEN NULL ELSE i END,
+       CASE WHEN i % 5 = 0 THEN NULL
+            WHEN i % 5 = 1 THEN '{"v":null}'
+            WHEN i % 5 = 2 THEN '{"v":true}'
+            WHEN i % 5 = 3 THEN '{"v":false}'
+            WHEN i % 10 = 4 THEN '{"other":1}'
+            ELSE '{"v":"s"}' END :: JSON
+FROM range(1, 61) t(i)
+
+
+statement ok
+CREATE INDEX fs_whole ON fs USING inverted(id, b, (n > 30), (j->'v') fs_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 2000000000)
+
+
+statement ok
+CREATE INDEX fs_split ON fs USING inverted(id, b, (n > 30), (j->'v') fs_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0, row_group_size = 8)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) fs
+
+
+# --- the fields the split creates. Three keys can hold booleans (the column,
+# the expression, the JSON leaf) and each contributes both value fields; the
+# JSON key alone contributes a `json_null` field beside its SQL-null marker.
+query TTI
+SELECT column_path, segment_type, count(*) AS fields
+FROM pragma_storage_info('fs_whole')
+WHERE segment_type IN ('VAR', 'FIXED_STRIDE', 'SINGLE')
+GROUP BY 1, 2 ORDER BY 1, 2
+----
+column_path	segment_type	fields
+[dict, expr]	VAR	1
+[dict, false]	SINGLE	3
+[dict, json_null]	SINGLE	1
+[dict, null]	SINGLE	3
+[dict, pk]	FIXED_STRIDE	1
+[dict, true]	SINGLE	3
+[dict]	VAR	1
+
+
+# --- a plain BOOLEAN column: every predicate form, against hand-computed
+# counts, at both row group sizes.
+query TII
+SELECT 'eq_true' AS q,
+       (SELECT count(*) FROM fs_whole WHERE b = true) AS whole,
+       (SELECT count(*) FROM fs_split WHERE b = true) AS split
+UNION ALL SELECT 'eq_false',
+       (SELECT count(*) FROM fs_whole WHERE b = false),
+       (SELECT count(*) FROM fs_split WHERE b = false)
+UNION ALL SELECT 'is_null',
+       (SELECT count(*) FROM fs_whole WHERE b IS NULL),
+       (SELECT count(*) FROM fs_split WHERE b IS NULL)
+UNION ALL SELECT 'is_not_null',
+       (SELECT count(*) FROM fs_whole WHERE b IS NOT NULL),
+       (SELECT count(*) FROM fs_split WHERE b IS NOT NULL)
+UNION ALL SELECT 'ne_true',
+       (SELECT count(*) FROM fs_whole WHERE b <> true),
+       (SELECT count(*) FROM fs_split WHERE b <> true)
+UNION ALL SELECT 'ne_false',
+       (SELECT count(*) FROM fs_whole WHERE b <> false),
+       (SELECT count(*) FROM fs_split WHERE b <> false)
+UNION ALL SELECT 'ge_false',
+       (SELECT count(*) FROM fs_whole WHERE b >= false),
+       (SELECT count(*) FROM fs_split WHERE b >= false)
+UNION ALL SELECT 'gt_false',
+       (SELECT count(*) FROM fs_whole WHERE b > false),
+       (SELECT count(*) FROM fs_split WHERE b > false)
+UNION ALL SELECT 'gt_true',
+       (SELECT count(*) FROM fs_whole WHERE b > true),
+       (SELECT count(*) FROM fs_split WHERE b > true)
+UNION ALL SELECT 'lt_true',
+       (SELECT count(*) FROM fs_whole WHERE b < true),
+       (SELECT count(*) FROM fs_split WHERE b < true)
+UNION ALL SELECT 'lt_false',
+       (SELECT count(*) FROM fs_whole WHERE b < false),
+       (SELECT count(*) FROM fs_split WHERE b < false)
+UNION ALL SELECT 'le_false',
+       (SELECT count(*) FROM fs_whole WHERE b <= false),
+       (SELECT count(*) FROM fs_split WHERE b <= false)
+UNION ALL SELECT 'in_both',
+       (SELECT count(*) FROM fs_whole WHERE b IN (true, false)),
+       (SELECT count(*) FROM fs_split WHERE b IN (true, false))
+UNION ALL SELECT 'in_true',
+       (SELECT count(*) FROM fs_whole WHERE b IN (true)),
+       (SELECT count(*) FROM fs_split WHERE b IN (true))
+UNION ALL SELECT 'not_in_false',
+       (SELECT count(*) FROM fs_whole WHERE b NOT IN (false)),
+       (SELECT count(*) FROM fs_split WHERE b NOT IN (false))
+UNION ALL SELECT 'ts_between',
+       (SELECT count(*) FROM fs_whole
+        WHERE b @@ ts_between(false, true, true, true)),
+       (SELECT count(*) FROM fs_split
+        WHERE b @@ ts_between(false, true, true, true))
+UNION ALL SELECT 'ts_between_excl',
+       (SELECT count(*) FROM fs_whole
+        WHERE b @@ ts_between(false, true, false, false)),
+       (SELECT count(*) FROM fs_split
+        WHERE b @@ ts_between(false, true, false, false))
+UNION ALL SELECT 'ts_lt_true',
+       (SELECT count(*) FROM fs_whole WHERE b @@ ts_lt(true)),
+       (SELECT count(*) FROM fs_split WHERE b @@ ts_lt(true))
+UNION ALL SELECT 'ts_ge_false',
+       (SELECT count(*) FROM fs_whole WHERE b @@ ts_ge(false)),
+       (SELECT count(*) FROM fs_split WHERE b @@ ts_ge(false))
+ORDER BY 1
+----
+q	whole	split
+eq_false	34	34
+eq_true	18	18
+ge_false	52	52
+gt_false	18	18
+gt_true	0	0
+in_both	52	52
+in_true	18	18
+is_not_null	52	52
+is_null	8	8
+le_false	34	34
+lt_false	0	0
+lt_true	34	34
+ne_false	18	18
+ne_true	34	34
+not_in_false	18	18
+ts_between	52	52
+ts_between_excl	0	0
+ts_ge_false	52	52
+ts_lt_true	34	34
+
+
+# The exact ids, not the cardinalities: reading the other field of the pair
+# fails here even though both fields exist and both are non-empty.
+query I
+SELECT id FROM fs_whole WHERE b = true AND id <= 12 ORDER BY id
+----
+id
+3
+6
+9
+12
+
+
+query I
+SELECT id FROM fs_split WHERE b = false AND id <= 12 ORDER BY id
+----
+id
+1
+2
+4
+5
+8
+10
+11
+
+
+# --- a BOOLEAN-returning indexed expression takes the same pair of fields; a
+# NULL input makes the expression SQL NULL, which is the marker field.
+query TII
+SELECT 'expr_true' AS q,
+       (SELECT count(*) FROM fs_whole WHERE (n > 30) = true) AS whole,
+       (SELECT count(*) FROM fs_split WHERE (n > 30) = true) AS split
+UNION ALL SELECT 'expr_false',
+       (SELECT count(*) FROM fs_whole WHERE (n > 30) = false),
+       (SELECT count(*) FROM fs_split WHERE (n > 30) = false)
+UNION ALL SELECT 'expr_null',
+       (SELECT count(*) FROM fs_whole WHERE (n > 30) IS NULL),
+       (SELECT count(*) FROM fs_split WHERE (n > 30) IS NULL)
+ORDER BY 1
+----
+q	whole	split
+expr_false	28	28
+expr_null	5	5
+expr_true	27	27
+
+
+# --- a JSON key: the bool leaves take the same pair, and the two null facts
+# are now two predicates over two fields. `IS NULL` is the 12 NULL rows plus
+# the 6 rows whose document has no `v` at all; the `null` leaf is its own 12.
+query TII
+SELECT 'json_true' AS q,
+       (SELECT count(*) FROM fs_whole WHERE (j->'v')::BOOLEAN = true) AS whole,
+       (SELECT count(*) FROM fs_split WHERE (j->'v')::BOOLEAN = true) AS split
+UNION ALL SELECT 'json_false',
+       (SELECT count(*) FROM fs_whole WHERE (j->'v')::BOOLEAN = false),
+       (SELECT count(*) FROM fs_split WHERE (j->'v')::BOOLEAN = false)
+UNION ALL SELECT 'json_sql_null',
+       (SELECT count(*) FROM fs_whole WHERE (j->'v') IS NULL),
+       (SELECT count(*) FROM fs_split WHERE (j->'v') IS NULL)
+UNION ALL SELECT 'json_null_leaf',
+       (SELECT count(*) FROM fs_whole WHERE json_type(j->'v') = 'NULL'),
+       (SELECT count(*) FROM fs_split WHERE json_type(j->'v') = 'NULL')
+UNION ALL SELECT 'json_not_null_leaf',
+       (SELECT count(*) FROM fs_whole WHERE json_type(j->'v') <> 'NULL'),
+       (SELECT count(*) FROM fs_split WHERE json_type(j->'v') <> 'NULL')
+UNION ALL SELECT 'json_string',
+       (SELECT count(*) FROM fs_whole WHERE (j->'v') = 's'),
+       (SELECT count(*) FROM fs_split WHERE (j->'v') = 's')
+ORDER BY 1
+----
+q	whole	split
+json_false	12	12
+json_not_null_leaf	30	30
+json_null_leaf	12	12
+json_sql_null	18	18
+json_string	6	6
+json_true	12	12
+
+
+query I
+SELECT id FROM fs_whole WHERE (j->'v')::BOOLEAN = true ORDER BY id LIMIT 4
+----
+id
+2
+7
+12
+17
+
+
+query I
+SELECT id FROM fs_split WHERE (j->'v')::BOOLEAN = false ORDER BY id LIMIT 4
+----
+id
+3
+8
+13
+18
+
+
+# --- EXPLAIN renders the field the value selected, on both sides of the pair,
+# and both fields when the predicate accepts both values.
+query
+EXPLAIN SELECT id FROM fs_whole WHERE b = true
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───╮
+│ Index: fs_whole    │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Term ─────────╮ │
+│ │ Field: b(true) │ │
+│ │ Value: true    │ │
+│ ╰────────────────╯ │
+│ Projections: id    │
+│ ~12 rows           │
+╰────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM fs_whole WHERE b = false
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────╮
+│ Index: fs_whole     │
+│ Lookup: table       │
+│ Index Filter:       │
+│ ╭─ Term ──────────╮ │
+│ │ Field: b(false) │ │
+│ │ Value: false    │ │
+│ ╰─────────────────╯ │
+│ Projections: id     │
+│ ~12 rows            │
+╰─────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM fs_whole WHERE b >= false
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: fs_whole                         │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Or ────────────╮                     │
+│ ╰────────┬────────╯                     │
+│          ├────────────────────╮         │
+│ ╭─ Term ─┴────────╮  ╭─ Term ─┴───────╮ │
+│ │ Field: b(false) │  │ Field: b(true) │ │
+│ │ Value: false    │  │ Value: true    │ │
+│ ╰─────────────────╯  ╰────────────────╯ │
+│ Projections: id                         │
+│ ~12 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM fs_whole WHERE json_type(j->'v') = 'NULL'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: fs_whole                  │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Term ───────────────────────╮ │
+│ │ Field: (j -> 'v')(json_null) │ │
+│ │ Value:                       │ │
+│ ╰──────────────────────────────╯ │
+│ Projections: id                  │
+│ ~12 rows                         │
+╰──────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM fs_whole WHERE (j->'v') IS NULL
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: fs_whole             │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Term ──────────────────╮ │
+│ │ Field: (j -> 'v')(null) │ │
+│ │ Value:                  │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~12 rows                    │
+╰─────────────────────────────╯
+
+
+# --- the null-marker exclude a boolean column anchors. A postings-only
+# positive on either value field already rejects every row the column's marker
+# indexes, so the marker exclude is redundant and the exclusion normal form
+# drops it. The map that says so is keyed by the VALUE field precisely because
+# one marker faces two of them here. Answers are unchanged either way -- this
+# is a pruning pin, and both queries return the 34 false rows.
+query
+EXPLAIN SELECT id FROM fs_whole WHERE NOT (b = true) AND b = false
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: fs_whole                         │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Exclusion ─────╮                     │
+│ ╰────────┬────────╯                     │
+│          ├────────────────────╮         │
+│ ╭─ Term ─┴────────╮  ╭─ Term ─┴───────╮ │
+│ │ Field: b(false) │  │ Field: b(true) │ │
+│ │ Value: false    │  │ Value: true    │ │
+│ ╰─────────────────╯  ╰────────────────╯ │
+│ Projections: id                         │
+│ ~12 rows                                │
+╰─────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM fs_whole WHERE b = false AND NOT (b IS NULL)
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────╮
+│ Index: fs_whole     │
+│ Lookup: table       │
+│ Index Filter:       │
+│ ╭─ Term ──────────╮ │
+│ │ Field: b(false) │ │
+│ │ Value: false    │ │
+│ ╰─────────────────╯ │
+│ Projections: id     │
+│ ~12 rows            │
+╰─────────────────────╯
+
+
+query III
+SELECT (SELECT count(*) FROM fs_whole WHERE NOT (b = true) AND b = false)
+         AS pruned_and,
+       (SELECT count(*) FROM fs_whole WHERE b = false AND NOT (b IS NULL))
+         AS pruned_not_null,
+       (SELECT count(*) FROM fs WHERE b = false) AS base
+----
+pruned_and	pruned_not_null	base
+34	34	34
+
+
+# --- dictionary-enumerating consumers. `ts_dict_agg` and the GROUP BY facet
+# pushdown both require a text term dictionary, so neither claims a boolean
+# key; the grouping runs over the scan and stays correct, including the NULL
+# group and the distinct count.
+query TI
+SELECT coalesce(b::VARCHAR, '-') AS val, count(*) AS rows
+FROM fs_whole GROUP BY 1 ORDER BY 1
+----
+val	rows
+-	8
+false	34
+true	18
+
+
+query I
+SELECT count(DISTINCT b) FROM fs_whole
+----
+count
+2
+
+
+statement error
+SELECT ts_dict_agg(b) FROM fs_whole
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
+
+
+# --- a second batch into its own segment, then a merge: the fields are the
+# schema's, so the merged segment carries the same split.
+statement ok
+INSERT INTO fs
+SELECT i,
+       CASE WHEN i % 7 = 0 THEN NULL WHEN i % 3 = 0 THEN true ELSE false END,
+       CASE WHEN i % 11 = 0 THEN NULL ELSE i END,
+       CASE WHEN i % 5 = 0 THEN NULL
+            WHEN i % 5 = 1 THEN '{"v":null}'
+            WHEN i % 5 = 2 THEN '{"v":true}'
+            WHEN i % 5 = 3 THEN '{"v":false}'
+            WHEN i % 10 = 4 THEN '{"other":1}'
+            ELSE '{"v":"s"}' END :: JSON
+FROM range(61, 121) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) fs
+
+
+statement ok
+VACUUM (COMPACT_TABLE) fs
+
+
+query TTII
+SELECT column_path, segment_type, count(DISTINCT row_group_id) AS segments,
+       count(*) AS fields
+FROM pragma_storage_info('fs_split')
+WHERE segment_type IN ('VAR', 'FIXED_STRIDE', 'SINGLE')
+GROUP BY 1, 2 ORDER BY 1, 2
+----
+column_path	segment_type	segments	fields
+[dict, expr]	VAR	1	1
+[dict, false]	SINGLE	1	3
+[dict, json_null]	SINGLE	1	1
+[dict, null]	SINGLE	1	3
+[dict, pk]	FIXED_STRIDE	1	1
+[dict, true]	SINGLE	1	3
+[dict]	VAR	1	1
+
+
+query TII
+SELECT 'm_eq_true' AS q,
+       (SELECT count(*) FROM fs_whole WHERE b = true) AS whole,
+       (SELECT count(*) FROM fs_split WHERE b = true) AS split
+UNION ALL SELECT 'm_eq_false',
+       (SELECT count(*) FROM fs_whole WHERE b = false),
+       (SELECT count(*) FROM fs_split WHERE b = false)
+UNION ALL SELECT 'm_is_null',
+       (SELECT count(*) FROM fs_whole WHERE b IS NULL),
+       (SELECT count(*) FROM fs_split WHERE b IS NULL)
+UNION ALL SELECT 'm_ge_false',
+       (SELECT count(*) FROM fs_whole WHERE b >= false),
+       (SELECT count(*) FROM fs_split WHERE b >= false)
+UNION ALL SELECT 'm_expr_true',
+       (SELECT count(*) FROM fs_whole WHERE (n > 30) = true),
+       (SELECT count(*) FROM fs_split WHERE (n > 30) = true)
+UNION ALL SELECT 'm_expr_false',
+       (SELECT count(*) FROM fs_whole WHERE (n > 30) = false),
+       (SELECT count(*) FROM fs_split WHERE (n > 30) = false)
+UNION ALL SELECT 'm_expr_null',
+       (SELECT count(*) FROM fs_whole WHERE (n > 30) IS NULL),
+       (SELECT count(*) FROM fs_split WHERE (n > 30) IS NULL)
+UNION ALL SELECT 'm_json_true',
+       (SELECT count(*) FROM fs_whole WHERE (j->'v')::BOOLEAN = true),
+       (SELECT count(*) FROM fs_split WHERE (j->'v')::BOOLEAN = true)
+UNION ALL SELECT 'm_json_false',
+       (SELECT count(*) FROM fs_whole WHERE (j->'v')::BOOLEAN = false),
+       (SELECT count(*) FROM fs_split WHERE (j->'v')::BOOLEAN = false)
+UNION ALL SELECT 'm_json_sql_null',
+       (SELECT count(*) FROM fs_whole WHERE (j->'v') IS NULL),
+       (SELECT count(*) FROM fs_split WHERE (j->'v') IS NULL)
+UNION ALL SELECT 'm_json_null_leaf',
+       (SELECT count(*) FROM fs_whole WHERE json_type(j->'v') = 'NULL'),
+       (SELECT count(*) FROM fs_split WHERE json_type(j->'v') = 'NULL')
+ORDER BY 1
+----
+q	whole	split
+m_eq_false	68	68
+m_eq_true	35	35
+m_expr_false	28	28
+m_expr_null	10	10
+m_expr_true	82	82
+m_ge_false	103	103
+m_is_null	17	17
+m_json_false	24	24
+m_json_null_leaf	24	24
+m_json_sql_null	36	36
+m_json_true	24	24
+
+
+# The emitted ids after the merge, whole-vs-split, for both sides of every
+# pair.
+query TT
+SELECT 'm_true_ids' AS q,
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM fs_whole
+        WHERE b = true) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM fs_split
+        WHERE b = true) AS same
+UNION ALL SELECT 'm_false_ids',
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM fs_whole
+        WHERE b = false) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM fs_split
+        WHERE b = false)
+UNION ALL SELECT 'm_json_null_ids',
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM fs_whole
+        WHERE json_type(j->'v') = 'NULL') =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM fs_split
+        WHERE json_type(j->'v') = 'NULL')
+UNION ALL SELECT 'm_sql_null_ids',
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM fs_whole
+        WHERE (j->'v') IS NULL) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM fs_split
+        WHERE (j->'v') IS NULL)
+ORDER BY 1
+----
+q	same
+m_false_ids	t
+m_json_null_ids	t
+m_sql_null_ids	t
+m_true_ids	t
+
+
+# The two null facts are disjoint and neither leaks into the other.
+query I
+SELECT count(*) FROM fs_split
+WHERE (j->'v') IS NULL AND json_type(j->'v') = 'NULL'
+----
+count
+0
+
+
+statement ok
+DROP TABLE fs
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY fs_kw

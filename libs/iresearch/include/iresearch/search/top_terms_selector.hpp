@@ -91,6 +91,12 @@ struct TopTermState : TopTerm<T> {
   void emplace(const SelectorState& state) {
     SDB_ASSERT(state.segment && state.docs_count && state.field);
 
+    // cookie() decodes the term's record whole, the stats included, so the
+    // collector above needs no read() before it -- that parses the same entry
+    // a second time. `terms` still gains exactly one entry per call, so the
+    // parallel walk over `segments` is unchanged.
+    terms.emplace_back(state.terms->cookie());
+
     const auto* segment = state.segment;
     const auto docs_count = *state.docs_count;
 
@@ -101,7 +107,6 @@ struct TopTermState : TopTerm<T> {
       ++segment.terms_count;
       segment.docs_count += docs_count;
     }
-    terms.emplace_back(state.terms->cookie());
   }
 
   template<typename Visitor>
@@ -116,7 +121,7 @@ struct TopTermState : TopTerm<T> {
   }
 
   std::vector<SegmentState> segments;
-  std::vector<SeekCookie::ptr> terms;
+  std::vector<TermCookie> terms;
 };
 
 template<typename State,
@@ -161,7 +166,6 @@ class TopTermsSelector : private util::Noncopyable {
 
   // Collect current term
   bool Visit(const key_type& key) {
-    _state.terms->read();
     const auto term = *_state.term;
 
     if (_heap.Full() && !_comparer(_heap.Min(), key, term)) {

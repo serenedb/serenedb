@@ -404,7 +404,7 @@ class BlockDisjunction : public DocIterator {
     if constexpr (kHasScore) {
       const PrepareScoreContext sub{
         .scorer = ctx.scorer,
-        .segment = ctx.segment,
+        .norms = ctx.norms,
         .fetcher = &_fetcher,
       };
 

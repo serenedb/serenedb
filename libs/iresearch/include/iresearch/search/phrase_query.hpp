@@ -77,7 +77,8 @@ class FixedPhraseQuery : public PhraseQuery<FixedPhraseState> {
     visitor.Visit(*this, state, boost * this->boost);
   }
 
-  DocIterator::ptr ExecuteWithOffsets(const SubReader& segment) const;
+  DocIterator::ptr ExecuteWithOffsets(const SubReader& segment,
+                                      uint32_t rg) const;
 };
 
 class VariadicPhraseQuery : public PhraseQuery<VariadicPhraseState> {
@@ -93,7 +94,8 @@ class VariadicPhraseQuery : public PhraseQuery<VariadicPhraseState> {
     visitor.Visit(*this, state, boost * this->boost);
   }
 
-  DocIterator::ptr ExecuteWithOffsets(const SubReader& segment) const;
+  DocIterator::ptr ExecuteWithOffsets(const SubReader& segment,
+                                      uint32_t rg) const;
 };
 
 }  // namespace irs

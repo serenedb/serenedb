@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
+#include <iresearch/formats/seek_cookie.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/prepared_state_visitor.hpp>
 #include <span>
@@ -36,7 +37,6 @@ class VariadicPhraseQuery;
 class NGramSimilarityQuery;
 struct PosAttr;
 struct OffsAttr;
-struct SeekCookie;
 struct SubReader;
 struct TermReader;
 
@@ -44,12 +44,14 @@ struct TermReader;
 namespace sdb::connector {
 
 struct FilterEntry {
-  std::variant<const irs::SeekCookie*, const irs::FixedPhraseQuery*,
+  std::variant<const irs::TermCookie*, const irs::FixedPhraseQuery*,
                const irs::VariadicPhraseQuery*,
                const irs::NGramSimilarityQuery*>
     filter;
 
-  // Lazy: null until first use in a segment, then reused for all docs.
+  // Lazy: null until first use in a (segment, row group), then reused for all
+  // its docs -- the iterator runs in one row group's local id space, so a new
+  // row group needs a new one.
   irs::DocIterator::ptr docs;
   irs::PosAttr* pos = nullptr;
   const irs::OffsAttr* offs = nullptr;
@@ -59,7 +61,9 @@ struct FilterEntry {
 struct FieldState {
   const irs::TermReader* reader = nullptr;
   std::vector<FilterEntry> entries;
-  containers::FlatHashSet<const irs::SeekCookie*> seen_cookies;
+  containers::FlatHashSet<const irs::TermCookie*> seen_cookies;
+  // Row group the lazy iterators of `entries` were built for.
+  uint32_t rg = 0;
 
   void Clear() noexcept {
     reader = nullptr;
@@ -76,10 +80,11 @@ struct FieldEntry {
 };
 
 void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader,
-                        const irs::SubReader& segment);
+                        const irs::SubReader& segment, uint32_t rg);
 
+// `doc_id` is row-group-local, `rg` says which row group it belongs to.
 void FillRowOffsets(FieldState& state, const irs::SubReader& segment,
-                    irs::doc_id_t doc_id, size_t max_pairs,
+                    uint32_t rg, irs::doc_id_t doc_id, size_t max_pairs,
                     std::vector<highlight::HitRange>& hits);
 
 class OffsetsCollector final : public irs::PreparedStateVisitor {

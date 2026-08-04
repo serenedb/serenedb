@@ -28,7 +28,7 @@
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/field_data.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -130,7 +130,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   SegmentWriter(ConstructToken, Directory& dir,
                 const SegmentWriterOptions& options) noexcept;
 
-  NormReader::ptr norms(field_id id) const final {
+  NormReader::ptr norms(field_id id, uint32_t rg = 0) const final {
     if (_col_reader == nullptr) {
       return {};
     }
@@ -138,7 +138,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     if (col == nullptr) {
       return {};
     }
-    return MakePersistedNormReader(*col);
+    return MakePersistedNormReader(*col, rg);
   }
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
 
@@ -180,7 +180,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   FieldsData _fields;
   std::vector<const FieldData*> _doc;
   std::string _seg_name;
-  std::unique_ptr<burst_trie::FieldWriter> _field_writer;
+  term_dict::FieldWriter::ptr _field_writer;
+  DictOptions _dict_options;
   duckdb::DatabaseInstance& _db;
   // Non-owning fallback, owned by the IndexWriter; used when no override is
   // set.

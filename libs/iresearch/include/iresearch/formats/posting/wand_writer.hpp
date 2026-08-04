@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+
 #include <algorithm>
 
 #include "basics/containers/small_vector.h"
@@ -54,6 +56,8 @@ class WandWriterImpl final : public WandWriter {
                const AttributeProvider& attrs) final {
     return _producer.Prepare(norms, meta, attrs);
   }
+
+  void SetRowGroup(uint32_t rg) final { _producer.SetRowGroup(rg); }
 
   void Reset() noexcept final {
     for (auto& entry : _levels) {
@@ -234,12 +238,18 @@ class FreqNormProducer : public AttributeProvider {
         return false;
       }
 
-      _norm_it = norms.norms(meta.norm);
-      if (!_norm_it) [[unlikely]] {
+      _norms.clear();
+      auto& rg0 = _norms.emplace_back(norms.norms(meta.norm));
+      if (!rg0) [[unlikely]] {
         return false;
       }
+      _norm_provider = &norms;
+      _norm_id = meta.norm;
+      _norm_it = rg0.get();
 
       if constexpr (kAvgDL) {
+        // Collection-wide: `GetAvg` reports the whole column's average
+        // document length, which every row group's reader answers alike.
         _avg_dl = _norm_it->GetAvg();
       }
 
@@ -247,6 +257,25 @@ class FreqNormProducer : public AttributeProvider {
     }
 
     return true;
+  }
+
+  // One reader per row group, built on first use and kept for the field: the
+  // writer walks terms outer and row groups inner, so a reader per call would
+  // cost an allocation per (term, row group).
+  void SetRowGroup(uint32_t rg) {
+    if constexpr (kNorm) {
+      if (rg >= _norms.size()) {
+        _norms.resize(rg + 1);
+      }
+      auto& reader = _norms[rg];
+      if (!reader) [[unlikely]] {
+        reader = _norm_provider->norms(_norm_id, rg);
+        SDB_ASSERT(reader);
+      }
+      _norm_it = reader.get();
+    } else {
+      IRS_IGNORE(rg);
+    }
   }
   IRS_FORCE_INLINE void Produce(Entry& to) noexcept {
     if constexpr (kBm25 || kDivNorm) {
@@ -332,7 +361,13 @@ class FreqNormProducer : public AttributeProvider {
   [[no_unique_address]]
   utils::Need<kNorm, Norm> _norm;
   [[no_unique_address]]
-  utils::Need<kNorm, NormReader::ptr> _norm_it;
+  utils::Need<kNorm, NormReader*> _norm_it{};
+  [[no_unique_address]]
+  utils::Need<kNorm, absl::InlinedVector<NormReader::ptr, 1>> _norms;
+  [[no_unique_address]]
+  utils::Need<kNorm, const NormProvider*> _norm_provider{};
+  [[no_unique_address]]
+  utils::Need<kNorm, field_id> _norm_id{};
   [[no_unique_address]] utils::Need<kBm25, score_t> _b;
   [[no_unique_address]] utils::Need<kAvgDL, score_t> _avg_dl;
 };

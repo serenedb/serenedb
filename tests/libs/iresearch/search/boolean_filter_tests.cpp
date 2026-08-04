@@ -48,7 +48,6 @@
 #include "iresearch/search/term_query.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
@@ -168,7 +167,7 @@ class BasicDocIterator : public irs::DocIterator {
   irs::ScoreFunction PrepareScore(const irs::PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+      .segment = *ctx.norms,
       .field = {},
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
@@ -354,7 +353,7 @@ TEST(boolean_query_boost, hierarchy) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
       .fetcher = nullptr,
     });
 
@@ -436,7 +435,7 @@ TEST(boolean_query_boost, hierarchy) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
 
@@ -527,7 +526,7 @@ TEST(boolean_query_boost, hierarchy) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
 
@@ -580,7 +579,7 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -611,7 +610,7 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -648,7 +647,7 @@ TEST(boolean_query_boost, and_filter) {
      * exists in both results */
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -692,7 +691,7 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -736,7 +735,7 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -778,7 +777,7 @@ TEST(boolean_query_boost, and_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -810,7 +809,7 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -841,7 +840,7 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -875,7 +874,7 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
 
@@ -934,7 +933,7 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
 
@@ -991,7 +990,7 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
 
@@ -1045,7 +1044,7 @@ TEST(boolean_query_boost, or_filter) {
 
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
 
@@ -1084,7 +1083,9 @@ struct SegmentReaderMock final : irs::SubReader {
   }
   const irs::TermReader* field(irs::field_id) const final { return nullptr; }
   std::span<const irs::field_id> field_ids() const final { return {}; }
-  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+  irs::NormReader::ptr norms(irs::field_id, irs::doc_id_t) const final {
+    return nullptr;
+  }
   irs::SegmentInfo _meta;
 };
 
@@ -1802,7 +1803,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -1865,7 +1866,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -1928,7 +1929,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -1992,7 +1993,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -2055,7 +2056,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -2118,7 +2119,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -2181,7 +2182,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -2244,7 +2245,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -2877,7 +2878,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -2938,7 +2939,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -2999,7 +3000,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -3066,7 +3067,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -3127,7 +3128,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
 
     ASSERT_TRUE(score.IsDefault());
@@ -3195,7 +3196,7 @@ TEST(small_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -3282,7 +3283,7 @@ TEST(block_disjunction_test, check_attributes) {
     ASSERT_EQ(0, cost->estimate());
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
   }
@@ -3306,7 +3307,7 @@ TEST(block_disjunction_test, check_attributes) {
     ASSERT_EQ(0, cost->estimate());
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
   }
@@ -4056,7 +4057,7 @@ TEST(block_disjunction_test, next_scored) {
       // score, no order set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_TRUE(score.IsDefault());
 
@@ -4114,7 +4115,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4175,7 +4176,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4236,7 +4237,7 @@ TEST(block_disjunction_test, next_scored) {
       // score, no order set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_TRUE(score.IsDefault());
 
@@ -4294,7 +4295,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4367,7 +4368,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4440,7 +4441,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4501,7 +4502,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4557,7 +4558,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4611,7 +4612,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4664,7 +4665,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4688,7 +4689,7 @@ TEST(block_disjunction_test, next_scored) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -4736,7 +4737,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4796,7 +4797,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4852,7 +4853,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4907,7 +4908,7 @@ TEST(block_disjunction_test, next_scored) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -4961,7 +4962,7 @@ TEST(block_disjunction_test, next_scored) {
     // score is set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -5011,7 +5012,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score, no order set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_TRUE(score.IsDefault());
 
@@ -5069,7 +5070,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5128,7 +5129,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5187,7 +5188,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score, no order set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_TRUE(score.IsDefault());
 
@@ -5246,7 +5247,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5320,7 +5321,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5394,7 +5395,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5456,7 +5457,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5511,7 +5512,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5564,7 +5565,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5618,7 +5619,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5654,7 +5655,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -5702,7 +5703,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5762,7 +5763,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5818,7 +5819,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5873,7 +5874,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       // score is set
       auto score = it.PrepareScore({
         .scorer = &sort,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
       ASSERT_FALSE(score.IsDefault());
 
@@ -5927,7 +5928,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     // score is set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8015,7 +8016,7 @@ TEST(block_disjunction_test, lazy_seek_scored_match_single_sub) {
     detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
   auto score = it.PrepareScore({
     .scorer = &sort,
-    .segment = &irs::SubReader::empty(),
+    .norms = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
 
@@ -8033,7 +8034,7 @@ TEST(block_disjunction_test, lazy_seek_scored_match_two_subs_sum) {
     detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
   auto score = it.PrepareScore({
     .scorer = &sort,
-    .segment = &irs::SubReader::empty(),
+    .norms = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
 
@@ -8050,7 +8051,7 @@ TEST(block_disjunction_test, lazy_seek_scored_match_miss_clears_score) {
     detail::ExecuteAll<irs::ScoreAdapter>(docs), irs::doc_limits::eof());
   auto score = it.PrepareScore({
     .scorer = &sort,
-    .segment = &irs::SubReader::empty(),
+    .norms = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
 
@@ -8079,7 +8080,7 @@ TEST(block_disjunction_test, lazy_seek_scored_min_match_threshold_passed) {
     irs::doc_limits::eof());
   auto score = it.PrepareScore({
     .scorer = &sort,
-    .segment = &irs::SubReader::empty(),
+    .norms = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
 
@@ -8104,7 +8105,7 @@ TEST(block_disjunction_test, lazy_seek_scored_min_match_partial_subs) {
     irs::doc_limits::eof());
   auto score = it.PrepareScore({
     .scorer = &sort,
-    .segment = &irs::SubReader::empty(),
+    .norms = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
 
@@ -8128,7 +8129,7 @@ TEST(block_disjunction_test, lazy_seek_scored_min_match_fast) {
               irs::doc_limits::eof());
   auto score = it.PrepareScore({
     .scorer = &sort,
-    .segment = &irs::SubReader::empty(),
+    .norms = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(score.IsDefault());
 
@@ -8219,7 +8220,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     // no order set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -8279,7 +8280,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8352,7 +8353,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8414,7 +8415,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8470,7 +8471,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8529,7 +8530,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8587,7 +8588,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8650,7 +8651,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8716,7 +8717,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8773,7 +8774,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8834,7 +8835,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -8967,7 +8968,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     // no order set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -9027,7 +9028,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9100,7 +9101,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9163,7 +9164,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9217,7 +9218,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9276,7 +9277,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9332,7 +9333,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9395,7 +9396,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9461,7 +9462,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9518,7 +9519,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -9579,7 +9580,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -11131,7 +11132,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     // score, no order set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -11185,7 +11186,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -11260,7 +11261,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -11335,7 +11336,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -11410,7 +11411,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -11484,7 +11485,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     detail::CompoundSort sort{{}};
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -11540,7 +11541,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -12103,7 +12104,7 @@ TEST(disjunction_test, seek_next) {
     // score, no order set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -12154,7 +12155,7 @@ TEST(disjunction_test, scored_seek_next) {
     // score, no order set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -12202,7 +12203,7 @@ TEST(disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -12265,7 +12266,7 @@ TEST(disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -12328,7 +12329,7 @@ TEST(disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -12397,7 +12398,7 @@ TEST(disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -12460,7 +12461,7 @@ TEST(disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -12529,7 +12530,7 @@ TEST(disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -13574,7 +13575,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     // score, no order set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -13621,7 +13622,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -13681,7 +13682,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -13741,7 +13742,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -13801,7 +13802,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -13861,7 +13862,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -13920,7 +13921,7 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     detail::CompoundSort sort({});
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -14338,7 +14339,7 @@ TEST(conjunction_test, seek_next) {
     detail::CompoundSort sort({});
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -14384,7 +14385,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14445,7 +14446,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score, no order set
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -14490,7 +14491,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14546,7 +14547,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14602,7 +14603,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14658,7 +14659,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14714,7 +14715,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14770,7 +14771,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14826,7 +14827,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14882,7 +14883,7 @@ TEST(conjunction_test, scored_seek_next) {
     // score
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -14937,7 +14938,7 @@ TEST(conjunction_test, scored_seek_next) {
     detail::CompoundSort sort{{}};
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -14992,7 +14993,7 @@ TEST(conjunction_test, scored_seek_next) {
     detail::CompoundSort sort{{}};
     auto score = it.PrepareScore({
       .scorer = &sort,
-      .segment = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty(),
     });
     ASSERT_TRUE(score.IsDefault());
 
@@ -15659,7 +15660,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
 
     auto score = filter_itr->PrepareScore({
       .scorer = &sort,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     size_t docs_count = 0;
@@ -15744,7 +15745,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
 
     auto score = filter_itr->PrepareScore({
       .scorer = &sort,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     size_t docs_count = 0;
@@ -16356,7 +16357,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
 
       const auto& scr = docs->PrepareScore({
         .scorer = &tfidf_scorer,
-        .segment = &irs::SubReader::empty(),
+        .norms = &irs::SubReader::empty(),
       });
 
       std::vector<irs::bstring> scores;
@@ -16629,7 +16630,7 @@ TEST(And_test, not_boosted) {
   auto docs = prep.Execute(0);
   const auto& scr = docs->PrepareScore({
     .scorer = &sort,
-    .segment = &irs::SubReader::empty(),
+    .norms = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(scr.IsDefault());
 
@@ -16774,7 +16775,9 @@ const irs::AutomatonFilter* FusedOf(const irs::Filter::ptr& filter) {
 }
 
 bool FusedAccepts(const irs::AutomatonFilter& fused, std::string_view term) {
-  return bool(irs::Accept(fused.options().compiled->acceptor, B(term)));
+  const auto predicate = fused.CompileTermPredicate();
+  EXPECT_NE(nullptr, predicate);
+  return predicate->Accepts(B(term));
 }
 
 }  // namespace
@@ -16846,13 +16849,45 @@ TEST(AndNullExclusion_test, prunes_anchored_marker) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
   const auto fields = ByTermFields(*filter);
   EXPECT_FALSE(fields.contains(kMarker));
   EXPECT_TRUE(fields.contains(kField));
+}
+
+// One column, several value fields, one marker -- the boolean split's shape.
+// Whichever value field the include anchors rejects the marker's rows, which
+// is why the map is keyed by the value field: a marker facing two of them
+// cannot be a key.
+TEST(AndNullExclusion_test, prunes_marker_anchored_by_either_value_field) {
+  constexpr irs::field_id kTrue = kFieldTestField;
+  constexpr irs::field_id kFalse = kFieldTestField + 1;
+  constexpr irs::field_id kOther = kFieldTestField + 2;
+  constexpr irs::field_id kMarker = kFieldTestField + 3;
+
+  sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
+  markers[kTrue] = kMarker;
+  markers[kFalse] = kMarker;
+
+  for (const auto anchor : {kTrue, kFalse}) {
+    auto root = std::make_unique<irs::And>();
+    Append<irs::ByTerm>(*root, anchor, "");
+    auto& negation = root->add<irs::Not>();
+    auto& group = negation.filter<irs::Or>();
+    Append<irs::ByTerm>(group, kOther, "kiwi");
+    Append<irs::ByTerm>(group, kMarker, "");
+
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {.null_markers = &markers});
+
+    const auto fields = ByTermFields(*filter);
+    EXPECT_FALSE(fields.contains(kMarker));
+    EXPECT_TRUE(fields.contains(anchor));
+    EXPECT_TRUE(fields.contains(kOther));
+  }
 }
 
 TEST(AndNullExclusion_test, keeps_unanchored_and_foreign_markers) {
@@ -16867,7 +16902,7 @@ TEST(AndNullExclusion_test, keeps_unanchored_and_foreign_markers) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -16897,7 +16932,7 @@ TEST(AndNullExclusion_test, prunes_marker_anchored_by_or_intersection) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -16932,8 +16967,8 @@ TEST(AndNullExclusion_test, or_intersection_spans_and_branches) {
   Append<irs::ByTerm>(group, kMarkerB, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarkerA] = kField;
-  markers[kMarkerB] = kOther;
+  markers[kField] = kMarkerA;
+  markers[kOther] = kMarkerB;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -16969,8 +17004,8 @@ TEST(AndNullExclusion_test, anchors_through_nested_exclusion_include) {
   Append<irs::ByTerm>(group, kMarkerB, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarkerA] = kField;
-  markers[kMarkerB] = kOther;
+  markers[kField] = kMarkerA;
+  markers[kOther] = kMarkerB;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -17003,7 +17038,7 @@ TEST(AndNullExclusion_test, keeps_marker_for_cross_field_or) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -17020,7 +17055,7 @@ TEST(AndNullExclusion_test, keeps_marker_without_include_anchor) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -17041,7 +17076,7 @@ TEST(AndNullExclusion_test, min_match_zero_terms_do_not_anchor) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -17806,7 +17841,7 @@ TEST(Or_test, boosted_not) {
   auto docs = prep.Execute(0);
   const auto& scr = docs->PrepareScore({
     .scorer = &sort,
-    .segment = &irs::SubReader::empty(),
+    .norms = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(scr.IsDefault());
 

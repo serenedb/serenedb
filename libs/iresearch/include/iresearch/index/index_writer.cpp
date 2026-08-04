@@ -1272,7 +1272,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_options) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
-      options.column_options, options.norm_column_options);
+      options.column_options, options.norm_column_options,
+      options.dict_options);
   }
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);

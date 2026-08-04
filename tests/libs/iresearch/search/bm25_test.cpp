@@ -170,7 +170,7 @@ void Bm25TestCase::TestQueryNorms() {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -221,7 +221,7 @@ void Bm25TestCase::TestQueryNorms() {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     while (!irs::doc_limits::eof(docs->advance())) {
@@ -368,7 +368,7 @@ TEST_P(Bm25TestCase, test_phrase) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = impl.get(),
-      .segment = &segment,
+      .norms = &segment,
     });
 
     const auto* column = segment.Column(kName);
@@ -433,7 +433,7 @@ TEST_P(Bm25TestCase, test_phrase) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = impl.get(),
-      .segment = &segment,
+      .norms = &segment,
     });
 
     const auto* column = segment.Column(kName);
@@ -512,7 +512,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     while (!irs::doc_limits::eof(docs->advance())) {
@@ -623,7 +623,7 @@ TEST_P(Bm25TestCase, test_query) {
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &segment,
+        .norms = &segment,
         .fetcher = &fetcher,
       });
 
@@ -747,7 +747,7 @@ TEST_P(Bm25TestCase, test_query) {
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &segment,
+        .norms = &segment,
         .fetcher = &fetcher,
       });
 
@@ -862,7 +862,7 @@ TEST_P(Bm25TestCase, test_query) {
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &segment,
+        .norms = &segment,
         .fetcher = &fetcher,
       });
 
@@ -913,7 +913,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     while (!irs::doc_limits::eof(docs->advance())) {
@@ -963,7 +963,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     while (!irs::doc_limits::eof(docs->advance())) {
@@ -1011,7 +1011,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     while (!irs::doc_limits::eof(docs->advance())) {
@@ -1059,7 +1059,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -1109,7 +1109,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     while (!irs::doc_limits::eof(docs->advance())) {
@@ -1148,7 +1148,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     irs::doc_id_t doc = irs::doc_limits::min();
@@ -1179,7 +1179,7 @@ TEST_P(Bm25TestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
     });
 
     irs::doc_id_t doc = irs::doc_limits::min();
@@ -1305,7 +1305,7 @@ TEST_P(Bm25TestCase, test_order) {
         auto docs = prepared.Execute(0);
         auto score = docs->PrepareScore({
           .scorer = &sort,
-          .segment = &segment,
+          .norms = &segment,
           .fetcher = &fetcher,
         });
 

@@ -25,7 +25,6 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/hash/hash.h>
 
-#include "automaton_utils.hpp"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/bitset.hpp"
 #include "basics/containers/small_vector.h"
@@ -284,56 +283,6 @@ uint32_t Distance(const ParametricState& state, const uint32_t max_distance,
   return min_dist;
 }
 
-struct Character {
-  bitset chi;  // characteristic vector
-  byte_type utf8[utf8_utils::kMaxCharSize]{};
-  size_t size{};
-  uint32_t cp{};  // utf8 code point
-};
-
-// characteristic vectors for a specified word
-std::vector<Character> MakeAlphabet(bytes_view word, size_t& utf8_size) {
-  sdb::containers::SmallVector<uint32_t, 16> chars;
-  utf8_utils::ToUTF32<false>(word, std::back_inserter(chars));
-  utf8_size = chars.size();
-
-  absl::c_sort(chars);
-  auto cbegin = chars.begin();
-  auto cend = std::unique(cbegin, chars.end());  // no need to erase here
-
-  std::vector<Character> alphabet(
-    1 + static_cast<size_t>(std::distance(cbegin, cend)));  // +1 for rho
-  auto begin = alphabet.begin();
-
-  // ensure we have enough capacity
-  const auto capacity = utf8_size + BitsRequired<bitset::word_t>();
-
-  begin->cp = std::numeric_limits<uint32_t>::max();
-  begin->chi.reset(capacity);
-  ++begin;
-
-  for (; cbegin != cend; ++cbegin, ++begin) {
-    const auto c = *cbegin;
-
-    // set code point
-    begin->cp = c;
-
-    // set utf8 representation
-    begin->size = utf8_utils::FromChar32(c, begin->utf8);
-
-    // evaluate characteristic vector
-    auto& chi = begin->chi;
-    chi.reset(capacity);
-    auto utf8_begin = word.data();
-    for (size_t i = 0; i < utf8_size; ++i) {
-      chi.reset(i, c == utf8_utils::ToChar32(utf8_begin));
-    }
-    SDB_ASSERT(utf8_begin == word.data() + word.size());
-  }
-
-  return alphabet;
-}
-
 // characteristic vector for a given character
 template<typename Iterator>
 uint64_t Chi(Iterator begin, Iterator end, uint32_t c) noexcept {
@@ -342,20 +291,6 @@ uint64_t Chi(Iterator begin, Iterator end, uint32_t c) noexcept {
     chi |= uint64_t(c == *begin) << i;
   }
   return chi;
-}
-
-// characteristic vector by a given offset and mask
-uint64_t Chi(const bitset& bs, size_t offset, uint64_t mask) noexcept {
-  auto word = bitset::word(offset);
-
-  auto align = offset - bitset::bit_offset(word);
-  if (!align) {
-    return bs[word] & mask;
-  }
-
-  const auto lhs = bs[word] >> align;
-  const auto rhs = bs[word + 1] << (BitsRequired<bitset::word_t>() - align);
-  return (lhs | rhs) & mask;
 }
 
 }  // namespace
@@ -472,138 +407,6 @@ ParametricDescription ParametricDescription::Read(DataInput& in) {
   in.ReadData(distances.data(), distances.size());
 
   return {std::move(transitions), std::move(distances), max_distance};
-}
-
-automaton MakeLevenshteinAutomaton(const ParametricDescription& description,
-                                   bytes_view prefix, bytes_view target) {
-  SDB_ASSERT(description);
-
-  struct State {
-    State(size_t offset, uint32_t state_id, automaton::StateId from) noexcept
-      : offset(offset), state_id(state_id), from(from) {}
-
-    size_t offset;            // state offset
-    uint32_t state_id;        // corresponding parametric state
-    automaton::StateId from;  // automaton state
-  };
-
-  size_t utf8_size;
-  const auto alphabet = MakeAlphabet(target, utf8_size);
-  const auto num_offsets = 1 + utf8_size;
-  const uint64_t mask = (UINT64_C(1) << description.chi_size()) - 1;
-
-  // transitions table of resulting automaton
-  std::vector<automaton::StateId> transitions(description.size() * num_offsets,
-                                              fst::kNoStateId);
-
-  automaton a;
-  a.ReserveStates(transitions.size());
-
-  // terminal state without outbound transitions
-  const auto invalid_state = a.AddState();
-  SDB_ASSERT(kInvalidState == invalid_state);
-  IRS_IGNORE(invalid_state);
-
-  // initial state
-  auto start_state = a.AddState();
-  a.SetStart(start_state);
-
-  auto begin = prefix.data();
-  auto end = prefix.data() + prefix.size();
-  decltype(start_state) to;
-  for (; begin != end;) {
-    const byte_type* next = utf8_utils::Next(begin, end);
-    to = a.AddState();
-    auto dist = std::distance(begin, next);
-    Utf8EmplaceArc(a, start_state, bytes_view(begin, dist), to);
-    start_state = to;
-    begin = next;
-  }
-
-  // check if start state is final
-  if (const auto distance = description.distance(1, utf8_size);
-      distance <= description.max_distance()) {
-    a.SetFinal(start_state, {true, distance});
-  }
-
-  // state stack
-  std::vector<State> stack;
-  stack.emplace_back(
-    0, 1,
-    start_state);  // 0 offset, 1st parametric state, initial automaton state
-
-  std::vector<std::pair<bytes_view, automaton::StateId>> arcs;
-  arcs.resize(utf8_size);  // allocate space for max possible number of arcs
-
-  for (Utf8TransitionsBuilder builder; !stack.empty();) {
-    const auto state = stack.back();
-    stack.pop_back();
-    arcs.clear();
-
-    automaton::StateId default_state =
-      fst::kNoStateId;  // destination of rho transition if exist
-    bool ascii = true;  // ascii only input
-
-    for (auto& entry : alphabet) {
-      const auto chi = Chi(entry.chi, state.offset, mask);
-      auto& transition = description.transition(state.state_id, chi);
-
-      const size_t offset =
-        transition.first ? transition.second + state.offset : 0;
-      SDB_ASSERT(transition.first * num_offsets + offset < transitions.size());
-      auto& to = transitions[transition.first * num_offsets + offset];
-
-      if (kInvalidState == transition.first) {
-        to = kInvalidState;
-      } else if (fst::kNoStateId == to) {
-        to = a.AddState();
-
-        if (const auto distance =
-              description.distance(transition.first, utf8_size - offset);
-            distance <= description.max_distance()) {
-          a.SetFinal(to, {true, distance});
-        }
-
-        stack.emplace_back(offset, transition.first, to);
-      }
-
-      if (chi && to != default_state) {
-        arcs.emplace_back(bytes_view(entry.utf8, entry.size), to);
-        ascii &= (entry.size == 1);
-      } else {
-        SDB_ASSERT(fst::kNoStateId == default_state || to == default_state);
-        default_state = to;
-      }
-    }
-
-    if (kInvalidState == default_state && arcs.empty()) {
-      // optimization for invalid terminal state
-      a.EmplaceArc(state.from, RangeLabel::From(0, 255), kInvalidState);
-    } else if (kInvalidState == default_state && ascii &&
-               !a.Final(state.from)) {
-      // optimization for ascii only input without default state and weight
-      for (auto& arc : arcs) {
-        SDB_ASSERT(1 == arc.first.size());
-        a.EmplaceArc(state.from, RangeLabel::From(arc.first.front()),
-                     arc.second);
-      }
-    } else {
-      builder.Insert(a, state.from, default_state, arcs.begin(), arcs.end());
-    }
-  }
-
-#ifdef SDB_DEV
-  // ensure resulting automaton is sorted and deterministic
-  static constexpr auto kExpectedProperties =
-    fst::kIDeterministic | fst::kILabelSorted | fst::kOLabelSorted |
-    fst::kAcceptor | fst::kUnweighted;
-  SDB_ASSERT(kExpectedProperties == a.Properties(kExpectedProperties, true));
-
-  // ensure invalid state has no outbound transitions
-  SDB_ASSERT(0 == a.NumArcs(kInvalidState));
-#endif
-
-  return a;
 }
 
 size_t EditDistance(const ParametricDescription& description,

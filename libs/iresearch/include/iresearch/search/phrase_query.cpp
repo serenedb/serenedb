@@ -73,9 +73,10 @@ DocIterator::ptr FixedPhraseQuery::Execute(const ExecutionContext& ctx,
   auto position = std::begin(this->positions);
 
   for (const auto& term_state : phrase_state->terms) {
-    SDB_ASSERT(term_state.first);
+    SDB_ASSERT(!term_state.first.rgs.empty());
 
-    auto docs = reader->Iterator(features, {.cookie = term_state.first.get()});
+    auto docs =
+      reader->RowGroupIterator(features, {.cookie = &term_state.first}, ctx.rg);
     if (!docs) [[unlikely]] {
       return DocIterator::empty();
     }
@@ -111,8 +112,8 @@ DocIterator::ptr FixedPhraseQuery::Execute(const ExecutionContext& ctx,
   });
 }
 
-DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
-  const SubReader& segment) const {
+DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(const SubReader& segment,
+                                                      uint32_t rg) const {
   const auto* phrase_state = &state;
 
   if (!phrase_state->reader) {
@@ -144,10 +145,10 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
     auto term_state = std::begin(phrase_state->terms);
 
     auto add_iterator = [&](IndexFeatures features) {
-      SDB_ASSERT(term_state->first);
+      SDB_ASSERT(!term_state->first.rgs.empty());
 
       auto docs =
-        reader->Iterator(features, {.cookie = term_state->first.get()});
+        reader->RowGroupIterator(features, {.cookie = &term_state->first}, rg);
       if (!docs) [[unlikely]] {
         return false;
       }
@@ -238,9 +239,10 @@ DocIterator::ptr VariadicPhraseQuery::Execute(const ExecutionContext& ctx,
     disj_itrs.reserve(num_terms);
     for (const auto end = term_state + num_terms; term_state != end;
          ++term_state) {
-      SDB_ASSERT(term_state->first);
+      SDB_ASSERT(!term_state->first.rgs.empty());
 
-      auto it = reader->Iterator(features, {.cookie = term_state->first.get()});
+      auto it = reader->RowGroupIterator(
+        features, {.cookie = &term_state->first}, ctx.rg);
       if (!it) [[unlikely]] {
         continue;
       }
@@ -299,7 +301,7 @@ DocIterator::ptr VariadicPhraseQuery::Execute(const ExecutionContext& ctx,
 }
 
 DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
-  const SubReader& segment) const {
+  const SubReader& segment, uint32_t rg) const {
   using Adapter = VariadicPhraseOffsetAdapter;
   using CompundDocIterator = CompoundDocIterator<Adapter>;
   using Disjunction = Disjunction<Adapter>;
@@ -337,10 +339,10 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
       disj_itrs.reserve(num_terms);
       for (const auto end = term_state + num_terms; term_state != end;
            ++term_state) {
-        SDB_ASSERT(term_state->first);
+        SDB_ASSERT(!term_state->first.rgs.empty());
 
-        auto it =
-          reader->Iterator(features, {.cookie = term_state->first.get()});
+        auto it = reader->RowGroupIterator(features,
+                                           {.cookie = &term_state->first}, rg);
         if (!it) [[unlikely]] {
           continue;
         }

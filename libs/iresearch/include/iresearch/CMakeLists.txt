@@ -90,7 +90,7 @@ set(IResearch_core_sources
     ./formats/format_utils.cpp
     ./formats/posting/skip_list.cpp
     ./formats/format_block_128.cpp
-    ./formats/index/burst_trie.cpp
+    ./formats/index/term_dict.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
     ./formats/ivf/centroids.cpp
@@ -133,6 +133,7 @@ set(IResearch_core_sources
     ./search/phrase_filter.cpp
     ./search/phrase_query.cpp
     ./search/same_position_filter.cpp
+    ./search/term_acceptor.cpp
     ./search/automaton_filter.cpp
     ./search/wildcard_filter.cpp
     ./search/regexp_filter.cpp
@@ -176,7 +177,6 @@ set(IResearch_core_sources
     ./store/memory_directory.cpp
     ./store/store_utils.cpp
     ./utils/attributes.cpp
-    ./utils/automaton_utils.cpp
     ./utils/encryption.cpp
     ./utils/ctr_encryption.cpp
     ./utils/directory_utils.cpp
@@ -184,6 +184,7 @@ set(IResearch_core_sources
     ./utils/index_utils.cpp
     ./utils/levenshtein_utils.cpp
     ./utils/wildcard_utils.cpp
+    ./utils/regexp_acceptor.cpp
     ./utils/regexp_utils.cpp
     ./utils/levenshtein_default_pdp.cpp
     ./utils/timer_utils.cpp
@@ -270,6 +271,7 @@ target_include_directories(
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${SNOWBALL_INCLUDE_DIR}
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
@@ -290,7 +292,6 @@ target_link_libraries(
     PUBLIC absl::crc32c
     PUBLIC serene_base
     PUBLIC simdjson
-    PUBLIC iresearch-ofst
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}

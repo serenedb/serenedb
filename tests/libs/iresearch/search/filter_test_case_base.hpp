@@ -84,7 +84,7 @@ class DocIteratorWrapper : public irs::DocIterator {
   irs::ScoreFunction PrepareScore(const irs::PrepareScoreContext& ctx) {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+      .segment = *ctx.norms,
       .field = {},
       .doc_attrs = *this,
     });
@@ -477,11 +477,6 @@ class FilterTestCaseBase : public IndexTestBase {
 
 struct EmptyTermReader : irs::Singleton<EmptyTermReader>, irs::TermReader {
   irs::SeekTermIterator::ptr iterator(irs::SeekMode) const final {
-    return irs::SeekTermIterator::empty();
-  }
-
-  irs::SeekTermIterator::ptr iterator(
-    const irs::automaton_table_matcher&) const final {
     return irs::SeekTermIterator::empty();
   }
 

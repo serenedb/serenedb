@@ -123,7 +123,11 @@ struct IndexReader {
 struct NormProvider {
   virtual ~NormProvider() = default;
 
-  virtual NormReader::ptr norms(field_id field) const = 0;
+  // `rg` is the row group whose local ids the returned reader is indexed by.
+  // The norm column is partitioned on the same grid as the field's postings, so
+  // one row group of the column answers one row group of the field and no
+  // reader ever spans row groups.
+  virtual NormReader::ptr norms(field_id field, uint32_t rg = 0) const = 0;
 };
 
 // Generic interface for accessing an index segment
@@ -150,13 +154,27 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual DocIterator::ptr docs_iterator() const = 0;
 
-  virtual DocIterator::ptr mask(DocIterator::ptr&& it) const {
+  // `it` yields ids local to one row group; `doc_offset` is what maps them
+  // back to the segment-wide ids the DocumentMask is keyed by
+  // (`RowGroups().Base(rg) - doc_limits::min()`), and applying it here is the
+  // whole of the mask's boundary arithmetic.
+  virtual DocIterator::ptr mask(DocIterator::ptr&& it,
+                                doc_id_t doc_offset = 0) const {
+    IRS_IGNORE(doc_offset);
     return std::move(it);
   }
 
   virtual std::span<const field_id> field_ids() const = 0;
 
   virtual const TermReader* field(field_id id) const = 0;
+
+  // The row-group grid this segment's postings are read through. The authority
+  // is the dictionary that wrote the segment, never any current setting: a
+  // dictionary that does not partition answers one row group spanning the
+  // segment, resolved here because only the segment knows its extent.
+  virtual RowGroupLayout RowGroups() const noexcept {
+    return RowGroupLayout::Whole(docs_count());
+  }
 
   virtual const ColReader* GetColReader() const { return nullptr; }
 
@@ -165,6 +183,25 @@ struct SubReader : public IndexReader, public NormProvider {
   }
   virtual const CentroidsTree* Ivf(field_id /*field*/) const { return nullptr; }
   virtual IndexInput::ptr ReopenIvf() const { return nullptr; }
+};
+
+// A segment seen from inside one row group: the scorers reach norms through a
+// NormProvider, so binding the row group here is all a scorer needs to keep
+// reading with the local ids its iterator produces.
+class RowGroupNormProvider final : public NormProvider {
+ public:
+  void Reset(const SubReader& segment, uint32_t rg) noexcept {
+    _segment = &segment;
+    _rg = rg;
+  }
+
+  NormReader::ptr norms(field_id field, uint32_t rg = 0) const final {
+    return _segment->norms(field, _rg + rg);
+  }
+
+ private:
+  const SubReader* _segment = nullptr;
+  uint32_t _rg = 0;
 };
 
 template<typename Visitor, typename FilterVisitor>

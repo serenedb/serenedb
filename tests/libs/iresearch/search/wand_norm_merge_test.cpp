@@ -21,7 +21,7 @@
 // Norm + BM25 wand round-trip tests across all the corner cases the
 // search-benchmark-game flagged. The minimal scenario passed; this file
 // adds the shapes the bench is likely actually hitting:
-//   * multi-row-group norm columns (small `norm_row_group_size`),
+//   * multi-row-group norm columns (small norm column row group size),
 //   * RGs with mixed byte_size on the same column,
 //   * mismatched per-source byte widths during compaction,
 //   * removals before compaction (mask-filter on the norm merge),
@@ -167,18 +167,15 @@ auto MakeByTerm(irs::field_id field, std::string_view value) {
 
 class WandNormMergeCase : public tests::IndexTestBase {
  protected:
-  // Customise `norm_row_group_size` per test so we can force multi-RG
-  // shapes without needing 100K docs.
-  irs::IndexWriterOptions MakeOpts(irs::Scorer* scorer,
-                                   uint32_t norm_rgs = 122880) {
+  // Customise the index's row group size per test so we can force multi-RG
+  // shapes without needing 100K docs. It cuts the postings and the norm
+  // columns together -- they share the one grid -- so a small value gives a
+  // partitioned segment whose norms are read per row group, which is the shape
+  // production takes past 122'880 documents.
+  irs::IndexWriterOptions MakeOpts(irs::Scorer* scorer, uint32_t rgs = 122880) {
     auto opts = irs::tests::DefaultWriterOptions();
     opts.reader_options.scorer = scorer;
-    opts.norm_column_options =
-      [norm_rgs, next = std::make_shared<std::atomic<irs::field_id>>(0)](
-        irs::field_id) -> irs::NormColumnOptions {
-      return {.id = next->fetch_add(1, std::memory_order_relaxed),
-              .row_group_size = norm_rgs};
-    };
+    opts.dict_options = {.row_group_size = rgs};
     return opts;
   }
 

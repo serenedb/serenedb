@@ -31,6 +31,7 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/vector_filter_util.hpp"
@@ -128,8 +129,10 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
 
   state.cookies.reserve(fine_ids.size());
   if (quant != VectorQuantization::None) {
-    state.pay_starts.reserve(fine_ids.size());
-    state.cluster_counts.reserve(fine_ids.size());
+    state.pay_base = postings->PayloadBase();
+    state.pay_runs.reserve(fine_ids.size());
+    state.pay_run_begin.reserve(fine_ids.size() + 1);
+    state.clusters.reserve(fine_ids.size());
   }
   if (needs_centroids) {
     state.cluster_centroids.reserve(fine_ids.size() * d);
@@ -142,20 +145,34 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     if (!SeekClusterTerm(*terms, c, term_buf)) {
       continue;
     }
-    if (term_meta) {
-      estimation += term_meta->docs_count;
-    }
-    if (quant != VectorQuantization::None) {
-      state.pay_starts.push_back(
-        static_cast<const TermMetaImpl*>(term_meta)->pay_start);
-      state.cluster_counts.push_back(term_meta->docs_count);
-    }
     if (needs_centroids) {
       const float* cen = probed_centroids.data() + i * d;
       state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
                                      cen + d);
     }
+    // cookie() decodes the cluster term's record whole, the stats included --
+    // which is why SeekClusterTerm does not read() them first.
     state.cookies.emplace_back(terms->cookie());
+    if (term_meta) {
+      estimation += term_meta->docs_count;
+    }
+    if (quant != VectorQuantization::None) {
+      // The cluster's payload is one run per row group its posting list
+      // touches, in cluster document order; the cookie already carries that
+      // list, which is why the row-group read contract put it there.
+      const auto& cookie = state.cookies.back();
+      state.pay_run_begin.push_back(
+        static_cast<uint32_t>(state.pay_runs.size()));
+      state.clusters.emplace_back(cookie.pay_start, term_meta->docs_count);
+      uint32_t doc_offset = 0;
+      for (const auto& group : cookie.rgs) {
+        state.pay_runs.emplace_back(group.rg, group.docs_count, doc_offset);
+        doc_offset += group.docs_count;
+      }
+    }
+  }
+  if (quant != VectorQuantization::None) {
+    state.pay_run_begin.push_back(static_cast<uint32_t>(state.pay_runs.size()));
   }
   state.estimation = estimation;
 

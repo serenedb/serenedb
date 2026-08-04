@@ -23,7 +23,6 @@
 #pragma once
 
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/formats/posting/reader.hpp"
@@ -73,8 +72,8 @@ class FormatImpl final : public FormatBase {
 
   PostingsWriter::ptr get_postings_writer(
     bool compaction, IResourceManager& resource_manager) const final {
-    return std::make_unique<PostingsWriterImpl<FormatTraits>>(
-      PostingsFormat::WandSimd, compaction, resource_manager);
+    return std::make_unique<PostingsWriterImpl<FormatTraits>>(compaction,
+                                                              resource_manager);
   }
   PostingsReader::ptr get_postings_reader() const final {
     return std::make_unique<PostingsReaderImpl<FormatTraits>>();

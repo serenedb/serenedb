@@ -25,6 +25,7 @@
 #include <duckdb/storage/table/row_group_collection.hpp>
 #include <span>
 
+#include "catalog/inverted_index.h"
 #include "catalog/table.h"
 
 namespace irs {
@@ -40,18 +41,22 @@ struct IResearchColumnBinding {
   uint64_t field;
 };
 
+// `index`, when given, adds one row per term-dict field of each segment beside
+// the `.col` rows: the dictionary's layout, its plane sizes and its FSST gate.
 bool ScanIResearchColumnSegmentInfo(
   const irs::IndexReader& reader,
   std::span<const IResearchColumnBinding> bindings,
   const duckdb::virtual_column_map_t& virtual_columns,
   duckdb::ColumnSegmentInfoScanState& state,
-  duckdb::vector<duckdb::ColumnSegmentInfo>& result);
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result,
+  const catalog::InvertedIndex* index = nullptr);
 
 void BuildIResearchColumnSegmentInfo(
   const irs::IndexReader& reader,
   std::span<const IResearchColumnBinding> bindings,
   const duckdb::virtual_column_map_t& virtual_columns,
-  duckdb::vector<duckdb::ColumnSegmentInfo>& result);
+  duckdb::vector<duckdb::ColumnSegmentInfo>& result,
+  const catalog::InvertedIndex* index = nullptr);
 
 // Virtual column ID for tableoid (PG system column). Always returns 0.
 // Placed in the special-identifier range alongside COLUMN_IDENTIFIER_ROW_*.

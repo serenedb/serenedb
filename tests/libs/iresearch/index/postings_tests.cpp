@@ -387,6 +387,56 @@ TEST(postings_tests, clear) {
   ASSERT_EQ(0, memory.Counter());
 }
 
+TEST(postings_tests, sorted_postings_order) {
+  SimpleMemoryAccounter memory;
+  {
+    auto pool = std::make_unique<byte_block_pool>(
+      ManagedTypedAllocator<byte_type>{memory});
+    byte_block_pool::inserter writer(pool->begin());
+    Postings bh(writer);
+
+    const std::vector<std::string> terms{
+      "shared_prefix_aaaaaaaa_tail_one",
+      "shared_prefix_aaaaaaaa_tail_two",
+      "shared_prefix_aaaaaaaa",
+      "shared_p",
+      "shared",
+      "b",
+      "aaaaaaaa",
+      "aaaaaaa",
+      "aaaaaaaab",
+      std::string("\x80\xFF\x01", 3),
+      std::string("\x7F\xFF", 2),
+      std::string("aa\x00zz", 5),
+      std::string("aa\x00", 3),
+      "inline12byte",
+      "pooled_term_longer_than_inline",
+      "doc42",
+      "doc421",
+    };
+    for (const auto& term : terms) {
+      ASSERT_NE(nullptr, bh.emplace(tests::detail::ToBytesView(term)));
+    }
+    ASSERT_EQ(terms.size(), bh.size());
+
+    std::vector<const Posting*> sorted;
+    bh.get_sorted_postings(sorted);
+    ASSERT_EQ(terms.size(), sorted.size());
+
+    std::vector<std::string> expected = terms;
+    std::sort(expected.begin(), expected.end(),
+              [](const std::string& lhs, const std::string& rhs) {
+                const auto r = std::memcmp(lhs.data(), rhs.data(),
+                                           std::min(lhs.size(), rhs.size()));
+                return r < 0 || (r == 0 && lhs.size() < rhs.size());
+              });
+    for (size_t i = 0; i < expected.size(); ++i) {
+      ASSERT_EQ(tests::detail::ToBytesView(expected[i]),
+                sorted[i]->TermBytes());
+    }
+  }
+}
+
 TEST(postings_tests, slice_alignment) {
   SimpleMemoryAccounter memory;
   {

@@ -64,8 +64,15 @@ class TestSeekTermIterator : public irs::SeekTermIterator {
 
   bool seek(irs::bytes_view) final { return false; }
 
-  irs::SeekCookie::ptr cookie() const final {
-    return std::make_unique<struct SeekPtr>(_cookie_ptr);
+  // The cookie is a value, so what it carries -- the term's statistics -- is
+  // what a consumer can check, rather than the identity of a heap allocation.
+  irs::TermCookie cookie() const final {
+    irs::TermCookie cookie;
+    cookie.stats = _cookie_ptr->second;
+    cookie.rgs.emplace_back(0U, _cookie_ptr->second.docs_count,
+                            _cookie_ptr->second.freq, 0U, 0U, 0U, 0U,
+                            static_cast<uint8_t>(0));
+    return cookie;
   }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
@@ -94,19 +101,10 @@ class TestSeekTermIterator : public irs::SeekTermIterator {
 
   void read() final {}
 
-  irs::DocIterator::ptr postings(irs::IndexFeatures /*features*/) const final {
+  irs::DocIterator::ptr RowGroupPostings(irs::IndexFeatures /*features*/,
+                                         uint32_t /*rg*/) const final {
     return irs::DocIterator::empty();
   }
-
-  struct SeekPtr final : irs::SeekCookie {
-    explicit SeekPtr(IteratorType ptr) noexcept : ptr(ptr) {}
-
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-      return nullptr;
-    }
-
-    IteratorType ptr;
-  };
 
  private:
   TestTermMeta _meta;
@@ -133,7 +131,9 @@ struct SubReader final : irs::SubReader {
   }
   const irs::TermReader* field(irs::field_id) const final { return nullptr; }
   std::span<const irs::field_id> field_ids() const final { return {}; }
-  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
+  irs::NormReader::ptr norms(irs::field_id, irs::doc_id_t) const final {
+    return nullptr;
+  }
 
   irs::SegmentInfo info;
 };
@@ -158,11 +158,9 @@ struct StateVisitor {
     expected_cookie = it->second.cookies.begin();
   }
 
-  void operator()(irs::SeekCookie::ptr& cookie) const {
-    auto* cookie_impl =
-      static_cast<const ::TestSeekTermIterator::SeekPtr*>(cookie.get());
-
-    ASSERT_EQ(*expected_cookie, cookie_impl->ptr);
+  void operator()(irs::TermCookie& cookie) const {
+    ASSERT_EQ((*expected_cookie)->second.docs_count, cookie.stats.docs_count);
+    ASSERT_EQ((*expected_cookie)->second.freq, cookie.stats.freq);
 
     ++expected_cookie;
   }

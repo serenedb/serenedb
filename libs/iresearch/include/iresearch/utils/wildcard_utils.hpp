@@ -22,7 +22,9 @@
 
 #pragma once
 
-#include "automaton.hpp"
+#include <cstdint>
+#include <cstring>
+
 #include "string.hpp"
 
 namespace irs {
@@ -43,18 +45,57 @@ enum WildcardMatch : uint8_t {
   kEscape = '\\',  // escape control symbol, e.g. "\%" issues literal "%"
 };
 
-////////////////////////////////////////////////////////////////////////////////
-/// @brief instantiates minimal DFA from a specified UTF-8 encoded wildcard
-///        sequence
-/// @returns DFA accpeting a specified wildcard expression
-/// @note control symbols are WildcardMatch
-/// @note non UTF-8 bytes transition instatiated as bytes
-/// @note invalid last escape, instatiate transition as byte
-////////////////////////////////////////////////////////////////////////////////
-automaton FromWildcard(bytes_view expr);
+// The lead-byte ranges `%` and `_` walk. Deliberately not strict UTF-8: the
+// model leaves the continuation bytes of a lead unconstrained, so overlongs and
+// surrogates are admitted while C0..C1 and F5..FF are not. A dictionary key is
+// arbitrary bytes, which is why `%` does not match everything.
+inline constexpr byte_type kUtf8ContinuationMin = 0x80;
+inline constexpr byte_type kUtf8ContinuationMax = 0xBF;
 
-inline automaton FromWildcard(std::string_view expr) {
-  return FromWildcard(ViewCast<byte_type>(expr));
+// True when `key` is a run of code points that model admits -- the language of
+// a bare `%`.
+inline bool AcceptsAnyUtf8(bytes_view key) noexcept {
+  const auto* p = key.data();
+  const auto* end = p + key.size();
+  while (p != end) {
+    // An ASCII run self-validates a word at a time.
+    while (static_cast<size_t>(end - p) >= sizeof(uint64_t)) {
+      uint64_t word;
+      std::memcpy(&word, p, sizeof(word));
+      if ((word & 0x8080808080808080ULL) != 0) {
+        break;
+      }
+      p += sizeof(word);
+    }
+    if (p == end) {
+      break;
+    }
+    const uint32_t lead = *p++;
+    if (lead <= 0x7F) {
+      continue;
+    }
+    uint32_t extra;
+    if (lead >= 0xC2 && lead <= 0xDF) {
+      extra = 1;
+    } else if (lead >= 0xE0 && lead <= 0xEF) {
+      extra = 2;
+    } else if (lead >= 0xF0 && lead <= 0xF4) {
+      extra = 3;
+    } else {
+      return false;
+    }
+    if (static_cast<size_t>(end - p) < extra) {
+      return false;
+    }
+    for (uint32_t i = 0; i != extra; ++i) {
+      const uint32_t continuation = *p++;
+      if (continuation < kUtf8ContinuationMin ||
+          continuation > kUtf8ContinuationMax) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 }  // namespace irs

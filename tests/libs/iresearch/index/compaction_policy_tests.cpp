@@ -104,7 +104,8 @@ class SubReaderMock final : public irs::SubReader {
     return nullptr;
   }
 
-  irs::DocIterator::ptr mask(irs::DocIterator::ptr&& it) const final {
+  irs::DocIterator::ptr mask(irs::DocIterator::ptr&& it,
+                             irs::doc_id_t doc_offset = 0) const final {
     EXPECT_FALSE(true);
     return std::move(it);
   }
@@ -122,7 +123,7 @@ class SubReaderMock final : public irs::SubReader {
     return nullptr;
   }
 
-  irs::NormReader::ptr norms(irs::field_id) const final {
+  irs::NormReader::ptr norms(irs::field_id, irs::doc_id_t) const final {
     EXPECT_FALSE(true);
     return nullptr;
   }

@@ -585,7 +585,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto score = docs->PrepareScore({
       .scorer = order.front().get(),
-      .segment = &index[0],
+      .norms = &index[0],
     });
     ASSERT_FALSE(score.IsDefault());
 
@@ -635,7 +635,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto score = docs->PrepareScore({
       .scorer = order.front().get(),
-      .segment = &index[0],
+      .norms = &index[0],
     });
 
     ASSERT_FALSE(score.IsDefault());
@@ -684,7 +684,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto score = docs->PrepareScore({
       .scorer = order.front().get(),
-      .segment = &index[0],
+      .norms = &index[0],
     });
 
     ASSERT_FALSE(score.IsDefault());
@@ -734,7 +734,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto score = docs->PrepareScore({
       .scorer = order.front().get(),
-      .segment = &index[0],
+      .norms = &index[0],
     });
 
     ASSERT_FALSE(score.IsDefault());
@@ -804,7 +804,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto score = docs->PrepareScore({
       .scorer = order.front().get(),
-      .segment = &index[0],
+      .norms = &index[0],
       .fetcher = &fetcher,
     });
 
@@ -876,7 +876,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto score = docs->PrepareScore({
       .scorer = order.front().get(),
-      .segment = &index[0],
+      .norms = &index[0],
       .fetcher = &fetcher,
     });
 

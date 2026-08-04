@@ -32,7 +32,7 @@ struct NGramState {
   explicit NGramState(IResourceManager& memory) noexcept : terms{{memory}} {}
 
   const TermReader* reader{};
-  ManagedVector<SeekCookie::ptr> terms;
+  ManagedVector<TermCookie> terms;
 };
 
 }  // namespace irs

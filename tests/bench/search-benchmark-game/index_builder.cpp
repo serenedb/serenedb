@@ -35,8 +35,7 @@ namespace bench {
 static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_pool_size,
                                                  size_t segment_mem_max,
-                                                 uint32_t row_group_size,
-                                                 uint32_t norm_row_group_size) {
+                                                 uint32_t row_group_size) {
   auto* db = &::sdb::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
@@ -49,13 +48,11 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
     return {.row_group_size = row_group_size};
   };
   writer_opts.norm_column_options =
-    [norm_row_group_size, next = std::make_shared<std::atomic<irs::field_id>>(
-                            0)](irs::field_id) -> irs::NormColumnOptions {
-    return {
-      .id = next->fetch_add(1, std::memory_order_relaxed),
-      .row_group_size = norm_row_group_size,
-    };
+    [next = std::make_shared<std::atomic<irs::field_id>>(0)](
+      irs::field_id) -> irs::NormColumnOptions {
+    return {.id = next->fetch_add(1, std::memory_order_relaxed)};
   };
+  writer_opts.dict_options = {.row_group_size = row_group_size};
   return writer_opts;
 }
 
@@ -69,8 +66,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
     _writer{irs::IndexWriter::Make(
       _dir, _format, irs::kOmCreate,
       MakeWriterOptions(_scorer_ptr, opts.indexer_threads,
-                        config.segment_mem_max, opts.row_group_size,
-                        opts.norm_row_group_size))} {}
+                        config.segment_mem_max, opts.row_group_size))} {}
 
 void IndexBuilder::IndexFromStream(std::istream& input,
                                    BatchHandlerFactory factory) {

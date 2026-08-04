@@ -24,7 +24,6 @@
 
 #include "all_iterator.hpp"
 #include "iresearch/search/automaton_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 
@@ -33,9 +32,10 @@ class AllQuery : public QueryBuilder {
   explicit AllQuery(const SubReader& segment, score_t boost)
     : QueryBuilder{segment}, _boost{boost} {}
 
-  DocIterator::ptr Execute(const ExecutionContext&,
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& stats) const final {
-    return memory::make_managed<AllIterator>(_segment.docs_count(),
+    // Every document of the row group, in its local id space.
+    return memory::make_managed<AllIterator>(_segment.RowGroups().Rows(ctx.rg),
                                              stats.GetStats().data(), _boost);
   }
 

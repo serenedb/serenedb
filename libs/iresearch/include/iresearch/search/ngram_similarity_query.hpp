@@ -52,7 +52,7 @@ class NGramSimilarityQuery : public QueryBuilder {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  DocIterator::ptr ExecuteWithOffsets() const;
+  DocIterator::ptr ExecuteWithOffsets(uint32_t rg) const;
 
  private:
   size_t _min_match_count;

@@ -110,7 +110,8 @@ INSERT INTO m_jv VALUES
     (1, '{"val":"alpha"}'),
     (2, '{"val":42}'),
     (3, '{"val":true}'),
-    (4, '{"val":null}');
+    (4, '{"val":null}'),
+    (5, '{"other":1}');
 
 statement ok
 VACUUM (REFRESH_TABLE) m_jv;
@@ -136,12 +137,20 @@ SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::bool = true;
 pk
 3
 
-# Expression source: null leaf
+# Expression source: the `null` leaf, which is a value and not an absence --
+# `IS NULL` is the other field, the rows where the key evaluates to SQL NULL
+# (here the document with no `val` at all).
+query
+SELECT pk FROM m_jv_expr_kw WHERE json_type(j->'val') = 'NULL';
+----
+pk
+4
+
 query
 SELECT pk FROM m_jv_expr_kw WHERE (j->'val') IS NULL;
 ----
 pk
-4
+5
 
 
 # ============================================================================

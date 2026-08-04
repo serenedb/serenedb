@@ -37,8 +37,7 @@ namespace irs {
 
 inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
                          const ReaderState& state, std::string_view ext,
-                         std::string_view format, const int32_t min_ver,
-                         const int32_t max_ver) {
+                         std::string_view format) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
   in = state.dir->open(str, advice);
@@ -47,7 +46,7 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
     throw IoError{absl::StrCat("Failed to open file, path: ", str)};
   }
 
-  format_utils::CheckHeader(*in, format, min_ver, max_ver);
+  format_utils::CheckHeader(*in, format);
 }
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
@@ -98,11 +97,16 @@ class PostingsReaderBase : public PostingsReader {
   void prepare(DataInput& in, const ReaderState& state,
                IndexFeatures features) final;
 
-  size_t decode(const byte_type* in, IndexFeatures field_features,
-                TermMeta& state) final;
-
   std::unique_ptr<IndexInput> ReopenPayload() const final {
     return _pay_in ? _pay_in->Reopen() : nullptr;
+  }
+
+  std::unique_ptr<IndexInput> ReopenDoc() const final {
+    return _doc_in ? _doc_in->Reopen() : nullptr;
+  }
+
+  std::unique_ptr<IndexInput> ReopenPos() const final {
+    return _pos_in ? _pos_in->Reopen() : nullptr;
   }
 
  protected:
@@ -127,9 +131,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
 
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state,
-               PostingsWriterBase::kDocExt, PostingsWriterBase::kDocFormatName,
-               static_cast<int32_t>(PostingsFormat::Min),
-               static_cast<int32_t>(PostingsFormat::Max));
+               PostingsWriterBase::kDocExt, PostingsWriterBase::kDocFormatName);
 
   // Since terms doc postings too large
   //  it is too costly to verify checksum of
@@ -142,9 +144,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     /* prepare positions input */
     PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
                  PostingsWriterBase::kPosExt,
-                 PostingsWriterBase::kPosFormatName,
-                 static_cast<int32_t>(PostingsFormat::Min),
-                 static_cast<int32_t>(PostingsFormat::Max));
+                 PostingsWriterBase::kPosFormatName);
 
     // Since terms pos postings too large
     // it is too costly to verify checksum of
@@ -157,9 +157,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
   if (needs_pay) {
     PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
                  PostingsWriterBase::kPayExt,
-                 PostingsWriterBase::kPayFormatName,
-                 static_cast<int32_t>(PostingsFormat::Min),
-                 static_cast<int32_t>(PostingsFormat::Max));
+                 PostingsWriterBase::kPayFormatName);
 
     // Since terms pos postings too large
     // it is too costly to verify checksum of
@@ -168,11 +166,6 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     // some forms of corruption.
     format_utils::ReadChecksum(*_pay_in);
   }
-
-  // check postings format
-  format_utils::CheckHeader(in, PostingsWriterBase::kTermsFormatName,
-                            static_cast<int32_t>(TermsFormat::Min),
-                            static_cast<int32_t>(TermsFormat::Max));
 
   const uint64_t block_size = in.ReadV32();
 
@@ -185,42 +178,6 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
 
   _scorer = state.scorer;
   _docs_count = state.meta->docs_count;
-}
-
-inline size_t PostingsReaderBase::decode(const byte_type* in,
-                                         IndexFeatures features,
-                                         TermMeta& state) {
-  auto& term_meta = static_cast<TermMetaImpl&>(state);
-  const auto* p = in;
-
-  SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Offs) ||
-             IndexFeatures::None == (features & IndexFeatures::Pay));
-
-  term_meta.docs_count = vread<uint32_t>(p);
-  if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
-    term_meta.freq = term_meta.docs_count + vread<uint32_t>(p);
-  }
-
-  term_meta.doc_start += vread<uint64_t>(p);
-  if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    term_meta.pos_start += vread<uint64_t>(p);
-    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
-      term_meta.pay_start += vread<uint64_t>(p);
-    }
-    term_meta.pos_offset = *p++;
-  }
-  if (IndexFeatures::None != (features & IndexFeatures::Pay)) {
-    term_meta.pay_start += vread<uint64_t>(p);
-  }
-
-  if (1 == term_meta.docs_count) {
-    term_meta.e_single_doc = vread<uint32_t>(p);
-  } else if (_block_size < term_meta.docs_count) {
-    term_meta.e_skip_start = vread<uint64_t>(p);
-  }
-
-  SDB_ASSERT(p >= in);
-  return size_t(std::distance(in, p));
 }
 
 template<typename FormatTraits>
@@ -240,7 +197,24 @@ class PostingsReaderImpl final : public PostingsReaderBase {
                             IteratorFieldOptions options, size_t min_match,
                             ScoreMergeType type) const final;
 
+  DocIterator::ptr ReuseIterator(DocIterator::ptr&& reuse,
+                                 IndexFeatures field_features,
+                                 IndexFeatures required_features,
+                                 const PostingCookie& meta,
+                                 IteratorFieldOptions options) const final;
+
  private:
+  template<typename Concrete>
+  DocIterator::ptr PrepareReused(DocIterator::ptr&& reuse,
+                                 const PostingCookie& meta) const {
+    if (!reuse) {
+      reuse = memory::make_managed<Concrete>();
+    }
+    auto& it = sdb::basics::downCast<Concrete>(*reuse);
+    it.Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
+    return std::move(reuse);
+  }
+
   DocIterator::ptr WandIterator(IndexFeatures field_features,
                                 std::span<const PostingCookie> metas,
                                 IteratorFieldOptions options,
@@ -496,6 +470,30 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
       }
       return memory::make_managed<MaxScoreIterator<Adapter>>(
         std::move(iterators));
+    });
+}
+
+template<typename FormatTraits>
+DocIterator::ptr PostingsReaderImpl<FormatTraits>::ReuseIterator(
+  DocIterator::ptr&& reuse, IndexFeatures field_features,
+  IndexFeatures required_features, const PostingCookie& meta,
+  IteratorFieldOptions options) const {
+  SDB_ASSERT(!options.wand_enabled);
+  return IteratorImpl(
+    field_features, required_features,
+    [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
+      return ResolveBool(
+        options.has_wand, [&]<bool HasWand> -> DocIterator::ptr {
+          if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
+            return PrepareReused<PostingIteratorImpl<
+              IteratorTraits, FieldTraits, HasWand, BytesViewInput>>(
+              std::move(reuse), meta);
+          } else {
+            return PrepareReused<PostingIteratorImpl<
+              IteratorTraits, FieldTraits, HasWand, IndexInput>>(
+              std::move(reuse), meta);
+          }
+        });
     });
 }
 

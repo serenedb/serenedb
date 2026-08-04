@@ -89,12 +89,12 @@ template<typename Visitor, typename Comparer>
 void CollectTerms(const SubReader& segment, const TermReader& field,
                   SeekTermIterator& terms, Visitor& visitor,
                   const Comparer& cmp) {
-  terms.read();  // read attributes (needed for cookie())
+  // No read(): the comparer classifies a term by its value alone, and the
+  // visitor's cookie() decodes the record whole, stats included -- a read()
+  // here would parse every visited entry a second time.
   visitor.Prepare(segment, field, terms);
 
   do {
-    terms.read();  // read attributes
-
     if (!cmp(terms)) {
       break;  // terminate traversal
     }

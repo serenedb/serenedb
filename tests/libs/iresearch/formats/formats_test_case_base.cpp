@@ -38,9 +38,9 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -790,7 +790,7 @@ TEST_P(FormatTestCase, fields_read_write) {
 
     irs::IdxWriter idx{dir(), "segment_name",
                        ::sdb::DuckDBEngine::Instance().instance()};
-    irs::burst_trie::FieldWriter writer{
+    irs::term_dict::FieldWriter writer{
       codec()->get_postings_writer(/*compaction=*/false,
                                    irs::IResourceManager::gNoop),
       /*compaction=*/false, irs::IResourceManager::gNoop};
@@ -807,8 +807,8 @@ TEST_P(FormatTestCase, fields_read_write) {
     meta.name = "segment_name";
 
     irs::IdxReader idx{dir(), "segment_name"};
-    irs::burst_trie::FieldReader reader_obj{codec()->get_postings_reader(),
-                                            irs::IResourceManager::gNoop};
+    irs::term_dict::FieldReader reader_obj{codec()->get_postings_reader(),
+                                           irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(
       irs::ReaderState{.dir = &dir(), .meta = &meta, .idx = &idx});
@@ -852,13 +852,9 @@ TEST_P(FormatTestCase, fields_read_write) {
         ASSERT_EQ(*expected_sorted_term, term->value());
         ASSERT_THROW(term->seek_ge(*expected_sorted_term), irs::NotSupported);
         auto cookie = term->cookie();
-        ASSERT_NE(nullptr, cookie);
-        {
-          auto* meta_from_cookie = irs::get<irs::TermMeta>(*cookie);
-          ASSERT_NE(nullptr, meta_from_cookie);
-          ASSERT_EQ(meta->docs_count, meta_from_cookie->docs_count);
-          ASSERT_EQ(meta->freq, meta_from_cookie->freq);
-        }
+        ASSERT_FALSE(cookie.rgs.empty());
+        ASSERT_EQ(meta->docs_count, cookie.stats.docs_count);
+        ASSERT_EQ(meta->freq, cookie.stats.freq);
       }
     }
 
@@ -916,30 +912,37 @@ TEST_P(FormatTestCase, fields_read_write) {
       }
     }
 
-    // ensure term is not invalidated during consequent unsuccessful seeks
+    // ensure term is not invalidated during consequent unsuccessful seeks:
+    // a failed seek leaves the cursor wherever the dictionary's scan stopped,
+    // which is not part of the contract, but it must still be a readable term
+    // and the next successful seek must land exactly.
     {
-      constexpr std::pair<std::string_view, std::string_view> kTerms[]{
-        {"abcabamet", "abcabamet"},
-        {"abcabrit", "abcabsit"},
-        {"abcabzit", "abcabsit"},
-        {"abcabelit", "abcabelit"}};
+      constexpr std::pair<std::string_view, bool> kTerms[]{{"abcabamet", true},
+                                                           {"abcabrit", false},
+                                                           {"abcabzit", false},
+                                                           {"abcabelit", true}};
 
       auto term = term_reader->iterator(irs::SeekMode::NORMAL);
-      for (const auto& [seek_term, expected_term] : kTerms) {
-        ASSERT_EQ(seek_term == expected_term,
-                  term->seek(irs::ViewCast<irs::byte_type>(seek_term)));
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(expected_term), term->value());
+      for (const auto& [seek_term, found] : kTerms) {
+        const auto target = irs::ViewCast<irs::byte_type>(seek_term);
+        ASSERT_EQ(found, term->seek(target));
+        if (found) {
+          ASSERT_EQ(target, term->value());
+        } else {
+          ASSERT_FALSE(term->value().empty());
+        }
       }
     }
 
-    // seek to nil (the smallest possible term)
+    // seek to nil (the smallest possible term). `seek_ge` must land on the
+    // field's smallest term and say NotFound; a plain `seek` only reports the
+    // miss -- where it leaves the cursor is not part of the contract.
     {
       (void)1;  // format work-around
       // with state
       {
         auto term = term_reader->iterator(irs::SeekMode::NORMAL);
         ASSERT_FALSE(term->seek(irs::bytes_view{}));
-        ASSERT_EQ((term_reader->min)(), term->value());
         ASSERT_EQ(irs::SeekResult::NotFound, term->seek_ge(irs::bytes_view{}));
         ASSERT_EQ((term_reader->min)(), term->value());
       }
@@ -948,7 +951,6 @@ TEST_P(FormatTestCase, fields_read_write) {
       {
         auto term = term_reader->iterator(irs::SeekMode::NORMAL);
         ASSERT_FALSE(term->seek(irs::bytes_view{}));
-        ASSERT_EQ((term_reader->min)(), term->value());
       }
 
       {
@@ -958,23 +960,16 @@ TEST_P(FormatTestCase, fields_read_write) {
       }
     }
 
-    /* Here is the structure of blocks:
+    /* The leaf blocks hold the terms themselves:
      *   TERM aaLorem
      *   TERM abaLorem
-     *   BLOCK abab ------> Integer
-     *                      ...
-     *                      ...
-     *   TERM abcaLorem
+     *   TERM ababInteger
      *   ...
+     *   TERM abcaLorem
      *
-     * Here we seek to "abaN" and since first entry that
-     * is greater than "abaN" is BLOCK entry "abab".
-     *
-     * In case of "seek" we end our scan on BLOCK entry "abab",
-     * and further "next" cause the skipping of the BLOCK "abab".
-     *
-     * In case of "seek_next" we also end our scan on BLOCK entry "abab"
-     * but furher "next" get us to the TERM "ababInteger" */
+     * "abaN" is not a term, and the smallest term above it is "ababInteger".
+     * Both seeks stop the scan there -- "seek" additionally reports the miss --
+     * and "next" continues from it. */
     {
       auto seek_term = irs::ViewCast<irs::byte_type>(std::string_view("abaN"));
       auto seek_result =
@@ -984,12 +979,13 @@ TEST_P(FormatTestCase, fields_read_write) {
       {
         auto term = term_reader->iterator(irs::SeekMode::NORMAL);
         ASSERT_FALSE(term->seek(seek_term));
-        /* we on the BLOCK "abab" */
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("abab")),
-                  term->value());
+        ASSERT_EQ(seek_result, term->value());
+        auto after = sorted_terms.find(seek_result);
+        ASSERT_NE(sorted_terms.end(), after);
+        ++after;
+        ASSERT_NE(sorted_terms.end(), after);
         ASSERT_TRUE(term->next());
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("abcaLorem")),
-                  term->value());
+        ASSERT_EQ(*after, term->value());
       }
 
       /* seek to term which is equal or greater than current */
@@ -1401,7 +1397,7 @@ TEST_P(FormatTestCaseWithEncryption, fields_read_write_wrong_encryption) {
 
     irs::IdxWriter idx{dir(), "segment_name",
                        ::sdb::DuckDBEngine::Instance().instance()};
-    irs::burst_trie::FieldWriter writer{
+    irs::term_dict::FieldWriter writer{
       codec()->get_postings_writer(/*compaction=*/false,
                                    irs::IResourceManager::gNoop),
       /*compaction=*/false, irs::IResourceManager::gNoop};
@@ -1543,7 +1539,8 @@ TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
     ASSERT_TRUE(term_itr->next());
 
     size_t hits = 0;
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
          !irs::doc_limits::eof(docs_itr->advance());) {
       ++hits;
     }

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -38,56 +39,162 @@ struct TermBoost : Attribute {
   score_t value{kNoBoost};
 };
 
-class WrappedTermIterator : public TermIterator {
+// Relays the whole term-iterator surface to the walk it wraps, so a wrapper
+// states only what it changes and a method added to the contract is relayed
+// here instead of in every wrapper. `Impl` is the walk's own interface, which
+// is the seekable one even where the wrapper itself is not seekable.
+template<typename Base, typename Impl = Base>
+class ForwardingTermIterator : public Base {
  public:
-  bytes_view value() const noexcept final { return _impl->value(); }
+  bytes_view value() const noexcept override { return _impl->value(); }
+  bool next() override { return _impl->next(); }
   void read() final { _impl->read(); }
-  DocIterator::ptr postings(IndexFeatures features) const final {
-    return _impl->postings(features);
+  DocIterator::ptr RowGroupPostings(IndexFeatures features,
+                                    uint32_t rg) const final {
+    return _impl->RowGroupPostings(features, rg);
+  }
+  std::span<const TermRowGroup> RowGroups() const final {
+    return _impl->RowGroups();
   }
   Attribute* GetMutable(TypeInfo::type_id id) noexcept override {
     return _impl->GetMutable(id);
   }
-  SeekTermIterator& GetImpl() noexcept { return *_impl; }
 
  protected:
-  explicit WrappedTermIterator(SeekTermIterator::ptr&& impl) noexcept
+  explicit ForwardingTermIterator(typename Impl::ptr&& impl) noexcept
     : _impl{std::move(impl)} {
     SDB_ASSERT(_impl);
   }
 
-  SeekTermIterator::ptr _impl;
+  typename Impl::ptr _impl;
 };
 
-class FilteredTermIterator : public TermIterator {
+class ForwardingSeekTermIterator
+  : public ForwardingTermIterator<SeekTermIterator> {
+ public:
+  SeekResult seek_ge(bytes_view target) override {
+    return _impl->seek_ge(target);
+  }
+  bool seek(bytes_view target) override { return _impl->seek(target); }
+  TermCookie cookie() const final { return _impl->cookie(); }
+
+ protected:
+  using ForwardingTermIterator<SeekTermIterator>::ForwardingTermIterator;
+};
+
+class WrappedTermIterator
+  : public ForwardingTermIterator<TermIterator, SeekTermIterator> {
+ public:
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+
+ protected:
+  using ForwardingTermIterator<TermIterator,
+                               SeekTermIterator>::ForwardingTermIterator;
+};
+
+class FilteredTermIterator : public ForwardingTermIterator<TermIterator> {
  public:
   FilteredTermIterator(TermIterator::ptr&& inner,
                        TermPredicate::ptr&& predicate) noexcept
-    : _inner{std::move(inner)}, _predicate{std::move(predicate)} {
-    SDB_ASSERT(_inner);
+    : ForwardingTermIterator<TermIterator>{std::move(inner)},
+      _predicate{std::move(predicate)} {
     SDB_ASSERT(_predicate);
   }
 
   bool next() final {
-    while (_inner->next()) {
-      if (_predicate->Accepts(_inner->value())) {
+    while (_impl->next()) {
+      if (_predicate->Accepts(_impl->value())) {
         return true;
       }
     }
     return false;
   }
-  bytes_view value() const noexcept final { return _inner->value(); }
-  void read() final { _inner->read(); }
-  DocIterator::ptr postings(IndexFeatures features) const final {
-    return _inner->postings(features);
+
+ private:
+  TermPredicate::ptr _predicate;
+};
+
+// A predicate over a key range, as a seekable term iterator: the range bounds
+// the walk (`upper` is exclusive, an empty bound is unbounded) and the
+// predicate decides what inside it is a match. This is what a filter whose
+// language a dictionary cannot walk directly falls back to, and what composes a
+// driver walk with the residual of a conjunction.
+class FilteredSeekTermIterator : public ForwardingSeekTermIterator {
+ public:
+  FilteredSeekTermIterator(SeekTermIterator::ptr&& impl,
+                           TermPredicate::ptr&& predicate, bstring lower = {},
+                           bstring upper = {})
+    : ForwardingSeekTermIterator{std::move(impl)},
+      _predicate{std::move(predicate)},
+      _lower{std::move(lower)},
+      _upper{std::move(upper)} {
+    SDB_ASSERT(_predicate);
   }
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return _inner->GetMutable(id);
+
+  bytes_view value() const noexcept final { return _value; }
+
+  bool next() final {
+    if (_done) {
+      return false;
+    }
+    if (_started) {
+      if (!_impl->next()) {
+        return Stop();
+      }
+    } else {
+      _started = true;
+      if (SeekResult::End == _impl->seek_ge(_lower)) {
+        return Stop();
+      }
+    }
+    return Scan();
+  }
+
+  SeekResult seek_ge(bytes_view target) final {
+    if (_done) {
+      return SeekResult::End;
+    }
+    _started = true;
+    const bytes_view from = std::max(target, bytes_view{_lower});
+    if (SeekResult::End == _impl->seek_ge(from) || !Scan()) {
+      return SeekResult::End;
+    }
+    return _value == target ? SeekResult::Found : SeekResult::NotFound;
+  }
+
+  bool seek(bytes_view target) final {
+    return SeekResult::Found == seek_ge(target);
   }
 
  private:
-  TermIterator::ptr _inner;
+  bool Scan() {
+    for (;;) {
+      const auto key = _impl->value();
+      if (!_upper.empty() && key >= bytes_view{_upper}) {
+        return Stop();
+      }
+      if (_predicate->Accepts(key)) {
+        _value = key;
+        return true;
+      }
+      if (!_impl->next()) {
+        return Stop();
+      }
+    }
+  }
+
+  bool Stop() {
+    _done = true;
+    _value = {};
+    return false;
+  }
+
   TermPredicate::ptr _predicate;
+  bstring _lower;
+  bstring _upper;
+  bytes_view _value;
+  bool _started{false};
+  bool _done{false};
 };
 
 }  // namespace irs

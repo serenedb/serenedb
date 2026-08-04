@@ -33,7 +33,7 @@ const SegmentInfo kEmptyInfo;
 struct EmptySubReader final : SubReader {
   uint64_t CountMappedMemory() const final { return 0; }
 
-  NormReader::ptr norms(field_id) const final { return {}; }
+  NormReader::ptr norms(field_id, uint32_t) const final { return {}; }
   const SegmentInfo& Meta() const final { return kEmptyInfo; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   DocIterator::ptr docs_iterator() const final { return DocIterator::empty(); }

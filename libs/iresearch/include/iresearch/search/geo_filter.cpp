@@ -114,7 +114,7 @@ class GeoIterator : public DocIterator {
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+      .segment = *ctx.norms,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
@@ -215,7 +215,7 @@ struct GeoState {
 
   const ColumnReader* stored_field{};
   const TermReader* reader{};
-  ManagedVector<SeekCookie::ptr> states;
+  ManagedVector<TermCookie> states;
 };
 
 // Compiled GeoFilter
@@ -230,7 +230,7 @@ class GeoQuery : public QueryBuilder {
       _acceptor{std::move(acceptor)},
       _boost{boost} {}
 
-  DocIterator::ptr Execute(const ExecutionContext&,
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& stats) const final {
     const auto& segment = _segment;
 
@@ -249,8 +249,9 @@ class GeoQuery : public QueryBuilder {
     itrs.reserve(_state.states.size());
 
     for (auto& entry : _state.states) {
-      SDB_ASSERT(entry);
-      auto it = field->Iterator(IndexFeatures::None, {.cookie = entry.get()});
+      SDB_ASSERT(!entry.rgs.empty());
+      auto it = field->RowGroupIterator(IndexFeatures::None, {.cookie = &entry},
+                                        ctx.rg);
       if (!it || doc_limits::eof(it->value())) [[unlikely]] {
         continue;
       }
@@ -546,14 +547,14 @@ GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
     collector.Field().Collect(*reader);
   }
 
-  ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
+  ManagedVector<TermCookie> term_states{{ctx.memory}};
   term_states.reserve(sorted_terms.size());
 
   for (const auto term : sorted_terms) {
     if (!terms->seek(ViewCast<byte_type>(term))) {
       continue;
     }
-    terms->read();
+    // cookie() decodes the term's record whole, so no read() before it.
     term_states.emplace_back(terms->cookie());
   }
 

@@ -1191,3 +1191,62 @@ SELECT ts_offsets('standalone_dict', 42, ts_phrase('fox'))
 
 statement ok
 DROP TEXT SEARCH DICTIONARY standalone_dict
+
+
+# --- ts_offsets across an output-chunk boundary ---
+# A hit past the first 2048-row output chunk lands in a second
+# EmitReadyBatch for the same segment, which reuses the prepared
+# offsets entries. The segment and its row-group grid are not part of
+# that reuse, so the second batch has to load them again.
+
+statement ok
+CREATE TABLE offsets_chunks (id INTEGER PRIMARY KEY, body VARCHAR)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY offsets_chunks_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    offset = true
+)
+
+
+statement ok
+CREATE INDEX offsets_chunks_idx ON offsets_chunks
+    USING inverted(body offsets_chunks_en)
+
+
+statement ok
+INSERT INTO offsets_chunks
+SELECT i, 'alpha beta gamma' FROM generate_series(1, 5000) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) offsets_chunks;
+
+
+query
+SELECT count(*), sum(len(bo))
+FROM (SELECT id, ts_offsets(body) AS bo
+      FROM offsets_chunks_idx
+      WHERE body @@ ts_phrase('alpha')) q
+----
+count	sum
+5000	10000
+
+
+statement ok
+DROP INDEX offsets_chunks_idx
+
+
+statement ok
+DROP TABLE offsets_chunks
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY offsets_chunks_en

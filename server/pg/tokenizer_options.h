@@ -75,14 +75,6 @@ inline constexpr OptionInfo kPosFeature{"position", false,
 inline constexpr OptionInfo kOffsetFeature{"offset", false,
                                            "Enables offset feature in index"};
 
-inline constexpr OptionInfo kNormRowGroupSize{
-  "norm_row_group_size",
-  static_cast<int>(DEFAULT_ROW_GROUP_SIZE),
-  "Norm column row-group size for indexes that bind this dictionary "
-  "with norm = true.",
-  CheckPositiveInt,
-};
-
 // Common
 
 inline constexpr OptionInfo kLocale{"locale", ""sv,

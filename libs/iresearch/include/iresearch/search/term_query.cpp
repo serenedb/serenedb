@@ -23,7 +23,7 @@
 #include "term_query.hpp"
 
 #include "basics/memory.hpp"
-#include "iresearch/formats/formats_attributes.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
@@ -38,16 +38,17 @@ DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx,
                                     const StatsBuffer& stats) const {
   const auto& segment = _segment;
 
-  if (!_state.cookie) [[unlikely]] {  // Invalid state
+  if (_state.cookie.rgs.empty()) [[unlikely]] {  // Invalid state
     return DocIterator::empty();
   }
 
   if (!stats.HasScorer() &&
-      segment.docs_count() ==
-        sdb::basics::downCast<CookieImpl>(*_state.cookie).meta.docs_count)
-    [[unlikely]] {
-    return memory::make_managed<AllIterator>(segment.docs_count(), nullptr,
-                                             kNoBoost);
+      segment.docs_count() == _state.cookie.stats.docs_count) [[unlikely]] {
+    // The term is in every document of the segment, so it is in every document
+    // of this row group -- and the iterator runs in the row group's local id
+    // space like every other leaf.
+    return memory::make_managed<AllIterator>(segment.RowGroups().Rows(ctx.rg),
+                                             nullptr, kNoBoost);
   }
 
   const auto* reader = _state.reader;
@@ -55,14 +56,14 @@ DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx,
   DocIterator::ptr docs;
 
   const auto features = GetFeatures(stats.GetScorer());
-  auto it = reader->Iterator(features,
-                             {
-                               .cookie = _state.cookie.get(),
-                               .stats = stats.GetStats().data(),
-                               .boost = _boost,
-                               .field = reader->meta(),
-                             },
-                             ctx.wand);
+  auto it = reader->RowGroupIterator(features,
+                                     {
+                                       .cookie = &_state.cookie,
+                                       .stats = stats.GetStats().data(),
+                                       .boost = _boost,
+                                       .field = reader->meta(),
+                                     },
+                                     ctx.rg, ctx.wand);
   if (!it) {
     return DocIterator::empty();
   }

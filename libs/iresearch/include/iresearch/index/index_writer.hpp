@@ -180,6 +180,9 @@ struct IndexWriterOptions : public SegmentOptions {
   // (Compact).
   ColumnOptionsProvider column_options;
   NormColumnOptionsProvider norm_column_options;
+  // The one row group size the fallback options report: it cuts the postings
+  // and, with them, the norm columns.
+  DictOptions dict_options;
 
   IndexWriterOptions() {}  // compiler requires non-default definition
 };

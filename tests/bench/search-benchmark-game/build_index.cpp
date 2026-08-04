@@ -80,7 +80,6 @@ int main(int argc, const char* argv[]) {
       .compaction_interval_ms = 5000,
       .compaction_threads = 0,
       .compact_all = true,
-      .norm_row_group_size = 10'000'000,
     };
 
     bench::IndexBuilder builder{"idx", builder_options, config};

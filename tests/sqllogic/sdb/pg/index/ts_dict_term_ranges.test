@@ -1,0 +1,520 @@
+hash-threshold 100
+
+# Term enumeration claims TERM RANGES, not whole segments: the workers walk
+# disjoint slices of ONE dictionary and between them emit exactly what a single
+# walk emits -- one row per (segment, term), never one per (segment, rg, term).
+# `cat` holds a distinct term per row, so its emitted row count equals the
+# distinct value count whatever the segment shape, and a term dropped at a
+# range boundary or claimed twice changes it; `opt` is low-cardinality and
+# nullable, which is where the one NULL-term row per (segment, field) rule
+# lives. Every expectation is the base table's own GROUP BY, which does not go
+# through the dictionary. Covered: all three counting modes (Meta, the masked
+# walk after deletes, and the WHERE-restricted walk), whole-field claims
+# (min/max, having filters), several fields in one query, both row group sizes,
+# and the same matrix through flush and compaction.
+# Background maintenance is disabled so visibility is driven by VACUUM.
+
+statement ok
+SET compaction_interval = 0
+
+
+statement ok
+SET refresh_interval = 0
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY trg_kw(template = 'keyword', frequency = true)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY trg_tx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+
+statement ok
+CREATE TABLE trg(id INTEGER PRIMARY KEY, cat VARCHAR NOT NULL, opt VARCHAR,
+                 amount INTEGER, body VARCHAR NOT NULL)
+
+
+# 6000 distinct `cat` terms is a dictionary of many leaf blocks, so its term
+# space is really cut into several ranges rather than answered by one.
+statement ok
+INSERT INTO trg
+SELECT i,
+       'cat_' || lpad(i::text, 6, '0'),
+       CASE WHEN i % 5 = 0 THEN NULL ELSE 'opt_' || lpad((i % 17)::text, 2, '0')
+       END,
+       i % 1000,
+       'alpha doc' || i || ' beta'
+         || CASE WHEN i % 7 = 0 THEN ' delta' ELSE '' END
+FROM range(1, 6001) t(i)
+
+
+# One row group spanning the segment, and 128 rows per row group: the masked
+# and WHERE-restricted counts walk a term's row groups themselves, so the two
+# sizes exercise different amounts of that walk under one range claim.
+statement ok
+CREATE INDEX trg_whole ON trg USING inverted(cat trg_kw, opt trg_kw,
+    body trg_tx) INCLUDE (amount)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 2000000000)
+
+
+statement ok
+CREATE INDEX trg_split ON trg USING inverted(cat trg_kw, opt trg_kw,
+    body trg_tx) INCLUDE (amount)
+    WITH (refresh_interval = 0, compaction_interval = 0, row_group_size = 128)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) trg;
+
+
+# --- Mode Meta: no deletes, no document filter. The per-term count is the
+# field-wide one the record already carries, so a range worker needs no
+# cross-worker reduce -- and its rows must still be the whole walk's.
+query TT
+SELECT 'whole_cat' AS q,
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_whole) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg GROUP BY cat) y) AS same
+UNION ALL SELECT 'split_cat',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_split) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg GROUP BY cat) y)
+UNION ALL SELECT 'whole_opt',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(opt)) t, unnest(ts_dict_count(opt)) n
+                FROM trg_whole) z GROUP BY t) x) =
+       (SELECT md5(string_agg(opt || ':' || n, ',' ORDER BY opt))
+        FROM (SELECT opt, count(*) n FROM trg WHERE opt IS NOT NULL
+              GROUP BY opt) y)
+UNION ALL SELECT 'split_opt',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(opt)) t, unnest(ts_dict_count(opt)) n
+                FROM trg_split) z GROUP BY t) x) =
+       (SELECT md5(string_agg(opt || ':' || n, ',' ORDER BY opt))
+        FROM (SELECT opt, count(*) n FROM trg WHERE opt IS NOT NULL
+              GROUP BY opt) y)
+UNION ALL SELECT 'whole_body',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(body)) t,
+                       unnest(ts_dict_count(body)) n FROM trg_whole) z
+              GROUP BY t) x) =
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(body)) t,
+                       unnest(ts_dict_count(body)) n FROM trg_split) z
+              GROUP BY t) x)
+ORDER BY 1
+----
+q	same
+split_cat	t
+split_opt	t
+whole_body	t
+whole_cat	t
+whole_opt	t
+
+
+# The multiplicity itself. Per-(segment, term) rows are merged by term above
+# the scan with their counts SUMMED, so a term claimed by two ranges doubles
+# its count while one dropped at a boundary disappears: `cat` is unique per
+# row, and only one row per term produces 6000 terms whose counts sum to the
+# 6000-row table.
+query TIII
+SELECT 'whole' AS idx, count(*) AS rows, count(DISTINCT t) AS terms,
+       sum(n)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+      FROM trg_whole) x
+UNION ALL
+SELECT 'split', count(*), count(DISTINCT t), sum(n)::BIGINT
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+      FROM trg_split) x
+ORDER BY 1
+----
+idx	rows	terms	docs
+split	6000	6000	6000
+whole	6000	6000	6000
+
+
+# The NULL-term row is one per (segment, field) -- the unit holding the
+# field's first range emits it and no other does, so the facet's NULL group is
+# the table's null count and not a multiple of it. (`ts_dict_agg` itself drops
+# the NULL term; the GROUP BY facet is where that row surfaces.)
+query TII
+SELECT 'whole' AS idx, count(*) AS groups,
+       max(n) FILTER (WHERE opt IS NULL) AS nulls
+FROM (SELECT opt, count(*) AS n FROM trg_whole GROUP BY opt) x
+UNION ALL
+SELECT 'split', count(*), max(n) FILTER (WHERE opt IS NULL)
+FROM (SELECT opt, count(*) AS n FROM trg_split GROUP BY opt) x
+UNION ALL
+SELECT 'base', count(*), max(n) FILTER (WHERE opt IS NULL)
+FROM (SELECT opt, count(*) AS n FROM trg GROUP BY opt) x
+ORDER BY 1
+----
+idx	groups	nulls
+base	18	1200
+split	18	1200
+whole	18	1200
+
+
+# Spelled out rather than digested, since these are the counting-mode numbers
+# themselves: of i in [1, 6000], 352 have i % 17 = 0 and 70 of those also have
+# i % 5 = 0 (i % 85 = 0), which are the NULLs -- so opt_00 holds 282. The
+# other two solve the same congruence pair at 35 and 70 mod 85.
+query TI
+SELECT opt, count(*) AS n FROM trg_split GROUP BY opt
+ORDER BY opt NULLS FIRST LIMIT 4
+----
+opt	n
+NULL	1200
+opt_00	282
+opt_01	282
+opt_02	283
+
+
+# --- Whole-field claims: `min` stops at the first live term of the walk and
+# `min`/`max` over an unmasked segment read the two bound terms, so neither
+# can be cut into ranges -- they stay one claim and must keep answering.
+query TTTI
+SELECT 'whole' AS idx, min(cat) AS mn, max(cat) AS mx,
+       count(DISTINCT cat) AS n FROM trg_whole
+UNION ALL
+SELECT 'split', min(cat), max(cat), count(DISTINCT cat) FROM trg_split
+UNION ALL
+SELECT 'base', min(cat), max(cat), count(DISTINCT cat) FROM trg
+ORDER BY 1
+----
+idx	mn	mx	n
+base	cat_000001	cat_006000	6000
+split	cat_000001	cat_006000	6000
+whole	cat_000001	cat_006000	6000
+
+
+# A having filter compiles its own term iterator over the whole field, which
+# is the other source a range cannot cut.
+query TTI
+SELECT 'whole' AS idx, min(cat) AS mn, count(DISTINCT cat) AS n
+FROM trg_whole WHERE cat LIKE 'cat_0001%'
+UNION ALL
+SELECT 'split', min(cat), count(DISTINCT cat)
+FROM trg_split WHERE cat LIKE 'cat_0001%'
+UNION ALL
+SELECT 'base', min(cat), count(DISTINCT cat) FROM trg WHERE cat LIKE 'cat_0001%'
+ORDER BY 1
+----
+idx	mn	n
+base	cat_000100	100
+split	cat_000100	100
+whole	cat_000100	100
+
+
+# --- Mode Where: a document filter restricts the counted set, and each worker
+# walks its own terms' row groups inside its own range.
+query TT
+SELECT 'whole_cat' AS q,
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_whole WHERE body @@ ts_phrase('delta')) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg WHERE id % 7 = 0
+              GROUP BY cat) y) AS same
+UNION ALL SELECT 'split_cat',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_split WHERE body @@ ts_phrase('delta')) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg WHERE id % 7 = 0 GROUP BY cat) y)
+UNION ALL SELECT 'whole_opt',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(opt)) t, unnest(ts_dict_count(opt)) n
+                FROM trg_whole WHERE body @@ ts_phrase('delta')) z
+              GROUP BY t) x) =
+       (SELECT md5(string_agg(opt || ':' || n, ',' ORDER BY opt))
+        FROM (SELECT opt, count(*) n FROM trg
+              WHERE id % 7 = 0 AND opt IS NOT NULL GROUP BY opt) y)
+UNION ALL SELECT 'split_opt',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(opt)) t, unnest(ts_dict_count(opt)) n
+                FROM trg_split WHERE body @@ ts_phrase('delta')) z
+              GROUP BY t) x) =
+       (SELECT md5(string_agg(opt || ':' || n, ',' ORDER BY opt))
+        FROM (SELECT opt, count(*) n FROM trg
+              WHERE id % 7 = 0 AND opt IS NOT NULL GROUP BY opt) y)
+ORDER BY 1
+----
+q	same
+split_cat	t
+split_opt	t
+whole_cat	t
+whole_opt	t
+
+
+# Multiplicity under the document filter: 857 of the 6000 rows carry `delta`,
+# and each contributes exactly one `cat` term row.
+query TII
+SELECT 'whole' AS idx, count(*) AS rows, count(DISTINCT t) AS terms
+FROM (SELECT unnest(ts_dict_agg(cat)) t FROM trg_whole
+      WHERE body @@ ts_phrase('delta')) x
+UNION ALL
+SELECT 'split', count(*), count(DISTINCT t)
+FROM (SELECT unnest(ts_dict_agg(cat)) t FROM trg_split
+      WHERE body @@ ts_phrase('delta')) x
+UNION ALL
+SELECT 'base', count(*), count(DISTINCT cat) FROM trg WHERE id % 7 = 0
+ORDER BY 1
+----
+idx	rows	terms
+base	857	857
+split	857	857
+whole	857	857
+
+
+# --- A second segment, then deletes: the masked walk (mode Masked) counts a
+# term's live documents per row group inside the claiming worker's range.
+statement ok
+INSERT INTO trg
+SELECT i, 'cat_' || lpad(i::text, 6, '0'),
+       CASE WHEN i % 5 = 0 THEN NULL ELSE 'opt_' || lpad((i % 17)::text, 2, '0')
+       END,
+       i % 1000,
+       'alpha doc' || i || ' beta'
+         || CASE WHEN i % 7 = 0 THEN ' delta' ELSE '' END
+FROM range(6001, 9001) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) trg;
+
+
+statement ok
+DELETE FROM trg WHERE id % 11 = 0
+
+
+statement ok
+VACUUM (REFRESH_TABLE) trg;
+
+
+query TT
+SELECT 'whole_cat' AS q,
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_whole) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg GROUP BY cat) y) AS same
+UNION ALL SELECT 'split_cat',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_split) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg GROUP BY cat) y)
+UNION ALL SELECT 'whole_opt',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(opt)) t, unnest(ts_dict_count(opt)) n
+                FROM trg_whole) z GROUP BY t) x) =
+       (SELECT md5(string_agg(opt || ':' || n, ',' ORDER BY opt))
+        FROM (SELECT opt, count(*) n FROM trg WHERE opt IS NOT NULL
+              GROUP BY opt) y)
+UNION ALL SELECT 'split_opt',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(opt)) t, unnest(ts_dict_count(opt)) n
+                FROM trg_split) z GROUP BY t) x) =
+       (SELECT md5(string_agg(opt || ':' || n, ',' ORDER BY opt))
+        FROM (SELECT opt, count(*) n FROM trg WHERE opt IS NOT NULL
+              GROUP BY opt) y)
+UNION ALL SELECT 'where_cat',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_split WHERE body @@ ts_phrase('delta')) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg WHERE id % 7 = 0 GROUP BY cat) y)
+UNION ALL SELECT 'minmax',
+       (SELECT min(cat) || '/' || max(cat) || '/' || count(DISTINCT cat)
+        FROM trg_split) =
+       (SELECT min(cat) || '/' || max(cat) || '/' || count(DISTINCT cat)
+        FROM trg)
+ORDER BY 1
+----
+q	same
+minmax	t
+split_cat	t
+split_opt	t
+where_cat	t
+whole_cat	t
+whole_opt	t
+
+
+# `cat` still holds one term per live row, and the deleted rows' terms are
+# gone from the emitted set entirely -- a masked range worker must drop a term
+# whose whole posting list is deleted, not emit it with a zero count.
+query TII
+SELECT 'whole' AS idx, count(*) AS rows, sum(n)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+      FROM trg_whole) x
+UNION ALL
+SELECT 'split', count(*), sum(n)::BIGINT
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+      FROM trg_split) x
+UNION ALL
+SELECT 'base', count(DISTINCT cat), count(*) FROM trg
+ORDER BY 1
+----
+idx	rows	docs
+base	8182	8182
+split	8182	8182
+whole	8182	8182
+
+
+# --- Several fields in one query: the claimable units span the fields of a
+# segment, and every field's rows carry NULL in the other's columns.
+query TT
+SELECT 'multi' AS q,
+       (SELECT md5(string_agg(k, ',' ORDER BY k)) FROM
+         (SELECT 'cat:' || t || ':' || n AS k
+          FROM (SELECT unnest(ts_dict_agg(cat)) t,
+                       unnest(ts_dict_count(cat)) n FROM trg_split) a
+          UNION ALL
+          SELECT 'opt:' || t || ':' || n
+          FROM (SELECT t, sum(n) n FROM
+                 (SELECT unnest(ts_dict_agg(opt)) t,
+                         unnest(ts_dict_count(opt)) n FROM trg_split) z
+                GROUP BY t) b) u) =
+       (SELECT md5(string_agg(k, ',' ORDER BY k)) FROM
+         (SELECT 'cat:' || cat || ':' || count(*) AS k FROM trg GROUP BY cat
+          UNION ALL
+          SELECT 'opt:' || opt || ':' || count(*)
+          FROM trg WHERE opt IS NOT NULL GROUP BY opt) v) AS same
+----
+q	same
+multi	t
+
+
+# ONE scan enumerating two fields at once: its claimable units span both, and
+# each field still contributes every term exactly once. The per-(segment,
+# term) rows are merged by term above the scan and their counts SUMMED, so a
+# term emitted twice by two ranges shows up as a doubled document count -- the
+# `docs` columns are the multiplicity pin.
+query TIIII
+SELECT 'index' AS src, len(ts_dict_agg(cat)) AS cats,
+       len(ts_dict_agg(opt)) AS opts,
+       list_sum(ts_dict_count(cat))::BIGINT AS cat_docs,
+       list_sum(ts_dict_count(opt))::BIGINT AS opt_docs
+FROM trg_split
+UNION ALL
+SELECT 'base', count(DISTINCT cat), count(DISTINCT opt), count(*),
+       count(*) FILTER (WHERE opt IS NOT NULL)
+FROM trg
+ORDER BY 1
+----
+src	cats	opts	cat_docs	opt_docs
+base	8182	17	8182	6545
+index	8182	17	8182	6545
+
+
+# --- Compaction: one segment, many row groups -- the shape the term-range
+# unit exists for, and the one where a segment claim is a single unit.
+statement ok
+VACUUM (COMPACT_TABLE) trg;
+
+
+query TT
+SELECT 'whole_cat' AS q,
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_whole) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg GROUP BY cat) y) AS same
+UNION ALL SELECT 'split_cat',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_split) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg GROUP BY cat) y)
+UNION ALL SELECT 'split_opt',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT t, sum(n) n FROM
+               (SELECT unnest(ts_dict_agg(opt)) t, unnest(ts_dict_count(opt)) n
+                FROM trg_split) z GROUP BY t) x) =
+       (SELECT md5(string_agg(opt || ':' || n, ',' ORDER BY opt))
+        FROM (SELECT opt, count(*) n FROM trg WHERE opt IS NOT NULL
+              GROUP BY opt) y)
+UNION ALL SELECT 'where_cat',
+       (SELECT md5(string_agg(t || ':' || n, ',' ORDER BY t))
+        FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+              FROM trg_split WHERE body @@ ts_phrase('delta')) x) =
+       (SELECT md5(string_agg(cat || ':' || n, ',' ORDER BY cat))
+        FROM (SELECT cat, count(*) n FROM trg WHERE id % 7 = 0 GROUP BY cat) y)
+UNION ALL SELECT 'having',
+       (SELECT min(cat) || '/' || count(DISTINCT cat) FROM trg_split
+        WHERE cat LIKE 'cat_0001%') =
+       (SELECT min(cat) || '/' || count(DISTINCT cat) FROM trg
+        WHERE cat LIKE 'cat_0001%')
+ORDER BY 1
+----
+q	same
+having	t
+split_cat	t
+split_opt	t
+where_cat	t
+whole_cat	t
+
+
+# One segment: every term row is emitted exactly once, and the NULL row with
+# it.
+query TIII
+SELECT 'whole' AS idx, count(*) AS rows, count(DISTINCT t) AS terms,
+       sum(n)::BIGINT AS docs
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+      FROM trg_whole) x
+UNION ALL
+SELECT 'split', count(*), count(DISTINCT t), sum(n)::BIGINT
+FROM (SELECT unnest(ts_dict_agg(cat)) t, unnest(ts_dict_count(cat)) n
+      FROM trg_split) x
+ORDER BY 1
+----
+idx	rows	terms	docs
+split	8182	8182	8182
+whole	8182	8182	8182
+
+
+query TII
+SELECT 'whole' AS idx, count(*) AS groups,
+       max(n) FILTER (WHERE opt IS NULL) AS nulls
+FROM (SELECT opt, count(*) AS n FROM trg_whole GROUP BY opt) x
+UNION ALL
+SELECT 'split', count(*), max(n) FILTER (WHERE opt IS NULL)
+FROM (SELECT opt, count(*) AS n FROM trg_split GROUP BY opt) x
+UNION ALL
+SELECT 'base', count(*), max(n) FILTER (WHERE opt IS NULL)
+FROM (SELECT opt, count(*) AS n FROM trg GROUP BY opt) x
+ORDER BY 1
+----
+idx	groups	nulls
+base	18	1637
+split	18	1637
+whole	18	1637
+
+
+statement ok
+DROP TABLE trg
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY trg_kw
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY trg_tx

@@ -64,8 +64,8 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
   if (!reader) {
     // field absent in this segment: a boost-carrying empty query so the boost
     // is still observable and consistent with the multi-term path
-    return memory::make_tracked<TermQuery>(
-      ctx.memory, segment, TermState{nullptr, nullptr}, ctx.boost);
+    return memory::make_tracked<TermQuery>(ctx.memory, segment,
+                                           TermState{nullptr, {}}, ctx.boost);
   }
   auto terms = reader->iterator(SeekMode::RandomOnly);
   if (terms && !terms->seek(term)) {
@@ -79,7 +79,7 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
       collector.Terms()[0].Collect(*terms);
     }
   }
-  TermState state{reader, terms ? terms->cookie() : nullptr};
+  TermState state{reader, terms ? terms->cookie() : TermCookie{}};
   return memory::make_tracked<TermQuery>(ctx.memory, segment, std::move(state),
                                          ctx.boost);
 }

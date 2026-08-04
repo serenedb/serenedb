@@ -488,7 +488,6 @@ void BuildIndex(const std::string& corpus_path,
     .compaction_interval_ms = 5000,
     .compaction_threads = 0,
     .compact_all = true,
-    .norm_row_group_size = 10'000'000,
   };
 
   bench::IndexBuilder builder{index_dir.string(), builder_options, config};
@@ -835,7 +834,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
         irs::ColumnArgsFetcher fetcher;
         auto score_func = it->PrepareScore({
           .scorer = &scorer,
-          .segment = &segment,
+          .norms = &segment,
           .fetcher = &fetcher,
         });
         EXPECT_FALSE(score_func.IsDefault())
@@ -866,7 +865,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
         auto it = prepared.Execute(i);
         auto score_func = it->PrepareScore({
           .scorer = &scorer,
-          .segment = &segment,
+          .norms = &segment,
           .fetcher = &fetcher,
         });
 

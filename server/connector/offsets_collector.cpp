@@ -37,26 +37,27 @@
 namespace sdb::connector {
 
 void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader,
-                        const irs::SubReader& segment) {
+                        const irs::SubReader& segment, uint32_t rg) {
   if (entry.docs) {
     return;
   }
-  auto docs = std::visit(
-    absl::Overload{[&](const irs::SeekCookie* cookie) {
-                     static constexpr auto kFeatures =
-                       irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                       irs::IndexFeatures::Offs;
-                     return reader->Iterator(
-                       kFeatures, irs::PostingCookie{.cookie = cookie});
-                   },
-                   [&](const auto* query) {
-                     if constexpr (requires { query->ExecuteWithOffsets(); }) {
-                       return query->ExecuteWithOffsets();
-                     } else {
-                       return query->ExecuteWithOffsets(segment);
-                     }
-                   }},
-    entry.filter);
+  auto docs =
+    std::visit(absl::Overload{
+                 [&](const irs::TermCookie* cookie) {
+                   static constexpr auto kFeatures = irs::IndexFeatures::Freq |
+                                                     irs::IndexFeatures::Pos |
+                                                     irs::IndexFeatures::Offs;
+                   return reader->RowGroupIterator(
+                     kFeatures, irs::TermLeaf{.cookie = cookie}, rg);
+                 },
+                 [&](const auto* query) {
+                   if constexpr (requires { query->ExecuteWithOffsets(rg); }) {
+                     return query->ExecuteWithOffsets(rg);
+                   } else {
+                     return query->ExecuteWithOffsets(segment, rg);
+                   }
+                 }},
+               entry.filter);
 
   if (!docs || irs::doc_limits::eof(docs->value())) {
     return;
@@ -74,11 +75,20 @@ void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader,
 }
 
 void FillRowOffsets(FieldState& state, const irs::SubReader& segment,
-                    irs::doc_id_t doc_id, size_t max_pairs,
+                    uint32_t rg, irs::doc_id_t doc_id, size_t max_pairs,
                     std::vector<highlight::HitRange>& hits) {
   hits.clear();
+  if (state.rg != rg) {
+    // The cached iterators live in the previous row group's local id space.
+    for (auto& entry : state.entries) {
+      entry.docs.reset();
+      entry.pos = nullptr;
+      entry.offs = nullptr;
+    }
+    state.rg = rg;
+  }
   for (auto& entry : state.entries) {
-    PrepareFilterEntry(entry, state.reader, segment);
+    PrepareFilterEntry(entry, state.reader, segment, rg);
     if (!entry.docs) {
       continue;
     }
@@ -116,8 +126,8 @@ FieldState* OffsetsCollector::FindFieldState(
 namespace {
 
 void RecordCookie(FieldState& field, const irs::TermReader* reader,
-                  const irs::SeekCookie* cookie) {
-  if (!cookie) {
+                  const irs::TermCookie* cookie) {
+  if (cookie->rgs.empty()) {
     return;
   }
   if (field.seen_cookies.insert(cookie).second) {
@@ -131,7 +141,7 @@ void RecordCookie(FieldState& field, const irs::TermReader* reader,
 bool OffsetsCollector::Visit(const irs::TermQuery&, const irs::TermState& state,
                              irs::score_t) {
   if (auto* field = FindFieldState(state.reader)) {
-    RecordCookie(*field, state.reader, state.cookie.get());
+    RecordCookie(*field, state.reader, &state.cookie);
   }
   return true;
 }
@@ -143,7 +153,7 @@ bool OffsetsCollector::Visit(const irs::MultiTermQuery&,
     return true;
   }
   for (const auto& entry : state.Terms()) {
-    RecordCookie(*field, state.Reader(), entry.cookie.get());
+    RecordCookie(*field, state.Reader(), &entry.cookie);
   }
   return true;
 }

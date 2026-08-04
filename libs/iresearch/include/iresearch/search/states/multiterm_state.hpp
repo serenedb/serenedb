@@ -37,7 +37,7 @@ class MultiTermState {
   static constexpr uint32_t kUnscored = std::numeric_limits<uint32_t>::max();
 
   struct Entry {
-    SeekCookie::ptr cookie;
+    TermCookie cookie;
     uint32_t docs_count = 0;
     score_t boost = kNoBoost;
     uint32_t stat_offset = kUnscored;

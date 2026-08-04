@@ -28,8 +28,8 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
-#include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/directory_utils.hpp"
@@ -71,7 +71,8 @@ class SegmentReaderImpl final : public SubReader {
 
   DocIterator::ptr docs_iterator() const final;
 
-  DocIterator::ptr mask(DocIterator::ptr&& it) const final;
+  DocIterator::ptr mask(DocIterator::ptr&& it,
+                        doc_id_t doc_offset = 0) const final;
 
   const TermReader* field(field_id id) const final {
     return _field_reader->field(id);
@@ -81,7 +82,13 @@ class SegmentReaderImpl final : public SubReader {
     return _field_reader->field_ids();
   }
 
-  NormReader::ptr norms(field_id field) const final;
+  RowGroupLayout RowGroups() const noexcept final {
+    const auto layout = _field_reader->RowGroups();
+    return layout.rows_per_group != 0 ? layout
+                                      : RowGroupLayout::Whole(_info.docs_count);
+  }
+
+  NormReader::ptr norms(field_id field, uint32_t rg = 0) const final;
 
   const ColumnReader* Column(field_id field) const final;
   const CentroidsTree* Ivf(field_id field) const final;
@@ -103,7 +110,7 @@ class SegmentReaderImpl final : public SubReader {
   SegmentInfo _info;
   std::shared_ptr<const DocumentMask> _docs_mask;
   std::shared_ptr<ColumnData> _data;
-  std::shared_ptr<burst_trie::FieldReader> _field_reader;
+  term_dict::FieldReader::ptr _field_reader;
 };
 
 }  // namespace irs

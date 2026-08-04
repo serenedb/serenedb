@@ -6,9 +6,7 @@
 
 * [Abseil - C++ Common Libraries](https://abseil.io)
 * [S2 Geometry Library](https://s2geometry.io)
-* [OpenFST](https://www.openfst.org/)
 * [frozen](https://github.com/serge-sans-paille/frozen)
-* [Kaldi](https://github.com/kaldi-asr/kaldi)
 * [LLVM](https://github.com/llvm/llvm-project)
 * [Google Benchmark](https://github.com/google/benchmark)
 * [OpenSSL](https://github.com/openssl/openssl)

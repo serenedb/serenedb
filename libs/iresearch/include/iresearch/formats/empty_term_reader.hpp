@@ -37,23 +37,14 @@ class EmptyTermReader final : public irs::TermReader {
     return SeekTermIterator::empty();
   }
 
-  SeekTermIterator::ptr iterator(
-    const automaton_table_matcher&) const noexcept final {
-    return SeekTermIterator::empty();
-  }
-
-  size_t BitUnion(const cookie_provider&, size_t*) const noexcept final {
+  size_t RowGroupBitUnion(const cookie_provider&, uint32_t,
+                          size_t*) const noexcept final {
     return 0;
   }
 
-  void read_documents(bytes_view, Acceptor acceptor) const noexcept final {}
-
-  TermMeta term(bytes_view) const noexcept final { return {}; }
-
-  DocIterator::ptr Iterator(IndexFeatures features,
-                            std::span<const PostingCookie> cookies,
-                            WandContext options, size_t min_match,
-                            ScoreMergeType type) const final {
+  DocIterator::ptr RowGroupIterator(IndexFeatures, std::span<const TermLeaf>,
+                                    uint32_t, WandContext, size_t,
+                                    ScoreMergeType) const final {
     return DocIterator::empty();
   }
 

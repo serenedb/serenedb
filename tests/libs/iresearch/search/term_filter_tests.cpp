@@ -138,7 +138,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &*(rdr.begin()),
+        .norms = &*(rdr.begin()),
       });
 
       // first hit
@@ -165,7 +165,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto docs = prep.Execute(0);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &*(rdr.begin()),
+        .norms = &*(rdr.begin()),
       });
 
       // first hit
@@ -518,7 +518,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
 
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &*(rdr.begin()),
+        .norms = &*(rdr.begin()),
       });
 
       while (!irs::doc_limits::eof(docs->advance())) {

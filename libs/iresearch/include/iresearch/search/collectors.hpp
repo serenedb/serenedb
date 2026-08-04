@@ -30,6 +30,7 @@
 
 #include "basics/down_cast.h"
 #include "basics/shared.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs {
@@ -49,6 +50,7 @@ struct FieldCollector {
 
 struct TermCollector {
   void Collect(const AttributeProvider& term_attrs) noexcept;
+  void Collect(const TermMeta& meta) noexcept;
 
   static void Merge(TermCollector& dst, const TermCollector& src);
 

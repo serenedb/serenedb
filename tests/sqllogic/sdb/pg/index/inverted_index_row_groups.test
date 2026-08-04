@@ -1,0 +1,284 @@
+hash-threshold 100
+
+# A row_group_size smaller than the segment: the postings are partitioned per
+# row group and every read path runs in row-group-local ids. Two indexes over
+# one table -- one with a row group spanning the segment, one at 256 rows --
+# make the unpartitioned index the oracle for every query shape, so the
+# comparison isolates partitioning from everything else.
+#
+# Covers, per shape: term, phrase, wildcard (the unscored-terms union),
+# levenshtein, BM25 top-k, streaming with covered `.col` columns, pushed
+# `.col` filters (count-only and streaming), ts_offsets (the highlighter
+# re-reads positions, so it needs the hit decomposed back to (rg, local)),
+# ts_dict facets, deletes (segment-wide DocumentMask over local ids) and
+# compaction (the merge streams a partitioned source).
+
+statement ok
+SET compaction_interval = 0
+
+
+statement ok
+SET refresh_interval = 0
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rg_kw(template = 'keyword', frequency = true)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rg_tx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true, norm = true)
+
+
+statement ok
+CREATE TABLE rgbase(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
+                    svc VARCHAR NOT NULL, amount INTEGER, body VARCHAR NOT NULL)
+
+
+statement ok
+INSERT INTO rgbase
+SELECT i,
+       CASE i % 3 WHEN 0 THEN 'ERROR' WHEN 1 THEN 'INFO' ELSE 'WARN' END,
+       CASE i % 4 WHEN 0 THEN 'frontend' WHEN 1 THEN 'backend'
+                  WHEN 2 THEN 'db' ELSE 'cache' END,
+       i % 1000,
+       'alpha doc' || i || ' beta gamma'
+         || CASE WHEN i % 7 = 0 THEN ' delta' ELSE '' END
+FROM range(1, 2001) t(i)
+
+
+# The oracle: one row group spanning the segment, so nothing is partitioned.
+statement ok
+CREATE INDEX rg_whole ON rgbase USING inverted(sev rg_kw, body rg_tx)
+    INCLUDE (svc, amount)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 2000000000)
+
+
+# 256 rows per row group over 2000 documents: 8 row groups, the last one short.
+statement ok
+CREATE INDEX rg_split ON rgbase USING inverted(sev rg_kw, body rg_tx)
+    INCLUDE (svc, amount)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 256)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rgbase
+
+
+# --- counts: a term in every document (the match-all shortcut), a selective
+# term, a wildcard (unscored-terms union), levenshtein, and both `.col` filter
+# shapes. Each is the unpartitioned count, so a per-row-group miss or a repeated
+# row group shows up immediately.
+query TII
+SELECT 'alpha' AS q,
+       (SELECT count(*) FROM rg_whole WHERE body @@ ts_phrase('alpha')) AS whole,
+       (SELECT count(*) FROM rg_split WHERE body @@ ts_phrase('alpha')) AS split
+UNION ALL SELECT 'delta',
+       (SELECT count(*) FROM rg_whole WHERE body @@ ts_phrase('delta')),
+       (SELECT count(*) FROM rg_split WHERE body @@ ts_phrase('delta'))
+UNION ALL SELECT 'wildcard',
+       (SELECT count(*) FROM rg_whole WHERE body @@ ts_like('doc1%')),
+       (SELECT count(*) FROM rg_split WHERE body @@ ts_like('doc1%'))
+UNION ALL SELECT 'levenshtein',
+       (SELECT count(*) FROM rg_whole WHERE body @@ ts_levenshtein('doc1234', 1)),
+       (SELECT count(*) FROM rg_split WHERE body @@ ts_levenshtein('doc1234', 1))
+UNION ALL SELECT 'colfilter',
+       (SELECT count(*) FROM rg_whole
+        WHERE body @@ ts_phrase('alpha') AND svc = 'frontend'),
+       (SELECT count(*) FROM rg_split
+        WHERE body @@ ts_phrase('alpha') AND svc = 'frontend')
+UNION ALL SELECT 'colrange',
+       (SELECT count(*) FROM rg_whole
+        WHERE body @@ ts_phrase('delta') AND amount >= 100 AND amount < 400),
+       (SELECT count(*) FROM rg_split
+        WHERE body @@ ts_phrase('delta') AND amount >= 100 AND amount < 400)
+UNION ALL SELECT 'matchall',
+       (SELECT count(*) FROM rg_whole), (SELECT count(*) FROM rg_split)
+ORDER BY 1
+----
+q	whole	split
+alpha	2000	2000
+colfilter	500	500
+colrange	85	85
+delta	285	285
+levenshtein	34	34
+matchall	2000	2000
+wildcard	1111	1111
+
+
+# --- emitted rows: the `.col` addressing and the PK lookup. Compared as a
+# digest of (id, covered columns) so a row group emitted at the wrong base
+# fails even when the cardinality matches.
+query TT
+SELECT 'stream' AS q,
+       (SELECT md5(string_agg(id || ':' || svc || ':' || amount, ','
+                              ORDER BY id))
+        FROM rg_whole WHERE body @@ ts_phrase('delta')) =
+       (SELECT md5(string_agg(id || ':' || svc || ':' || amount, ','
+                              ORDER BY id))
+        FROM rg_split WHERE body @@ ts_phrase('delta')) AS same
+UNION ALL SELECT 'stream_filtered',
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_whole
+        WHERE body @@ ts_phrase('alpha') AND amount BETWEEN 200 AND 260) =
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_split
+        WHERE body @@ ts_phrase('alpha') AND amount BETWEEN 200 AND 260)
+UNION ALL SELECT 'wildcard_ids',
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_whole
+        WHERE body @@ ts_like('doc1%')) =
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_split
+        WHERE body @@ ts_like('doc1%'))
+UNION ALL SELECT 'matchall_rows',
+       (SELECT md5(string_agg(id || ':' || svc, ',' ORDER BY id)) FROM rg_whole) =
+       (SELECT md5(string_agg(id || ':' || svc, ',' ORDER BY id)) FROM rg_split)
+ORDER BY 1
+----
+q	same
+matchall_rows	t
+stream	t
+stream_filtered	t
+wildcard_ids	t
+
+
+# --- BM25: scores are computed per row group but the corpus statistics stay
+# segment-wide, so every score must match the unpartitioned index exactly.
+query TT
+SELECT 'scores' AS q,
+       (SELECT md5(string_agg(round(s::numeric, 4)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(rg_whole.tableoid) s FROM rg_whole
+              WHERE body @@ ts_phrase('delta')) t) =
+       (SELECT md5(string_agg(round(s::numeric, 4)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(rg_split.tableoid) s FROM rg_split
+              WHERE body @@ ts_phrase('delta')) t) AS same
+UNION ALL SELECT 'topk',
+       -- The scores, not the ids: BM25 ties are broken by collection order,
+       -- which a per-row-group walk legitimately reorders.
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(rg_whole.tableoid) s FROM rg_whole
+              WHERE body @@ ts_phrase('delta') ORDER BY s DESC LIMIT 10) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(rg_split.tableoid) s FROM rg_split
+              WHERE body @@ ts_phrase('delta') ORDER BY s DESC LIMIT 10) t)
+UNION ALL SELECT 'offsets',
+       (SELECT md5(string_agg(o::text, ',' ORDER BY id))
+        FROM (SELECT id, ts_offsets(body) o FROM rg_whole
+              WHERE body @@ ts_phrase('delta')) t) =
+       (SELECT md5(string_agg(o::text, ',' ORDER BY id))
+        FROM (SELECT id, ts_offsets(body) o FROM rg_split
+              WHERE body @@ ts_phrase('delta')) t)
+UNION ALL SELECT 'ts_dict',
+       (SELECT md5(string_agg(d::text, ','))
+        FROM (SELECT unnest(ts_dict_agg(sev)) d FROM rg_whole ORDER BY 1) t) =
+       (SELECT md5(string_agg(d::text, ','))
+        FROM (SELECT unnest(ts_dict_agg(sev)) d FROM rg_split ORDER BY 1) t)
+ORDER BY 1
+----
+q	same
+offsets	t
+scores	t
+topk	t
+ts_dict	t
+
+
+# --- deletes: the DocumentMask stays segment-wide while the postings are
+# local, so the PK delete filter and every masked read add the row group base.
+statement ok
+DELETE FROM rgbase WHERE id % 37 = 0
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rgbase
+
+
+query TT
+SELECT 'del_rows' AS q,
+       (SELECT md5(string_agg(id || ':' || svc, ',' ORDER BY id)) FROM rg_whole) =
+       (SELECT md5(string_agg(id || ':' || svc, ',' ORDER BY id)) FROM rg_split)
+         AS same
+UNION ALL SELECT 'del_delta',
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_whole
+        WHERE body @@ ts_phrase('delta')) =
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_split
+        WHERE body @@ ts_phrase('delta'))
+UNION ALL SELECT 'del_ts_dict',
+       (SELECT md5(string_agg(d::text, ','))
+        FROM (SELECT unnest(ts_dict_agg(sev)) d FROM rg_whole ORDER BY 1) t) =
+       (SELECT md5(string_agg(d::text, ','))
+        FROM (SELECT unnest(ts_dict_agg(sev)) d FROM rg_split ORDER BY 1) t)
+ORDER BY 1
+----
+q	same
+del_delta	t
+del_rows	t
+del_ts_dict	t
+
+
+# --- a second segment, then compaction: the merge streams a partitioned
+# source, so it walks each term's row groups and remaps through the source's
+# segment ids.
+statement ok
+INSERT INTO rgbase
+SELECT i, 'ERROR', 'frontend', i % 1000,
+       'alpha doc' || i || ' beta gamma delta epsilon'
+FROM range(3000, 4200) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rgbase
+
+
+statement ok
+VACUUM (COMPACT_TABLE) rgbase
+
+
+query TT
+SELECT 'merged_rows' AS q,
+       (SELECT md5(string_agg(id || ':' || svc, ',' ORDER BY id)) FROM rg_whole) =
+       (SELECT md5(string_agg(id || ':' || svc, ',' ORDER BY id)) FROM rg_split)
+         AS same
+UNION ALL SELECT 'merged_epsilon',
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_whole
+        WHERE body @@ ts_phrase('epsilon')) =
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_split
+        WHERE body @@ ts_phrase('epsilon'))
+UNION ALL SELECT 'merged_scores',
+       (SELECT md5(string_agg(round(s::numeric, 4)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(rg_whole.tableoid) s FROM rg_whole
+              WHERE body @@ ts_phrase('delta')) t) =
+       (SELECT md5(string_agg(round(s::numeric, 4)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(rg_split.tableoid) s FROM rg_split
+              WHERE body @@ ts_phrase('delta')) t)
+UNION ALL SELECT 'merged_wildcard',
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_whole
+        WHERE body @@ ts_like('doc1%')) =
+       (SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM rg_split
+        WHERE body @@ ts_like('doc1%'))
+ORDER BY 1
+----
+q	same
+merged_epsilon	t
+merged_rows	t
+merged_scores	t
+merged_wildcard	t
+
+
+statement ok
+DROP INDEX rg_split
+
+
+statement ok
+DROP INDEX rg_whole
+
+
+statement ok
+DROP TABLE rgbase
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rg_tx
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rg_kw

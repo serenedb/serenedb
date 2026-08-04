@@ -41,10 +41,14 @@ namespace sdb::connector {
 
 struct DocRows {
   std::span<const irs::doc_id_t> docs;
+  // First segment row of the row group `docs` are local to: `.col` addressing
+  // is (row group, local id), and this is the one place the pair becomes the
+  // segment row a columnstore read wants.
+  uint64_t base = 0;
 
   size_t size() const noexcept { return docs.size(); }
   uint64_t operator[](size_t i) const noexcept {
-    return docs[i] - irs::doc_limits::min();
+    return base + docs[i] - irs::doc_limits::min();
   }
 };
 

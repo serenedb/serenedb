@@ -1,0 +1,225 @@
+hash-threshold 100
+
+# WAND over a partitioned index: the max-score entries a term's posting list
+# carries are per (term, row group), and the norms feeding them are read from
+# the row group that produced the list. A reader that answered them from the
+# segment's first row group would write understated maxima for every row group
+# past the first and prune documents that belong in the top-K.
+#
+# Doc length grows with id, so each row group's norms differ from row group 0's
+# and a wrong-row-group read is visible in the ranking. Three indexes over one
+# table: an unpartitioned WAND-off oracle, the same shape partitioned with WAND
+# off (isolates partitioning), and partitioned with WAND on. Covered on the
+# flush leg and again after a merge.
+
+statement ok
+SET compaction_interval = 0
+
+
+statement ok
+SET refresh_interval = 0
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wrg_tx(template = 'text',
+    locale = 'en_US.UTF-8', case = 'lower', stemming = false, accent = false,
+    frequency = true, position = true, norm = true)
+
+
+statement ok
+CREATE TABLE wrgbase(id INTEGER PRIMARY KEY, body VARCHAR NOT NULL)
+
+
+# tf('delta') cycles 1..5 while the document length climbs with the id, so the
+# BM25 length normalisation of a late row group is nothing like row group 0's.
+statement ok
+INSERT INTO wrgbase
+SELECT i,
+       repeat('delta ', 1 + (i % 5))
+         || repeat('filler ', 1 + (i / 40))
+         || CASE WHEN i % 11 = 0 THEN 'epsilon ' ELSE '' END
+         || CASE WHEN i % 17 = 0 THEN 'zeta' ELSE 'eta' END
+FROM range(1, 2001) t(i)
+
+
+# The oracle: one row group spanning the segment, WAND off.
+statement ok
+CREATE INDEX wrg_whole ON wrgbase USING inverted(body wrg_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 2000000000)
+
+
+# 128 rows per row group over 2000 documents: 16 row groups, WAND off.
+statement ok
+CREATE INDEX wrg_split ON wrgbase USING inverted(body wrg_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 128)
+
+
+# Same partitioning, WAND on: the max-score entries are written per (term, row
+# group) at flush and at merge.
+statement ok
+CREATE INDEX wrg_split_w ON wrgbase USING inverted(body wrg_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 128, optimize_top_k = 'bm25(1.2, 0.75)')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) wrgbase
+
+
+# --- flush leg. Scores first: the scan reads norms per row group, so every
+# document's score must match the unpartitioned oracle's exactly. Then the
+# top-K sets, which is where a wrong max-score prunes.
+query TT
+SELECT 'scores_split' AS q,
+       (SELECT md5(string_agg(round(s::numeric, 6)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(wrg_whole.tableoid) s FROM wrg_whole
+              WHERE body @@ ts_phrase('delta')) t) =
+       (SELECT md5(string_agg(round(s::numeric, 6)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(wrg_split.tableoid) s FROM wrg_split
+              WHERE body @@ ts_phrase('delta')) t)
+         AS same
+UNION ALL SELECT 'scores_split_w',
+       (SELECT md5(string_agg(round(s::numeric, 6)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(wrg_whole.tableoid) s FROM wrg_whole
+              WHERE body @@ ts_phrase('delta')) t) =
+       (SELECT md5(string_agg(round(s::numeric, 6)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(wrg_split_w.tableoid) s FROM wrg_split_w
+              WHERE body @@ ts_phrase('delta')) t)
+UNION ALL SELECT 'topk_term',
+       (SELECT md5(string_agg(id::text, ',')) FROM
+         (SELECT id FROM wrg_whole WHERE body @@ ts_phrase('delta')
+          ORDER BY BM25(wrg_whole.tableoid) DESC, id LIMIT 50) t) =
+       (SELECT md5(string_agg(id::text, ',')) FROM
+         (SELECT id FROM wrg_split_w WHERE body @@ ts_phrase('delta')
+          ORDER BY BM25(wrg_split_w.tableoid) DESC, id LIMIT 50) t)
+UNION ALL SELECT 'topk_term_scores',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(wrg_whole.tableoid) s FROM wrg_whole
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 50) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(wrg_split_w.tableoid) s FROM wrg_split_w
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 50) t)
+UNION ALL SELECT 'topk_any',
+       (SELECT md5(string_agg(id::text, ',')) FROM
+         (SELECT id FROM wrg_whole
+          WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+          ORDER BY BM25(wrg_whole.tableoid) DESC, id LIMIT 50) t) =
+       (SELECT md5(string_agg(id::text, ',')) FROM
+         (SELECT id FROM wrg_split_w
+          WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+          ORDER BY BM25(wrg_split_w.tableoid) DESC, id LIMIT 50) t)
+UNION ALL SELECT 'topk_any_scores',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(wrg_whole.tableoid) s FROM wrg_whole
+              WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+              ORDER BY s DESC LIMIT 50) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(wrg_split_w.tableoid) s FROM wrg_split_w
+              WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+              ORDER BY s DESC LIMIT 50) t)
+ORDER BY 1
+----
+q	same
+scores_split	t
+scores_split_w	t
+topk_any	t
+topk_any_scores	t
+topk_term	t
+topk_term_scores	t
+
+
+# --- merge leg: a second segment, then compaction. The merge re-writes every
+# term's posting lists per row group of the merged segment and rebuilds the
+# max-score entries against the merged norm column.
+statement ok
+INSERT INTO wrgbase
+SELECT i,
+       repeat('delta ', 1 + (i % 7))
+         || repeat('filler ', 1 + ((4200 - i) / 30))
+         || CASE WHEN i % 5 = 0 THEN 'epsilon zeta' ELSE 'eta' END
+FROM range(3000, 4200) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) wrgbase
+
+
+statement ok
+VACUUM (COMPACT_TABLE) wrgbase
+
+
+query TT
+SELECT 'merged_scores' AS q,
+       (SELECT md5(string_agg(round(s::numeric, 6)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(wrg_whole.tableoid) s FROM wrg_whole
+              WHERE body @@ ts_phrase('delta')) t) =
+       (SELECT md5(string_agg(round(s::numeric, 6)::text, ',' ORDER BY id))
+        FROM (SELECT id, BM25(wrg_split_w.tableoid) s FROM wrg_split_w
+              WHERE body @@ ts_phrase('delta')) t)
+         AS same
+UNION ALL SELECT 'merged_topk_term',
+       (SELECT md5(string_agg(id::text, ',')) FROM
+         (SELECT id FROM wrg_whole WHERE body @@ ts_phrase('delta')
+          ORDER BY BM25(wrg_whole.tableoid) DESC, id LIMIT 50) t) =
+       (SELECT md5(string_agg(id::text, ',')) FROM
+         (SELECT id FROM wrg_split_w WHERE body @@ ts_phrase('delta')
+          ORDER BY BM25(wrg_split_w.tableoid) DESC, id LIMIT 50) t)
+UNION ALL SELECT 'merged_topk_term_scores',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(wrg_whole.tableoid) s FROM wrg_whole
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 50) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(wrg_split_w.tableoid) s FROM wrg_split_w
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 50) t)
+UNION ALL SELECT 'merged_topk_any',
+       (SELECT md5(string_agg(id::text, ',')) FROM
+         (SELECT id FROM wrg_whole
+          WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+          ORDER BY BM25(wrg_whole.tableoid) DESC, id LIMIT 50) t) =
+       (SELECT md5(string_agg(id::text, ',')) FROM
+         (SELECT id FROM wrg_split_w
+          WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+          ORDER BY BM25(wrg_split_w.tableoid) DESC, id LIMIT 50) t)
+UNION ALL SELECT 'merged_topk_any_scores',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(wrg_whole.tableoid) s FROM wrg_whole
+              WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+              ORDER BY s DESC LIMIT 50) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(wrg_split_w.tableoid) s FROM wrg_split_w
+              WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+              ORDER BY s DESC LIMIT 50) t)
+ORDER BY 1
+----
+q	same
+merged_scores	t
+merged_topk_any	t
+merged_topk_any_scores	t
+merged_topk_term	t
+merged_topk_term_scores	t
+
+
+statement ok
+DROP INDEX wrg_split_w
+
+
+statement ok
+DROP INDEX wrg_split
+
+
+statement ok
+DROP INDEX wrg_whole
+
+
+statement ok
+DROP TABLE wrgbase
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wrg_tx

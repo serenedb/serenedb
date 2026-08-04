@@ -977,7 +977,7 @@ class PhraseIterator : public DocIterator {
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+      .segment = *ctx.norms,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,

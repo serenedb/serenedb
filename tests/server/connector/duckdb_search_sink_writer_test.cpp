@@ -37,6 +37,7 @@
 #include "basics/duckdb_engine.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
+#include "connector/duckdb_search_full_scan.hpp"
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
@@ -132,7 +133,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id) {
     static catalog::Tokenizer gStringTokenizer(
       catalog::Permissions{}, ObjectId{0}, ObjectId{12345},
-      "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
+      "test_string_verbartim", {},
       irs::analysis::TokenizerConfig{.config =
                                        irs::StringTokenizer::Options{}});
     auto tokenizer = gStringTokenizer.GetTokenizer();
@@ -167,7 +168,20 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   const std::vector<catalog::Column::Id> col_id{
     catalog::Column::Id{1}, catalog::Column::Id{2}, catalog::Column::Id{3},
     catalog::Column::Id{4}, catalog::Column::Id{5}};
-  DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id};
+  // A BOOLEAN key indexes into two always-<X> fields picked by the value, so
+  // the entry must carry both ids -- the column's own field holds nothing.
+  constexpr irs::field_id kBoolTrueFieldId = 200;
+  constexpr irs::field_id kBoolFalseFieldId = 201;
+  catalog::InvertedIndexEntryInfo bool_entry;
+  bool_entry.true_field_id = kBoolTrueFieldId;
+  bool_entry.false_field_id = kBoolFalseFieldId;
+  EntryInfoProvider bool_entry_provider =
+    [bool_field = col_id[2],
+     &bool_entry](irs::field_id id) -> const catalog::InvertedIndexEntryInfo* {
+    return id == bool_field ? &bool_entry : nullptr;
+  };
+  DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id,
+                                    std::move(bool_entry_provider)};
 
   const std::vector<std::string_view> pk{
     {"pk1", 3}, {"pk2", 3}, {"pk3", 3}, {"pk4", 3}};
@@ -276,7 +290,11 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_NE(nullptr, int32_terms);
     auto varchar_terms = segment.field(catalog::Column::Id{2});
     ASSERT_NE(nullptr, varchar_terms);
-    auto bool_terms = segment.field(catalog::Column::Id{3});
+    // The value's field, not the column's: the column's own field is never
+    // created, and a swapped true/false selection lands in the wrong one.
+    ASSERT_EQ(nullptr, segment.field(catalog::Column::Id{3}));
+    auto bool_terms =
+      segment.field(col3 ? kBoolTrueFieldId : kBoolFalseFieldId);
     ASSERT_NE(nullptr, bool_terms);
     auto real_terms = segment.field(catalog::Column::Id{4});
     ASSERT_NE(nullptr, real_terms);
@@ -292,32 +310,32 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     SCOPED_TRACE(absl::StrCat("validating pk=", pk));
     auto varchar_term_itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(varchar_term_itr->seek(irs::ViewCast<irs::byte_type>(col2)));
-    auto varchar_postings =
-      segment.mask(varchar_term_itr->postings(irs::IndexFeatures::None));
+    auto varchar_postings = segment.mask(
+      varchar_term_itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     num_stream.reset(col1);
     ASSERT_TRUE(num_stream.next());
     auto int32_term_itr = int32_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(int32_term_itr->seek(num_token->value));
-    auto int32_postings =
-      segment.mask(int32_term_itr->postings(irs::IndexFeatures::None));
+    auto int32_postings = segment.mask(
+      int32_term_itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     num_stream.reset(col4);
     ASSERT_TRUE(num_stream.next());
     auto real_term_itr = real_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(real_term_itr->seek(num_token->value));
-    auto real_postings =
-      segment.mask(real_term_itr->postings(irs::IndexFeatures::None));
+    auto real_postings = segment.mask(
+      real_term_itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     num_stream.reset(col5);
     ASSERT_TRUE(num_stream.next());
     auto big_term_itr = big_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(big_term_itr->seek(num_token->value));
     auto big_postings =
-      segment.mask(big_term_itr->postings(irs::IndexFeatures::None));
+      segment.mask(big_term_itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     bool_stream.reset(col3);
     ASSERT_TRUE(bool_stream.next());
     auto bool_term_itr = bool_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(bool_term_itr->seek(bool_token->value));
-    auto bool_postings =
-      segment.mask(bool_term_itr->postings(irs::IndexFeatures::None));
+    auto bool_postings = segment.mask(
+      bool_term_itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     ASSERT_TRUE(!irs::doc_limits::eof(int32_postings->advance()));
     ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->advance()));
     ASSERT_TRUE(!irs::doc_limits::eof(real_postings->advance()));
@@ -488,18 +506,18 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_postings =
-      varchar_terms_itr->postings(irs::IndexFeatures::None);
+      varchar_terms_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->advance()));
     ASSERT_EQ(1, read_pk_at(varchar_postings->value()));
     auto varchar_nulls_postings =
-      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+      varchar_nulls_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(varchar_nulls_postings->seek(varchar_postings->value()));
     // NULL is not in this row
     ASSERT_NE(varchar_nulls_postings->value(), varchar_postings->value());
     auto unknown_terms_itr = unknown_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(unknown_terms_itr->next());
     auto unknown_postings =
-      unknown_terms_itr->postings(irs::IndexFeatures::None);
+      unknown_terms_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(unknown_postings->seek(varchar_postings->value()));
     ASSERT_EQ(varchar_postings->value(), unknown_postings->value());
     ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->advance()));
@@ -513,13 +531,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_nulls_postings =
-      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+      varchar_nulls_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(varchar_nulls_postings->seek(row_doc_id));
     ASSERT_EQ(varchar_nulls_postings->value(), row_doc_id);
     auto unknown_terms_itr = unknown_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(unknown_terms_itr->next());
     auto unknown_postings =
-      unknown_terms_itr->postings(irs::IndexFeatures::None);
+      unknown_terms_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(unknown_postings->seek(row_doc_id));
     ASSERT_EQ(unknown_postings->value(), row_doc_id);
   }
@@ -533,18 +551,18 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_postings =
-      varchar_terms_itr->postings(irs::IndexFeatures::None);
+      varchar_terms_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->advance()));
     ASSERT_EQ(3, read_pk_at(varchar_postings->value()));
     auto varchar_nulls_postings =
-      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+      varchar_nulls_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(varchar_nulls_postings->seek(varchar_postings->value()));
     // NULL is not in this row
     ASSERT_NE(varchar_nulls_postings->value(), varchar_postings->value());
     auto unknown_terms_itr = unknown_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(unknown_terms_itr->next());
     auto unknown_postings =
-      unknown_terms_itr->postings(irs::IndexFeatures::None);
+      unknown_terms_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(unknown_postings->seek(varchar_postings->value()));
     ASSERT_EQ(varchar_postings->value(), unknown_postings->value());
     ASSERT_FALSE(!irs::doc_limits::eof(varchar_postings->advance()));
@@ -558,13 +576,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
     auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(varchar_nulls_itr->next());
     auto varchar_nulls_postings =
-      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+      varchar_nulls_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(varchar_nulls_postings->seek(row_doc_id));
     ASSERT_EQ(varchar_nulls_postings->value(), row_doc_id);
     auto unknown_terms_itr = unknown_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(unknown_terms_itr->next());
     auto unknown_postings =
-      unknown_terms_itr->postings(irs::IndexFeatures::None);
+      unknown_terms_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(unknown_postings->seek(row_doc_id));
     ASSERT_EQ(unknown_postings->value(), row_doc_id);
   }
@@ -615,7 +633,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   ASSERT_TRUE(varchar_terms_itr->seek(
     irs::ViewCast<irs::byte_type>(std::string_view{"\x0foo", 4})));
 
-  auto varchar_postings = varchar_terms_itr->postings(irs::IndexFeatures::None);
+  auto varchar_postings =
+    varchar_terms_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
   ASSERT_TRUE(!irs::doc_limits::eof(varchar_postings->advance()));
   ASSERT_EQ(1, read_pk_at(varchar_postings->value()));
 }
@@ -716,7 +735,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
-    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    auto postings =
+      segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     ASSERT_TRUE(!irs::doc_limits::eof(postings->advance()));
     ASSERT_EQ(1, read_pk_at(postings->value()));
     ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
@@ -730,7 +750,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
-    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    auto postings =
+      segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
   }
   {
@@ -741,7 +762,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
-    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    auto postings =
+      segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
   }
 }
@@ -781,7 +803,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
     auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
-    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    auto postings =
+      segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     ASSERT_TRUE(!irs::doc_limits::eof(postings->advance()));
     ASSERT_EQ(1, read_pk_at(postings->value()));
     ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
@@ -795,14 +818,16 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
       auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(itr->seek(
         irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
-      auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+      auto postings =
+        segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
       ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
     }
     {
       auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(itr->seek(
         irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
-      auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+      auto postings =
+        segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
       ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
     }
   }
@@ -854,7 +879,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(itr->seek(
         irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
-      auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+      auto postings =
+        segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
       ASSERT_TRUE(!irs::doc_limits::eof(postings->advance()));
       ASSERT_EQ(1, read_pk_at(postings->value()));
       ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
@@ -868,7 +894,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
         auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
         ASSERT_TRUE(itr->seek(
           irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
-        auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+        auto postings =
+          segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
         ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
       }
     }
@@ -880,7 +907,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
         auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
         ASSERT_TRUE(itr->seek(
           irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
-        auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+        auto postings =
+          segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
         ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
       }
     }
@@ -923,7 +951,8 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
-    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    auto postings =
+      segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     ASSERT_TRUE(!irs::doc_limits::eof(postings->advance()));
     ASSERT_EQ(1, read_pk_at(postings->value()));
     ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
@@ -937,8 +966,54 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
     auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(
       itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
-    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    auto postings =
+      segment.mask(itr->RowGroupPostings(irs::IndexFeatures::None, 0));
     ASSERT_FALSE(!irs::doc_limits::eof(postings->advance()));
+  }
+}
+
+// A segment with no deletions must pay for them as if they did not exist. The
+// three places that has to hold are one question asked three ways, so they are
+// pinned together: `SubReader::mask` hands the iterator back unwrapped (no
+// MaskDocIterator, no per-document cost), and `SegmentAllLive` -- what the scan
+// grid sets `bulk` from and what ts_dict classifies CountMode::Meta on -- says
+// yes exactly when the segment carries no document mask at all.
+TEST_F(DuckDBSearchSinkWriterTest, AllLiveSegmentPaysNothingForDeletes) {
+  constexpr std::string_view kPk1 = {"pk1", 3};
+  constexpr std::string_view kPk2 = {"pk2", 3};
+
+  InsertTwoVarcharRows(*_data_writer, kPk1, "value1", kPk2, "value2");
+  _data_writer->RefreshCommit();
+
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+    ASSERT_EQ(1, reader.size());
+    const auto& segment = reader[0];
+    ASSERT_EQ(segment.docs_count(), segment.live_docs_count());
+    EXPECT_EQ(nullptr, segment.docs_mask());
+
+    auto docs = segment.docs_iterator();
+    const auto* unmasked = docs.get();
+    auto masked = segment.mask(std::move(docs));
+    EXPECT_EQ(unmasked, masked.get());
+    EXPECT_TRUE(SegmentAllLive(segment));
+  }
+
+  DeleteOnePk(*_data_writer, kPk1);
+  _data_writer->RefreshCommit();
+
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+    ASSERT_EQ(1, reader.size());
+    const auto& segment = reader[0];
+    ASSERT_NE(segment.docs_count(), segment.live_docs_count());
+    EXPECT_NE(nullptr, segment.docs_mask());
+
+    auto docs = segment.docs_iterator();
+    const auto* unmasked = docs.get();
+    auto masked = segment.mask(std::move(docs));
+    EXPECT_NE(unmasked, masked.get());
+    EXPECT_FALSE(SegmentAllLive(segment));
   }
 }
 

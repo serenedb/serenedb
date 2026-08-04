@@ -22,8 +22,8 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
 
 namespace irs {
 
@@ -111,13 +111,15 @@ class PositionImpl final : public PosAttr {
   // prepares iterator to work
   template<typename InputType>
   void Prepare(const DocState& state) {
-    _pos_in = sdb::basics::downCast<InputType>(*state.pos_in).Reopen();
-
     if (!_pos_in) {
-      // implementation returned wrong pointer
-      SDB_ERROR(IRESEARCH, "Failed to reopen positions input");
+      _pos_in = sdb::basics::downCast<InputType>(*state.pos_in).Reopen();
 
-      throw IoError("failed to reopen positions input");
+      if (!_pos_in) {
+        // implementation returned wrong pointer
+        SDB_ERROR(IRESEARCH, "Failed to reopen positions input");
+
+        throw IoError("failed to reopen positions input");
+      }
     }
 
     _cookie.pos_file_pointer = state.term_state->pos_start;
@@ -126,15 +128,18 @@ class PositionImpl final : public PosAttr {
       state.term_state->pos_start);
     _enc_buf = state.enc_buf;
     _pend_pos = _cookie.pend_pos;
+    _buf_pos = doc_limits::kBlockSize;
 
     if constexpr (IteratorTraits::Offset()) {
-      _pay_in = sdb::basics::downCast<InputType>(*state.pay_in).Reopen();
-
       if (!_pay_in) {
-        // implementation returned wrong pointer
-        SDB_ERROR(IRESEARCH, "Failed to reopen payload input");
+        _pay_in = sdb::basics::downCast<InputType>(*state.pay_in).Reopen();
 
-        throw IoError("failed to reopen payload input");
+        if (!_pay_in) {
+          // implementation returned wrong pointer
+          SDB_ERROR(IRESEARCH, "Failed to reopen payload input");
+
+          throw IoError("failed to reopen payload input");
+        }
       }
 
       _cookie.pay_file_pointer = state.term_state->pay_start;

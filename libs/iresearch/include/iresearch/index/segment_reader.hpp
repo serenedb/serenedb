@@ -61,12 +61,14 @@ class SegmentReader final : public SubReader {
   const DocumentMask* docs_mask() const final;
 
   // FIXME find a better way to mask documents
-  DocIterator::ptr mask(DocIterator::ptr&& it) const final;
+  DocIterator::ptr mask(DocIterator::ptr&& it,
+                        doc_id_t doc_offset = 0) const final;
 
   const TermReader* field(field_id id) const final;
   std::span<const field_id> field_ids() const final;
+  RowGroupLayout RowGroups() const noexcept final;
 
-  NormReader::ptr norms(field_id field) const final;
+  NormReader::ptr norms(field_id field, uint32_t rg = 0) const final;
 
   const ColumnReader* Column(field_id field) const final;
   const CentroidsTree* Ivf(field_id field) const final;

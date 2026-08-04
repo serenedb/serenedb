@@ -25,7 +25,6 @@
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -60,8 +59,8 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term,
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
-      *filter->mutable_options() =
-        AutomatonOptions{FromWildcard(term), term, scored_terms_limit};
+      *filter->mutable_options() = AutomatonOptions{
+        term, PatternKind::Wildcard, RegexpSyntax::Perl, scored_terms_limit};
       filter->boost(boost);
       return filter;
     });
@@ -78,12 +77,9 @@ Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
 }
 
 TermPredicate::ptr ByWildcard::CompileTermPredicate() const {
-  auto acceptor = FromWildcard(options().term);
-  if (!Validate(acceptor)) {
-    return nullptr;
-  }
-  return MakeAutomatonTermPredicate(
-    std::make_shared<const CompiledAcceptor>(std::move(acceptor)));
+  return MakePatternSource(bstring{options().term}, PatternKind::Wildcard,
+                           RegexpSyntax::Perl)
+    ->Predicate();
 }
 
 }  // namespace irs

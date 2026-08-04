@@ -132,6 +132,27 @@ void EnsureId(irs::field_id& id) {
   }
 }
 
+void EnsureBoolFieldIds(InvertedIndexEntryInfo& entry) {
+  EnsureId(entry.true_field_id);
+  EnsureId(entry.false_field_id);
+}
+
+// A boolean value is one of two always-<X> fields, so a key that can hold one
+// needs both ids reserved up front: the write path picks between them per row,
+// and the filter builder per predicate value.
+bool KeyCanHoldBoolean(const duckdb::LogicalType& type) noexcept {
+  const auto id = type.id();
+  if (id == duckdb::LogicalTypeId::LIST) {
+    return duckdb::ListType::GetChildType(type).id() ==
+           duckdb::LogicalTypeId::BOOLEAN;
+  }
+  if (id == duckdb::LogicalTypeId::ARRAY) {
+    return duckdb::ArrayType::GetChildType(type).id() ==
+           duckdb::LogicalTypeId::BOOLEAN;
+  }
+  return id == duckdb::LogicalTypeId::BOOLEAN;
+}
+
 // Parse a user-supplied compression name into a duckdb::CompressionType.
 // "auto" is the writer default (analyze tournament). Other names map
 // 1:1 to duckdb codecs; the writer throws at flush time if the named
@@ -658,12 +679,10 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
   if (wants_store || wants_norm) {
     entry.synthetic_column = static_cast<irs::field_id>(NextId());
   }
-  if (wants_norm) {
-    entry.norm_row_group_size = dict.GetNormRowGroupSize();
-  }
   if (value_type.IsJSONType() && !IsGeoAnalyzer(analyzer)) {
-    EnsureId(entry.bool_field_id);
+    EnsureId(entry.json_null_field_id);
     EnsureId(entry.numeric_field_id);
+    EnsureBoolFieldIds(entry);
   }
 }
 
@@ -735,7 +754,6 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   const std::shared_ptr<const Snapshot>& snapshot, InvertedIndexOptions options,
   ExpressionData predicate) {
   SDB_ASSERT(options.row_group_size != 0);
-  SDB_ASSERT(options.norm_row_group_size != 0);
   ValidateInvertedIndexColumns(columns);
 
   InvertedIndex::Entries entries;
@@ -771,6 +789,9 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
       ApplyOpclassToEntry(context, c, expr_data.pretty_printed,
                           expr_data.return_type, *snapshot, database_id,
                           schema_name, expr_info);
+      if (KeyCanHoldBoolean(expr_data.return_type)) {
+        EnsureBoolFieldIds(expr_info);
+      }
       entries.emplace(field_id, std::move(expr_info));
       expression_keys.emplace_back(expr_data, field_id);
       continue;
@@ -798,13 +819,13 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
     }
     ApplyOpclassToEntry(context, c, c.name, c.GetCatalogColumn().type,
                         *snapshot, database_id, schema_name, index_col);
+    if (KeyCanHoldBoolean(c.GetCatalogColumn().type)) {
+      EnsureBoolFieldIds(index_col);
+    }
   }
   for (auto& [_, entry] : entries) {
     if (entry.row_group_size == 0) {
       entry.row_group_size = options.row_group_size;
-    }
-    if (entry.norm_row_group_size == 0) {
-      entry.norm_row_group_size = options.norm_row_group_size;
     }
     EnsureId(entry.null_field_id);
   }

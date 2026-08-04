@@ -37,10 +37,10 @@ struct FixedPhraseState {
 
   // Mimic std::pair interface
   struct TermState {
-    TermState(SeekCookie::ptr&& first, score_t /*second*/) noexcept
+    TermState(TermCookie&& first, score_t /*second*/) noexcept
       : first{std::move(first)} {}
 
-    SeekCookie::ptr first;
+    TermCookie first;
   };
 
   using Terms = ManagedVector<TermState>;
@@ -56,7 +56,7 @@ struct VariadicPhraseState {
   explicit VariadicPhraseState(IResourceManager& memory) noexcept
     : num_terms{{memory}}, terms{{memory}} {}
 
-  using TermState = std::pair<SeekCookie::ptr, score_t>;
+  using TermState = std::pair<TermCookie, score_t>;
 
   ManagedVector<size_t> num_terms;  // number of terms per phrase part
   using Terms = ManagedVector<TermState>;

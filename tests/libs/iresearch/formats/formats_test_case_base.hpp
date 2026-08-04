@@ -28,13 +28,55 @@
 
 #include "index/index_tests.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/field_meta.hpp"
 
 namespace tests {
 
+// A row group wider than any test corpus, so a term is cut into the one run an
+// unpartitioned field stores.
+inline constexpr uint32_t kWholeSegment = 1U << 31;
+
+// Runs the production write path over one term and hands back the record a
+// dictionary would have decoded from it: the term's anchor in each stream plus
+// one run per row group, each measured from those anchors. This is the same
+// mapping `term_dict`'s record encoder and parser make, and it is the only way
+// to reach the postings reader -- a whole-term posting list is not a thing the
+// writer produces.
+inline irs::TermCookie WriteOneTerm(irs::PostingsWriter& writer,
+                                    irs::DocIterator& docs,
+                                    uint32_t row_group_size = kWholeSegment) {
+  irs::TermRuns runs;
+  writer.WriteTerm(docs, row_group_size, runs);
+
+  irs::TermCookie cookie;
+  cookie.stats.docs_count = runs.docs_count;
+  cookie.stats.freq = runs.freq;
+  cookie.doc_start = runs.doc_start;
+  cookie.pos_start = runs.pos_ptr;
+  cookie.pay_start = runs.pay_ptr;
+
+  uint32_t doc_offset = 0;
+  uint32_t pos_offset = 0;
+  uint32_t pay_offset = 0;
+  uint32_t slot = runs.pos_anchor;
+  for (const auto& run : runs.runs) {
+    cookie.rgs.emplace_back(
+      run.rg, run.df, run.tf, doc_offset, pos_offset, pay_offset,
+      static_cast<uint32_t>(run.df == 1 ? run.single_doc : run.e_skip),
+      static_cast<uint8_t>(slot));
+    doc_offset += static_cast<uint32_t>(run.run_len);
+    pos_offset += static_cast<uint32_t>(run.pos_delta);
+    pay_offset += static_cast<uint32_t>(run.pay_delta);
+    slot = (slot + run.tf) & (irs::pos_limits::kBlockSize - 1);
+  }
+  return cookie;
+}
+
 class MockTermReader final : public irs::BasicTermReader {
  public:
-  explicit MockTermReader(irs::TermIterator& it, irs::FieldMeta meta,
+  explicit MockTermReader(irs::SourceTermIterator& it, irs::FieldMeta meta,
                           irs::bytes_view min_term, irs::bytes_view max_term)
     : _it{it},
       _meta{std::move(meta)},
@@ -45,8 +87,8 @@ class MockTermReader final : public irs::BasicTermReader {
   irs::Attribute* GetMutable(irs::TypeInfo::type_id /*type*/) noexcept final {
     return nullptr;
   }
-  irs::TermIterator::ptr iterator() const final {
-    return irs::memory::to_managed<irs::TermIterator>(_it);
+  irs::SourceTermIterator::ptr iterator() const final {
+    return irs::memory::to_managed<irs::SourceTermIterator>(_it);
   }
   const irs::FieldMeta& meta() const { return _meta; }
   irs::field_id id() const final { return meta().id; }
@@ -54,7 +96,7 @@ class MockTermReader final : public irs::BasicTermReader {
   irs::bytes_view min() const final { return _min_term; }
   irs::bytes_view max() const final { return _max_term; }
 
-  irs::TermIterator& _it;
+  irs::SourceTermIterator& _it;
   irs::FieldMeta _meta;
   irs::bytes_view _min_term;
   irs::bytes_view _max_term;
@@ -179,7 +221,7 @@ class FormatTestCase : public IndexTestBase {
   bool supports_columnstore_headers() const noexcept { return true; }
 
   template<typename It>
-  class Terms : public irs::TermIterator {
+  class Terms : public irs::SourceTermIterator {
    public:
     using docs_type = std::vector<std::pair<irs::doc_id_t, uint32_t>>;
 
@@ -210,8 +252,6 @@ class FormatTestCase : public IndexTestBase {
       irs::IndexFeatures /*features*/) const final {
       return irs::memory::make_managed<FormatTestCase::TestPostings>(_docs);
     }
-
-    void read() final {}
 
     irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
       return nullptr;

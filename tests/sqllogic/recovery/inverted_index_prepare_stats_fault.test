@@ -1,0 +1,126 @@
+hash-threshold 100
+
+# The scored-query prepare barrier: every worker collects per-segment term
+# statistics, the worker that finishes the last prepare unit reduces them into
+# one StatsBuffer and releases the barrier. Releasing it is unconditional --
+# workers parked on it would otherwise wait for a unit that will never finish.
+#
+# A reduce that throws must therefore still release the barrier AND fail the
+# query. Swallowing the throw leaves the statistics unpublished, so every
+# worker scores against `irs::StatsBuffer::Empty()`: wrong scores, no error,
+# no log line.
+#
+# `SearchPrepareStatsFault` throws inside the reduce. Armed, every scored
+# scan shape that crosses the barrier must surface "intentional debug error";
+# unarmed, the same queries answer normally.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TABLE doc (
+  pk INTEGER PRIMARY KEY,
+  body VARCHAR
+)
+
+
+statement ok
+CREATE INDEX doc_idx ON doc USING inverted(pk, body en)
+
+
+statement ok
+INSERT INTO doc VALUES (1, 'alpha one'), (2, 'alpha two beta')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) doc
+
+
+# A second refresh so the prepare phase has more than one unit to claim: the
+# reduce runs on whichever worker finishes last, not on a fixed one.
+statement ok
+INSERT INTO doc VALUES (3, 'alpha three'), (4, 'beta four')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) doc
+
+
+# --- baseline: unarmed, both scored shapes answer -----------------------
+
+query
+SELECT pk FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC, pk;
+----
+pk
+1
+2
+3
+
+
+query
+SELECT pk FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC, pk
+  LIMIT 2;
+----
+pk
+1
+2
+
+
+# --- armed: the reduce fails, so the query fails ------------------------
+# Streaming scan with the score column projected.
+
+statement ok
+SET sdb_faults = 'SearchPrepareStatsFault'
+
+
+statement error intentional debug error
+SELECT pk FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC, pk;
+
+
+# Top-k scan (ORDER BY score LIMIT k) crosses the same barrier.
+
+statement error intentional debug error
+SELECT pk FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC, pk
+  LIMIT 2;
+
+
+statement ok
+SET sdb_faults = '-SearchPrepareStatsFault'
+
+
+# --- disarmed: unchanged answers ----------------------------------------
+
+query
+SELECT pk FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC, pk;
+----
+pk
+1
+2
+3
+
+
+statement ok
+DROP TABLE doc
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en

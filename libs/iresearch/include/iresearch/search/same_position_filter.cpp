@@ -124,7 +124,7 @@ class SamePositionQuery : public QueryBuilder {
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
-  DocIterator::ptr Execute(const ExecutionContext&,
+  DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& stats) const final {
     if (_states.empty()) {
       return DocIterator::empty();
@@ -142,8 +142,8 @@ class SamePositionQuery : public QueryBuilder {
       auto* reader = term_state.reader;
       SDB_ASSERT(reader);
 
-      auto docs =
-        reader->Iterator(features, {.cookie = term_state.cookie.get()});
+      auto docs = reader->RowGroupIterator(
+        features, {.cookie = &term_state.cookie}, ctx.rg);
       if (!docs) {
         return DocIterator::empty();
       }
@@ -219,11 +219,13 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
       continue;
     }
 
-    term->read();  // read term attributes
+    // cookie() decodes the term's record whole, the stats included, so the
+    // collector reads them after it rather than off a read() that would parse
+    // the same entry a second time.
+    term_states.emplace_back(field, term->cookie());
     if (collector) {
       collector->Terms()[term_idx].Collect(*term);
     }
-    term_states.emplace_back(field, term->cookie());
   }
 
   if (term_states.size() != terms.size()) {

@@ -82,11 +82,13 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
       }
     }
     if (term->seek(ngram)) {
-      term->read();
+      // cookie() decodes the term's record whole, the stats included, so the
+      // collector reads them after it rather than off a read() that would
+      // parse the same entry a second time.
+      term_state = term->cookie();
       if (part) {
         part->front().Collect(*term);
       }
-      term_state = term->cookie();
       ++count_terms;
     }
 

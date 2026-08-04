@@ -259,7 +259,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -307,7 +307,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes
@@ -355,7 +355,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes
@@ -402,7 +402,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes
@@ -452,7 +452,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes
@@ -498,7 +498,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes
@@ -547,7 +547,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes
@@ -595,7 +595,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes
@@ -645,7 +645,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes
@@ -691,7 +691,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
       auto docs = prepared.Execute(i);
       auto score_function = docs->PrepareScore({
         .scorer = &sort,
-        .segment = &sub,
+        .norms = &sub,
       });
       auto* frequency = irs::get<irs::FreqBlockAttr>(*docs);
       // ensure all iterators contain  attributes

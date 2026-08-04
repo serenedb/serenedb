@@ -118,9 +118,19 @@ struct ColumnOptions {
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;
 
+// The norm column's grid is not a knob: it is the index's one `row_group_size`,
+// the same value the postings are cut at, because a norm read is served by the
+// row group that produced the posting list.
 struct NormColumnOptions {
   field_id id = field_limits::invalid();
+};
+
+struct DictOptions {
+  // Rows per row group: a term's postings are cut at row group boundaries and
+  // the stored doc ids are row-group local.
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+
+  friend bool operator==(const DictOptions&, const DictOptions&) = default;
 };
 
 using NormColumnOptionsProvider = std::function<NormColumnOptions(field_id)>;
@@ -133,6 +143,12 @@ class IndexFieldOptions {
   virtual ~IndexFieldOptions() = default;
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
   virtual NormColumnOptions GetNormColumnOptions(field_id id) const = 0;
+  virtual DictOptions GetDictOptions() const { return {}; }
+
+  // A synthetic always-<X> field: the schema fixes its one term, so the
+  // dictionary keeps no term bytes, no leaf block and no separators and the
+  // field header carries the posting lists directly.
+  virtual bool IsDictlessField(field_id id) const { return false; }
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --
@@ -157,9 +173,11 @@ inline bool CompatibleFieldOptions(const IndexFieldOptions* prev,
 class FunctionFieldOptions final : public IndexFieldOptions {
  public:
   FunctionFieldOptions(ColumnOptionsProvider column_options,
-                       NormColumnOptionsProvider norm_column_options) noexcept
+                       NormColumnOptionsProvider norm_column_options,
+                       DictOptions dict_options) noexcept
     : _column_options{std::move(column_options)},
-      _norm_column_options{std::move(norm_column_options)} {}
+      _norm_column_options{std::move(norm_column_options)},
+      _dict_options{dict_options} {}
 
   ColumnOptions GetColumnOptions(field_id id) const final {
     return _column_options ? _column_options(id) : ColumnOptions{};
@@ -168,10 +186,12 @@ class FunctionFieldOptions final : public IndexFieldOptions {
     return _norm_column_options ? _norm_column_options(id)
                                 : NormColumnOptions{};
   }
+  DictOptions GetDictOptions() const final { return _dict_options; }
 
  private:
   ColumnOptionsProvider _column_options;
   NormColumnOptionsProvider _norm_column_options;
+  DictOptions _dict_options;
 };
 
 }  // namespace irs

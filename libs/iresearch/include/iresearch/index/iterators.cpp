@@ -86,7 +86,8 @@ EmptyDocIterator gEmptyDocIterator;
 struct EmptySeekTermIterator : SeekTermIterator {
   bytes_view value() const noexcept final { return {}; }
 
-  DocIterator::ptr postings(IndexFeatures /*features*/) const noexcept final {
+  DocIterator::ptr RowGroupPostings(IndexFeatures /*features*/,
+                                    uint32_t /*rg*/) const noexcept final {
     return DocIterator::empty();
   }
 
@@ -104,7 +105,7 @@ struct EmptySeekTermIterator : SeekTermIterator {
 
   bool seek(bytes_view /*value*/) noexcept final { return false; }
 
-  SeekCookie::ptr cookie() const noexcept final { return nullptr; }
+  TermCookie cookie() const final { return {}; }
 };
 
 EmptySeekTermIterator gEmptySeekIterator;

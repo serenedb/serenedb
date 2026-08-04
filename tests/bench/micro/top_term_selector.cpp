@@ -60,8 +60,10 @@ class SeekTermIterator : public irs::SeekTermIterator {
 
   bool seek(irs::bytes_view) final { return false; }
 
-  irs::SeekCookie::ptr cookie() const final {
-    return std::make_unique<SeekPtr>(_cookie_ptr);
+  irs::TermCookie cookie() const final {
+    irs::TermCookie cookie;
+    cookie.stats = std::get<1>(*_cookie_ptr);
+    return cookie;
   }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
@@ -87,19 +89,10 @@ class SeekTermIterator : public irs::SeekTermIterator {
 
   void read() final {}
 
-  irs::DocIterator::ptr postings(irs::IndexFeatures /*features*/) const final {
+  irs::DocIterator::ptr RowGroupPostings(irs::IndexFeatures /*features*/,
+                                         uint32_t /*rg*/) const final {
     return irs::DocIterator::empty();
   }
-
-  struct SeekPtr final : irs::SeekCookie {
-    explicit SeekPtr(iterator_type ptr) noexcept : ptr(ptr) {}
-
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-      return nullptr;
-    }
-
-    iterator_type ptr;
-  };
 
  private:
   TermMetaBench _meta;
@@ -122,7 +115,7 @@ struct SubReader final : irs::SubReader {
   }
   const irs::TermReader* field(irs::field_id) const final { return nullptr; }
   std::span<const irs::field_id> field_ids() const noexcept final { return {}; }
-  irs::NormReader::ptr norms(irs::field_id field) const final {
+  irs::NormReader::ptr norms(irs::field_id field, irs::doc_id_t) const final {
     return nullptr;
   }
 

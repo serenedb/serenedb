@@ -356,7 +356,7 @@ void OpenReader(std::string_view format,
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
   ASSERT_TRUE(term_itr->next());
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
   ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
   ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                    values, docs_itr->value()));
@@ -485,7 +485,7 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -629,7 +629,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -747,7 +747,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -872,7 +872,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -973,7 +973,7 @@ TEST(index_death_test_formats_15,
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -992,7 +992,7 @@ TEST(index_death_test_formats_15,
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -1115,7 +1115,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -1134,7 +1134,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -1153,7 +1153,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -1172,7 +1172,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -1264,22 +1264,30 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   auto terms = segment.field(kSameAnlPayId);
   ASSERT_NE(nullptr, terms);
 
-  // regiseter reopen failure in term dictionary
+  // regiseter reopen failure in term dictionary. Which of the two calls
+  // reopens `.idx` is up to the dictionary -- the lazy root is built when the
+  // iterator is created -- so the failure is required from the pair.
   {
     dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.idx");
-    auto term_itr =
-      terms->iterator(irs::SeekMode::NORMAL);  // successful attempt
-    ASSERT_NE(nullptr, term_itr);
-    ASSERT_THROW(term_itr->next(), irs::IoError);
+    ASSERT_THROW(
+      {
+        auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+        EXPECT_NE(nullptr, term_itr);
+        term_itr->next();
+      },
+      irs::IoError);
   }
 
   // regiseter reopen failure in term dictionary (nullptr)
   {
     dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.idx");
-    auto term_itr =
-      terms->iterator(irs::SeekMode::NORMAL);  // successful attempt
-    ASSERT_NE(nullptr, term_itr);
-    ASSERT_THROW(term_itr->next(), irs::IoError);
+    ASSERT_THROW(
+      {
+        auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+        EXPECT_NE(nullptr, term_itr);
+        term_itr->next();
+      },
+      irs::IoError);
   }
 
   auto term_itr = terms->iterator(irs::SeekMode::NORMAL);  // successful attempt
@@ -1289,39 +1297,43 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   // regiseter reopen failure in postings
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");
   // can't reopen document input
-  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
+  ASSERT_THROW((void)term_itr->RowGroupPostings(irs::IndexFeatures::None, 0),
                irs::IoError);
   // regiseter reopen failure in postings (nullptr)
   dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.doc");
   // can't reopen document input (nullptr)
-  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
+  ASSERT_THROW((void)term_itr->RowGroupPostings(irs::IndexFeatures::None, 0),
                irs::IoError);
   // regiseter reopen failure in positions
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pos");
   // can't reopen position input
-  ASSERT_THROW((void)term_itr->postings(kPositions), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kPositions, 0), irs::IoError);
   // regiseter reopen failure in positions (nullptr)
   dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pos");
   // can't reopen position (nullptr)
-  ASSERT_THROW((void)term_itr->postings(kPositions), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kPositions, 0), irs::IoError);
   // regiseter reopen failure in payload
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
   // can't reopen offset input
-  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kPositionsOffsets, 0),
+               irs::IoError);
 
   // regiseter reopen failure in payload (nullptr)
   dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
 
   // can't reopen position (nullptr)
-  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kPositionsOffsets, 0),
+               irs::IoError);
   // regiseter reopen failure in payload
   // can't reopen offset input
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
-  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kPositionsOffsets, 0),
+               irs::IoError);
   // regiseter reopen failure in payload (nullptr)
   dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
   // can't reopen position (nullptr)
-  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kPositionsOffsets, 0),
+               irs::IoError);
 
   // regiseter reopen failure in postings
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");
@@ -1335,16 +1347,16 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
   // regiseter reopen failure in payload
   dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kAllFeatures, 0), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kAllFeatures, 0), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kAllFeatures, 0), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kAllFeatures, 0), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kAllFeatures, 0), irs::IoError);
+  ASSERT_THROW((void)term_itr->RowGroupPostings(kAllFeatures, 0), irs::IoError);
 
   ASSERT_TRUE(dir.NoFailures());
   // successful attempt
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
   ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
   ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                    values, docs_itr->value()));
@@ -1455,7 +1467,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -1517,7 +1529,7 @@ TEST(index_death_test_formats_15,
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -1534,7 +1546,7 @@ TEST(index_death_test_formats_15,
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -1677,7 +1689,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -1805,7 +1817,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -2057,7 +2069,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -2072,7 +2084,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -2157,7 +2169,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -2172,7 +2184,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->value()));
@@ -2309,7 +2321,7 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -2419,7 +2431,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -2595,7 +2607,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -2694,7 +2706,7 @@ TEST(index_death_test_formats_15, fails_in_exists) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -2852,7 +2864,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->value()));
@@ -2938,7 +2950,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
   ASSERT_TRUE(term_itr->next());
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = term_itr->RowGroupPostings(irs::IndexFeatures::None, 0);
   ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
   ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                    values, docs_itr->value()));

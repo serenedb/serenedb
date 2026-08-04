@@ -139,7 +139,7 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   auto docs = prepared.Execute(0);
   auto score = docs->PrepareScore({
     .scorer = impl.get(),
-    .segment = &segment,
+    .norms = &segment,
     .fetcher = &fetcher,
   });
 

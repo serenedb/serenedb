@@ -152,7 +152,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
   auto docs = prepared.Execute(0);
   auto score = docs->PrepareScore({
     .scorer = impl.get(),
-    .segment = &segment,
+    .norms = &segment,
     .fetcher = &fetcher,
   });
 

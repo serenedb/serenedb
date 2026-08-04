@@ -42,7 +42,10 @@ class LazyFilterBitset : private util::Noncopyable {
   LazyFilterBitset(const SubReader& segment, const ExecutionContext& ctx,
                    const StatsBuffer& stats, const QueryBuilder& inner_query)
     : _manager{ctx.memory} {
-    const size_t bits = segment.docs_count() + doc_limits::min();
+    // A bit index is a row-group-local doc id, like everything the inner query
+    // produces.
+    const auto layout = segment.RowGroups();
+    const size_t bits = layout.Rows(ctx.rg) + doc_limits::min();
     _words = bitset::bits_to_words(bits);
 
     auto bytes = sizeof(*this) + sizeof(WordT) * _words;
@@ -50,7 +53,8 @@ class LazyFilterBitset : private util::Noncopyable {
     Finally decrease = [&]() noexcept { ctx.memory.DecreaseChecked(bytes); };
 
     // TODO(mbkkt) use mask from segment manually to avoid virtual call
-    _real_doc_itr = segment.mask(inner_query.Execute(ctx, stats));
+    _real_doc_itr = segment.mask(inner_query.Execute(ctx, stats),
+                                 layout.Base(ctx.rg) - doc_limits::min());
 
     _cost = CostAttr::extract(*_real_doc_itr);
 
@@ -184,8 +188,25 @@ struct ProxyQueryCache {
       prepared{PreparedAlloc{memory}},
       readers{Alloc{memory}} {}
 
+  // A document set is one worker's view of one ROW GROUP: the bit index is a
+  // row-group-local doc id, so a set per segment would answer every row group
+  // with the first one's documents, and the set fills as it is read, so a set
+  // shared by workers would fill under them.
+  struct ReaderKey {
+    const SubReader* segment;
+    const WorkerContext* worker;
+    uint32_t rg;
+
+    friend bool operator==(const ReaderKey&, const ReaderKey&) = default;
+
+    template<typename H>
+    friend H AbslHashValue(H h, const ReaderKey& key) {
+      return H::combine(std::move(h), key.segment, key.worker, key.rg);
+    }
+  };
+
   using Alloc = ManagedTypedAllocator<
-    std::pair<const SubReader* const, std::unique_ptr<LazyFilterBitset>>>;
+    std::pair<const ReaderKey, std::unique_ptr<LazyFilterBitset>>>;
   using PreparedAlloc =
     ManagedTypedAllocator<std::pair<const SubReader* const, QueryBuilder::ptr>>;
 
@@ -196,10 +217,10 @@ struct ProxyQueryCache {
     absl::container_internal::hash_default_hash<const SubReader*>,
     absl::container_internal::hash_default_eq<const SubReader*>, PreparedAlloc>
     prepared;
-  absl::flat_hash_map<
-    const SubReader*, std::unique_ptr<LazyFilterBitset>,
-    absl::container_internal::hash_default_hash<const SubReader*>,
-    absl::container_internal::hash_default_eq<const SubReader*>, Alloc>
+  absl::flat_hash_map<ReaderKey, std::unique_ptr<LazyFilterBitset>,
+                      absl::container_internal::hash_default_hash<ReaderKey>,
+                      absl::container_internal::hash_default_eq<ReaderKey>,
+                      Alloc>
     readers;
 };
 
@@ -217,9 +238,10 @@ class ProxyQuery : public QueryBuilder {
   DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& stats) const final {
     const auto& segment = _segment;
+    const ProxyQueryCache::ReaderKey key{&segment, ctx.worker, ctx.rg};
     auto* cache_bitset = [&] -> LazyFilterBitset* {
       absl::ReaderMutexLock lock{&_cache->readers_lock};
-      auto it = _cache->readers.find(&segment);
+      auto it = _cache->readers.find(key);
       if (it != _cache->readers.end()) {
         return it->second.get();
       }
@@ -228,10 +250,9 @@ class ProxyQuery : public QueryBuilder {
     if (!cache_bitset) {
       auto bitset =
         std::make_unique<LazyFilterBitset>(segment, ctx, stats, *_inner_query);
-      cache_bitset = bitset.get();
       absl::WriterMutexLock lock{&_cache->readers_lock};
-      SDB_ASSERT(!_cache->readers.contains(&segment));
-      _cache->readers.emplace(&segment, std::move(bitset));
+      cache_bitset =
+        _cache->readers.emplace(key, std::move(bitset)).first->second.get();
     }
     return memory::make_tracked<LazyFilterBitsetIterator>(ctx.memory,
                                                           *cache_bitset);

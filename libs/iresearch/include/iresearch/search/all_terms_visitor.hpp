@@ -53,17 +53,18 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
 
   bool Visit(score_t boost) final {
     SDB_ASSERT(_terms);
-    _terms->read();
-    if (_term_stats) {
-      (*_term_stats)[_stat_index].Collect(*_terms);
-    }
-
+    // cookie() decodes the term's record whole, the stats included, so the
+    // term statistics are read after it rather than off a read() that would
+    // parse the same entry a second time.
     _state.Push(typename State::Entry{
       .cookie = _terms->cookie(),
       .docs_count = *_docs_count,
       .boost = boost,
       .stat_offset = _stat_index,
     });
+    if (_term_stats) {
+      (*_term_stats)[_stat_index].Collect(*_terms);
+    }
     return true;
   }
 

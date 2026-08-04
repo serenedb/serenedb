@@ -61,11 +61,13 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
 
   CostAttr::Type estimation = 0;
   while (terms->next()) {
-    terms->read();
+    // cookie() decodes the term's record whole, the stats included, so the
+    // estimate is summed after it rather than off a read() that would parse
+    // the same entry a second time.
+    state.cookies.emplace_back(terms->cookie());
     if (term_meta) {
       estimation += term_meta->docs_count;
     }
-    state.cookies.emplace_back(terms->cookie());
   }
   state.estimation = estimation;
 

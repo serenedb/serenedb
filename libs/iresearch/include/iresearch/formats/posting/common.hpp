@@ -25,31 +25,12 @@
 #include <functional>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats_attributes.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-// TODO(mbkkt) avoid logic duplication
-// I think there's two options:
-// 1. each file contains this file version
-// 2. single per segment file controls over versions
-
-enum class TermsFormat : int32_t {
-  Min = 0,
-  Max = Min,
-};
-
-// Format of postings, written in ".doc", ".pos", ".pay" files
-enum class PostingsFormat : int32_t {
-  Min = 0,
-
-  WandSimd = Min,
-
-  Max = WandSimd,
-};
 
 struct SkipState {
   // pointer to the beginning of document block

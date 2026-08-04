@@ -144,7 +144,7 @@ void CollectSegment(const tests::PreparedFilter& prepared, size_t i,
   if (scorer != nullptr) {
     score = docs->PrepareScore({
       .scorer = scorer,
-      .segment = &sub,
+      .norms = &sub,
     });
   }
 

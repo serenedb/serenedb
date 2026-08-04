@@ -5557,7 +5557,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto score = it->PrepareScore({
       .scorer = &sort,
-      .segment = &*sub,
+      .norms = &*sub,
     });
 
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -5623,7 +5623,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto score = docs->PrepareScore({
       .scorer = &sort,
-      .segment = &*sub,
+      .norms = &*sub,
     });
 
     ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
@@ -6104,7 +6104,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
       .scorer = &freq_score,
-      .segment = &*sub,
+      .norms = &*sub,
     });
     irs::score_t score_val;
 
@@ -6348,7 +6348,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
       .scorer = &freq_score,
-      .segment = &*sub,
+      .norms = &*sub,
     });
     irs::score_t score_val;
 
@@ -6459,7 +6459,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
       .scorer = &freq_score,
-      .segment = &*sub,
+      .norms = &*sub,
     });
     irs::score_t score_val;
 
@@ -6570,7 +6570,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto disj_docs = disj_prepared.Execute(0);
     auto disj_score = disj_docs->PrepareScore({
       .scorer = &freq_score,
-      .segment = &*sub,
+      .norms = &*sub,
     });
     irs::score_t score_val;
 

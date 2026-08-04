@@ -62,6 +62,8 @@ irs::DocIterator::ptr SearchRemoveFilterBase::MakeIterator(
   _pending_mask = ctx.pending_docs_mask;
   _pk_field = _segment->field(_pk_field_id);
   SDB_ASSERT(_pk_field);
+  _pk_terms = _pk_field->iterator(irs::SeekMode::RandomOnly);
+  SDB_ASSERT(_pk_terms);
   _pos = 0;
   _doc = irs::doc_limits::invalid();
   return irs::memory::to_managed<irs::DocIterator>(
@@ -100,18 +102,39 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     // FIELD_SORTED_1 Due to documents are sorted for storing after applying
     // queries it will still see documents in insertion order.
 
+    // One seek per key, then only the row groups the key actually occurs in --
+    // the cookie carries that list, so the segment's grid is never walked to
+    // find the few that hold anything.
     auto doc = irs::doc_limits::eof();
-    auto acceptor = [&](irs::doc_id_t found_doc) {
-      if ((_segment_mask && _segment_mask->contains(found_doc)) ||
-          (_pending_mask && _pending_mask->contains(found_doc))) {
-        return true;  // skip deleted
+    if (_pk_terms->seek(pk)) {
+      const auto layout = _segment->RowGroups();
+      for (const auto& group : _pk_terms->RowGroups()) {
+        auto docs =
+          _pk_terms->RowGroupPostings(irs::IndexFeatures::None, group.rg);
+        if (!docs) {
+          continue;
+        }
+        // The PK's postings are row-group-local, while the DocumentMask this
+        // feeds is segment-wide: adding the row group's base here is the
+        // mask's boundary arithmetic, done once at its only consumer.
+        const auto base = static_cast<irs::doc_id_t>(layout.Base(group.rg) -
+                                                     irs::doc_limits::min());
+        irs::doc_id_t found_doc;
+        while (!irs::doc_limits::eof(found_doc = docs->advance())) {
+          const auto seg_doc = found_doc + base;
+          if ((_segment_mask && _segment_mask->contains(seg_doc)) ||
+              (_pending_mask && _pending_mask->contains(seg_doc))) {
+            continue;  // skip deleted
+          }
+          // found alive document with this PK
+          doc = seg_doc;
+          break;
+        }
+        if (!irs::doc_limits::eof(doc)) {
+          break;
+        }
       }
-      // found alive document with this PK
-      doc = found_doc;
-      return false;
-    };
-
-    _pk_field->read_documents(pk, acceptor);
+    }
 
     if (irs::doc_limits::eof(doc)) {
       ++_pos;

@@ -45,6 +45,45 @@ struct TermAttr;
 
 namespace tests {
 
+// A term's field-wide statistics, or an empty one when the field has no such
+// term. The reader itself answers per (term, row group), so a whole-field
+// question is a seek plus a look at the cookie.
+inline irs::TermMeta TermStats(const irs::TermReader& field,
+                               irs::bytes_view term) {
+  auto it = field.iterator(irs::SeekMode::RandomOnly);
+  if (!it || !it->seek(term)) {
+    return {};
+  }
+  return it->cookie().stats;
+}
+
+// The documents `term` occurs in inside row group `rg`, in that row group's
+// local id space; the walk stops when the acceptor says so.
+inline void RowGroupReadDocuments(const irs::TermReader& field,
+                                  irs::bytes_view term, uint32_t rg,
+                                  absl::FunctionRef<bool(irs::doc_id_t)> acc) {
+  auto it = field.iterator(irs::SeekMode::RandomOnly);
+  if (!it || !it->seek(term)) {
+    return;
+  }
+  auto docs = it->RowGroupPostings(irs::IndexFeatures::None, rg);
+  if (!docs) {
+    return;
+  }
+  irs::doc_id_t d;
+  while (!irs::doc_limits::eof(d = docs->advance())) {
+    if (!acc(d)) {
+      break;
+    }
+  }
+}
+
+// The same over a field that holds one row group.
+inline void ReadDocuments(const irs::TermReader& field, irs::bytes_view term,
+                          absl::FunctionRef<bool(irs::doc_id_t)> acc) {
+  RowGroupReadDocuments(field, term, 0, acc);
+}
+
 irs::IndexWriterOptions CsDefaultWriterOptions();
 irs::IndexReaderOptions CsDefaultReaderOptions();
 
@@ -219,9 +258,9 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void AssertSnapshotEquality(const irs::IndexWriter& writer);
 
   void assert_index(irs::IndexFeatures features, size_t skip = 0,
-                    irs::automaton_table_matcher* matcher = nullptr) const {
+                    const irs::TermAcceptorSource* source = nullptr) const {
     tests::AssertIndex(open_reader().GetImpl(), index(), features, skip,
-                       matcher);
+                       source);
   }
 
   void SetUp() final {

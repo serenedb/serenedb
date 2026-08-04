@@ -37,16 +37,6 @@ class IndexInput;
 
 class NormColumnReader final {
  public:
-  // Per-RG view bundling the four fields the hot path (BM25/TFIDF
-  // multi-RG `RefreshRowGroup`) reads back-to-back. One bound check
-  // instead of four.
-  struct RgInfo {
-    std::span<const byte_type> bytes;
-    uint64_t first_row;
-    uint64_t row_count;
-    uint8_t byte_size;
-  };
-
   NormColumnReader(field_id id, std::vector<NormRowGroupMeta> pointers,
                    IndexInput& in);
 
@@ -56,12 +46,6 @@ class NormColumnReader final {
 
   uint64_t Sum() const noexcept { return _total_sum; }
   uint64_t NonZeroCount() const noexcept { return _total_non_zero; }
-
-  RgInfo Rg(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _pointers.size());
-    return {_spans[rg], _row_offsets[rg], _pointers[rg].row_count,
-            _pointers[rg].byte_size};
-  }
 
   uint8_t ByteSize(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());

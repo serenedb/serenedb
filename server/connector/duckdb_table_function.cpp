@@ -460,8 +460,14 @@ auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
       if (fid == entry.null_field_id) {
         return entry_base(lookup.entry_field_id) + "(null)";
       }
-      if (fid == entry.bool_field_id) {
-        return entry_base(lookup.entry_field_id) + "(bool)";
+      if (fid == entry.json_null_field_id) {
+        return entry_base(lookup.entry_field_id) + "(json_null)";
+      }
+      if (fid == entry.true_field_id) {
+        return entry_base(lookup.entry_field_id) + "(true)";
+      }
+      if (fid == entry.false_field_id) {
+        return entry_base(lookup.entry_field_id) + "(false)";
       }
       if (fid == entry.numeric_field_id) {
         return entry_base(lookup.entry_field_id) + "(numeric)";
@@ -503,10 +509,10 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
         }
         return Kind::String;
       }
-      if (fid == entry.null_field_id) {
+      if (fid == entry.null_field_id || fid == entry.json_null_field_id) {
         return Kind::Null;
       }
-      if (fid == entry.bool_field_id) {
+      if (fid == entry.true_field_id || fid == entry.false_field_id) {
         return Kind::Bool;
       }
       if (fid == entry.numeric_field_id) {
@@ -872,10 +878,19 @@ static double IResearchScanProgress(
   if (gstate.total_segments == 0) {
     return -1;
   }
-  const auto claimed = std::min<uint64_t>(
-    gstate.next_segment.load(std::memory_order_relaxed), gstate.total_segments);
-  return 100.0 * static_cast<double>(claimed) /
-         static_cast<double>(gstate.total_segments);
+  // The work item is one row group of one segment, except for ts_dict, whose
+  // is one term range of one field of one segment.
+  const auto total_rgs = gstate.grid.TotalRgs();
+  if (total_rgs != 0) {
+    return 100.0 * static_cast<double>(gstate.ClaimedRowGroups()) /
+           static_cast<double>(total_rgs);
+  }
+  const auto units = gstate.term_grid.units.size();
+  if (units == 0) {
+    return -1;
+  }
+  return 100.0 * static_cast<double>(gstate.ClaimedTermRanges()) /
+         static_cast<double>(units);
 }
 
 namespace {

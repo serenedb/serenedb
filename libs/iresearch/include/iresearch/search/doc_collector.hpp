@@ -58,9 +58,9 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
   score_t score_threshold = std::numeric_limits<score_t>::min();
   NthPartitionScoreCollector collector{score_threshold, k, hits};
   ColumnArgsFetcher fetcher;
+  RowGroupNormProvider norm_provider;
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {
-    fetcher.Clear();
     auto& query = queries[seg_idx];
     collector.SetSegment(seg_idx++);
 
@@ -68,15 +68,26 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
       continue;
     }
 
-    auto it = query->Execute({}, stats);
+    // Prepare is per segment, execution is per row group: the iterator tree
+    // runs in the row group's local id space and the collector adds its base
+    // back, so the reported ids stay segment-wide.
+    const auto grid = segment.RowGroups();
+    for (uint32_t rg = 0; rg < grid.count; ++rg) {
+      const auto doc_offset = grid.Base(rg) - doc_limits::min();
+      fetcher.Clear();
+      collector.SetRowGroup(doc_offset);
+      norm_provider.Reset(segment, rg);
 
-    auto score_func = it->PrepareScore({
-      .scorer = &scorer,
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+      auto it = query->Execute({.rg = rg}, stats);
 
-    it->Collect(score_func, fetcher, collector);
+      auto score_func = it->PrepareScore({
+        .scorer = &scorer,
+        .norms = &norm_provider,
+        .fetcher = &fetcher,
+      });
+
+      it->Collect(score_func, fetcher, collector);
+    }
   }
 
   std::sort(
@@ -102,9 +113,9 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   score_t score_threshold = std::numeric_limits<score_t>::min();
   NthPartitionScoreCollector collector{score_threshold, k, hits};
   ColumnArgsFetcher fetcher;
+  RowGroupNormProvider norm_provider;
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {
-    fetcher.Clear();
     auto& query = queries[seg_idx];
     collector.SetSegment(seg_idx++);
 
@@ -112,21 +123,29 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
       continue;
     }
 
-    auto it = query->Execute({.wand = wand}, stats);
+    const auto grid = segment.RowGroups();
+    for (uint32_t rg = 0; rg < grid.count; ++rg) {
+      const auto doc_offset = grid.Base(rg) - doc_limits::min();
+      fetcher.Clear();
+      collector.SetRowGroup(doc_offset);
+      norm_provider.Reset(segment, rg);
 
-    auto score_func = it->PrepareScore({
-      .scorer = &scorer,
-      .segment = &segment,
-      .fetcher = &fetcher,
-    });
+      auto it = query->Execute({.wand = wand, .rg = rg}, stats);
 
-    if (auto* score_threshold = irs::GetMutable<ScoreThresholdAttr>(it.get())) {
-      collector.SetScoreThreshold(score_threshold->value);
+      auto score_func = it->PrepareScore({
+        .scorer = &scorer,
+        .norms = &norm_provider,
+        .fetcher = &fetcher,
+      });
+
+      if (auto* it_threshold = irs::GetMutable<ScoreThresholdAttr>(it.get())) {
+        collector.SetScoreThreshold(it_threshold->value);
+      }
+
+      it->Collect(score_func, fetcher, collector);
+
+      collector.SetScoreThreshold(score_threshold);
     }
-
-    it->Collect(score_func, fetcher, collector);
-
-    collector.SetScoreThreshold(score_threshold);
   }
 
   std::sort(

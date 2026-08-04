@@ -47,6 +47,9 @@ struct FieldStats {
 struct FieldProperties {
   field_id norm{field_limits::invalid()};
   IndexFeatures index_features{IndexFeatures::None};
+  // The field holds exactly one term and the host knows it from its schema, so
+  // the dictionary stores no term bytes at all: the field *is* that term.
+  bool dictless{false};
 };
 
 struct FieldMeta : FieldProperties {

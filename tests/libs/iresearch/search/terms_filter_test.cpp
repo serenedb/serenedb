@@ -619,12 +619,10 @@ TEST_P(TermsFilterTestCase, compile_term_iterator_matches_predicate) {
     check(f, true);
   }
   {
-    auto dfa = irs::FromRegexp(std::string_view{"a.*|v.*"});
-    ASSERT_NE(0, dfa.NumStates());
     irs::AutomatonFilter f;
     *f.mutable_field_id() = kDuplicatedId;
-    *f.mutable_options() =
-      irs::AutomatonOptions{std::move(dfa), B("a.*|v.*"), 1024};
+    *f.mutable_options() = irs::AutomatonOptions{
+      B("a.*|v.*"), irs::PatternKind::Regexp, irs::RegexpSyntax::Perl, 1024};
     check(f, true);
   }
 }

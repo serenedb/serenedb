@@ -29,6 +29,7 @@
 #include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
+#include <exception>
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filter.hpp>
@@ -75,6 +76,15 @@ enum class ScanMode : uint8_t {
   // a lookup column is needed -- for a filter or for the output.
   Stream,
 };
+
+// A segment with no deletions must pay for them as if they did not exist: its
+// `.col` scan reads its rows in bulk instead of walking a masked doc iterator,
+// its ts_dict counts come from term metadata instead of intersecting postings,
+// and `SubReader::mask` hands the iterator back unwrapped. All three ask this,
+// and it holds exactly when the segment carries no document mask.
+inline bool SegmentAllLive(const irs::SubReader& seg) noexcept {
+  return seg.live_docs_count() == seg.docs_count();
+}
 
 // Global scan state, filled by IResearchScanInitGlobal in pipeline order:
 // the projection walk (InitScanState), the pushed-filter classification
@@ -184,9 +194,29 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   const irs::Filter* filter = nullptr;
   irs::Filter::ptr owned_filter;
   std::unique_ptr<irs::Scorer> scorer_obj;
-  std::vector<irs::QueryBuilder::ptr> queries;
+  // One prepared query per segment, shared by every worker that claims a row
+  // group of it: the dictionary lookups behind it are the per-segment prepare
+  // cost and are paid once. `published` is the whole read path -- one acquire
+  // load, and null means "not built yet", never "wait". `owned` exists only to
+  // keep the winner's build alive for the scan; it is written by the worker
+  // whose publication won and read again at teardown, so it never needs to be
+  // atomic (EnsureSegmentQuery states why racing builders are legal).
+  struct QuerySlot {
+    irs::QueryBuilder::ptr owned;
+    std::atomic<const irs::QueryBuilder*> published{nullptr};
+  };
+  std::vector<QuerySlot> queries;
   std::vector<irs::PrepareCollector::ptr> collectors;
   std::optional<irs::StatsBuffer> stats;
+  // What the reduce threw, if it threw. The barrier has to be released even
+  // then -- workers parked on it would wait forever -- so the failure travels
+  // with it: the reducing worker stores it before Notify(), every worker that
+  // passes the barrier rethrows it. Written by exactly one thread, read only
+  // after the notification, so the notification is its publication edge.
+  std::exception_ptr prepare_error;
+  // The scored-query barrier: `prepare_finished` is both the published-stats
+  // flag (HasBeenNotified) and what a worker with no claimable prepare unit
+  // waits on when it cannot park (see PreparePhase).
   absl::Notification prepare_finished;
   std::atomic_uint32_t prepare_segment = 0;
   std::atomic_uint32_t prepare_count = 0;
@@ -203,29 +233,146 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // regardless (corpus-level term stats). ------------------------------------
   std::vector<uint32_t> segment_order;
   uint32_t claimable_segments = 0;
-  std::atomic_uint32_t next_segment{0};
 
   uint32_t SegmentAt(uint32_t claimed) const {
     return segment_order.empty() ? claimed : segment_order[claimed];
   }
 
+  // --- The work grid: one row group of one segment is the work item. -------
+  // A slot is a claimable segment, in claim order: `BuildGrid` compacts
+  // `segment_order` onto exactly those, so slot `i` IS `SegmentAt(i)` and the
+  // grid stores no segment id of its own. Each slot has its own row-group
+  // cursor, so several workers run different row groups of the SAME segment --
+  // a one-segment index parallelizes exactly like a many-segment one. A worker
+  // claims a RUN of row groups per cursor bump, so affinity is what the claim
+  // hands it rather than something it has to ask for again; it moves to a
+  // fresh slot when its own is drained, and steals from the others only when
+  // there is no fresh slot left.
+  //
+  // Longest run a single claim may take. Bounded so a worker cannot swallow a
+  // slot that other workers still need, and so the best-first claim policy
+  // below still reaches the second-best row group early.
+  static constexpr uint32_t kMaxRgRun = 8;
+  // Cursors sit one per cache line: adjacent slots are claimed by different
+  // workers at the same time, and a 4-byte stride would put sixteen slots'
+  // claims on one line.
+  static constexpr size_t kCacheLine = 64;
+  struct alignas(kCacheLine) RgCursor {
+    std::atomic_uint32_t next{0};
+  };
+  struct RgGrid {
+    // Slot `i` owns row groups `[rg_base[i], rg_base[i + 1])` of `rg_order`,
+    // which is `TermRangeSlot`'s `[begin, count)` with the count derived
+    // rather than stored. Sized slots + 1, so `back()` is the grid total.
+    std::vector<uint32_t> rg_base;
+    // Claim policy, flat: the i-th claim of slot `s` runs
+    // `rg_order[rg_base[s] + i]`. Empty = ascending row-group order in every
+    // slot; ORDER BY <covered column> LIMIT fills it best-first by the order
+    // key's per-column-segment statistics.
+    std::vector<uint32_t> rg_order;
+    std::vector<RgCursor> cursors;
+    std::atomic_uint32_t next_slot{0};
+    uint32_t run = 1;
+
+    uint32_t Slots() const noexcept {
+      return static_cast<uint32_t>(cursors.size());
+    }
+    uint32_t RgCount(uint32_t slot) const noexcept {
+      return rg_base[slot + 1] - rg_base[slot];
+    }
+    // Claimable row groups over all slots: what bounds the useful worker
+    // count, and the denominator of scan progress.
+    uint32_t TotalRgs() const noexcept {
+      return rg_base.empty() ? 0 : rg_base.back();
+    }
+    uint32_t RgAt(uint32_t slot, uint32_t claimed) const noexcept {
+      return rg_order.empty() ? claimed : rg_order[rg_base[slot] + claimed];
+    }
+  };
+  RgGrid grid;
+
+  // A claimed work item plus the run it came from: `slot` survives the claim
+  // so the next one comes from the same segment while it has row groups left,
+  // and `[taken, end)` is the rest of that run, which costs no atomic.
+  static constexpr uint32_t kNoSlot = std::numeric_limits<uint32_t>::max();
+  struct RgClaim {
+    uint32_t slot = kNoSlot;
+    uint32_t seg = 0;
+    uint32_t rg = 0;
+    uint32_t taken = 0;
+    uint32_t end = 0;
+
+    // The claim that took the slot's very first row group. A whole-segment
+    // answer -- count mode's live count -- belongs to exactly one claimer, and
+    // this is which one.
+    bool FirstOfSlot() const noexcept { return taken == 1; }
+  };
+
+  // --- The ts_dict work grid: one term range of one field of one segment. --
+  // A dictionary is a segment's and a term's count is summed over its row
+  // groups, so row groups cannot divide term enumeration -- claiming them
+  // would re-enumerate the dictionary once per row group and emit one row per
+  // (segment, rg, term) instead of one per (segment, term). A term range
+  // divides it and changes neither: the ranges of a field partition its terms,
+  // so between them the workers emit exactly what one walk emits.
+  struct TermRangeUnit {
+    // The ts_dict request this range enumerates, by index.
+    uint32_t field = 0;
+    irs::TermRange range;
+    // The field's NULL-term row is one row per (segment, field): the unit
+    // holding the field's first range is the one that emits it.
+    bool nulls = false;
+  };
+  struct TermRangeSlot {
+    uint32_t seg = 0;
+    // This segment's units, as a span of `term_grid.units`.
+    uint32_t begin = 0;
+    uint32_t count = 0;
+    std::atomic_uint32_t next{0};
+  };
+  struct TermRangeGrid {
+    std::vector<TermRangeUnit> units;
+    std::vector<TermRangeSlot> slots;
+    std::atomic_uint32_t next_slot{0};
+  };
+  TermRangeGrid term_grid;
+
+  struct TermRangeClaim {
+    uint32_t slot = kNoSlot;
+    uint32_t seg = 0;
+    uint32_t unit = 0;
+  };
+
+  // Claim one term range. False = every slot is exhausted. Same policy as
+  // ClaimRowGroup: affinity to the segment the worker already classified,
+  // then a fresh segment, then stealing.
+  bool ClaimTermRange(TermRangeClaim& claim);
+
+  uint64_t ClaimedTermRanges() const;
+
+  void BuildTermRangeGrid(const SereneDBScanBindData& bind);
+
+  // One publication slot per segment for the shared prepared queries.
+  void InitQuerySlots() { queries = std::vector<QuerySlot>(total_segments); }
+
+  // The segment's prepared query, built once for every worker that claims a
+  // row group of it. `worker_collector` is the caller's statistics collector
+  // slot (scored scans only), allocated on first use and reused across
+  // segments.
+  const irs::QueryBuilder& EnsureSegmentQuery(
+    irs::PrepareCollector*& worker_collector, const irs::SubReader& seg,
+    uint32_t seg_idx);
+
+  // Claim one row group. False = the grid is drained (every slot exhausted).
+  bool ClaimRowGroup(RgClaim& claim);
+
+  // Row groups claimed so far, for progress reporting.
+  uint64_t ClaimedRowGroups() const;
+
+  void BuildGrid(const SereneDBScanBindData& bind);
+
   // --- The decided plan and its mode-specific state. ------------------------
   ScanMode mode = ScanMode::Stream;
-
-  // ColScan work units: `bulk` slices of all-live segments read `.col`
-  // directly; a segment with deletes becomes one non-bulk unit taking the
-  // masked streaming walk.
-  struct ScanUnit {
-    uint32_t seg;
-    uint64_t begin;
-    uint64_t count;
-    bool bulk;
-  };
-  struct ColScanState {
-    std::vector<ScanUnit> units;
-    std::atomic_uint32_t next_unit{0};
-  };
-  ColScanState col_scan;
 
   // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for WAND pruning,
   // and the over-fetch pool size when quantization / a lookup filter requires
@@ -239,17 +386,29 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   std::atomic<duckdb::idx_t> produced_rows{0};
 
+  // What the task scheduler could actually run in parallel, read once at init:
+  // the work counts below are capped by it so the per-worker state the scan
+  // sizes off MaxThreads() (collector slots) is never over-allocated.
+  duckdb::idx_t pool_threads = 1;
+
   duckdb::idx_t MaxThreads() const final {
+    const auto cap = [&](duckdb::idx_t units) {
+      return std::max<duckdb::idx_t>(1, std::min(pool_threads, units));
+    };
     switch (mode) {
       case ScanMode::CountFast:
         return 1;
-      case ScanMode::ColScan:
-        return std::max<duckdb::idx_t>(1, col_scan.units.size());
+      case ScanMode::TsDict:
+        // One worker per claimable term range.
+        return cap(term_grid.units.size());
       default:
-        // The scorer prepare phase walks every segment (corpus-level term
-        // statistics), even ones the whole-file classification excluded.
-        return std::max<duckdb::idx_t>(
-          1, scorer_obj ? total_segments : claimable_segments);
+        // One worker per claimable row group. The scorer prepare phase walks
+        // every segment (corpus-level term statistics), even ones the
+        // whole-file classification excluded, so a scored scan is additionally
+        // allowed a worker per segment.
+        return cap(scorer_obj
+                     ? std::max<duckdb::idx_t>(grid.TotalRgs(), total_segments)
+                     : grid.TotalRgs());
     }
   }
 };

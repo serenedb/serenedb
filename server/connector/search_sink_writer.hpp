@@ -183,7 +183,9 @@ class SearchSinkInsertBaseImpl {
     template<typename T>
     void SetNumericValue(T value);
 
-    void PrepareForBooleanValue();
+    // A boolean is two always-<X> fields, so the value selects the field:
+    // `id` is set per row by SetBooleanValue, not once per batch.
+    void PrepareForBooleanValue(irs::field_id true_id, irs::field_id false_id);
     void SetBooleanValue(bool value);
 
     void PrepareForNullValue();
@@ -192,6 +194,8 @@ class SearchSinkInsertBaseImpl {
     search::AnalyzerImpl::CacheType::ptr analyzer;
     catalog::Tokenizer::TokenizerWrapper string_analyzer;
     irs::field_id id{irs::field_limits::invalid()};
+    irs::field_id true_id{irs::field_limits::invalid()};
+    irs::field_id false_id{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
     irs::StoreAttr own_store;
     const irs::StoreAttr* store_attr = nullptr;
@@ -234,7 +238,8 @@ class SearchSinkInsertBaseImpl {
     Field string_field;
     Field numeric_field;
     Field bool_field;
-    Field null_field;
+    Field json_null_field;
+    Field sql_null_field;
     irs::field_id tokenizer_column = irs::field_limits::invalid();
 
     void InitForExpression(irs::field_id entry_field_id,

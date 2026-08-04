@@ -263,7 +263,8 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   std::vector<highlight::HitRange> offsets;
   for (duckdb::idx_t r = 0; r < count; ++r) {
     const auto target = static_cast<irs::doc_id_t>(irs::doc_limits::min() + r);
-    FillRowOffsets(entry.state, *segment, target, bind.limit, offsets);
+    FillRowOffsets(entry.state, *segment, /*rg=*/0, target, bind.limit,
+                   offsets);
     WriteRowOffsets(result, r, offsets);
   }
 }

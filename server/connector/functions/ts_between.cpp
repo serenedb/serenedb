@@ -29,6 +29,19 @@
 #include "ts_common.hpp"
 
 namespace sdb::connector {
+namespace {
+
+void RequireBoolFields(std::string_view label,
+                       const SearchColumnInfo& column_info) {
+  if (!HasBoolFieldIds(column_info)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(label, ": boolean column has no indexed value fields"),
+      ERR_HINT("Recreate the inverted index so the column is indexed."));
+  }
+}
+
+}  // namespace
 
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -181,21 +194,15 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.boost(ctx.boost);
-    auto* options = range.mutable_options();
-    options->scored_terms_limit = ctx.scored_terms_limit;
-    auto& rng = options->range;
-    auto bytes = irs::ViewCast<irs::byte_type>(
-      irs::BooleanTokenizer::value(bound_val->GetValue<bool>()));
-    if (is_lower) {
-      rng.min.assign(bytes);
-      rng.min_type = bound_type;
-    } else {
-      rng.max.assign(bytes);
-      rng.max_type = bound_type;
-    }
+    RequireBoolFields(label, column_info);
+    const bool bound = bound_val->GetValue<bool>();
+    const auto accepts = [&](bool value) {
+      if (is_lower) {
+        return inclusive ? value >= bound : value > bound;
+      }
+      return inclusive ? value <= bound : value < bound;
+    };
+    AddBoolValueSet(parent, ctx, column_info, accepts(false), accepts(true));
     return;
   }
 
@@ -289,24 +296,23 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     options->scored_terms_limit = ctx.scored_terms_limit;
     FillByRangeOptionsVarchar(args, *options);
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.boost(ctx.boost);
-    auto* options = range.mutable_options();
-    options->scored_terms_limit = ctx.scored_terms_limit;
-    auto& rng = options->range;
-    if (args.min) {
-      rng.min.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args.min->GetValue<bool>())));
-      rng.min_type =
-        args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-    }
-    if (args.max) {
-      rng.max.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args.max->GetValue<bool>())));
-      rng.max_type =
-        args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-    }
+    RequireBoolFields("ts_between", column_info);
+    const auto accepts = [&](bool value) {
+      if (args.min) {
+        const bool lo = args.min->GetValue<bool>();
+        if (args.min_incl ? value < lo : value <= lo) {
+          return false;
+        }
+      }
+      if (args.max) {
+        const bool hi = args.max->GetValue<bool>();
+        if (args.max_incl ? value > hi : value >= hi) {
+          return false;
+        }
+      }
+      return true;
+    };
+    AddBoolValueSet(parent, ctx, column_info, accepts(false), accepts(true));
   } else {
     // Numeric. Cast each bound to the column's logical type before
     // tokenising so the indexed and queried representations match.

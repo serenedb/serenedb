@@ -73,17 +73,11 @@ class SingleWandIterator : public DocIterator {
   explicit SingleWandIterator()
     : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, true} {}
 
-  ~SingleWandIterator() {
-    if (_doc_in) {
-      std::allocator<uint32_t>{}.deallocate(_collected_freqs, kScoreBlock);
-    }
-  }
-
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
     if (auto wand_source = ctx.scorer->prepare_wand_source()) {
       auto wand_func = ctx.scorer->PrepareScorer({
-        .segment = *ctx.segment,
+        .segment = *ctx.norms,
         .field = _field,
         .doc_attrs = *wand_source,
         .stats = _stats,
@@ -96,7 +90,7 @@ class SingleWandIterator : public DocIterator {
       _deferred_skip_offs = 0;
     }
     return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+      .segment = *ctx.norms,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
@@ -389,6 +383,9 @@ class SingleWandIterator : public DocIterator {
 
   uint32_t _enc_buf[doc_limits::kBlockSize];
   uint32_t* _collected_freqs = nullptr;
+  // One score block of collected frequencies, inline for the same reason as
+  // PostingIteratorBase's: a posting list is built per (term, row group).
+  uint32_t _freq_block[kScoreBlock];
   [[no_unique_address]] uint32_t _freqs[doc_limits::kBlockSize];
   doc_id_t _docs[doc_limits::kBlockSize];
 #ifdef __AVX2__
@@ -403,6 +400,8 @@ class SingleWandIterator : public DocIterator {
   SkipReader<WandReadSkip, InputType> _skip;
   uint64_t _deferred_skip_offs = 0;
   uint32_t _deferred_skip_docs_count = 0;
+  // The run stores no frequency tail when tf == df -- every frequency is one.
+  bool _freqs_all_one = false;
 };
 
 // TODO(gnusi): Deduplicate ScoreBlock and Collect at least
@@ -989,8 +988,9 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
     ScoreFunction::Constant(std::numeric_limits<score_t>::max()),
     std::make_unique<DefaultWandSource>());
 
-  auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
+  const auto& term_state = meta.meta;
   std::get<CostAttr>(_attrs).reset(term_state.docs_count);
+  _freqs_all_one = term_state.freq == term_state.docs_count;
 
   if (term_state.docs_count > 1) {
     _left_in_list = term_state.docs_count;
@@ -1007,7 +1007,7 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
     }
 
     auto& freq_block = std::get<FreqBlockAttr>(_attrs);
-    _collected_freqs = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+    _collected_freqs = _freq_block;
     freq_block.value = _collected_freqs;
 
     GetDocIn().Seek(term_state.doc_start);
@@ -1057,7 +1057,11 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::ReadBlock(
     _max_in_leaf = *(std::end(_docs) - 1);
     _left_in_leaf = tail;
     _left_in_list = 0;
-    IteratorTraits::ReadTail(tail, GetDocIn(), _enc_buf, _freqs);
+    if (_freqs_all_one) {
+      std::fill_n(std::end(_freqs) - tail, tail, 1U);
+    } else {
+      IteratorTraits::ReadTail(tail, GetDocIn(), _enc_buf, _freqs);
+    }
   }
 }
 

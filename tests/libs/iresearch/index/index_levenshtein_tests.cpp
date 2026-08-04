@@ -24,7 +24,7 @@
 
 #include "basics/containers/small_vector.h"
 #include "index/index_tests.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 
@@ -34,8 +34,7 @@ class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
                     const irs::ParametricDescription& description,
                     const irs::bytes_view& prefix,
                     const irs::bytes_view& target) {
-    auto acceptor = irs::MakeLevenshteinAutomaton(description, prefix, target);
-    irs::automaton_table_matcher matcher(acceptor, true);
+    const irs::LevenshteinAcceptor acceptor{description, prefix, target};
 
     sdb::containers::SmallVector<uint32_t, 16> target_chars;
     irs::utf8_utils::ToUTF32<false>(target, std::back_inserter(target_chars));
@@ -47,7 +46,7 @@ class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
 
         auto expected_terms = field->iterator(irs::SeekMode::NORMAL);
         ASSERT_NE(nullptr, expected_terms);
-        auto actual_terms = field->iterator(matcher);
+        auto actual_terms = field->iterator(acceptor);
         ASSERT_NE(nullptr, actual_terms);
 
         auto* payload = irs::get<irs::PayAttr>(*actual_terms);

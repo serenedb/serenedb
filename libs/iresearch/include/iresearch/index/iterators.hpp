@@ -27,6 +27,7 @@
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <bit>
 
 #include "basics/assert.h"
@@ -48,7 +49,8 @@ namespace irs {
 
 struct PrepareScoreContext {
   const Scorer* scorer = nullptr;
-  const SubReader* segment = nullptr;
+  // Row-group scoped: the ids that reach it are the executing row group's.
+  const NormProvider* norms = nullptr;
   ColumnArgsFetcher* fetcher = nullptr;
 };
 
@@ -119,12 +121,30 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     _score_threshold = &score_threshold;
   }
 
+  // The one place the threshold moves, and it only ever rises. Two things
+  // raise it and neither knows about the other: this collector's own k-th
+  // whenever the buffer fills, and the scan seeding a row group with the best
+  // k-th any worker has published. The buffer is not cleared at that seed, so
+  // hits accepted under the older threshold stay in it and the next fill can
+  // produce a k-th below the seeded value -- routing every raise through here
+  // is what keeps that lower k-th from writing the threshold back down.
+  // SetScoreThreshold asserts on it.
+  IRS_FORCE_INLINE void RaiseScoreThreshold(score_t score_threshold) noexcept {
+    *_score_threshold = std::max(*_score_threshold, score_threshold);
+  }
+
   IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
     ++_count;
     TryPush(score, doc);
   }
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
+
+  // The collected ids are row-group local. The hit buffer outlives the row
+  // group -- it is a cross-segment output buffer whose every consumer (`.col`
+  // gather, exact rerank, row emission) addresses the segment -- so the row
+  // group's base is added once, here, as the docs enter it.
+  void SetRowGroup(doc_id_t doc_offset) noexcept { _doc_offset = doc_offset; }
 
   IRS_FORCE_INLINE size_t AcceptedCount() const noexcept {
     return _hits_it - _hits_begin;
@@ -215,7 +235,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   IRS_FORCE_INLINE bool Push(score_t score, doc_id_t doc) noexcept {
     SDB_ASSERT(Accept(score));
-    *_hits_it = {score, doc, _current_segment};
+    *_hits_it = {score, doc + _doc_offset, _current_segment};
     ++_hits_it;
     if (_hits_it != _hits_end) {
       return false;
@@ -224,7 +244,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     std::nth_element(
       _hits_begin, _hits_pivot, _hits_end,
       [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
-    *_score_threshold = _hits_pivot->score;
+    RaiseScoreThreshold(_hits_pivot->score);
     return true;
   }
 
@@ -245,6 +265,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   uint64_t _count = 0;
   uint32_t _current_segment = 0;
+  doc_id_t _doc_offset = 0;
   score_t* IRS_RESTRICT _score_threshold = nullptr;
   ScoreDoc* IRS_RESTRICT _hits_it;
   ScoreDoc* IRS_RESTRICT const _hits_begin;
@@ -602,8 +623,55 @@ struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   // Read term attributes
   virtual void read() = 0;
 
-  // Return iterator over the associated posting list with the requested
-  // features.
+  // The term's posting list inside row group `rg`, in that row group's local
+  // id space -- the term-iterator counterpart of
+  // `TermReader::RowGroupIterator`. Null when the term has no posting list
+  // there. A dictionary that does not partition gives a term the single row
+  // group that spans the segment, so `rg` is 0 and this is all of it.
+  [[nodiscard]] virtual DocIterator::ptr RowGroupPostings(
+    IndexFeatures features, uint32_t rg) const = 0;
+
+  // As above, recycling `reuse` -- an iterator this same method (on any term
+  // of one field, from one reader) handed out earlier -- instead of
+  // allocating. A consumer that drains posting lists one after another, like
+  // a merge, keeps one live iterator per source this way. `reuse` must have
+  // been drained with `advance()` alone; null creates. The default ignores
+  // the recycled object and allocates.
+  [[nodiscard]] virtual DocIterator::ptr RowGroupPostings(
+    IndexFeatures features, uint32_t rg, DocIterator::ptr&& reuse) const {
+    return RowGroupPostings(features, rg);
+  }
+
+  // The row groups this term has postings in, ascending -- borrowed, so a
+  // consumer counting one term across a segment asks the term instead of
+  // asking every row group of the grid. Every dictionary-backed iterator
+  // knows its list; empty is the empty iterator's answer, and a positioned
+  // iterator without one is a contract violation at the call site.
+  [[nodiscard]] virtual std::span<const TermRowGroup> RowGroups() const {
+    return {};
+  }
+
+  // The term's decoded record -- runs and stream anchors, borrowed until the
+  // iterator moves -- plus where the term's `.doc` bytes end, which the runs'
+  // own offsets cannot spell for the last of them. What a consumer that
+  // transplants whole runs (the merge byte blit) needs and `RowGroups` does
+  // not say. A null cookie means this dictionary does not expose it.
+  struct Extents {
+    const TermCookie* cookie = nullptr;
+    uint64_t doc_end = 0;
+  };
+
+  [[nodiscard]] virtual Extents TermExtents() const { return {}; }
+};
+
+// What a field writer reads: each term hands over its posting list whole,
+// which is what `PostingsWriter::WriteTerm` cuts into per-row-group runs. The
+// read side has no such list -- there a term's postings are per (term, row
+// group) -- so this is a separate contract rather than a mode of
+// `TermIterator`.
+struct SourceTermIterator : Iterator<bytes_view, AttributeProvider> {
+  using ptr = memory::managed_ptr<SourceTermIterator>;
+
   [[nodiscard]] virtual DocIterator::ptr postings(
     IndexFeatures features) const = 0;
 };
@@ -637,7 +705,16 @@ struct SeekTermIterator : TermIterator {
   virtual bool seek(bytes_view value) = 0;
 
   // Returns seek cookie of the current term value.
-  [[nodiscard]] virtual SeekCookie::ptr cookie() const = 0;
+  [[nodiscard]] virtual TermCookie cookie() const = 0;
+};
+
+// A half-open `[lo, hi)` slice of one field's term space -- the unit several
+// workers enumerate a single dictionary by. An empty `lo` starts at the
+// field's first term and an empty `hi` runs past its last: a bound is a
+// dictionary block separator, which is never empty, so neither is ambiguous.
+struct TermRange {
+  bytes_view lo;
+  bytes_view hi;
 };
 
 // Position iterator to the specified target and returns current value

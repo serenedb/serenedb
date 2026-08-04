@@ -94,8 +94,9 @@ class AllIterator : public DocIterator {
 
 class MaskDocIterator : public DocIterator {
  public:
-  MaskDocIterator(DocIterator::ptr&& it, const DocumentMask& mask) noexcept
-    : _mask{mask}, _it{std::move(it)} {}
+  MaskDocIterator(DocIterator::ptr&& it, const DocumentMask& mask,
+                  doc_id_t doc_offset) noexcept
+    : _mask{mask}, _it{std::move(it)}, _doc_offset{doc_offset} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _it->GetMutable(type);
@@ -104,7 +105,7 @@ class MaskDocIterator : public DocIterator {
   doc_id_t advance() final {
     while (true) {
       const auto doc = _it->advance();
-      if (!_mask.contains(doc)) {
+      if (!Masked(doc)) {
         return _doc = doc;
       }
     }
@@ -115,7 +116,7 @@ class MaskDocIterator : public DocIterator {
       return _doc;
     }
     const auto doc = _it->seek(target);
-    if (!_mask.contains(doc)) {
+    if (!Masked(doc)) {
       return _doc = doc;
     }
     return advance();
@@ -129,13 +130,13 @@ class MaskDocIterator : public DocIterator {
     const auto raw = _it->EmitDocs(out, min, max);
     uint32_t n = 0;
     for (uint32_t i = 0; i < raw; ++i) {
-      if (!_mask.contains(out[i])) {
+      if (!Masked(out[i])) {
         out[n++] = out[i];
       }
     }
     // Keep value() on a live doc >= max, matching advance()'s contract.
     auto doc = _it->value();
-    while (!doc_limits::eof(doc) && _mask.contains(doc)) {
+    while (!doc_limits::eof(doc) && Masked(doc)) {
       doc = _it->advance();
     }
     _doc = doc;
@@ -166,8 +167,15 @@ class MaskDocIterator : public DocIterator {
   }
 
  private:
+  // eof must never be shifted: `eof + offset` wraps onto a real id of the
+  // first row group and would loop advance() forever.
+  bool Masked(doc_id_t doc) const noexcept {
+    return !doc_limits::eof(doc) && _mask.contains(doc + _doc_offset);
+  }
+
   const DocumentMask& _mask;
   DocIterator::ptr _it;
+  const doc_id_t _doc_offset;
 };
 
 class MaskedDocIterator : public DocIterator {
@@ -233,7 +241,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   reader->_refs = GetRefs(dir, meta);
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
-  reader->_field_reader = std::make_shared<burst_trie::FieldReader>(
+  reader->_field_reader = std::make_shared<term_dict::FieldReader>(
     meta.codec->get_postings_reader(), *dir.ResourceManager().readers);
   if (options.index) {
     reader->_field_reader->prepare(ReaderState{
@@ -276,7 +284,7 @@ uint64_t SegmentReaderImpl::CountMappedMemory() const {
   return bytes;
 }
 
-NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
+NormReader::ptr SegmentReaderImpl::norms(field_id field, uint32_t rg) const {
   if (!_data) {
     return {};
   }
@@ -284,7 +292,7 @@ NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
   if (!nc) {
     return {};
   }
-  return MakePersistedNormReader(*nc);
+  return MakePersistedNormReader(*nc, rg);
 }
 
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
@@ -315,14 +323,16 @@ DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
     doc_limits::min(), doc_limits::min() + _info.docs_count, *_docs_mask);
 }
 
-DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
+DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it,
+                                         doc_id_t doc_offset) const {
   SDB_ASSERT(it);
   if (!_docs_mask) {
     return std::move(it);
   }
   SDB_ASSERT(!_docs_mask->empty());
 
-  return memory::make_managed<MaskDocIterator>(std::move(it), *_docs_mask);
+  return memory::make_managed<MaskDocIterator>(std::move(it), *_docs_mask,
+                                               doc_offset);
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

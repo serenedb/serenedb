@@ -35,8 +35,12 @@ std::span<const field_id> SegmentReader::field_ids() const {
   return _impl->field_ids();
 }
 
-NormReader::ptr SegmentReader::norms(field_id field) const {
-  return _impl->norms(field);
+RowGroupLayout SegmentReader::RowGroups() const noexcept {
+  return _impl->RowGroups();
+}
+
+NormReader::ptr SegmentReader::norms(field_id field, uint32_t rg) const {
+  return _impl->norms(field, rg);
 }
 
 const ColumnReader* SegmentReader::Column(field_id field) const {
@@ -54,8 +58,9 @@ const ColReader* SegmentReader::GetColReader() const {
 }
 
 // FIXME find a better way to mask documents
-DocIterator::ptr SegmentReader::mask(DocIterator::ptr&& it) const {
-  return _impl->mask(std::move(it));
+DocIterator::ptr SegmentReader::mask(DocIterator::ptr&& it,
+                                     doc_id_t doc_offset) const {
+  return _impl->mask(std::move(it), doc_offset);
 }
 
 const TermReader* SegmentReader::field(field_id id) const {

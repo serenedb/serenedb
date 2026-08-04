@@ -41,9 +41,9 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_dict.hpp"
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -86,9 +86,20 @@ class ProgressTracker {
 
 class CompoundDocIterator : public DocIterator {
  public:
+  // One (source, row group) posting list of the merged term, opened only when
+  // the walk reaches it: the walk is strictly forward, so at most one list per
+  // source is live, and `cache` -- the source's one reusable iterator -- backs
+  // them all in turn.
   struct DocIteratorT {
-    DocIterator::ptr it;
+    TermIterator* terms;
+    DocIterator::ptr* cache;
     const DocRemap* remap;
+    // The source posting list is one row group's, in its local id space; the
+    // doc map is keyed by source segment ids, so the row group's base is added
+    // here -- the merge's single boundary conversion.
+    doc_id_t doc_offset;
+    uint32_t rg;
+    DocIterator* it;
   };
   using IteratorsT = std::vector<DocIteratorT>;
 
@@ -99,10 +110,11 @@ class CompoundDocIterator : public DocIterator {
     : _progress(progress, kProgressStepDocs) {}
 
   template<typename Func>
-  bool Reset(Func&& func) {
+  bool Reset(IndexFeatures features, Func&& func) {
     if (!func(_iterators)) {
       return false;
     }
+    _features = features;
     _doc = doc_limits::invalid();
     _current_itr = 0;
     return true;
@@ -112,9 +124,16 @@ class CompoundDocIterator : public DocIterator {
 
   bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
 
+  void SetBlitPlan(std::span<const BlitRun> runs, bool has_wand) noexcept {
+    _blit_plan.runs = runs;
+    _blit_plan.has_wand = has_wand;
+  }
+
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<AttrProviderChangeAttr>::id() == type ? &_attribute_change
-                                                           : nullptr;
+    if (irs::Type<AttrProviderChangeAttr>::id() == type) {
+      return &_attribute_change;
+    }
+    return irs::Type<BlitPlanAttr>::id() == type ? &_blit_plan : nullptr;
   }
 
   doc_id_t advance() final;
@@ -134,8 +153,10 @@ class CompoundDocIterator : public DocIterator {
 
  private:
   AttrProviderChangeAttr _attribute_change;
+  BlitPlanAttr _blit_plan;
   std::vector<DocIteratorT> _iterators;
   size_t _current_itr{0};
+  IndexFeatures _features{IndexFeatures::None};
   ProgressTracker _progress;
 };
 
@@ -150,34 +171,46 @@ doc_id_t CompoundDocIterator::advance() {
   for (bool notify = !doc_limits::valid(_doc); _current_itr < _iterators.size();
        notify = true, ++_current_itr) {
     auto& it_entry = _iterators[_current_itr];
-    auto& it = it_entry.it;
-    const auto& remap = *it_entry.remap;
 
-    if (!it) {
+    // A transplanted run's entry: the writer copies its bytes, the walk owes
+    // it nothing.
+    if (!it_entry.remap) {
       continue;
     }
 
-    if (notify) {
-      _attribute_change(*it);
+    if (!it_entry.it) {
+      *it_entry.cache = it_entry.terms->RowGroupPostings(
+        _features, it_entry.rg, std::move(*it_entry.cache));
+      it_entry.it = it_entry.cache->get();
+      SDB_ASSERT(it_entry.it);
+      if (!it_entry.it) [[unlikely]] {
+        continue;
+      }
     }
 
+    if (notify) {
+      _attribute_change(*it_entry.it);
+    }
+
+    const auto& remap = *it_entry.remap;
     while (true) {
-      auto it_value = it->advance();
+      auto it_value = it_entry.it->advance();
       if (doc_limits::eof(it_value)) {
         break;
       }
+      it_value += it_entry.doc_offset;
       if (remap.IsMasked(it_value)) {
         continue;
       }
       return _doc = remap.Remap(it_value);
     }
-    it.reset();
+    it_entry.it = nullptr;
   }
 
   return _doc = doc_limits::eof();
 }
 
-class CompoundTermIterator : public TermIterator {
+class CompoundTermIterator : public SourceTermIterator {
  public:
   CompoundTermIterator(const CompoundTermIterator&) = delete;
   CompoundTermIterator& operator=(const CompoundTermIterator&) = delete;
@@ -191,9 +224,11 @@ class CompoundTermIterator : public TermIterator {
     return !static_cast<bool>(_progress) || _doc_itr.Aborted();
   }
 
-  void Reset(const FieldMeta& meta) noexcept {
+  void Reset(const FieldMeta& meta, uint32_t out_rgs, bool out_wand) noexcept {
     _current_term = {};
     _meta = &meta;
+    _out_rgs = out_rgs;
+    _out_wand = out_wand;
     _term_iterator_mask.clear();
     _term_iterators.clear();
     _min_term.clear();
@@ -214,14 +249,6 @@ class CompoundTermIterator : public TermIterator {
 
   DocIterator::ptr postings(IndexFeatures features) const final;
 
-  void read() final {
-    for (const auto itr_id : _term_iterator_mask) {
-      auto& it = _term_iterators[itr_id].it;
-      SDB_ASSERT(it);
-      it->read();
-    }
-  }
-
   bytes_view value() const noexcept final {
     if (!_has_min_term) [[unlikely]] {
       _has_min_term = true;
@@ -239,16 +266,53 @@ class CompoundTermIterator : public TermIterator {
   struct TermIteratorImpl {
     SeekTermIterator::ptr it;
     const DocRemap* remap;
+    RowGroupLayout layout;
+    // The source's one posting iterator, recycled across every (term, row
+    // group) of this field the doc walk opens.
+    mutable DocIterator::ptr posting_cache;
+    // Raw plane streams of a source whose runs may transplant, reopened once
+    // per field.
+    IndexInput::ptr blit_doc;
+    IndexInput::ptr blit_pos;
+    // First output ordinal (0-based) of the source's doc range; exact only
+    // when the remap is a pure shift.
+    uint64_t base0{0};
+    // The remap moves ids by one base and masks nothing, so a source row
+    // group's output range is known without walking it.
+    bool identity{false};
+    // Everything term-independent a transplant needs holds for this source:
+    // identity remap, the same row group grid landing on output boundaries,
+    // the synthesized field shape, and matching wand state.
+    bool blit_ok{false};
+  };
+
+  // The output range one entry's source rows can occupy -- what the sole
+  // contributor test reads off a candidate's neighbours.
+  struct EntryBounds {
+    uint64_t lo;
+    uint64_t hi;
+  };
+
+  // A run of a transplantable source: its byte extents and which entry of the
+  // walk it replaces if it qualifies.
+  struct BlitCandidate {
+    BlitRun run;
+    uint32_t index;
   };
 
   bytes_view _current_term;
   const FieldMeta* _meta{};
   std::vector<size_t> _term_iterator_mask;
   std::vector<TermIteratorImpl> _term_iterators;
+  mutable std::vector<EntryBounds> _bounds;
+  mutable std::vector<BlitCandidate> _cands;
+  mutable std::vector<BlitRun> _blit_runs;
   mutable bstring _min_term;
   mutable bstring _max_term;
   mutable CompoundDocIterator _doc_itr;
   mutable bool _has_min_term{false};
+  uint32_t _out_rgs{0};
+  bool _out_wand{false};
   ProgressTracker _progress;
 };
 
@@ -256,10 +320,37 @@ void CompoundTermIterator::Add(const TermReader& reader,
                                const DocRemap& remap) {
   auto it = reader.iterator(SeekMode::NORMAL);
   SDB_ASSERT(it);
-  if (it) [[likely]] {
-    _term_iterator_mask.emplace_back(_term_iterators.size());
-    _term_iterators.emplace_back(std::move(it), &remap);
+  if (!it) [[unlikely]] {
+    return;
   }
+  _term_iterator_mask.emplace_back(_term_iterators.size());
+  auto& impl =
+    _term_iterators.emplace_back(std::move(it), &remap, reader.RowGroups());
+  impl.identity = remap.mask == nullptr && remap.id_map.empty();
+  if (!impl.identity) {
+    return;
+  }
+  impl.base0 = remap.base_id - doc_limits::min();
+  const auto features = reader.meta().index_features;
+  const bool pos = IndexFeatures::None != (features & IndexFeatures::Pos);
+  // A transplanted run must be the bytes the output writer would produce: the
+  // grid must land source row groups on output boundaries with local ids
+  // intact, the field shape must survive the feature intersection, and wand
+  // roots must be owed exactly when the source wrote them. Offsets lockstep
+  // with shared position blocks and payloads are lanes of one stream, so
+  // neither plane's runs move as bytes.
+  if (_out_rgs == 0 || impl.layout.rows_per_group != _out_rgs ||
+      impl.base0 % _out_rgs != 0 || features != _meta->index_features ||
+      IndexFeatures::None !=
+        (features & (IndexFeatures::Offs | IndexFeatures::Pay)) ||
+      reader.has_scorer(0) != _out_wand) {
+    return;
+  }
+  impl.blit_doc = reader.ReopenDoc();
+  if (pos) {
+    impl.blit_pos = reader.ReopenPos();
+  }
+  impl.blit_ok = impl.blit_doc != nullptr && (!pos || impl.blit_pos != nullptr);
 }
 
 bool CompoundTermIterator::next() {
@@ -311,19 +402,104 @@ DocIterator::ptr CompoundTermIterator::postings(
   auto add_iterators = [this](CompoundDocIterator::IteratorsT& itrs) {
     itrs.clear();
     itrs.reserve(_term_iterator_mask.size());
+    _bounds.clear();
+    _cands.clear();
+    _blit_runs.clear();
+    // A positional run past one postings block carries skip data, and its
+    // skip entries embed `.pos` byte distances and slots measured at the
+    // source's block phase -- the one thing about a run's `.doc` bytes that
+    // does not survive a phase shift. Such runs walk as documents.
+    const bool pos_field =
+      IndexFeatures::None != (_meta->index_features & IndexFeatures::Pos);
     for (auto& itr_id : _term_iterator_mask) {
       auto& term_itr = _term_iterators[itr_id];
       SDB_ASSERT(term_itr.it);
-      auto it = term_itr.it->postings(Meta().index_features);
-      SDB_ASSERT(it);
-      if (it) [[likely]] {
-        itrs.emplace_back(std::move(it), term_itr.remap);
+      // A partitioned source has one posting list per row group; concatenating
+      // them in row group order is ascending in source segment ids, which is
+      // what the doc map consumes. The term's own run list says which row
+      // groups those are -- probing the whole grid would ask every row group
+      // the term skips, and a merge over a compacted source pays that per
+      // term. The lists themselves open lazily, as the doc walk reaches them.
+      const auto& layout = term_itr.layout;
+      // A dictionary without extents -- a term is one whose bytes cannot be
+      // transplanted, only walked.
+      const auto ext =
+        term_itr.blit_ok ? term_itr.it->TermExtents() : TermIterator::Extents{};
+      if (!ext.cookie) {
+        const auto rgs = term_itr.it->RowGroups();
+        SDB_ASSERT(!rgs.empty());
+        for (const auto& group : rgs) {
+          SDB_ASSERT(group.rg < layout.count);
+          uint64_t lo = 0;
+          uint64_t hi = std::numeric_limits<uint64_t>::max();
+          if (term_itr.identity && layout.rows_per_group != 0) {
+            lo = term_itr.base0 + uint64_t{group.rg} * layout.rows_per_group;
+            hi = lo + layout.Rows(group.rg);
+          }
+          _bounds.push_back({.lo = lo, .hi = hi});
+          itrs.push_back(
+            {.terms = term_itr.it.get(),
+             .cache = &term_itr.posting_cache,
+             .remap = term_itr.remap,
+             .doc_offset = layout.Base(group.rg) - doc_limits::min(),
+             .rg = group.rg,
+             .it = nullptr});
+        }
+        continue;
+      }
+      const auto& rgs = ext.cookie->rgs;
+      SDB_ASSERT(!rgs.empty());
+      for (size_t i = 0; i != rgs.size(); ++i) {
+        const auto& run = rgs[i];
+        SDB_ASSERT(run.rg < layout.count);
+        const uint64_t lo =
+          term_itr.base0 + uint64_t{run.rg} * layout.rows_per_group;
+        if (!pos_field || run.docs_count <= doc_limits::kBlockSize) {
+          const uint64_t doc_off = run.doc_offset;
+          const uint64_t doc_end = i + 1 != rgs.size()
+                                     ? rgs[i + 1].doc_offset
+                                     : ext.doc_end - ext.cookie->doc_start;
+          _cands.push_back(
+            {.run = {.doc_in = term_itr.blit_doc.get(),
+                     .pos_in = term_itr.blit_pos.get(),
+                     .doc_start = ext.cookie->doc_start + doc_off,
+                     .doc_len = doc_end - doc_off,
+                     .pos_start = ext.cookie->pos_start + run.pos_offset,
+                     .rg = static_cast<uint32_t>(lo / _out_rgs),
+                     .df = run.docs_count,
+                     .tf = run.freq,
+                     .inlined = run.inlined,
+                     .pos_slot = run.pos_slot},
+             .index = static_cast<uint32_t>(itrs.size())});
+        }
+        _bounds.push_back({.lo = lo, .hi = lo + layout.Rows(run.rg)});
+        itrs.push_back({.terms = term_itr.it.get(),
+                        .cache = &term_itr.posting_cache,
+                        .remap = term_itr.remap,
+                        .doc_offset = layout.Base(run.rg) - doc_limits::min(),
+                        .rg = run.rg,
+                        .it = nullptr});
       }
     }
+    // A run transplants when it is the output row group's only contributor:
+    // its source rows start the group, the previous entry ends by then, and
+    // the next entry starts past it. Entries are ascending in output order,
+    // so adjacency is the whole test; a qualifying run's bytes go with the
+    // plan and its entry drops out of the walk.
+    for (const auto& cand : _cands) {
+      const size_t i = cand.index;
+      if ((i == 0 || _bounds[i - 1].hi <= _bounds[i].lo) &&
+          (i + 1 == _bounds.size() ||
+           _bounds[i + 1].lo >= _bounds[i].lo + _out_rgs)) {
+        _blit_runs.push_back(cand.run);
+        itrs[i].remap = nullptr;
+      }
+    }
+    _doc_itr.SetBlitPlan(_blit_runs, _out_wand);
     return true;
   };
 
-  _doc_itr.Reset(add_iterators);
+  _doc_itr.Reset(Meta().index_features, add_iterators);
   return memory::to_managed<DocIterator>(_doc_itr);
 }
 
@@ -352,13 +528,35 @@ class CompoundFieldIterator final : public BasicTermReader {
   bytes_view(min)() const noexcept final { return _term_itr.MinTerm(); }
   bytes_view(max)() const noexcept final { return _term_itr.MaxTerm(); }
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-  TermIterator::ptr iterator() const final;
+  SourceTermIterator::ptr iterator() const final;
 
   bool Aborted() const {
     return !static_cast<bool>(_progress) || _term_itr.Aborted();
   }
 
   void SetProperties(FieldProperties props) noexcept { _props = props; }
+
+  // The output grid and this field's wand state, which decide whether a
+  // source run's bytes can survive a merge verbatim.
+  void SetBlitContext(uint32_t out_rgs, bool out_wand) noexcept {
+    _out_rgs = out_rgs;
+    _out_wand = out_wand;
+  }
+
+  // Sources cover disjoint output id ranges, so with nothing masked the
+  // field's docs count is the sum of what each source field already counted.
+  doc_id_t KnownDocsCount() const final {
+    uint64_t total = 0;
+    for (const auto& entry : _field_iterator_mask) {
+      const auto& remap = *_field_iterators[entry.itr_id].remap;
+      if (remap.mask != nullptr || !remap.id_map.empty()) {
+        return 0;
+      }
+      total += entry.reader->docs_count();
+    }
+    SDB_ASSERT(total < doc_limits::eof());
+    return static_cast<doc_id_t>(total);
+  }
 
  private:
   struct FieldIteratorImpl {
@@ -380,6 +578,8 @@ class CompoundFieldIterator final : public BasicTermReader {
   std::vector<TermIteratorImpl> _field_iterator_mask;
   std::vector<FieldIteratorImpl> _field_iterators;
   mutable CompoundTermIterator _term_itr;
+  uint32_t _out_rgs{0};
+  bool _out_wand{false};
   ProgressTracker _progress;
 };
 
@@ -440,12 +640,16 @@ bool CompoundFieldIterator::Next() {
   return true;
 }
 
-TermIterator::ptr CompoundFieldIterator::iterator() const {
-  _term_itr.Reset(Meta());
+SourceTermIterator::ptr CompoundFieldIterator::iterator() const {
+  // Transplanted runs never pass their documents through the writer's
+  // bitset, so they are legal only when the field's count arrives whole --
+  // the same all-identity condition, checked once for both.
+  const uint32_t out_rgs = KnownDocsCount() != 0 ? _out_rgs : 0;
+  _term_itr.Reset(Meta(), out_rgs, _out_wand);
   for (const auto& segment : _field_iterator_mask) {
     _term_itr.Add(*(segment.reader), *(_field_iterators[segment.itr_id].remap));
   }
-  return memory::to_managed<TermIterator>(_term_itr);
+  return memory::to_managed<SourceTermIterator>(_term_itr);
 }
 
 bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
@@ -506,8 +710,10 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     }
   }
   NormColumnOptions opts{};
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   if (any_source_has_norm && field_options) {
     opts = field_options->GetNormColumnOptions(id);
+    row_group_size = field_options->GetDictOptions().row_group_size;
   }
   field_id out_id = field_limits::invalid();
   NormColumnWriter* norm_writer = nullptr;
@@ -535,7 +741,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
                  "mint a valid id for field ",
                  id);
       out_id = opts.id;
-      norm_writer = &col_writer.OpenNormColumn(out_id, opts.row_group_size);
+      norm_writer = &col_writer.OpenNormColumn(out_id, row_group_size);
       norm_writer->PadTo(merged_row);
     }
 
@@ -598,7 +804,7 @@ MergedNormIdMap MergeNorms(ColWriter& col_writer,
 struct MergedNormProvider final : public NormProvider {
   const ColReader* reader = nullptr;
 
-  NormReader::ptr norms(field_id id) const final {
+  NormReader::ptr norms(field_id id, uint32_t rg = 0) const final {
     if (reader == nullptr) {
       return {};
     }
@@ -606,7 +812,27 @@ struct MergedNormProvider final : public NormProvider {
     if (col == nullptr) {
       return {};
     }
-    return MakePersistedNormReader(*col);
+    return MakePersistedNormReader(*col, rg);
+  }
+};
+
+// The attribute shape the postings writer offers its wand writer, so probing
+// `WandWriter::Prepare` here answers exactly what the writer's own prepare
+// will: whether the output field carries wand data, which a transplanted
+// run's bytes must agree with.
+struct WandProbeAttrs final : AttributeProvider {
+  ValueIndex doc;
+  FreqAttr freq;
+  FreqAttr* wand_freq{};
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if (type == irs::Type<ValueIndex>::id()) {
+      return &doc;
+    }
+    if (type == irs::Type<FreqAttr>::id()) {
+      return wand_freq;
+    }
+    return nullptr;
   }
 };
 
@@ -615,12 +841,21 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  const MergedNormIdMap& merged_norm_ids,
                  const MergeWriter::FlushProgress& progress,
                  IResourceManager& rm, IdxWriter& idx,
-                 std::span<const BasicTermReader* const> extra) {
-  auto field_writer = std::make_unique<burst_trie::FieldWriter>(
+                 std::span<const BasicTermReader* const> extra,
+                 const IndexFieldOptions* field_options) {
+  const auto dict_options =
+    field_options ? field_options->GetDictOptions() : DictOptions{};
+  auto field_writer = std::make_unique<term_dict::FieldWriter>(
     meta.codec->get_postings_writer(/*compaction=*/true, rm),
-    /*compaction=*/true, rm);
+    /*compaction=*/true, rm, dict_options);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
+
+  const WandWriter::ptr wand_probe =
+    flush_state.scorer
+      ? flush_state.scorer->prepare_wand_writer(doc_limits::kMaxSkipLevels)
+      : nullptr;
+  WandProbeAttrs probe_attrs;
 
   std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
@@ -645,6 +880,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
+    props.dictless = field_options && field_options->IsDictlessField(fid);
 
     if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const auto it = merged_norm_ids.find(field_itr.Meta().id);
@@ -653,7 +889,17 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
       }
     }
 
+    bool out_wand = false;
+    if (wand_probe && flush_state.norms) {
+      probe_attrs.wand_freq =
+        IndexFeatures::None != (props.index_features & IndexFeatures::Freq)
+          ? &probe_attrs.freq
+          : nullptr;
+      out_wand = wand_probe->Prepare(*flush_state.norms, props, probe_attrs);
+    }
+
     field_itr.SetProperties(props);
+    field_itr.SetBlitContext(dict_options.row_group_size, out_wand);
     field_writer->write(field_itr);
   }
 
@@ -808,7 +1054,7 @@ bool MergeWriter::Flush(SegmentMeta& segment,
   if (segment.docs_count != 0 &&
       !WriteFields(state, segment, fields_itr, merged_norm_ids,
                    progress_callback, _readers.get_allocator().Manager(), idx,
-                   cluster_readers)) {
+                   cluster_readers, _field_options)) {
     return false;
   }
 

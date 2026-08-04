@@ -144,6 +144,19 @@ class ColFilterChain {
   std::span<Col> Cols() noexcept { return {_cols.data(), _cols.size()}; }
   void Clear() noexcept { _cols.clear(); }
 
+  // Doc ids reaching the chain are local to one row group; `base` is that row
+  // group's first segment row, so `RowOf` is the single (row group, local) ->
+  // segment row conversion the columnstore reads are keyed by.
+  void SetRowBase(uint64_t base) noexcept { _row_base = base; }
+  uint64_t RowBase() const noexcept { return _row_base; }
+  // Rewinds every bound column's scan cursor (they only move forward) and
+  // drops the per-block zonemap verdicts, so the chain can serve a walk that
+  // restarts behind where the last one ended.
+  void RewindScan(irs::ReadContext& ctx);
+  uint64_t RowOf(irs::doc_id_t doc) const noexcept {
+    return _row_base + doc - irs::doc_limits::min();
+  }
+
   // Binds the non-score specs against this segment's columnstore (score specs
   // are the caller's -- they filter the computed score vector, not `.col`).
   // Every spec's column must exist: the per-segment classification resolves
@@ -204,14 +217,14 @@ class ColFilterChain {
   // compacts docs (and scores when non-null) so entry w corresponds to
   // anchor + sel[w]. In-place friendly: the write cursor never passes the
   // read cursor.
-  static void CompactByOffsets(const duckdb::SelectionVector& sel,
-                               duckdb::idx_t survivors, uint64_t anchor,
-                               const irs::doc_id_t* docs_in,
-                               const irs::score_t* scores_in,
-                               irs::doc_id_t* docs_out,
-                               irs::score_t* scores_out);
+  void CompactByOffsets(const duckdb::SelectionVector& sel,
+                        duckdb::idx_t survivors, uint64_t anchor,
+                        const irs::doc_id_t* docs_in,
+                        const irs::score_t* scores_in, irs::doc_id_t* docs_out,
+                        irs::score_t* scores_out) const;
 
  private:
+  uint64_t _row_base = 0;
   duckdb::ClientContext* _context = nullptr;
   ColFilterStateCache* _states = nullptr;
   std::vector<Col> _cols;
@@ -246,21 +259,42 @@ class TableFilterDocIterator : public irs::DocIterator {
     std::vector<FilterSpec> active;
   };
 
-  TableFilterDocIterator(irs::DocIterator::ptr inner,
-                         const irs::ColReader& col_reader,
-                         std::span<const FilterSpec> filters,
-                         duckdb::ClientContext& context,
-                         ColFilterStateCache& states);
+  // Worker-lifetime: the inline STANDARD_VECTOR_SIZE staging arrays plus the
+  // ReadContext and the bound chain are far too heavy to rebuild per row
+  // group. BeginSegment rebinds the chain to a segment; Reset re-points it at
+  // one row group's iterator, in that row group's local id space.
+  TableFilterDocIterator() = default;
 
-  irs::doc_id_t advance() final {
-    _doc = _inner->advance();
-    return _doc;
+  void BeginSegment(const irs::ColReader& col_reader,
+                    std::span<const FilterSpec> filters,
+                    duckdb::ClientContext& context,
+                    ColFilterStateCache& states);
+  void Reset(irs::DocIterator::ptr inner, uint64_t row_base) {
+    _inner = std::move(inner);
+    _doc = irs::doc_limits::invalid();
+    _min = irs::doc_limits::min();
+    _emitted = _survivors = 0;
+    // The bound columns' scan cursors only move forward. Advancing to the next
+    // row group continues forward and keeps them; anything else -- ts_dict
+    // restarting the walk for the next term -- has to rewind.
+    if (!_scan_fresh && row_base <= _filters.RowBase()) {
+      _filters.RewindScan(*_ctx);
+    }
+    _scan_fresh = false;
+    _filters.SetRowBase(row_base);
   }
+
+  irs::doc_id_t advance() final;
   irs::doc_id_t seek(irs::doc_id_t target) final {
+    // Narrowing a seek would have to drain forward from the target, and no
+    // filtered path does: the two counting shapes materialize a conjunction
+    // beneath the wrapper instead. Forwarding skips the `.col` filters.
+    SDB_ASSERT(false, "seek on a table-filtered iterator");
     _doc = _inner->seek(target);
     return _doc;
   }
   irs::doc_id_t LazySeek(irs::doc_id_t target) final {
+    SDB_ASSERT(false, "LazySeek on a table-filtered iterator");
     _doc = _inner->LazySeek(target);
     return _doc;
   }
@@ -299,14 +333,27 @@ class TableFilterDocIterator : public irs::DocIterator {
   duckdb::idx_t FilterBlock(irs::doc_id_t* docs, irs::score_t* scores,
                             duckdb::idx_t n);
 
+  // The one place a `.col` filter decides a document for an unscored walk:
+  // stages the next non-empty run of survivors into `_docbuf` and returns its
+  // size (0 = exhausted). count() sums the runs and advance() hands them out
+  // one at a time, so a count and an existence probe cannot answer from two
+  // different predicates.
+  uint32_t NextSurvivors();
+
   irs::DocIterator::ptr _inner;
-  irs::ReadContext _ctx;
+  std::unique_ptr<irs::ReadContext> _ctx;
   ColFilterChain _filters;
   // Filter on the computed score (not a `.col` field): applied on the score
   // vector after scoring. Null when there is no score filter; the state is
   // cache-owned.
   const duckdb::TableFilter* _score_filter = nullptr;
   duckdb::TableFilterState* _score_state = nullptr;
+  // The chain was just bound, so its cursors are already at row 0.
+  bool _scan_fresh = false;
+  // NextSurvivors' walk cursor and the run of `_docbuf` advance() has left.
+  irs::doc_id_t _min = irs::doc_limits::min();
+  uint32_t _emitted = 0;
+  uint32_t _survivors = 0;
   std::array<irs::doc_id_t, STANDARD_VECTOR_SIZE> _docbuf;
   std::array<irs::score_t, STANDARD_VECTOR_SIZE> _scorebuf;
 };

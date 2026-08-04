@@ -37,6 +37,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/term_iterator.hpp"
 #include "iresearch/search/term_predicate.hpp"
+#include "iresearch/search/worker_context.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
@@ -59,7 +60,21 @@ struct ExecutionContext {
   const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
+  // Which row group of the segment to execute over. Prepare is per segment --
+  // term seeks, cookies and statistics are segment-scoped, and a cookie
+  // already carries the term's whole row-group list -- while execution is per
+  // row group: the iterator tree it builds runs entirely in that row group's
+  // local id space. A segment whose dictionary does not partition is one row
+  // group, so `0` is both the default and the only legal value there.
+  uint32_t rg = 0;
   bool top_k_collect = false;
+  // The executing worker: the scratch it owns (the quantized vector path's
+  // decode cursors) and, being one object per worker, what a prepared query
+  // that must cache per worker keys on. A proxied filter's document set fills
+  // as it is read, so two workers sharing one would fill it under each other.
+  // Workers of one scan must pass distinct objects; a single-threaded caller
+  // leaves it null.
+  WorkerContext* worker = nullptr;
 };
 
 inline IndexFeatures GetFeatures(const Scorer* scorer) noexcept {

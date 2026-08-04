@@ -133,16 +133,19 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
 
     const auto* col_reader = segment.GetColReader();
     SDB_ASSERT(col_reader != nullptr);
+    auto filtered = std::make_unique<sdb::connector::TableFilterDocIterator>();
+    filtered->BeginSegment(
+      *col_reader,
+      std::span<const sdb::connector::TableFilterDocIterator::FilterSpec>{&spec,
+                                                                          1},
+      ctx, filter_states);
+    filtered->Reset(query->Execute({.wand = wand}, stats), /*row_base=*/0);
     irs::DocIterator::ptr it =
-      irs::memory::make_managed<sdb::connector::TableFilterDocIterator>(
-        query->Execute({.wand = wand}, stats), *col_reader,
-        std::span<const sdb::connector::TableFilterDocIterator::FilterSpec>{
-          &spec, 1},
-        ctx, filter_states);
+      irs::memory::to_managed<irs::DocIterator>(*filtered);
 
     auto score_func = it->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
     if (auto* threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {

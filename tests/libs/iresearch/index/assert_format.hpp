@@ -28,6 +28,7 @@
 #include "doc_generator.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/term_acceptor.hpp"
 
 namespace tests {
 
@@ -237,11 +238,11 @@ using index_t = std::vector<IndexSegment>;
 void AssertIndex(irs::IndexReader::ptr actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
                  size_t skip = 0,
-                 irs::automaton_table_matcher* matcher = nullptr);
+                 const irs::TermAcceptorSource* source = nullptr);
 
 void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
                  const index_t& index, irs::IndexFeatures features,
                  size_t skip = 0,
-                 irs::automaton_table_matcher* matcher = nullptr);
+                 const irs::TermAcceptorSource* source = nullptr);
 
 }  // namespace tests

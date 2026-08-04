@@ -26,7 +26,7 @@
 #include <utility>
 
 #include "filter.hpp"
-#include "iresearch/utils/automaton.hpp"
+#include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/string.hpp"
@@ -36,7 +36,6 @@ namespace irs {
 class ByEditDistance;
 class LevenshteinAutomatonFilter;
 struct FilterVisitor;
-struct CompiledAcceptor;
 struct PayAttr;
 
 struct ByEditDistanceAllOptions {
@@ -134,7 +133,10 @@ struct LevenshteinAutomatonOptions {
   using FilterType = LevenshteinAutomatonFilter;
 
   bstring target;
-  std::shared_ptr<const CompiledAcceptor> compiled;
+  // The only backend: the parametric tables are stepped directly, so the filter
+  // materializes no automaton at all. Null only on a default-constructed
+  // options object.
+  std::shared_ptr<const LevenshteinAcceptor> parametric;
   uint32_t utf8_target_size{1};
   byte_type no_distance{1};
   size_t max_terms{};

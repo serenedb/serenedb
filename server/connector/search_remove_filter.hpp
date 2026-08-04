@@ -67,6 +67,10 @@ class SearchRemoveFilterBase : public irs::Filter, public irs::DocIterator {
   mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::DocumentMask* _segment_mask{};
   mutable const irs::TermReader* _pk_field{};
+  // One exact-seek cursor over the PK dictionary for the whole walk: a cursor
+  // per probe would reopen the `.idx` stream and rebuild the block cursor for
+  // every primary key this filter carries.
+  mutable irs::SeekTermIterator::ptr _pk_terms;
   mutable size_t _pos{0};
   // TODO(Dronplane) use persistent duckdb memory pool for proper memory
   // accounting currently available query duckdb memory pool is discarded after

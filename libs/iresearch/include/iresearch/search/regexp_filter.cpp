@@ -23,7 +23,6 @@
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -59,9 +58,8 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
     [&](bytes_view pattern) -> Filter::ptr {
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
-      *filter->mutable_options() =
-        AutomatonOptions{FromRegexp(pattern, kDefaultMaxDfaStates, syntax),
-                         pattern, scored_terms_limit};
+      *filter->mutable_options() = AutomatonOptions{
+        pattern, PatternKind::Regexp, syntax, scored_terms_limit};
       filter->boost(boost);
       return filter;
     });
@@ -80,13 +78,9 @@ Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
 }
 
 TermPredicate::ptr ByRegexp::CompileTermPredicate() const {
-  auto acceptor =
-    FromRegexp(options().pattern, kDefaultMaxDfaStates, options().syntax);
-  if (!Validate(acceptor)) {
-    return nullptr;
-  }
-  return MakeAutomatonTermPredicate(
-    std::make_shared<const CompiledAcceptor>(std::move(acceptor)));
+  return MakePatternSource(bstring{options().pattern}, PatternKind::Regexp,
+                           options().syntax)
+    ->Predicate();
 }
 
 }  // namespace irs

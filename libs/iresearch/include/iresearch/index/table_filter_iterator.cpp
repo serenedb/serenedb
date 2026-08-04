@@ -104,6 +104,15 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
   }
 }
 
+void ColFilterChain::RewindScan(irs::ReadContext& ctx) {
+  for (auto& c : _cols) {
+    c.scan = c.reader->InitScan(ctx);
+    c.checked = {};
+    c.verdict = duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
+    c.deferred = false;
+  }
+}
+
 bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
   for (auto& c : _cols) {
     // A children-backed column filters on a compact decode whose scan state
@@ -239,19 +248,19 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
   while (i < n) {
     // Group the ascending docs that fall in one columnstore block: zonemap
     // and the codec filter both work per block.
-    const uint64_t anchor = docs[i] - irs::doc_limits::min();
+    const uint64_t anchor = RowOf(docs[i]);
     const uint64_t rg_end = _cols.front().reader->RowGroupEnd(anchor);
     duckdb::idx_t j = i;
-    while (j < n && (docs[j] - irs::doc_limits::min()) < rg_end) {
+    while (j < n && RowOf(docs[j]) < rg_end) {
       ++j;
     }
     const duckdb::idx_t run = j - i;
-    const auto span = static_cast<duckdb::idx_t>(
-      (docs[j - 1] - irs::doc_limits::min()) - anchor + 1);
+    const auto span =
+      static_cast<duckdb::idx_t>(RowOf(docs[j - 1]) - anchor + 1);
     SDB_ASSERT(run <= STANDARD_VECTOR_SIZE);
     _sel.Initialize(_sel_data);
     for (duckdb::idx_t k = 0; k < run; ++k) {
-      _sel.set_index(k, (docs[i + k] - irs::doc_limits::min()) - anchor);
+      _sel.set_index(k, RowOf(docs[i + k]) - anchor);
     }
     const auto survivors = FilterWindow(anchor, span, _sel, run, nullptr);
     CompactByOffsets(_sel, survivors, anchor, docs + i,
@@ -347,11 +356,11 @@ void ColFilterChain::CompactByOffsets(const duckdb::SelectionVector& sel,
                                       const irs::doc_id_t* docs_in,
                                       const irs::score_t* scores_in,
                                       irs::doc_id_t* docs_out,
-                                      irs::score_t* scores_out) {
+                                      irs::score_t* scores_out) const {
   duckdb::idx_t k = 0;
   for (duckdb::idx_t s = 0; s < survivors; ++s) {
     const uint64_t want = sel.get_index(s);
-    while (((docs_in[k] - irs::doc_limits::min()) - anchor) != want) {
+    while ((RowOf(docs_in[k]) - anchor) != want) {
       ++k;
     }
     docs_out[s] = docs_in[k];
@@ -361,11 +370,21 @@ void ColFilterChain::CompactByOffsets(const duckdb::SelectionVector& sel,
   }
 }
 
-TableFilterDocIterator::TableFilterDocIterator(
-  irs::DocIterator::ptr inner, const irs::ColReader& col_reader,
-  std::span<const FilterSpec> filters, duckdb::ClientContext& context,
-  ColFilterStateCache& states)
-  : _inner{std::move(inner)}, _ctx{col_reader} {
+void TableFilterDocIterator::BeginSegment(const irs::ColReader& col_reader,
+                                          std::span<const FilterSpec> filters,
+                                          duckdb::ClientContext& context,
+                                          ColFilterStateCache& states) {
+  // The previous segment's bound columns pin blocks in `_ctx`; drop them
+  // before the context is reset (it asserts on live handles).
+  _inner = nullptr;
+  _filters.Clear();
+  _score_filter = nullptr;
+  _score_state = nullptr;
+  if (_ctx) {
+    _ctx->Reset(col_reader);
+  } else {
+    _ctx = std::make_unique<irs::ReadContext>(col_reader);
+  }
   for (const auto& spec : filters) {
     if (spec.is_score) {
       // The score is computed, not stored in `.col` -- filtered on the score
@@ -374,8 +393,10 @@ TableFilterDocIterator::TableFilterDocIterator(
       _score_state = &states.State(context, *spec.filter);
     }
   }
-  _filters.Bind(col_reader, _ctx, filters, context, states);
+  _filters.Bind(col_reader, *_ctx, filters, context, states);
   _filters.FinishBind();
+  _filters.SetRowBase(0);
+  _scan_fresh = true;
 }
 
 duckdb::idx_t TableFilterDocIterator::FilterBlock(irs::doc_id_t* docs,
@@ -400,31 +421,62 @@ duckdb::idx_t TableFilterDocIterator::FilterBlock(irs::doc_id_t* docs,
   return _filters.FilterDocs(docs, scores, out);
 }
 
-uint32_t TableFilterDocIterator::count() {
-  // count() never scores, so a pushed score filter cannot be applied here --
-  // the mode decision (DecideScanMode) must route such plans to streaming.
-  SDB_ASSERT(_score_filter == nullptr);
-  // Self-positioning EmitDocs drives the walk from a running `min`; no external
-  // advance() prime (which is invalid for iterators that don't implement it).
-  uint32_t total = 0;
-  auto min = irs::doc_limits::min();
-  while (!irs::doc_limits::eof(min)) {
+uint32_t TableFilterDocIterator::NextSurvivors() {
+  // Self-positioning EmitDocs drives the walk from a running `_min`; no
+  // external advance() prime (which is invalid for iterators that don't
+  // implement it).
+  while (!irs::doc_limits::eof(_min)) {
     if (!_filters.Empty()) {
       // Zonemap skip: raise the emit floor past a definitely-dead block
       // (EmitDocs self-positions to `min`) instead of emitting and dropping
       // it window by window.
-      const auto dead_end = _filters.DeadUntil(min - irs::doc_limits::min());
+      const auto dead_end = _filters.DeadUntil(_filters.RowOf(_min));
       if (dead_end != 0) {
-        min = irs::doc_limits::min() + static_cast<irs::doc_id_t>(dead_end);
+        _min = irs::doc_limits::min() +
+               static_cast<irs::doc_id_t>(dead_end - _filters.RowBase());
         continue;
       }
     }
-    const auto max = min + STANDARD_VECTOR_SIZE;
-    const auto n = _inner->EmitDocs(_docbuf.data(), min, max);
-    total += static_cast<uint32_t>(FilterBlock(_docbuf.data(), nullptr, n));
-    _doc = min = _inner->value();  // postcondition: first doc >= max (or eof)
+    const auto max = _min + STANDARD_VECTOR_SIZE;
+    const auto n = _inner->EmitDocs(_docbuf.data(), _min, max);
+    const auto survivors =
+      static_cast<uint32_t>(FilterBlock(_docbuf.data(), nullptr, n));
+    _min = _inner->value();  // postcondition: first doc >= max (or eof)
+    if (survivors != 0) {
+      return survivors;
+    }
   }
+  return 0;
+}
+
+uint32_t TableFilterDocIterator::count() {
+  // count() never scores, so a pushed score filter cannot be applied here --
+  // the mode decision (DecideScanMode) must route such plans to streaming.
+  SDB_ASSERT(_score_filter == nullptr);
+  uint32_t total = _survivors - _emitted;
+  _emitted = _survivors = 0;
+  for (auto n = NextSurvivors(); n != 0; n = NextSurvivors()) {
+    total += n;
+  }
+  _doc = irs::doc_limits::eof();
   return total;
+}
+
+irs::doc_id_t TableFilterDocIterator::advance() {
+  // An existence probe answers off the same staged survivors count() sums;
+  // forwarding to the inner iterator would report a document the `.col`
+  // filters reject.
+  SDB_ASSERT(_score_filter == nullptr);
+  if (_emitted == _survivors) {
+    _emitted = 0;
+    _survivors = NextSurvivors();
+    if (_survivors == 0) {
+      _doc = irs::doc_limits::eof();
+      return _doc;
+    }
+  }
+  _doc = _docbuf[_emitted++];
+  return _doc;
 }
 
 uint32_t TableFilterDocIterator::EmitDocs(irs::doc_id_t* out, irs::doc_id_t min,
@@ -458,9 +510,10 @@ void TableFilterDocIterator::Collect(const irs::ScoreFunction& scorer,
       // Zonemap skip: raise the emit floor past a definitely-dead block
       // (EmitScoredDocs self-positions to `min`) instead of scoring and
       // dropping it window by window.
-      const auto dead_end = _filters.DeadUntil(min - irs::doc_limits::min());
+      const auto dead_end = _filters.DeadUntil(_filters.RowOf(min));
       if (dead_end != 0) {
-        min = irs::doc_limits::min() + static_cast<irs::doc_id_t>(dead_end);
+        min = irs::doc_limits::min() +
+              static_cast<irs::doc_id_t>(dead_end - _filters.RowBase());
         continue;
       }
     }

@@ -655,6 +655,50 @@ TEST_F(TextAnalyzerParserTestSuite, test_text_analyzer) {
   }
 }
 
+TEST_F(TextAnalyzerParserTestSuite, test_mixed_ascii_non_ascii) {
+  auto next_term = [](Analyzer& stream) {
+    auto* p_value = irs::get<irs::TermAttr>(stream);
+    EXPECT_NE(nullptr, p_value);
+    EXPECT_TRUE(stream.next());
+    return std::string((char*)p_value->value.data(), p_value->value.size());
+  };
+
+  {
+    auto stream = MakeText(TextOpts{.stemming = false});
+    ASSERT_NE(nullptr, stream);
+    ASSERT_TRUE(
+      stream->reset("The R\xC3\xA9sum\xC3\xA9 \xD0\x97\xD0\xB2\xD0\xB5\xD0\xB7"
+                    "\xD0\xB4\xD0\xB0 Doc42 QUICK"));
+    ASSERT_EQ("the", next_term(*stream));
+    ASSERT_EQ("resume", next_term(*stream));
+    ASSERT_EQ("\xD0\xB7\xD0\xB2\xD0\xB5\xD0\xB7\xD0\xB4\xD0\xB0",
+              next_term(*stream));
+    ASSERT_EQ("doc42", next_term(*stream));
+    ASSERT_EQ("quick", next_term(*stream));
+    ASSERT_FALSE(stream->next());
+  }
+
+  {
+    auto stream =
+      MakeText(TextOpts{.locale = "tr_TR.UTF-8", .stemming = false});
+    ASSERT_NE(nullptr, stream);
+    ASSERT_TRUE(stream->reset("TITLE dair"));
+    ASSERT_EQ("t\xC4\xB1tle", next_term(*stream));
+    ASSERT_EQ("dair", next_term(*stream));
+    ASSERT_FALSE(stream->next());
+  }
+
+  {
+    auto stream =
+      MakeText(TextOpts{.case_convert = irs::Case::Upper, .stemming = false});
+    ASSERT_NE(nullptr, stream);
+    ASSERT_TRUE(stream->reset("MiXed ascii42"));
+    ASSERT_EQ("MIXED", next_term(*stream));
+    ASSERT_EQ("ASCII42", next_term(*stream));
+    ASSERT_FALSE(stream->next());
+  }
+}
+
 TEST_F(TextAnalyzerParserTestSuite, test_fail_load_default_stopwords) {
   SetStopwordsPath("invalid stopwords path");
 

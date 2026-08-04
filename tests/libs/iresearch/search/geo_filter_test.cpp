@@ -715,7 +715,7 @@ TEST(GeoFilterTest, checkScorer) {
 
       const auto score = it->PrepareScore({
         .scorer = &ord,
-        .segment = &segment,
+        .norms = &segment,
       });
       EXPECT_FALSE(score.IsDefault());
 

@@ -39,7 +39,6 @@
 #include "iresearch/search/terms_filter.hpp"
 #include "iresearch/search/top_terms_selector.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 namespace {
@@ -130,8 +129,8 @@ struct GetVisitor {
   field_visitor operator()(const auto&) const { SDB_UNREACHABLE(); }
 
   field_visitor operator()(const AutomatonOptions& options) const {
-    SDB_ASSERT(options.compiled);
-    return AutomatonFilter::visitor(options.compiled->acceptor);
+    SDB_ASSERT(options.source);
+    return AutomatonFilter::visitor(options.source);
   }
 
   field_visitor operator()(const LevenshteinAutomatonOptions& options) const {
@@ -174,10 +173,14 @@ class PhraseTermVisitor final : public FilterVisitor,
 
   bool Visit(score_t boost) final {
     SDB_ASSERT(_terms && _segment && _reader);
-    _terms->read();
 
     // disallow negative boost
     boost = std::max(0.f, boost);
+
+    // cookie() decodes the term's record whole, the stats included, so the
+    // term collector below reads them without a read() parsing the same entry
+    // a second time.
+    _phrase_states.emplace_back(_terms->cookie(), boost);
 
     // Only if it has scorer
     if (_part) {
@@ -188,7 +191,6 @@ class PhraseTermVisitor final : public FilterVisitor,
       ++_term_offset;
       _volatile_boost |= (boost != kNoBoost);
     }
-    _phrase_states.emplace_back(_terms->cookie(), boost);
     return true;
   }
 
@@ -447,7 +449,8 @@ bool ByPhraseOptions::LowerParts() {
           return opts;
         },
         [lim](bytes_view term) -> phrase_part {
-          return AutomatonOptions{FromWildcard(term), term, lim};
+          return AutomatonOptions{term, PatternKind::Wildcard,
+                                  RegexpSyntax::Perl, lim};
         });
       changed = true;
     } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
@@ -468,8 +471,7 @@ bool ByPhraseOptions::LowerParts() {
           return opts;
         },
         [lim, syntax](bytes_view pattern) -> phrase_part {
-          return AutomatonOptions{
-            FromRegexp(pattern, kDefaultMaxDfaStates, syntax), pattern, lim};
+          return AutomatonOptions{pattern, PatternKind::Regexp, syntax, lim};
         });
       changed = true;
     } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);

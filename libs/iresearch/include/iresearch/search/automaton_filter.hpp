@@ -25,35 +25,37 @@
 
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
-#include "iresearch/utils/automaton.hpp"
+#include "iresearch/search/term_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
 class AutomatonFilter;
 struct FilterVisitor;
-struct CompiledAcceptor;
 
 struct AutomatonOptions {
   using FilterType = AutomatonFilter;
 
   bstring pattern;
-  std::shared_ptr<const CompiledAcceptor> compiled;
+  TermAcceptorSource::ptr source;
+  PatternKind kind{PatternKind::Regexp};
   size_t scored_terms_limit{1024};
 
   AutomatonOptions() = default;
-  AutomatonOptions(automaton acceptor, bytes_view pattern,
+  AutomatonOptions(bytes_view pattern, PatternKind kind, RegexpSyntax syntax,
+                   size_t scored_terms_limit);
+  AutomatonOptions(bytes_view pattern, TermAcceptorSource::ptr source,
                    size_t scored_terms_limit);
 
   bool operator==(const AutomatonOptions& rhs) const noexcept {
-    return pattern == rhs.pattern &&
+    return pattern == rhs.pattern && kind == rhs.kind &&
            scored_terms_limit == rhs.scored_terms_limit;
   }
 };
 
 class AutomatonFilter final : public FilterWithField<AutomatonOptions> {
  public:
-  static field_visitor visitor(const automaton& acceptor);
+  static field_visitor visitor(TermAcceptorSource::ptr source);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
@@ -65,7 +67,11 @@ class AutomatonFilter final : public FilterWithField<AutomatonOptions> {
   TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
 };
 
-TermPredicate::ptr MakeAutomatonTermPredicate(
-  std::shared_ptr<const CompiledAcceptor> compiled);
+// Instantiates a filter over the terms `source` accepts.
+QueryBuilder::ptr PrepareAcceptorSegment(const SubReader& segment,
+                                         const PrepareContext& ctx,
+                                         irs::field_id field,
+                                         const TermAcceptorSource& source,
+                                         score_t boost);
 
 }  // namespace irs

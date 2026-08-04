@@ -52,10 +52,14 @@ void ValidateFooter(IndexInput& in) {
 
 namespace format_utils {
 
-// TODO(mbkkt) maybe ver is uint32_t
-void WriteHeader(IndexOutput& out, std::string_view format, int32_t ver) {
+void WriteHeader(IndexOutput& out, std::string_view format) {
   out.WriteU32(kFormatMagic);
   WriteStr(out, format);
+}
+
+// TODO(mbkkt) maybe ver is uint32_t
+void WriteHeader(IndexOutput& out, std::string_view format, int32_t ver) {
+  WriteHeader(out, format);
   out.WriteU32(ver);
 }
 
@@ -72,15 +76,14 @@ size_t HeaderLength(std::string_view format) noexcept {
          format.size();
 }
 
-int32_t CheckHeader(DataInput& in, std::string_view req_format, int32_t min_ver,
-                    int32_t max_ver) {
+void CheckHeader(DataInput& in, std::string_view req_format) {
   const ptrdiff_t left = in.Length() - in.Position();
 
   if (left < 0) {
     throw IllegalState{"Header has invalid length."};
   }
 
-  const size_t expected = HeaderLength(req_format);
+  const size_t expected = HeaderLength(req_format) - sizeof(int32_t);
 
   if (static_cast<size_t>(left) < expected) {
     throw IndexError{absl::StrCat("While checking header, error: only '", left,
@@ -101,6 +104,11 @@ int32_t CheckHeader(DataInput& in, std::string_view req_format, int32_t min_ver,
       absl::StrCat("While checking header, error: format mismatch '", format,
                    "' != '", req_format, "'")};
   }
+}
+
+int32_t CheckHeader(DataInput& in, std::string_view req_format, int32_t min_ver,
+                    int32_t max_ver) {
+  CheckHeader(in, req_format);
 
   const int32_t ver = in.ReadI32();
 
@@ -142,7 +150,7 @@ int64_t Checksum(const IndexInput& in) {
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,
                    const FlushState& state, std::string_view ext,
-                   std::string_view format, const int32_t version) {
+                   std::string_view format) {
   SDB_ASSERT(!out);
 
   FileName(str, state.name, ext);
@@ -152,7 +160,7 @@ void PrepareOutput(std::string& str, IndexOutput::ptr& out,
     throw IoError{absl::StrCat("Failed to create file, path: ", str)};
   }
 
-  WriteHeader(*out, format, version);
+  WriteHeader(*out, format);
 }
 
 }  // namespace format_utils

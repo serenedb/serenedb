@@ -1,0 +1,235 @@
+hash-threshold 100
+
+# ts_dict term existence under a `.col` (INCLUDE'd column) filter.
+# When the count column is NOT projected, the scan only asks whether a term
+# still has one live document -- an existence probe rather than a count. That
+# probe and the counting path must answer from the same predicate: a term
+# whose every document fails the column filter must not appear in the term
+# list while the counting path drops it. Both ts_dict counting modes are
+# covered (Masked: column filter only; Where: column filter + an indexed @@
+# predicate), each pinned by its plan and checked against the same query over
+# the base table. Background maintenance is off.
+
+statement ok
+SET compaction_interval = 0
+
+statement ok
+SET refresh_interval = 0
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pkw(template = 'keyword', frequency = true)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ptx(template = 'text', locale = 'en_US.UTF-8',
+    case = 'lower', stemming = false, accent = false, frequency = true,
+    position = true)
+
+statement ok
+CREATE TABLE pbase(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
+                   svc VARCHAR NOT NULL, body VARCHAR NOT NULL)
+
+# ALERT and ZULU occur only on `backend` rows, so `svc = 'frontend'` rejects
+# every document of both terms; INFO survives the column filter but not the
+# @@ predicate.
+statement ok
+INSERT INTO pbase VALUES
+  (1, 'ERROR', 'frontend', 'disk failed'),
+  (2, 'INFO',  'frontend', 'all ok'),
+  (3, 'ALERT', 'backend',  'net failed'),
+  (4, 'WARN',  'frontend', 'failed retry'),
+  (5, 'ZULU',  'backend',  'failed hard'),
+  (6, 'ERROR', 'frontend', 'failed again')
+
+statement ok
+CREATE INDEX ptab_idx ON pbase USING inverted(sev pkw, body ptx)
+    INCLUDE (svc) WITH (refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) pbase;
+
+# --- Masked mode: the term list alone, no count column projected
+query
+EXPLAIN SELECT unnest(ts_dict_agg(sev)) AS term FROM ptab_idx WHERE svc = 'frontend'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: ptab_idx                          │
+│ TsDict: sev                              │
+│ Projections: sdb_inverted_index_term$sev │
+│ Column Filter: svc = 'frontend'          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query T
+SELECT unnest(ts_dict_agg(sev)) AS term FROM ptab_idx
+WHERE svc = 'frontend' ORDER BY term
+----
+term
+ERROR
+INFO
+WARN
+
+query T
+SELECT DISTINCT sev AS term FROM pbase WHERE svc = 'frontend' ORDER BY term
+----
+term
+ERROR
+INFO
+WARN
+
+# --- the counting path over the same predicate agrees term for term
+query
+EXPLAIN SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(sev)) AS t, unnest(ts_dict_count(sev)) AS c
+      FROM ptab_idx WHERE svc = 'frontend') s
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────╮
+│ Projections:                                        │
+│ sdb_inverted_index_term$sev,                        │
+│ CAST(sdb_inverted_index_term_count$sev AS INTEGER)  │
+│ ~0 rows                                             │
+╰──────────────────────────┬──────────────────────────╯
+╭─ HASH_GROUP_BY ──────────┴──────────────────────────╮
+│ Groups: #0                                          │
+│ Aggregates: sum(#1)                                 │
+│ ~0 rows                                             │
+╰──────────────────────────┬──────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────┴──────────────────────────╮
+│ Index: ptab_idx                                     │
+│ TsDict: sev                                         │
+│ Projections:                                        │
+│ sdb_inverted_index_term$sev,                        │
+│ sdb_inverted_index_term_count$sev                   │
+│ Column Filter: svc = 'frontend'                     │
+│ ~1 row                                              │
+╰─────────────────────────────────────────────────────╯
+
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(sev)) AS t, unnest(ts_dict_count(sev)) AS c
+      FROM ptab_idx WHERE svc = 'frontend') s
+ORDER BY term
+----
+term	docs
+ERROR	2
+INFO	1
+WARN	1
+
+query TI
+SELECT sev AS term, count(*) AS docs FROM pbase
+WHERE svc = 'frontend' GROUP BY sev ORDER BY term
+----
+term	docs
+ERROR	2
+INFO	1
+WARN	1
+
+# --- Where mode: column filter + an indexed @@ predicate, term list alone
+query
+EXPLAIN SELECT unnest(ts_dict_agg(sev)) AS term FROM ptab_idx WHERE svc = 'frontend' AND body @@ 'failed'
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────╮
+│ Groups: #0                               │
+│ ~0 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: ptab_idx                          │
+│ Index Filter:                            │
+│ ╭─ Term ──────────────╮                  │
+│ │ Field: body(string) │                  │
+│ │ Value: failed       │                  │
+│ ╰─────────────────────╯                  │
+│ Column Filter: svc = 'frontend'          │
+│ TsDict: sev                              │
+│ Projections: sdb_inverted_index_term$sev │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query T
+SELECT unnest(ts_dict_agg(sev)) AS term FROM ptab_idx
+WHERE svc = 'frontend' AND body @@ 'failed' ORDER BY term
+----
+term
+ERROR
+WARN
+
+query T
+SELECT DISTINCT sev AS term FROM pbase
+WHERE svc = 'frontend' AND body LIKE '%failed%' ORDER BY term
+----
+term
+ERROR
+WARN
+
+query TI
+SELECT t AS term, c AS docs
+FROM (SELECT unnest(ts_dict_agg(sev)) AS t, unnest(ts_dict_count(sev)) AS c
+      FROM ptab_idx WHERE svc = 'frontend' AND body @@ 'failed') s
+ORDER BY term
+----
+term	docs
+ERROR	2
+WARN	1
+
+query TI
+SELECT sev AS term, count(*) AS docs FROM pbase
+WHERE svc = 'frontend' AND body LIKE '%failed%' GROUP BY sev ORDER BY term
+----
+term	docs
+ERROR	2
+WARN	1
+
+# --- deletions compose with the column filter on the probe too: dropping
+# both ERROR rows must remove the term from the list, not just from the count
+statement ok
+DELETE FROM pbase WHERE id IN (1, 6)
+
+statement ok
+VACUUM (REFRESH_TABLE) pbase;
+
+query T
+SELECT unnest(ts_dict_agg(sev)) AS term FROM ptab_idx
+WHERE svc = 'frontend' ORDER BY term
+----
+term
+INFO
+WARN
+
+query T
+SELECT DISTINCT sev AS term FROM pbase WHERE svc = 'frontend' ORDER BY term
+----
+term
+INFO
+WARN
+
+query T
+SELECT unnest(ts_dict_agg(sev)) AS term FROM ptab_idx
+WHERE svc = 'frontend' AND body @@ 'failed' ORDER BY term
+----
+term
+WARN
+
+query T
+SELECT DISTINCT sev AS term FROM pbase
+WHERE svc = 'frontend' AND body LIKE '%failed%' ORDER BY term
+----
+term
+WARN
+
+statement ok
+DROP INDEX ptab_idx
+
+statement ok
+DROP TABLE pbase
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ptx
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pkw

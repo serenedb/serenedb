@@ -74,6 +74,11 @@ struct WandWriter {
   virtual bool Prepare(const NormProvider& norms, const FieldProperties& field,
                        const AttributeProvider& attrs) = 0;
 
+  // A term is written as one posting list per row group with row-group-local
+  // ids, so the norms feeding the max-score entries are read from that row
+  // group's norm reader. Called once per (term, row group), before `Reset`.
+  virtual void SetRowGroup(uint32_t rg) = 0;
+
   virtual void Reset() = 0;
 
   virtual void Update() = 0;

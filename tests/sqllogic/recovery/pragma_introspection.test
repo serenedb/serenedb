@@ -160,14 +160,19 @@ SELECT row_group_id, column_name, column_id, column_path, segment_type, count, p
 ----
 row_group_id	column_name	column_id	column_path	segment_type	count	persistent
 0	j	2	[2]	INTEGER	5000	t
+0	NULL	NULL	[dict, pk]	FIXED_STRIDE	5000	t
+0	s	1	[dict]	VAR	5000	t
 0	i	NULL	[i]	BIGINT	5000	t
 
 
-# A plain inverted index stores values only for the encoded primary key.
+# A plain inverted index stores column values only for the encoded primary key;
+# its other rows are the term dictionary's own sections.
 query
 SELECT row_group_id, column_name, column_id, column_path, segment_type, count, persistent FROM pragma_storage_info('pin_inv');
 ----
 row_group_id	column_name	column_id	column_path	segment_type	count	persistent
+0	s	1	[dict]	VAR	5000	t
+0	NULL	NULL	[dict, pk]	FIXED_STRIDE	5000	t
 0	i	NULL	[i]	BIGINT	5000	t
 
 

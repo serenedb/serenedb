@@ -136,7 +136,6 @@ struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
   irs::field_id synthetic_column = irs::field_limits::invalid();
-  uint32_t norm_row_group_size = 0;
   bool store_values = false;
   bool indexed_term_dict = false;
   bool hyperloglog = false;
@@ -145,15 +144,26 @@ struct InvertedIndexEntryInfo {
   std::optional<IVFColumnConfig> ivf_config;
   uint32_t row_group_size = 0;
 
+  // A boolean value is not a term in a two-term dictionary: it is one of two
+  // always-<X> fields, picked by the VALUE at write time and at predicate
+  // build time. `null_field_id` is the SQL-null marker only; a JSON key's
+  // `null` leaf is its own field, so `IS NULL` and a JSON null value are
+  // distinct predicates over distinct fields.
   irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id json_null_field_id = irs::field_limits::invalid();
+  irs::field_id true_field_id = irs::field_limits::invalid();
+  irs::field_id false_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
 
   bool IsIVF() const noexcept { return ivf_config.has_value(); }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
-           irs::field_limits::valid(bool_field_id);
+           irs::field_limits::valid(json_null_field_id);
+  }
+  bool HasBoolFields() const noexcept {
+    return irs::field_limits::valid(true_field_id) &&
+           irs::field_limits::valid(false_field_id);
   }
   bool IsTermDict() const noexcept {
     return !IsIVF() && (indexed_term_dict || HasTextDictionary());
@@ -269,6 +279,19 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::NormColumnOptions GetNormColumnOptions(irs::field_id id) const final;
 
+  // The always-<X> marker fields: a key's SQL-null marker, a JSON key's
+  // json-null leaf and the two boolean value fields each post one fixed term,
+  // so their dictionary is the field itself. Schema knowledge, never a
+  // statistic -- a field that happens to hold one term stays an ordinary
+  // dictionary.
+  bool IsDictlessField(irs::field_id id) const final;
+
+  // One `row_group_size` for everything: the columns, the postings and the
+  // norms share the index's row group.
+  irs::DictOptions GetDictOptions() const final {
+    return {.row_group_size = _options.row_group_size};
+  }
+
   // Segment-reuse homogeneity gate: any two incarnations of an inverted index
   // produce identical column encodings, so a write may always resume a segment
   // opened by another incarnation. A DROP COLUMN that truly changes the
@@ -277,7 +300,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // incarnations; RENAME -- the one in-place mutation -- leaves column options
   // untouched. A serenedb writer's gate only ever compares two InvertedIndex
   // options (the other concrete IndexFieldOptions, FunctionFieldOptions, is
-  // iresearch-test- only and never mixed onto the same writer), so equality
+  // iresearch-test-only and never mixed onto the same writer), so equality
   // reduces to "same type" -- which is an invariant here, asserted rather than
   // branched on.
   bool EqualOptions(const irs::IndexFieldOptions& other) const noexcept final {

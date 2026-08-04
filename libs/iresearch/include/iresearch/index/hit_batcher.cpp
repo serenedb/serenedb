@@ -58,6 +58,7 @@ void HitBatcher::BeginSegment(
   SDB_ASSERT(filters.empty() || states != nullptr,
              "bound filters need the worker's state cache");
   _seg_idx = seg_idx;
+  _rg_first_row = 0;
   _len = 0;
   _group = 0;
   _batch = 0;
@@ -65,6 +66,7 @@ void HitBatcher::BeginSegment(
   _compact_dense = false;
   _columns.clear();
   _filters.Clear();
+  _filters.SetRowBase(0);
   _score_filter = nullptr;
   _score_state = nullptr;
   _rg_col = nullptr;
@@ -312,7 +314,8 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
     duckdb::ListVector::SetListSize(out, 0);
   }
   if (c.extract) {
-    const DocRows rows{std::span<const irs::doc_id_t>{&_docs[first], hits}};
+    const DocRows rows{std::span<const irs::doc_id_t>{&_docs[first], hits},
+                       _rg_first_row};
     c.extract_binding->MaterializeRows(rows, out, at, dense);
     return;
   }
@@ -364,8 +367,8 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
     // doc/score arrays, compacting in place.
     if (!_filters.Empty()) {
       auto* scores = _track_scores ? ScoreData() : nullptr;
-      ColFilterChain::CompactByOffsets(_sel, survivors, anchor, _docs.data(),
-                                       scores, _docs.data(), scores);
+      _filters.CompactByOffsets(_sel, survivors, anchor, _docs.data(), scores,
+                                _docs.data(), scores);
     }
     _filters.FinishOutputs(anchor, span, _sel, survivors, output);
   }

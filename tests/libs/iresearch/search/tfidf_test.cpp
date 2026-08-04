@@ -168,7 +168,7 @@ void TfidfTestCase::TestQueryNorms() {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -220,7 +220,7 @@ void TfidfTestCase::TestQueryNorms() {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -388,7 +388,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -455,7 +455,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -537,7 +537,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -648,7 +648,7 @@ TEST_P(TfidfTestCase, test_query) {
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &segment,
+        .norms = &segment,
         .fetcher = &fetcher,
       });
 
@@ -772,7 +772,7 @@ TEST_P(TfidfTestCase, test_query) {
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &segment,
+        .norms = &segment,
         .fetcher = &fetcher,
       });
 
@@ -887,7 +887,7 @@ TEST_P(TfidfTestCase, test_query) {
       auto docs = prepared_filter.Execute(i);
       auto score = docs->PrepareScore({
         .scorer = &scorer,
-        .segment = &segment,
+        .norms = &segment,
         .fetcher = &fetcher,
       });
 
@@ -939,7 +939,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -989,7 +989,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -1037,7 +1037,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -1085,7 +1085,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -1135,7 +1135,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -1174,7 +1174,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -1208,7 +1208,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto docs = prepared_filter.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 
@@ -1303,7 +1303,7 @@ TEST_P(TfidfTestCase, test_order) {
     auto docs = prepared.Execute(0);
     auto score = docs->PrepareScore({
       .scorer = &scorer,
-      .segment = &segment,
+      .norms = &segment,
       .fetcher = &fetcher,
     });
 

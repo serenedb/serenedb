@@ -56,6 +56,8 @@ inline constexpr irs::field_id kDocLongId = tests::FieldIdFor("doc_long");
 inline constexpr irs::field_id kDocStringId = tests::FieldIdFor("doc_string");
 inline constexpr irs::field_id kDocTextId = tests::FieldIdFor("doc_text");
 inline constexpr irs::field_id kFooId = tests::FieldIdFor("foo");
+inline constexpr irs::field_id kTxtId = tests::FieldIdFor("txt");
+inline constexpr irs::field_id kCatId = tests::FieldIdFor("cat");
 inline constexpr irs::field_id kAnotherColumnId =
   tests::FieldIdFor("another_column");
 
@@ -99,7 +101,8 @@ void ValidateTerms(
 
     ASSERT_NE(expected_terms.end(), itr);
 
-    for (auto docs_itr = segment.mask(term_itr->postings(index_features));
+    for (auto docs_itr =
+           segment.mask(term_itr->RowGroupPostings(index_features, 0));
          !irs::doc_limits::eof(docs_itr->advance());) {
       ASSERT_EQ(1, itr->second.erase(docs_itr->value()));
 
@@ -1365,7 +1368,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   index_segment.codec = codec_ptr;
 
   const irs::FunctionFieldOptions field_options{
-    nullptr, irs::tests::MakeNormColumnOptionsProvider()};
+    nullptr, irs::tests::MakeNormColumnOptionsProvider(), irs::DictOptions{}};
   const irs::SegmentWriterOptions options{
     .scorers_features = {},
     .db = &::sdb::DuckDBEngine::Instance().instance(),
@@ -2439,6 +2442,194 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     EXPECT_TRUE(anothers.contains("shared_value_2"));
     EXPECT_TRUE(anothers.contains("shared_value_3"));
   }
+}
+
+TEST_P(MergeWriterTestCase, TransplantAlignedRowGroups) {
+  constexpr uint32_t kRows = 160;
+  constexpr uint32_t kSeg0 = 400;
+  constexpr uint32_t kSeg1 = 50;
+  constexpr uint32_t kSeg2 = 60;
+  constexpr auto kTxtFeatures =
+    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
+
+  auto codec_ptr = Codec();
+  ASSERT_NE(nullptr, codec_ptr);
+  irs::MemoryDirectory dir;
+
+  auto opts = irs::tests::DefaultWriterOptions();
+  opts.dict_options.row_group_size = kRows;
+
+  auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate, opts);
+  ASSERT_NE(nullptr, writer);
+
+  using Model =
+    std::map<std::string, std::map<irs::doc_id_t, std::vector<uint32_t>>>;
+  Model txt_model;
+  Model cat_model;
+
+  auto insert_range = [&](uint32_t begin, uint32_t end) {
+    auto trx = writer->GetBatch();
+    for (uint32_t i = begin; i != end; ++i) {
+      auto doc = trx.Insert();
+      const auto id = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
+      uint32_t next_pos = irs::pos_limits::min();
+      auto txt = [&](const std::string& value, uint32_t times) {
+        tests::StringField field{"txt", value};
+        field.id = kTxtId;
+        auto& positions = txt_model[value][id];
+        for (uint32_t k = 0; k != times; ++k) {
+          doc.Insert(field);
+          positions.push_back(next_pos++);
+        }
+      };
+      auto cat = [&](const std::string& value) {
+        tests::StringViewField field{"cat", value, irs::IndexFeatures::None};
+        field.id = kCatId;
+        doc.Insert(field);
+        cat_model[value][id];
+      };
+      // Sorts before every skip-carrying term, lives in every segment, and
+      // varies wildly in count: each merge shifts the output position phase
+      // before those runs, and the shifted blocks pack at different byte
+      // sizes -- the shape whose skip data cannot survive a transplant.
+      if (const uint32_t fill = (i * 7) % 97; fill != 0) {
+        txt("aaafill", fill);
+      }
+      txt("all", 1 + i % 3);
+      if (i % 2 == 0) {
+        txt("even", 1);
+      }
+      if (i == 5 || i == 165 || i == 325) {
+        txt("sparse", 1);
+      }
+      txt("b" + std::to_string(i / 48), 1);
+      txt("u" + std::to_string(i), 1);
+      cat("every");
+      cat("c" + std::to_string(i % 5));
+    }
+    trx.Commit();
+    ASSERT_TRUE(writer->RefreshCommit());
+  };
+
+  auto validate_field = [&](const irs::SubReader& segment, irs::field_id fid,
+                            const Model& model, irs::IndexFeatures features,
+                            uint32_t total_docs) {
+    auto* terms = segment.field(fid);
+    ASSERT_NE(nullptr, terms);
+    ASSERT_EQ(total_docs, terms->docs_count());
+    const auto layout = terms->RowGroups();
+    ASSERT_EQ(kRows, layout.rows_per_group);
+    const bool positional =
+      irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos);
+    Model remaining = model;
+    for (auto it = terms->iterator(irs::SeekMode::NORMAL); it->next();) {
+      const auto key = static_cast<std::string>(
+        irs::ViewCast<char>(irs::bytes_view{it->value()}));
+      auto mit = remaining.find(key);
+      ASSERT_NE(remaining.end(), mit) << key;
+      const auto& docs = mit->second;
+      auto expect = docs.begin();
+      for (const auto& group : it->RowGroups()) {
+        auto postings = it->RowGroupPostings(features, group.rg);
+        ASSERT_NE(nullptr, postings);
+        auto* pos = irs::GetMutable<irs::PosAttr>(postings.get());
+        ASSERT_EQ(positional, pos != nullptr);
+        while (!irs::doc_limits::eof(postings->advance())) {
+          const auto global = static_cast<irs::doc_id_t>(
+            layout.Base(group.rg) + postings->value() - irs::doc_limits::min());
+          ASSERT_NE(docs.end(), expect) << key;
+          ASSERT_EQ(expect->first, global) << key;
+          if (positional) {
+            ASSERT_EQ(expect->second.size(), postings->GetFreq()) << key;
+            for (const auto expected_pos : expect->second) {
+              ASSERT_TRUE(pos->next()) << key;
+              ASSERT_EQ(expected_pos, pos->value()) << key;
+            }
+            ASSERT_FALSE(pos->next()) << key;
+          }
+          ++expect;
+        }
+      }
+      ASSERT_EQ(docs.end(), expect) << key;
+      remaining.erase(mit);
+    }
+    ASSERT_TRUE(remaining.empty());
+  };
+
+  // Seeks through a run cross its skip data, which a transplanted docs-only
+  // run keeps verbatim and a re-encoded positional run rebuilds at the output
+  // phase -- either way the landing must agree with the model.
+  auto validate_seeks = [&](const irs::SubReader& segment, irs::field_id fid,
+                            const Model& model, const std::string& key,
+                            irs::IndexFeatures features) {
+    auto* terms = segment.field(fid);
+    ASSERT_NE(nullptr, terms);
+    const auto layout = terms->RowGroups();
+    auto it = terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(it->seek(irs::ViewCast<irs::byte_type>(std::string_view{key})));
+    const auto& docs = model.at(key);
+    for (const auto& group : it->RowGroups()) {
+      const auto base = layout.Base(group.rg);
+      const auto first = base;
+      const auto last = base + layout.Rows(group.rg) - 1;
+      auto lower = docs.lower_bound(first);
+      auto upper = docs.upper_bound(static_cast<irs::doc_id_t>(last));
+      ASSERT_NE(lower, upper);
+      const auto rg_last = std::prev(upper)->first;
+      auto postings = it->RowGroupPostings(features, group.rg);
+      ASSERT_NE(nullptr, postings);
+      const auto target =
+        static_cast<irs::doc_id_t>(rg_last - base + irs::doc_limits::min());
+      ASSERT_EQ(target, postings->seek(target));
+      if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)) {
+        auto* pos = irs::GetMutable<irs::PosAttr>(postings.get());
+        ASSERT_NE(nullptr, pos);
+        const auto& positions = docs.at(rg_last);
+        ASSERT_EQ(positions.size(), postings->GetFreq()) << key;
+        for (const auto expected_pos : positions) {
+          ASSERT_TRUE(pos->next()) << key;
+          ASSERT_EQ(expected_pos, pos->value()) << key;
+        }
+        ASSERT_FALSE(pos->next()) << key;
+      }
+      ASSERT_TRUE(irs::doc_limits::eof(postings->advance()));
+    }
+  };
+
+  insert_range(0, kSeg0);
+  insert_range(kSeg0, kSeg0 + kSeg1);
+
+  auto reader =
+    irs::DirectoryReader(dir, codec_ptr, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(nullptr, reader);
+  ASSERT_EQ(2, reader.size());
+
+  const irs::index_utils::CompactionCount compact_all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  ASSERT_TRUE(writer->RefreshCommit());
+  reader = reader.Reopen();
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(kSeg0 + kSeg1, reader[0].docs_count());
+  validate_field(reader[0], kTxtId, txt_model, kTxtFeatures, kSeg0 + kSeg1);
+  validate_field(reader[0], kCatId, cat_model, irs::IndexFeatures::None,
+                 kSeg0 + kSeg1);
+
+  // The steady-state shape: one large row-group-aligned source plus a small
+  // one whose rows spill across an output row group boundary.
+  insert_range(kSeg0 + kSeg1, kSeg0 + kSeg1 + kSeg2);
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  ASSERT_TRUE(writer->RefreshCommit());
+  reader = reader.Reopen();
+  ASSERT_EQ(1, reader.size());
+  const uint32_t total = kSeg0 + kSeg1 + kSeg2;
+  ASSERT_EQ(total, reader[0].docs_count());
+  validate_field(reader[0], kTxtId, txt_model, kTxtFeatures, total);
+  validate_field(reader[0], kCatId, cat_model, irs::IndexFeatures::None, total);
+  validate_seeks(reader[0], kTxtId, txt_model, "aaafill", kTxtFeatures);
+  validate_seeks(reader[0], kTxtId, txt_model, "all", kTxtFeatures);
+  validate_seeks(reader[0], kTxtId, txt_model, "even", kTxtFeatures);
+  validate_seeks(reader[0], kCatId, cat_model, "every",
+                 irs::IndexFeatures::None);
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {

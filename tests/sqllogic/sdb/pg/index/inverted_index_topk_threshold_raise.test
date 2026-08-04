@@ -1,0 +1,142 @@
+hash-threshold 100
+
+# The top-k collector's score threshold is raised from two places and its hit
+# buffer is not cleared between them.
+#
+#   * `NthPartitionScoreCollector::Push` raises it to the k-th of the 2k hits
+#     it buffers, every time the buffer fills.
+#   * The scan raises it at every row-group boundary to the best k-th any
+#     worker has published (`global_kth_score`), because a hit under a k-th
+#     some worker already reached cannot enter the query's top-k.
+#
+# The buffer survives that second raise, so hits accepted under the older,
+# lower threshold stay in it. A worker that retains k hits with k-th 7, enters
+# a row group seeded at 9 by another worker, and fills its buffer again gets a
+# `nth_element` pivot of 7 -- below 9. Writing that back unconditionally lowers
+# the threshold, which `SetScoreThreshold` asserts cannot happen.
+#
+# What the shape has to provide:
+#   * more row groups than workers, so a worker crosses many boundaries with a
+#     non-empty buffer (this is the part that makes it fire: with one row group
+#     per worker there is no retention across a raise at all);
+#   * more than one segment, and scores that differ between them so the
+#     published k-th keeps moving;
+#   * WAND on. Without it the collector's threshold pointer never leaves the
+#     worker's own `local_threshold`, so the lowering is invisible to the
+#     assert -- it is a silently weakened threshold instead of a crash;
+#   * a single score order key, so the scan takes the top-k collector path at
+#     all (`ORDER BY <score> DESC, id` streams into TOP_N instead).
+#
+# `tk_whole` is the one-row-group, WAND-off oracle the answers are pinned to.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tk_tx(template = 'text',
+    locale = 'en_US.UTF-8', case = 'lower', stemming = false, accent = false,
+    frequency = true, position = true, norm = true)
+
+
+statement ok
+CREATE TABLE tkbase(id INTEGER PRIMARY KEY, body VARCHAR NOT NULL)
+
+
+# tf('delta') cycles 1..7 and the document length cycles independently, so BM25
+# spreads widely inside every row group -- each one can publish a k-th that
+# another worker's retained hits sit below.
+statement ok
+INSERT INTO tkbase
+SELECT i,
+       repeat('delta ', 1 + (i % 7))
+         || repeat('filler ', 1 + (i % 97))
+         || CASE WHEN i % 11 = 0 THEN 'epsilon ' ELSE '' END
+         || CASE WHEN i % 17 = 0 THEN 'zeta' ELSE 'eta' END
+FROM range(1, 20000) t(i)
+
+
+statement ok
+CREATE INDEX tk_whole ON tkbase USING inverted(body tk_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 2000000000)
+
+
+# 64 rows per row group: ~470 row groups over the two segments, far more than
+# the worker count, which is what puts a raise in the middle of a live buffer.
+statement ok
+CREATE INDEX tk_w ON tkbase USING inverted(body tk_tx)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 64, optimize_top_k = 'bm25(1.2, 0.75)')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tkbase
+
+
+# A second segment with a different length profile, so the two segments' scores
+# interleave and the cross-worker k-th keeps moving.
+statement ok
+INSERT INTO tkbase
+SELECT i,
+       repeat('delta ', 1 + (i % 5))
+         || repeat('filler ', 1 + (i % 61))
+         || CASE WHEN i % 5 = 0 THEN 'epsilon zeta' ELSE 'eta' END
+FROM range(20000, 30000) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tkbase
+
+
+# Scores, not ids: the top-50 of 30 000 documents has ties, so the id set is
+# not unique but the ordered score list is.
+query TT
+SELECT 'topk50' AS q,
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(tk_whole.tableoid) s FROM tk_whole
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 50) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(tk_w.tableoid) s FROM tk_w
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 50) t)
+         AS same
+UNION ALL SELECT 'topk10',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(tk_whole.tableoid) s FROM tk_whole
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 10) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(tk_w.tableoid) s FROM tk_w
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 10) t)
+UNION ALL SELECT 'topk200',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(tk_whole.tableoid) s FROM tk_whole
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 200) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(tk_w.tableoid) s FROM tk_w
+              WHERE body @@ ts_phrase('delta')
+              ORDER BY s DESC LIMIT 200) t)
+UNION ALL SELECT 'topk50_any',
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(tk_whole.tableoid) s FROM tk_whole
+              WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+              ORDER BY s DESC LIMIT 50) t) =
+       (SELECT string_agg(round(s::numeric, 6)::text, ',' ORDER BY s DESC)
+        FROM (SELECT BM25(tk_w.tableoid) s FROM tk_w
+              WHERE body @@ ts_any(['delta', 'epsilon', 'zeta'])
+              ORDER BY s DESC LIMIT 50) t)
+ORDER BY 1
+----
+q	same
+topk10	t
+topk200	t
+topk50	t
+topk50_any	t
+
+
+statement ok
+DROP TABLE tkbase
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tk_tx

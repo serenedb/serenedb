@@ -117,6 +117,14 @@ Filter& Negate(Source& parent) {
 irs::ByTerm& AddNullMarkerTerm(irs::BooleanFilter& parent,
                                irs::field_id null_field_id);
 
+// A boolean column is two always-<X> fields, so every boolean predicate is the
+// SET of values it accepts and compiles to nothing / one field's term / their
+// disjunction. `ctx.negated` and the column's null marker are handled by the
+// same AddMaybeNegated the single-filter paths use.
+void AddBoolValueSet(irs::BooleanFilter& parent, const FilterContext& ctx,
+                     const SearchColumnInfo& info, bool accept_false,
+                     bool accept_true);
+
 // SQL three-valued logic: a NULL row satisfies no comparison, but a bare
 // irs::Not runs against ALL live docs and would readmit rows without a
 // token in the negated column. Scoped negation excludes the column's

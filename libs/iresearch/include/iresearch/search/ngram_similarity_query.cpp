@@ -494,7 +494,7 @@ class NGramSimilarityDocIterator : public DocIterator {
 
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+      .segment = *ctx.norms,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
@@ -575,7 +575,7 @@ class NGramSimilarityDocIterator : public DocIterator {
 
 CostAdapters Execute(const NGramState& query_state,
                      IndexFeatures required_features,
-                     IndexFeatures extra_features) {
+                     IndexFeatures extra_features, uint32_t rg) {
   const auto* field = query_state.reader;
 
   if (field == nullptr ||
@@ -589,12 +589,12 @@ CostAdapters Execute(const NGramState& query_state,
   itrs.reserve(query_state.terms.size());
 
   for (const auto& term_state : query_state.terms) {
-    if (!term_state) [[unlikely]] {
+    if (term_state.rgs.empty()) [[unlikely]] {
       continue;
     }
 
-    if (auto docs = field->Iterator(required_features,
-                                    {.cookie = term_state.get()})) [[likely]] {
+    if (auto docs = field->RowGroupIterator(
+          required_features, {.cookie = &term_state}, rg)) [[likely]] {
       itrs.emplace_back(std::move(docs));
     }
   }
@@ -612,7 +612,7 @@ DocIterator::ptr NGramSimilarityQuery::Execute(const ExecutionContext& ctx,
   const auto& segment = _segment;
 
   const auto features = GetFeatures(scorer);
-  auto itrs = irs::Execute(_state, kRequiredFeatures, features);
+  auto itrs = irs::Execute(_state, kRequiredFeatures, features, ctx.rg);
 
   if (itrs.size() < _min_match_count) {
     return DocIterator::empty();
@@ -636,9 +636,9 @@ DocIterator::ptr NGramSimilarityQuery::Execute(const ExecutionContext& ctx,
     _state.reader->meta(), scorer ? stat.data() : nullptr, _boost);
 }
 
-DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets() const {
+DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets(uint32_t rg) const {
   auto itrs = irs::Execute(_state, kRequiredFeatures | IndexFeatures::Offs,
-                           IndexFeatures::None);
+                           IndexFeatures::None, rg);
 
   if (itrs.size() < _min_match_count) {
     return DocIterator::empty();

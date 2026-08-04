@@ -27,8 +27,8 @@
 #include "formats_test_case_base.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/formats_attributes.hpp"
 #include "iresearch/formats/posting/wand_writer.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -265,7 +265,7 @@ class Format15TestCase : public tests::FormatTestCase {
 
   Docs GenerateDocs(size_t count, float_t mean, float_t dev, size_t step);
 
-  std::pair<irs::TermMetaImpl, irs::PostingsReader::ptr> WriteReadMeta(
+  std::pair<irs::TermCookie, irs::PostingsReader::ptr> WriteReadMeta(
     irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
     irs::IndexFeatures features);
 
@@ -274,22 +274,22 @@ class Format15TestCase : public tests::FormatTestCase {
   void AssertBackwardsNext(irs::PostingsReader& reader, irs::Scorer& scorer,
                            DocsView docs, irs::IndexFeatures field_features,
                            irs::IndexFeatures features,
-                           const irs::TermMeta& meta, uint32_t threshold,
+                           const irs::TermCookie& meta, uint32_t threshold,
                            bool strict);
   void AssertDocsSeq(irs::PostingsReader& reader, irs::Scorer& scorer,
                      DocsView docs, irs::IndexFeatures field_features,
-                     irs::IndexFeatures features, const irs::TermMeta& meta,
+                     irs::IndexFeatures features, const irs::TermCookie& meta,
                      uint32_t threshold, bool strict,
                      size_t expected_next_calls = 0);
   void AssertDocsRandom(irs::PostingsReader& reader, irs::Scorer& scorer,
                         DocsView docs, irs::IndexFeatures field_features,
-                        irs::IndexFeatures features, const irs::TermMeta& meta,
-                        uint32_t threshold, bool strict, size_t seed,
-                        size_t inc);
+                        irs::IndexFeatures features,
+                        const irs::TermCookie& meta, uint32_t threshold,
+                        bool strict, size_t seed, size_t inc);
   void AssertCornerCases(irs::PostingsReader& reader, irs::Scorer& scorer,
                          DocsView docs, irs::IndexFeatures field_features,
-                         irs::IndexFeatures features, const irs::TermMeta& meta,
-                         bool strict);
+                         irs::IndexFeatures features,
+                         const irs::TermCookie& meta, bool strict);
   void AssertPostings(DocsView docs, irs::IndexFeatures field_features,
                       irs::IndexFeatures features);
   void AssertWandPostings(DocsView docs, uint32_t threshold,
@@ -301,11 +301,11 @@ class Format15TestCase : public tests::FormatTestCase {
                                       irs::Scorer& scorer,
                                       irs::IndexFeatures field_features,
                                       irs::IndexFeatures features,
-                                      const irs::TermMeta& meta,
+                                      const irs::TermCookie& meta,
                                       uint32_t threshold, bool strict);
 };
 
-std::pair<irs::TermMetaImpl, irs::PostingsReader::ptr>
+std::pair<irs::TermCookie, irs::PostingsReader::ptr>
 Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
                                 irs::ScorerPtr scorer,
                                 irs::IndexFeatures features) {
@@ -317,7 +317,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
   EXPECT_NE(nullptr, codec);
   auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);
   EXPECT_NE(nullptr, writer);
-  irs::TermMetaImpl term_meta;
+  irs::TermCookie cookie;
 
   {
     const irs::FlushState state{
@@ -337,13 +337,12 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     writer->BeginField(irs::FieldProperties{.index_features = features});
 
     TestPostings it{docs, features};
-    writer->Write(it, term_meta);
+    cookie = WriteOneTerm(*writer, it);
     const auto stats = writer->EndField();
     EXPECT_EQ(docs.size(), stats.docs_count);
     const uint64_t expected_has_wand =
       irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_wand, stats.has_wand);
-    writer->Encode(*out, term_meta);
     writer->End();
   }
 
@@ -360,26 +359,10 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
   EXPECT_NE(nullptr, reader);
   reader->prepare(*in, state, features);
 
-  irs::bstring in_data(in->Length() - in->Position(), 0);
-  in->ReadData(&in_data[0], in_data.size());
-  const auto* begin = in_data.c_str();
+  EXPECT_EQ(1, cookie.rgs.size());
+  EXPECT_EQ(docs.size(), cookie.stats.docs_count);
 
-  irs::TermMetaImpl read_meta;
-  begin += reader->decode(begin, features, read_meta);
-
-  {
-    EXPECT_EQ(term_meta.docs_count, read_meta.docs_count);
-    EXPECT_EQ(term_meta.doc_start, read_meta.doc_start);
-    EXPECT_EQ(term_meta.pos_start, read_meta.pos_start);
-    EXPECT_EQ(term_meta.pay_start, read_meta.pay_start);
-    EXPECT_EQ(term_meta.pos_offset, read_meta.pos_offset);
-    EXPECT_EQ(term_meta.e_single_doc, read_meta.e_single_doc);
-    EXPECT_EQ(term_meta.e_skip_start, read_meta.e_skip_start);
-  }
-
-  EXPECT_EQ(begin, in_data.data() + in_data.size());
-
-  return std::make_pair(read_meta, std::move(reader));
+  return std::make_pair(std::move(cookie), std::move(reader));
 }
 
 void Format15TestCase::AssertWanderator(irs::DocIterator::ptr& actual,
@@ -402,7 +385,7 @@ void Format15TestCase::AssertWanderator(irs::DocIterator::ptr& actual,
 irs::DocIterator::ptr Format15TestCase::GetWanderator(
   irs::PostingsReader& reader, irs::Scorer& scorer,
   irs::IndexFeatures field_features, irs::IndexFeatures features,
-  const irs::TermMeta& meta, uint32_t threshold, bool strict) {
+  const irs::TermCookie& meta, uint32_t threshold, bool strict) {
   const bool iterator_has_freq =
     irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
   const bool field_has_freq =
@@ -414,10 +397,8 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
     options.strict = strict;
   }
 
-  irs::CookieImpl cookie{static_cast<const irs::TermMetaImpl&>(meta)};
-
-  auto actual =
-    reader.Iterator(field_features, features, {.cookie = &cookie}, options);
+  auto actual = reader.Iterator(field_features, features,
+                                {.meta = {meta, meta.rgs.front()}}, options);
   EXPECT_NE(nullptr, actual);
 
   auto* threshold_attr = irs::GetMutable<irs::ScoreThresholdAttr>(actual.get());
@@ -432,7 +413,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
                                            irs::Scorer& scorer, DocsView docs,
                                            irs::IndexFeatures field_features,
                                            irs::IndexFeatures features,
-                                           const irs::TermMeta& meta,
+                                           const irs::TermCookie& meta,
                                            uint32_t threshold, bool strict) {
   auto is_less = [&](auto lhs, auto rhs) {
     if (strict) {
@@ -456,7 +437,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
     auto score_function =
       irs::get<irs::FreqBlockAttr>(*actual)
         ? actual->PrepareScore(
-            {.scorer = &scorer, .segment = &irs::SubReader::empty()})
+            {.scorer = &scorer, .norms = &irs::SubReader::empty()})
         : irs::ScoreFunction::Constant(
             std::numeric_limits<irs::score_t>::max());
     AssertWanderator(actual, features, threshold);
@@ -509,7 +490,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
                                         irs::Scorer& scorer, DocsView docs,
                                         irs::IndexFeatures field_features,
                                         irs::IndexFeatures features,
-                                        const irs::TermMeta& meta,
+                                        const irs::TermCookie& meta,
                                         uint32_t threshold, bool strict,
                                         size_t seed, size_t inc) {
   auto is_less = [&](auto lhs, auto rhs) {
@@ -529,7 +510,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
   auto score_function =
     irs::get<irs::FreqBlockAttr>(*actual)
       ? actual->PrepareScore(
-          {.scorer = &scorer, .segment = &irs::SubReader::empty()})
+          {.scorer = &scorer, .norms = &irs::SubReader::empty()})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
   AssertWanderator(actual, features, threshold);
 
@@ -589,7 +570,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
                                      irs::Scorer& scorer, DocsView docs,
                                      irs::IndexFeatures field_features,
                                      irs::IndexFeatures features,
-                                     const irs::TermMeta& meta,
+                                     const irs::TermCookie& meta,
                                      uint32_t threshold, bool strict,
                                      size_t expected_next_calls) {
   auto is_less = [&](auto lhs, auto rhs) {
@@ -610,7 +591,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
   auto score_function =
     irs::get<irs::FreqBlockAttr>(*actual)
       ? actual->PrepareScore(
-          {.scorer = &scorer, .segment = &irs::SubReader::empty()})
+          {.scorer = &scorer, .norms = &irs::SubReader::empty()})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
 
   AssertWanderator(actual, features, threshold);
@@ -720,7 +701,7 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
                                          irs::Scorer& scorer, DocsView docs,
                                          irs::IndexFeatures field_features,
                                          irs::IndexFeatures features,
-                                         const irs::TermMeta& meta,
+                                         const irs::TermCookie& meta,
                                          bool strict) {
   // next + seek to eof
   {

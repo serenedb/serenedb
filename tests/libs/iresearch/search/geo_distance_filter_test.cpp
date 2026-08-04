@@ -945,12 +945,12 @@ TEST(GeoDistanceFilterTest, checkScorer) {
 
       const auto score = it->PrepareScore({
         .scorer = &ord,
-        .segment = &segment,
+        .norms = &segment,
       });
       EXPECT_FALSE(score.IsDefault());
       const auto& seek_score = seek_it->PrepareScore({
         .scorer = &ord,
-        .segment = &segment,
+        .norms = &segment,
       });
       EXPECT_FALSE(seek_score.IsDefault());
 

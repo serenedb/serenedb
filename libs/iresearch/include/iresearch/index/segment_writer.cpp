@@ -250,14 +250,16 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
 
   _seg_name = meta.name;
 
-  if (!_field_writer) {
+  const auto* active = ActiveFieldOptions();
+  const auto dict_options = active ? active->GetDictOptions() : DictOptions{};
+  if (!_field_writer || dict_options != _dict_options) {
     auto& rm = _docs_context.get_allocator().Manager();
-    _field_writer = std::make_unique<burst_trie::FieldWriter>(
+    _field_writer = std::make_unique<term_dict::FieldWriter>(
       meta.codec->get_postings_writer(/*compaction=*/false, rm),
-      /*compaction=*/false, rm);
+      /*compaction=*/false, rm, dict_options);
+    _dict_options = dict_options;
   }
 
-  const auto* active = ActiveFieldOptions();
   _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
   _col_writer->SetFieldOptions(active);
   _fields.SetColWriter(_col_writer.get());

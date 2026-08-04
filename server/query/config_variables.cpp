@@ -441,11 +441,11 @@ constexpr std::pair<std::string_view, VariableDescription>
       kRowGroupSizeSetting,
       {
         LogicalTypeId::UINTEGER,
-        "Default column row-group size for INCLUDEd in newly created inverted "
-        "indexes. "
-        "Per-column (row_group_size = ...) and per-index WITH (row_group_size "
-        "= ...) override. Reads from existing indexes are unaffected. "
-        "Default: 122'880.",
+        "Default row-group size in newly created inverted indexes: the one "
+        "row group the stored columns, the norm columns and the row-group "
+        "partitioned postings all share. "
+        "Per-index WITH (row_group_size = ...) overrides. Reads from existing "
+        "indexes are unaffected. Default: 122'880.",
         [] { return duckdb::Value::UINTEGER(DEFAULT_ROW_GROUP_SIZE); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto n = value.GetValue<uint32_t>();
@@ -453,27 +453,6 @@ constexpr std::pair<std::string_view, VariableDescription>
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"row_group_size\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
-      kNormRowGroupSizeSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Default column row-group size for norm columns of text-indexed fields "
-        "(Norm feature) in newly created inverted indexes. "
-        "Per-column (row_group_size = ...) and per-index WITH (row_group_size "
-        "= ...) override. Reads from existing indexes are unaffected. "
-        "Default: 122'880.",
-        [] { return duckdb::Value::UINTEGER(122'880); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto n = value.GetValue<uint32_t>();
-          if (n == 0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"norm_row_group_size\": \"",
                                     value.ToString(), "\""));
           }
         },

@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <duckdb/common/mutex.hpp>
 #include <duckdb/common/projection_index.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -62,7 +63,6 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/vector_similarity_query.hpp>
 #include <iresearch/search/vector_similarity_scorer.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/string.hpp>
 #include <mutex>
 #include <ranges>
@@ -105,14 +105,68 @@ struct IResearchScanLocalState : public duckdb::LocalTableFunctionState {
   // EnsureSegmentQuery only when a scorer runs (inert for count/ts_dict).
   irs::PrepareCollector* prepare_collector = nullptr;
 
+  // This worker's place in the (segment, row group) grid: the last claimed
+  // item and the slot it keeps claiming from while that segment has row
+  // groups left.
+  IResearchScanGlobalState::RgClaim claim;
+
   // Whole-file filter classification of the segment this worker currently
   // scans: computed exactly once per claimed segment (at the claim site) and
   // consumed by StartSegment (HitBatcher binding) and the bulk FullScanner.
   uint32_t classified_seg = std::numeric_limits<uint32_t>::max();
   TableFilterDocIterator::SegmentClassification seg_cls;
+  // The claimed segment's deletions, cached with the classification. A segment
+  // with none must not pay for them: `SubReader::mask` hands the iterator back
+  // unwrapped, and asking it that is a virtual call per (query, row group) for
+  // an answer the segment gives once.
+  const irs::DocumentMask* seg_docs_mask = nullptr;
   // Per-worker filter-evaluation state (ExpressionExecutor + decode scratch),
   // built once per pushed filter and reused across segments and engines.
   ColFilterStateCache filter_states;
+
+  // Row-group grid of the segment this worker currently scans, and its cursor
+  // in it. The grid always comes from the segment's dictionary
+  // (`SubReader::RowGroups`), never from the catalog `row_group_size`: a
+  // dictionary that does not partition answers one row group spanning the
+  // segment while the catalog value is a real, smaller number.
+  irs::RowGroupLayout grid;
+  uint32_t rg = 0;
+  // The segment seen from inside `rg`: the scorers read norms through it, so
+  // it carries the base that maps the executing row group's local ids onto the
+  // segment rows the norms are stored in.
+  irs::RowGroupNormProvider norm_provider;
+
+  // This worker, as the queries it executes see it: the quantized-vector
+  // decode cursors it reuses across the row groups it claims of one segment,
+  // and the identity a query that caches per worker keys on. Neither can live
+  // in the prepared query -- workers share it while running different row
+  // groups.
+  irs::WorkerContext worker;
+
+  // The `.col` table-filter wrapper, owned by the worker: it carries ~16 KiB
+  // of inline staging arrays plus a ReadContext and the bound filter chain, so
+  // it is rebound per segment and re-pointed per row group, never rebuilt.
+  // Null until a segment with active filters is claimed.
+  std::unique_ptr<TableFilterDocIterator> col_filter;
+  uint32_t col_filter_seg = std::numeric_limits<uint32_t>::max();
+
+  // First segment row of a row group, i.e. what maps its local ids back to the
+  // segment. Taken as an argument rather than off `rg`: the ts_dict counters
+  // walk a term's own row-group list, which is not the worker's cursor.
+  uint64_t RowBase(uint32_t group) const noexcept {
+    return grid.Base(group) - irs::doc_limits::min();
+  }
+  irs::doc_id_t DocOffset(uint32_t group) const noexcept {
+    return static_cast<irs::doc_id_t>(RowBase(group));
+  }
+
+  // A row group's documents seen through the segment's deletions, or the
+  // iterator itself when there are none.
+  irs::DocIterator::ptr Mask(const irs::SubReader& seg,
+                             irs::DocIterator::ptr&& it, uint32_t group) const {
+    return seg_docs_mask ? seg.mask(std::move(it), DocOffset(group))
+                         : std::move(it);
+  }
 };
 
 struct SegDocBufferedScanLocalState : public IResearchScanLocalState {
@@ -173,14 +227,29 @@ struct StreamScanLocalState : public SegDocBufferedScanLocalState {
   irs::ScoreFunction streaming_score_function;
   irs::ColumnArgsFetcher score_fetcher;
 
-  void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                    uint32_t seg_idx, IResearchScanGlobalState& g);
+  // Start the claimed row group. The segment-level binding (PK column,
+  // HitBatcher) is redone only when the claim moved to another segment --
+  // consecutive claims of the same segment keep it.
+  void StartClaim(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                  uint32_t seg_idx, uint32_t claimed_rg,
+                  IResearchScanGlobalState& g);
   duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
                           IResearchScanGlobalState& g,
                           duckdb::DataChunk& output);
 
  protected:
   void PushHits(IResearchScanGlobalState& g);
+  // The streaming walk runs one row group at a time: the iterator tree is
+  // built fresh from that row group's posting lists and the worker claims the
+  // next one only once the batcher has drained this one.
+  void StartRowGroup(IResearchScanGlobalState& g);
+  void EndRowGroupWalk() noexcept { _rg_seg = nullptr; }
+
+ private:
+  const irs::SubReader* _rg_seg = nullptr;
+  uint32_t _rg_seg_idx = 0;
+  // The segment the HitBatcher is bound to.
+  uint32_t _batcher_seg = std::numeric_limits<uint32_t>::max();
 };
 
 // ColScan: bulk units read `.col` through per-segment FullScanners; a
@@ -193,8 +262,8 @@ struct ColScanLocalState : public StreamScanLocalState {
   uint64_t bulk_seg_doc_count = 0;
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
 
-  void StartUnit(duckdb::ClientContext& ctx,
-                 const IResearchScanGlobalState::ScanUnit& unit,
+  void StartUnit(duckdb::ClientContext& ctx, const irs::SubReader& seg,
+                 uint32_t seg_idx, uint32_t claimed_rg, bool bulk,
                  IResearchScanGlobalState& g);
   duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
                           IResearchScanGlobalState& g,
@@ -210,10 +279,12 @@ struct CountScanLocalState : public IResearchScanLocalState {
   uint64_t local_emitted = 0;
 };
 
+// What the ts_dict per-term counting helpers need to reach the worker: the
+// active `.col` filters, its filter wrapper and its row-group cursor all live
+// on the local state.
 struct ColFilterCtx {
-  std::span<const TableFilterDocIterator::FilterSpec> active;
   IResearchScanGlobalState* g = nullptr;
-  ColFilterStateCache* states = nullptr;
+  IResearchScanLocalState* l = nullptr;
 };
 
 struct TsDictLocalState : public IResearchScanLocalState {
@@ -239,20 +310,23 @@ struct TsDictLocalState : public IResearchScanLocalState {
   std::vector<FieldState> fields;
   CountMode count_mode = CountMode::Meta;
   const irs::QueryBuilder* where_query = nullptr;
-  TableFilterDocIterator::SegmentClassification seg_cls;
-  ColFilterStateCache filter_states;
+  // This worker's place in the term-range grid: the last claimed unit and the
+  // segment slot it keeps claiming from while that segment has ranges left.
+  IResearchScanGlobalState::TermRangeClaim term_claim;
 
-  void StartSegment(duckdb::ClientContext& ctx, const irs::SubReader& seg,
-                    uint32_t seg_idx, IResearchScanGlobalState& g);
+  void StartUnit(IResearchScanGlobalState& g,
+                 const IResearchScanGlobalState::TermRangeClaim& claim);
   duckdb::idx_t EmitChunk(duckdb::ClientContext& ctx,
                           IResearchScanGlobalState& g,
                           duckdb::DataChunk& output,
                           duckdb::idx_t output_start);
 
  private:
-  bool NextField();
+  void StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
+                    IResearchScanGlobalState& g);
   irs::TermIterator::ptr MakeTermSource(const FieldState& field,
-                                        const irs::TermReader& reader);
+                                        const irs::TermReader& reader,
+                                        const irs::TermRange& range);
   duckdb::idx_t EmitField(duckdb::DataChunk& output, duckdb::idx_t output_start,
                           duckdb::idx_t capacity);
   duckdb::idx_t AppendNullRow(duckdb::DataChunk& output,
@@ -261,8 +335,10 @@ struct TsDictLocalState : public IResearchScanLocalState {
   const irs::SubReader* _seg = nullptr;
   ColFilterCtx _cf;
   bool _null_pending = false;
+  // No unit of this segment emits anything: it is dead by whole-file
+  // classification, or the WHERE query matches nothing in it.
+  bool _segment_dead = false;
   const FieldState* _field = nullptr;
-  const FieldState* _next_field = nullptr;
   CountMode _cursor_mode = CountMode::Meta;
   irs::TermIterator::ptr _cursor;
 };
@@ -279,10 +355,20 @@ void RunTsDictScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
                    TsDictLocalState& l, duckdb::DataChunk& output);
 
 struct HitsChunk {
+  // `docs` are segment-wide ids spanning several row groups, so a consumer
+  // that needs the (row group, local id) form has to decompose them.
+  static constexpr uint32_t kCrossRowGroup =
+    std::numeric_limits<uint32_t>::max();
+
   std::span<const irs::doc_id_t> docs;
   std::span<const float> scores;
   std::span<const uint32_t> segs;
   uint32_t fixed_seg = 0;
+  // The row group `docs` are local to: the streaming path stages one row group
+  // per batch, so a hit is (rg, docs[i]) with no arithmetic. The top-k path's
+  // hit buffer is ordered across the segment's row groups and holds
+  // segment-wide ids, which is what kCrossRowGroup says.
+  uint32_t rg = kCrossRowGroup;
 
   size_t size() const noexcept { return docs.size(); }
   uint32_t seg(size_t i) const noexcept {
@@ -296,9 +382,11 @@ inline void SortScoreDocsBySegDoc(std::span<irs::ScoreDoc> hits) {
   });
 }
 
+// `rg` is the row group the batcher staged, or HitsChunk::kCrossRowGroup when
+// the staged ids are segment-wide.
 duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                              IResearchScanGlobalState& g,
-                             SegDocBufferedScanLocalState& l,
+                             SegDocBufferedScanLocalState& l, uint32_t rg,
                              duckdb::DataChunk& output);
 duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx,
                             IResearchScanGlobalState& g,
@@ -1079,50 +1167,278 @@ duckdb::Value UnitOrderKey(const irs::ColumnReader& reader,
 }
 
 // ORDER BY <covered column> LIMIT, one level below BuildSegmentScanOrder:
-// claim a segment's bulk units best-first by the order key's per-column-
-// segment statistics, so the TopN dynamic bound tightens on the best unit
-// first and DeadUntil kills the rest -- rows within a file are laid out in
-// insert order, which correlates with the key exactly when it matters.
-// Reorders col_scan.units[first_unit..] in place (they all belong to one
-// segment).
-void OrderSegmentScanUnits(IResearchScanGlobalState& g,
-                           const irs::SubReader& seg,
-                           const SereneDBScanBindData::ScanOrder& order,
-                           size_t first_unit) {
+// claim a segment's row groups best-first by the order key's per-column-
+// segment statistics, so the TopN dynamic bound tightens on the best row
+// group first and DeadUntil kills the rest -- rows within a file are laid out
+// in insert order, which correlates with the key exactly when it matters.
+// The scan order is a claim policy, nothing else: it permutes which row group
+// the i-th claim of this slot runs.
+void OrderSlotRowGroups(std::vector<uint32_t>& out, uint32_t rg_count,
+                        const irs::SubReader& seg,
+                        const SereneDBScanBindData::ScanOrder& order) {
+  // The slot's run of the flat order exists whether or not this segment can
+  // be sorted: an unsortable one runs its row groups ascending, which is what
+  // the identity fill says.
+  const auto begin = out.size();
+  for (uint32_t rg = 0; rg < rg_count; ++rg) {
+    out.push_back(rg);
+  }
+  if (rg_count < 2) {
+    return;
+  }
   const auto field = static_cast<irs::field_id>(order.column.id());
   const auto* col_reader = seg.GetColReader();
   const auto* reader = col_reader ? col_reader->Column(field) : nullptr;
   if (reader == nullptr) {
     return;
   }
-  const std::span units{g.col_scan.units.data() + first_unit,
-                        g.col_scan.units.size() - first_unit};
+  const auto grid = seg.RowGroups();
   std::vector<ScanOrderKey> keys;
-  keys.reserve(units.size());
-  for (uint32_t i = 0; i < units.size(); ++i) {
-    keys.push_back({i, UnitOrderKey(*reader, order, units[i].begin,
-                                    units[i].begin + units[i].count)});
+  keys.reserve(rg_count);
+  for (uint32_t rg = 0; rg < rg_count; ++rg) {
+    const uint64_t base = grid.Base(rg) - irs::doc_limits::min();
+    keys.push_back(
+      {rg, UnitOrderKey(*reader, order, base, base + grid.Rows(rg))});
   }
   SortScanOrderKeys(keys, order);
-  std::vector<IResearchScanGlobalState::ScanUnit> reordered;
-  reordered.reserve(units.size());
-  for (const auto& k : keys) {
-    reordered.push_back(units[k.id]);
+  for (size_t i = 0; i != keys.size(); ++i) {
+    out[begin + i] = keys[i].id;
   }
-  absl::c_copy(reordered, units.begin());
+}
+
+// What a ts_dict field enumerates its terms with. `Walk` is the forward pass
+// over the dictionary; the other two answer for the WHOLE field in one go --
+// a having filter compiles its own term iterator, and `min`/`max` over a
+// segment whose meta counts are exact read only the two bound terms.
+enum class TsDictSource : uint8_t {
+  Walk,
+  Having,
+  MinMax,
+};
+
+TsDictSource PickTsDictSource(TsDictTermUses uses, const irs::Filter* having,
+                              bool masked) {
+  using enum TsDictTermUses;
+  if (having) {
+    return TsDictSource::Having;
+  }
+  if ((uses == kMax || uses == (kMin | kMax)) && !masked) {
+    return TsDictSource::MinMax;
+  }
+  return TsDictSource::Walk;
+}
+
+// Whether this field's terms may be claimed a range at a time. Only the
+// forward walk may: a whole-field source has no ranges to cut, and `min`
+// stops at the first live term the walk reaches, which is the field's minimum
+// only while the walk starts at the field's first term.
+bool TsDictSplittable(TsDictTermUses uses, const irs::Filter* having,
+                      bool masked) {
+  return PickTsDictSource(uses, having, masked) == TsDictSource::Walk &&
+         uses != TsDictTermUses::kMin;
 }
 
 }  // namespace
+
+void IResearchScanGlobalState::BuildGrid(const SereneDBScanBindData& bind) {
+  // The claim order is narrowed to exactly the claimable segments, which is
+  // what lets a slot index be a segment index: nothing in the grid repeats
+  // `segment_order`, and `SegmentAt` answers for both.
+  std::vector<uint32_t> claim_order;
+  claim_order.reserve(claimable_segments);
+  for (uint32_t claimed = 0; claimed < claimable_segments; ++claimed) {
+    const auto si = SegmentAt(claimed);
+    const auto& seg = (*reader)[si];
+    if (seg.docs_count() != 0 && seg.RowGroups().count != 0) {
+      claim_order.push_back(si);
+    }
+  }
+  claimable_segments = static_cast<uint32_t>(claim_order.size());
+  segment_order = std::move(claim_order);
+
+  const bool ordered =
+    bind.scan_order && (mode == ScanMode::Stream || mode == ScanMode::ColScan);
+  grid.rg_base.reserve(size_t{claimable_segments} + 1);
+  grid.rg_base.push_back(0);
+  for (uint32_t slot = 0; slot != claimable_segments; ++slot) {
+    const auto& seg = (*reader)[segment_order[slot]];
+    const auto rg_count = seg.RowGroups().count;
+    if (ordered) {
+      OrderSlotRowGroups(grid.rg_order, rg_count, seg, *bind.scan_order);
+    }
+    grid.rg_base.push_back(grid.rg_base.back() + rg_count);
+  }
+  // The cursors are built once at their final size -- never grown, never
+  // moved, because a claim in flight holds a reference to one.
+  grid.cursors = std::vector<RgCursor>(claimable_segments);
+  // A run has to leave every worker something to claim, so the grid is cut
+  // into at least twice as many runs as there are workers.
+  const auto workers = std::max<uint64_t>(pool_threads, 1);
+  grid.run = static_cast<uint32_t>(
+    std::clamp<uint64_t>(grid.TotalRgs() / (2 * workers), 1, kMaxRgRun));
+}
+
+bool IResearchScanGlobalState::ClaimRowGroup(RgClaim& claim) {
+  const auto emit = [&](uint32_t slot) {
+    claim.slot = slot;
+    claim.seg = SegmentAt(slot);
+    claim.rg = grid.RgAt(slot, claim.taken++);
+    return true;
+  };
+  // The rest of the run this worker already claimed: affinity by
+  // construction, and no atomic to hand it the next row group.
+  if (claim.taken != claim.end) {
+    return emit(claim.slot);
+  }
+  const auto take = [&](uint32_t slot) {
+    const auto count = grid.RgCount(slot);
+    const auto begin =
+      grid.cursors[slot].next.fetch_add(grid.run, std::memory_order_relaxed);
+    if (begin >= count) {
+      return false;
+    }
+    claim.taken = begin;
+    claim.end = std::min(begin + grid.run, count);
+    return emit(slot);
+  };
+  // Affinity: stay on the segment this worker already has bound.
+  if (claim.slot < grid.Slots() && take(claim.slot)) {
+    return true;
+  }
+  // A segment no other worker has started yet.
+  for (;;) {
+    const auto fresh = grid.next_slot.fetch_add(1, std::memory_order_relaxed);
+    if (fresh >= grid.Slots()) {
+      break;
+    }
+    if (take(fresh)) {
+      return true;
+    }
+  }
+  // Steal, starting past this worker's own slot so two workers that fall
+  // through together do not pick the same victim first.
+  const auto slots = grid.Slots();
+  const auto start = claim.slot < slots ? claim.slot : 0;
+  for (uint32_t i = 1; i <= slots; ++i) {
+    const auto victim = start + i < slots ? start + i : start + i - slots;
+    if (grid.cursors[victim].next.load(std::memory_order_relaxed) <
+          grid.RgCount(victim) &&
+        take(victim)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+uint64_t IResearchScanGlobalState::ClaimedRowGroups() const {
+  uint64_t claimed = 0;
+  for (uint32_t slot = 0; slot != grid.Slots(); ++slot) {
+    claimed += std::min(grid.cursors[slot].next.load(std::memory_order_relaxed),
+                        grid.RgCount(slot));
+  }
+  return claimed;
+}
+
+void IResearchScanGlobalState::BuildTermRangeGrid(
+  const SereneDBScanBindData& bind) {
+  const auto& reqs = bind.ts_dicts;
+  // One share per worker of each (segment, field): a field's own block count
+  // caps it, so a small dictionary stays a single unit and a big one spreads.
+  std::vector<irs::TermRange> ranges(std::max<duckdb::idx_t>(pool_threads, 1));
+  term_grid.slots = std::vector<TermRangeSlot>(total_segments);
+  for (uint32_t si = 0; si < total_segments; ++si) {
+    const auto& seg = (*reader)[si];
+    // The mode the worker will settle on, as far as init can know it: a
+    // filtered scan counts through the query, and deletes force the masked
+    // walk. An active `.col` filter can only turn `Meta` into `Masked`, which
+    // costs a split and never claims one a whole-field source would answer.
+    const bool masked = !filter && seg.live_docs_count() != seg.docs_count();
+    auto& slot = term_grid.slots[si];
+    slot.seg = si;
+    slot.begin = static_cast<uint32_t>(term_grid.units.size());
+    for (uint32_t fi = 0; fi < reqs.size(); ++fi) {
+      const auto& req = reqs[fi];
+      const auto* field = seg.field(req.field_id);
+      size_t count = 0;
+      if (field && field->size() != 0) {
+        if (TsDictSplittable(req.term_uses, req.having_filter.get(), masked)) {
+          count = field->TermRanges(ranges);
+        } else {
+          ranges.front() = {};
+          count = 1;
+        }
+      }
+      const bool nulls = irs::field_limits::valid(req.null_field_id);
+      if (count == 0 && !nulls) {
+        continue;
+      }
+      // A field with no terms in this segment still owes its NULL-term row.
+      for (size_t i = 0; i < std::max<size_t>(count, 1); ++i) {
+        term_grid.units.emplace_back(
+          fi, i < count ? ranges[i] : irs::TermRange{}, nulls && i == 0);
+      }
+    }
+    slot.count = static_cast<uint32_t>(term_grid.units.size() - slot.begin);
+  }
+}
+
+bool IResearchScanGlobalState::ClaimTermRange(TermRangeClaim& claim) {
+  const auto take = [&](uint32_t slot_idx) {
+    auto& slot = term_grid.slots[slot_idx];
+    const auto claimed = slot.next.fetch_add(1, std::memory_order_relaxed);
+    if (claimed >= slot.count) {
+      return false;
+    }
+    claim.slot = slot_idx;
+    claim.seg = slot.seg;
+    claim.unit = slot.begin + claimed;
+    return true;
+  };
+  // Affinity: stay on the segment this worker already classified and prepared.
+  if (claim.slot < term_grid.slots.size() && take(claim.slot)) {
+    return true;
+  }
+  for (;;) {
+    const auto fresh =
+      term_grid.next_slot.fetch_add(1, std::memory_order_relaxed);
+    if (fresh >= term_grid.slots.size()) {
+      break;
+    }
+    if (take(fresh)) {
+      return true;
+    }
+  }
+  const auto slots = static_cast<uint32_t>(term_grid.slots.size());
+  const auto start = claim.slot < slots ? claim.slot : 0;
+  for (uint32_t i = 1; i <= slots; ++i) {
+    const auto victim = start + i < slots ? start + i : start + i - slots;
+    if (term_grid.slots[victim].next.load(std::memory_order_relaxed) <
+          term_grid.slots[victim].count &&
+        take(victim)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+uint64_t IResearchScanGlobalState::ClaimedTermRanges() const {
+  uint64_t claimed = 0;
+  for (const auto& slot : term_grid.slots) {
+    claimed += std::min(slot.next.load(std::memory_order_relaxed), slot.count);
+  }
+  return claimed;
+}
 
 void ClassifySegmentColFilters(
   const irs::SubReader& seg, IResearchScanGlobalState& g,
   ColFilterStateCache& states,
   TableFilterDocIterator::SegmentClassification& out);
 
-irs::DocIterator::ptr MaybeWrapColFilter(
-  irs::DocIterator::ptr inner, const irs::SubReader& seg,
-  std::span<const TableFilterDocIterator::FilterSpec> active,
-  IResearchScanGlobalState& g, ColFilterStateCache& states);
+irs::DocIterator::ptr MaybeWrapColFilter(irs::DocIterator::ptr inner,
+                                         const irs::SubReader& seg,
+                                         IResearchScanGlobalState& g,
+                                         IResearchScanLocalState& l,
+                                         uint32_t rg);
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
@@ -1143,6 +1459,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->total_segments = ss.snapshot->reader.size();
   state->claimable_segments = static_cast<uint32_t>(state->total_segments);
   state->vector_scorer = ss.vector_scorer ? &*ss.vector_scorer : nullptr;
+  state->pool_threads =
+    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->mode = DecideScanMode(*state, ss);
@@ -1161,8 +1479,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     if (ss.stored_filter) {
       state->filter = ss.stored_filter.get();
-      state->queries.resize(ss.snapshot->reader.size());
+      state->InitQuerySlots();
     }
+    state->BuildTermRangeGrid(bind_data);
     return duckdb::unique_ptr_cast<IResearchScanGlobalState,
                                    duckdb::GlobalTableFunctionState>(
       std::move(state));
@@ -1202,7 +1521,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->filter =
       ss.stored_filter ? ss.stored_filter.get() : &MatchAllFilter();
   }
-  state->queries.resize(ss.snapshot->reader.size());
+  state->InitQuerySlots();
 
   if (!state->col_filters.empty() && state->total_segments != 0) {
     ColFilterStateCache init_states;
@@ -1221,6 +1540,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         static_cast<uint32_t>(state->segment_order.size());
     }
   }
+
+  // Claim order is decided before the grid is built: the segment permutation
+  // orders the slots, and each slot's row groups are ordered inside it.
+  if (ss.scan_order &&
+      (state->mode == ScanMode::Stream || state->mode == ScanMode::ColScan)) {
+    BuildSegmentScanOrder(*state, *ss.scan_order);
+  }
+  state->BuildGrid(bind_data);
 
   if (state->mode == ScanMode::Count) {
     return state;
@@ -1282,51 +1609,50 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       WandEnabled(bind_data.inverted_index.get(), ss.text_scorer);
   }
 
-  if (ss.scan_order &&
-      (state->mode == ScanMode::Stream || state->mode == ScanMode::ColScan)) {
-    BuildSegmentScanOrder(*state, *ss.scan_order);
-  }
-
-  if (state->mode == ScanMode::ColScan) {
-    // Search tables carry no inverted_index; fall back to the default unit.
-    uint64_t rg_rows = bind_data.inverted_index
-                         ? bind_data.inverted_index->GetOptions().row_group_size
-                         : 0;
-    if (rg_rows == 0) {
-      rg_rows = DEFAULT_ROW_GROUP_SIZE;
-    }
-    const uint64_t unit_rows = rg_rows >= DEFAULT_ROW_GROUP_SIZE
-                                 ? rg_rows
-                                 : DEFAULT_ROW_GROUP_SIZE / rg_rows * rg_rows;
-    // Walking claim order keeps units grouped whole-segment best-first; with
-    // a scan order, a segment's bulk units are additionally claimed best-first
-    // by the order key's per-column-segment statistics (a deleted segment is
-    // one forward masked-streaming unit -- doc iterators cannot reorder).
-    for (uint32_t claimed = 0; claimed < state->claimable_segments; ++claimed) {
-      const auto si = state->SegmentAt(claimed);
-      const auto& seg = (*state->reader)[si];
-      const uint64_t docs = seg.docs_count();
-      if (docs == 0) {
-        continue;
-      }
-      if (seg.live_docs_count() != docs) {
-        state->col_scan.units.push_back({si, 0, docs, /*bulk=*/false});
-        continue;
-      }
-      const auto first_unit = state->col_scan.units.size();
-      for (uint64_t begin = 0; begin < docs; begin += unit_rows) {
-        state->col_scan.units.push_back(
-          {si, begin, std::min(unit_rows, docs - begin), /*bulk=*/true});
-      }
-      if (ss.scan_order && state->col_scan.units.size() - first_unit > 1) {
-        OrderSegmentScanUnits(*state, seg, *ss.scan_order, first_unit);
-      }
-    }
-  }
-
   return duckdb::unique_ptr_cast<IResearchScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(
     std::move(state));
+}
+
+const irs::QueryBuilder& IResearchScanGlobalState::EnsureSegmentQuery(
+  irs::PrepareCollector*& worker_collector, const irs::SubReader& seg,
+  uint32_t seg_idx) {
+  auto& entry = queries[seg_idx];
+  if (const auto* published = entry.published.load(std::memory_order_acquire)) {
+    return *published;
+  }
+  irs::PrepareCollector* collector = nullptr;
+  if (scorer_obj) {
+    if (!worker_collector) {
+      const uint32_t slot =
+        collector_slots.fetch_add(1, std::memory_order_relaxed);
+      SDB_ASSERT(slot < collectors.size());
+      collectors[slot] = filter->MakeCollector(scorer_obj.get());
+      worker_collector = collectors[slot].get();
+    }
+    collector = worker_collector;
+  }
+  auto built = filter->PrepareSegment(seg, {.collector = collector});
+  SDB_ASSERT(built);
+  // Two workers can build the same segment only on the paths that skip the
+  // prepare barrier -- Count, ts_dict, filter-only Stream, vector -- and none
+  // of those ever reads what a collector accumulated: the reduce that turns
+  // the per-worker collectors into `g.stats` runs only inside RunPrepareUnits,
+  // which claims each segment with an exclusive counter and finishes before
+  // any scan claim, so on every lazy path `g.stats` stays empty and Execute
+  // gets StatsBuffer::Empty(). PrepareSegment therefore has no accumulating
+  // side effect where it can race, and a duplicate build costs a repeated
+  // dictionary lookup and nothing else: whoever publishes first owns the
+  // query, the loser drops its copy and returns the published one so every
+  // caller -- itself included -- holds a reference that outlives the scan.
+  const irs::QueryBuilder* expected = nullptr;
+  if (!entry.published.compare_exchange_strong(expected, built.get(),
+                                               std::memory_order_release,
+                                               std::memory_order_acquire)) {
+    return *expected;
+  }
+  entry.owned = std::move(built);
+  return *entry.owned;
 }
 
 namespace {
@@ -1335,48 +1661,109 @@ const irs::QueryBuilder& EnsureSegmentQuery(IResearchScanGlobalState& g,
                                             IResearchScanLocalState& l,
                                             const irs::SubReader& seg,
                                             uint32_t seg_idx) {
-  auto& q = g.queries[seg_idx];
-  if (!q) {
-    irs::PrepareCollector* collector = nullptr;
-    if (g.scorer_obj) {
-      if (!l.prepare_collector) {
-        const uint32_t slot =
-          g.collector_slots.fetch_add(1, std::memory_order_relaxed);
-        SDB_ASSERT(slot < g.collectors.size());
-        g.collectors[slot] = g.filter->MakeCollector(g.scorer_obj.get());
-        l.prepare_collector = g.collectors[slot].get();
-      }
-      collector = l.prepare_collector;
-    }
-    q = g.filter->PrepareSegment(seg, {.collector = collector});
-  }
-  return *q;
+  return g.EnsureSegmentQuery(l.prepare_collector, seg, seg_idx);
 }
 
-void PreparePhase(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
-                  IResearchScanLocalState& l) {
+// One finished prepare unit. The last one reduces the per-worker collectors
+// into the query's term statistics and releases the barrier -- and it counts
+// however its scope is left, because a unit that throws must release the
+// barrier too: workers parked on it would otherwise wait for a unit that will
+// never finish while the error unwinds through the worker that raised it.
+class PrepareUnitScope {
+ public:
+  explicit PrepareUnitScope(IResearchScanGlobalState& g) noexcept : _g{g} {}
+
+  ~PrepareUnitScope() {
+    if (_g.prepare_count.fetch_add(1, std::memory_order_acq_rel) + 1 !=
+        _g.total_segments) {
+      return;
+    }
+    try {
+      SDB_IF_FAILURE("SearchPrepareStatsFault") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+      const uint32_t used = _g.collector_slots.load(std::memory_order_relaxed);
+      auto& merged = *_g.collectors[0];
+      merged.MergeAll([&](irs::PrepareCollector::MergeSink sink) {
+        for (uint32_t i = 1; i < used; ++i) {
+          sink(*_g.collectors[i]);
+        }
+      });
+      _g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
+    } catch (...) {
+      _g.prepare_error = std::current_exception();
+    }
+    _g.prepare_finished.Notify();
+  }
+
+ private:
+  IResearchScanGlobalState& _g;
+};
+
+// Run prepare units until none are left. The unit is one segment (its
+// dictionary lookups + its share of the corpus statistics), claimed with one
+// atomic. True = the statistics are published and the caller may score.
+bool RunPrepareUnits(IResearchScanGlobalState& g,
+                     irs::PrepareCollector*& worker_collector) {
   for (;;) {
     const auto seg = g.prepare_segment.fetch_add(1, std::memory_order_relaxed);
     if (seg >= g.total_segments) {
-      break;
+      return g.prepare_finished.HasBeenNotified();
     }
     SDB_ASSERT((*g.reader)[seg].live_docs_count() != 0);
-    EnsureSegmentQuery(g, l, (*g.reader)[seg], seg);
-    if (g.prepare_count.fetch_add(1, std::memory_order_acq_rel) + 1 ==
-        g.total_segments) {
-      const uint32_t used = g.collector_slots.load(std::memory_order_relaxed);
-      auto& merged = *g.collectors[0];
-      merged.MergeAll([&](irs::PrepareCollector::MergeSink sink) {
-        for (uint32_t i = 1; i < used; ++i) {
-          sink(*g.collectors[i]);
-        }
-      });
-      g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
-      g.prepare_finished.Notify();
-      return;
+    {
+      const PrepareUnitScope unit{g};
+      g.EnsureSegmentQuery(worker_collector, (*g.reader)[seg], seg);
+    }
+    if (g.prepare_finished.HasBeenNotified()) {
+      return true;
     }
   }
-  g.prepare_finished.WaitForNotification();
+}
+
+// What a parked worker leaves behind. Prepare units are claimed with a
+// monotonic counter, so a worker only parks once every unit is claimed and
+// this task finds nothing left to run -- it exists to complete when the
+// reduce does, which is what wakes the worker. Scheduling refused
+// (`can_block == false`) runs it inline instead, which is the pre-parking
+// behaviour: wait here for the reduce.
+class PrepareAsyncTask final : public duckdb::AsyncTask {
+ public:
+  explicit PrepareAsyncTask(IResearchScanGlobalState& g) noexcept : _g{g} {}
+
+  void Execute() final {
+    irs::PrepareCollector* collector = nullptr;
+    if (!RunPrepareUnits(_g, collector)) {
+      _g.prepare_finished.WaitForNotification();
+    }
+  }
+
+ private:
+  IResearchScanGlobalState& _g;
+};
+
+// The scored-query barrier. False = this worker parked: it emits no rows and
+// duckdb takes its thread back until the prepare tasks complete, then calls
+// the scan again.
+bool PreparePhase(IResearchScanGlobalState& g, IResearchScanLocalState& l,
+                  duckdb::TableFunctionInput& data) {
+  if (!RunPrepareUnits(g, l.prepare_collector)) {
+    if (data.results_execution_mode ==
+        duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
+      duckdb::vector<duckdb::unique_ptr<duckdb::AsyncTask>> tasks;
+      tasks.push_back(duckdb::make_uniq<PrepareAsyncTask>(g));
+      data.async_result = duckdb::AsyncResult{std::move(tasks)};
+      return false;
+    }
+    g.prepare_finished.WaitForNotification();
+  }
+  // Past the barrier the statistics are whatever the reduce produced -- so a
+  // reduce that failed fails the query here, on every worker, instead of
+  // letting them score against an empty StatsBuffer.
+  if (g.prepare_error) {
+    std::rethrow_exception(g.prepare_error);
+  }
+  return true;
 }
 
 void WriteChunkOffsets(std::vector<FieldEntry>& offsets_entries,
@@ -1396,21 +1783,43 @@ void WriteChunkOffsets(std::vector<FieldEntry>& offsets_entries,
   }
   const irs::IndexReader& reader = *g.reader;
   const irs::SubReader* cached_seg = nullptr;
+  irs::RowGroupLayout grid;
+  // The prepared entries survive the call -- the next batch of one segment
+  // reuses them -- while the segment and its grid do not, so they are tracked
+  // apart: a batch that inherits the entries still has to load both.
+  uint32_t cached_seg_idx = std::numeric_limits<uint32_t>::max();
   for (size_t i = 0; i < view.size(); ++i) {
     const uint32_t seg_idx = view.seg(i);
+    if (seg_idx != cached_seg_idx) {
+      cached_seg = &reader[seg_idx];
+      grid = cached_seg->RowGroups();
+      cached_seg_idx = seg_idx;
+    }
     if (seg_idx != offsets_prepped_seg) {
       for (auto& entry : offsets_entries) {
         entry.state.Clear();
       }
-      cached_seg = &reader[seg_idx];
       OffsetsCollector visitor{offsets_entries};
-      const auto& seg_query = g.queries[seg_idx];
+      const auto* seg_query =
+        g.queries[seg_idx].published.load(std::memory_order_acquire);
       SDB_ASSERT(seg_query);
       seg_query->Visit(visitor, irs::kNoBoost);
       offsets_prepped_seg = seg_idx;
     }
+    // The highlighter re-reads the term positions, so it needs the hit back in
+    // the (row group, local id) form the postings are stored in. The streaming
+    // path staged one row group, so it already is that form; only the top-k
+    // path's cross-row-group buffer pays the grid division.
+    auto rg = view.rg;
+    auto local = view.docs[i];
+    if (rg == HitsChunk::kCrossRowGroup) {
+      rg = static_cast<uint32_t>((local - irs::doc_limits::min()) /
+                                 grid.rows_per_group);
+      local -=
+        static_cast<irs::doc_id_t>(grid.Base(rg) - irs::doc_limits::min());
+    }
     for (auto& entry : offsets_entries) {
-      FillRowOffsets(entry.state, *cached_seg, view.docs[i], entry.limit,
+      FillRowOffsets(entry.state, *cached_seg, rg, local, entry.limit,
                      offsets_doc_scratch);
       WriteRowOffsets(output.data[entry.output_idx],
                       static_cast<duckdb::idx_t>(i), offsets_doc_scratch);
@@ -1457,30 +1866,102 @@ void BuildOffsetsEntries(Lstate& lstate, duckdb::TableFunctionInitInput& input,
 }
 
 uint32_t CountDocs(irs::DocIterator::ptr docs, const irs::SubReader& seg,
-                   bool count_all, const ColFilterCtx& cf) {
-  docs = MaybeWrapColFilter(std::move(docs), seg, cf.active, *cf.g, *cf.states);
+                   bool count_all, const ColFilterCtx& cf, uint32_t rg) {
+  docs = MaybeWrapColFilter(std::move(docs), seg, *cf.g, *cf.l, rg);
   if (count_all) {
     return static_cast<uint32_t>(docs->count());
   }
   return irs::doc_limits::eof(docs->advance()) ? 0 : 1;
 }
 
+// `|a n b|`, or 1 as soon as they meet when only existence is asked. The
+// cheaper side leads, which is the order MakeConjunction sorts into. Both
+// iterators stay where the caller put them: this is what the two ScoreAdapters
+// and the Conjunction it replaces cost a heap allocation each for, per
+// (term, row group).
+uint32_t CountIntersection(irs::DocIterator& a, irs::DocIterator& b,
+                           bool count_all) {
+  uint32_t live = 0;
+  auto doc = a.advance();
+  while (!irs::doc_limits::eof(doc)) {
+    const auto other = b.seek(doc);
+    if (irs::doc_limits::eof(other)) {
+      break;
+    }
+    if (other != doc) {
+      doc = a.seek(other);
+      continue;
+    }
+    ++live;
+    if (!count_all) {
+      break;
+    }
+    doc = a.advance();
+  }
+  return live;
+}
+
+// The two `ts_dict` per-term counting shapes. A term's postings are one list
+// per row group, so both sum over the row groups the term occurs in -- the
+// term's own list, never the segment's grid, which on a large dictionary is
+// one trip per row group per term to find the few that hold anything.
 uint32_t WhereLiveDocs(irs::TermIterator& it, const irs::SubReader& seg,
                        const irs::QueryBuilder& where, bool count_all,
                        const ColFilterCtx& cf) {
-  std::vector<irs::ScoreAdapter> itrs;
-  itrs.reserve(2);
-  itrs.emplace_back(it.postings(irs::IndexFeatures::None));
-  itrs.emplace_back(where.Execute({}, irs::StatsBuffer::Empty()));
-  return CountDocs(irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
-                                        seg.docs_count(), std::move(itrs)),
-                   seg, count_all, cf);
+  auto& l = *cf.l;
+  uint32_t live = 0;
+  const auto rgs = it.RowGroups();
+  SDB_ASSERT(!rgs.empty());
+  // The `.col` wrapper narrows one iterator, so with filters active the two
+  // sides are materialized into a conjunction beneath it -- for the probe as
+  // much as for the count, which is what makes them one answer. Everything
+  // else is a leapfrog between the two iterators the caller already holds.
+  const bool bulk = !l.seg_cls.active.empty();
+  for (const auto& group : rgs) {
+    SDB_ASSERT(group.rg < l.grid.count);
+    auto term_docs = it.RowGroupPostings(irs::IndexFeatures::None, group.rg);
+    SDB_ASSERT(term_docs);
+    auto where_docs = where.Execute({.rg = group.rg, .worker = &l.worker},
+                                    irs::StatsBuffer::Empty());
+    if (bulk) {
+      std::vector<irs::ScoreAdapter> itrs;
+      itrs.reserve(2);
+      itrs.emplace_back(std::move(term_docs));
+      itrs.emplace_back(std::move(where_docs));
+      live +=
+        CountDocs(irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                                       l.grid.Rows(group.rg), std::move(itrs)),
+                  seg, count_all, cf, group.rg);
+    } else if (irs::CostAttr::extract(*term_docs) <=
+               irs::CostAttr::extract(*where_docs)) {
+      live += CountIntersection(*term_docs, *where_docs, count_all);
+    } else {
+      live += CountIntersection(*where_docs, *term_docs, count_all);
+    }
+    if (!count_all && live != 0) {
+      break;
+    }
+  }
+  return live;
 }
 
 uint32_t MaskedLiveDocs(irs::TermIterator& it, const irs::SubReader& seg,
                         bool count_all, const ColFilterCtx& cf) {
-  return CountDocs(seg.mask(it.postings(irs::IndexFeatures::None)), seg,
-                   count_all, cf);
+  auto& l = *cf.l;
+  uint32_t live = 0;
+  const auto rgs = it.RowGroups();
+  SDB_ASSERT(!rgs.empty());
+  for (const auto& group : rgs) {
+    SDB_ASSERT(group.rg < l.grid.count);
+    auto term_docs = it.RowGroupPostings(irs::IndexFeatures::None, group.rg);
+    SDB_ASSERT(term_docs);
+    live += CountDocs(l.Mask(seg, std::move(term_docs), group.rg), seg,
+                      count_all, cf, group.rg);
+    if (!count_all && live != 0) {
+      break;
+    }
+  }
+  return live;
 }
 
 class MinMaxTermsIterator : public irs::TermIterator {
@@ -1501,7 +1982,8 @@ class MinMaxTermsIterator : public irs::TermIterator {
 
   void read() final {}
 
-  irs::DocIterator::ptr postings(irs::IndexFeatures /*features*/) const final {
+  irs::DocIterator::ptr RowGroupPostings(irs::IndexFeatures /*features*/,
+                                         uint32_t /*rg*/) const final {
     return irs::DocIterator::empty();
   }
 
@@ -1524,7 +2006,7 @@ uint32_t NullFieldLiveCount(const irs::SubReader& seg, irs::field_id field,
   if (!reader) {
     return 0;
   }
-  if (count_mode == Mode::Meta && cf.active.empty() &&
+  if (count_mode == Mode::Meta && cf.l->seg_cls.active.empty() &&
       seg.live_docs_count() == seg.docs_count()) {
     return static_cast<uint32_t>(reader->docs_count());
   }
@@ -1676,8 +2158,10 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     case ScanMode::TopK: {
       auto& l = data.local_state->Cast<TopKScanLocalState>();
       if (!l.prepared) {
-        if (gstate.total_segments != 0 && !gstate.vector_scorer) {
-          PreparePhase(context, gstate, l);
+        if (gstate.total_segments != 0 && !gstate.vector_scorer &&
+            !PreparePhase(gstate, l, data)) {
+          out.SetChildCardinality(0);
+          return;
         }
         l.prepared = true;
       }
@@ -1693,8 +2177,9 @@ void IResearchScanFunction(duckdb::ClientContext& context,
       auto& l = data.local_state->Cast<StreamScanLocalState>();
       if (!l.prepared) {
         if (gstate.scorer_obj && gstate.total_segments != 0 &&
-            !gstate.vector_scorer) {
-          PreparePhase(context, gstate, l);
+            !gstate.vector_scorer && !PreparePhase(gstate, l, data)) {
+          out.SetChildCardinality(0);
+          return;
         }
         l.prepared = true;
       }
@@ -1765,18 +2250,30 @@ void IResearchSetScanOrder(
 // (nothing pushed, or everything ALWAYS_TRUE for this segment) returns the
 // inner iterator unwrapped -- the non-filtered path.
 // Transparent to every DocIterator consumer (count/Collect/EmitScoredDocs).
-irs::DocIterator::ptr MaybeWrapColFilter(
-  irs::DocIterator::ptr inner, const irs::SubReader& seg,
-  std::span<const TableFilterDocIterator::FilterSpec> active,
-  IResearchScanGlobalState& g, ColFilterStateCache& states) {
+irs::DocIterator::ptr MaybeWrapColFilter(irs::DocIterator::ptr inner,
+                                         const irs::SubReader& seg,
+                                         IResearchScanGlobalState& g,
+                                         IResearchScanLocalState& l,
+                                         uint32_t rg) {
+  const auto active =
+    std::span<const TableFilterDocIterator::FilterSpec>{l.seg_cls.active};
   if (active.empty()) {
     return inner;
   }
   const auto* col_reader = seg.GetColReader();
   SDB_ASSERT(col_reader != nullptr,
              "`.col` table filter requires a columnstore segment");
-  return irs::memory::make_managed<TableFilterDocIterator>(
-    std::move(inner), *col_reader, active, *g.client_context, states);
+  if (!l.col_filter) {
+    l.col_filter = std::make_unique<TableFilterDocIterator>();
+    l.col_filter_seg = std::numeric_limits<uint32_t>::max();
+  }
+  if (l.col_filter_seg != l.classified_seg) {
+    l.col_filter->BeginSegment(*col_reader, active, *g.client_context,
+                               l.filter_states);
+    l.col_filter_seg = l.classified_seg;
+  }
+  l.col_filter->Reset(std::move(inner), l.RowBase(rg));
+  return irs::memory::to_managed<irs::DocIterator>(*l.col_filter);
 }
 
 // Whole-segment classification of the pushed `.col`/score filters against the
@@ -1862,11 +2359,23 @@ void ClassifySegmentColFilters(
   }
 }
 
+// Everything a worker learns once per claimed segment: the whole-file filter
+// verdict and whether the segment has deletions at all.
+void ClassifySegment(const irs::SubReader& seg, IResearchScanGlobalState& g,
+                     IResearchScanLocalState& l, uint32_t seg_idx) {
+  ClassifySegmentColFilters(seg, g, l.filter_states, l.seg_cls);
+  l.seg_docs_mask = seg.docs_mask();
+  l.classified_seg = seg_idx;
+}
+
 namespace {
 
-void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
-                        uint32_t seg_idx, IResearchScanGlobalState& g) {
-  ClassifySegmentColFilters(seg, g, s.filter_states, s.seg_cls);
+void CollectRowGroupTopK(TopKScanLocalState& s, const irs::SubReader& seg,
+                         uint32_t seg_idx, uint32_t rg,
+                         IResearchScanGlobalState& g) {
+  if (s.classified_seg != seg_idx) {
+    ClassifySegment(seg, g, s, seg_idx);
+  }
   const auto& cls = s.seg_cls;
   if (cls.segment_dead) {
     return;
@@ -1880,14 +2389,13 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   }
   auto& collector = std::get<C>(s.collector);
 
-  s.score_fetcher.Clear();
   collector.SetSegment(seg_idx);
 
-  const auto seen_global =
-    g.topk.global_kth_score.load(std::memory_order_relaxed);
-  if (seen_global > s.local_threshold) {
-    s.local_threshold = seen_global;
-  }
+  // Claim-then-skip: start the row group at the best threshold any worker has
+  // reached, so WAND drops whole posting lists whose own maximum score cannot
+  // beat it -- with nothing but the header reads the iterator does anyway.
+  collector.RaiseScoreThreshold(
+    g.topk.global_kth_score.load(std::memory_order_relaxed));
 
   const auto& seg_query = EnsureSegmentQuery(g, s, seg, seg_idx);
   const irs::StatsBuffer& stats =
@@ -1895,16 +2403,29 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
 
   const bool wand_enabled =
     WandEnabled(search.inverted_index.get(), search.text_scorer);
-  irs::DocIterator::ptr it = seg.mask(seg_query.Execute(
-    {.wand = {.wand_enabled = wand_enabled},
-     .top_k_collect = search.vector_scorer.has_value() && cls.active.empty()},
-    stats));
+  s.grid = seg.RowGroups();
+  s.rg = rg;
+  // The fetcher caches the norm reader it was handed, and that reader is
+  // based at the row group it was built for -- so it is rebuilt per row
+  // group, exactly as the streaming path does.
+  s.score_fetcher.Clear();
+  collector.SetRowGroup(s.DocOffset(rg));
+  irs::DocIterator::ptr it = s.Mask(
+    seg,
+    seg_query.Execute(
+      {.wand = {.wand_enabled = wand_enabled},
+       .rg = s.rg,
+       .top_k_collect = search.vector_scorer.has_value() && cls.active.empty(),
+       .worker = &s.worker},
+      stats),
+    rg);
   // Filter the collected docs by the covered `.col` values, so top-k is
   // selected over survivors (codec Filter + zonemap in the wrapper).
-  it = MaybeWrapColFilter(std::move(it), seg, cls.active, g, s.filter_states);
+  it = MaybeWrapColFilter(std::move(it), seg, g, s, rg);
+  s.norm_provider.Reset(seg, s.rg);
   auto score_func = it->PrepareScore({
     .scorer = g.scorer_obj.get(),
-    .segment = &seg,
+    .norms = &s.norm_provider,
     .fetcher = &s.score_fetcher,
   });
   if (auto* it_threshold = irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
@@ -1913,6 +2434,8 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   it->Collect(score_func, s.score_fetcher, collector);
   collector.SetScoreThreshold(s.local_threshold);
 
+  // Publish per row group, not per segment: the sooner the k-th score rises,
+  // the more row groups every other worker skips.
   const irs::score_t kth = s.local_threshold;
   auto cur = g.topk.global_kth_score.load(std::memory_order_relaxed);
   while (kth > cur && !g.topk.global_kth_score.compare_exchange_weak(
@@ -1925,15 +2448,13 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
 void RunTopKScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
                  TopKScanLocalState& l, duckdb::DataChunk& output) {
   while (!l.segments_exhausted) {
-    const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (claimed >= g.claimable_segments) {
+    if (!g.ClaimRowGroup(l.claim)) {
       l.segments_exhausted = true;
       break;
     }
-    const auto seg = g.SegmentAt(claimed);
-    const auto& sub = (*g.reader)[seg];
+    const auto& sub = (*g.reader)[l.claim.seg];
     SDB_ASSERT(sub.live_docs_count() != 0);
-    CollectSegmentTopK(l, sub, seg, g);
+    CollectRowGroupTopK(l, sub, l.claim.seg, l.claim.rg, g);
   }
   if (!l.emit_prepared) {
     l.PrepareEmitBuffer(g);
@@ -1987,54 +2508,75 @@ void TopKScanLocalState::PrepareEmitBuffer(IResearchScanGlobalState& g) {
   top_hits = hit_slice.subspan(0, kept);
 }
 
-void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
-                                        const irs::SubReader& seg,
-                                        uint32_t seg_idx,
-                                        IResearchScanGlobalState& g) {
-  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, seg_idx);
+void StreamScanLocalState::StartClaim(duckdb::ClientContext& /*ctx*/,
+                                      const irs::SubReader& seg,
+                                      uint32_t seg_idx, uint32_t claimed_rg,
+                                      IResearchScanGlobalState& g) {
+  if (_batcher_seg != seg_idx) {
+    if (g.needs_lookup && !PkColumnFor(*g.reader, seg_idx).second) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("inverted-index segment has no stored PK column but the query "
+                "needs to map hits back to source rows"));
+    }
+    EnsureHitBatcher(g);
+    SDB_ASSERT(classified_seg == seg_idx,
+               "segment filters are classified at the claim site");
+    hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
+                              &filter_states, seg_cls.active);
+    _batcher_seg = seg_idx;
+  }
+  _rg_seg = &seg;
+  _rg_seg_idx = seg_idx;
+  grid = seg.RowGroups();
+  rg = claimed_rg;
+  StartRowGroup(g);
+}
+
+void StreamScanLocalState::StartRowGroup(IResearchScanGlobalState& g) {
+  const auto& seg = *_rg_seg;
+  hit_batcher->BeginRowGroup(RowBase(rg));
+  const auto& seg_query = EnsureSegmentQuery(g, *this, seg, _rg_seg_idx);
   // The `.col`/score filters run inside the HitBatcher (RowGroup::Scan-style
   // filter+materialize), so the DocIterator streams unfiltered -- no
   // TableFilterDocIterator on this path. When a dynamic TOP_N score boundary is
   // pushed on a WAND-enabled text scorer, run WAND so below-threshold blocks
   // are skipped (PushHits seeds the threshold from the boundary before each
   // emit).
-  streaming_doc =
-    seg.mask(seg_query.Execute({.wand = {.wand_enabled = g.wand_streaming}},
-                               g.stats ? *g.stats : irs::StatsBuffer::Empty()));
-  if (g.needs_lookup && !PkColumnFor(*g.reader, seg_idx).second) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("inverted-index segment has no stored PK column but the query "
-              "needs to map hits back to source rows"));
-  }
+  streaming_doc = Mask(
+    seg,
+    seg_query.Execute(
+      {.wand = {.wand_enabled = g.wand_streaming}, .rg = rg, .worker = &worker},
+      g.stats ? *g.stats : irs::StatsBuffer::Empty()),
+    rg);
   if (g.ScanScore()) {
     score_fetcher.Clear();
+    norm_provider.Reset(seg, rg);
     streaming_score_function = streaming_doc->PrepareScore({
       .scorer = g.scorer_obj.get(),
-      .segment = &seg,
+      .norms = &norm_provider,
       .fetcher = &score_fetcher,
     });
   }
-  EnsureHitBatcher(g);
-  SDB_ASSERT(classified_seg == seg_idx,
-             "segment filters are classified at the claim site");
-  hit_batcher->BeginSegment(seg_idx, seg.GetColReader(), g.client_context,
-                            &filter_states, seg_cls.active);
 }
 
-void ColScanLocalState::StartUnit(
-  duckdb::ClientContext& ctx, const IResearchScanGlobalState::ScanUnit& unit,
-  IResearchScanGlobalState& g) {
-  if (unit.bulk) {
-    current_seg_idx = unit.seg;
-    bulk_doc_in_seg = unit.begin;
-    bulk_seg_doc_count = unit.begin + unit.count;
+void ColScanLocalState::StartUnit(duckdb::ClientContext& ctx,
+                                  const irs::SubReader& seg, uint32_t seg_idx,
+                                  uint32_t claimed_rg, bool bulk,
+                                  IResearchScanGlobalState& g) {
+  if (bulk) {
+    const auto rows = seg.RowGroups();
+    current_seg_idx = seg_idx;
+    bulk_doc_in_seg = rows.Base(claimed_rg) - irs::doc_limits::min();
+    bulk_seg_doc_count = bulk_doc_in_seg + rows.Rows(claimed_rg);
     streaming_doc.reset();
-    // A scan order can hand out a segment's bulk units out of row order, so a
-    // unit may start behind the reused per-segment scanner, whose column
-    // cursors only move forward (GatherFilter/Skip never rewind). Only then
-    // drop the scanner so OpenScanner rebuilds it fresh at `unit.begin`;
-    // ascending units keep reusing it.
+    EndRowGroupWalk();
+    // Row groups of one segment are claimed by several workers and a scan
+    // order hands them out out of row order, so a claim may start behind the
+    // reused per-segment scanner, whose column cursors only move forward
+    // (GatherFilter/Skip never rewind). Only then drop the scanner so
+    // OpenScanner rebuilds it fresh at the claim; ascending claims keep
+    // reusing it.
     if (current_seg_idx < full_scanners.size()) {
       auto& scanner = full_scanners[current_seg_idx];
       if (scanner && bulk_doc_in_seg < scanner->ScannedEnd()) {
@@ -2045,7 +2587,7 @@ void ColScanLocalState::StartUnit(
   }
   bulk_doc_in_seg = 0;
   bulk_seg_doc_count = 0;
-  StartSegment(ctx, (*g.reader)[unit.seg], unit.seg, g);
+  StartClaim(ctx, seg, seg_idx, claimed_rg, g);
 }
 
 FullScanner* ColScanLocalState::OpenScanner(const IResearchScanGlobalState& g) {
@@ -2086,9 +2628,11 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
     if (!irs::doc_limits::eof(next) && !hit_batcher->Filters().Empty()) {
       // Zonemap skip: raise the emit floor past definitely-dead blocks (the
       // self-positioning Emit skips to it) instead of staging and dropping
-      // their windows; when everything left is dead, the segment is done.
-      const auto rows = hit_batcher->SegmentRowCount();
-      auto row = static_cast<uint64_t>(cursor - irs::doc_limits::min());
+      // their windows; when everything left is dead, the row group is done.
+      const auto base = RowBase(rg);
+      const auto rows =
+        std::min(hit_batcher->SegmentRowCount(), base + grid.Rows(rg));
+      auto row = base + static_cast<uint64_t>(cursor - irs::doc_limits::min());
       for (auto dead = hit_batcher->Filters().DeadUntil(row);
            dead != 0 && row < rows;
            dead = hit_batcher->Filters().DeadUntil(row)) {
@@ -2097,7 +2641,8 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
       if (row >= rows) {
         next = irs::doc_limits::eof();
       } else {
-        cursor = irs::doc_limits::min() + static_cast<irs::doc_id_t>(row);
+        cursor =
+          irs::doc_limits::min() + static_cast<irs::doc_id_t>(row - base);
       }
     }
     if (irs::doc_limits::eof(next)) {
@@ -2108,7 +2653,8 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
       }
       return;
     }
-    const auto span = hit_batcher->OpenWindow(cursor - irs::doc_limits::min());
+    const auto span =
+      hit_batcher->OpenWindow(RowBase(rg) + cursor - irs::doc_limits::min());
     if (span == 0) {
       return;
     }
@@ -2175,7 +2721,7 @@ duckdb::idx_t ColScanLocalState::EmitChunk(duckdb::ClientContext& ctx,
 duckdb::idx_t StreamScanLocalState::EmitChunk(duckdb::ClientContext& ctx,
                                               IResearchScanGlobalState& g,
                                               duckdb::DataChunk& output) {
-  // A window entirely dropped by the filters must not read as "segment
+  // A window entirely dropped by the filters must not read as "row group
   // drained" -- pull the next ready batch until one has survivors or the
   // batcher is genuinely empty.
   for (;;) {
@@ -2185,6 +2731,8 @@ duckdb::idx_t StreamScanLocalState::EmitChunk(duckdb::ClientContext& ctx,
     if (!hit_batcher->Ready()) {
       PushHits(g);
       if (!hit_batcher->Ready()) {
+        // Nothing ready and nothing pending: this row group's iterator drained
+        // and the batcher flushed, so the worker claims the next row group.
         return 0;
       }
     }
@@ -2193,7 +2741,7 @@ duckdb::idx_t StreamScanLocalState::EmitChunk(duckdb::ClientContext& ctx,
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
     }
-    const auto produced = EmitReadyBatch(ctx, g, *this, output);
+    const auto produced = EmitReadyBatch(ctx, g, *this, rg, output);
     if (produced != 0) {
       return produced;
     }
@@ -2204,30 +2752,40 @@ duckdb::idx_t StreamScanLocalState::EmitChunk(duckdb::ClientContext& ctx,
 void RunCountScan(IResearchScanGlobalState& g, CountScanLocalState& l,
                   duckdb::DataChunk& output) {
   while (!l.segments_exhausted) {
-    const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (claimed >= g.claimable_segments) {
+    if (!g.ClaimRowGroup(l.claim)) {
       l.segments_exhausted = true;
       break;
     }
-    const auto seg = g.SegmentAt(claimed);
+    const auto seg = l.claim.seg;
     const auto& sub = (*g.reader)[seg];
     SDB_ASSERT(sub.live_docs_count() != 0);
-    ClassifySegmentColFilters(sub, g, l.filter_states, l.seg_cls);
+    if (l.classified_seg != seg) {
+      ClassifySegment(sub, g, l, seg);
+    }
     if (l.seg_cls.segment_dead) {
       continue;
     }
     if (l.seg_cls.active.empty() && !g.scan->stored_filter &&
         !g.vector_scorer) {
-      // No predicate and the whole-file statistics settled every pushed
-      // filter for this segment: the live count answers without touching the
-      // postings.
-      l.local_count += sub.live_docs_count();
+      // No predicate and the whole-file statistics settled every pushed filter
+      // for this segment: the live count answers the whole segment without
+      // touching the postings, so its first claimer takes it and the other
+      // claims of the same segment add nothing. Which claim that is the grid
+      // already decided -- exactly one claim of a slot is its first.
+      if (l.claim.FirstOfSlot()) {
+        l.local_count += sub.live_docs_count();
+      }
       continue;
     }
     const auto& seg_query = EnsureSegmentQuery(g, l, sub, seg);
+    l.grid = sub.RowGroups();
+    const auto rg = l.claim.rg;
     auto doc = MaybeWrapColFilter(
-      sub.mask(seg_query.Execute({}, irs::StatsBuffer::Empty())), sub,
-      l.seg_cls.active, g, l.filter_states);
+      l.Mask(sub,
+             seg_query.Execute({.rg = rg, .worker = &l.worker},
+                               irs::StatsBuffer::Empty()),
+             rg),
+      sub, g, l, rg);
     l.local_count += doc->count();
   }
   if (l.local_emitted >= l.local_count) {
@@ -2243,7 +2801,7 @@ void RunCountScan(IResearchScanGlobalState& g, CountScanLocalState& l,
 
 duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
                              IResearchScanGlobalState& g,
-                             SegDocBufferedScanLocalState& l,
+                             SegDocBufferedScanLocalState& l, uint32_t rg,
                              duckdb::DataChunk& output) {
   if (!g.cs_projections.empty()) {
     SDB_IF_FAILURE("SearchIncludeFetchFault") {
@@ -2271,6 +2829,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext& ctx,
     .docs = batch.docs,
     .scores = batch.scores,
     .fixed_seg = batch.seg,
+    .rg = rg,
   };
   WriteChunkOffsets(l.offsets_entries, l.offsets_prepped_seg,
                     l.offsets_doc_scratch, g, view, output);
@@ -2366,7 +2925,8 @@ bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx,
       }
       batcher.CommitWindow(n);
     }
-    const auto emitted = EmitReadyBatch(ctx, g, l, output);
+    const auto emitted =
+      EmitReadyBatch(ctx, g, l, HitsChunk::kCrossRowGroup, output);
     const auto kept = FinalizeBatch(ctx, g, l, output, emitted);
     if (kept != 0) {
       output.SetChildCardinality(kept);
@@ -2394,19 +2954,21 @@ void RunStreamingScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
       output.Reset();
       continue;
     }
-    const auto claimed = g.next_segment.fetch_add(1, std::memory_order_relaxed);
-    if (claimed >= g.claimable_segments) {
+    if (!g.ClaimRowGroup(l.claim)) {
       break;
     }
-    const auto seg_idx = g.SegmentAt(claimed);
+    const auto seg_idx = l.claim.seg;
     const auto& seg = (*g.reader)[seg_idx];
     SDB_ASSERT(seg.live_docs_count() != 0);
-    ClassifySegmentColFilters(seg, g, l.filter_states, l.seg_cls);
-    l.classified_seg = seg_idx;
+    // Row groups subdivide a segment; the whole-file classification is
+    // computed once per segment and reused across its row groups.
+    if (l.classified_seg != seg_idx) {
+      ClassifySegment(seg, g, l, seg_idx);
+    }
     if (l.seg_cls.segment_dead) {
       continue;
     }
-    l.StartSegment(ctx, seg, seg_idx, g);
+    l.StartClaim(ctx, seg, seg_idx, l.claim.rg, g);
   }
   output.SetChildCardinality(0);
 }
@@ -2420,23 +2982,22 @@ void RunColScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
       output.SetChildCardinality(added);
       return;
     }
-    const auto ui =
-      g.col_scan.next_unit.fetch_add(1, std::memory_order_relaxed);
-    if (ui >= g.col_scan.units.size()) {
+    if (!g.ClaimRowGroup(l.claim)) {
       break;
     }
-    const auto& unit = g.col_scan.units[ui];
-    // Units subdivide a segment; the whole-file classification is computed
-    // once per segment and reused across its units.
-    if (l.classified_seg != unit.seg) {
-      ClassifySegmentColFilters((*g.reader)[unit.seg], g, l.filter_states,
-                                l.seg_cls);
-      l.classified_seg = unit.seg;
+    const auto seg_idx = l.claim.seg;
+    const auto& seg = (*g.reader)[seg_idx];
+    // Row groups subdivide a segment; the whole-file classification is
+    // computed once per segment and reused across its row groups.
+    if (l.classified_seg != seg_idx) {
+      ClassifySegment(seg, g, l, seg_idx);
     }
     if (l.seg_cls.segment_dead) {
       continue;
     }
-    l.StartUnit(ctx, unit, g);
+    // A segment with deletes takes the masked streaming walk of the claimed
+    // row group; an all-live one reads its rows straight out of `.col`.
+    l.StartUnit(ctx, seg, seg_idx, l.claim.rg, SegmentAllLive(seg), g);
   }
   output.SetChildCardinality(0);
 }
@@ -2453,15 +3014,11 @@ void RunTsDictScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
       if (added != 0) {
         continue;
       }
-      const auto seg_idx =
-        g.next_segment.fetch_add(1, std::memory_order_relaxed);
-      if (seg_idx >= g.total_segments) {
+      if (!g.ClaimTermRange(l.term_claim)) {
         exhausted = true;
         break;
       }
-      const auto& seg = (*g.reader)[seg_idx];
-      SDB_ASSERT(seg.live_docs_count() != 0);
-      l.StartSegment(ctx, seg, seg_idx, g);
+      l.StartUnit(g, l.term_claim);
     }
     if (collected != 0 || exhausted) {
       output.SetChildCardinality(collected);
@@ -2471,27 +3028,30 @@ void RunTsDictScan(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
   }
 }
 
-void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
-                                    const irs::SubReader& seg, uint32_t seg_idx,
+void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
                                     IResearchScanGlobalState& g) {
   _seg = &seg;
-  ClassifySegmentColFilters(seg, g, filter_states, seg_cls);
-  _cf = {seg_cls.active, &g, &filter_states};
-  if (seg_cls.segment_dead) {
-    _next_field = nullptr;
+  ClassifySegment(seg, g, *this, seg_idx);
+  grid = seg.RowGroups();
+  _cf = {&g, this};
+  _segment_dead = seg_cls.segment_dead;
+  if (_segment_dead) {
     return;
   }
-  count_mode = seg.live_docs_count() != seg.docs_count() ? CountMode::Masked
-                                                         : CountMode::Meta;
+  count_mode = SegmentAllLive(seg) ? CountMode::Meta : CountMode::Masked;
   where_query = nullptr;
-  _next_field = fields.empty() ? nullptr : fields.data();
   if (g.filter) {
     const auto& query = EnsureSegmentQuery(g, *this, seg, seg_idx);
-    auto probe =
-      MaybeWrapColFilter(query.Execute({}, irs::StatsBuffer::Empty()), seg,
-                         seg_cls.active, g, filter_states);
-    if (irs::doc_limits::eof(probe->advance())) {
-      _next_field = nullptr;
+    bool matched = false;
+    for (uint32_t group = 0; group < grid.count && !matched; ++group) {
+      auto probe =
+        MaybeWrapColFilter(query.Execute({.rg = group, .worker = &worker},
+                                         irs::StatsBuffer::Empty()),
+                           seg, g, *this, group);
+      matched = !irs::doc_limits::eof(probe->advance());
+    }
+    if (!matched) {
+      _segment_dead = true;
       return;
     }
     where_query = &query;
@@ -2502,19 +3062,48 @@ void TsDictLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   }
 }
 
+void TsDictLocalState::StartUnit(
+  IResearchScanGlobalState& g,
+  const IResearchScanGlobalState::TermRangeClaim& claim) {
+  if (classified_seg != claim.seg) {
+    const auto& seg = (*g.reader)[claim.seg];
+    SDB_ASSERT(seg.live_docs_count() != 0);
+    StartSegment(seg, claim.seg, g);
+  }
+  const auto& unit = g.term_grid.units[claim.unit];
+  const auto& field = fields[unit.field];
+  _field = &field;
+  _cursor.reset();
+  _cursor_mode = count_mode;
+  _null_pending = unit.nulls && !_segment_dead;
+  if (_segment_dead) {
+    return;
+  }
+  if (const auto* reader = _seg->field(field.field_id);
+      reader && reader->size() != 0) {
+    _cursor = MakeTermSource(field, *reader, unit.range);
+  }
+}
+
 irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
-  const FieldState& field, const irs::TermReader& reader) {
-  if (field.having_filter) {
+  const FieldState& field, const irs::TermReader& reader,
+  const irs::TermRange& range) {
+  const auto source = PickTsDictSource(field.term_uses, field.having_filter,
+                                       count_mode == CountMode::Masked);
+  // A source that answers for the whole field is only ever handed the whole
+  // field: the grid does not cut ranges for one (BuildTermRangeGrid).
+  SDB_ASSERT(source == TsDictSource::Walk ||
+             (range.lo.empty() && range.hi.empty()));
+  if (source == TsDictSource::Having) {
     auto cursor = field.having_filter->CompileTermIterator(reader);
     SDB_ENSURE(cursor,
                "ts_dict: claimed having filter failed to compile a term "
                "iterator");
     return cursor;
   }
-  const bool max_only = field.term_uses == TsDictTermUses::kMax;
-  const bool min_max =
-    field.term_uses == (TsDictTermUses::kMin | TsDictTermUses::kMax);
-  if ((max_only || min_max) && count_mode != CountMode::Masked) {
+  if (source == TsDictSource::MinMax) {
+    const bool min_max =
+      field.term_uses == (TsDictTermUses::kMin | TsDictTermUses::kMax);
     std::array<irs::bytes_view, 2> terms;
     size_t count = 0;
     const auto max = reader.max();
@@ -2542,28 +3131,7 @@ irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
       return irs::memory::make_managed<MinMaxTermsIterator>(terms, count);
     }
   }
-  return reader.iterator(irs::SeekMode::NORMAL);
-}
-
-bool TsDictLocalState::NextField() {
-  while (_next_field) {
-    const auto& field = *_next_field++;
-    if (_next_field == fields.data() + fields.size()) {
-      _next_field = nullptr;
-    }
-    _field = &field;
-    _null_pending = irs::field_limits::valid(field.null_field_id);
-    _cursor_mode = count_mode;
-    _cursor.reset();
-    if (const auto* reader = _seg->field(field.field_id);
-        reader && reader->size() != 0) {
-      _cursor = MakeTermSource(field, *reader);
-    }
-    if (_cursor || _null_pending) {
-      return true;
-    }
-  }
-  return false;
+  return reader.RangeIterator(range);
 }
 
 namespace {
@@ -2627,7 +3195,10 @@ struct TsDictEmitter {
   }
 
   void OnTerm(irs::TermIterator& it) {
-    if (ctx.meta) {
+    // Only the Meta mode decodes nothing else: the counting modes below reach
+    // RowGroups()/RowGroupPostings(), which decode the term's record whole --
+    // stats included -- so a read() first would parse the same entry twice.
+    if (ctx.meta && ctx.count_mode == TsDictLocalState::CountMode::Meta) {
       it.read();
     }
     const auto live_docs = LiveDocs(it);
@@ -2764,14 +3335,15 @@ duckdb::idx_t TsDictLocalState::EmitChunk(duckdb::ClientContext& /*ctx*/,
                                           IResearchScanGlobalState& g,
                                           duckdb::DataChunk& output,
                                           duckdb::idx_t output_start) {
+  if (!_field) {
+    return 0;
+  }
   const auto capacity = STANDARD_VECTOR_SIZE - output_start;
-  do {
-    if (const auto n = EmitField(output, output_start, capacity); n != 0) {
-      g.produced_rows.fetch_add(n, std::memory_order_relaxed);
-      return n;
-    }
-  } while (NextField());
-  return 0;
+  const auto n = EmitField(output, output_start, capacity);
+  if (n != 0) {
+    g.produced_rows.fetch_add(n, std::memory_order_relaxed);
+  }
+  return n;
 }
 
 }  // namespace sdb::connector

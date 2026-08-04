@@ -25,9 +25,11 @@ set(iresearch-tests_sources
     ./formats/columnstore2_test.cpp
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp
+    ./formats/ivf/ivf_row_group_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_test_case_base.cpp
     ./formats/skip_list_test.cpp
+    ./formats/term_dict_test.cpp
     ./store/directory_test_case.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp
@@ -92,7 +94,6 @@ set(iresearch-tests_sources
     ./search/wand_scoring_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/wkb_parser_test.cpp
-    ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp
     ./utils/encryption_test.cpp
     ./utils/container_utils_tests.cpp
@@ -106,8 +107,6 @@ set(iresearch-tests_sources
     ./utils/bit_utils_tests.cpp
     ./utils/block_pool_test.cpp
     ./utils/levenshtein_utils_test.cpp
-    ./utils/wildcard_utils_test.cpp
-    ./utils/regexp_utils_test.cpp
     ./utils/ref_counter_tests.cpp
     ./utils/minhash_utils_test.cpp
     ./utils/string_tests.cpp
@@ -118,9 +117,6 @@ set(iresearch-tests_sources
     ./utils/thread_pool_test.cpp
     ./utils/utf8_utils_test.cpp
     ./utils/utf8_path_tests.cpp
-    ./utils/fst_builder_test.cpp
-    ./utils/fst_utils_test.cpp
-    ./utils/fst_string_weight_test.cpp
     ./utils/ngram_match_utils_tests.cpp
     ./utils/write_helpers.cpp
     ./tests_param.cpp
@@ -190,7 +186,6 @@ target_include_directories(
         ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         ${FROZEN_INCLUDE_DIR}
-        $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
@@ -227,6 +222,5 @@ target_include_directories(
         ${Fasttext_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         ${FROZEN_INCLUDE_DIR}
-        $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )

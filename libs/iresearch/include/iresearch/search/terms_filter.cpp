@@ -22,6 +22,10 @@
 
 #include "terms_filter.hpp"
 
+#include <span>
+#include <utility>
+#include <vector>
+
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_terms_visitor.hpp"
 #include "iresearch/search/collectors.hpp"
@@ -29,47 +33,104 @@
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
+
+std::vector<bytes_view> Probes(const ByTermsOptions::search_terms& terms) {
+  std::vector<bytes_view> probes;
+  probes.reserve(terms.size());
+  for (const auto& term : terms) {
+    probes.emplace_back(term.term);
+  }
+  return probes;
+}
 
 class ByTermsIterator : public WrappedTermIterator {
  public:
   ByTermsIterator(const TermReader& reader,
                   const ByTermsOptions::search_terms& terms)
-    : WrappedTermIterator{reader.iterator(SeekMode::NORMAL)},
-      _cursor{terms.begin()},
-      _end{terms.end()} {}
+    : ByTermsIterator{reader, terms, Probes(terms)} {}
 
   score_t Boost() const noexcept { return _boost; }
   uint32_t Index() const noexcept { return _index; }
 
-  bool next() final {
+  bool next() final { return _batch ? NextReported() : NextProbed(); }
+
+ private:
+  // What the probe set is resolved through: the dictionary's own batch pass, or
+  // a plain walk this class seeks itself when the dictionary has none.
+  struct Walk {
+    SeekTermIterator::ptr it;
+    bool batch;
+  };
+
+  static Walk MakeWalk(const TermReader& reader,
+                       std::span<const bytes_view> probes) {
+    auto batch = reader.BatchIterator(probes);
+    if (batch) {
+      return {std::move(batch), true};
+    }
+    return {reader.iterator(SeekMode::NORMAL), false};
+  }
+
+  // `probes` is taken by reference so that it is still filled when the walk is
+  // built from it: the batch pass borrows the span, and only a moved vector
+  // keeps the buffer that span points into.
+  ByTermsIterator(const TermReader& reader,
+                  const ByTermsOptions::search_terms& terms,
+                  std::vector<bytes_view>&& probes)
+    : ByTermsIterator{terms, probes, MakeWalk(reader, probes)} {}
+
+  ByTermsIterator(const ByTermsOptions::search_terms& terms,
+                  std::vector<bytes_view>& probes, Walk&& walk)
+    : WrappedTermIterator{std::move(walk.it)},
+      _probes{std::move(probes)},
+      _cursor{terms.begin()},
+      _end{terms.end()},
+      _batch{walk.batch} {}
+
+  // The batch pass reports the probes that hit, in probe order, so the term
+  // set is walked alongside it and everything skipped over is a miss.
+  bool NextReported() {
+    if (!_impl->next()) {
+      return false;
+    }
+    const auto term = _impl->value();
+    while (_cursor != _end && _cursor->term != term) {
+      ++_cursor;
+      ++_index;
+    }
+    SDB_ENSURE(_cursor != _end,
+               "terms filter: batch iterator reported a term that is not in "
+               "the probe set, or reported out of probe order");
+    _boost = _cursor->boost;
+    return true;
+  }
+
+  bool NextProbed() {
     if (_started) {
-      if (_cursor == _end) {
-        return false;
-      }
       ++_cursor;
       ++_index;
     }
     _started = true;
-    while (_cursor != _end) {
+    for (; _cursor != _end; ++_cursor, ++_index) {
       if (_impl->seek(_cursor->term)) {
         _boost = _cursor->boost;
         return true;
       }
-      ++_cursor;
-      ++_index;
     }
     return false;
   }
 
- private:
+  std::vector<bytes_view> _probes;
   ByTermsOptions::search_terms::const_iterator _cursor;
   ByTermsOptions::search_terms::const_iterator _end;
   score_t _boost = kNoBoost;
   uint32_t _index = 0;
-  bool _started = false;
+  bool _batch;
+  bool _started{false};
 };
 
 }  // namespace

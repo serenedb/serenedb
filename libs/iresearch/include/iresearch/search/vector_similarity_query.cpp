@@ -51,6 +51,12 @@
 namespace irs {
 namespace {
 
+// What maps a row group's local doc id to the segment doc id the `.col`
+// columns are addressed by.
+doc_id_t RowGroupDocOffset(const SubReader& segment, uint32_t rg) noexcept {
+  return segment.RowGroups().Base(rg) - doc_limits::min();
+}
+
 class RawVectorReader {
  public:
   RawVectorReader(const ColumnReader& vector_column,
@@ -101,7 +107,7 @@ class VectorDistanceIterator : public DocIterator {
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+      .segment = *ctx.norms,
       .field = {},
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
@@ -136,12 +142,17 @@ class VectorDistanceIterator : public DocIterator {
 
 class RawVectorIterator : public VectorDistanceIterator {
  public:
+  // `src` runs in one row group's local id space while the vector column is
+  // addressed by segment row, so `doc_offset` is added at the read -- a `.col`
+  // boundary, exactly where the conversion belongs.
   RawVectorIterator(DocIterator::ptr&& src, const ColumnReader& vector_column,
                     const ColReader& col_reader, uint32_t d,
                     std::span<const float> query, VectorMetric metric,
-                    score_t boost, CostAttr::Type estimation)
+                    score_t boost, CostAttr::Type estimation,
+                    doc_id_t doc_offset)
     : VectorDistanceIterator{std::move(src), boost, estimation},
-      _reader{vector_column, col_reader, d} {
+      _reader{vector_column, col_reader, d},
+      _doc_offset{doc_offset} {
     _reader.SetQuery(query, metric);
   }
 
@@ -151,7 +162,7 @@ class RawVectorIterator : public VectorDistanceIterator {
       _cur_dist = .0f;
       return _doc = doc;
     }
-    _reader.ComputeDistance(doc, kNoBoost, _cur_dist);
+    _reader.ComputeDistance(doc + _doc_offset, kNoBoost, _cur_dist);
     return _doc = doc;
   }
 
@@ -164,7 +175,7 @@ class RawVectorIterator : public VectorDistanceIterator {
       _cur_dist = .0f;
       return _doc = doc;
     }
-    _reader.ComputeDistance(doc, kNoBoost, _cur_dist);
+    _reader.ComputeDistance(doc + _doc_offset, kNoBoost, _cur_dist);
     return _doc = doc;
   }
 
@@ -172,6 +183,7 @@ class RawVectorIterator : public VectorDistanceIterator {
 
  private:
   RawVectorReader _reader;
+  doc_id_t _doc_offset;
 };
 
 using QVectorPosting =
@@ -179,12 +191,16 @@ using QVectorPosting =
 
 class QVectorIterator : public VectorDistanceIterator {
  public:
-  QVectorIterator(DocIterator::ptr&& src, std::unique_ptr<QuantizerReader> qr,
-                  score_t boost, CostAttr::Type estimation)
+  // `qr` is the cluster's reader, shared by every row group of that cluster
+  // this worker runs and owned by its ClusterReaderCache; `run_offset` is
+  // where this row group's run starts inside the cluster's payload ordinals.
+  QVectorIterator(DocIterator::ptr&& src, QuantizerReader& qr, score_t boost,
+                  CostAttr::Type estimation, uint32_t run_offset)
     : VectorDistanceIterator{std::move(src), boost, estimation},
-      _qr{std::move(qr)},
-      _total{estimation} {
-    SDB_ASSERT(_qr);
+      _qr{&qr},
+      _total{estimation},
+      _base{run_offset},
+      _run_offset{run_offset} {
     _posting = sdb::basics::downCast<QVectorPosting>(_src.get());
   }
 
@@ -216,7 +232,7 @@ class QVectorIterator : public VectorDistanceIterator {
     }
     const uint32_t remaining = _posting->RemainingDocs();
     SDB_ASSERT(remaining < _total);
-    _base = static_cast<uint32_t>(_total - 1 - remaining);
+    _base = _run_offset + static_cast<uint32_t>(_total - 1 - remaining);
     _qr->ComputeBlock(_base, 1, &_cur_dist);
     ++_base;
     return _doc = doc;
@@ -286,12 +302,13 @@ class QVectorIterator : public VectorDistanceIterator {
     _len = static_cast<uint16_t>(_docs.size());
   }
 
-  std::unique_ptr<QuantizerReader> _qr;
+  QuantizerReader* _qr;
   QVectorPosting* _posting = nullptr;
   CostAttr::Type _total;
   std::span<const doc_id_t> _docs;
   std::array<score_t, kPostingBlock> _dist;
-  uint32_t _base = 0;
+  uint32_t _base;
+  uint32_t _run_offset;
   uint16_t _len = 0;
   uint16_t _pos = 0;
 };
@@ -378,14 +395,14 @@ class FilterIterator : public DocIterator {
   DocIterator::ptr _it;
 };
 
-std::vector<PostingCookie> MakeCookies(const VectorState& state) {
-  std::vector<PostingCookie> cookies;
-  cookies.reserve(state.cookies.size());
+std::vector<TermLeaf> MakeLeaves(const VectorState& state) {
+  std::vector<TermLeaf> leaves;
+  leaves.reserve(state.cookies.size());
   for (const auto& cookie : state.cookies) {
-    SDB_ASSERT(cookie);
-    cookies.push_back({.cookie = cookie.get(), .field = state.reader->meta()});
+    SDB_ASSERT(!cookie.rgs.empty());
+    leaves.push_back({.cookie = &cookie, .field = state.reader->meta()});
   }
-  return cookies;
+  return leaves;
 }
 
 template<typename Primary, typename Inner>
@@ -402,30 +419,69 @@ DocIterator::ptr MergeWithInner(Primary&& primary, Inner&& inner,
 
 struct ClusterInputs {
   DocIterator::ptr postings;
-  std::unique_ptr<QuantizerReader> vr;
+  QuantizerReader* vr = nullptr;
+  // Ordinal position of this row group's first document within the cluster --
+  // what `QuantizerReader::ComputeBlock`'s cluster-wide offset is counted from
+  // -- and how many documents the run holds.
+  uint32_t run_offset = 0;
+  uint32_t run_docs = 0;
 };
 
+// The cluster's reader, built on its first row group from the whole run list
+// and reused for the rest: the decode and multi-bit RaBitQ's refine threshold
+// are cluster-scoped, so one reader per (cluster, row group) would redo the
+// whole cluster once per row group. It lives in the executing worker's cache,
+// not in the query: workers run different row groups of one segment through
+// the same prepared query.
+QuantizerReader& ClusterReader(const VectorState& state,
+                               ClusterReaderCache& cache, size_t c,
+                               bool has_centroids, IndexInput& pay_root) {
+  auto& slot = cache.Slot(&state, c, state.cookies.size());
+  if (!slot) {
+    slot = MakeQuantizerReader(state.codebook, pay_root.Dup(), state.pay_base);
+    SDB_ASSERT(slot);
+    const float* centroid =
+      has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
+    const auto& cluster = state.clusters[c];
+    slot->StartCluster(cluster.first_lane, cluster.docs_count, centroid);
+  }
+  return *slot;
+}
+
 std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
+                                                 ClusterReaderCache& cache,
                                                  size_t c, bool has_centroids,
-                                                 IndexInput& pay_root) {
-  const PostingCookie cookie{.cookie = state.cookies[c].get(),
-                             .field = state.reader->meta()};
-  auto postings = state.reader->Iterator(IndexFeatures::None, cookie);
+                                                 IndexInput& pay_root,
+                                                 uint32_t rg) {
+  const TermLeaf leaf{.cookie = &state.cookies[c],
+                      .field = state.reader->meta()};
+  auto postings = state.reader->RowGroupIterator(IndexFeatures::None, leaf, rg);
   if (!postings) {
     return std::nullopt;
   }
-  auto vr = MakeQuantizerReader(state.codebook, pay_root.Dup());
-  SDB_ASSERT(vr);
-  const float* centroid =
-    has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
-  vr->StartCluster(state.pay_starts[c], state.cluster_counts[c], centroid);
-  return ClusterInputs{std::move(postings), std::move(vr)};
+  // The cluster's runs ascend by row group, so this claim's run is a binary
+  // search, and the lanes the runs before it hold are stored beside it.
+  const auto* first = state.pay_runs.data() + state.pay_run_begin[c];
+  const auto* last = state.pay_runs.data() + state.pay_run_begin[c + 1];
+  const auto* run = std::lower_bound(
+    first, last, rg,
+    [](const ClusterRun& l, uint32_t r) noexcept { return l.rg < r; });
+  SDB_ASSERT(run != last && run->rg == rg,
+             "the cluster has a posting list in this row group");
+  return ClusterInputs{std::move(postings),
+                       &ClusterReader(state, cache, c, has_centroids, pay_root),
+                       run->doc_offset, run->docs_count};
 }
 
 using QVectorIterators = std::vector<memory::managed_ptr<QVectorIterator>>;
 
 template<typename Out>
-bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
+bool BuildClusterIterators(const VectorState& state, WorkerContext* worker,
+                           score_t boost, uint32_t rg, Out& out) {
+  SDB_ENSURE(worker,
+             "the quantized vector path decodes through the executing "
+             "worker's cluster readers");
+  auto& cache = worker->cluster_readers;
   auto pay_root = state.reader->ReopenPayload();
   if (!pay_root) {
     return false;
@@ -434,13 +490,13 @@ bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
   const bool has_centroids =
     state.cluster_centroids.size() == state.cookies.size() * state.d;
   for (size_t c = 0; c < state.cookies.size(); ++c) {
-    auto ci = MakeClusterIterator(state, c, has_centroids, *pay_root);
+    auto ci =
+      MakeClusterIterator(state, cache, c, has_centroids, *pay_root, rg);
     if (!ci) {
       continue;
     }
-    auto qit = memory::make_managed<QVectorIterator>(std::move(ci->postings),
-                                                     std::move(ci->vr), boost,
-                                                     state.cluster_counts[c]);
+    auto qit = memory::make_managed<QVectorIterator>(
+      std::move(ci->postings), *ci->vr, boost, ci->run_docs, ci->run_offset);
     if constexpr (std::is_same_v<Out, ScoreAdapters>) {
       out.emplace_back(DocIterator::ptr{std::move(qit)});
     } else {
@@ -460,10 +516,10 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
     return nullptr;
   }
 
-  auto cookies = MakeCookies(state);
-  DocIterator::ptr src =
-    state.reader->Iterator(IndexFeatures::None, cookies, WandContext{},
-                           /*min_match=*/1, ScoreMergeType::Noop);
+  auto leaves = MakeLeaves(state);
+  DocIterator::ptr src = state.reader->RowGroupIterator(
+    IndexFeatures::None, leaves, ctx.rg, WandContext{},
+    /*min_match=*/1, ScoreMergeType::Noop);
   if (!src) {
     return nullptr;
   }
@@ -484,13 +540,14 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
   const auto d = static_cast<uint32_t>(state.vector_column->ArraySize());
   return memory::make_managed<RawVectorIterator>(
     std::move(src), *state.vector_column, *col_reader, d, query, metric, boost,
-    state.estimation);
+    state.estimation, RowGroupDocOffset(segment, ctx.rg));
 }
 
 DocIterator::ptr WrapRawScorer(DocIterator::ptr src, const SubReader& segment,
                                const VectorState& state,
                                std::span<const float> query,
-                               VectorMetric metric, score_t boost) {
+                               VectorMetric metric, score_t boost,
+                               doc_id_t doc_offset) {
   const auto* col_reader = segment.GetColReader();
   if (!col_reader || !src) {
     return src;
@@ -498,7 +555,7 @@ DocIterator::ptr WrapRawScorer(DocIterator::ptr src, const SubReader& segment,
   const auto d = static_cast<uint32_t>(state.vector_column->ArraySize());
   return memory::make_managed<RawVectorIterator>(
     std::move(src), *state.vector_column, *col_reader, d, query, metric, boost,
-    state.estimation);
+    state.estimation, doc_offset);
 }
 
 class DisjointClusterUnion : public DocIterator {
@@ -595,20 +652,20 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
 
   if (_state.quant != VectorQuantization::None) {
-    SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
-    SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
+    SDB_ASSERT(_state.pay_run_begin.size() == _state.cookies.size() + 1);
+    SDB_ASSERT(_state.clusters.size() == _state.cookies.size());
     SDB_ASSERT(_state.codebook);
 
     if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
       QVectorIterators children;
-      if (BuildClusterIterators(_state, _boost, children) &&
+      if (BuildClusterIterators(_state, ctx.worker, _boost, ctx.rg, children) &&
           !children.empty()) {
         return memory::make_managed<DisjointClusterUnion>(std::move(children),
                                                           docs_count, _boost);
       }
     } else {
       ScoreAdapters children;
-      if (BuildClusterIterators(_state, _boost, children) &&
+      if (BuildClusterIterators(_state, ctx.worker, _boost, ctx.rg, children) &&
           !children.empty()) {
         using Disjunction =
           DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
@@ -624,9 +681,10 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
             memory::make_managed<FilterIterator>(std::move(inner_it)),
             docs_count, ScoreMergeType::Sum);
         }
-        return ctx.top_k_collect ? std::move(v)
-                                 : WrapRawScorer(std::move(v), _segment, _state,
-                                                 query, _metric, _boost);
+        return ctx.top_k_collect
+                 ? std::move(v)
+                 : WrapRawScorer(std::move(v), _segment, _state, query, _metric,
+                                 _boost, RowGroupDocOffset(_segment, ctx.rg));
       }
     }
   }

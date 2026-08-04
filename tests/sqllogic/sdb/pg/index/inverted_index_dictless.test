@@ -1,0 +1,347 @@
+hash-threshold 100
+
+# The always-<X> fields store no dictionary at all: a key's SQL-null marker, a
+# JSON key's json-null leaf, and each of the two boolean value fields post
+# exactly one fixed term, known from the schema, so the field header carries the
+# posting lists directly and there is no leaf block, no separator section and no
+# term-meta section to read. Selection is that schema property and nothing else
+# -- column `c`, whose corpus is the single value 'k', holds one term and still
+# keeps a full dictionary.
+#
+# Covers: the layout as `pragma_storage_info` reports it, at a row group
+# spanning the segment and at a row group smaller than it; the null/bool/json
+# predicates the always-<X> fields serve, compared against an index differing
+# only in row_group_size; and all of it again after a merge.
+
+statement ok
+SET compaction_interval = 0
+
+
+statement ok
+SET refresh_interval = 0
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dl_kw(template = 'keyword', frequency = true)
+
+
+statement ok
+CREATE TABLE dl(id INTEGER PRIMARY KEY, s VARCHAR, n INTEGER, b BOOLEAN,
+                c VARCHAR, j JSON)
+
+
+statement ok
+INSERT INTO dl
+SELECT i,
+       CASE WHEN i % 3 = 0 THEN NULL ELSE 'v' || (i % 7) END,
+       CASE WHEN i % 4 = 0 THEN NULL ELSE i % 11 END,
+       CASE WHEN i % 5 = 0 THEN NULL WHEN i % 2 = 0 THEN true ELSE false END,
+       'k',
+       CASE WHEN i % 6 = 0 THEN NULL
+            WHEN i % 6 = 1 THEN '{"v":null}'
+            WHEN i % 6 = 2 THEN '{"v":true}'
+            WHEN i % 6 = 3 THEN '{"v":7}'
+            ELSE '{"v":"w' || (i % 4) || '"}' END :: JSON
+FROM range(1, 601) t(i)
+
+
+# The oracle: one row group spanning the segment, so no term is partitioned.
+statement ok
+CREATE INDEX dl_whole ON dl
+    USING inverted(id, s dl_kw, n, b, c dl_kw, (j->'v') dl_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 2000000000)
+
+
+# 128 rows per row group over 600 documents: 5 row groups, the last one short.
+statement ok
+CREATE INDEX dl_split ON dl
+    USING inverted(id, s dl_kw, n, b, c dl_kw, (j->'v') dl_kw)
+    WITH (refresh_interval = 0, compaction_interval = 0,
+          row_group_size = 128)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dl
+
+
+# --- the layout, per field. `column_path` names the field's role rather than
+# its id: a synthetic field's id comes from the catalog counter and is not
+# stable across runs. Every always-<X> field is SINGLE; every value field, the
+# PK terms included, keeps its dictionary. A BOOLEAN key contributes `true` and
+# `false` fields and nothing under its own id; the JSON key contributes a
+# `true` field (its corpus has no `false` leaf) plus separate `null` (SQL) and
+# `json_null` (the `null` leaf) fields. FIXED_STRIDE marks the fields whose
+# terms are all one byte width and whose leaf blocks store a sorted stride
+# array rather than front-coded entries.
+query TTI
+SELECT column_path, segment_type, count(*) AS fields
+FROM pragma_storage_info('dl_whole')
+WHERE segment_type IN ('VAR', 'FIXED_STRIDE', 'SINGLE')
+GROUP BY 1, 2 ORDER BY 1, 2
+----
+column_path	segment_type	fields
+[dict, expr]	FIXED_STRIDE	1
+[dict, false]	SINGLE	1
+[dict, json_null]	SINGLE	1
+[dict, null]	SINGLE	4
+[dict, numeric]	VAR	1
+[dict, pk]	FIXED_STRIDE	1
+[dict, true]	SINGLE	2
+[dict]	FIXED_STRIDE	1
+[dict]	VAR	3
+
+
+query TTI
+SELECT column_path, segment_type, count(*) AS fields
+FROM pragma_storage_info('dl_split')
+WHERE segment_type IN ('VAR', 'FIXED_STRIDE', 'SINGLE')
+GROUP BY 1, 2 ORDER BY 1, 2
+----
+column_path	segment_type	fields
+[dict, expr]	FIXED_STRIDE	1
+[dict, false]	SINGLE	1
+[dict, json_null]	SINGLE	1
+[dict, null]	SINGLE	4
+[dict, numeric]	VAR	1
+[dict, pk]	FIXED_STRIDE	1
+[dict, true]	SINGLE	2
+[dict]	FIXED_STRIDE	1
+[dict]	VAR	3
+
+
+# Selection is the schema property, never a statistic: `c` holds exactly one
+# term and still keeps a full dictionary, while every always-<X> field holds
+# its one term without one.
+query TTTT
+SELECT coalesce(column_name, '-') AS col, column_path, segment_type,
+       regexp_extract(segment_info, 'terms=([0-9]+)', 1) AS terms
+FROM pragma_storage_info('dl_split', include_segment_info := true)
+WHERE segment_type IN ('VAR', 'FIXED_STRIDE', 'SINGLE')
+  AND regexp_extract(segment_info, 'terms=([0-9]+)', 1) = '1'
+ORDER BY 1, 2
+----
+col	column_path	segment_type	terms
+-	[dict, json_null]	SINGLE	1
+-	[dict, null]	SINGLE	1
+-	[dict, true]	SINGLE	1
+b	[dict, false]	SINGLE	1
+b	[dict, null]	SINGLE	1
+b	[dict, true]	SINGLE	1
+c	[dict]	VAR	1
+n	[dict, null]	SINGLE	1
+s	[dict, null]	SINGLE	1
+
+
+# The always-<X> fields are named after the key they belong to; the JSON key is
+# an expression, so its leaves have no table column to name.
+query TTT
+SELECT coalesce(column_name, '-') AS col, column_path, segment_type
+FROM pragma_storage_info('dl_split')
+WHERE segment_type = 'SINGLE' ORDER BY 1, 2
+----
+col	column_path	segment_type
+-	[dict, json_null]	SINGLE
+-	[dict, null]	SINGLE
+-	[dict, true]	SINGLE
+b	[dict, false]	SINGLE
+b	[dict, null]	SINGLE
+b	[dict, true]	SINGLE
+n	[dict, null]	SINGLE
+s	[dict, null]	SINGLE
+
+
+# Zero dictionary content, plane by plane, for every dictless field -- and a
+# non-zero leaf-block plane for every field that keeps a dictionary. The sizes
+# themselves are not pinned; that they are all zero exactly for SINGLE is.
+query TB
+SELECT segment_type,
+       bool_and(starts_with(segment_info,
+                            'blocks=0 block_count=0 fixed_blocks=0 var_blocks=0 separators=0 fsst_table=0'))
+         AS all_planes_empty
+FROM pragma_storage_info('dl_split', include_segment_info := true)
+WHERE segment_type IN ('VAR', 'SINGLE')
+GROUP BY 1 ORDER BY 1
+----
+segment_type	all_planes_empty
+SINGLE	t
+VAR	f
+
+
+# --- the predicates the marker fields serve, against the unpartitioned index.
+query TII
+SELECT 's_null' AS q,
+       (SELECT count(*) FROM dl_whole WHERE s IS NULL) AS whole,
+       (SELECT count(*) FROM dl_split WHERE s IS NULL) AS split
+UNION ALL SELECT 's_not_null',
+       (SELECT count(*) FROM dl_whole WHERE s IS NOT NULL),
+       (SELECT count(*) FROM dl_split WHERE s IS NOT NULL)
+UNION ALL SELECT 'n_null',
+       (SELECT count(*) FROM dl_whole WHERE n IS NULL),
+       (SELECT count(*) FROM dl_split WHERE n IS NULL)
+UNION ALL SELECT 'b_null',
+       (SELECT count(*) FROM dl_whole WHERE b IS NULL),
+       (SELECT count(*) FROM dl_split WHERE b IS NULL)
+UNION ALL SELECT 'b_true',
+       (SELECT count(*) FROM dl_whole WHERE b = true),
+       (SELECT count(*) FROM dl_split WHERE b = true)
+UNION ALL SELECT 'b_false',
+       (SELECT count(*) FROM dl_whole WHERE b = false),
+       (SELECT count(*) FROM dl_split WHERE b = false)
+UNION ALL SELECT 'b_ne_true',
+       (SELECT count(*) FROM dl_whole WHERE b <> true),
+       (SELECT count(*) FROM dl_split WHERE b <> true)
+UNION ALL SELECT 'json_true',
+       (SELECT count(*) FROM dl_whole WHERE (j->'v')::BOOLEAN = true),
+       (SELECT count(*) FROM dl_split WHERE (j->'v')::BOOLEAN = true)
+UNION ALL SELECT 'json_num',
+       (SELECT count(*) FROM dl_whole WHERE (j->'v')::INTEGER = 7),
+       (SELECT count(*) FROM dl_split WHERE (j->'v')::INTEGER = 7)
+UNION ALL SELECT 'mixed',
+       (SELECT count(*) FROM dl_whole WHERE s IS NULL AND n IS NULL),
+       (SELECT count(*) FROM dl_split WHERE s IS NULL AND n IS NULL)
+UNION ALL SELECT 'or_null',
+       (SELECT count(*) FROM dl_whole WHERE s IS NULL OR b IS NULL),
+       (SELECT count(*) FROM dl_split WHERE s IS NULL OR b IS NULL)
+UNION ALL SELECT 'null_and_term',
+       (SELECT count(*) FROM dl_whole WHERE n IS NULL AND s = 'v1'),
+       (SELECT count(*) FROM dl_split WHERE n IS NULL AND s = 'v1')
+ORDER BY 1
+----
+q	whole	split
+b_false	240	240
+b_ne_true	240	240
+b_null	120	120
+b_true	240	240
+json_num	100	100
+json_true	100	100
+mixed	50	50
+n_null	150	150
+null_and_term	15	15
+or_null	280	280
+s_not_null	400	400
+s_null	200	200
+
+
+# The emitted ids, not just the cardinalities: a marker field's posting list
+# read at the wrong row-group base fails here even when the count matches.
+query TT
+SELECT 's_null_ids' AS q,
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_whole
+        WHERE s IS NULL) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_split
+        WHERE s IS NULL) AS same
+UNION ALL SELECT 'b_true_ids',
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_whole
+        WHERE b = true) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_split
+        WHERE b = true)
+UNION ALL SELECT 'mixed_ids',
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_whole
+        WHERE b IS NULL AND s IS NOT NULL) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_split
+        WHERE b IS NULL AND s IS NOT NULL)
+UNION ALL SELECT 'json_num_ids',
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_whole
+        WHERE (j->'v')::INTEGER = 7) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_split
+        WHERE (j->'v')::INTEGER = 7)
+ORDER BY 1
+----
+q	same
+b_true_ids	t
+json_num_ids	t
+mixed_ids	t
+s_null_ids	t
+
+
+# --- a second batch into its own segment, then a merge: the property is the
+# schema's, so the merged segment must still be dictless.
+statement ok
+INSERT INTO dl
+SELECT i,
+       CASE WHEN i % 3 = 0 THEN NULL ELSE 'v' || (i % 7) END,
+       CASE WHEN i % 4 = 0 THEN NULL ELSE i % 11 END,
+       CASE WHEN i % 5 = 0 THEN NULL WHEN i % 2 = 0 THEN true ELSE false END,
+       'k',
+       CASE WHEN i % 6 = 0 THEN NULL
+            WHEN i % 6 = 1 THEN '{"v":null}'
+            WHEN i % 6 = 2 THEN '{"v":true}'
+            WHEN i % 6 = 3 THEN '{"v":7}'
+            ELSE '{"v":"w' || (i % 4) || '"}' END :: JSON
+FROM range(601, 1201) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dl
+
+
+statement ok
+VACUUM (COMPACT_TABLE) dl
+
+
+query TTII
+SELECT column_path, segment_type, count(DISTINCT row_group_id) AS segments,
+       count(*) AS fields
+FROM pragma_storage_info('dl_split')
+WHERE segment_type IN ('VAR', 'FIXED_STRIDE', 'SINGLE')
+GROUP BY 1, 2 ORDER BY 1, 2
+----
+column_path	segment_type	segments	fields
+[dict, expr]	FIXED_STRIDE	1	1
+[dict, false]	SINGLE	1	1
+[dict, json_null]	SINGLE	1	1
+[dict, null]	SINGLE	1	4
+[dict, numeric]	VAR	1	1
+[dict, pk]	FIXED_STRIDE	1	1
+[dict, true]	SINGLE	1	2
+[dict]	FIXED_STRIDE	1	1
+[dict]	VAR	1	3
+
+
+query TII
+SELECT 'merged_s_null' AS q,
+       (SELECT count(*) FROM dl_whole WHERE s IS NULL) AS whole,
+       (SELECT count(*) FROM dl_split WHERE s IS NULL) AS split
+UNION ALL SELECT 'merged_b_null',
+       (SELECT count(*) FROM dl_whole WHERE b IS NULL),
+       (SELECT count(*) FROM dl_split WHERE b IS NULL)
+UNION ALL SELECT 'merged_b_true',
+       (SELECT count(*) FROM dl_whole WHERE b = true),
+       (SELECT count(*) FROM dl_split WHERE b = true)
+UNION ALL SELECT 'merged_json_num',
+       (SELECT count(*) FROM dl_whole WHERE (j->'v')::INTEGER = 7),
+       (SELECT count(*) FROM dl_split WHERE (j->'v')::INTEGER = 7)
+ORDER BY 1
+----
+q	whole	split
+merged_b_null	240	240
+merged_b_true	480	480
+merged_json_num	200	200
+merged_s_null	400	400
+
+
+query TT
+SELECT 'merged_null_ids' AS q,
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_whole
+        WHERE n IS NULL) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_split
+        WHERE n IS NULL) AS same
+UNION ALL SELECT 'merged_bool_ids',
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_whole
+        WHERE b = false) =
+       (SELECT md5(string_agg(id::VARCHAR, ',' ORDER BY id)) FROM dl_split
+        WHERE b = false)
+ORDER BY 1
+----
+q	same
+merged_bool_ids	t
+merged_null_ids	t
+
+
+statement ok
+DROP TABLE dl
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dl_kw

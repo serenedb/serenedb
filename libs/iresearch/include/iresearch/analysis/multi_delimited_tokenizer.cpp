@@ -20,14 +20,11 @@
 
 #include "multi_delimited_tokenizer.hpp"
 
-#include <fst/union.h>
-#include <fstext/determinize-star.h>
-
+#include <limits>
 #include <string_view>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/fstext/fst_draw.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
@@ -227,7 +224,22 @@ void InsertErrorTransitions(const std::vector<bstring>& strings,
   }
 }
 
-automaton MakeStringTrie(const std::vector<bstring>& strings) {
+// The trie already carries its own failure transitions, so every state has a
+// complete transition function over all 256 bytes -- which is a flat table, and
+// what the table matcher it used to be walked through built internally anyway.
+struct StringTrieDfa {
+  static constexpr uint8_t kNotFinal = std::numeric_limits<uint8_t>::max();
+  static constexpr size_t kAlphabet = 256;
+
+  uint32_t Step(uint32_t state, byte_type label) const noexcept {
+    return next[state * kAlphabet + label];
+  }
+
+  std::vector<uint32_t> next;
+  std::vector<uint8_t> depth;
+};
+
+StringTrieDfa MakeStringTrie(const std::vector<bstring>& strings) {
   std::vector<std::unique_ptr<TrieNode>> nodes;
   nodes.emplace_back(std::make_unique<TrieNode>(0, 0));
 
@@ -259,43 +271,25 @@ automaton MakeStringTrie(const std::vector<bstring>& strings) {
   auto* root = nodes.front().get();
   InsertErrorTransitions(strings, matched_word, root, root);
 
-  automaton a;
-  a.AddStates(nodes.size());
-  a.SetStart(0);
+  StringTrieDfa dfa;
+  dfa.next.assign(nodes.size() * StringTrieDfa::kAlphabet, 0);
+  dfa.depth.assign(nodes.size(), StringTrieDfa::kNotFinal);
 
   for (auto& n : nodes) {
-    int64_t last_state = -1;
-    size_t last_char = 0;
-
+    // A leaf ends the walk, so its own transitions are never taken.
     if (n->is_leaf) {
-      a.SetFinal(n->state_id, {true, static_cast<byte_type>(n->depth)});
+      dfa.depth[n->state_id] = static_cast<uint8_t>(n->depth);
       continue;
     }
-
-    for (size_t k = 0; k <= std::numeric_limits<byte_type>::max(); k++) {
-      int64_t next_state = root->state_id;
-      if (auto it = n->real_trie.find(k); it != n->real_trie.end()) {
-        next_state = it->second->state_id;
-      }
-
-      if (last_state == -1) {
-        last_state = next_state;
-        last_char = k;
-      } else if (last_state != next_state) {
-        a.EmplaceArc(n->state_id, RangeLabel::From(last_char, k - 1),
-                     last_state);
-        last_state = next_state;
-        last_char = k;
-      }
+    auto* row = dfa.next.data() + n->state_id * StringTrieDfa::kAlphabet;
+    for (size_t k = 0; k != StringTrieDfa::kAlphabet; ++k) {
+      const auto it = n->real_trie.find(k);
+      row[k] = static_cast<uint32_t>(
+        it != n->real_trie.end() ? it->second->state_id : root->state_id);
     }
-
-    a.EmplaceArc(
-      n->state_id,
-      RangeLabel::From(last_char, std::numeric_limits<byte_type>::max()),
-      last_state);
   }
 
-  return a;
+  return dfa;
 }
 
 class MultiDelimitedTokenizerGeneric final
@@ -303,44 +297,26 @@ class MultiDelimitedTokenizerGeneric final
  public:
   explicit MultiDelimitedTokenizerGeneric(
     const std::vector<bstring>& delimiters)
-    : autom(MakeStringTrie(delimiters)), matcher(MakeAutomatonMatcher(autom)) {
-    // fst::drawFst(automaton_, std::cout);
-
-#ifdef SDB_DEV
-    // ensure nfa is sorted
-    static constexpr auto kExpectedNfaProperties =
-      fst::kILabelSorted | fst::kOLabelSorted | fst::kAcceptor |
-      fst::kUnweighted;
-
-    SDB_ASSERT(kExpectedNfaProperties ==
-               autom.Properties(kExpectedNfaProperties, true));
-#endif
-  }
+    : dfa(MakeStringTrie(delimiters)) {}
 
   auto FindNextDelim() {
-    auto state = matcher.GetFst().Start();
-    matcher.SetState(state);
+    uint32_t state = 0;
     for (size_t k = 0; k < _data.length(); k++) {
-      matcher.Find(_data[k]);
+      state = dfa.Step(state, _data[k]);
 
-      state = matcher.Value().nextstate;
-
-      if (matcher.Final(state)) {
-        auto length = matcher.Final(state).Payload();
+      const auto length = dfa.depth[state];
+      if (length != StringTrieDfa::kNotFinal) {
         SDB_ASSERT(length <= k);
 
         return std::make_pair(_data.begin() + (k - length),
                               static_cast<size_t>(length + 1));
       }
-
-      matcher.SetState(state);
     }
 
     return std::make_pair(_data.end(), size_t{0});
   }
 
-  automaton autom;
-  automaton_table_matcher matcher;
+  StringTrieDfa dfa;
 };
 
 class MultiDelimitedTokenizerSingle final

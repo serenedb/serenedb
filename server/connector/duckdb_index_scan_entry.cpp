@@ -122,7 +122,8 @@ InvertedIndexScanEntry::GetColumnSegmentInfo(
     GetSereneDBContext(*client).EnsureSearchSnapshot(_inverted_index->GetId());
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
   BuildIResearchColumnSegmentInfo(snapshot->reader, IndexSegmentInfoBindings(),
-                                  GetVirtualColumns(), result);
+                                  GetVirtualColumns(), result,
+                                  _inverted_index.get());
   return result;
 }
 
@@ -136,9 +137,9 @@ bool InvertedIndexScanEntry::ScanColumnSegmentInfo(
   }
   auto snapshot =
     GetSereneDBContext(*client).EnsureSearchSnapshot(_inverted_index->GetId());
-  return ScanIResearchColumnSegmentInfo(snapshot->reader,
-                                        IndexSegmentInfoBindings(),
-                                        GetVirtualColumns(), state, result);
+  return ScanIResearchColumnSegmentInfo(
+    snapshot->reader, IndexSegmentInfoBindings(), GetVirtualColumns(), state,
+    result, _inverted_index.get());
 }
 
 std::vector<IResearchColumnBinding>

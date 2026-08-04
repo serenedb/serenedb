@@ -47,7 +47,6 @@ struct IndexBuilderOptions {
   size_t compaction_threads = 0;
   bool compact_all = true;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  uint32_t norm_row_group_size = DEFAULT_ROW_GROUP_SIZE;
 };
 
 class IndexBuilder {

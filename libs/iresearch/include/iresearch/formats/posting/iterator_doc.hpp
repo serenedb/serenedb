@@ -38,14 +38,6 @@ class PostingIteratorBase : public DocIterator {
   static_assert(doc_limits::kBlockSize % kScoreBlock == 0,
                 "kBlockSize must be a multiple of kScoreBlock");
 
-  ~PostingIteratorBase() {
-    if constexpr (IteratorTraits::Frequency()) {
-      if (_doc_in) {
-        std::allocator<uint32_t>{}.deallocate(_collected_freqs, kScoreBlock);
-      }
-    }
-  }
-
   uint32_t RemainingDocs() const noexcept {
     return _left_in_leaf + _left_in_list;
   }
@@ -129,7 +121,7 @@ class PostingIteratorBase : public DocIterator {
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
+      .segment = *ctx.norms,
       .field = _field,
       .doc_attrs = *this,
       .fetcher = ctx.fetcher,
@@ -193,6 +185,11 @@ class PostingIteratorBase : public DocIterator {
   // But for positions we need freqs, even without score
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
     _collected_freqs = nullptr;
+  // One score block of collected frequencies. A fixed 128 bytes beside the
+  // 1.5 KB of leaf buffers below, so the posting list of one (term, row group)
+  // owes no allocation of its own for it.
+  [[no_unique_address]] utils::Need<IteratorTraits::Frequency(),
+                                    uint32_t[kScoreBlock]> _freq_block;
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(),
                                     uint32_t[doc_limits::kBlockSize]> _freqs;
   doc_id_t _docs[doc_limits::kBlockSize];
@@ -466,7 +463,6 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
     void Disable() noexcept {
       SDB_ASSERT(!_skip_levels.empty());
-      SDB_ASSERT(!doc_limits::valid(_skip_levels.back().doc));
       _skip_levels.back().doc = doc_limits::eof();
     }
 
@@ -550,6 +546,8 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   uint64_t _skip_offs{};
   SkipReader<ReadSkip, InputType> _skip;
   uint32_t _docs_count{};
+  // The run stores no frequency tail when tf == df -- every frequency is one.
+  bool _freqs_all_one{};
 };
 
 template<typename IteratorTraits, typename FieldTraits, bool HasWand,
@@ -562,13 +560,21 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                                              bool wand_enabled) {
   this->Init(meta);
 
-  auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
+  const auto& term_state = meta.meta;
   std::get<CostAttr>(this->_attrs).reset(term_state.docs_count);
+  _freqs_all_one =
+    FieldTraits::Frequency() && term_state.freq == term_state.docs_count;
+
+  // A recycled iterator carries the previous list's exhausted state; these
+  // stores are what makes `Prepare` a full reset for a consumer that only
+  // ever advances. On a fresh object they rewrite the initializers.
+  this->_doc = doc_limits::invalid();
+  this->_max_in_leaf = doc_limits::invalid();
+  this->_left_in_leaf = 0;
+  _skip.Reader().Disable();
 
   if (term_state.docs_count > 1) {
     this->_left_in_list = term_state.docs_count;
-    SDB_ASSERT(this->_left_in_leaf == 0);
-    SDB_ASSERT(this->_max_in_leaf == doc_limits::invalid());
 
     if (!this->_doc_in) {
       this->_doc_in = doc_in->Reopen();  // Reopen thread-safe stream
@@ -581,7 +587,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
 
     if constexpr (IteratorTraits::Frequency()) {
       auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
-      this->_collected_freqs = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+      this->_collected_freqs = this->_freq_block;
       freq_block.value = this->_collected_freqs;
     }
 
@@ -738,12 +744,16 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand, InputType>::FillBlock(
               *(std::end(this->_docs) - 1) = this->_max_in_leaf;
               empty = false;
               if constexpr (FieldTraits::Frequency()) {
-                IteratorTraits::SkipTail(tail, GetDocIn());
+                if (tail == doc_limits::kBlockSize || !_freqs_all_one) {
+                  IteratorTraits::SkipTail(tail, GetDocIn());
+                }
               }
               continue;
             }
             if constexpr (FieldTraits::Frequency()) {
-              IteratorTraits::SkipTail(tail, GetDocIn());
+              if (tail == doc_limits::kBlockSize || !_freqs_all_one) {
+                IteratorTraits::SkipTail(tail, GetDocIn());
+              }
             }
           } else {
             ReadLeaf(*(std::end(this->_docs) - 1));
@@ -803,7 +813,11 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
   this->_left_in_leaf = tail;
   this->_left_in_list = 0;
   if constexpr (IteratorTraits::Frequency()) {
-    IteratorTraits::ReadTail(tail, GetDocIn(), this->_enc_buf, this->_freqs);
+    if (_freqs_all_one) {
+      std::fill_n(std::end(this->_freqs) - tail, tail, 1U);
+    } else {
+      IteratorTraits::ReadTail(tail, GetDocIn(), this->_enc_buf, this->_freqs);
+    }
   }
 }
 

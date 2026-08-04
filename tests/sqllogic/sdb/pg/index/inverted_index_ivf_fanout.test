@@ -7,8 +7,8 @@ control substitution on
 # yields one leaf candidate, so a smaller width would silently cap the probe
 # count.
 #
-# This file covers the setting's surface and end-to-end correctness of both the
-# narrow and wide descent on a genuinely multi-level tree. That the width
+# This file covers the setting's surface and the end-to-end health of both the
+# narrow and the wide descent on a genuinely multi-level tree. That the width
 # changes which clusters are reached is pinned deterministically in the gtest
 # centroids_node_test.fanout_caps_children_per_node -- proving it through SQL
 # would need a crafted approximate case whose expected rows are fragile.
@@ -32,18 +32,20 @@ SET sdb_ivf_max_search_fanout = -1;
 db error: ERROR: invalid value for parameter "sdb_ivf_max_search_fanout": "-1"
 
 
-# ---- multi-level tree: posting_size=2, max_centroids=1024, 10000 points -----
+# ---- multi-level tree: posting_size=2, max_centroids=8, 1000 points ---------
 # Both settings are load-bearing, not arbitrary. The tree only gains a second
 # layer when the sample-space leaf count exceeds max_centroids, and the build
-# square-roots the ideal child count while it does. Leaving max_centroids at 0
-# would pair posting_size with a root wide enough for every leaf -- a single flat
-# level -- and then the descent never consults the fanout at all, so the queries
-# below would pass no matter what this setting did.
+# square-roots the ideal child count while it does. The 0.2 sample of 1000 rows
+# splits into 200 sample-space leaves, so max_centroids has to sit well under
+# 200. Leaving it at 0 -- or setting it to any value from 200 up -- pairs
+# posting_size with a root wide enough for every leaf, a single flat level, and
+# then the descent never consults the fanout at all: at 1024 the narrow and the
+# wide descent return the same row for every query below.
 statement ok
 SET sdb_ivf_posting_size = 2;
 
 statement ok
-SET sdb_ivf_max_centroids = 1024;
+SET sdb_ivf_max_centroids = 8;
 
 statement ok
 CREATE TABLE fan (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
@@ -57,9 +59,14 @@ INSERT INTO fan SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(1000) t(i)
 statement ok
 VACUUM (REFRESH_TABLE) fan;
 
-# ---- narrow descent: fanout 1 at nprobe 1 is a pure greedy walk. Points lie on
-# a line, so the greedy child is always the right one and the neighbour is still
-# exact -- this exercises the width-limited path end to end.
+# ---- narrow descent: fanout 1 at nprobe 1 is a pure greedy walk, which this
+# exercises end to end. Only the two extremes are asserted exact: k-means on a
+# line yields contiguous clusters, so the nearest centroid at every level is the
+# outermost child and the greedy walk always reaches the leaf holding the end
+# point. An interior query is approximate wherever it falls near a cluster
+# boundary -- one probed leaf holds ~5 of the 1000 points -- so it is asserted to
+# land in the right neighbourhood instead. Which side of a boundary a given point
+# sits on moves with the k-means layout, which differs across builds.
 statement ok
 SET sdb_nprobe = 1;
 
@@ -73,10 +80,24 @@ pk
 0
 
 query
-SELECT pk FROM fan_idx ORDER BY emb <-> [123.0, 0.0]::FLOAT[2] LIMIT 1;
+SELECT pk FROM fan_idx ORDER BY emb <-> [999.0, 0.0]::FLOAT[2] LIMIT 1;
 ----
 pk
-123
+999
+
+query
+SELECT count(*) AS near FROM (
+  SELECT pk FROM fan_idx ORDER BY emb <-> [123.0, 0.0]::FLOAT[2] LIMIT 1
+) t WHERE abs(t.pk - 123) <= 32;
+----
+near
+1
+
+# ---- wide descent: a large width reaches every node, so the probed leaf is the
+# globally nearest one rather than the greedy one. That still probes a single
+# leaf at nprobe 1, so the same exact/approximate split applies.
+statement ok
+SET sdb_ivf_max_search_fanout = 100000;
 
 query
 SELECT pk FROM fan_idx ORDER BY emb <-> [999.0, 0.0]::FLOAT[2] LIMIT 1;
@@ -84,21 +105,13 @@ SELECT pk FROM fan_idx ORDER BY emb <-> [999.0, 0.0]::FLOAT[2] LIMIT 1;
 pk
 999
 
-# ---- wide descent: a large width reaches every node, so results stay exact.
-statement ok
-SET sdb_ivf_max_search_fanout = 100000;
-
 query
-SELECT pk FROM fan_idx ORDER BY emb <-> [123.0, 0.0]::FLOAT[2] LIMIT 1;
+SELECT count(*) AS near FROM (
+  SELECT pk FROM fan_idx ORDER BY emb <-> [567.0, 0.0]::FLOAT[2] LIMIT 1
+) t WHERE abs(t.pk - 567) <= 32;
 ----
-pk
-123
-
-query
-SELECT pk FROM fan_idx ORDER BY emb <-> [567.0, 0.0]::FLOAT[2] LIMIT 1;
-----
-pk
-567
+near
+1
 
 # ---- a large nprobe lifts the width past the setting, so the exhaustive-probe
 # idiom other IVF tests rely on keeps working at the default width.

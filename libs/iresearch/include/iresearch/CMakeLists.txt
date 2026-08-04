@@ -252,6 +252,14 @@ include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 
 add_library(iresearch-static STATIC ${IResearch_core_sources})
 
+# faiss::Panorama's prune_kernel asks for loop vectorization that aarch64 cannot
+# honour (a gather through active_indices plus a narrow store), and Release
+# promotes -Wpass-failed to an error.
+set_source_files_properties(
+    ./formats/ivf/quantizer.cpp
+    PROPERTIES COMPILE_OPTIONS "-Wno-pass-failed"
+)
+
 set_source_files_properties(
     search/bm25.cpp
     search/tfidf.cpp

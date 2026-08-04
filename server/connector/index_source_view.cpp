@@ -190,7 +190,9 @@ void ViewIndexSourceBase::GatherNonLookupColumns(
   // them to match -- only these small columns move, and nothing writes them
   // afterwards, so a dictionary Slice suffices (no flatten/copy). The selection
   // and slot list are reused across batches (built once in InitProjection).
+  SDB_ASSERT(count <= _sort_perm.size());
   for (duckdb::idx_t k = 0; k < count; ++k) {
+    SDB_ASSERT(survivor_idx[k] < _sort_perm.size());
     _gather_sel.set_index(k, _sort_perm[survivor_idx[k]]);
   }
   for (const auto c : _non_lookup_slots) {

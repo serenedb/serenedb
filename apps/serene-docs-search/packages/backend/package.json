@@ -1,0 +1,58 @@
+{
+    "name": "@serenedb/docs-search-backend",
+    "version": "0.9.1",
+    "description": "Sync + search backend for SereneDocsSearch: pulls docs, indexes them in SereneDB, serves the widget API",
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/serenedb/serenedb.git",
+        "directory": "apps/serene-docs-search/packages/backend"
+    },
+    "homepage": "https://github.com/serenedb/serenedb/tree/main/apps/serene-docs-search#readme",
+    "bugs": {
+        "url": "https://github.com/serenedb/serenedb/issues"
+    },
+    "type": "module",
+    "bin": {
+        "serene-docs-search-backend": "./dist/index.js"
+    },
+    "main": "./dist/index.js",
+    "files": [
+        "dist",
+        "Dockerfile"
+    ],
+    "scripts": {
+        "build": "tsup src/index.ts --format esm --clean --shims --external pdf-parse --external pdf-parse/lib/pdf-parse.js",
+        "dev": "tsx src/index.ts",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "eval": "EVAL=1 vitest run test/relevance.test.ts"
+    },
+    "dependencies": {
+        "@aws-sdk/client-s3": "^3.600.0",
+        "cheerio": "^1.0.0",
+        "class-transformer": "^0.5.1",
+        "class-validator": "^0.15.1",
+        "cors": "^2.8.5",
+        "express": "^4.21.0",
+        "pg": "^8.16.0",
+        "picomatch": "^4.0.0",
+        "reflect-metadata": "^0.2.2"
+    },
+    "optionalDependencies": {
+        "pdf-parse": "^1.1.1"
+    },
+    "devDependencies": {
+        "@serenedb/docs-search-core": "0.9.1",
+        "@types/cors": "^2.8.17",
+        "@types/express": "^4.17.21",
+        "@types/node": "^22.0.0",
+        "@types/pg": "^8.15.0",
+        "@types/picomatch": "^3.0.0",
+        "tsup": "^8.0.0",
+        "tsx": "^4.19.0",
+        "typescript": "^5.6.0",
+        "vitest": "^2.1.0"
+    },
+    "private": true
+}

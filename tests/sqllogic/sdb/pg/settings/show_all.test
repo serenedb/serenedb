@@ -33,6 +33,18 @@ auto_fallback_to_full_download	on	Allows automatically falling back to full file
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
 autoinstall_known_extensions	off	Whether known extensions are allowed to be automatically installed when a query depends on them
 autoload_known_extensions	off	Whether known extensions are allowed to be automatically loaded when a query depends on them
+azure_account_name	NULL	Azure account name, when set, the extension will attempt to automatically detect credentials
+azure_context_caching	1	Enable/disable the caching of some context when performing queries. This cache is by default enable, and will for a given connection keep a local context when performing a query. If you suspect that the caching is causing some side effect you can try to disable it by setting this option to false.
+azure_credential_chain	NULL	Ordered list of Azure credential providers, in string format separated by ';'. E.g. 'cli;workload_identity;managed_identity;env'
+azure_endpoint	blob.core.windows.net	Override the azure endpoint for when the Azure credential providers are used.
+azure_http_proxy	NULL	Proxy to use when login & performing request to azure. By default it will use the HTTP_PROXY environment variable if set.
+azure_http_stats	0	Include http info from the Azure Storage in the explain analyze statement.
+azure_proxy_password	NULL	Http proxy password if needed.
+azure_proxy_user_name	NULL	Http proxy user name if needed.
+azure_read_buffer_size	8388608	Size of the read buffer.
+azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
+azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
+azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).
 bytea_output	hex	Sets the output format for bytea.
@@ -356,6 +368,18 @@ auto_fallback_to_full_download	on	Allows automatically falling back to full file
 autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
 autoinstall_known_extensions	off	Whether known extensions are allowed to be automatically installed when a query depends on them
 autoload_known_extensions	off	Whether known extensions are allowed to be automatically loaded when a query depends on them
+azure_account_name	NULL	Azure account name, when set, the extension will attempt to automatically detect credentials
+azure_context_caching	1	Enable/disable the caching of some context when performing queries. This cache is by default enable, and will for a given connection keep a local context when performing a query. If you suspect that the caching is causing some side effect you can try to disable it by setting this option to false.
+azure_credential_chain	NULL	Ordered list of Azure credential providers, in string format separated by ';'. E.g. 'cli;workload_identity;managed_identity;env'
+azure_endpoint	blob.core.windows.net	Override the azure endpoint for when the Azure credential providers are used.
+azure_http_proxy	NULL	Proxy to use when login & performing request to azure. By default it will use the HTTP_PROXY environment variable if set.
+azure_http_stats	0	Include http info from the Azure Storage in the explain analyze statement.
+azure_proxy_password	NULL	Http proxy password if needed.
+azure_proxy_user_name	NULL	Http proxy user name if needed.
+azure_read_buffer_size	8388608	Size of the read buffer.
+azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
+azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
+azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).
 bytea_output	hex	Sets the output format for bytea.

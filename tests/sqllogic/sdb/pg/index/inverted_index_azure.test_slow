@@ -1,0 +1,408 @@
+control substitution on
+
+# Inverted index on Azure-backed views over parquet + csv files. Mirrors
+# inverted_index_s3.test_slow (seed a table, COPY to az://..., expose as
+# `CREATE VIEW v AS SELECT * FROM read_*('az://...')`) and layers
+# CREATE INDEX + PHRASE + BM25 on top. The azure extension resolves the
+# secret at scan time.
+
+
+statement ok
+CREATE OR REPLACE SECRET azurite_${__DATABASE__} (
+  TYPE azure,
+  CONNECTION_STRING '${AZURITE_CONNECTION_STRING}',
+  SCOPE 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_'
+);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY az_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+# --- seed data: a source table + COPY TO azure (parquet + csv) ---
+
+
+statement ok
+CREATE TABLE company_src (id INTEGER PRIMARY KEY, who TEXT, what TEXT);
+
+
+statement ok
+INSERT INTO company_src VALUES
+  (1, 'vedernikoff', 'want a lot of money but not want to work deadinside'),
+  (2, 'babsky', 'parses csv files in sleep and dreams of parquet deadinside'),
+  (3, 'pudge', 'goes mid every game and blames the jungler deadinside'),
+  (4, 'anchin-chan', 'reads manga all day instead of writing sql deadinside'),
+  (5, 'kostya', 'types on a clickclack keyboard all night long deadinside'),
+  (6, 'gayazov', 'plays mass effect and skips every stand up deadinside'),
+  (7, 'krivda', 'writes sql at night and closes tickets at dawn deadinside'),
+  (8, 'pavelvi', 'pushes to main at 3am and calls it a feature deadinside');
+
+
+statement count 8
+COPY company_src
+TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_inv_idx_az_company.parquet'
+WITH (FORMAT parquet);
+
+
+statement count 8
+COPY company_src
+TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_inv_idx_az_company.csv'
+WITH (FORMAT csv, HEADER true);
+
+
+# --- inverted index over azure parquet ---
+
+
+statement ok
+CREATE VIEW company_parquet_ext AS
+  SELECT * FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_inv_idx_az_company.parquet');
+
+
+statement ok
+CREATE INDEX company_parquet_idx ON company_parquet_ext
+USING inverted(id, who az_en, what az_en);
+
+
+# bare SELECT on the index entry streams the underlying parquet
+query
+SELECT id, who FROM company_parquet_idx ORDER BY id;
+----
+id	who
+1	vedernikoff
+2	babsky
+3	pudge
+4	anchin-chan
+5	kostya
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+# single-phrase match
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('want a lot of money')
+ORDER BY id;
+----
+id	who
+1	vedernikoff
+
+
+# single-phrase match inside a longer sentence
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('mass effect')
+ORDER BY id;
+----
+id	who
+6	gayazov
+
+
+# phrase that appears in every row
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('deadinside')
+ORDER BY id;
+----
+id	who
+1	vedernikoff
+2	babsky
+3	pudge
+4	anchin-chan
+5	kostya
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+# OR across two phrases
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('at night') OR what @@ ts_phrase('at 3am')
+ORDER BY id;
+----
+id	who
+7	krivda
+8	pavelvi
+
+
+# AND across two phrases (one matches `who`, other matches `what`)
+query
+SELECT id, who FROM company_parquet_idx
+WHERE who @@ ts_phrase('babsky') AND what @@ ts_phrase('parquet')
+ORDER BY id;
+----
+id	who
+2	babsky
+
+
+# BM25 is wired: every matching row gets a positive score.
+query
+SELECT id,
+       BM25(company_parquet_idx.tableoid) > 0 AS has_score
+FROM company_parquet_idx
+WHERE what @@ ts_phrase('deadinside')
+ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+3	t
+4	t
+5	t
+6	t
+7	t
+8	t
+
+
+# --- inverted index over azure csv ---
+
+
+statement ok
+CREATE VIEW company_csv_ext AS
+  SELECT * FROM read_csv('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_inv_idx_az_company.csv');
+
+
+statement ok
+CREATE INDEX company_csv_idx ON company_csv_ext
+USING inverted(id, who az_en, what az_en);
+
+
+query
+SELECT id, who FROM company_csv_idx ORDER BY id;
+----
+id	who
+1	vedernikoff
+2	babsky
+3	pudge
+4	anchin-chan
+5	kostya
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE what @@ ts_phrase('want a lot of money')
+ORDER BY id;
+----
+id	who
+1	vedernikoff
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE what @@ ts_phrase('mass effect')
+ORDER BY id;
+----
+id	who
+6	gayazov
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE what @@ ts_phrase('at night') OR what @@ ts_phrase('at 3am')
+ORDER BY id;
+----
+id	who
+7	krivda
+8	pavelvi
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE who @@ ts_phrase('kostya') OR who @@ ts_phrase('pudge')
+ORDER BY id;
+----
+id	who
+3	pudge
+5	kostya
+
+
+# BM25 also works on CSV external index (via counter + re-scan path).
+query
+SELECT id,
+       BM25(company_csv_idx.tableoid) > 0 AS has_score
+FROM company_csv_idx
+WHERE what @@ ts_phrase('deadinside')
+ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+3	t
+4	t
+5	t
+6	t
+7	t
+8	t
+
+
+# --- cross-file sanity check: both azure indexes return the same row order
+# as the source table for a one-shot phrase query ---
+
+
+query
+SELECT id, who FROM company_parquet_idx
+WHERE who @@ ts_phrase('gayazov') OR who @@ ts_phrase('krivda') OR who @@ ts_phrase('pavelvi')
+ORDER BY id;
+----
+id	who
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE who @@ ts_phrase('gayazov') OR who @@ ts_phrase('krivda') OR who @@ ts_phrase('pavelvi')
+ORDER BY id;
+----
+id	who
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+query
+SELECT id, who FROM company_src
+WHERE who IN ('gayazov', 'krivda', 'pavelvi')
+ORDER BY id;
+----
+id	who
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+# --- the blob grows after the index was built ---
+# A view-backed index is a build-time snapshot: VACUUM (REFRESH_*) never
+# re-scans the view, so the grown blob is invisible until the index is
+# re-created.
+
+
+statement count 1
+INSERT INTO company_src VALUES
+  (9, 'carol', 'joined the company after the index build deadinside');
+
+
+statement count 9
+COPY company_src
+TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_inv_idx_az_company.parquet'
+WITH (FORMAT parquet);
+
+
+statement count 9
+COPY company_src
+TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_inv_idx_az_company.csv'
+WITH (FORMAT csv, HEADER true);
+
+
+statement ok
+VACUUM (REFRESH_INDEX) company_parquet_idx;
+
+
+statement ok
+VACUUM (REFRESH_INDEX) company_csv_idx;
+
+
+# still the 8-row snapshot: no row 9, its terms are not searchable
+query
+SELECT count(*) AS c FROM company_parquet_idx;
+----
+c
+8
+
+
+query
+SELECT count(*) AS c FROM company_csv_idx;
+----
+c
+8
+
+
+query
+SELECT count(*) AS c FROM company_parquet_idx
+WHERE what @@ ts_phrase('joined the company');
+----
+c
+0
+
+
+# re-creating the index re-scans the blob and picks up the new row
+
+
+statement ok
+DROP INDEX company_parquet_idx;
+
+
+statement ok
+DROP INDEX company_csv_idx;
+
+
+statement ok
+CREATE INDEX company_parquet_idx ON company_parquet_ext
+USING inverted(id, who az_en, what az_en);
+
+
+statement ok
+CREATE INDEX company_csv_idx ON company_csv_ext
+USING inverted(id, who az_en, what az_en);
+
+
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('joined the company')
+ORDER BY id;
+----
+id	who
+9	carol
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE what @@ ts_phrase('joined the company')
+ORDER BY id;
+----
+id	who
+9	carol
+
+
+query
+SELECT count(*) AS c FROM company_parquet_idx;
+----
+c
+9
+
+
+query
+SELECT count(*) AS c FROM company_csv_idx;
+----
+c
+9
+
+
+statement ok
+DROP VIEW company_parquet_ext;
+
+
+statement ok
+DROP VIEW company_csv_ext;
+
+
+statement ok
+DROP TABLE company_src;
+
+
+statement ok
+DROP SECRET azurite_${__DATABASE__};

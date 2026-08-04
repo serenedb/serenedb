@@ -1,0 +1,154 @@
+control substitution on
+
+# Regression: the PG single-column alias rename applies only to set-returning
+# functions (generate_series); file scans are composite-returning, so neither
+# the replacement-scan stem alias nor a user-written alias renames their column.
+
+statement ok
+COPY (SELECT 42 AS v) TO '${__TEST_DIR__}/stem.parquet' (FORMAT parquet);
+
+
+query
+SELECT v FROM '${__TEST_DIR__}/stem.parquet';
+----
+v
+42
+
+
+query
+SELECT * FROM '${__TEST_DIR__}/stem.parquet';
+----
+v
+42
+
+
+statement ok
+COPY (SELECT 42 AS v) TO '${__TEST_DIR__}/stem.csv' (FORMAT csv, HEADER true);
+
+
+query
+SELECT v FROM '${__TEST_DIR__}/stem.csv';
+----
+v
+42
+
+
+statement ok
+COPY (SELECT 42 AS v) TO '${__TEST_DIR__}/stem.json' (FORMAT json);
+
+
+query
+SELECT v FROM '${__TEST_DIR__}/stem.json';
+----
+v
+42
+
+
+# the synthesized alias still resolves qualified references
+
+query
+SELECT stem.v FROM '${__TEST_DIR__}/stem.parquet';
+----
+v
+42
+
+
+# glob: the fallback alias (the whole path string) must not rename either
+
+query
+SELECT v FROM '${__TEST_DIR__}/stem*.parquet';
+----
+v
+42
+
+
+# a user alias on a file scan names the table only (composite result)
+
+query
+SELECT x.v FROM '${__TEST_DIR__}/stem.parquet' AS x;
+----
+v
+42
+
+
+# virtual columns of the underlying scan stay reachable
+
+query
+SELECT v, filename LIKE '%stem.parquet' AS f FROM '${__TEST_DIR__}/stem.parquet';
+----
+v	f
+42	t
+
+
+# two-column file: columns keep their names, with or without an alias
+
+statement ok
+COPY (SELECT 1 AS a, 2 AS b) TO '${__TEST_DIR__}/two.parquet' (FORMAT parquet);
+
+
+query
+SELECT a, b FROM '${__TEST_DIR__}/two.parquet';
+----
+a	b
+1	2
+
+
+query
+SELECT * FROM '${__TEST_DIR__}/two.parquet';
+----
+a	b
+1	2
+
+
+# the synthesized alias (file stem) qualifies columns and star
+
+query
+SELECT two.a, two.b FROM '${__TEST_DIR__}/two.parquet';
+----
+a	b
+1	2
+
+
+query
+SELECT two.* FROM '${__TEST_DIR__}/two.parquet';
+----
+a	b
+1	2
+
+
+query
+SELECT t.a, t.b FROM '${__TEST_DIR__}/two.parquet' AS t;
+----
+a	b
+1	2
+
+
+query
+SELECT g FROM generate_series(1, 1) AS g;
+----
+g
+1
+
+
+query
+SELECT u FROM unnest(ARRAY[7]) AS u;
+----
+u
+7
+
+
+# a table alias on a base table never renames columns
+
+statement ok
+CREATE TABLE single_v(v INTEGER);
+
+
+statement ok
+INSERT INTO single_v VALUES (42);
+
+
+query
+SELECT v FROM single_v AS t;
+----
+v
+42

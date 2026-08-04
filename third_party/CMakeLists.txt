@@ -690,6 +690,22 @@ set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
 set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
 
 ################################################################################
+## libxml2
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+add_subdirectory(libxml2-cmake)
+
+################################################################################
+## Azure SDK (monolithic build)
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+add_subdirectory(azure-cmake)
+
+################################################################################
 ## duckdb
 ################################################################################
 
@@ -722,7 +738,7 @@ set(LATEST_STORAGE FALSE CACHE BOOL "" FORCE)
 # Suppress the per-extension "vcpkg.json present but VCPKG_BUILD not set" warning.
 set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure"
     CACHE STRING
     ""
     FORCE
@@ -739,6 +755,7 @@ set(DUCKDB_EXTENSION_CONFIGS
 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_azure" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
@@ -774,6 +791,7 @@ target_link_libraries(
         tpcds_extension
         json_extension
         httpfs_extension
+        azure_extension
         avro_extension
         iceberg_extension
         postgres_scanner_extension

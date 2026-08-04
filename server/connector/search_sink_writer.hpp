@@ -388,24 +388,19 @@ class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
   void Abort() final { AbortImpl(); }
 };
 
-inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
+// Builds the search-table insert sink: merged tokenizer/entry providers, the
+// writer's field options, the term fan-out map, and every declared index's
+// indexed expressions (evaluated per chunk by WriteChunkToSearchSink).
+std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
-  std::shared_ptr<const catalog::Snapshot> snapshot) {
-  auto config = shard.GetIndexConfig();
-  // Hand the writer the merged encoding config so norm-featured fields flush
-  // (else the writer asserts) and per-index compression/row-group is honored.
-  trx.SetFieldOptions(shard.GetFieldOptions());
-  return std::make_unique<SearchSinkInsertBaseImpl>(
-    trx, MakeConfigTokenizerProvider(config, std::move(snapshot)),
-    MakeConfigEntryInfoProvider(std::move(config)),
-    std::vector<IndexedExpression>{},
-    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
-    shard.GetTermsByColumn());
-}
+  std::shared_ptr<const catalog::Snapshot> snapshot,
+  duckdb::ClientContext& context);
 
+// `table_id` + `context` drive per-index expression evaluation over the chunk.
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const catalog::Column::Id> column_ids,
-                            uint64_t pk_base);
+                            uint64_t pk_base, ObjectId table_id,
+                            duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

@@ -26,10 +26,12 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iterator>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/primary_key.hpp"
+#include "catalog/catalog.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "pg/errcodes.h"
@@ -818,10 +820,40 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
   _remove_filter.reset();
 }
 
+std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
+  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
+  std::shared_ptr<const catalog::Snapshot> snapshot,
+  duckdb::ClientContext& context) {
+  auto config = shard.GetIndexConfig();
+  // Gather every declared index's indexed expressions. Each index keeps its own
+  // allocated field ids, so the union is collision-free; the write path
+  // evaluates them per chunk and emits each under its field.
+  std::vector<IndexedExpression> indexed_exprs;
+  for (const auto& index : snapshot->GetIndexesByRelation(shard.GetTableId())) {
+    if (index->GetType() != catalog::ObjectType::InvertedIndex) {
+      continue;
+    }
+    auto exprs = MakeIndexedExpressions(
+      basics::downCast<const catalog::InvertedIndex>(*index), context);
+    indexed_exprs.insert(indexed_exprs.end(),
+                         std::make_move_iterator(exprs.begin()),
+                         std::make_move_iterator(exprs.end()));
+  }
+  // Hand the writer the merged encoding config so norm-featured fields flush
+  // (else the writer asserts) and per-index compression/row-group is honored.
+  trx.SetFieldOptions(shard.GetFieldOptions());
+  return std::make_unique<SearchSinkInsertBaseImpl>(
+    trx, MakeConfigTokenizerProvider(config, snapshot),
+    MakeConfigEntryInfoProvider(std::move(config)), std::move(indexed_exprs),
+    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
+    shard.GetTermsByColumn());
+}
+
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const catalog::Column::Id> column_ids,
-                            uint64_t pk_base) {
+                            uint64_t pk_base, ObjectId table_id,
+                            duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
 
   auto& scratch = sink.GetKeyScratch();
@@ -861,6 +893,18 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   }
   write_column(catalog::Column::kGeneratedPKId, duckdb::LogicalType::BIGINT,
                gen_pk);
+  // Indexed expressions: evaluate each over the chunk and emit it under its own
+  // allocated field (single-field -- value + terms + any IVF live together, no
+  // fan-out). `column_ids` is the chunk slot -> column id map the expression's
+  // column refs resolve against.
+  for (const auto& indexed_expr : sink.IndexedExpressionImpl()) {
+    SDB_ASSERT(indexed_expr.normalized_expr);
+    auto result =
+      EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
+                            column_ids, context, indexed_expr.is_geojson);
+    sink.SwitchFieldImpl(indexed_expr.field_id, result.GetType(), result,
+                         num_rows);
+  }
   sink.FinishImpl();
 }
 

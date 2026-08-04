@@ -20,12 +20,14 @@
 
 #include "search/search_table_recovery.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
 #include <chrono>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
 #include <memory>
@@ -36,6 +38,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
@@ -56,6 +59,14 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   SDB_ASSERT(snapshot);
   auto& engine = GetSearchEngine();
+
+  // A dedicated connection whose ClientContext drives indexed-expression
+  // evaluation for replayed rows (the WAL stores raw columns; expressions must
+  // be recomputed). Rolled back at the end -- it never writes anything.
+  duckdb::Connection expr_conn(DuckDBEngine::Instance().instance());
+  expr_conn.BeginTransaction();
+  absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
+  auto& expr_context = *expr_conn.context;
 
   // Per-shard replay metadata, built once from the catalog table so the
   // recovered key matches the written one.
@@ -121,8 +132,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       }
 
       if (!ctx.insert_sink) {
-        ctx.insert_sink =
-          connector::MakeSearchTableInsertSink(ctx.trx, *info.shard, snapshot);
+        ctx.insert_sink = connector::MakeSearchTableInsertSink(
+          ctx.trx, *info.shard, snapshot, expr_context);
         ctx.delete_sink =
           std::make_unique<connector::SearchSinkDeleteBaseImpl>(ctx.trx);
       }
@@ -133,7 +144,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
       connector::WriteChunkToSearchSink(*ctx.insert_sink, chunk,
-                                        info.column_ids, pk_base);
+                                        info.column_ids, pk_base, table_id,
+                                        expr_context);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     // Each DELETE op replays as one removal batch on the shared trx; feeding it

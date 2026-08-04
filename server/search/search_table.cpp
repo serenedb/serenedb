@@ -157,6 +157,16 @@ void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
       terms[col_id].push_back(term_field);
     }
   }
+  // Indexed expressions are synthetic and single-field: their value + terms
+  // (and any IVF / JSON-leaf / norm sub-fields) live under the expression's own
+  // allocated field id, so fold each entry verbatim. The write path evaluates
+  // the expression and emits it directly under that field -- no column fan-out,
+  // so nothing is added to `terms`.
+  for (const auto& key : index.ExpressionKeys()) {
+    if (const auto* entry = index.FindEntry(key.field_id)) {
+      entries.insert_or_assign(key.field_id, *entry);
+    }
+  }
 }
 
 // The iresearch encoding config the search writer asks for at flush/merge,

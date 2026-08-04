@@ -123,8 +123,7 @@ CompactionOptions PinCompactionOptions(SearchTable& table) {
   // applied to merged segments too (and kept alive across the merge).
   auto options = table.GetFieldOptions();
   const irs::IndexFieldOptions* ptr = options.get();
-  return {
-    .alive = true, .keepalive = std::move(options), .field_options = ptr};
+  return {.alive = true, .keepalive = std::move(options), .field_options = ptr};
 }
 
 template<class Storage>

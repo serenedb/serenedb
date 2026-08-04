@@ -10,7 +10,7 @@
 
 </div>
 
-[![Watch the video](https://github.com/user-attachments/assets/2ea82d69-7e58-4214-8d05-21146bff38fd)](https://youtu.be/mVaudH7w8yw)
+[![Watch the video](https://github.com/user-attachments/assets/2ea82d69-7e58-4214-8d05-21146bff38fd)](https://youtu.be/hpxR1v2DXUA)
 
 DocSearch-style documentation search, self-hosted on [SereneDB](https://serenedb.com).
 One widget, one backend container, one database -- full-text (BM25), hybrid semantic

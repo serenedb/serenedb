@@ -46,9 +46,6 @@ namespace {
 
 constexpr size_t kTrainSeed = 42;
 constexpr uint64_t kSampleSegmentOversample = 4;
-constexpr size_t kMaxFanout = 1024;
-constexpr size_t kTrainPointsPerLeaf = 64;
-constexpr size_t kMaxTrainSample = 4ull * 1024 * 1024;
 constexpr size_t kClusterIters = 15;
 constexpr size_t kLeafClusterIters = 8;
 constexpr size_t kClusterRedos = 1;
@@ -498,7 +495,11 @@ CentroidsBuilder CentroidsBuilder::BuildFromSample(std::vector<float> sample,
   CentroidsBuilder builder;
   builder._metric = metric;
   builder._d = d;
-  SDB_ASSERT(max_centroids);
+  if (max_centroids == 0) {
+    const size_t rows = d == 0 ? 0 : sample.size() / d;
+    max_centroids = std::max<size_t>(
+      1, (rows + leaf_size - 1) / std::max<size_t>(1, leaf_size));
+  }
   builder.BuildTree(std::move(sample), leaf_size, max_centroids);
   return builder;
 }
@@ -510,11 +511,8 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
   const size_t t = params.posting_size;
   SDB_ASSERT(t > 0);
 
-  size_t sample_size =
-    std::max<size_t>(static_cast<size_t>(params.sample_factor * rows),
-                     (rows / t) * kTrainPointsPerLeaf);
+  size_t sample_size = static_cast<size_t>(params.sample_factor * rows);
   sample_size = std::max<size_t>(sample_size, params.min_train_sample);
-  sample_size = std::min<size_t>(sample_size, kMaxTrainSample);
   sample_size = std::min<size_t>(sample_size, rows);
 
   const size_t tau =

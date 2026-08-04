@@ -25,8 +25,8 @@
 
 #include <sstream>
 
-#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -114,9 +114,9 @@ TEST(ngram_token_stream_test, construct) {
 
   // 2-gram
   {
-    auto stream = irs::analysis::NGramTokenizer<
-      irs::analysis::NGramTokenizerBase::InputType::Binary>::
-      make(irs::analysis::NGramTokenizerBase::Options(2, 2, true));
+    auto stream = std::make_unique<irs::analysis::NGramTokenizer<
+      irs::analysis::NGramTokenizerBase::InputType::Binary>>(
+      irs::analysis::NGramTokenizerBase::Options(2, 2, true));
     ASSERT_NE(nullptr, stream);
     ASSERT_EQ(irs::Type<irs::analysis::NGramTokenizer<
                 irs::analysis::NGramTokenizerBase::InputType::Binary>>::id(),
@@ -132,9 +132,9 @@ TEST(ngram_token_stream_test, construct) {
 
   // 0 == min_gram
   {
-    auto stream = irs::analysis::NGramTokenizer<
-      irs::analysis::NGramTokenizerBase::InputType::Binary>::
-      make(irs::analysis::NGramTokenizerBase::Options(0, 2, true));
+    auto stream = std::make_unique<irs::analysis::NGramTokenizer<
+      irs::analysis::NGramTokenizerBase::InputType::Binary>>(
+      irs::analysis::NGramTokenizerBase::Options(0, 2, true));
     ASSERT_NE(nullptr, stream);
     ASSERT_EQ(irs::Type<irs::analysis::NGramTokenizer<
                 irs::analysis::NGramTokenizerBase::InputType::Binary>>::id(),
@@ -150,9 +150,9 @@ TEST(ngram_token_stream_test, construct) {
 
   // min_gram > max_gram
   {
-    auto stream = irs::analysis::NGramTokenizer<
-      irs::analysis::NGramTokenizerBase::InputType::Binary>::
-      make(irs::analysis::NGramTokenizerBase::Options(
+    auto stream = std::make_unique<irs::analysis::NGramTokenizer<
+      irs::analysis::NGramTokenizerBase::InputType::Binary>>(
+      irs::analysis::NGramTokenizerBase::Options(
         std::numeric_limits<size_t>::max(), 2, true));
     ASSERT_NE(nullptr, stream);
     ASSERT_EQ(irs::Type<irs::analysis::NGramTokenizer<
@@ -199,8 +199,7 @@ TEST(ngram_token_stream_test, next_utf8) {
       std::vector<uint32_t> poss;
       std::vector<uint32_t> starts;
       std::vector<uint32_t> ends;
-      const auto collect = [&](irs::TokenBatch& batch,
-                               irs::DocRuns runs) {
+      const auto collect = [&](irs::TokenBatch& batch, irs::DocRuns runs) {
         ASSERT_TRUE(stream.Traits().explicit_pos);
         ASSERT_TRUE(runs.empty());
         for (uint32_t i = 0; i < batch.count; ++i) {
@@ -213,7 +212,8 @@ TEST(ngram_token_stream_test, next_utf8) {
         }
       };
       tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, collect};
-      ASSERT_TRUE(stream.Fill(tests::ToStringT(data), sink.writer, sink.layout));
+      ASSERT_TRUE(
+        stream.Fill(tests::ToStringT(data), sink.writer, sink.layout));
       sink.writer.Finish();
       ASSERT_EQ(expected.size(), terms.size());
       for (size_t k = 0; k < expected.size(); ++k) {
@@ -933,7 +933,8 @@ TEST(ngram_token_stream_test, next) {
         }
       };
       tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, collect};
-      ASSERT_TRUE(stream.Fill(tests::ToStringT(data), sink.writer, sink.layout));
+      ASSERT_TRUE(
+        stream.Fill(tests::ToStringT(data), sink.writer, sink.layout));
       sink.writer.Finish();
       ASSERT_EQ(expected.size(), terms.size());
       for (size_t k = 0; k < expected.size(); ++k) {
@@ -1639,10 +1640,10 @@ void AssertNgramFillsMatchPull() {
 
 TEST(ngram_token_stream_test, native_fills_match_pull_binary) {
   ASSERT_TRUE(irs::analysis::NGramTokenizer<
-                 irs::analysis::NGramTokenizerBase::InputType::Binary>{
+                irs::analysis::NGramTokenizerBase::InputType::Binary>{
     irs::analysis::NGramTokenizerBase::Options{}}
-                 .Traits()
-                 .explicit_pos);
+                .Traits()
+                .explicit_pos);
   AssertNgramFillsMatchPull<
     irs::analysis::NGramTokenizerBase::InputType::Binary>();
 }

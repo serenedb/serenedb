@@ -30,16 +30,13 @@
 namespace irs {
 namespace analysis {
 
-////////////////////////////////////////////////////////////////////////////////
-/// @class ngram_token_stream
-/// @brief produces ngram from a specified input in a range of
-///         [min_gram;max_gram]. Can optionally preserve the original input.
-////////////////////////////////////////////////////////////////////////////////
+// Produces ngrams from the input in a range of [min_gram;max_gram].
+// Can optionally preserve the original input.
 class NGramTokenizerBase : private util::Noncopyable {
  public:
   enum class InputType : uint8_t {
-    Binary,  // input is treaten as generic bytes
-    UTF8,    // input is treaten as ut8-encoded symbols
+    Binary,  // input is treated as generic bytes
+    UTF8,    // input is treated as utf8-encoded symbols
   };
 
   enum class NGramMode : uint8_t {
@@ -56,7 +53,7 @@ class NGramTokenizerBase : private util::Noncopyable {
     bool preserve_original{true};  // emit input data as a token
     InputType stream_bytes_type{InputType::Binary};
     bstring start_marker;  // marker of ngrams at the beginning of stream
-    bstring end_marker;    // marker of ngrams at the end of strem
+    bstring end_marker;    // marker of ngrams at the end of stream
     NGramMode ngram_mode{NGramMode::All};
   };
 
@@ -75,9 +72,8 @@ class NGramTokenizerBase : private util::Noncopyable {
   // Plain: no markers and no preserve_original -- the marker machinery
   // compiles out of the gram loops.
   template<TokenLayout Layout, bool Identity, bool Plain, NGramMode Mode>
-  void EmitGrams(TokenSink& sink, bytes_view data, const uint32_t* bounds,
-                 uint32_t nsym);
-  void BuildBoundaries(bytes_view data);
+  void EmitGrams(TokenSink& sink, const byte_type* base, uint32_t size,
+                 const uint32_t* bounds, uint32_t nsym);
 
   std::vector<uint32_t> _fill_bounds;
 };
@@ -86,8 +82,6 @@ template<NGramTokenizerBase::InputType StreamType>
 class NGramTokenizer : public TypedTokenizer<NGramTokenizer<StreamType>>,
                        public NGramTokenizerBase {
  public:
-  static Tokenizer::ptr make(NGramTokenizerBase::Options&& options);
-
   explicit NGramTokenizer(NGramTokenizerBase::Options&& options);
 
   TokenTraits Traits() const noexcept final {

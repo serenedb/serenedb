@@ -30,16 +30,9 @@
 #include "iresearch/analysis/classify.hpp"
 #include "iresearch/analysis/term_view.hpp"
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
-
-template<NGramTokenizerBase::InputType StreamType>
-Tokenizer::ptr NGramTokenizer<StreamType>::make(
-  NGramTokenizerBase::Options&& options) {
-  return std::make_unique<NGramTokenizer<StreamType>>(std::move(options));
-}
 
 NGramTokenizerBase::NGramTokenizerBase(Options&& options)
   : _options(std::move(options)) {
@@ -48,14 +41,12 @@ NGramTokenizerBase::NGramTokenizerBase(Options&& options)
 }
 
 Tokenizer::ptr NGramTokenizerBase::Make(Options opts) {
-  const auto stream_bytes_type = opts.stream_bytes_type;
-  switch (stream_bytes_type) {
-    case NGramTokenizerBase::InputType::Binary:
-      return NGramTokenizer<NGramTokenizerBase::InputType::Binary>::make(
+  switch (opts.stream_bytes_type) {
+    case InputType::Binary:
+      return std::make_unique<NGramTokenizer<InputType::Binary>>(
         std::move(opts));
-    case NGramTokenizerBase::InputType::UTF8:
-      return NGramTokenizer<NGramTokenizerBase::InputType::UTF8>::make(
-        std::move(opts));
+    case InputType::UTF8:
+      return std::make_unique<NGramTokenizer<InputType::UTF8>>(std::move(opts));
   }
   THROW_SQL_ERROR(ERR_MSG("ngram: unsupported input type"));
 }
@@ -65,15 +56,6 @@ NGramTokenizer<StreamType>::NGramTokenizer(
   NGramTokenizerBase::Options&& options)
   : NGramTokenizerBase{std::move(options)} {
   SDB_ASSERT(StreamType == _options.stream_bytes_type);
-}
-
-void NGramTokenizerBase::BuildBoundaries(bytes_view data) {
-  const auto* base = data.data();
-  const size_t size = data.size();
-  BuildUtf8CpBounds(
-    base, size,
-    simdutf::validate_utf8(reinterpret_cast<const char*>(base), size),
-    _fill_bounds);
 }
 
 namespace {
@@ -104,8 +86,9 @@ struct GramSink {
   }
 
   void Emit(uint32_t off_start, uint32_t off_end, uint32_t position) const {
-    sink.Emit<Layout>(MakeTermView(base + off_start, off_end - off_start),
-                      position, Offs{off_start, off_end});
+    sink.Emit<Layout>(
+      MakeTermView(base + off_start, off_end - off_start, base + data_size),
+      position, Offs{off_start, off_end});
   }
 
   void EmitConcat(bytes_view prefix, bytes_view suffix, uint32_t off_start,
@@ -123,7 +106,7 @@ struct GramSink {
 };
 
 template<TokenLayout Layout, bool Identity>
-void EmitOriginalStep(const GramSink<Layout, Identity>& grams, bytes_view data,
+void EmitOriginalStep(const GramSink<Layout, Identity>& grams,
                       bytes_view start_marker, bytes_view end_marker,
                       EmitOriginal& pending, uint32_t position) {
   switch (pending) {
@@ -132,11 +115,13 @@ void EmitOriginalStep(const GramSink<Layout, Identity>& grams, bytes_view data,
       pending = EmitOriginal::None;
       break;
     case EmitOriginal::WithEndMarker:
-      grams.EmitConcat(data, end_marker, 0, grams.data_size, position);
+      grams.EmitConcat({grams.base, grams.data_size}, end_marker, 0,
+                       grams.data_size, position);
       pending = EmitOriginal::None;
       break;
     case EmitOriginal::WithStartMarker:
-      grams.EmitConcat(start_marker, data, 0, grams.data_size, position);
+      grams.EmitConcat(start_marker, {grams.base, grams.data_size}, 0,
+                       grams.data_size, position);
       pending =
         end_marker.empty() ? EmitOriginal::None : EmitOriginal::WithEndMarker;
       break;
@@ -148,8 +133,8 @@ void EmitOriginalStep(const GramSink<Layout, Identity>& grams, bytes_view data,
 
 template<TokenLayout Layout, bool Identity, bool Plain, NGramMode Mode>
 void EmitPrefixGrams(const Options& options,
-                     const GramSink<Layout, Identity>& grams, bytes_view data,
-                     uint32_t nsym, EmitOriginal& pending) {
+                     const GramSink<Layout, Identity>& grams, uint32_t nsym,
+                     EmitOriginal& pending) {
   const auto* base = grams.base;
   const uint32_t data_size = grams.data_size;
   const bytes_view start_marker = options.start_marker;
@@ -173,12 +158,12 @@ void EmitPrefixGrams(const Options& options,
         grams.EmitConcat(bytes_view{base, end_off}, end_marker, 0, end_off, 1);
       }
     } else {
-      EmitOriginalStep(grams, data, start_marker, end_marker, pending, 1);
+      EmitOriginalStep(grams, start_marker, end_marker, pending, 1);
     }
   }
   if constexpr (!Plain && Mode != NGramMode::PrefixAndSuffix) {
     while (pending != EmitOriginal::None) {
-      EmitOriginalStep(grams, data, start_marker, end_marker, pending, 1);
+      EmitOriginalStep(grams, start_marker, end_marker, pending, 1);
     }
   }
 }
@@ -245,8 +230,8 @@ void EmitInteriorGrams(const Options& options,
 
 template<TokenLayout Layout, bool Identity, bool Plain, NGramMode Mode>
 void EmitSuffixGrams(const Options& options,
-                     const GramSink<Layout, Identity>& grams, bytes_view data,
-                     uint32_t nsym, EmitOriginal& pending) {
+                     const GramSink<Layout, Identity>& grams, uint32_t nsym,
+                     EmitOriginal& pending) {
   const auto* base = grams.base;
   const uint32_t data_size = grams.data_size;
   const bytes_view start_marker = options.start_marker;
@@ -286,8 +271,7 @@ void EmitSuffixGrams(const Options& options,
         ? 1u
         : suffix_pos;
     while (pending != EmitOriginal::None) {
-      EmitOriginalStep(grams, data, start_marker, end_marker, pending,
-                       orig_pos);
+      EmitOriginalStep(grams, start_marker, end_marker, pending, orig_pos);
     }
   }
 }
@@ -296,13 +280,13 @@ void EmitSuffixGrams(const Options& options,
 
 template<TokenLayout Layout, bool Identity, bool Plain,
          NGramTokenizerBase::NGramMode Mode>
-void NGramTokenizerBase::EmitGrams(TokenSink& sink, bytes_view data,
-                                   const uint32_t* bounds, uint32_t nsym) {
+void NGramTokenizerBase::EmitGrams(TokenSink& sink, const byte_type* base,
+                                   uint32_t size, const uint32_t* bounds,
+                                   uint32_t nsym) {
   if (nsym == 0) {
     return;
   }
-  const GramSink<Layout, Identity> gram_sink{
-    sink, data.data(), static_cast<uint32_t>(data.size()), bounds};
+  const GramSink<Layout, Identity> gram_sink{sink, base, size, bounds};
   EmitOriginal pending = EmitOriginal::None;
   if constexpr (!Plain) {
     if (_options.preserve_original) {
@@ -313,38 +297,33 @@ void NGramTokenizerBase::EmitGrams(TokenSink& sink, bytes_view data,
   }
 
   if constexpr (Mode != NGramMode::Suffix) {
-    EmitPrefixGrams<Layout, Identity, Plain, Mode>(_options, gram_sink, data,
-                                                   nsym, pending);
+    EmitPrefixGrams<Layout, Identity, Plain, Mode>(_options, gram_sink, nsym,
+                                                   pending);
   }
   if constexpr (Mode == NGramMode::All) {
     EmitInteriorGrams<Layout, Identity, Plain>(_options, gram_sink, nsym);
   } else if constexpr (Mode == NGramMode::Suffix ||
                        Mode == NGramMode::PrefixAndSuffix) {
-    EmitSuffixGrams<Layout, Identity, Plain, Mode>(_options, gram_sink, data,
-                                                   nsym, pending);
+    EmitSuffixGrams<Layout, Identity, Plain, Mode>(_options, gram_sink, nsym,
+                                                   pending);
   }
 }
 
 template<NGramTokenizerBase::InputType StreamType>
 template<TokenLayout Layout, bool Plain, NGramTokenizerBase::NGramMode Mode>
-bool NGramTokenizer<StreamType>::DoFill(duckdb::string_t raw,
-                                        TokenSink& sink) {
-  const bytes_view data{reinterpret_cast<const byte_type*>(raw.GetData()),
-                        raw.GetSize()};
+bool NGramTokenizer<StreamType>::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  const auto* base = reinterpret_cast<const byte_type*>(raw.GetData());
+  const uint32_t size = raw.GetSize();
   if constexpr (StreamType == InputType::Binary) {
-    EmitGrams<Layout, true, Plain, Mode>(sink, data, nullptr,
-                                         static_cast<uint32_t>(data.size()));
+    EmitGrams<Layout, true, Plain, Mode>(sink, base, size, nullptr, size);
+  } else if (simdutf::validate_ascii(raw.GetData(), size)) {
+    EmitGrams<Layout, true, Plain, Mode>(sink, base, size, nullptr, size);
   } else {
-    if (simdutf::validate_ascii(reinterpret_cast<const char*>(data.data()),
-                                data.size())) {
-      EmitGrams<Layout, true, Plain, Mode>(sink, data, nullptr,
-                                           static_cast<uint32_t>(data.size()));
-    } else {
-      BuildBoundaries(data);
-      EmitGrams<Layout, false, Plain, Mode>(
-        sink, data, _fill_bounds.data(),
-        static_cast<uint32_t>(_fill_bounds.size() - 1));
-    }
+    BuildUtf8CpBounds(base, size, simdutf::validate_utf8(raw.GetData(), size),
+                      _fill_bounds);
+    EmitGrams<Layout, false, Plain, Mode>(
+      sink, base, size, _fill_bounds.data(),
+      static_cast<uint32_t>(_fill_bounds.size() - 1));
   }
   return true;
 }

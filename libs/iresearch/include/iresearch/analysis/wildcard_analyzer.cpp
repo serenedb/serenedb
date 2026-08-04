@@ -176,7 +176,7 @@ WildcardAnalyzer::WildcardAnalyzer(Tokenizer::ptr base_analyzer,
   if (!_analyzer) {
     _analyzer = std::make_unique<KeywordTokenizer>();
   }
-  auto ptr = Ngram::make({
+  _ngram = std::make_unique<Ngram>(NGramTokenizerBase::Options{
     ngram_size,
     ngram_size,
     false,
@@ -184,7 +184,6 @@ WildcardAnalyzer::WildcardAnalyzer(Tokenizer::ptr base_analyzer,
     {},
     {},
   });
-  _ngram = decltype(_ngram){sdb::basics::downCast<Ngram>(ptr.release())};
   SDB_ASSERT(_ngram);
 }
 

@@ -159,6 +159,66 @@ void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
   }
 }
 
+// The iresearch encoding config the search writer asks for at flush/merge,
+// resolved from the merged config (mirrors catalog::InvertedIndex, which is
+// itself an IndexFieldOptions, over that index's own entries). Only fields the
+// merged config knows carry per-index encoding; every other opened column
+// (each value column keyed by its column id, the generated-PK rowid, synthetic
+// blob sub-columns) gets the writer's baseline defaults. IVF is intentionally
+// not attached here -- a vector value is stored under its column id, not the
+// per-index field, so IVF stays a separate follow-up.
+class MergedFieldOptions final : public irs::IndexFieldOptions {
+ public:
+  explicit MergedFieldOptions(
+    std::shared_ptr<const catalog::InvertedIndex::Entries> entries)
+    : _entries{std::move(entries)} {}
+
+  irs::ColumnOptions GetColumnOptions(irs::field_id id) const final {
+    const auto it = _entries->find(id);
+    if (it == _entries->end()) {
+      return {};  // not a merged-config field -> writer baseline (non-zero rgs)
+    }
+    const auto& entry = it->second;
+    irs::ColumnOptions opts;
+    if (entry.row_group_size != 0) {
+      opts.row_group_size = entry.row_group_size;
+    }
+    opts.compression = entry.compression;
+    opts.hyperloglog = entry.hyperloglog;
+    // An IVF entry keys the merged config by its column id (not an allocated
+    // term field), so this fires for the vector value column the fan-out stores
+    // -- attaching the ANN index to it. `id` is that column id, matching the
+    // read (InvertedIndex::GetIvfInfo(col_id)).
+    opts.ivf_info = catalog::IvfInfoForEntry(id, entry);
+    return opts;
+  }
+
+  irs::NormColumnOptions GetNormColumnOptions(irs::field_id id) const final {
+    const auto it = _entries->find(id);
+    SDB_ASSERT(it != _entries->end(),
+               "MergedFieldOptions::GetNormColumnOptions: unknown id ", id);
+    const auto& entry = it->second;
+    SDB_ASSERT(irs::field_limits::valid(entry.synthetic_column),
+               "MergedFieldOptions::GetNormColumnOptions: no norm reservation "
+               "for id ",
+               id);
+    irs::NormColumnOptions opts;
+    opts.id = entry.synthetic_column;
+    if (entry.norm_row_group_size != 0) {
+      opts.row_group_size = entry.norm_row_group_size;
+    }
+    return opts;
+  }
+
+ private:
+  std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
+};
+
+std::shared_ptr<const irs::IndexFieldOptions> MakeFieldOptions(
+  std::shared_ptr<const catalog::InvertedIndex::Entries> entries) {
+  return std::make_shared<const MergedFieldOptions>(std::move(entries));
+}
+
 }  // namespace
 
 SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
@@ -176,6 +236,7 @@ SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
   _entries =
     std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
   _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
+  _field_options = MakeFieldOptions(_entries);
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
@@ -193,6 +254,12 @@ std::shared_ptr<const SearchTable::TermsByColumn>
 SearchTable::GetTermsByColumn() const noexcept {
   std::shared_lock lock(_table_lock);
   return _terms_by_column;
+}
+
+std::shared_ptr<const irs::IndexFieldOptions> SearchTable::GetFieldOptions()
+  const noexcept {
+  std::shared_lock lock(_table_lock);
+  return _field_options;
 }
 
 catalog::ColumnTokenizer SearchTable::GetTokenizer(
@@ -214,6 +281,7 @@ void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
   MergeIndexInto(*merged_entries, *merged_terms, index);
   _entries = std::move(merged_entries);
   _terms_by_column = std::move(merged_terms);
+  _field_options = MakeFieldOptions(_entries);
 }
 
 void SearchTable::RebuildIndexConfig(const catalog::Snapshot& snapshot) {
@@ -233,6 +301,7 @@ void SearchTable::RebuildIndexConfig(const catalog::Snapshot& snapshot) {
   std::unique_lock lock(_table_lock);
   _entries = std::move(next_entries);
   _terms_by_column = std::move(next_terms);
+  _field_options = MakeFieldOptions(_entries);
 }
 
 SearchTable::~SearchTable() {

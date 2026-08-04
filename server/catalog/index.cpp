@@ -781,7 +781,7 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
     }
     const auto column = c.GetCatalogColumn().GetId();
     irs::field_id col_field_id;
-    if (search_engine) {
+    if (search_engine && !c.IsBuiltin(kIVFKind)) {
       // Allocate one term field per column, reused when the column is mentioned
       // again in the same index (e.g. `col dict, col included(...)`, which
       // merges the term + stored roles into one entry below).
@@ -792,6 +792,11 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
       }
       col_field_id = m_it->second;
     } else {
+      // IVF is a columnstore-attached vector index, not a term posting: keep it
+      // at the column id so it attaches to the single stored vector value (the
+      // fan-out stores it there) and the ANN read -- which resolves the column
+      // ref to the column id -- finds it. Transactional indexes stay at the
+      // column id too.
       col_field_id = static_cast<irs::field_id>(column);
     }
     auto [col_it, col_inserted] =

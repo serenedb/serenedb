@@ -161,6 +161,14 @@ struct InvertedIndexEntryInfo {
   bool IsStored() const noexcept { return store_values || IsIVF(); }
 };
 
+// The writer/reader IVF descriptor for an entry with an ivf_config (nullopt
+// otherwise), keyed off `field_id` (its centroids/postings ids). Shared by the
+// read path (InvertedIndex::GetIvfInfo) and the search table's write-side
+// MergedFieldOptions so both derive identical params -- a mismatch would make
+// the built index and the query disagree.
+std::optional<irs::IvfInfo> IvfInfoForEntry(
+  irs::field_id field_id, const InvertedIndexEntryInfo& entry);
+
 struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;

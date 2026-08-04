@@ -1,0 +1,54 @@
+# IVF (vector ANN) on a search table. An IVF index is columnstore-attached, not a
+# term posting: the vector value is stored once under its column id and the IVF
+# attaches to that column, so an ANN query through the index scan pushes the
+# distance + top-k INTO the scan (accelerated) rather than computing distances
+# over every row. One IVF per vector column (the store attaches one IVF per data
+# column). Commit-time-only, so rows are observed after VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TABLE v (id BIGINT PRIMARY KEY, vec FLOAT[3])
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX v_idx ON v USING inverted (vec ivf(metric='l2'));
+
+statement ok
+INSERT INTO v VALUES
+  (1, array_value(1::FLOAT, 2::FLOAT, 3::FLOAT)),
+  (2, array_value(10::FLOAT, 10::FLOAT, 10::FLOAT)),
+  (3, array_value(5::FLOAT, 5::FLOAT, 5::FLOAT)),
+  (4, array_value(0::FLOAT, 0::FLOAT, 0::FLOAT));
+
+statement ok
+VACUUM (REFRESH_TABLE) v;
+
+# The two nearest neighbours of [1,2,3] are row 1 (itself) and row 4 ([0,0,0]).
+query
+SELECT id FROM v_idx
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+id
+1
+4
+
+# The distance + top-k are pushed into the scan (IVF-accelerated): the scan
+# carries a Score + Top, not a separate distance projection over all rows.
+query
+EXPLAIN SELECT id FROM v_idx
+ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 ASC                       │
+│ ~2 rows                                │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: v_idx                           │
+│ Lookup: search                         │
+│ Score: l2_distance(vec, FLOAT[3])      │
+│ Top: 2                                 │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~4 rows                                │
+╰────────────────────────────────────────╯

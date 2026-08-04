@@ -392,6 +392,9 @@ inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   std::shared_ptr<const catalog::Snapshot> snapshot) {
   auto config = shard.GetIndexConfig();
+  // Hand the writer the merged encoding config so norm-featured fields flush
+  // (else the writer asserts) and per-index compression/row-group is honored.
+  trx.SetFieldOptions(shard.GetFieldOptions());
   return std::make_unique<SearchSinkInsertBaseImpl>(
     trx, MakeConfigTokenizerProvider(config, std::move(snapshot)),
     MakeConfigEntryInfoProvider(std::move(config)),

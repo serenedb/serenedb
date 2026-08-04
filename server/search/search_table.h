@@ -97,6 +97,14 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
     containers::FlatHashMap<catalog::Column::Id, std::vector<irs::field_id>>;
   std::shared_ptr<const TermsByColumn> GetTermsByColumn() const noexcept;
 
+  // The per-field iresearch encoding config (norms/compression/row-group) the
+  // writer asks for at flush + merge, resolved against the merged config. The
+  // Search-engine analogue of handing the writer a transactional index's own
+  // IndexFieldOptions -- without it a norm-featured field trips a writer assert.
+  // Swapped together with the merged config; cached so it stays pointer-stable
+  // within a config generation (segment-reuse gate is pointer identity).
+  std::shared_ptr<const irs::IndexFieldOptions> GetFieldOptions() const noexcept;
+
   // Resolve the analyzer/features for `field_id` from the current config; PK
   // and keyword columns fall back to the default string tokenizer. Mirrors
   // InvertedIndex::GetTokenizer via the shared catalog::TokenizerForEntry.
@@ -241,6 +249,8 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   // the write-side fan-out (value stored once per column, term emitted per
   // field).
   std::shared_ptr<const TermsByColumn> _terms_by_column;
+  // Writer encoding config over the merged _entries, RCU-swapped with them.
+  std::shared_ptr<const irs::IndexFieldOptions> _field_options;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   // Borrowed from the search engine (set in OpenWriter). Outlives this object.

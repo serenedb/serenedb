@@ -467,13 +467,12 @@ irs::field_id InvertedIndex::FindFieldIdBySerialized(
   return it->second;
 }
 
-std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
-  irs::field_id field_id) const {
-  const auto* entry = FindEntry(field_id);
-  if (!entry || !entry->ivf_config) {
+std::optional<irs::IvfInfo> IvfInfoForEntry(
+  irs::field_id field_id, const InvertedIndexEntryInfo& entry) {
+  if (!entry.ivf_config) {
     return std::nullopt;
   }
-  const auto& cfg = *entry->ivf_config;
+  const auto& cfg = *entry.ivf_config;
   return irs::IvfInfo{
     .centroids_id = field_id,
     .postings_id = field_id,
@@ -483,6 +482,15 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .sample_factor = cfg.sample_factor,
     .posting_size = cfg.posting_size,
   };
+}
+
+std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
+  irs::field_id field_id) const {
+  const auto* entry = FindEntry(field_id);
+  if (!entry) {
+    return std::nullopt;
+  }
+  return IvfInfoForEntry(field_id, *entry);
 }
 
 irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {

@@ -92,9 +92,8 @@ IRS_FORCE_INLINE constexpr decltype(auto) ResolveValues(Visitor&& visit,
       return visit(tag);
     } else {
       return ResolveValues(
-        [&](auto... tags) IRS_FORCE_INLINE -> decltype(auto) {
-          return visit(tag, tags...);
-        },
+        [&](auto... tags)
+          IRS_FORCE_INLINE -> decltype(auto) { return visit(tag, tags...); },
         rest...);
     }
   };
@@ -154,6 +153,11 @@ struct EmitKSlot {
   uint32_t begin;
   uint32_t end;
   Offs offs{};
+};
+
+struct PosOffs {
+  Offs offs;
+  uint32_t pos;
 };
 
 struct Pos {
@@ -242,17 +246,32 @@ class TokenSink final : util::Noncopyable {
     FillLanes<L>(i, 0, rest...);
   }
 
+  // The generator returns Offs (pos comes from the trailing tags) or PosOffs
+  // (pos comes from the generator; generators are invoked in index order, so
+  // stateful cursors are fine).
   template<TokenLayout L, typename Gen, typename... P>
   IRS_FORCE_INLINE void EmitK(size_t k, const byte_type* base, Gen gen,
                               P... pos) {
+    static_assert(
+      !std::is_same_v<std::invoke_result_t<Gen&, size_t>, PosOffs> ||
+        sizeof...(P) == 0,
+      "pos comes from the generator");
+    const auto put = [&](uint32_t slot, size_t i, auto t) IRS_FORCE_INLINE {
+      if constexpr (std::is_same_v<decltype(t), PosOffs>) {
+        _batch.terms[slot] =
+          MakeTermView(base + t.offs.start, t.offs.end - t.offs.start);
+        FillLanes<L>(slot, i, Pos{t.pos}, t.offs);
+      } else {
+        _batch.terms[slot] = MakeTermView(base + t.start, t.end - t.start);
+        FillLanes<L>(slot, i, pos..., t);
+      }
+    };
     size_t done = 0;
     while (done < k) {
       const auto slots = Next(k - done);
       const auto first = static_cast<uint32_t>(slots.data() - _batch.terms);
       for (size_t j = 0; j < slots.size(); ++j) {
-        const Offs offs = gen(done + j);
-        slots[j] = MakeTermView(base + offs.start, offs.end - offs.start);
-        FillLanes<L>(first + static_cast<uint32_t>(j), done + j, pos..., offs);
+        put(first + static_cast<uint32_t>(j), done + j, gen(done + j));
       }
       done += slots.size();
     }

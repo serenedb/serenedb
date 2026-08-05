@@ -811,6 +811,38 @@ Tokenizer::ptr MakeNgramVariable() {
   return NGramTokenizerBase::Make(std::move(opts));
 }
 
+Tokenizer::ptr MakeNgramMode(NGramTokenizerBase::NGramMode mode) {
+  NGramTokenizerBase::Options opts;
+  opts.min_gram = 2;
+  opts.max_gram = 4;
+  opts.preserve_original = false;
+  opts.stream_bytes_type = NGramTokenizerBase::InputType::Binary;
+  opts.ngram_mode = mode;
+  return NGramTokenizerBase::Make(std::move(opts));
+}
+
+Tokenizer::ptr MakeNgramPrefix() {
+  return MakeNgramMode(NGramTokenizerBase::NGramMode::Prefix);
+}
+
+Tokenizer::ptr MakeNgramSuffix() {
+  return MakeNgramMode(NGramTokenizerBase::NGramMode::Suffix);
+}
+
+Tokenizer::ptr MakeNgramPrefixSuffix() {
+  return MakeNgramMode(NGramTokenizerBase::NGramMode::PrefixAndSuffix);
+}
+
+Tokenizer::ptr MakeNgramVariableMarked() {
+  NGramTokenizerBase::Options opts;
+  opts.min_gram = 2;
+  opts.max_gram = 4;
+  opts.preserve_original = true;
+  opts.stream_bytes_type = NGramTokenizerBase::InputType::Binary;
+  opts.end_marker = irs::ViewCast<irs::byte_type>(std::string_view{"$"});
+  return NGramTokenizerBase::Make(std::move(opts));
+}
+
 Tokenizer::ptr MakeNgramBinary() {
   return MakeNgram(NGramTokenizerBase::InputType::Binary);
 }
@@ -988,6 +1020,10 @@ TOKENIZER_BENCH(path_hierarchy_reverse_replace, MakePathHierarchyReverseReplace,
                 PathCorpus);
 TOKENIZER_BENCH(ngram_binary, MakeNgramBinary, TextCorpus);
 TOKENIZER_BENCH(ngram_variable, MakeNgramVariable, TextCorpus);
+TOKENIZER_BENCH(ngram_variable_marked, MakeNgramVariableMarked, TextCorpus);
+TOKENIZER_BENCH(ngram_prefix, MakeNgramPrefix, TextCorpus);
+TOKENIZER_BENCH(ngram_suffix, MakeNgramSuffix, TextCorpus);
+TOKENIZER_BENCH(ngram_prefix_suffix, MakeNgramPrefixSuffix, TextCorpus);
 TOKENIZER_BENCH(ngram_utf8, MakeNgramUtf8, TextCorpus);
 TOKENIZER_BENCH(sparse_ngram, MakeSparseNgram, TextCorpus);
 TOKENIZER_BENCH(wildcard, MakeWildcard, TextCorpus);

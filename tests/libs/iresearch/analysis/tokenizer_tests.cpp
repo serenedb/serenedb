@@ -172,7 +172,8 @@ TEST(string_token_stream_tests, native_batch_fill) {
       ASSERT_EQ(v.size(), batch.offs_end[0]);
     };
     tests::FnTokenSink sink{irs::TokenLayout::TermsPosOffs, check};
-    ASSERT_TRUE(stream.Fill(tests::ToStringT(v), sink.writer, sink.layout));
+    ASSERT_TRUE(stream.Fill(tests::ToStringT(v), irs::doc_limits::min(),
+                            sink.writer, sink.layout));
     sink.writer.Finish();
     ASSERT_EQ(1, flushes);
   }

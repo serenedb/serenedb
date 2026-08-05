@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <tuple>
 #include <vector>
 
 #include "iresearch/analysis/tokenizer.hpp"
@@ -41,6 +42,15 @@ class NGramTokenizerBase : private util::Noncopyable {
 
   enum class NGramMode : uint8_t {
     All,
+    Prefix,
+    Suffix,
+    PrefixAndSuffix,
+  };
+
+  // Dispatch-side refinement of NGramMode: All splits by gram shape.
+  enum class FillMode : uint8_t {
+    AllFixed,
+    AllVariable,
     Prefix,
     Suffix,
     PrefixAndSuffix,
@@ -71,9 +81,10 @@ class NGramTokenizerBase : private util::Noncopyable {
 
   // Plain: no markers and no preserve_original -- the marker machinery
   // compiles out of the gram loops.
-  template<TokenLayout Layout, bool Identity, bool Plain, NGramMode Mode>
-  void EmitGrams(TokenSink& sink, const byte_type* base, uint32_t size,
-                 const uint32_t* bounds, uint32_t nsym);
+  // Identity: ascii/binary input, symbol index == byte offset; otherwise
+  // utf8 codepoint bounds are built here.
+  template<TokenLayout Layout, bool Identity, bool Plain, FillMode Mode>
+  void EmitGrams(TokenSink& sink, const byte_type* base, uint32_t size);
 
   std::vector<uint32_t> _fill_bounds;
 };
@@ -91,14 +102,9 @@ class NGramTokenizer : public TypedTokenizer<NGramTokenizer<StreamType>>,
     };
   }
 
-  auto PrepareBatch() const {
-    const bool plain = !_options.preserve_original &&
-                       _options.start_marker.empty() &&
-                       _options.end_marker.empty();
-    return std::tuple{plain, _options.ngram_mode};
-  }
+  std::tuple<bool, FillMode> PrepareBatch() const;
 
-  template<TokenLayout Layout, bool Plain, NGramMode Mode>
+  template<TokenLayout Layout, bool Plain, FillMode Mode>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 };
 

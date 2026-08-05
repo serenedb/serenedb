@@ -1945,11 +1945,11 @@ absl::Status MakeSearchFilter(
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 
-  size_t scored_terms_limit = 1024;
+  uint32_t scored_terms_limit = 1024;
   duckdb::Value v;
   if (context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
       !v.IsNull()) {
-    scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
+    scored_terms_limit = static_cast<uint32_t>(v.GetValue<int32_t>());
   }
 
   uint32_t levenshtein_max_terms = 64;

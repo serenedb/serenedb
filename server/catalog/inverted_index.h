@@ -248,6 +248,24 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
     return static_cast<irs::field_id>(column);
   }
 
+  // Reverse of TermFieldForColumn: the plain column a Search-table allocated
+  // term field belongs to. Call only with such a field (asserted); used for
+  // display, e.g. a filter's field name in EXPLAIN.
+  Column::Id ColumnForTermField(irs::field_id field_id) const noexcept {
+    for (const auto& [column, term_field] : _col_to_term_field) {
+      if (term_field == field_id) {
+        SDB_ASSERT(ReferencesColumn(column),
+                   "ColumnForTermField: term field maps to a non-indexed "
+                   "column ",
+                   column);
+        return column;
+      }
+    }
+    SDB_ASSERT(false,
+               "ColumnForTermField: not an allocated term field: ", field_id);
+    return Column::kInvalidId;
+  }
+
   static std::shared_ptr<InvertedIndex> Deserialize(duckdb::Deserializer& src,
                                                     ReadContext ctx);
   void Serialize(duckdb::Serializer& sink) const final;

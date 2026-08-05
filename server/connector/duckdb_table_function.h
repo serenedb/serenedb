@@ -193,7 +193,12 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   std::optional<ScanOrder> scan_order;
 
   struct OffsetsRequest {
+    // The field whose stored offsets the scan reads (matched against the term
+    // reader's field id): the allocated term field for a Search-table plain
+    // column, the column id itself otherwise.
     catalog::Column::Id column_id;
+    // The column id used for the output column's display name.
+    catalog::Column::Id display_id = catalog::Column::kInvalidId;
     size_t limit = std::numeric_limits<size_t>::max();
     duckdb::idx_t get_col_idx = 0;
     OffsetsBindData* bind = nullptr;
@@ -202,6 +207,11 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 
   struct TsDictRequest {
     irs::field_id field_id = irs::field_limits::invalid();
+    // The id used to derive the human-readable column name (DisplayColumnName).
+    // Equals `field_id` for transactional/expression fields, but for a
+    // Search-table plain column `field_id` is the allocated term field (where
+    // the dictionary lives) while `display_id` is the column id (its name).
+    irs::field_id display_id = irs::field_limits::invalid();
     // Valid for a nullable facet: the scan appends a per-segment NULL-term
     // row counting the null-marker field under the claimed document filter.
     irs::field_id null_field_id = irs::field_limits::invalid();
@@ -233,7 +243,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     if (it != ts_dicts.end()) {
       return *it;
     }
-    return ts_dicts.emplace_back(TsDictRequest{.field_id = field_id});
+    return ts_dicts.emplace_back(
+      TsDictRequest{.field_id = field_id, .display_id = field_id});
   }
   void AppendSummary(
     duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const;

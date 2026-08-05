@@ -163,7 +163,7 @@ duckdb::idx_t EnsureTsDictCol(connector::SereneDBScanBindData& bind_data,
   if (col_idx == duckdb::DConstants::INVALID_INDEX) {
     col_idx = AppendVirtualGetColumn(
       bind_data, get, col.virtual_id, duckdb::LogicalType{col.type},
-      TsDictColName(bind_data, req.field_id, kind));
+      TsDictColName(bind_data, req.display_id, kind));
   }
   return col_idx;
 }
@@ -210,15 +210,16 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictListAggregate(
 
 duckdb::unique_ptr<duckdb::Expression> MakeTsDictAggregate(
   duckdb::LogicalOperator& root, duckdb::ClientContext& context,
-  FoundScan& found, irs::field_id field_id, TsDictColKind kind,
-  std::string_view agg_name, duckdb::TableIndex table_index,
+  FoundScan& found, irs::field_id field_id, irs::field_id display_id,
+  TsDictColKind kind, std::string_view agg_name, duckdb::TableIndex table_index,
   const duckdb::Identifier& alias) {
   auto& req = found.bind_data->TsDictFor(field_id);
+  req.display_id = display_id;
   const duckdb::LogicalType col_type{TsDictColFor(kind).type};
   const auto col_idx = EnsureTsDictCol(*found.bind_data, *found.get, req, kind);
   using enum connector::TsDictTermUses;
   req.term_uses |= agg_name == "min" ? kMin : agg_name == "max" ? kMax : kFull;
-  const auto name = TsDictColName(*found.bind_data, field_id, kind);
+  const auto name = TsDictColName(*found.bind_data, display_id, kind);
   const auto binding =
     ExposeGetColumnAt(root, table_index, *found.get, col_idx, name, col_type);
   auto result = agg_name == "list"
@@ -290,7 +291,12 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
-  return MakeTsDictAggregate(root, context, found,
+  // Read the dictionary from the index's own term field (the allocated field
+  // for a Search-table plain column, the column id itself for a transactional
+  // one), but name the output column from the column id.
+  const auto read_field =
+    found.bind_data->inverted_index->TermFieldForColumn(col_id);
+  return MakeTsDictAggregate(root, context, found, read_field,
                              static_cast<irs::field_id>(col_id), kind, agg_name,
                              col_ref->Binding().table_index, agg.GetAlias());
 }
@@ -902,7 +908,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildKeywordTsDictAggregate(
   duckdb::ClientContext& context, const duckdb::Identifier& alias,
   FoundScan& target) {
   return MakeTsDictAggregate(root, context, target, match.field_id,
-                             TsDictColKind::Term, match.agg,
+                             match.field_id, TsDictColKind::Term, match.agg,
                              match.binding.table_index, alias);
 }
 

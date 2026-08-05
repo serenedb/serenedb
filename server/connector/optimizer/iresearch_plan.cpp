@@ -717,14 +717,22 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   const bool is_text = col_info->text_dictionary.isSet();
   const bool offs_stored =
     col_info->features.HasFeatures(irs::IndexFeatures::Offs);
+  // The stored offsets live under the index's own term field (the allocated
+  // field for a Search-table plain column), which is what the scan's term
+  // query iterates and the offsets collector matches on. The column id is kept
+  // only for the display name.
+  const auto read_field = static_cast<catalog::Column::Id>(
+    found.bind_data->inverted_index->TermFieldForColumn(target_col_id));
 
   if (is_text && !offs_stored) {
     auto bind = duckdb::make_uniq<connector::OffsetsBindData>();
     bind->inverted_index = found.bind_data->inverted_index;
     bind->column_id = target_col_id;
     bind->limit = limit;
-    search_scan.offsets.push_back(
-      {.column_id = target_col_id, .limit = limit, .bind = bind.get()});
+    search_scan.offsets.push_back({.column_id = target_col_id,
+                                   .display_id = target_col_id,
+                                   .limit = limit,
+                                   .bind = bind.get()});
     func.BindInfoMutable() = std::move(bind);
     func.FunctionMutable().SetFunctionCallback(connector::OffsetsScalarFn);
     auto body_expr = std::move(func.GetChildrenMutable()[0]);
@@ -739,7 +747,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   duckdb::idx_t get_col_idx = duckdb::DConstants::INVALID_INDEX;
   const auto existing = absl::c_find_if(
     search_scan.offsets,
-    [&](const auto& req) { return req.column_id == target_col_id; });
+    [&](const auto& req) { return req.column_id == read_field; });
   if (existing != search_scan.offsets.end()) {
     if (existing->limit != limit) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -755,8 +763,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
     get_col_idx = AppendVirtualGetColumn(
       *found.bind_data, *found.get, catalog::Column::kInvertedIndexOffsetsId,
       col_type, offsets_col_name);
-    search_scan.offsets.push_back(
-      {.column_id = target_col_id, .limit = limit, .get_col_idx = get_col_idx});
+    search_scan.offsets.push_back({.column_id = read_field,
+                                   .display_id = target_col_id,
+                                   .limit = limit,
+                                   .get_col_idx = get_col_idx});
   }
   const auto binding =
     ExposeGetColumnAt(root, col_ref.Binding().table_index, *found.get,

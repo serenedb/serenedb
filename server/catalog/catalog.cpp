@@ -2238,7 +2238,7 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
         table && table->GetEngine() == TableEngine::Search;
       SDB_ASSERT(table || [&] {
         auto rel = clone->GetObject(index->GetRelationId());
-        return rel && rel->GetType() == ObjectType::PgSqlView;
+        return rel && rel->GetType() == ObjectType::View;
       }());
       // The inverted index's mutable iresearch storage hangs off the metadata
       // object itself, so the CREATE INDEX build (GetGlobalSinkState) reaches

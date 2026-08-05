@@ -133,6 +133,33 @@ INSERT INTO mt_docs VALUES (1, 'phone', 'cat'), (2, 'phony', 'bat'), (3, 'phonet
 statement ok
 VACUUM (REFRESH_TABLE) mt_docs;
 
+# The plan carries both values: the enumerated column uncapped, the document
+# filter at the session cap.
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_docs_idx
+WHERE cat @@ ts_levenshtein('phon', 2) AND body @@ ts_levenshtein('cat', 1);
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────────────╮
+│ Groups: #0                                      │
+│ ~0 rows                                         │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: mt_docs_idx                              │
+│ Index Filter:                                   │
+│ ╭─ And ───────────────╮                         │
+│ ╰──────────┬──────────╯                         │
+│            ├────────────────────────╮           │
+│ ╭─ Levenshtein ───────╮  ╭─ Levenshtein ──────╮ │
+│ │ Field: body(string) │  │ Field: cat(string) │ │
+│ │ Target: cat         │  │ Target: phon       │ │
+│ │ Max Terms: 64       │  │ Max Terms: 0       │ │
+│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ TsDict: cat                                     │
+│ Projections: sdb_inverted_index_term$cat        │
+│ ~1 row                                          │
+╰─────────────────────────────────────────────────╯
+
 # Uncapped: the body filter admits cat, bat and rat, so both cat terms within
 # distance 2 of 'phon' enumerate.
 query

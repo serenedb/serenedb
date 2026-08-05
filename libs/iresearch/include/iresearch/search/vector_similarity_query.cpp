@@ -687,7 +687,7 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
           memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
           ScoreMergeType::Sum);
       }
-      return ctx.top_k_collect || ctx.defer_exact_distance ||
+      return ctx.top_k_collect || _state.defer_exact_distance ||
                  _state.quant == VectorQuantization::None
                ? std::move(v)
                : WrapRawScorer(std::move(v), _segment, _state, query, _metric,

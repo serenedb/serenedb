@@ -97,6 +97,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   state.reader = postings;
   state.vector_column = vector_col;
   state.quant = quant;
+  state.defer_exact_distance = opts.defer_exact_distance;
   state.d = d;
   state.codebook = std::move(codebook);
 

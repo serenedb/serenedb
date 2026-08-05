@@ -60,7 +60,6 @@ struct ExecutionContext {
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
   bool top_k_collect = false;
-  bool defer_exact_distance = false;
 };
 
 inline IndexFeatures GetFeatures(const Scorer* scorer) noexcept {

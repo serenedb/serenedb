@@ -403,7 +403,7 @@ bool VectorRerankFromSource(const SereneDBScanBindData& bind) {
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
-                                  float radius) {
+                                  float radius, bool defer_exact_distance) {
   if (vs.radius != std::numeric_limits<float>::max()) {
     auto f = std::make_unique<irs::ByRadius>();
     *f->mutable_field_id() = vs.field_id;
@@ -427,6 +427,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
+  o->defer_exact_distance = defer_exact_distance;
   o->inner = std::move(inner);
   return f;
 }

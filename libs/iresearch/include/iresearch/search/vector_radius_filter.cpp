@@ -90,6 +90,7 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
 
   VectorState state{ctx.memory};
   state.reader = postings;
+  state.vector_column = segment.Column(field_id());
   state.quant = quant;
   state.d = d;
   state.codebook = std::move(codebook);

@@ -124,10 +124,7 @@ struct VectorScorerOptions {
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
-                                  float radius,
-                                  bool defer_exact_distance = false);
-
-bool VectorRerankFromSource(const SereneDBScanBindData& bind);
+                                  float radius);
 
 enum class TsDictTermUses : uint8_t {
   kNone = 0,

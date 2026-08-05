@@ -687,8 +687,7 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
           memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
           ScoreMergeType::Sum);
       }
-      return ctx.top_k_collect || _state.defer_exact_distance ||
-                 _state.quant == VectorQuantization::None
+      return ctx.top_k_collect || _state.quant == VectorQuantization::None
                ? std::move(v)
                : WrapRawScorer(std::move(v), _segment, _state, query, _metric,
                                _boost);
@@ -737,7 +736,15 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
       std::move(res), memory::make_managed<FilterIterator>(std::move(inner_it)),
       docs_count, ScoreMergeType::Sum);
   }
-  return res;
+  // Membership stays on the lossy payload gate, but a survivor reports its
+  // exact distance -- rescored from the index's own vectors, like the top-k
+  // pool.
+  if (_state.quant == VectorQuantization::None ||
+      _state.vector_column == nullptr) {
+    return res;
+  }
+  return WrapRawScorer(std::move(res), _segment, _state, _query, _metric,
+                       _boost);
 }
 
 }  // namespace irs

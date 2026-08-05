@@ -89,7 +89,6 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   const irs::IndexReader* reader = nullptr;
   size_t total_segments = 0;
   const VectorScorerOptions* vector_scorer = nullptr;
-  bool vector_rerank_from_table = false;
 
   // --- The projection walk: what duckdb asked the scan for. ----------------
   std::vector<duckdb::idx_t> projected_columns;
@@ -208,11 +207,6 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   uint32_t SegmentAt(uint32_t claimed) const {
     return segment_order.empty() ? claimed : segment_order[claimed];
-  }
-
-  bool DeferExactDistance() const noexcept {
-    return vector_rerank_from_table &&
-           (mode != ScanMode::TopK || topk.rerank_pool != 0);
   }
 
   // --- The decided plan and its mode-specific state. ------------------------

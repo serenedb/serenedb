@@ -26,6 +26,7 @@
 
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
 

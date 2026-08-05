@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <fst/matcher.h>
+
 #include "basics/shared.hpp"
 
 namespace fst {

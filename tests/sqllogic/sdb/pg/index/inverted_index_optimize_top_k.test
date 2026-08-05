@@ -4,47 +4,47 @@ hash-threshold 100
 # Coverage for `WITH (optimize_top_k)` on `CREATE INDEX ... USING inverted(...)`.
 #
 # When set, the catalog InvertedIndex remembers the flag across restart, the
-# writer encodes per-block max-impact (WAND) data via a default BM25 scorer,
+# writer encodes per-block score bounds via a default BM25 scorer,
 # and `ORDER BY BM25(...) DESC LIMIT k` queries execute the iterator with
-# WandContext{wand_enabled=true} plus running heap-minimum threshold feedback.
-# EXPLAIN reflects the option by suffixing the `TopK` row in the
-# IRESEARCH_SCAN box with `, optimized` when WAND pruning is engaged.
+# score_prune=true plus running heap-minimum threshold
+# feedback. EXPLAIN reflects the option by suffixing the `TopK` row in the
+# IRESEARCH_SCAN box with `, optimized` when score pruning is engaged.
 #
 # `optimize_top_k` is a string-encoded scorer expression, e.g.
 # `'bm25(1.2, 0.75)'`, `'tfidf()'`, `'raw_tf()'`. Omitting the option leaves
-# WAND off. The catalog stores the parsed `ScorerOptions`; WAND fires only
-# when the index's stored scorer matches the ORDER BY scorer.
+# pruning off. The catalog stores the parsed `ScorerOptions`; pruning fires
+# only when the index's stored scorer matches the ORDER BY scorer.
 #
 # Single-token `body @@ ts_phrase('x')` collapses to a ByTerm filter, which
-# is the simplest WAND-eligible iterator (only needs Freq + Norm features).
+# is the simplest prune-eligible iterator (only needs Freq + Norm features).
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TABLE docs_wand (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_topk (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement count 1
-INSERT INTO docs_wand VALUES (1, 'fox quick');
+INSERT INTO docs_topk VALUES (1, 'fox quick');
 
 
 statement count 1
-INSERT INTO docs_wand VALUES (2, 'fox lazy');
+INSERT INTO docs_topk VALUES (2, 'fox lazy');
 
 
 statement count 1
-INSERT INTO docs_wand VALUES (3, 'lazy dog');
+INSERT INTO docs_topk VALUES (3, 'lazy dog');
 
 
 statement count 1
-INSERT INTO docs_wand VALUES (4, 'fox runs fast');
+INSERT INTO docs_topk VALUES (4, 'fox runs fast');
 
 
 statement count 1
-INSERT INTO docs_wand VALUES (5, 'rabbit and a fox');
+INSERT INTO docs_topk VALUES (5, 'rabbit and a fox');
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en_wand(
+CREATE TEXT SEARCH DICTIONARY en_topk(
     template = 'text',
     locale = 'en_US.UTF-8',
     case = 'none',
@@ -57,21 +57,21 @@ CREATE TEXT SEARCH DICTIONARY en_wand(
 
 
 statement ok
-CREATE INDEX docs_wand_idx ON docs_wand USING inverted(id, body en_wand)
+CREATE INDEX docs_topk_idx ON docs_topk USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) docs_wand;
+VACUUM (REFRESH_TABLE) docs_topk;
 
 
-# Top-K with WAND on. Tie-break on id for deterministic ordering across
-# any FP accumulation differences between the WAND and non-WAND paths.
+# Top-K with pruning on. Tie-break on id for deterministic ordering across
+# any FP accumulation differences between the pruned and plain paths.
 
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
+ORDER BY BM25(docs_topk_idx.tableoid) DESC, id
 LIMIT 3;
 ----
 id
@@ -80,7 +80,7 @@ id
 4
 
 
-# Same data with a non-WAND index for an equivalence baseline.
+# Same data with a plain index for an equivalence baseline.
 
 statement ok
 CREATE TABLE docs_plain (id INTEGER PRIMARY KEY, body VARCHAR);
@@ -107,7 +107,7 @@ INSERT INTO docs_plain VALUES (5, 'rabbit and a fox');
 
 
 statement ok
-CREATE INDEX docs_plain_idx ON docs_plain USING inverted(id, body en_wand);
+CREATE INDEX docs_plain_idx ON docs_plain USING inverted(id, body en_topk);
 
 
 statement ok
@@ -129,9 +129,9 @@ id
 # Larger LIMIT exercises the heap-fill path (BlockSize = 2*k).
 
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
+ORDER BY BM25(docs_topk_idx.tableoid) DESC, id
 LIMIT 10;
 ----
 id
@@ -143,14 +143,14 @@ id
 
 # --- OFFSET behavior ---
 # Single-key ORDER BY + LIMIT + OFFSET: the scan caps at limit + offset
-# (combined_limit in row_group_pruner.cpp), so WAND top-K still engages
+# (combined_limit in row_group_pruner.cpp), so pruned top-K still engages
 # and TOP_N above slices the surplus. Multi-key ORDER BY still bails.
 
 # OFFSET 0 matches LIMIT-only behavior.
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC
+ORDER BY BM25(docs_topk_idx.tableoid) DESC
 LIMIT 3 OFFSET 0;
 ----
 id
@@ -161,9 +161,9 @@ id
 
 # Non-zero OFFSET: scan returns top (limit+offset)=4 rows, TOP_N drops 2.
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC
+ORDER BY BM25(docs_topk_idx.tableoid) DESC
 LIMIT 2 OFFSET 2;
 ----
 id
@@ -173,15 +173,15 @@ id
 
 # OFFSET past the result set yields empty output.
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC
+ORDER BY BM25(docs_topk_idx.tableoid) DESC
 LIMIT 10 OFFSET 100;
 ----
 id
 
 
-# Plain (non-WAND) index produces the same rows under LIMIT + OFFSET.
+# Plain (unpruned) index produces the same rows under LIMIT + OFFSET.
 query
 SELECT id FROM docs_plain_idx
 WHERE body @@ ts_phrase('fox')
@@ -196,7 +196,7 @@ id
 # EXPLAIN: scan reports `TopK: <limit+offset>, optimized` -- the rewrite
 # engages and the scan caps at 4 rows; TOP_N drops the first 1.
 query
-EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) DESC LIMIT 3 OFFSET 1;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3 OFFSET 1;
 ----
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
@@ -206,7 +206,7 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: docs_wand_idx                   │
+│ Index: docs_topk_idx                   │
 │ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
@@ -224,17 +224,17 @@ QUERY PLAN
 # Multi-key ORDER BY + OFFSET: rewrite bails (tied-tiebreak unsafe), no
 # `TopK:` line. TOP_N handles both ordering and slicing.
 query
-EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) DESC, id LIMIT 3 OFFSET 1;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3 OFFSET 1;
 ----
 QUERY PLAN
 ╭─ TOP_N ──────────────────────────────────────────────────╮
 │ Top: 3                                                   │
 │ Offset: 1                                                │
-│ Order By: #1 DESC, docs_wand_idx.id ASC                  │
+│ Order By: #1 DESC, docs_topk_idx.id ASC                  │
 │ ~1 row                                                   │
 ╰─────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
-│ Index: docs_wand_idx                                     │
+│ Index: docs_topk_idx                                     │
 │ Lookup: table                                            │
 │ Index Filter:                                            │
 │ ╭─ Term ──────────────╮                                  │
@@ -249,12 +249,12 @@ QUERY PLAN
 ╰──────────────────────────────────────────────────────────╯
 
 
-# EXPLAIN: WAND-enabled scan reports `TopK: <k>, optimized`; plain scan
-# reports `TopK: <k>` without the suffix. WAND only applies on the top-K
+# EXPLAIN: prune-enabled scan reports `TopK: <k>, optimized`; plain scan
+# reports `TopK: <k>` without the suffix. Pruning only applies on the top-K
 # path so the marker is bundled into the same row instead of a separate one.
 
 query
-EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) DESC LIMIT 3;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
@@ -263,7 +263,7 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: docs_wand_idx                   │
+│ Index: docs_topk_idx                   │
 │ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
@@ -318,7 +318,7 @@ INSERT INTO docs_default VALUES (2, 'fox jumps');
 
 
 statement ok
-CREATE INDEX docs_default_idx ON docs_default USING inverted(id, body en_wand);
+CREATE INDEX docs_default_idx ON docs_default USING inverted(id, body en_topk);
 
 
 statement ok
@@ -337,14 +337,14 @@ id
 
 # ---------------------------------------------------------------------------
 # Conjunction (AND) and disjunction (OR) filter shapes still produce the
-# same top-K results with WAND on as without. The score_top_k pull-up
+# same top-K results with pruning on as without. The score_top_k pull-up
 # happens regardless of the boolean filter shape.
 # ---------------------------------------------------------------------------
 
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('lazy')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
+ORDER BY BM25(docs_topk_idx.tableoid) DESC, id
 LIMIT 3;
 ----
 id
@@ -362,9 +362,9 @@ id
 
 
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('lazy')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
+ORDER BY BM25(docs_topk_idx.tableoid) DESC, id
 LIMIT 4;
 ----
 id
@@ -392,19 +392,19 @@ id
 # an additional segment so the threshold-feedback loop has to carry the
 # heap minimum from segment 0 into segment 1 (see SetScoreThreshold round-
 # trip in duckdb_search_full_scan.cpp). Top-K results must still match
-# the non-WAND baseline over the union of both segments.
+# the unpruned baseline over the union of both segments.
 # ---------------------------------------------------------------------------
 
 statement count 1
-INSERT INTO docs_wand VALUES (6, 'fox fox fox');
+INSERT INTO docs_topk VALUES (6, 'fox fox fox');
 
 
 statement count 1
-INSERT INTO docs_wand VALUES (7, 'a fox in a box');
+INSERT INTO docs_topk VALUES (7, 'a fox in a box');
 
 
 statement count 1
-INSERT INTO docs_wand VALUES (8, 'no match here');
+INSERT INTO docs_topk VALUES (8, 'no match here');
 
 
 statement count 1
@@ -420,7 +420,7 @@ INSERT INTO docs_plain VALUES (8, 'no match here');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) docs_wand;
+VACUUM (REFRESH_TABLE) docs_topk;
 
 
 statement ok
@@ -428,9 +428,9 @@ VACUUM (REFRESH_TABLE) docs_plain;
 
 
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
+ORDER BY BM25(docs_topk_idx.tableoid) DESC, id
 LIMIT 3;
 ----
 id
@@ -454,9 +454,9 @@ id
 # Larger LIMIT spans both segments and forces the heap to fill.
 
 query
-SELECT id FROM docs_wand_idx
+SELECT id FROM docs_topk_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
+ORDER BY BM25(docs_topk_idx.tableoid) DESC, id
 LIMIT 100;
 ----
 id
@@ -484,14 +484,14 @@ id
 
 
 # ---------------------------------------------------------------------------
-# EXPLAIN coverage for paths where WAND should NOT engage.
+# EXPLAIN coverage for paths where pruning should NOT engage.
 # ---------------------------------------------------------------------------
 
 # 1. No LIMIT -> no score_top_k pull-up -> no `TopK` row at all (whether or
 #    not the index has optimize_top_k set). Filtering still happens.
 
 query
-EXPLAIN SELECT id, BM25(docs_wand_idx.tableoid) AS s FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY s DESC;
+EXPLAIN SELECT id, BM25(docs_topk_idx.tableoid) AS s FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY s DESC;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────╮
@@ -499,7 +499,7 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: docs_wand_idx                   │
+│ Index: docs_topk_idx                   │
 │ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
@@ -517,7 +517,7 @@ QUERY PLAN
 #    DESC). No `TopK` row, no `optimized` suffix.
 
 query
-EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) ASC LIMIT 3;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC LIMIT 3;
 ----
 QUERY PLAN
 ╭─ TOP_N ─────────────────────────────────────────────────╮
@@ -526,7 +526,7 @@ QUERY PLAN
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
-│ Index: docs_wand_idx                                    │
+│ Index: docs_topk_idx                                    │
 │ Lookup: table                                           │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
@@ -563,7 +563,7 @@ INSERT INTO docs_tfidf VALUES (2, 'fox bar');
 
 statement ok
 CREATE INDEX docs_tfidf_idx ON docs_tfidf
-  USING inverted(id, body en_wand)
+  USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'tfidf()');
 
 
@@ -597,7 +597,7 @@ QUERY PLAN
 
 
 # bm25 with explicit non-default args -- both `optimize_top_k` and the
-# `ORDER BY BM25(...)` use the same params, so WAND engages.
+# `ORDER BY BM25(...)` use the same params, so pruning engages.
 
 statement ok
 CREATE TABLE docs_bm25_args (id INTEGER PRIMARY KEY, body VARCHAR);
@@ -613,7 +613,7 @@ INSERT INTO docs_bm25_args VALUES (2, 'fox bar');
 
 statement ok
 CREATE INDEX docs_bm25_args_idx ON docs_bm25_args
-  USING inverted(id, body en_wand)
+  USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'bm25(1.5, 0.8)');
 
 
@@ -646,7 +646,7 @@ QUERY PLAN
 ╰────────────────────────────────────────╯
 
 
-# Mismatched scorer -- index says BM25, query orders by TFIDF. WAND off
+# Mismatched scorer -- index says BM25, query orders by TFIDF. Pruning off
 # (no `, optimized` suffix). Top-K still pulls up; results are correct.
 
 query
@@ -681,14 +681,14 @@ QUERY PLAN
 # Unknown scorer name.
 statement error scorer
 CREATE INDEX docs_default_bad_unknown ON docs_default
-  USING inverted(id, body en_wand)
+  USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'mystery_scorer()');
 
 
 # Out-of-range parameter.
 statement error lambda
 CREATE INDEX docs_default_bad_lambda ON docs_default
-  USING inverted(id, body en_wand)
+  USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'lm_jm(2.0)');
 
 
@@ -696,7 +696,7 @@ CREATE INDEX docs_default_bad_lambda ON docs_default
 # function call.
 statement error scorer function call
 CREATE INDEX docs_default_bad_bare ON docs_default
-  USING inverted(id, body en_wand)
+  USING inverted(id, body en_topk)
   WITH (optimize_top_k = 'bm25');
 
 
@@ -704,7 +704,7 @@ CREATE INDEX docs_default_bad_bare ON docs_default
 # bare `true` keyword.
 statement error
 CREATE INDEX docs_default_bad_keyword ON docs_default
-  USING inverted(id, body en_wand)
+  USING inverted(id, body en_topk)
   WITH (optimize_top_k = true);
 ----
 db error: ERROR: 'optimize_top_k' expects a scorer function call, got 'true'

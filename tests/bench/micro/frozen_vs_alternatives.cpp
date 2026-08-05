@@ -46,7 +46,7 @@
 //     storage, nor ordered sets beat it. The tables are L1-resident, so the
 //     game is instruction throughput and frozen's fully-unrolled compile-time-N
 //     branchless search already wins.
-//   - Postings block (N=128): irs::branchless_lower_bound (== probablydance's
+//   - Postings block (N=128): irs::BranchlessLowerBound (== probablydance's
 //     bit_floor form) is fastest. sb_lower_bound, galloping, Eytzinger (+the
 //     O(n) transform it can't amortize on a search-once block), the SIMD-leaf
 //     hybrid, frozen::bits<128>, and std::lower_bound all lose.
@@ -64,6 +64,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <boost/text/detail/case_mapping_tables.hpp>
 #include <boost/text/grapheme_break.hpp>
 #include <boost/text/line_break.hpp>
@@ -237,10 +238,36 @@ size_t hybrid_simd_lower_bound_n(const uint32_t* a, uint32_t x) {
   return lo + simd_lower_bound_le16(a + lo, len, x);
 }
 
+// The arbitrary-length form of the branchless search. The postings code keeps
+// only the compile-time-N variant (measured by RegisterPostingBlock below), so
+// the interval arms, whose tables are not powers of two, carry it here.
+template<typename It, typename T, typename Cmp = std::less<>>
+It branchless_lower_bound(It begin, It end, const T& value, Cmp&& compare = {}) {
+  size_t len = end - begin;
+  if (len == 0) {
+    return end;
+  }
+  size_t step = std::bit_floor(len);
+  if (step != len && compare(begin[step], value)) {
+    len -= step + 1;
+    if (len == 0) {
+      return end;
+    }
+    step = std::bit_ceil(len);
+    begin = end - step;
+  }
+  for (step /= 2; step != 0; step /= 2) {
+    if (compare(begin[step], value)) {
+      begin += step;
+    }
+  }
+  return begin + compare(*begin, value);
+}
+
 // probablydance/irs branchless as a (ptr, n, x) function; when n is a
 // compile-time constant at the call site it unrolls like the postings path.
 size_t pd_lower_bound(const uint32_t* a, size_t n, uint32_t x) {
-  return static_cast<size_t>(irs::branchless_lower_bound(a, a + n, x) - a);
+  return static_cast<size_t>(branchless_lower_bound(a, a + n, x) - a);
 }
 
 // ---------------------------------------------------------------------------
@@ -286,13 +313,13 @@ size_t FzStoreStd(const frozen::set<T, N>& set) {
   return sum;
 }
 
-// Same contiguous frozen storage, but our irs::branchless_lower_bound.
+// Same contiguous frozen storage, but our branchless search.
 template<class T, std::size_t N>
 size_t FzStoreBranchless(const frozen::set<T, N>& set) {
   size_t sum = 0;
   for (uint32_t cp : kQueries) {
     const T query{cp, cp + 1};
-    const auto it = irs::branchless_lower_bound(set.begin(), set.end(), query);
+    const auto it = branchless_lower_bound(set.begin(), set.end(), query);
     if (it != set.end() && Contains(*it, cp)) {
       sum += Weight(*it);
     }
@@ -306,7 +333,7 @@ size_t VecBranchless(const std::vector<T>& v) {
   size_t sum = 0;
   for (uint32_t cp : kQueries) {
     const T query{cp, cp + 1};
-    const auto it = irs::branchless_lower_bound(v.begin(), v.end(), query);
+    const auto it = branchless_lower_bound(v.begin(), v.end(), query);
     if (it != v.end() && Contains(*it, cp)) {
       sum += Weight(*it);
     }
@@ -432,7 +459,7 @@ void RegisterMembership() {
     const auto b = bt::SOFT_DOTTED_CPS.begin();
     const auto e = bt::SOFT_DOTTED_CPS.end();
     for (uint32_t cp : kQueries) {
-      const auto it = irs::branchless_lower_bound(b, e, cp);
+      const auto it = branchless_lower_bound(b, e, cp);
       sum += it != e && *it == cp;
     }
     return sum;
@@ -457,7 +484,7 @@ void RegisterMembership() {
   Add("soft_dotted/vec_branchless", [vec] {
     size_t sum = 0;
     for (uint32_t cp : kQueries) {
-      const auto it = irs::branchless_lower_bound(vec->begin(), vec->end(), cp);
+      const auto it = branchless_lower_bound(vec->begin(), vec->end(), cp);
       sum += it != vec->end() && *it == cp;
     }
     return sum;
@@ -479,11 +506,11 @@ void RegisterMembership() {
 }
 
 // ---------------------------------------------------------------------------
-// Posting block: the real irs::branchless_lower_bound hot path
+// Posting block: the real irs::BranchlessLowerBound hot path
 // (iterator_doc.hpp searches a full sorted doc_id_t[kBlockSize] per seek).
-// This is the inverse question: should the postings code drop our runtime
-// branchless_lower_bound for frozen::bits::lower_bound<kBlockSize> (which is
-// N-templated and unrolls)?
+// This is the inverse question: should the postings code drop our
+// BranchlessLowerBound for frozen::bits::lower_bound<kBlockSize>? Both take the
+// block size as a template parameter and unroll.
 // ---------------------------------------------------------------------------
 
 constexpr std::size_t kBlockSize = 128;  // == doc_limits::kBlockSize
@@ -555,7 +582,7 @@ void RegisterPostingBlock() {
     size_t sum = 0;
     for (uint32_t tgt : kTargets) {
       const auto it =
-        irs::branchless_lower_bound(kDocBlock.begin(), kDocBlock.end(), tgt);
+        irs::BranchlessLowerBound<kBlockSize>(kDocBlock.begin(), tgt);
       sum += it != kDocBlock.end() ? *it : 0;
     }
     return sum;

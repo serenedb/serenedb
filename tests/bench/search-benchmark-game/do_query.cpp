@@ -38,6 +38,12 @@ enum class QueryType {
   Top10Count,
   Top100Count,
   Top1000Count,
+  Top100Debug,
+  Top100CountDebug,
+  EmitDocs,
+  EmitDocsDebug,
+  EmitScoredDocs,
+  EmitScoredDocsDebug,
   Unsupported,
 };
 
@@ -62,6 +68,18 @@ constexpr customize::customize_t customize::enum_name<QueryType>(
       return "TOP_100_COUNT";
     case QueryType::Top1000Count:
       return "TOP_1000_COUNT";
+    case QueryType::Top100Debug:
+      return "TOP_100_DEBUG";
+    case QueryType::Top100CountDebug:
+      return "TOP_100_COUNT_DEBUG";
+    case QueryType::EmitDocs:
+      return "EMIT_DOCS";
+    case QueryType::EmitDocsDebug:
+      return "EMIT_DOCS_DEBUG";
+    case QueryType::EmitScoredDocs:
+      return "EMIT_SCORED_DOCS";
+    case QueryType::EmitScoredDocsDebug:
+      return "EMIT_SCORED_DOCS_DEBUG";
     default:
       return "UNSUPPORTED";
   }
@@ -106,6 +124,20 @@ size_t ExecuteQuery(bench::Executor& executor, Query q) {
       return executor.ExecuteTopKWithCount(100, query);
     case QueryType::Top1000Count:
       return executor.ExecuteTopKWithCount(1000, query);
+    case QueryType::Top100Debug:
+      executor.ExecuteTopK(100, query);
+      return executor.HashResults();
+    case QueryType::Top100CountDebug:
+      executor.ExecuteTopKWithCount(100, query);
+      return executor.HashResults();
+    case QueryType::EmitDocs:
+      return executor.ExecuteEmitDocs(query).count;
+    case QueryType::EmitDocsDebug:
+      return executor.ExecuteEmitDocs(query, true).hash;
+    case QueryType::EmitScoredDocs:
+      return executor.ExecuteEmitScoredDocs(query).count;
+    case QueryType::EmitScoredDocsDebug:
+      return executor.ExecuteEmitScoredDocs(query, true).hash;
     default:
       return 0;
   }

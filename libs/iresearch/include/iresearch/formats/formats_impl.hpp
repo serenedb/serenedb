@@ -36,8 +36,7 @@ namespace irs {
 class FormatBase : public Format {
  public:
   IndexMetaWriter::ptr get_index_meta_writer() const final {
-    return std::make_unique<IndexMetaWriterImpl>(
-      IndexMetaWriterImpl::kFormatMax);
+    return std::make_unique<IndexMetaWriterImpl>();
   }
   IndexMetaReader::ptr get_index_meta_reader() const final {
     // can reuse stateless reader
@@ -47,7 +46,7 @@ class FormatBase : public Format {
 
   SegmentMetaWriter::ptr get_segment_meta_writer() const final {
     // can reuse stateless writer
-    static SegmentMetaWriterImpl gInstance{SegmentMetaWriterImpl::kFormatMax};
+    static SegmentMetaWriterImpl gInstance;
     return memory::to_managed<SegmentMetaWriter>(gInstance);
   }
   SegmentMetaReader::ptr get_segment_meta_reader() const final {
@@ -73,8 +72,8 @@ class FormatImpl final : public FormatBase {
 
   PostingsWriter::ptr get_postings_writer(
     bool compaction, IResourceManager& resource_manager) const final {
-    return std::make_unique<PostingsWriterImpl<FormatTraits>>(
-      PostingsFormat::WandSimd, compaction, resource_manager);
+    return std::make_unique<PostingsWriterImpl<FormatTraits>>(compaction,
+                                                              resource_manager);
   }
   PostingsReader::ptr get_postings_reader() const final {
     return std::make_unique<PostingsReaderImpl<FormatTraits>>();

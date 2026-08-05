@@ -22,45 +22,39 @@
 
 #pragma once
 
-#include "basics/down_cast.h"
-#include "iresearch/formats/formats.hpp"
+#include <cstdint>
+
+#include "iresearch/types.hpp"
 
 namespace irs {
 
-struct TermMetaImpl : TermMeta {
-  TermMetaImpl() noexcept : e_skip_start{0} {}
+struct PostingMeta {
   void clear() noexcept {
-    TermMeta::clear();
-    e_skip_start = doc_start = pos_start = pay_start = pos_offset = 0;
+    docs_count = freq = 0;
+    doc_start = pos_start = pay_start = 0;
+    pos_offset = 0;
+    doc_delta = 0;
   }
 
+  uint32_t docs_count = 0;  // How many documents a particular term contains
+  uint32_t freq = 0;  // How many times a particular term occur in documents
   uint64_t doc_start = 0;  // where this term's postings start in the .doc file
   uint64_t pos_start = 0;  // where this term's postings start in the .pos file
   uint64_t pay_start = 0;  // where this term's postings start in the .pay file
-  // how many positions do we need to skip in positions block
-  size_t pos_offset = 0;
-  union {
-    uint64_t e_skip_start;  // pointer where skip data starts (after doc_start)
-    doc_id_t e_single_doc;  // singleton document id delta
-  };
+  // Slot of the term's first position inside the block at `pos_start`, so it
+  // is bounded by the position block size.
+  uint32_t pos_offset = 0;
+  // A delta whose base `docs_count` decides, and the only field of this record
+  // that means two things. A single-document term has no `.doc` data, so it
+  // carries its document as a delta from `doc_limits::min()`; a term long
+  // enough to carry skip data carries where that data starts as a delta from
+  // `doc_start`, which bounds it by the term's own `.doc` footprint rather than
+  // by the file -- `EndTerm` refuses a term that does not fit. For the lengths
+  // in between it is neither written nor read.
+  uint32_t doc_delta = 0;
 };
 
-struct CookieImpl final : SeekCookie {
-  CookieImpl() = default;
-  explicit CookieImpl(const TermMetaImpl& meta) noexcept : meta(meta) {}
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (type == irs::Type<TermMeta>::id()) [[likely]] {
-      return &meta;
-    }
-
-    return nullptr;
-  }
-
-  TermMetaImpl meta;
-};
-
-template<>
-struct Type<TermMetaImpl> : Type<TermMeta> {};
+// What a query over a term this segment does not have stands on.
+inline constexpr PostingMeta kNoPosting;
 
 }  // namespace irs

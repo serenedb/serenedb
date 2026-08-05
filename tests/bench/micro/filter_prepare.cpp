@@ -203,10 +203,10 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   writer_opts.column_options = [](irs::field_id) -> irs::ColumnOptions {
     return {};
   };
-  writer_opts.norm_column_options =
+  writer_opts.norm_column_id =
     [next = std::make_shared<std::atomic<irs::field_id>>(0)](
-      irs::field_id) -> irs::NormColumnOptions {
-    return {.id = next->fetch_add(1, std::memory_order_relaxed)};
+      irs::field_id) -> irs::field_id {
+    return next->fetch_add(1, std::memory_order_relaxed);
   };
   auto writer =
     irs::IndexWriter::Make(*_dir, _codec, irs::kOmCreate, writer_opts);

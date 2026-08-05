@@ -62,10 +62,10 @@ struct EntryConfigSerialized {
   search::Features features;
   std::optional<IVFColumnConfig> ivf_config;
   irs::field_id synthetic_column = irs::field_limits::invalid();
-  uint32_t row_group_size = 0;
-  uint32_t norm_row_group_size = 0;
   irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id json_null_field_id = irs::field_limits::invalid();
+  irs::field_id true_field_id = irs::field_limits::invalid();
+  irs::field_id false_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
 };
 

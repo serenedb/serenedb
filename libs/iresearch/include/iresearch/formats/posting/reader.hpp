@@ -37,8 +37,7 @@ namespace irs {
 
 inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
                          const ReaderState& state, std::string_view ext,
-                         std::string_view format, const int32_t min_ver,
-                         const int32_t max_ver) {
+                         std::string_view format) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
   in = state.dir->open(str, advice);
@@ -47,13 +46,13 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
     throw IoError{absl::StrCat("Failed to open file, path: ", str)};
   }
 
-  format_utils::CheckHeader(*in, format, min_ver, max_ver);
+  format_utils::CheckHeader(*in, format);
 }
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
 template<typename PostingImpl>
-struct WandPostingAdapter : PostingAdapter<PostingImpl> {
+struct PruningPostingAdapter : PostingAdapter<PostingImpl> {
   using PostingAdapter<PostingImpl>::PostingAdapter;
 
   IRS_FORCE_INLINE doc_id_t SeekToBlock(doc_id_t doc) {
@@ -65,8 +64,8 @@ struct WandPostingAdapter : PostingAdapter<PostingImpl> {
   }
 
   template<typename... Args>
-  IRS_FORCE_INLINE void CollectRange(Args&&... args) {
-    this->self().CollectRange(std::forward<Args>(args)...);
+  IRS_FORCE_INLINE void ForEachScoredBlock(Args&&... args) {
+    this->self().ForEachScoredBlock(std::forward<Args>(args)...);
   }
 
   template<typename... Args>
@@ -74,8 +73,8 @@ struct WandPostingAdapter : PostingAdapter<PostingImpl> {
     return this->self().ScoreCandidates(std::forward<Args>(args)...);
   }
 
-  void SetSkipWandBelow(doc_id_t max) noexcept {
-    this->self().SetSkipWandBelow(max);
+  void SetSkipBoundsBelow(doc_id_t max) noexcept {
+    this->self().SetSkipBoundsBelow(max);
   }
 };
 
@@ -99,7 +98,7 @@ class PostingsReaderBase : public PostingsReader {
                IndexFeatures features) final;
 
   size_t decode(const byte_type* in, IndexFeatures field_features,
-                TermMeta& state) final;
+                PostingMeta& state) final;
 
   std::unique_ptr<IndexInput> ReopenPayload() const final {
     return _pay_in ? _pay_in->Reopen() : nullptr;
@@ -127,9 +126,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
 
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state,
-               PostingsWriterBase::kDocExt, PostingsWriterBase::kDocFormatName,
-               static_cast<int32_t>(PostingsFormat::Min),
-               static_cast<int32_t>(PostingsFormat::Max));
+               PostingsWriterBase::kDocExt, PostingsWriterBase::kDocFormatName);
 
   // Since terms doc postings too large
   //  it is too costly to verify checksum of
@@ -142,9 +139,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     /* prepare positions input */
     PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
                  PostingsWriterBase::kPosExt,
-                 PostingsWriterBase::kPosFormatName,
-                 static_cast<int32_t>(PostingsFormat::Min),
-                 static_cast<int32_t>(PostingsFormat::Max));
+                 PostingsWriterBase::kPosFormatName);
 
     // Since terms pos postings too large
     // it is too costly to verify checksum of
@@ -157,9 +152,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
   if (needs_pay) {
     PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
                  PostingsWriterBase::kPayExt,
-                 PostingsWriterBase::kPayFormatName,
-                 static_cast<int32_t>(PostingsFormat::Min),
-                 static_cast<int32_t>(PostingsFormat::Max));
+                 PostingsWriterBase::kPayFormatName);
 
     // Since terms pos postings too large
     // it is too costly to verify checksum of
@@ -168,11 +161,6 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     // some forms of corruption.
     format_utils::ReadChecksum(*_pay_in);
   }
-
-  // check postings format
-  format_utils::CheckHeader(in, PostingsWriterBase::kTermsFormatName,
-                            static_cast<int32_t>(TermsFormat::Min),
-                            static_cast<int32_t>(TermsFormat::Max));
 
   const uint64_t block_size = in.ReadV32();
 
@@ -189,35 +177,32 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
 
 inline size_t PostingsReaderBase::decode(const byte_type* in,
                                          IndexFeatures features,
-                                         TermMeta& state) {
-  auto& term_meta = static_cast<TermMetaImpl&>(state);
+                                         PostingMeta& posting_meta) {
   const auto* p = in;
 
   SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Vec) ||
              IndexFeatures::None ==
                (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
 
-  term_meta.docs_count = vread<uint32_t>(p);
+  posting_meta.docs_count = vread<uint32_t>(p);
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
-    term_meta.freq = term_meta.docs_count + vread<uint32_t>(p);
+    posting_meta.freq = posting_meta.docs_count + vread<uint32_t>(p);
   }
 
-  term_meta.doc_start += vread<uint64_t>(p);
+  posting_meta.doc_start += vread<uint64_t>(p);
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    term_meta.pos_start += vread<uint64_t>(p);
+    posting_meta.pos_start += vread<uint64_t>(p);
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
-      term_meta.pay_start += vread<uint64_t>(p);
+      posting_meta.pay_start += vread<uint64_t>(p);
     }
-    term_meta.pos_offset = *p++;
+    posting_meta.pos_offset = *p++;
   } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
-    term_meta.pay_start += vread<uint64_t>(p);
-    term_meta.pos_offset = *p++;
+    posting_meta.pay_start += vread<uint64_t>(p);
+    posting_meta.pos_offset = *p++;
   }
 
-  if (1 == term_meta.docs_count) {
-    term_meta.e_single_doc = vread<uint32_t>(p);
-  } else if (_block_size < term_meta.docs_count) {
-    term_meta.e_skip_start = vread<uint64_t>(p);
+  if (1 == posting_meta.docs_count || _block_size < posting_meta.docs_count) {
+    posting_meta.doc_delta = vread<uint32_t>(p);
   }
 
   SDB_ASSERT(p >= in);
@@ -232,8 +217,8 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 
   PostingsReaderImpl() noexcept : PostingsReaderBase{doc_limits::kBlockSize} {}
 
-  size_t BitUnion(IndexFeatures field, const term_provider_f& provider,
-                  size_t* set, bool has_wand) final;
+  size_t BitUnion(IndexFeatures field, TermProvider provider, uint64_t* set,
+                  bool has_score_bounds) final;
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
@@ -242,10 +227,10 @@ class PostingsReaderImpl final : public PostingsReaderBase {
                             ScoreMergeType type) const final;
 
  private:
-  DocIterator::ptr WandIterator(IndexFeatures field_features,
-                                std::span<const PostingCookie> metas,
-                                IteratorFieldOptions options,
-                                ScoreMergeType type) const;
+  DocIterator::ptr PruningIterator(IndexFeatures field_features,
+                                   std::span<const PostingCookie> metas,
+                                   IteratorFieldOptions options,
+                                   ScoreMergeType type) const;
 
   template<typename FieldTraits, typename Factory>
   static DocIterator::ptr IteratorImpl(IndexFeatures enabled,
@@ -259,40 +244,47 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 
 template<typename FieldTraits>
 void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
-                  uint32_t* enc_buf, size_t* set) {
-  constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-  size_t num_blocks = docs_count / doc_limits::kBlockSize;
+                  uint32_t* enc_buf, uint64_t* words) {
+  auto read_leaf = [&]<size_t N>(uint32_t len,
+                                 doc_id_t prev) IRS_FORCE_INLINE {
+    const auto leaf =
+      FieldTraits::ReadTailForFill(len, doc_in, enc_buf, docs, prev);
+    if constexpr (FieldTraits::Frequency()) {
+      if (len == doc_limits::kBlockSize) {
+        FieldTraits::SkipBlock(doc_in);
+      }
+    }
+    if (leaf.IsRun()) {
+      const uint64_t first = uint64_t{prev} + 1;
+      SetBitRange(words, first, first + len);
+    } else if (leaf.IsBitset()) {
+      OrBitsetAt(words, prev, leaf.bitset, leaf.words);
+    } else {
+      static constexpr auto kBits = BitsRequired<uint64_t>();
+      const auto* const data = docs + doc_limits::kBlockSize - len;
+      VisitDocs<N>(len, [&](uint32_t i) IRS_FORCE_INLINE {
+        const size_t offset = data[i];
+        SetBit(words[offset / kBits], offset % kBits);
+      });
+    }
+    return leaf.max;
+  };
 
   auto prev_doc = doc_limits::invalid();
-  while (num_blocks--) {
-    FieldTraits::ReadBlockDelta(doc_in, enc_buf, docs, prev_doc);
-    if constexpr (FieldTraits::Frequency()) {
-      FieldTraits::SkipBlock(doc_in);
-    }
-
-    // FIXME optimize
-    for (const auto doc : std::span{docs, doc_limits::kBlockSize}) {
-      SetBit(set[doc / kBits], doc % kBits);
-    }
-    prev_doc = docs[doc_limits::kBlockSize - 1];
+  for (auto blocks = docs_count / doc_limits::kBlockSize; blocks--;) {
+    prev_doc = read_leaf.template operator()<doc_limits::kBlockSize>(
+      doc_limits::kBlockSize, prev_doc);
   }
 
-  const auto tail = docs_count % doc_limits::kBlockSize;
-  if (tail == 0) {
-    return;
-  }
-  FieldTraits::ReadTailDelta(tail, doc_in, enc_buf, docs, prev_doc);
-
-  // FIXME optimize
-  for (const auto doc : std::span{docs + doc_limits::kBlockSize - tail, tail}) {
-    SetBit(set[doc / kBits], doc % kBits);
+  if (const auto tail = docs_count % doc_limits::kBlockSize; tail != 0) {
+    read_leaf.template operator()<std::dynamic_extent>(tail, prev_doc);
   }
 }
 
 template<typename FormatTraits>
 size_t PostingsReaderImpl<FormatTraits>::BitUnion(
-  const IndexFeatures field_features, const term_provider_f& provider,
-  size_t* set, bool has_wand) {
+  const IndexFeatures field_features, TermProvider provider, uint64_t* set,
+  bool has_score_bounds) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   uint32_t enc_buf[doc_limits::kBlockSize];
   doc_id_t docs[doc_limits::kBlockSize
@@ -314,14 +306,14 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   }
 
   size_t count = 0;
-  while (const TermMeta* meta = provider()) {
-    auto& term_state = static_cast<const TermMetaImpl&>(*meta);
+  while (const PostingMeta* meta = provider()) {
+    const auto& term_state = *meta;
 
     if (term_state.docs_count > 1) {
       doc_in->Seek(term_state.doc_start);
       SDB_ASSERT(!doc_in->IsEOF());
       if (term_state.docs_count < doc_limits::kBlockSize) {
-        CommonSkipWandData(has_wand, *doc_in);
+        SkipScoreBounds(has_score_bounds, *doc_in);
       }
       SDB_ASSERT(!doc_in->IsEOF());
 
@@ -337,7 +329,7 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
 
       count += term_state.docs_count;
     } else {
-      const doc_id_t doc = doc_limits::min() + term_state.e_single_doc;
+      const doc_id_t doc = doc_limits::min() + term_state.doc_delta;
       SetBit(set[doc / kBits], doc % kBits);
 
       ++count;
@@ -421,7 +413,7 @@ auto ResolveInputType(DataInput::Type type, auto&& f) {
   }
 }
 
-auto ResolveWandFeatures(IndexFeatures field_features, auto&& f) {
+auto ResolveScoreBoundFeatures(IndexFeatures field_features, auto&& f) {
   switch (ToIndex(field_features)) {
     case kPosOffs:
       return f.template operator()<true, true>();
@@ -432,49 +424,51 @@ auto ResolveWandFeatures(IndexFeatures field_features, auto&& f) {
   }
 }
 
-auto ResolveHasWand(bool has_wand, auto&& f) {
-  if (has_wand) {
+auto ResolveHasScoreBounds(bool has_score_bounds, auto&& f) {
+  if (has_score_bounds) {
     return f.template operator()<true>();
   } else {
     return f.template operator()<false>();
   }
 }
 
-auto ResolveWandType(IndexFeatures field_features, bool has_wand,
-                     DataInput::Type type, auto&& f) {
-  return ResolveWandFeatures(
+auto ResolveScoreBoundType(IndexFeatures field_features, bool has_score_bounds,
+                           DataInput::Type type, auto&& f) {
+  return ResolveScoreBoundFeatures(
     field_features, [&]<bool Pos, bool Offs> -> DocIterator::ptr {
-      return ResolveHasWand(has_wand, [&]<bool HasWand>() {
-        return ResolveInputType(
-          type, [&]<typename InputType> -> DocIterator::ptr {
-            return f.template operator()<Pos, Offs, HasWand, InputType>();
-          });
-      });
+      return ResolveHasScoreBounds(
+        has_score_bounds, [&]<bool HasScoreBounds>() {
+          return ResolveInputType(
+            type, [&]<typename InputType> -> DocIterator::ptr {
+              return f
+                .template operator()<Pos, Offs, HasScoreBounds, InputType>();
+            });
+        });
     });
 }
 
 template<typename FormatTraits>
-DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
+DocIterator::ptr PostingsReaderImpl<FormatTraits>::PruningIterator(
   IndexFeatures field_features, std::span<const PostingCookie> metas,
   IteratorFieldOptions options, ScoreMergeType type) const {
-  SDB_IF_FAILURE("irs::WandIterator") {  //
+  SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
 
-  return ResolveWandType(
-    field_features, options.has_wand, _doc_in->GetType(),
-    [&]<bool Pos, bool Offs, bool HasWand, typename InputType>()
+  return ResolveScoreBoundType(
+    field_features, options.has_score_bounds, _doc_in->GetType(),
+    [&]<bool Pos, bool Offs, bool HasScoreBounds, typename InputType>()
       -> DocIterator::ptr {
       auto make_postings_iterator =
         [&]<bool Root>(const PostingCookie& cookie) {
           auto it = memory::make_managed<
-            SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>>();
+            SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>>();
           it->Prepare(cookie, _doc_in.get());
           return it;
         };
 
       if (metas.size() == 1) {
-        SDB_IF_FAILURE("irs::SingleWandIterator") {
+        SDB_IF_FAILURE("irs::SinglePruningIterator") {
           THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
         }
         return make_postings_iterator.template operator()<true>(metas[0]);
@@ -489,8 +483,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
       }
 
       using Iterator =
-        SingleWandIterator<FormatTraits, false, Pos, Offs, InputType>;
-      using Adapter = WandPostingAdapter<Iterator>;
+        SinglePruningIterator<FormatTraits, false, Pos, Offs, InputType>;
+      using Adapter = PruningPostingAdapter<Iterator>;
 
       SDB_IF_FAILURE("irs::MaxScoreIterator") {  //
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -513,15 +507,18 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     return {};
   }
 
-  // Dispatch to WandIterator when (1) the caller asked for WAND, (2) the
-  // field has wand metadata persisted, (3) the field exposes Freq, (4) the
-  // query doesn't need positional/offset data, and (5) min_match is 1.
-  if (options.wand_enabled && options.has_wand &&
+  // Dispatch to PruningIterator when
+  // (1) the caller asked for score pruning,
+  // (2) the field has score bounds persisted,
+  // (3) the field exposes Freq,
+  // (4) the query doesn't need positional/offset data,
+  // (5) min_match is 1.
+  if (options.score_prune && options.has_score_bounds &&
       IndexFeatures::None != (field_features & IndexFeatures::Freq) &&
       IndexFeatures::None ==
         (required_features & (IndexFeatures::Pos | IndexFeatures::Offs)) &&
       min_match == 1) {
-    return WandIterator(field_features, metas, options, type);
+    return PruningIterator(field_features, metas, options, type);
   }
 
   auto make_postings_iterator = [&](const PostingCookie& cookie) {
@@ -529,15 +526,16 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
         return ResolveBool(
-          options.has_wand, [&]<bool HasWand> -> DocIterator::ptr {
+          options.has_score_bounds,
+          [&]<bool HasScoreBounds> -> DocIterator::ptr {
             if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
               auto it = memory::make_managed<PostingIteratorImpl<
-                IteratorTraits, FieldTraits, HasWand, BytesViewInput>>();
+                IteratorTraits, FieldTraits, HasScoreBounds, BytesViewInput>>();
               it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
               return it;
             } else {
               auto it = memory::make_managed<PostingIteratorImpl<
-                IteratorTraits, FieldTraits, HasWand, IndexInput>>();
+                IteratorTraits, FieldTraits, HasScoreBounds, IndexInput>>();
               it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
               return it;
             }
@@ -569,7 +567,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
       return ResolveMergeType(type, [&]<ScoreMergeType MergeType> {
         using MinMatchIterator = MinMatchIterator<Adapter, MergeType>;
         return MakeWeakDisjunction<MinMatchIterator>(
-          options, _docs_count, std::move(adapters), min_match);
+          options.score_prune, _docs_count, std::move(adapters), min_match);
       });
     });
 }

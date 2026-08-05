@@ -31,7 +31,6 @@
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 
@@ -60,7 +59,7 @@ class ByRangeIterator : public WrappedTermIterator {
  public:
   ByRangeIterator(const TermReader& reader,
                   const ByRangeFilterOptions::range_type& range)
-    : WrappedTermIterator{reader.iterator(SeekMode::NORMAL)}, _range{&range} {}
+    : WrappedTermIterator{reader.iterator(SeekMode::Normal)}, _range{&range} {}
 
   bool next() final {
     bool res = false;

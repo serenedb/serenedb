@@ -22,15 +22,15 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 
 namespace irs {
 
 struct DocState {
   const IndexInput* pos_in;
   const IndexInput* pay_in;
-  const TermMetaImpl* term_state;
+  const PostingMeta* term_state;
   uint32_t* enc_buf;
 };
 
@@ -186,6 +186,7 @@ class PositionImpl final : public PosAttr {
   // prepares iterator to work
   template<typename InputType>
   void Prepare(const DocState& state) {
+    SDB_ASSERT(!_pos_in);
     _pos_in = sdb::basics::downCast<InputType>(*state.pos_in).Reopen();
 
     if (!_pos_in) {
@@ -203,6 +204,7 @@ class PositionImpl final : public PosAttr {
     _pend_pos = _cookie.pend_pos;
 
     if constexpr (IteratorTraits::Offset()) {
+      SDB_ASSERT(!_pay_in);
       _pay_in = sdb::basics::downCast<InputType>(*state.pay_in).Reopen();
 
       if (!_pay_in) {

@@ -102,7 +102,11 @@ inline connector::SearchColumnInfo MakeSearchColumnInfo(
   return {
     .field_id = field,
     .null_field_id = info ? info->null_field_id : irs::field_limits::invalid(),
-    .bool_field_id = info ? info->bool_field_id : irs::field_limits::invalid(),
+    .json_null_field_id =
+      info ? info->json_null_field_id : irs::field_limits::invalid(),
+    .true_field_id = info ? info->true_field_id : irs::field_limits::invalid(),
+    .false_field_id =
+      info ? info->false_field_id : irs::field_limits::invalid(),
     .numeric_field_id =
       info ? info->numeric_field_id : irs::field_limits::invalid(),
     .logical_type = std::move(type),

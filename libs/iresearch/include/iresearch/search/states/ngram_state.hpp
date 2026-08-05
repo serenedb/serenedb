@@ -22,7 +22,8 @@
 
 #pragma once
 
-#include "iresearch/formats/seek_cookie.hpp"
+#include "basics/resource_manager.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 
 namespace irs {
 
@@ -32,7 +33,7 @@ struct NGramState {
   explicit NGramState(IResourceManager& memory) noexcept : terms{{memory}} {}
 
   const TermReader* reader{};
-  ManagedVector<SeekCookie::ptr> terms;
+  ManagedVector<PostingMeta> terms;
 };
 
 }  // namespace irs

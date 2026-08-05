@@ -35,8 +35,7 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
   static constexpr std::string_view kFormatPrefix = "segments_";
   static constexpr std::string_view kFormatPrefixTmp = "pending_segments_";
 
-  static constexpr int32_t kFormatMin = 0;
-  static constexpr int32_t kFormatMax = 0;
+  static constexpr int32_t kFormatVersion = 0;
 
   enum {
     kHasPayload = 1,
@@ -44,10 +43,6 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
 
   static std::string FileName(uint64_t gen) {
     return FileName(kFormatPrefix, gen);
-  }
-
-  explicit IndexMetaWriterImpl(int32_t version) noexcept : _version{version} {
-    SDB_ASSERT(_version >= kFormatMin && version <= kFormatMax);
   }
 
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
@@ -69,7 +64,6 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
 
   Directory* _dir{};
   uint64_t _pending_gen{index_gen_limits::invalid()};  // Generation to commit
-  int32_t _version;
 };
 
 inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
@@ -92,7 +86,7 @@ inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
   }
 
   {
-    format_utils::WriteHeader(*out, kFormatName, _version);
+    format_utils::WriteHeader(*out, kFormatName, kFormatVersion);
     out->WriteV64(meta.gen);
     out->WriteU64(meta.seg_counter);
     SDB_ASSERT(meta.segments.size() <= std::numeric_limits<uint32_t>::max());

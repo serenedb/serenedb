@@ -22,7 +22,8 @@
 
 #pragma once
 
-#include "iresearch/formats/seek_cookie.hpp"
+#include "basics/resource_manager.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/states/term_state.hpp"
 #include "iresearch/types.hpp"
 
@@ -37,10 +38,10 @@ struct FixedPhraseState {
 
   // Mimic std::pair interface
   struct TermState {
-    TermState(SeekCookie::ptr&& first, score_t /*second*/) noexcept
-      : first{std::move(first)} {}
+    TermState(const PostingMeta& first, score_t /*second*/) noexcept
+      : first{first} {}
 
-    SeekCookie::ptr first;
+    PostingMeta first;
   };
 
   using Terms = ManagedVector<TermState>;
@@ -56,7 +57,7 @@ struct VariadicPhraseState {
   explicit VariadicPhraseState(IResourceManager& memory) noexcept
     : num_terms{{memory}}, terms{{memory}} {}
 
-  using TermState = std::pair<SeekCookie::ptr, score_t>;
+  using TermState = std::pair<PostingMeta, score_t>;
 
   ManagedVector<size_t> num_terms;  // number of terms per phrase part
   // Per-slot connectivity-component ids over query term sets (see

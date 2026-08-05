@@ -30,8 +30,8 @@ namespace irs {
 // Compiled query suitable for filters with a single term like "by_term"
 class TermQuery : public QueryBuilder {
  public:
-  explicit TermQuery(const SubReader& segment, TermState&& state,
-                     score_t boost);
+  explicit TermQuery(const SubReader& segment, const TermReader* reader,
+                     const PostingMeta& cookie, score_t boost);
 
   DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& stats) const final;

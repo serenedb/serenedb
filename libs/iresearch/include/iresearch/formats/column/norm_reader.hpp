@@ -36,6 +36,9 @@ struct NormReader : public memory::Managed {
   virtual void Get(std::span<const doc_id_t> docs,
                    std::span<uint32_t> values) = 0;
 
+  virtual void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
+                             std::span<uint32_t, kScoreBlock> values) = 0;
+
   virtual void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
                                std::span<uint32_t, kPostingBlock> values) = 0;
 

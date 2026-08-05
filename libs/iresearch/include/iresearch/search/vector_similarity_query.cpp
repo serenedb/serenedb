@@ -317,16 +317,10 @@ class QVectorIterator : public VectorDistanceIterator {
     _doc = doc_limits::eof();
   }
 
-  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }
-
-  IRS_DOC_ITERATOR_EMIT_DEFAULTS
-
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask,
-                                      irs::FillBlockScoreContext score,
-                                      irs::FillBlockMatchContext match) final {
-    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score, match);
-  }
+  IRS_DOC_ITERATOR_FILL_BLOCK
+  IRS_DOC_ITERATOR_COUNT
+  IRS_DOC_ITERATOR_EMIT_DOCS
+  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
 
  private:
   score_t CurrentThreshold() noexcept {
@@ -500,8 +494,7 @@ std::vector<PostingCookie> MakeCookies(const VectorState& state) {
   std::vector<PostingCookie> cookies;
   cookies.reserve(state.cookies.size());
   for (const auto& cookie : state.cookies) {
-    SDB_ASSERT(cookie);
-    cookies.push_back({.cookie = cookie.get(), .field = state.reader->meta()});
+    cookies.push_back({.cookie = &cookie, .field = state.reader->meta()});
   }
   return cookies;
 }
@@ -514,8 +507,7 @@ DocIterator::ptr MergeWithInner(Primary&& primary, Inner&& inner,
   itrs.reserve(2);
   itrs.emplace_back(std::forward<Primary>(primary));
   itrs.emplace_back(std::forward<Inner>(inner));
-  return MakeConjunction(merge_type, WandContext{}, docs_count,
-                         std::move(itrs));
+  return MakeConjunction(merge_type, false, docs_count, std::move(itrs));
 }
 
 struct ClusterInputs {
@@ -527,7 +519,7 @@ struct ClusterInputs {
 std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
                                                  size_t c, bool has_centroids,
                                                  IndexInput& pay_root) {
-  const PostingCookie cookie{.cookie = state.cookies[c].get(),
+  const PostingCookie cookie{.cookie = &state.cookies[c],
                              .field = state.reader->meta()};
   auto postings = state.reader->Iterator(IndexFeatures::None, cookie);
   if (!postings) {
@@ -578,7 +570,7 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
 
   auto cookies = MakeCookies(state);
   DocIterator::ptr src =
-    state.reader->Iterator(IndexFeatures::None, cookies, WandContext{},
+    state.reader->Iterator(IndexFeatures::None, cookies, false,
                            /*min_match=*/1, ScoreMergeType::Noop);
   if (!src) {
     return nullptr;
@@ -736,8 +728,8 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
       }
       using Disjunction =
         DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
-      DocIterator::ptr v = MakeDisjunction<Disjunction>(
-        WandContext{}, docs_count, std::move(adapters));
+      DocIterator::ptr v =
+        MakeDisjunction<Disjunction>(false, docs_count, std::move(adapters));
       if (_inner) {
         auto inner_it = _inner->Execute(ctx, stats);
         if (!inner_it) {

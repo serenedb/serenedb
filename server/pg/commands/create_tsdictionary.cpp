@@ -157,8 +157,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   auto Result() && {
-    return std::make_tuple(std::move(_config), std::move(_features),
-                           _norm_row_group_size);
+    return std::make_tuple(std::move(_config), std::move(_features));
   }
 
  private:
@@ -903,23 +902,11 @@ class CreateTSDictionaryOptions : public OptionsParser {
           SDB_ASSERT(added);
         }
       });
-    if (OptionsParser::HasOption(tokenizer_options::kNormRowGroupSize)) {
-      if (!_features.HasFeatures(irs::IndexFeatures::Norm)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("norm_row_group_size requires norm = true"),
-          ERR_HINT(tokenizer_options::kNormRowGroupSize.description));
-      }
-      _norm_row_group_size =
-        static_cast<uint32_t>(OptionsParser::EraseOptionOrDefault<
-                              tokenizer_options::kNormRowGroupSize>());
-    }
     _features.Validate(type);
   }
 
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
-  uint32_t _norm_row_group_size = DEFAULT_ROW_GROUP_SIZE;
   std::shared_ptr<const catalog::Snapshot> _snapshot;
   ObjectId _db_id;
   std::string_view _current_schema;
@@ -934,10 +921,9 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
   auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
 
-  auto [cfg, features, norm_row_group_size] =
-    std::move(
-      CreateTSDictionaryOptions{snapshot, db_id, current_schema, options})
-      .Result();
+  auto [cfg, features] = std::move(CreateTSDictionaryOptions{
+                                     snapshot, db_id, current_schema, options})
+                           .Result();
 
   auto test_analyzer = irs::analysis::CreateAnalyzer(irs::analysis::Clone(cfg));
   SDB_ASSERT(test_analyzer);
@@ -950,7 +936,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
 
   auto tokenizer = std::make_shared<catalog::Tokenizer>(
     conn_ctx.GetRoleId(), ObjectId{}, ObjectId{}, name, features,
-    norm_row_group_size, std::move(cfg));
+    std::move(cfg));
 
   auto& catalog = catalog::GetCatalog();
   catalog.CreateTokenizer(catalog::AccessContext{conn_ctx.GetRoleId()}, db_id,

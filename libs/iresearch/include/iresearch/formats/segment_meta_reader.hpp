@@ -85,9 +85,8 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
 
   const auto checksum = format_utils::Checksum(*in);
 
-  std::ignore = format_utils::CheckHeader(
-    *in, SegmentMetaWriterImpl::kFormatName, SegmentMetaWriterImpl::kFormatMin,
-    SegmentMetaWriterImpl::kFormatMax);
+  format_utils::CheckHeader(*in, SegmentMetaWriterImpl::kFormatName,
+                            SegmentMetaWriterImpl::kFormatVersion);
   auto name = ReadString<std::string>(*in);
   const auto segment_version = in->ReadV64();
   const auto live_docs_count = in->ReadV32();

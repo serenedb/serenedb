@@ -39,13 +39,6 @@ void FieldCollector::Merge(FieldCollector& dst, const FieldCollector& src) {
   dst.total_term_freq += src.total_term_freq;
 }
 
-void TermCollector::Collect(const AttributeProvider& term_attrs) noexcept {
-  if (const auto* meta = irs::get<TermMeta>(term_attrs)) {
-    docs_with_term += meta->docs_count;
-    total_term_freq += meta->freq;
-  }
-}
-
 void TermCollector::Merge(TermCollector& dst, const TermCollector& src) {
   dst.docs_with_term += src.docs_with_term;
   dst.total_term_freq += src.total_term_freq;

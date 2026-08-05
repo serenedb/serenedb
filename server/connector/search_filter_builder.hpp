@@ -52,6 +52,7 @@ struct SearchColumnInfo {
   irs::field_id numeric_field_id = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
+  std::optional<uint32_t> levenshtein_max_terms;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,

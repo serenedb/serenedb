@@ -114,8 +114,9 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
   edit_filter.boost(ctx.boost);
   *edit_filter.mutable_field_id() =
     PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-  FillByEditDistanceOptions(args, *edit_filter.mutable_options(),
-                            ctx.levenshtein_max_terms);
+  FillByEditDistanceOptions(
+    args, *edit_filter.mutable_options(),
+    column_info.levenshtein_max_terms.value_or(ctx.levenshtein_max_terms));
 }
 
 }  // namespace sdb::connector

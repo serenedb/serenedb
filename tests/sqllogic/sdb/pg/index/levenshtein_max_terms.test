@@ -173,6 +173,124 @@ RESET sdb_levenshtein_max_terms;
 statement ok
 DROP TABLE mt_docs;
 
+# A cap above the number of matching terms is a no-op.
+statement ok
+SET sdb_levenshtein_max_terms = 100;
+
+query
+SELECT count(*) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+13
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+# The override is per resolved column, so an OR that mixes the enumerated
+# column with a document filter caps only the latter. Uncapped, the body side
+# also admits bat and rat, so phonetic (4 edits from 'phon', reachable only
+# through its row) enumerates too.
+statement ok
+DROP TABLE IF EXISTS mt_or;
+
+statement ok
+CREATE TABLE mt_or (a INTEGER PRIMARY KEY, cat VARCHAR, body VARCHAR);
+
+statement ok
+CREATE INDEX mt_or_idx ON mt_or USING inverted(a, cat, body mt_english);
+
+statement ok
+INSERT INTO mt_or VALUES (1, 'phone', 'cat'), (2, 'phony', 'bat'), (3, 'phonetic', 'rat');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_or;
+
+query
+SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_or_idx
+WHERE cat @@ ts_levenshtein('phon', 2) OR body @@ ts_levenshtein('cat', 1)
+ORDER BY term;
+----
+term
+phone
+phonetic
+phony
+
+statement ok
+SET sdb_levenshtein_max_terms = 1;
+
+# The body side now expands to 'cat' alone, dropping row 3, while the
+# enumerated column stays uncapped and still contributes phony at distance 1.
+query
+SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_or_idx
+WHERE cat @@ ts_levenshtein('phon', 2) OR body @@ ts_levenshtein('cat', 1)
+ORDER BY term;
+----
+term
+phone
+phony
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+statement ok
+DROP TABLE mt_or;
+
+# The cap applies per index segment, so the same query over the same rows
+# returns more terms while they sit in separate segments than after a merge.
+statement ok
+SET compaction_interval = 0;
+
+statement ok
+DROP TABLE IF EXISTS mt_segs;
+
+statement ok
+CREATE TABLE mt_segs (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX mt_segs_idx ON mt_segs USING inverted(a, b mt_english);
+
+statement ok
+INSERT INTO mt_segs VALUES (1,'cat'), (2,'bat'), (3,'rat'), (4,'hat'), (5,'mat'), (6,'oat');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_segs;
+
+statement ok
+INSERT INTO mt_segs VALUES (7,'cab'), (8,'cad'), (9,'can'), (10,'cap'), (11,'car'), (12,'caw');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_segs;
+
+statement ok
+SET sdb_levenshtein_max_terms = 3;
+
+query
+SELECT count(*) FROM mt_segs_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+6
+
+statement ok
+VACUUM (COMPACT_TABLE) mt_segs;
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_segs;
+
+query
+SELECT count(*) FROM mt_segs_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+3
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+statement ok
+RESET compaction_interval;
+
+statement ok
+DROP TABLE mt_segs;
+
 # The cap also applies to a fuzzy part inside a phrase.
 statement ok
 DROP TEXT SEARCH DICTIONARY IF EXISTS mt_english_pos;
@@ -210,6 +328,15 @@ SELECT count(*) FROM mt_phrases_idx WHERE b @@ (ts_levenshtein('cat', 1) ## 'zzz
 ----
 count
 8
+
+statement ok
+SET sdb_levenshtein_max_terms = 3;
+
+query
+SELECT count(*) FROM mt_phrases_idx WHERE b @@ (ts_levenshtein('cat', 1) ## 'zzz');
+----
+count
+3
 
 statement ok
 SET sdb_levenshtein_max_terms = 1;

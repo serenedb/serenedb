@@ -1952,10 +1952,10 @@ absl::Status MakeSearchFilter(
     scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
   }
 
-  size_t levenshtein_max_terms = 64;
+  uint32_t levenshtein_max_terms = 64;
   if (context.TryGetCurrentSetting("sdb_levenshtein_max_terms", v) &&
       !v.IsNull()) {
-    levenshtein_max_terms = static_cast<size_t>(v.GetValue<int32_t>());
+    levenshtein_max_terms = static_cast<uint32_t>(v.GetValue<int32_t>());
   }
 
   FilterContext ctx{

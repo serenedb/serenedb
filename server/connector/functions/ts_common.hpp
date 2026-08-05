@@ -58,7 +58,7 @@ struct FilterContext {
   irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
   size_t scored_terms_limit = 1024;
-  size_t levenshtein_max_terms = 64;
+  uint32_t levenshtein_max_terms = 64;
 
   FilterContext WithTokenizer(irs::analysis::Analyzer& tokenizer) const {
     return {

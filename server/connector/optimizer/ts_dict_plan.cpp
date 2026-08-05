@@ -62,6 +62,7 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
@@ -1598,44 +1599,6 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
              "over unnest(ts_dict_agg(...))"));
 }
 
-class ScopedSetting {
- public:
-  ScopedSetting(duckdb::ClientContext& ctx, const char* name,
-                duckdb::Value value)
-    : _settings{ctx.config.user_settings} {
-    auto& db_config = duckdb::DBConfig::GetConfig(ctx);
-    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    _index = db_config.TryGetSettingIndex(name, option);
-    if (!_index.IsValid()) {
-      return;
-    }
-    const auto index = _index.GetIndex();
-    if (_settings.IsSet(index)) {
-      _settings.TryGetSetting(db_config.user_settings, index, _old);
-    }
-    _settings.SetUserSetting(index, std::move(value));
-  }
-
-  ~ScopedSetting() {
-    if (!_index.IsValid()) {
-      return;
-    }
-    if (_old.IsNull()) {
-      _settings.ClearSetting(_index.GetIndex());
-    } else {
-      _settings.SetUserSetting(_index.GetIndex(), std::move(_old));
-    }
-  }
-
-  ScopedSetting(const ScopedSetting&) = delete;
-  ScopedSetting& operator=(const ScopedSetting&) = delete;
-
- private:
-  duckdb::LocalUserSettings& _settings;
-  duckdb::optional_idx _index;
-  duckdb::Value _old;
-};
-
 irs::Filter::ptr ClaimOptimizedConjunct(
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const connector::ColumnGetter& getter,
@@ -1810,9 +1773,9 @@ class TsDictFilterClaim {
       _row_origin(filters.size(), false),
       _having_and(ss.ts_dicts.size()),
       _where_and{std::make_unique<irs::And>()} {
-    _enum_by_field.reserve(ss.ts_dicts.size());
-    for (size_t i = 0; i < ss.ts_dicts.size(); ++i) {
-      _enum_by_field[ss.ts_dicts[i].field_id] = i;
+    _enum_fields.reserve(ss.ts_dicts.size());
+    for (const auto& req : ss.ts_dicts) {
+      _enum_fields.insert(req.field_id);
     }
   }
 
@@ -1830,14 +1793,18 @@ class TsDictFilterClaim {
   size_t EnumeratedFieldCount() const { return _ss.ts_dicts.size(); }
 
   bool Enumerated(irs::field_id field) const {
-    return absl::c_any_of(
-      _ss.ts_dicts, [&](const auto& req) { return req.field_id == field; });
+    return _enum_fields.contains(field);
   }
 
-  bool RefsEnumerated(const duckdb::Expression& expr) const {
-    EnumFieldRefs refs;
-    CollectEnumFieldRefs(expr, _enum_by_field, _bind_data, _get, refs);
-    return refs.matched_key.has_value() || refs.term_virtual;
+  template<typename Getter>
+  auto Uncapping(const Getter& getter) const {
+    return [this, &getter](const auto& expr) {
+      auto info = getter(expr);
+      if (info && Enumerated(info->field_id)) {
+        info->levenshtein_max_terms = 0;
+      }
+      return info;
+    };
   }
 
   void Optimize(irs::Filter::ptr& f, bool fuse_intersections = false) const {
@@ -1925,13 +1892,8 @@ class TsDictFilterClaim {
     duckdb::unique_ptr<duckdb::Expression>& conjunct,
     const connector::ColumnGetter& col_getter,
     const connector::ExpressionGetter& e_getter) const {
-    std::optional<ScopedSetting> uncapped;
-    if (RefsEnumerated(*conjunct)) {
-      uncapped.emplace(_context, "sdb_levenshtein_max_terms",
-                       duckdb::Value::INTEGER(0));
-    }
-    return ClaimOptimizedConjunct(conjunct, col_getter, e_getter,
-                                  _getters.analyzed_fields,
+    return ClaimOptimizedConjunct(conjunct, Uncapping(col_getter),
+                                  Uncapping(e_getter), _getters.analyzed_fields,
                                   _getters.null_markers, _context);
   }
 
@@ -2109,7 +2071,7 @@ class TsDictFilterClaim {
   std::vector<bool> _row_origin;
   std::vector<std::unique_ptr<irs::And>> _having_and;
   std::unique_ptr<irs::And> _where_and;
-  containers::FlatHashMap<irs::field_id, size_t> _enum_by_field;
+  containers::FlatHashSet<irs::field_id> _enum_fields;
 };
 
 }  // namespace

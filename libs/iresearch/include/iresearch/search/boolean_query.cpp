@@ -70,9 +70,6 @@ ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx,
     itrs.emplace_back(std::move(docs));
   }
 
-  // if (Conjunction || itrs.size() > 1) {
-  //   TODO(mbkkt) ctx.wand.strict = true;
-  // }
   return itrs;
 }
 
@@ -95,14 +92,14 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(stats.GetScorer() ? merge_type : ScoreMergeType::Noop,
-                          [&]<ScoreMergeType MergeType> {
-                            using Disjunction =
-                              DisjunctionIterator<ScoreAdapter, MergeType>;
-                            return MakeDisjunction<Disjunction>(
-                              ctx.wand, static_cast<doc_id_t>(docs_count),
-                              std::move(itrs), std::forward<Args>(args)...);
-                          });
+  return ResolveMergeType(
+    stats.GetScorer() ? merge_type : ScoreMergeType::Noop,
+    [&]<ScoreMergeType MergeType> {
+      using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
+      return MakeDisjunction<Disjunction>(
+        ctx.score_prune, static_cast<doc_id_t>(docs_count), std::move(itrs),
+        std::forward<Args>(args)...);
+    });
 }
 
 // Returns conjunction iterator created from the specified queries
@@ -127,8 +124,8 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return MakeConjunction(scorer ? merge_type : ScoreMergeType::Noop, ctx.wand,
-                         docs_count, std::move(itrs),
+  return MakeConjunction(scorer ? merge_type : ScoreMergeType::Noop,
+                         ctx.score_prune, docs_count, std::move(itrs),
                          std::forward<Args>(args)...);
 }
 
@@ -139,7 +136,7 @@ DocIterator::ptr ExclusionQuery::Execute(const ExecutionContext& old,
   SDB_ASSERT(!_excludes.empty());
   ExecutionContext ctx{old};
   // TODO(mbkkt) enable back?
-  ctx.wand.wand_enabled = false;
+  ctx.score_prune = false;
 
   const bool has_children = stats.ChildCount() != 0;
 
@@ -290,8 +287,8 @@ DocIterator::ptr MinMatchQuery::Execute(const ExecutionContext& ctx,
       // FIXME(gnusi): use FAST version
       using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
       return MakeWeakDisjunction<Disjunction>(
-        ctx.wand, static_cast<doc_id_t>(_segment.docs_count()), std::move(itrs),
-        min_match_count);
+        ctx.score_prune, static_cast<doc_id_t>(_segment.docs_count()),
+        std::move(itrs), min_match_count);
     });
 }
 
@@ -299,7 +296,7 @@ DocIterator::ptr BoostQuery::Execute(const ExecutionContext& old,
                                      const StatsBuffer& stats) const {
   ExecutionContext ctx{old};
   // TODO(mbkkt) enable back?
-  ctx.wand.wand_enabled = false;
+  ctx.score_prune = false;
 
   const bool has_children = stats.ChildCount() != 0;
   const auto* scorer = stats.GetScorer();

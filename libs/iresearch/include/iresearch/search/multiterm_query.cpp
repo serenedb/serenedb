@@ -37,13 +37,13 @@ namespace {
 class LazyBitsetIterator : public BitsetDocIterator {
  public:
   LazyBitsetIterator(const SubReader& segment, const TermReader& field,
-                     std::vector<const SeekCookie*>&& cookies,
+                     std::span<const MultiTermState::Entry> terms,
                      CostAttr::Type estimation) noexcept
     : BitsetDocIterator(estimation),
       _field(&field),
       _segment(&segment),
-      _cookies(std::move(cookies)) {
-    SDB_ASSERT(!_cookies.empty());
+      _terms(terms) {
+    SDB_ASSERT(!_terms.empty());
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -57,7 +57,7 @@ class LazyBitsetIterator : public BitsetDocIterator {
   std::unique_ptr<word_t[]> _set;
   const TermReader* _field;
   const SubReader* _segment;
-  std::vector<const SeekCookie*> _cookies;
+  std::span<const MultiTermState::Entry> _terms;
 };
 
 bool LazyBitsetIterator::refill(const word_t** begin, const word_t** end) {
@@ -70,13 +70,13 @@ bool LazyBitsetIterator::refill(const word_t** begin, const word_t** end) {
   _set = std::make_unique<word_t[]>(words);
   std::memset(_set.get(), 0, sizeof(word_t) * words);
 
-  auto provider = [begin = _cookies.begin(),
-                   end =
-                     _cookies.end()]() mutable noexcept -> const SeekCookie* {
-    if (begin != end) {
-      auto* cookie = *begin;
-      ++begin;
-      return cookie;
+  auto provider = [begin = _terms.begin(),
+                   end = _terms.end()] mutable noexcept -> const PostingMeta* {
+    while (begin != end) {
+      const auto& entry = *begin++;
+      if (entry.stat_offset == MultiTermState::kUnscored) {
+        return &entry.cookie;
+      }
     }
     return nullptr;
   };
@@ -110,6 +110,10 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
+  // TODO(mbkkt) fold the mask into the pruning iterator during the deletes
+  // rework and drop this.
+  const bool score_prune = ctx.score_prune && _segment.docs_mask() == nullptr;
+
   auto* reader = _state.Reader();
   SDB_ASSERT(reader);
 
@@ -125,35 +129,30 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
   }
 
   // partition the collected terms into scored / unscored
-  std::vector<const SeekCookie*> unscored;
   CostAttr::Type unscored_estimation = 0;
   CostAttr::Type total_estimation = 0;
   size_t scored_count = 0;
   for (const auto& entry : terms) {
-    total_estimation += entry.docs_count;
+    total_estimation += entry.cookie.docs_count;
     if (entry.stat_offset != MultiTermState::kUnscored) {
       ++scored_count;
     } else {
-      SDB_ASSERT(entry.cookie);
-      unscored.emplace_back(entry.cookie.get());
-      unscored_estimation += entry.docs_count;
+      unscored_estimation += entry.cookie.docs_count;
     }
   }
 
-  const bool has_unscored_terms = !unscored.empty();
+  const bool has_unscored_terms = scored_count != terms.size();
 
   if (!has_unscored_terms) {
     std::vector<PostingCookie> cookies;
     cookies.reserve(scored_count);
     for (const auto& entry : terms) {
-      SDB_ASSERT(entry.cookie);
       cookies.emplace_back(
-        entry.cookie.get(),
-        scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
+        &entry.cookie, scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
         entry.boost * _boost, reader->meta());
     }
 
-    auto docs = reader->Iterator(features, cookies, ctx.wand, _min_match,
+    auto docs = reader->Iterator(features, cookies, score_prune, _min_match,
                                  scorer ? _merge_type : ScoreMergeType::Noop);
     return docs ? std::move(docs) : DocIterator::empty();
   }
@@ -165,16 +164,15 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
     if (entry.stat_offset == MultiTermState::kUnscored) {
       continue;
     }
-    SDB_ASSERT(entry.cookie);
     auto docs = reader->Iterator(
       features,
       {
-        .cookie = entry.cookie.get(),
+        .cookie = &entry.cookie,
         .stats = scorer ? all_stats[entry.stat_offset].c_str() : nullptr,
         .boost = entry.boost * _boost,
         .field = reader->meta(),
       },
-      ctx.wand);
+      score_prune);
     if (!docs) [[unlikely]] {
       continue;
     }
@@ -186,7 +184,7 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
 
   {
     DocIterator::ptr docs = memory::make_managed<LazyBitsetIterator>(
-      _segment, *reader, std::move(unscored), unscored_estimation);
+      _segment, *reader, terms, unscored_estimation);
 
     SDB_ASSERT(it != std::end(itrs));
     *it = std::move(docs);
@@ -200,8 +198,8 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
     [&]<ScoreMergeType MergeType>() {
       using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
       return MakeWeakDisjunction<Disjunction>(
-        ctx.wand, static_cast<doc_id_t>(_segment.docs_count()), std::move(itrs),
-        _min_match, total_estimation);
+        score_prune, static_cast<doc_id_t>(_segment.docs_count()),
+        std::move(itrs), _min_match, total_estimation);
     });
 }
 

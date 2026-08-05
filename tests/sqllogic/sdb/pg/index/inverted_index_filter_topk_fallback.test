@@ -1,7 +1,7 @@
 hash-threshold 100
 
-# Top-k scan paths (WAND text / IVF vector) enforce table filters through
-# the columnstore predicate, which can only answer filters on INCLUDE'd
+# Top-k scan paths (score-pruned text / IVF vector) enforce table filters
+# through the columnstore predicate, which can only answer filters on INCLUDE'd
 # columns. Filters it cannot answer (non-INCLUDE columns, the score column)
 # must fall back to the streaming scan, which re-checks every row after
 # materialization -- the top-k paths have no post-filter, so without the

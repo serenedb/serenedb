@@ -1016,7 +1016,7 @@ QUERY PLAN
 │ Lookup: table            │
 │ Index Filter:            │
 │ ╭─ Term ───────────────╮ │
-│ │ Field: (a > b)(bool) │ │
+│ │ Field: (a > b)(true) │ │
 │ │ Value: true          │ │
 │ ╰──────────────────────╯ │
 │ Projections: id          │

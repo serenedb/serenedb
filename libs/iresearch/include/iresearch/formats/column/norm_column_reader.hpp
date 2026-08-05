@@ -24,7 +24,6 @@
 
 #include <cstdint>
 #include <span>
-#include <utility>
 #include <vector>
 
 #include "basics/assert.h"
@@ -47,8 +46,7 @@ class NormColumnReader final {
     uint8_t byte_size;
   };
 
-  NormColumnReader(field_id id, std::vector<NormRowGroupMeta> pointers,
-                   IndexInput& in);
+  NormColumnReader(field_id id, NormColumnMeta meta, IndexInput& in);
 
   field_id Id() const noexcept { return _id; }
   size_t RowGroupCount() const noexcept { return _pointers.size(); }
@@ -59,7 +57,7 @@ class NormColumnReader final {
 
   RgInfo Rg(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());
-    return {_spans[rg], _row_offsets[rg], _pointers[rg].row_count,
+    return {_spans[rg], rg * _rg_rows, RowGroupRowCount(rg),
             _pointers[rg].byte_size};
   }
 
@@ -67,32 +65,39 @@ class NormColumnReader final {
     SDB_ASSERT(rg < _pointers.size());
     return _pointers[rg].byte_size;
   }
-  uint32_t RowGroupRowCount(size_t rg) const noexcept {
+  bool UniformByteSize() const noexcept { return _uniform_byte_size; }
+  // Groups are uniform, so only the last one is short.
+  uint64_t RowGroupRowCount(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());
-    return _pointers[rg].row_count;
+    return rg + 1 == _pointers.size() ? _total_row_count - rg * _rg_rows
+                                      : _rg_rows;
   }
   uint64_t RowGroupFirstRow(size_t rg) const noexcept {
     SDB_ASSERT(rg < _pointers.size());
-    return _row_offsets[rg];
+    return rg * _rg_rows;
   }
   std::span<const byte_type> RowGroupBytes(size_t rg) const noexcept {
     SDB_ASSERT(rg < _spans.size());
     return _spans[rg];
   }
 
-  std::pair<size_t, uint64_t> Locate(uint64_t row_pos) const noexcept;
+  RgInfo Locate(uint64_t row_pos) const noexcept {
+    SDB_ASSERT(row_pos < _total_row_count);
+    return Rg(static_cast<size_t>(row_pos / _rg_rows));
+  }
 
   uint32_t Get(uint64_t row_pos) const noexcept;
 
  private:
   field_id _id;
   std::vector<NormRowGroupMeta> _pointers;
-  std::vector<uint64_t> _row_offsets;  // cumulative; size = pointers + 1
   std::vector<std::span<const byte_type>> _spans;
   std::vector<byte_type> _owned;
+  uint64_t _rg_rows = 1;
   uint64_t _total_row_count = 0;
   uint64_t _total_sum = 0;
   uint64_t _total_non_zero = 0;
+  bool _uniform_byte_size = true;
 };
 
 // Decode one stored value from a row-group's raw bytes.

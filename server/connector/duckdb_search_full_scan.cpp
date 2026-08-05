@@ -62,7 +62,6 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/vector_similarity_query.hpp>
 #include <iresearch/search/vector_similarity_scorer.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/string.hpp>
 #include <mutex>
 #include <ranges>
@@ -72,6 +71,7 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
+#include "basics/system-compiler.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
@@ -635,7 +635,7 @@ void BuildTableFilter(IResearchScanGlobalState& state,
   // Score-column filters, applied on the computed score vector (whatever
   // HandleScoreFilter left pushed: on top-k the collector-enforced conjuncts
   // were stripped; the floor was recorded on the bind data there). The
-  // dynamic TOP_N boundary's shared runtime bound is captured for WAND
+  // dynamic TOP_N boundary's shared runtime bound is captured for prune
   // seeding -- it may sit alone or AND-combined with other score predicates.
   const auto score_emit = bind_data.vector_scorer
                             ? bind_data.vector_scorer->score_emit
@@ -934,13 +934,13 @@ void RerankHits(IResearchScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
 }
 
 // Current lower-bound score from the dynamic TOP_N boundary, or min() when it
-// is not yet initialized or is not a lower bound (text-only path: WAND scores
-// are strictly positive). Seeds the streaming WAND threshold; the exact
+// is not yet initialized or is not a lower bound (text-only path: scores
+// are strictly positive). Seeds the streaming prune threshold; the exact
 // boundary is still enforced by the HitBatcher score filter, so an over-loose
-// threshold only skips fewer blocks (never wrong). WAND pruning is strict
+// threshold only skips fewer blocks (never wrong). Score pruning is strict
 // (skips `block_max <= threshold`), so a `>=` boundary steps one ulp down --
 // docs scoring exactly the boundary are still needed for tie-breaking.
-irs::score_t CurrentWandThreshold(duckdb::DynamicFilterData& dyn) {
+irs::score_t CurrentPruneThreshold(duckdb::DynamicFilterData& dyn) {
   std::lock_guard<duckdb::mutex> guard(dyn.lock);
   if (!dyn.initialized.load(std::memory_order_relaxed) ||
       dyn.constant.IsNull() ||
@@ -1243,8 +1243,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       // Static score floor (Lucene min_score): the collectors start at the
       // bound and enforce it -- the stripped filter's replacement
       // (HandleScoreFilter recorded the floor only where it is the
-      // collector's raw space) -- and WAND skips below-floor blocks from the
-      // first window.
+      // collector's raw space) -- and pruning skips below-floor blocks from
+      // the first window.
       state->topk.global_kth_score.store(state->score_static_floor,
                                          std::memory_order_relaxed);
     }
@@ -1255,13 +1255,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
         ReadRerankFactor(context) * static_cast<uint32_t>(*ss.score_top_k);
     }
   } else if (state->mode == ScanMode::Stream) {
-    // Streaming text-score WAND: a pushed dynamic TOP_N score boundary (score
-    // DESC TOP_N -- only a lower bound can seed block-max skipping) or a
-    // static score floor on a WAND-enabled text scorer lets the streaming
+    // Streaming text-score pruning: a pushed dynamic TOP_N score boundary
+    // (score DESC TOP_N -- only a lower bound can seed block-max skipping) or
+    // a static score floor on a prune-capable text scorer lets the streaming
     // DocIterator skip below-threshold blocks (its ScoreThresholdAttr is
     // seeded before each emit); the HitBatcher score filter still enforces
     // the exact boundary. Honors the same kill switch as the in-scan top-k
-    // rule (IResearchSetScanOrder): with it set, WAND must not engage
+    // rule (IResearchSetScanOrder): with it set, pruning must not engage
     // anywhere.
     duckdb::Value disable_topk;
     const bool topk_disabled =
@@ -1276,10 +1276,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
          duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO);
     const bool static_bound =
       state->score_static_floor > std::numeric_limits<irs::score_t>::lowest();
-    state->wand_streaming =
+    state->score_prune_streaming =
       !topk_disabled && ss.text_scorer && state->ScanScore() &&
       (dynamic_bound || static_bound) &&
-      WandEnabled(bind_data.inverted_index.get(), ss.text_scorer);
+      ScorePruneEnabled(bind_data.inverted_index.get(), ss.text_scorer);
   }
 
   if (ss.scan_order &&
@@ -1528,7 +1528,7 @@ uint32_t NullFieldLiveCount(const irs::SubReader& seg, irs::field_id field,
       seg.live_docs_count() == seg.docs_count()) {
     return static_cast<uint32_t>(reader->docs_count());
   }
-  auto it = reader->iterator(irs::SeekMode::NORMAL);
+  auto it = reader->iterator();
   SDB_ASSERT(it);
   if (!it->next()) {
     return 0;
@@ -1883,20 +1883,23 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   s.score_fetcher.Clear();
   collector.SetSegment(seg_idx);
 
-  const auto seen_global =
-    g.topk.global_kth_score.load(std::memory_order_relaxed);
-  if (seen_global > s.local_threshold) {
-    s.local_threshold = seen_global;
-  }
+  // A hit below a k-th some worker already published cannot enter the query's
+  // top-k, so seed this segment with it. Routed through the collector's one
+  // raise rather than assigning `local_threshold` here: that is what keeps a
+  // later `nth_element` pivot -- taken over hits accepted under the older,
+  // lower threshold -- from writing the threshold back down, which
+  // `SetScoreThreshold` asserts cannot happen.
+  collector.RaiseScoreThreshold(
+    g.topk.global_kth_score.load(std::memory_order_relaxed));
 
   const auto& seg_query = EnsureSegmentQuery(g, s, seg, seg_idx);
   const irs::StatsBuffer& stats =
     g.stats ? *g.stats : irs::StatsBuffer::Empty();
 
-  const bool wand_enabled =
-    WandEnabled(search.inverted_index.get(), search.text_scorer);
+  const bool score_prune =
+    ScorePruneEnabled(search.inverted_index.get(), search.text_scorer);
   irs::DocIterator::ptr it = seg.mask(seg_query.Execute(
-    {.wand = {.wand_enabled = wand_enabled},
+    {.prune = {.score_prune = score_prune},
      .top_k_collect = search.vector_scorer.has_value() && cls.active.empty()},
     stats));
   // Filter the collected docs by the covered `.col` values, so top-k is
@@ -1995,12 +1998,12 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   // The `.col`/score filters run inside the HitBatcher (RowGroup::Scan-style
   // filter+materialize), so the DocIterator streams unfiltered -- no
   // TableFilterDocIterator on this path. When a dynamic TOP_N score boundary is
-  // pushed on a WAND-enabled text scorer, run WAND so below-threshold blocks
-  // are skipped (PushHits seeds the threshold from the boundary before each
-  // emit).
-  streaming_doc =
-    seg.mask(seg_query.Execute({.wand = {.wand_enabled = g.wand_streaming}},
-                               g.stats ? *g.stats : irs::StatsBuffer::Empty()));
+  // pushed on a prune-capable text scorer, run score pruning so
+  // below-threshold blocks are skipped (PushHits seeds the threshold from the
+  // boundary before each emit).
+  streaming_doc = seg.mask(
+    seg_query.Execute({.prune = {.score_prune = g.score_prune_streaming}},
+                      g.stats ? *g.stats : irs::StatsBuffer::Empty()));
   if (g.needs_lookup && !PkColumnFor(*g.reader, seg_idx).second) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -2113,15 +2116,15 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
       return;
     }
     if (g.ScanScore()) {
-      if (g.wand_streaming) {
-        // Seed the WAND threshold from the static score floor and the dynamic
+      if (g.score_prune_streaming) {
+        // Seed the prune threshold from the static score floor and the dynamic
         // TOP_N boundary's current value; blocks that cannot beat it are
         // skipped this window.
         if (auto* t =
               irs::GetMutable<irs::ScoreThresholdAttr>(streaming_doc.get())) {
           auto v = g.score_static_floor;
           if (g.score_dynamic_filter) {
-            v = std::max(v, CurrentWandThreshold(*g.score_dynamic_filter));
+            v = std::max(v, CurrentPruneThreshold(*g.score_dynamic_filter));
           }
           t->value = v;
         }
@@ -2542,7 +2545,7 @@ irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
       return irs::memory::make_managed<MinMaxTermsIterator>(terms, count);
     }
   }
-  return reader.iterator(irs::SeekMode::NORMAL);
+  return reader.iterator(irs::SeekMode::Normal);
 }
 
 bool TsDictLocalState::NextField() {

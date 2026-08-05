@@ -30,15 +30,10 @@
 
 namespace irs {
 
-template<typename TermIterator>
-bool SeekClusterTerm(TermIterator& terms, uint32_t cluster_id,
-                     std::span<byte_type, kCentroidTermWidth> term_buf) {
+inline bool SeekClusterTerm(auto& terms, uint32_t cluster_id,
+                            std::span<byte_type, kCentroidTermWidth> term_buf) {
   EncodeCentroidTerm(cluster_id, term_buf.data());
-  if (!terms.seek(bytes_view{term_buf.data(), term_buf.size()})) {
-    return false;
-  }
-  terms.read();
-  return true;
+  return terms.seek(bytes_view{term_buf.data(), term_buf.size()});
 }
 
 inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,

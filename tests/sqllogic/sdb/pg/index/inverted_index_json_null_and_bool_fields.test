@@ -1,0 +1,173 @@
+# A JSON `null` leaf and a SQL NULL are different facts, and a boolean value is
+# one of two always-<X> fields rather than a term in a two-term dictionary.
+# Both are field identities, so the oracle is the answer SETS being disjoint and
+# the plan naming the field that answered.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY kw(template = 'keyword');
+
+statement ok
+CREATE TABLE jn (id INTEGER PRIMARY KEY, c JSON);
+
+statement ok
+CREATE INDEX jn_idx ON jn USING inverted(id, (c->'v') kw);
+
+# id 2 carries a JSON `null` leaf, id 3 is a SQL NULL row, id 4 has no `v` path
+# at all. 3 and 4 are what `IS NULL` asks about; 2 is not.
+statement ok
+INSERT INTO jn VALUES
+    (1, '{"v":"a"}'::json),
+    (2, '{"v":null}'::json),
+    (3, NULL),
+    (4, '{"w":1}'::json),
+    (5, '{"v":42}'::json),
+    (6, '{"v":true}'::json),
+    (7, '{"v":false}'::json);
+
+statement ok
+VACUUM (REFRESH_TABLE) jn;
+
+# `->` binds looser than IS NULL, hence the parens.
+query
+SELECT id FROM jn_idx WHERE (c->'v') IS NULL ORDER BY id;
+----
+id
+3
+4
+
+query
+SELECT id FROM jn_idx WHERE json_type(c->'v') = 'NULL' ORDER BY id;
+----
+id
+2
+
+# The three sets partition the table: no row answers both, and negation still
+# excludes the SQL-NULL rows under three-valued logic.
+query
+SELECT id FROM jn_idx WHERE json_type(c->'v') <> 'NULL' ORDER BY id;
+----
+id
+1
+5
+6
+7
+
+# The json-null field, not the SQL-null marker, answered it.
+query
+EXPLAIN SELECT id FROM jn_idx WHERE json_type(c->'v') = 'NULL';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────╮
+│ Index: jn_idx                    │
+│ Lookup: table                    │
+│ Index Filter:                    │
+│ ╭─ Term ───────────────────────╮ │
+│ │ Field: (c -> 'v')(json_null) │ │
+│ │ Value:                       │ │
+│ ╰──────────────────────────────╯ │
+│ Projections: id                  │
+│ ~1 row                           │
+╰──────────────────────────────────╯
+
+# Every boolean predicate shape is the SET of values it accepts, compiled to
+# nothing / one field's term / their disjunction.
+
+statement ok
+CREATE TABLE bf (pk INTEGER PRIMARY KEY, f BOOLEAN);
+
+statement ok
+CREATE INDEX bf_idx ON bf USING inverted(pk, f);
+
+statement ok
+INSERT INTO bf VALUES (1, true), (2, false), (3, true), (4, NULL);
+
+statement ok
+VACUUM (REFRESH_TABLE) bf;
+
+query
+SELECT pk FROM bf_idx WHERE f = true ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM bf_idx WHERE f >= false ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT pk FROM bf_idx WHERE f > false ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM bf_idx WHERE f < true ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM bf_idx WHERE f <= false ORDER BY pk;
+----
+pk
+2
+
+# Accepts neither value: the empty set, not a range over one field.
+query
+SELECT pk FROM bf_idx WHERE f > true ORDER BY pk;
+----
+pk
+
+query
+SELECT pk FROM bf_idx WHERE f IN (true) ORDER BY pk;
+----
+pk
+1
+3
+
+query
+SELECT pk FROM bf_idx WHERE f IN (true, false) ORDER BY pk;
+----
+pk
+1
+2
+3
+
+# The NULL row satisfies no comparison, negated or not.
+query
+SELECT pk FROM bf_idx WHERE NOT (f = true) ORDER BY pk;
+----
+pk
+2
+
+query
+SELECT pk FROM bf_idx WHERE f IS NULL ORDER BY pk;
+----
+pk
+4
+
+# Both value fields, picked by value, with no field holding both.
+query
+EXPLAIN SELECT pk FROM bf_idx WHERE f >= false;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────╮
+│ Index: bf_idx                           │
+│ Lookup: table                           │
+│ Index Filter:                           │
+│ ╭─ Or ────────────╮                     │
+│ ╰────────┬────────╯                     │
+│          ├────────────────────╮         │
+│ ╭─ Term ─┴────────╮  ╭─ Term ─┴───────╮ │
+│ │ Field: f(false) │  │ Field: f(true) │ │
+│ │ Value: false    │  │ Value: true    │ │
+│ ╰─────────────────╯  ╰────────────────╯ │
+│ Projections: pk                         │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯

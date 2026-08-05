@@ -50,32 +50,6 @@ constexpr bool operator==(EmptyLabel<Label>, const T&) noexcept {
   return true;
 }
 
-template<typename Weight>
-struct EmptyWeight {
-  using ReverseWeight = EmptyWeight;
-
-  constexpr EmptyWeight& operator=(Weight) noexcept { return *this; }
-
-  constexpr ReverseWeight Reverse() const noexcept { return *this; }
-  constexpr EmptyWeight Quantize(
-    [[maybe_unused]] float delta = kDelta) const noexcept {
-    return {};
-  }
-  constexpr operator Weight() const noexcept { return Weight::One(); }
-  constexpr operator Weight() noexcept { return Weight::One(); }
-  constexpr bool operator==(EmptyWeight) const noexcept { return true; }
-
-  std::ostream& Write(std::ostream& strm) const {
-    Weight::One().Write(strm);
-    return strm;
-  }
-
-  std::istream& Read(std::istream& strm) {
-    Weight().Read(strm);
-    return strm;
-  }
-};
-
 template<typename W, typename L = int32_t>
 struct ILabelArc {
   using Weight = W;

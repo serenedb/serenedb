@@ -265,7 +265,7 @@ class BlockDisjunction : public DocIterator {
       }
 
       if constexpr (kHasScore) {
-        _score_buf.score_window[0] = 0;
+        BeginScoreDoc(_doc);
         _doc_base = _doc;
 
         for (auto [it, scorer] : std::views::zip(_itrs, _scorers)) {
@@ -311,7 +311,7 @@ class BlockDisjunction : public DocIterator {
 
     size_t matches = 0;
     if constexpr (kHasScore) {
-      _score_buf.score_window[0] = 0;
+      BeginScoreDoc(target);
     }
 
     VisitAndPurge([&](auto v) {
@@ -366,7 +366,95 @@ class BlockDisjunction : public DocIterator {
     return _doc = target;
   }
 
-  IRS_DOC_ITERATOR_EMIT_DEFAULTS
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
+    const auto doc = seek(min);
+    if (doc >= max) {
+      return 0;
+    }
+    uint32_t n = 0;
+    out[n++] = doc;
+    const uint32_t wide_limit = max - min - kBlockSize;
+    for (;;) {
+      const auto base = _doc_base;
+      if (base >= max) {
+        break;
+      }
+      if (base + kBlockSize > max) {
+        auto below = _cur & ((UINT64_C(1) << (max - base)) - 1);
+        _cur ^= below;
+        while (below != 0) {
+          out[n++] = base + static_cast<doc_id_t>(std::countr_zero(below));
+          below = PopBit(below);
+        }
+        break;
+      }
+      if (n <= wide_limit) [[likely]] {
+        n = static_cast<uint32_t>(MaterializeWord(base, _cur, out + n) - out);
+        _cur = 0;
+      } else {
+        while (_cur != 0) {
+          out[n++] = base + static_cast<doc_id_t>(std::countr_zero(_cur));
+          _cur = PopBit(_cur);
+        }
+      }
+      if (!NextWord()) {
+        _match_count = 0;
+        _doc = doc_limits::eof();
+        return n;
+      }
+    }
+    advance();
+    return n;
+  }
+
+  uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores, doc_id_t max,
+                          const ScoreFunction& scorer,
+                          ColumnArgsFetcher* fetcher, doc_id_t min) final {
+    if constexpr (kHasScore) {
+      const auto* IRS_RESTRICT window = _score_buf.score_window.data();
+      const auto doc = seek(min);
+      if (doc >= max) {
+        return 0;
+      }
+      uint32_t n = 0;
+      out[n] = doc;
+      scores[n++] = window[_buf_offset + (doc - _doc_base)];
+      for (;;) {
+        const auto base = _doc_base;
+        const auto offset = _buf_offset;
+        if (base >= max) {
+          break;
+        }
+        if (base + kBlockSize > max) {
+          auto below = _cur & ((UINT64_C(1) << (max - base)) - 1);
+          _cur ^= below;
+          while (below != 0) {
+            const auto bit = static_cast<uint32_t>(std::countr_zero(below));
+            out[n] = base + bit;
+            scores[n++] = window[offset + bit];
+            below = PopBit(below);
+          }
+          break;
+        }
+        while (_cur != 0) {
+          const auto bit = static_cast<uint32_t>(std::countr_zero(_cur));
+          out[n] = base + bit;
+          scores[n++] = window[offset + bit];
+          _cur = PopBit(_cur);
+        }
+        if (!NextWord()) {
+          _match_count = 0;
+          _doc = doc_limits::eof();
+          return n;
+        }
+      }
+      advance();
+      return n;
+    } else {
+      SDB_ASSERT(false);
+      return 0;
+    }
+  }
 
   uint32_t count() final {
     uint32_t count = 0;
@@ -437,6 +525,12 @@ class BlockDisjunction : public DocIterator {
 
   struct ResolveOverloadTag {};
 
+  IRS_FORCE_INLINE void BeginScoreDoc(doc_id_t doc) {
+    static_assert(kHasScore);
+    _score_buf.score_window[0] = 0;
+    _fetcher.Fetch(doc);
+  }
+
   template<typename It, typename Scorer>
   IRS_FORCE_INLINE void MergeSubScore(It& it, Scorer& scorer) {
     if constexpr (kHasScore) {
@@ -500,7 +594,7 @@ class BlockDisjunction : public DocIterator {
 
     while (begin != end) {
       if (!visitor(*begin)) {
-        // TODO(mbkkt) It looks good, but only for wand case
+        // TODO(mbkkt) It looks good, but only for score pruning case
         // scores_.unscored -= begin->score().IsDefault();
         std::iter_swap(begin, --end);
         _scorers.pop_back();
@@ -624,6 +718,18 @@ class BlockDisjunction : public DocIterator {
     return !empty;
   }
 
+  IRS_FORCE_INLINE bool NextWord() {
+    if (_begin == std::end(_mask)) [[unlikely]] {
+      return Refill();
+    }
+    _cur = *_begin++;
+    _doc_base += BitsRequired<uint64_t>();
+    if constexpr (Traits::kMinMatch || kHasScore) {
+      _buf_offset += BitsRequired<uint64_t>();
+    }
+    return true;
+  }
+
   bool Refill() {
     const bool empty = !RefillImpl();
     if (empty) {
@@ -720,13 +826,11 @@ struct RebindIterator<DisjunctionIterator<Adapter, MergeType>> {
   using Unary = void;  // block disjunction doesn't support visitor
   using Basic = void;  // basic disjunction always faster than small
   using Small = void;  // block disjunction always faster than small
-  using Wand = DisjunctionIterator<Adapter, MergeType>;
 };
 
 template<typename Adapter, ScoreMergeType MergeType>
 struct RebindIterator<MinMatchIterator<Adapter, MergeType>> {
   using Disjunction = DisjunctionIterator<Adapter, MergeType>;
-  using Wand = MinMatchIterator<Adapter, MergeType>;
 };
 
 }  // namespace irs

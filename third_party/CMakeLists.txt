@@ -285,29 +285,13 @@ if(ARCH_AARCH64)
 endif()
 
 ################################################################################
-### OpenFST + Kaldi library
+### OpenFST library
 ################################################################################
 
-# We build OpenFST extensions provided by Kaldi as a part of OpenFST
-set(Kaldi_sources
-    ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src/base/io-funcs.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src/base/kaldi-error.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src/base/kaldi-utils.cc
-)
-
 set(OpenFST_sources
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/compat.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/encode.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/flags.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/openfst/fst.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/fst-types.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/mapped-file.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/openfst/properties.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/symbol-table.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/symbol-table-ops.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/openfst/util.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/openfst/weight.cc
-    ${Kaldi_sources}
 )
 
 add_library(iresearch-ofst OBJECT ${OpenFST_sources})
@@ -325,7 +309,6 @@ target_include_directories(
     iresearch-ofst
     SYSTEM
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/openfst
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src
 )
 
 target_link_libraries(

@@ -452,9 +452,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_disable_top_k_optimization",
       {
         LogicalTypeId::BOOLEAN,
-        "When true, the optimizer skips pulling `ORDER BY <scorer>(...) "
-        "DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max "
-        "top-K) pruning never engages. Default: false (optimization on).",
+        "When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC "
+        "LIMIT k` into the inverted-index scan, so block-max score pruning "
+        "never engages. Default: false (optimization on).",
         [] { return duckdb::Value::BOOLEAN(false); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -463,11 +463,9 @@ constexpr std::pair<std::string_view, VariableDescription>
       kRowGroupSizeSetting,
       {
         LogicalTypeId::UINTEGER,
-        "Default column row-group size for INCLUDEd in newly created inverted "
-        "indexes. "
-        "Per-column (row_group_size = ...) and per-index WITH (row_group_size "
-        "= ...) override. Reads from existing indexes are unaffected. "
-        "Default: 122'880.",
+        "Default columnstore row-group size for newly created inverted "
+        "indexes. Per-index WITH (row_group_size = ...) overrides it. Reads "
+        "from existing indexes are unaffected. Default: 122'880.",
         [] { return duckdb::Value::UINTEGER(DEFAULT_ROW_GROUP_SIZE); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           const auto n = value.GetValue<uint32_t>();
@@ -475,27 +473,6 @@ constexpr std::pair<std::string_view, VariableDescription>
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG("invalid value for parameter "
                                     "\"row_group_size\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
-      kNormRowGroupSizeSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Default column row-group size for norm columns of text-indexed fields "
-        "(Norm feature) in newly created inverted indexes. "
-        "Per-column (row_group_size = ...) and per-index WITH (row_group_size "
-        "= ...) override. Reads from existing indexes are unaffected. "
-        "Default: 122'880.",
-        [] { return duckdb::Value::UINTEGER(122'880); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto n = value.GetValue<uint32_t>();
-          if (n == 0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"norm_row_group_size\": \"",
                                     value.ToString(), "\""));
           }
         },

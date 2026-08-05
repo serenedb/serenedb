@@ -20,19 +20,18 @@
 
 #pragma once
 
-#include "automaton.hpp"
 #include "string.hpp"
 
 namespace irs {
 
 // Pattern classification - used by the filter to pick fast paths
-// (ByTerm / ByPrefix) before falling back to a full automaton.
+// (ByTerm / ByPrefix) before falling back to the regexp walk.
 enum class RegexpType {
   LiteralEscaped,  // e.g. hello\.world (literal after unescape)
   Literal,         // e.g. hello (no metacharacters at all)
   PrefixEscaped,   // e.g. hello\.world.* (prefix with escapes + .* suffix)
   Prefix,          // e.g. hello.* (literal prefix + .* suffix)
-  Complex,         // everything else - requires full automaton
+  Complex,         // everything else - requires the regexp walk
 };
 
 // Regexp syntax dialect.  Controls how the pattern is parsed by RE2.
@@ -48,25 +47,25 @@ enum class RegexpSyntax {
   // POSIX Extended Regular Expression dialect.  Restricted to the
   // POSIX ERE feature set: literals, . * + ? | () [] {n,m}, anchors
   // ^ $, character classes including POSIX classes [[:alpha:]] etc.
-  // Perl extensions are rejected at parse time (empty automaton).
+  // Perl extensions are rejected at parse time (an acceptor of nothing).
   PosixEre,
 };
 
 enum class RegexpMeta : byte_type {
-  kDot = '.',
-  kStar = '*',
-  kPlus = '+',
-  kQuestion = '?',
-  kPipe = '|',
-  kLParen = '(',
-  kRParen = ')',
-  kLBracket = '[',
-  kRBracket = ']',
-  kCaret = '^',
-  kDollar = '$',
-  kEscape = '\\',
-  kLBrace = '{',
-  kRBrace = '}',
+  Dot = '.',
+  Star = '*',
+  Plus = '+',
+  Question = '?',
+  Pipe = '|',
+  LParen = '(',
+  RParen = ')',
+  LBracket = '[',
+  RBracket = ']',
+  Caret = '^',
+  Dollar = '$',
+  Escape = '\\',
+  LBrace = '{',
+  RBrace = '}',
 };
 
 constexpr byte_type AsByte(RegexpMeta m) noexcept {
@@ -75,20 +74,20 @@ constexpr byte_type AsByte(RegexpMeta m) noexcept {
 
 constexpr bool IsRegexpMeta(byte_type c) noexcept {
   switch (static_cast<RegexpMeta>(c)) {
-    case RegexpMeta::kDot:
-    case RegexpMeta::kStar:
-    case RegexpMeta::kPlus:
-    case RegexpMeta::kQuestion:
-    case RegexpMeta::kPipe:
-    case RegexpMeta::kLParen:
-    case RegexpMeta::kRParen:
-    case RegexpMeta::kLBracket:
-    case RegexpMeta::kRBracket:
-    case RegexpMeta::kCaret:
-    case RegexpMeta::kDollar:
-    case RegexpMeta::kEscape:
-    case RegexpMeta::kLBrace:
-    case RegexpMeta::kRBrace:
+    case RegexpMeta::Dot:
+    case RegexpMeta::Star:
+    case RegexpMeta::Plus:
+    case RegexpMeta::Question:
+    case RegexpMeta::Pipe:
+    case RegexpMeta::LParen:
+    case RegexpMeta::RParen:
+    case RegexpMeta::LBracket:
+    case RegexpMeta::RBracket:
+    case RegexpMeta::Caret:
+    case RegexpMeta::Dollar:
+    case RegexpMeta::Escape:
+    case RegexpMeta::LBrace:
+    case RegexpMeta::RBrace:
       return true;
     default:
       return false;
@@ -99,31 +98,13 @@ constexpr bool IsRegexpMeta(byte_type c) noexcept {
 // \p). Only regexp metacharacters are "simple escapes" - the backslash just
 // removes their special meaning and produces a literal character.
 // Everything else (\d, \w, \s, \b, \B, \p, \P, \Q, \A, \z, etc.)
-// is an RE2 feature that must go through the full automaton path.
+// is an RE2 feature that must go through the regexp walk.
 constexpr bool IsSimpleEscape(byte_type c) noexcept { return IsRegexpMeta(c); }
-
-// Default maximum number of DFA states after determinization.
-// Patterns that produce a larger DFA are rejected (return empty automaton).
-// 10'000 is generous for real-world patterns (most produce < 1'000)
-// while guarding against exponential blowup from pathological input
-// (e.g. [ab]*a[ab]{15} -> ~65'000 states).
-// 0 means no limit.
-inline constexpr int64_t kDefaultMaxDfaStates = 10'000;
 
 RegexpType ComputeRegexpType(bytes_view pattern) noexcept;
 
 bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 
 bytes_view UnescapeRegexp(bytes_view in, bstring& out);
-
-automaton FromRegexp(bytes_view pattern,
-                     int64_t max_dfa_states = kDefaultMaxDfaStates,
-                     RegexpSyntax syntax = RegexpSyntax::Perl);
-
-inline automaton FromRegexp(std::string_view pattern,
-                            int64_t max_dfa_states = kDefaultMaxDfaStates,
-                            RegexpSyntax syntax = RegexpSyntax::Perl) {
-  return FromRegexp(ViewCast<byte_type>(pattern), max_dfa_states, syntax);
-}
 
 }  // namespace irs

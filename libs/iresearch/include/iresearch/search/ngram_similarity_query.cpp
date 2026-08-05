@@ -589,12 +589,11 @@ CostAdapters Execute(const NGramState& query_state,
   itrs.reserve(query_state.terms.size());
 
   for (const auto& term_state : query_state.terms) {
-    if (!term_state) [[unlikely]] {
-      continue;
+    if (term_state.docs_count == 0) [[unlikely]] {
+      continue;  // term absent from this segment
     }
-
-    if (auto docs = field->Iterator(required_features,
-                                    {.cookie = term_state.get()})) [[likely]] {
+    if (auto docs = field->Iterator(required_features, {.cookie = &term_state}))
+      [[likely]] {
       itrs.emplace_back(std::move(docs));
     }
   }

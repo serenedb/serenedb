@@ -344,8 +344,8 @@ static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
   return result;
 }
 
-bool WandEnabled(const catalog::InvertedIndex* index,
-                 const std::optional<catalog::ScorerOptions>& scorer) {
+bool ScorePruneEnabled(const catalog::InvertedIndex* index,
+                       const std::optional<catalog::ScorerOptions>& scorer) {
   if (!index) {
     return false;
   }
@@ -460,8 +460,14 @@ auto MakeFieldNameResolver(const SereneDBScanBindData& bind_data,
       if (fid == entry.null_field_id) {
         return entry_base(lookup.entry_field_id) + "(null)";
       }
-      if (fid == entry.bool_field_id) {
-        return entry_base(lookup.entry_field_id) + "(bool)";
+      if (fid == entry.json_null_field_id) {
+        return entry_base(lookup.entry_field_id) + "(json_null)";
+      }
+      if (fid == entry.true_field_id) {
+        return entry_base(lookup.entry_field_id) + "(true)";
+      }
+      if (fid == entry.false_field_id) {
+        return entry_base(lookup.entry_field_id) + "(false)";
       }
       if (fid == entry.numeric_field_id) {
         return entry_base(lookup.entry_field_id) + "(numeric)";
@@ -604,9 +610,9 @@ void SereneDBScanBindData::AppendSummary(
   }
   if (score_top_k) {
     // TODO(mbkkt): prunnable/etc instead of optimized?
-    // TODO(mbkkt): streaming top k also should be marked when wand enabled
+    // TODO(mbkkt): streaming top k also should be marked when pruning enabled
     std::string topk_val = absl::StrCat(*score_top_k);
-    if (WandEnabled(bind.inverted_index.get(), text_scorer)) {
+    if (ScorePruneEnabled(bind.inverted_index.get(), text_scorer)) {
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("Top", std::move(topk_val));
@@ -850,7 +856,7 @@ SereneDBScanToValue(duckdb::TableFunctionToStringInput& input) {
   }
   bind.AppendSummary(result);
   // Top-k enforces the floor via the collectors for any scorer; streaming
-  // only puts it to work as the text WAND threshold.
+  // only puts it to work as the text prune threshold.
   if (bind.score_static_floor > std::numeric_limits<float>::lowest() &&
       (bind.score_top_k || bind.text_scorer)) {
     result.insert("Min Score", absl::StrCat(bind.score_static_floor));
@@ -919,14 +925,14 @@ bool ScoreFloorApplies(const SereneDBScanBindData& bind) {
 // Score-column filter policy. The filter may be one predicate or an AND
 // combination (a TableFilterSet holds one filter per column). Static lower
 // bounds (`score > c` / `>= c`) are recorded as `score_static_floor`: it
-// seeds the streaming WAND threshold, the top-k collectors and the Min Score
+// seeds the streaming prune threshold, the top-k collectors and the Min Score
 // display. On the top-k collector path the scan enforces score bounds itself,
 // so those conjuncts are stripped from the filter: the dynamic TOP_N boundary
 // (the collector maintains its own) and static lower bounds where the floor
 // is the collector's raw space (ScoreFloorApplies) -- the collector starts at
 // the floor. An empty residue drops the filter from the plan entirely.
 // Everything else stays pushed and evaluated per row: on the streaming path
-// the WAND threshold only skips blocks, it enforces nothing.
+// the prune threshold only skips blocks, it enforces nothing.
 duckdb::TableFilterPushdown HandleScoreFilter(SereneDBScanBindData& bind,
                                               duckdb::TableFilter& filter) {
   auto& expr_filter =

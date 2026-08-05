@@ -74,9 +74,10 @@ class MaxScoreIterator : public DocIterator {
   }
   doc_id_t seek(doc_id_t target) final { return advance(); }
 
-  // WAND/topk iterator: entered through Collect (top-k) and EmitScoredDocs (a
-  // windowed scored drain, e.g. TableFilterDocIterator::Collect over a filtered
-  // top-k). count()/EmitDocs()/FillBlock() are unscored paths never reached.
+  // Pruning/topk iterator: entered through Collect (top-k) and EmitScoredDocs
+  // (a windowed scored drain, e.g. TableFilterDocIterator::Collect over a
+  // filtered top-k). count()/EmitDocs()/FillBlock() are unscored paths never
+  // reached.
   uint32_t count() final {
     SDB_ASSERT(false);
     return 0;
@@ -228,7 +229,8 @@ class MaxScoreIterator : public DocIterator {
   // Appends (doc, score) pairs produced by the shared window-scoring path into
   // the caller's parallel arrays -- the AddDocs/AddWindow surface a
   // ScoreCollector exposes, minus the top-k threshold (EmitScoredDocs emits
-  // every WAND survivor; the downstream collector applies its own threshold).
+  // every pruning survivor; the downstream collector applies its own
+  // threshold).
   struct EmitSink {
     doc_id_t* IRS_RESTRICT docs;
     score_t* IRS_RESTRICT scores;

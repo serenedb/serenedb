@@ -52,10 +52,14 @@ void ValidateFooter(IndexInput& in) {
 
 namespace format_utils {
 
-// TODO(mbkkt) maybe ver is uint32_t
-void WriteHeader(IndexOutput& out, std::string_view format, int32_t ver) {
+void WriteHeader(IndexOutput& out, std::string_view format) {
   out.WriteU32(kFormatMagic);
   WriteStr(out, format);
+}
+
+// TODO(mbkkt) maybe ver is uint32_t
+void WriteHeader(IndexOutput& out, std::string_view format, int32_t ver) {
+  WriteHeader(out, format);
   out.WriteU32(ver);
 }
 
@@ -67,20 +71,20 @@ void WriteFooter(IndexOutput& out) {
   out.WriteU64(out.Checksum());
 }
 
-size_t HeaderLength(std::string_view format) noexcept {
-  return sizeof(int32_t) * 2 + bytes_io<uint64_t>::vsize(format.size()) +
+namespace {
+
+size_t HeaderLengthNoVersion(std::string_view format) noexcept {
+  return sizeof(int32_t) + bytes_io<uint64_t>::vsize(format.size()) +
          format.size();
 }
 
-int32_t CheckHeader(DataInput& in, std::string_view req_format, int32_t min_ver,
-                    int32_t max_ver) {
+void CheckHeaderImpl(DataInput& in, std::string_view req_format,
+                     size_t expected) {
   const ptrdiff_t left = in.Length() - in.Position();
 
   if (left < 0) {
     throw IllegalState{"Header has invalid length."};
   }
-
-  const size_t expected = HeaderLength(req_format);
 
   if (static_cast<size_t>(left) < expected) {
     throw IndexError{absl::StrCat("While checking header, error: only '", left,
@@ -101,15 +105,27 @@ int32_t CheckHeader(DataInput& in, std::string_view req_format, int32_t min_ver,
       absl::StrCat("While checking header, error: format mismatch '", format,
                    "' != '", req_format, "'")};
   }
+}
+
+}  // namespace
+
+size_t HeaderLength(std::string_view format) noexcept {
+  return HeaderLengthNoVersion(format) + sizeof(int32_t);
+}
+
+void CheckHeader(DataInput& in, std::string_view req_format) {
+  CheckHeaderImpl(in, req_format, HeaderLengthNoVersion(req_format));
+}
+
+void CheckHeader(DataInput& in, std::string_view req_format, int32_t req_ver) {
+  CheckHeaderImpl(in, req_format, HeaderLength(req_format));
 
   const int32_t ver = in.ReadI32();
 
-  if (ver < min_ver || ver > max_ver) {
+  if (ver != req_ver) {
     throw IndexError{absl::StrCat(
       "While checking header, error: invalid version '", ver, "'")};
   }
-
-  return ver;
 }
 
 int64_t Checksum(const IndexInput& in) {
@@ -142,7 +158,7 @@ int64_t Checksum(const IndexInput& in) {
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,
                    const FlushState& state, std::string_view ext,
-                   std::string_view format, const int32_t version) {
+                   std::string_view format) {
   SDB_ASSERT(!out);
 
   FileName(str, state.name, ext);
@@ -152,7 +168,7 @@ void PrepareOutput(std::string& str, IndexOutput::ptr& out,
     throw IoError{absl::StrCat("Failed to create file, path: ", str)};
   }
 
-  WriteHeader(*out, format, version);
+  WriteHeader(*out, format);
 }
 
 }  // namespace format_utils

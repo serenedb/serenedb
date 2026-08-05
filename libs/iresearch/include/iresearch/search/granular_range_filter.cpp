@@ -89,12 +89,9 @@ template<typename Visitor, typename Comparer>
 void CollectTerms(const SubReader& segment, const TermReader& field,
                   SeekTermIterator& terms, Visitor& visitor,
                   const Comparer& cmp) {
-  terms.read();  // read attributes (needed for cookie())
   visitor.Prepare(segment, field, terms);
 
   do {
-    terms.read();  // read attributes
-
     if (!cmp(terms)) {
       break;  // terminate traversal
     }
@@ -496,7 +493,7 @@ void CollectTermsWithin(const SubReader& segment, const TermReader& field,
 template<typename Visitor>
 void VisitImpl(const SubReader& segment, const TermReader& reader,
                const ByGranularRange::options_type& options, Visitor& visitor) {
-  auto terms = reader.iterator(SeekMode::NORMAL);
+  auto terms = reader.iterator();
 
   if (!terms) [[unlikely]] {
     return;

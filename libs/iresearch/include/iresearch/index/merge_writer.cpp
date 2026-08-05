@@ -177,7 +177,7 @@ doc_id_t CompoundDocIterator::advance() {
   return _doc = doc_limits::eof();
 }
 
-class CompoundTermIterator : public TermIterator {
+class CompoundTermIterator : public TermOnlyIterator {
  public:
   CompoundTermIterator(const CompoundTermIterator&) = delete;
   CompoundTermIterator& operator=(const CompoundTermIterator&) = delete;
@@ -214,14 +214,6 @@ class CompoundTermIterator : public TermIterator {
 
   DocIterator::ptr postings(IndexFeatures features) const final;
 
-  void read() final {
-    for (const auto itr_id : _term_iterator_mask) {
-      auto& it = _term_iterators[itr_id].it;
-      SDB_ASSERT(it);
-      it->read();
-    }
-  }
-
   bytes_view value() const noexcept final {
     if (!_has_min_term) [[unlikely]] {
       _has_min_term = true;
@@ -254,7 +246,7 @@ class CompoundTermIterator : public TermIterator {
 
 void CompoundTermIterator::Add(const TermReader& reader,
                                const DocRemap& remap) {
-  auto it = reader.iterator(SeekMode::NORMAL);
+  auto it = reader.iterator();
   SDB_ASSERT(it);
   if (it) [[likely]] {
     _term_iterator_mask.emplace_back(_term_iterators.size());
@@ -349,10 +341,10 @@ class CompoundFieldIterator final : public BasicTermReader {
 
   field_id id() const noexcept final { return Meta().id; }
   FieldProperties properties() const noexcept final { return _props; }
-  bytes_view(min)() const noexcept final { return _term_itr.MinTerm(); }
-  bytes_view(max)() const noexcept final { return _term_itr.MaxTerm(); }
+  bytes_view min() const noexcept final { return _term_itr.MinTerm(); }
+  bytes_view max() const noexcept final { return _term_itr.MaxTerm(); }
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-  TermIterator::ptr iterator() const final;
+  TermOnlyIterator::ptr iterator() const final;
 
   bool Aborted() const {
     return !static_cast<bool>(_progress) || _term_itr.Aborted();
@@ -440,12 +432,12 @@ bool CompoundFieldIterator::Next() {
   return true;
 }
 
-TermIterator::ptr CompoundFieldIterator::iterator() const {
+TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
   _term_itr.Reset(Meta());
   for (const auto& segment : _field_iterator_mask) {
     _term_itr.Add(*(segment.reader), *(_field_iterators[segment.itr_id].remap));
   }
-  return memory::to_managed<TermIterator>(_term_itr);
+  return memory::to_managed<TermOnlyIterator>(_term_itr);
 }
 
 bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
@@ -505,9 +497,11 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
       break;
     }
   }
-  NormColumnOptions opts{};
+  field_id norm_id = field_limits::invalid();
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   if (any_source_has_norm && field_options) {
-    opts = field_options->GetNormColumnOptions(id);
+    norm_id = field_options->GetNormColumnId(id);
+    row_group_size = field_options->row_group_size;
   }
   field_id out_id = field_limits::invalid();
   NormColumnWriter* norm_writer = nullptr;
@@ -530,12 +524,12 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     }
 
     if (!norm_writer) {
-      SDB_ENSURE(field_limits::valid(opts.id),
-                 "MergeNormColumnFromSources: GetNormColumnOptions did not "
+      SDB_ENSURE(field_limits::valid(norm_id),
+                 "MergeNormColumnFromSources: GetNormColumnId did not "
                  "mint a valid id for field ",
                  id);
-      out_id = opts.id;
-      norm_writer = &col_writer.OpenNormColumn(out_id, opts.row_group_size);
+      out_id = norm_id;
+      norm_writer = &col_writer.OpenNormColumn(out_id, row_group_size);
       norm_writer->PadTo(merged_row);
     }
 

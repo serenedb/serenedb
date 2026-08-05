@@ -47,7 +47,6 @@ enum class PkColumnKind : uint8_t {
 // a real value -- iresearch defines 0 == unlimited.
 struct InvertedIndexOptions {
   uint32_t row_group_size = 122880;
-  uint32_t norm_row_group_size = 122880;
   uint32_t refresh_interval_ms = 1000;
   uint32_t compaction_interval_ms = 1000;
   uint32_t cleanup_interval_step = 1;

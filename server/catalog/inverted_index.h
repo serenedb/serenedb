@@ -136,24 +136,28 @@ struct InvertedIndexEntryInfo {
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
   irs::field_id synthetic_column = irs::field_limits::invalid();
-  uint32_t norm_row_group_size = 0;
   bool store_values = false;
   bool indexed_term_dict = false;
   bool hyperloglog = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   std::optional<IVFColumnConfig> ivf_config;
-  uint32_t row_group_size = 0;
 
   irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id json_null_field_id = irs::field_limits::invalid();
+  irs::field_id true_field_id = irs::field_limits::invalid();
+  irs::field_id false_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
 
   bool IsIVF() const noexcept { return ivf_config.has_value(); }
   bool HasTextDictionary() const noexcept { return text_dictionary.isSet(); }
+  bool HasBoolFields() const noexcept {
+    return irs::field_limits::valid(true_field_id) &&
+           irs::field_limits::valid(false_field_id);
+  }
   bool HasJsonLeafFields() const noexcept {
     return irs::field_limits::valid(numeric_field_id) &&
-           irs::field_limits::valid(bool_field_id);
+           irs::field_limits::valid(json_null_field_id) && HasBoolFields();
   }
   bool IsTermDict() const noexcept {
     return !IsIVF() && (indexed_term_dict || HasTextDictionary());
@@ -206,6 +210,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
       _expression_keys{std::move(expression_keys)},
       _options{std::move(options)},
       _predicate{std::move(predicate)} {
+    row_group_size = _options.row_group_size;
     BuildExprByFieldIdIndex();
     BuildSerializedExprIndex();
     BuildFieldLookupIndex();
@@ -267,7 +272,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
   // at flush/merge, resolved against this index's own entries (no catalog
   // lookup).
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
-  irs::NormColumnOptions GetNormColumnOptions(irs::field_id id) const final;
+  irs::field_id GetNormColumnId(irs::field_id id) const final;
 
   // Segment-reuse homogeneity gate: any two incarnations of an inverted index
   // produce identical column encodings, so a write may always resume a segment

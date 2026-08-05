@@ -134,6 +134,7 @@ set(IResearch_core_sources
     ./search/phrase_query.cpp
     ./search/same_position_filter.cpp
     ./search/automaton_filter.cpp
+    ./search/term_acceptor.cpp
     ./search/wildcard_filter.cpp
     ./search/regexp_filter.cpp
     ./search/wildcard_ngram_filter.cpp
@@ -176,7 +177,7 @@ set(IResearch_core_sources
     ./store/memory_directory.cpp
     ./store/store_utils.cpp
     ./utils/attributes.cpp
-    ./utils/automaton_utils.cpp
+    ./utils/regexp_acceptor.cpp
     ./utils/encryption.cpp
     ./utils/ctr_encryption.cpp
     ./utils/directory_utils.cpp

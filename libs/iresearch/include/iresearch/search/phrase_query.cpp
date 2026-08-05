@@ -91,9 +91,7 @@ DocIterator::ptr FixedPhraseQuery::Execute(const ExecutionContext& ctx,
   auto position = std::begin(this->positions);
 
   for (const auto& term_state : phrase_state->terms) {
-    SDB_ASSERT(term_state.first);
-
-    auto docs = reader->Iterator(features, {.cookie = term_state.first.get()});
+    auto docs = reader->Iterator(features, {.cookie = &term_state.first});
     if (!docs) [[unlikely]] {
       return DocIterator::empty();
     }
@@ -185,10 +183,9 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
     // request offsets from ALL iterators - with reordering any
     // term could be leftmost/rightmost in the document
     for (const auto& term_state : phrase_state->terms) {
-      SDB_ASSERT(term_state.first);
+      SDB_ASSERT(term_state.first.docs_count != 0);
 
-      auto docs =
-        reader->Iterator(kRequireOffs, {.cookie = term_state.first.get()});
+      auto docs = reader->Iterator(kRequireOffs, {.cookie = &term_state.first});
       if (!docs) [[unlikely]] {
         return DocIterator::empty();
       }
@@ -235,10 +232,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
     auto term_state = std::begin(phrase_state->terms);
 
     auto add_iterator = [&](IndexFeatures features) {
-      SDB_ASSERT(term_state->first);
-
-      auto docs =
-        reader->Iterator(features, {.cookie = term_state->first.get()});
+      auto docs = reader->Iterator(features, {.cookie = &term_state->first});
       if (!docs) [[unlikely]] {
         return false;
       }
@@ -334,9 +328,7 @@ DocIterator::ptr VariadicPhraseQuery::Execute(const ExecutionContext& ctx,
     disj_itrs.reserve(num_terms);
     for (const auto end = term_state + num_terms; term_state != end;
          ++term_state) {
-      SDB_ASSERT(term_state->first);
-
-      auto it = reader->Iterator(features, {.cookie = term_state->first.get()});
+      auto it = reader->Iterator(features, {.cookie = &term_state->first});
       if (!it) [[unlikely]] {
         continue;
       }
@@ -353,7 +345,7 @@ DocIterator::ptr VariadicPhraseQuery::Execute(const ExecutionContext& ctx,
       return DocIterator::empty();
     }
 
-    // TODO(mbkkt) VariadicPhrase wand support
+    // TODO(mbkkt) VariadicPhrase score pruning support
     auto disj = MakeDisjunction<Disjunction>(
       {}, static_cast<doc_id_t>(rdr.docs_count()), std::move(disj_itrs));
     pos.first = sdb::basics::downCast<CompoundDocIterator>(disj.get());
@@ -467,10 +459,10 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
       disj_itrs.reserve(num_terms);
       for (const auto end = term_state + num_terms; term_state != end;
            ++term_state) {
-        SDB_ASSERT(term_state->first);
+        SDB_ASSERT(term_state->first.docs_count != 0);
 
         auto it =
-          reader->Iterator(kRequireOffs, {.cookie = term_state->first.get()});
+          reader->Iterator(kRequireOffs, {.cookie = &term_state->first});
         if (!it) [[unlikely]] {
           continue;
         }
@@ -522,10 +514,7 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
       disj_itrs.reserve(num_terms);
       for (const auto end = term_state + num_terms; term_state != end;
            ++term_state) {
-        SDB_ASSERT(term_state->first);
-
-        auto it =
-          reader->Iterator(features, {.cookie = term_state->first.get()});
+        auto it = reader->Iterator(features, {.cookie = &term_state->first});
         if (!it) [[unlikely]] {
           continue;
         }
@@ -546,7 +535,7 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
         return false;
       }
 
-      // TODO(mbkkt) VariadicPhrase wand support
+      // TODO(mbkkt) VariadicPhrase score pruning support
       auto disj = MakeDisjunction<Disjunction>(
         {}, static_cast<doc_id_t>(segment.docs_count()), std::move(disj_itrs));
       pos.first = sdb::basics::downCast<CompundDocIterator>(disj.get());

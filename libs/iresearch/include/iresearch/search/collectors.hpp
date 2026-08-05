@@ -30,6 +30,7 @@
 
 #include "basics/down_cast.h"
 #include "basics/shared.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs {
@@ -48,7 +49,10 @@ struct FieldCollector {
 };
 
 struct TermCollector {
-  void Collect(const AttributeProvider& term_attrs) noexcept;
+  void Collect(const PostingMeta& meta) noexcept {
+    docs_with_term += meta.docs_count;
+    total_term_freq += meta.freq;
+  }
 
   static void Merge(TermCollector& dst, const TermCollector& src);
 

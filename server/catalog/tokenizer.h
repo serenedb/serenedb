@@ -76,12 +76,9 @@ class Tokenizer : public Object {
 
   Tokenizer(Permissions perm, ObjectId schema_id, ObjectId id,
             std::string_view name, search::Features features,
-            uint32_t norm_row_group_size,
             irs::analysis::TokenizerConfig config);
 
   const search::Features& GetFeatures() const noexcept { return _features; }
-
-  uint32_t GetNormRowGroupSize() const noexcept { return _norm_row_group_size; }
 
  private:
   irs::analysis::Analyzer::ptr CreateAnalyzer() const;
@@ -90,7 +87,6 @@ class Tokenizer : public Object {
   std::vector<irs::analysis::Analyzer::ptr> _pool;
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
-  uint32_t _norm_row_group_size;
 };
 
 }  // namespace sdb::catalog

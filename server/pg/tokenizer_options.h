@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <duckdb/storage/storage_info.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -74,14 +73,6 @@ inline constexpr OptionInfo kPosFeature{"position", false,
 // TODO(codeworse) Add for option alternative names? offsets
 inline constexpr OptionInfo kOffsetFeature{"offset", false,
                                            "Enables offset feature in index"};
-
-inline constexpr OptionInfo kNormRowGroupSize{
-  "norm_row_group_size",
-  static_cast<int>(DEFAULT_ROW_GROUP_SIZE),
-  "Norm column row-group size for indexes that bind this dictionary "
-  "with norm = true.",
-  CheckPositiveInt,
-};
 
 // Common
 

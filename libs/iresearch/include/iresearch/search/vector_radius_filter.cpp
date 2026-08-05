@@ -49,23 +49,19 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
     return QueryBuilder::Empty();
   }
 
-  auto terms = postings->iterator(SeekMode::NORMAL);
+  auto terms = postings->iterator();
   if (!terms) {
     return QueryBuilder::Empty();
   }
-  const auto* term_meta = irs::get<TermMeta>(*terms);
-
   VectorState state{ctx.memory};
   state.reader = postings;
   state.vector_column = vector_col;
 
   CostAttr::Type estimation = 0;
   while (terms->next()) {
-    terms->read();
-    if (term_meta) {
-      estimation += term_meta->docs_count;
-    }
-    state.cookies.emplace_back(terms->cookie());
+    const auto& posting_meta = terms->cookie();
+    estimation += posting_meta.docs_count;
+    state.cookies.emplace_back(posting_meta);
   }
   state.estimation = estimation;
 

@@ -42,10 +42,7 @@ class FlakyBaseTokenizer final
   template<irs::TokenLayout Layout>
   bool DoFill(duckdb::string_t raw, irs::TokenSink& sink) {
     const std::string_view value{raw.GetData(), raw.GetSize()};
-    tests::EmitCopy<Layout>(
-      sink,
-      irs::bytes_view{reinterpret_cast<const irs::byte_type*>(value.data()),
-                      value.size()});
+    tests::EmitCopy<Layout>(sink, irs::ViewCast<irs::byte_type>(value));
     return value != "fail";
   }
 };

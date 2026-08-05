@@ -71,10 +71,8 @@ class WildcardAnalyzer final : public TypedTokenizer<WildcardAnalyzer>,
  private:
   template<TokenLayout Layout>
   void Emit(TokenSink& sink);
-  void BuildTermBounds(bytes_view term);
   template<bool Identity, TokenLayout Layout>
-  void EmitTermGrams(TokenSink& sink, bytes_view term,
-                     const uint32_t* bounds, uint32_t nsym);
+  void EmitTermGrams(TokenSink& sink, const byte_type* term, uint32_t size);
 
   struct SubSink;
 

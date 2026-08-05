@@ -115,20 +115,19 @@ bool WildcardAnalyzer::DoFill(duckdb::string_t raw, TokenSink& out) {
   return true;
 }
 
-void WildcardAnalyzer::BuildTermBounds(bytes_view term) {
-  const auto* p = term.data();
-  const size_t size = term.size();
-  BuildUtf8CpBounds(
-    p, size,
-    simdutf::validate_utf8(reinterpret_cast<const char*>(p) + 1, size - 2),
-    _fill_bounds);
-}
-
 template<bool Identity, TokenLayout Layout>
-void WildcardAnalyzer::EmitTermGrams(TokenSink& sink, bytes_view term,
-                                     const uint32_t* bounds, uint32_t nsym) {
-  const auto* p = term.data();
-  const auto size = static_cast<uint32_t>(term.size());
+void WildcardAnalyzer::EmitTermGrams(TokenSink& sink, const byte_type* term,
+                                     uint32_t size) {
+  const uint32_t* bounds = nullptr;
+  uint32_t nsym = size;
+  if constexpr (!Identity) {
+    BuildUtf8CpBounds(
+      term, size,
+      simdutf::validate_utf8(reinterpret_cast<const char*>(term) + 1, size - 2),
+      _fill_bounds);
+    bounds = _fill_bounds.data();
+    nsym = static_cast<uint32_t>(_fill_bounds.size() - 1);
+  }
   const uint32_t n = _ngram_size;
   const auto bnd = [&](uint32_t i) -> uint32_t {
     if constexpr (Identity) {
@@ -146,7 +145,8 @@ void WildcardAnalyzer::EmitTermGrams(TokenSink& sink, bytes_view term,
   // per slot-guaranteed wave and the gen emits window views into it
   sink.EmitK<Layout>(
     count, size,
-    [&](byte_type* mem, size_t) IRS_FORCE_INLINE { std::memcpy(mem, p, size); },
+    [&](byte_type* mem, size_t)
+      IRS_FORCE_INLINE { std::memcpy(mem, term, size); },
     [&](size_t s, byte_type*) IRS_FORCE_INLINE {
       const auto b0 = bnd(static_cast<uint32_t>(s));
       const auto b1 = bnd(std::min(static_cast<uint32_t>(s) + n, nsym));
@@ -160,19 +160,15 @@ void WildcardAnalyzer::Emit(TokenSink& sink) {
   const auto* end = it + _terms.size();
   while (it != end) {
     const auto size = vread<uint32_t>(it) + 2U;
-    const bytes_view term{it, size};
+    const auto* term = it;
     it += size;
-    const auto* body = reinterpret_cast<const char*>(term.data()) + 1;
-    const size_t body_size = term.size() - 2;
+    const auto* body = reinterpret_cast<const char*>(term) + 1;
+    const uint32_t body_size = size - 2;
     if (body_size <= 16 ? IsAsciiShort(body, body_size)
                         : simdutf::validate_ascii(body, body_size)) {
-      EmitTermGrams<true, Layout>(sink, term, nullptr,
-                                  static_cast<uint32_t>(term.size()));
+      EmitTermGrams<true, Layout>(sink, term, size);
     } else {
-      BuildTermBounds(term);
-      EmitTermGrams<false, Layout>(
-        sink, term, _fill_bounds.data(),
-        static_cast<uint32_t>(_fill_bounds.size() - 1));
+      EmitTermGrams<false, Layout>(sink, term, size);
     }
   }
 }

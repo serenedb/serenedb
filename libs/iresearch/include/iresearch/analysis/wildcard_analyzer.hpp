@@ -51,6 +51,8 @@ class WildcardAnalyzer final : public TypedTokenizer<WildcardAnalyzer>,
 
   explicit WildcardAnalyzer(Tokenizer::ptr base_analyzer,
                             size_t ngram_size) noexcept;
+  ~WildcardAnalyzer() override;
+
   template<TokenLayout Layout>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 
@@ -58,14 +60,13 @@ class WildcardAnalyzer final : public TypedTokenizer<WildcardAnalyzer>,
     return {.store = true};
   }
 
+  std::tuple<> PrepareBatch();
+
   void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
 
   void Unbind() noexcept final { _analyzer->Unbind(); }
 
-  auto& ngram() const noexcept {
-    SDB_ASSERT(_ngram);
-    return *_ngram;
-  }
+  auto& ngram() noexcept { return _ngram; }
 
  private:
   template<TokenLayout Layout>
@@ -75,13 +76,15 @@ class WildcardAnalyzer final : public TypedTokenizer<WildcardAnalyzer>,
   void EmitTermGrams(TokenSink& sink, bytes_view term,
                      const uint32_t* bounds, uint32_t nsym);
 
+  struct SubSink;
+
   Tokenizer::ptr _analyzer;
-  std::unique_ptr<Ngram> _ngram;
+  Ngram _ngram;
   bstring _terms;
 
   uint32_t _ngram_size = 3;
   std::vector<uint32_t> _fill_bounds;
-  std::unique_ptr<TokenSink> _encode_writer;
+  std::unique_ptr<SubSink> _sub_sink;
 };
 
 extern template class TypedTokenizer<WildcardAnalyzer>;

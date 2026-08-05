@@ -36,6 +36,20 @@ std::unique_ptr<irs::analysis::WildcardAnalyzer> MakeWildcard(
                                                            ngram_size);
 }
 
+class FlakyBaseTokenizer final
+  : public irs::analysis::TypedTokenizer<FlakyBaseTokenizer> {
+ public:
+  template<irs::TokenLayout Layout>
+  bool DoFill(duckdb::string_t raw, irs::TokenSink& sink) {
+    const std::string_view value{raw.GetData(), raw.GetSize()};
+    tests::EmitCopy<Layout>(
+      sink,
+      irs::bytes_view{reinterpret_cast<const irs::byte_type*>(value.data()),
+                      value.size()});
+    return value != "fail";
+  }
+};
+
 std::vector<irs::bstring> PullTokens(irs::analysis::WildcardAnalyzer& stream,
                                      std::string_view data) {
   std::vector<irs::bstring> out;
@@ -179,4 +193,30 @@ TEST(wildcard_analyzer_tests, store_survives_fill_reset) {
     other_stream->Fill("hello", other_sink.writer, other_sink.layout));
   other_sink.writer.Finish();
   ASSERT_EQ(other_sink.store, stored);
+}
+
+TEST(wildcard_analyzer_tests, base_fill_failure_leaves_no_residue) {
+  irs::analysis::WildcardAnalyzer stream{std::make_unique<FlakyBaseTokenizer>(),
+                                         3};
+  irs::TokenCollector sink{irs::TokenLayout::Terms};
+  ASSERT_FALSE(stream.Fill("fail", sink.writer, sink.layout));
+  ASSERT_TRUE(sink.tokens.empty());
+  ASSERT_TRUE(sink.store.empty());
+
+  ASSERT_TRUE(stream.Fill("okey", sink.writer, sink.layout));
+  sink.writer.Finish();
+
+  irs::analysis::WildcardAnalyzer fresh{std::make_unique<FlakyBaseTokenizer>(),
+                                        3};
+  irs::TokenCollector expected{irs::TokenLayout::Terms};
+  ASSERT_TRUE(fresh.Fill("okey", expected.writer, expected.layout));
+  expected.writer.Finish();
+
+  ASSERT_EQ(expected.tokens.size(), sink.tokens.size());
+  for (size_t i = 0; i < expected.tokens.size(); ++i) {
+    SCOPED_TRACE(testing::Message() << "token=" << i);
+    ASSERT_EQ(expected.tokens[i].term, sink.tokens[i].term);
+  }
+  ASSERT_FALSE(sink.store.empty());
+  ASSERT_EQ(expected.store, sink.store);
 }

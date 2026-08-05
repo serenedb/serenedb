@@ -25,24 +25,13 @@
 
 #include <simdutf.h>
 
-#include "basics/down_cast.h"
 #include "iresearch/analysis/classify.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs::analysis {
-namespace {
-
-constexpr std::string_view kFill = "00000\xFF";
-
-[[maybe_unused]] constexpr std::string_view FillPad(size_t len) noexcept {
-  return {kFill.data() + kFill.size() - len, len};
-}
-
-}  // namespace
 
 Tokenizer::ptr WildcardAnalyzer::Make(Options opts) {
   Tokenizer::ptr base;
@@ -64,10 +53,15 @@ void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
   }
   const auto vlen = bytes_io<uint32_t>::vsize(static_cast<uint32_t>(size));
   const auto idx = terms.size();
-  terms.resize(idx + vlen + 1 + size + 1, byte_type{0xFF});
-  auto* data = terms.data() + idx;
-  WriteVarint<uint32_t>(static_cast<uint32_t>(size), data);
-  std::memcpy(terms.data() + idx + vlen + 1, term.GetData(), size);
+  terms.resize_and_overwrite(
+    idx + vlen + 1 + size + 1, [&](byte_type* p, size_t n) {
+      auto* data = p + idx;
+      WriteVarint<uint32_t>(static_cast<uint32_t>(size), data);
+      *data++ = byte_type{0xFF};
+      std::memcpy(data, term.GetData(), size);
+      data[size] = byte_type{0xFF};
+      return n;
+    });
 }
 
 class EncodeConsumer final : public TokenConsumer {
@@ -86,18 +80,32 @@ class EncodeConsumer final : public TokenConsumer {
 
 }  // namespace
 
+struct WildcardAnalyzer::SubSink {
+  explicit SubSink(bstring& terms) : consumer{terms} {
+    writer.Bind(consumer, nullptr);
+  }
+
+  EncodeConsumer consumer;
+  TokenSink writer;
+};
+
+WildcardAnalyzer::~WildcardAnalyzer() = default;
+
+std::tuple<> WildcardAnalyzer::PrepareBatch() {
+  if (!_sub_sink) {
+    _sub_sink = std::make_unique<SubSink>(_terms);
+  }
+  return {};
+}
+
 template<TokenLayout Layout>
 bool WildcardAnalyzer::DoFill(duckdb::string_t raw, TokenSink& out) {
   _terms.clear();
-  EncodeConsumer consumer{_terms};
-  if (!_encode_writer) {
-    _encode_writer = std::make_unique<TokenSink>();
-  }
-  _encode_writer->Bind(consumer, nullptr);
-  if (!_analyzer->Fill(raw, *_encode_writer, TokenLayout::Terms)) {
+  if (!_analyzer->Fill(raw, _sub_sink->writer, TokenLayout::Terms)) {
+    _sub_sink->writer.Discard();
     return false;
   }
-  _encode_writer->Finish();
+  _sub_sink->writer.Finish();
 
   if (_terms.empty()) {
     return false;
@@ -172,19 +180,18 @@ void WildcardAnalyzer::Emit(TokenSink& sink) {
 WildcardAnalyzer::WildcardAnalyzer(Tokenizer::ptr base_analyzer,
                                    size_t ngram_size) noexcept
   : _analyzer{std::move(base_analyzer)},
+    _ngram{NGramTokenizerBase::Options{
+      ngram_size,
+      ngram_size,
+      false,
+      NGramTokenizerBase::InputType::UTF8,
+      {},
+      {},
+    }},
     _ngram_size{static_cast<uint32_t>(std::max<size_t>(ngram_size, 1))} {
   if (!_analyzer) {
     _analyzer = std::make_unique<KeywordTokenizer>();
   }
-  _ngram = std::make_unique<Ngram>(NGramTokenizerBase::Options{
-    ngram_size,
-    ngram_size,
-    false,
-    NGramTokenizerBase::InputType::UTF8,
-    {},
-    {},
-  });
-  SDB_ASSERT(_ngram);
 }
 
 template class TypedTokenizer<WildcardAnalyzer>;

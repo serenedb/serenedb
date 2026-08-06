@@ -34,6 +34,7 @@
 #include <faiss/utils/random.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -891,9 +892,7 @@ class ProductQuantizerReader final : public QuantizerReader {
       _code_bytes{kFastScanBbs * _nsq / 2},
       _group_bytes{_code_bytes + (M == VectorMetric::L2Sqr
                                     ? kFastScanBbs * sizeof(float)
-                                    : 0)} {
-    _accu.resize(kFastScanBbs);
-  }
+                                    : 0)} {}
 
   PayloadBlockSetting BlockSetting() const noexcept final {
     return {.group_size = kFastScanBbs,
@@ -941,7 +940,7 @@ class ProductQuantizerReader final : public QuantizerReader {
   size_t _nsq;
   size_t _code_bytes;
   size_t _group_bytes;
-  faiss::AlignedTable<uint16_t> _accu;
+  std::array<uint16_t, kFastScanBbs> _accu;
   float _qc = 0.f;
 };
 
@@ -1227,7 +1226,6 @@ class RaBitQuantizerReader final : public QuantizerReader {
       _code_bytes{kFastScanBbs * _nsq / 2},
       _aux_bytes{kFastScanBbs * _storage},
       _group_bytes{_code_bytes + _aux_bytes + kFastScanBbs * sizeof(float)} {
-    _accu.resize(kFastScanBbs);
     if (_ex_bits > 0) {
       _sign_bits.resize((_rd + 7) / 8);
     }
@@ -1345,7 +1343,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
   std::vector<float> _rot_centroid;
   std::vector<float> _q_res;
   std::vector<uint8_t> _sign_bits;
-  faiss::AlignedTable<uint16_t> _accu;
+  std::array<uint16_t, kFastScanBbs> _accu;
 };
 
 template<VectorMetric M>

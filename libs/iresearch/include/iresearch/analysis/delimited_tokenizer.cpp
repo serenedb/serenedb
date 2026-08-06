@@ -23,131 +23,227 @@
 
 #include "delimited_tokenizer.hpp"
 
+#include <cstring>
+#include <optional>
 #include <string_view>
+
+#include "basics/shared.hpp"
+#include "iresearch/analysis/classify.hpp"
+#include "iresearch/analysis/term_view.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 
 namespace irs::analysis {
 namespace {
 
-bytes_view EvalTerm(bstring& buf, bytes_view data) {
-  if (data.empty() || '"' != data[0]) {
-    return data;  // not a quoted term (even if quotes inside
+// Unescapes a quoted term straight into caller-provided memory (single copy);
+// nullopt when the term is identity (unquoted / mismatched quotes).
+std::optional<uint32_t> UnescapeInto(byte_type* out, bytes_view data) {
+  if (data.empty() || data[0] != '"') {
+    return std::nullopt;
   }
-
-  buf.clear();
-
-  bool escaped = false;
-  size_t start = 1;
-
-  for (size_t i = 1, count = data.size(); i < count; ++i) {
-    if ('"' == data[i]) {
-      if (escaped && start == i) {  // an escaped quote
-        escaped = false;
-
-        continue;
-      }
-
-      if (escaped) {
-        break;  // mismatched quote
-      }
-
-      buf.append(&data[start], i - start);
-      escaped = true;
-      start = i + 1;
+  const size_t count = data.size();
+  size_t out_n = 0;
+  for (size_t start = 1;;) {
+    const size_t pos = data.find('"', start);
+    if (pos == bytes_view::npos) {
+      return std::nullopt;
     }
+    std::memcpy(out + out_n, data.data() + start, pos - start);
+    out_n += pos - start;
+    if (pos + 1 == count) {
+      return static_cast<uint32_t>(out_n);
+    }
+    if (data[pos + 1] != '"') {
+      return std::nullopt;
+    }
+    out[out_n++] = '"';
+    start = pos + 2;
   }
-
-  return start != 1 && start == data.size()
-           ? bytes_view(buf)
-           : data;  // return identity for mismatched quotes
 }
 
-size_t FindDelimiter(bytes_view data, bytes_view delim) {
-  if (IsNull(delim)) {
-    return data.size();
+const byte_type* FindQuote(const byte_type* from, const byte_type* end) {
+  const auto* hit = static_cast<const byte_type*>(
+    memchr(from, '"', static_cast<size_t>(end - from)));
+  return hit ? hit : end;
+}
+
+const byte_type* FindDelim(const byte_type* from, const byte_type* end,
+                           bytes_view delim) {
+  for (;;) {
+    const auto* hit = static_cast<const byte_type*>(
+      memchr(from, delim.front(), static_cast<size_t>(end - from)));
+    if (hit == nullptr || static_cast<size_t>(end - hit) < delim.size()) {
+      return end;
+    }
+    if (std::memcmp(hit + 1, delim.data() + 1, delim.size() - 1) == 0) {
+      return hit;
+    }
+    from = hit + 1;
   }
+}
 
-  bool quoted = false;
-
-  for (size_t i = 0, count = data.size(); i < count; ++i) {
-    if (quoted) {
-      if ('"' == data[i]) {
-        quoted = false;
-      }
-
-      continue;
+const byte_type* FindTokenEnd(const byte_type* from, const byte_type* end,
+                              bytes_view delim, const byte_type*& next_quote) {
+  for (;;) {
+    const auto* d = FindDelim(from, end, delim);
+    if (d <= next_quote) {
+      return d;
     }
-
-    if (data.size() - i < delim.size()) {
-      break;  // no more delimiters in data
+    const auto* close = FindQuote(next_quote + 1, end);
+    if (close == end) {
+      return end;
     }
-
-    if (0 == memcmp(data.data() + i, delim.data(), delim.size()) &&
-        (i || delim.size())) {  // do not match empty delim at data start
-      return i;  // delimiter match takes precedence over '"' match
-    }
-
-    if ('"' == data[i]) {
-      quoted = true;
-    }
+    from = close + 1;
+    next_quote = FindQuote(from, end);
   }
+}
 
-  return data.size();
+template<TokenLayout Layout>
+IRS_FORCE_INLINE void EmitToken(TokenSink& sink, const byte_type* cur,
+                                const byte_type* tok_end,
+                                const byte_type* value_end, uint32_t& start,
+                                size_t delim_size) {
+  const auto token_size = static_cast<size_t>(tok_end - cur);
+  uint32_t end = 0;
+  if constexpr (Layout == TokenLayout::TermsPosOffs) {
+    end = start + static_cast<uint32_t>(token_size);
+  }
+  if (token_size != 0 && *cur == '"') [[unlikely]] {
+    sink.Emit<Layout>(
+      token_size,
+      [&](byte_type* mem) IRS_FORCE_INLINE -> uint32_t {
+        if (const auto n = UnescapeInto(mem, {cur, token_size})) {
+          return *n;
+        }
+        std::memcpy(mem, cur, token_size);
+        return static_cast<uint32_t>(token_size);
+      },
+      Offs{start, end});
+  } else {
+    sink.Emit<Layout>(
+      MakeTermView(cur, static_cast<uint32_t>(token_size), value_end),
+      Offs{start, end});
+  }
+  if constexpr (Layout == TokenLayout::TermsPosOffs) {
+    start = end + static_cast<uint32_t>(delim_size);
+  }
 }
 
 }  // namespace
 
 DelimitedTokenizer::DelimitedTokenizer(std::string_view delimiter)
-  : _delim(ViewCast<byte_type>(delimiter)) {
-  if (!IsNull(_delim)) {
-    _delim_buf = _delim;  // keep a local copy of the delimiter
-    _delim = _delim_buf;  // update the delimter to point at the local copy
-  }
-}
+  : _delim(ViewCast<byte_type>(delimiter)),
+    _mode(delimiter.empty()       ? Mode::Chars
+          : delimiter.size() == 1 ? Mode::Single
+                                  : Mode::Multi) {}
 
-Analyzer::ptr DelimitedTokenizer::Make(Options opts) {
+Tokenizer::ptr DelimitedTokenizer::Make(Options opts) {
   return std::make_unique<DelimitedTokenizer>(opts.delimiter);
 }
 
-bool DelimitedTokenizer::next() {
-  if (IsNull(_data)) {
-    return false;
+template<TokenLayout Layout, DelimitedTokenizer::Mode M>
+bool DelimitedTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  const auto* p = reinterpret_cast<const byte_type*>(raw.GetData());
+  const size_t size = raw.GetSize();
+  if constexpr (M == Mode::Chars) {
+    CharsFillValue<Layout>(sink, p, size);
+  } else if constexpr (M == Mode::Single) {
+    if (memchr(p, '"', size) == nullptr) [[likely]] {
+      FastFillValue<Layout>(sink, p, size);
+    } else {
+      QuotedFillValue<Layout>(sink, p, size);
+    }
+  } else {
+    QuotedFillValue<Layout>(sink, p, size);
   }
-
-  auto& offset = std::get<OffsAttr>(_attrs);
-
-  auto size = FindDelimiter(_data, _delim);
-  auto next = std::max<size_t>(1, size + _delim.size());
-  auto start = offset.end + static_cast<uint32_t>(_delim.size());
-  // value is allowed to overflow, will only produce invalid result
-  auto end = start + size;
-
-  if (std::numeric_limits<uint32_t>::max() < end) {
-    return false;  // cannot fit the next token into offset calculation
-  }
-
-  auto& term = std::get<TermAttr>(_attrs);
-
-  offset.start = start;
-  offset.end = static_cast<uint32_t>(end);
-  term.value = IsNull(_delim)
-                 ? bytes_view{_data.data(), size}
-                 : EvalTerm(_term_buf, bytes_view(_data.data(), size));
-  _data = size >= _data.size()
-            ? bytes_view{}
-            : bytes_view{_data.data() + next, _data.size() - next};
-
   return true;
 }
 
-bool DelimitedTokenizer::reset(std::string_view data) {
-  _data = ViewCast<byte_type>(data);
+// Single-byte delimiter over a quote-free value: block-classified bitmask
+// splitting (compare loop vectorizes), token views straight into the value.
+// Slots are claimed per mask (popcount) so the capacity check runs once per
+// block, not per token.
+template<TokenLayout Layout>
+void DelimitedTokenizer::FastFillValue(TokenSink& sink, const byte_type* p,
+                                       size_t size) {
+  const auto delim = _delim[0];
+  size_t tok_begin = 0;
 
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  // counterpart to computation in next() above
-  offset.end = 0 - static_cast<uint32_t>(_delim.size());
+  const auto emit = [&](size_t pos) IRS_FORCE_INLINE {
+    sink.Emit<Layout>(
+      MakeTermView(p + tok_begin, static_cast<uint32_t>(pos - tok_begin),
+                   p + size),
+      Offs{static_cast<uint32_t>(tok_begin), static_cast<uint32_t>(pos)});
+    tok_begin = pos + 1;
+  };
 
-  return true;
+  size_t offset = 0;
+  for (; size - offset >= classify::kClassifyBlock;
+       offset += classify::kClassifyBlock) {
+    VisitSetBits(ClassifyEqBlock(p + offset, delim),
+                 [&](uint32_t bit) IRS_FORCE_INLINE { emit(offset + bit); });
+  }
+  for (; offset < size; ++offset) {
+    if (p[offset] == delim) {
+      emit(offset);
+    }
+  }
+  sink.Emit<Layout>(
+    MakeTermView(p + tok_begin, static_cast<uint32_t>(size - tok_begin),
+                 p + size),
+    Offs{static_cast<uint32_t>(tok_begin), static_cast<uint32_t>(size)});
 }
+
+// Chars mode (empty delimiter): one byte or one quoted span per token.
+template<TokenLayout Layout>
+void DelimitedTokenizer::CharsFillValue(TokenSink& sink, const byte_type* p,
+                                        size_t size) {
+  SDB_ASSERT(_delim.empty());
+  const auto* cur = p;
+  const auto* const value_end = p + size;
+  uint32_t start = 0;
+  do {
+    const auto* tok_end = cur;
+    if (cur != value_end) {
+      if (*cur != '"') {
+        tok_end = cur + 1;
+      } else if (const auto* close = FindQuote(cur + 1, value_end);
+                 close != value_end) {
+        tok_end = close + 1;
+      } else {
+        tok_end = value_end;
+      }
+    }
+    EmitToken<Layout>(sink, cur, tok_end, value_end, start, 0);
+    cur = tok_end;
+  } while (cur != value_end);
+}
+
+// Quote-aware delimiter splitting -- delimiters inside a quoted span do not
+// split. The quote cursor threads across tokens, so the whole value is
+// scanned once.
+template<TokenLayout Layout>
+void DelimitedTokenizer::QuotedFillValue(TokenSink& sink, const byte_type* p,
+                                         size_t size) {
+  SDB_ASSERT(!_delim.empty());
+  const bytes_view delim{_delim};
+  const auto* cur = p;
+  const auto* const value_end = p + size;
+  uint32_t start = 0;
+  const auto* next_quote = FindQuote(p, value_end);
+  for (;;) {
+    if (next_quote < cur) {
+      next_quote = FindQuote(cur, value_end);
+    }
+    const auto* tok_end = FindTokenEnd(cur, value_end, delim, next_quote);
+    EmitToken<Layout>(sink, cur, tok_end, value_end, start, delim.size());
+    if (tok_end == value_end) {
+      return;
+    }
+    cur = tok_end + delim.size();
+  }
+}
+
+template class TypedTokenizer<DelimitedTokenizer>;
 
 }  // namespace irs::analysis

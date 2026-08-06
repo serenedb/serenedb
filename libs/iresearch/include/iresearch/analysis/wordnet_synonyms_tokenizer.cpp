@@ -29,8 +29,8 @@
 #include <string_view>
 #include <utility>
 
-#include "basics/log.h"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/term_view.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
@@ -105,7 +105,8 @@ WordnetSynonymsTokenizer::SynonymsMap WordnetSynonymsTokenizer::Parse(
     std::string synonym = absl::StrReplaceAll(
       raw_synonym.substr(1, raw_synonym.size() - 2), {{"''", "'"}});
 
-    mapping[synonym].push_back(syn_set_id);
+    mapping[synonym].emplace_back(syn_set_id.data(),
+                                  static_cast<uint32_t>(syn_set_id.size()));
   }
 
   for (auto& [word, synset] : mapping) {
@@ -130,48 +131,28 @@ WordnetSynonymsTokenizer::MakeState(std::string text) {
   // Order matters: views in `mapping`'s values point into `text`, so the
   // backing buffer is populated before parsing builds the views over it.
   state->text = std::move(text);
-  state->mapping = Parse(state->text);
+  state->mapping = Prefiltered{Parse(state->text)};
 
   return state;
 }
 
-Analyzer::ptr WordnetSynonymsTokenizer::Make(Options opts) {
+Tokenizer::ptr WordnetSynonymsTokenizer::Make(Options opts) {
   return std::make_unique<WordnetSynonymsTokenizer>(
     MakeState(std::move(opts.synonyms_text)));
 }
 
-bool WordnetSynonymsTokenizer::next() {
-  if (!_term_exists) {
-    return false;
+template<TokenLayout Layout>
+bool WordnetSynonymsTokenizer::DoFill(const duckdb::string_t& raw, TokenSink& sink) {
+  const auto* groups = Lookup(raw);
+  if (groups == nullptr) {
+    return true;
   }
-
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = ViewCast<byte_type>(*_curr);
-  _curr++;
-
-  if (_curr == _end) {
-    _term_exists = false;
+  for (const auto group : *groups) {
+    sink.Emit<Layout>(group);
   }
-
   return true;
 }
 
-bool WordnetSynonymsTokenizer::reset(const std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = data.size();
-
-  const auto& mapping = _state->mapping;
-  if (const auto it = mapping.find(data); it == mapping.end()) {
-    _term_exists = false;
-  } else {
-    _begin = _curr = it->second.data();
-    _end = _curr + it->second.size();
-
-    _term_exists = true;
-  }
-
-  return true;
-}
+template class TypedTokenizer<WordnetSynonymsTokenizer>;
 
 }  // namespace irs::analysis

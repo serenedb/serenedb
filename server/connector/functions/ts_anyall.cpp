@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
@@ -103,7 +103,7 @@ void FromTokenizeListInAnyAllOf(
     std::string analyzer_name;
     GetVarcharArg(*tokenize_call.GetChildren()[1], analyzer_name,
                   {"ts_tokenize analyzer name", kSyntaxHint});
-    if (analyzer_name == irs::StringTokenizer::type_name()) {
+    if (analyzer_name == irs::KeywordTokenizer::type_name()) {
       use_identity = true;
     } else {
       override_wrapper = AcquireTokenizer(ctx.client_context, analyzer_name);
@@ -114,7 +114,7 @@ void FromTokenizeListInAnyAllOf(
                   "'): tokenizer not found in catalog"),
           ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY or use "
                    "'",
-                   irs::StringTokenizer::type_name(),
+                   irs::KeywordTokenizer::type_name(),
                    "' for raw bytes per element."));
       }
     }
@@ -152,16 +152,14 @@ void FromTokenizeListInAnyAllOf(
       tokens.emplace_back(bytes.begin(), bytes.end());
       continue;
     }
-    if (!analyzer->reset(raw)) {
+    irs::TermVectorSink sink{tokens};
+    if (!analyzer->Fill(raw, sink.writer, irs::TokenLayout::Terms)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Failed to analyse '", raw, "'"),
         ERR_HINT("The selected analyzer rejected this list element."));
     }
-    const auto* tok_attr = irs::get<irs::TermAttr>(*analyzer);
-    while (analyzer->next()) {
-      tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
-    }
+    sink.writer.Finish();
   }
 
   if (tokens.empty()) {

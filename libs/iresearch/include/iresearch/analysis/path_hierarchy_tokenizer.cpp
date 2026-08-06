@@ -22,79 +22,290 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <cstring>
 #include <string_view>
 
-#include "iresearch/analysis/analyzer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include "iresearch/analysis/term_view.hpp"
+#include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 
 PathHierarchyTokenizer::PathHierarchyTokenizer(Options&& options) noexcept
-  : _options{std::move(options)}, _term_eof{true} {}
+  : _options{std::move(options)} {}
 
 PathHierarchyTokenizer::~PathHierarchyTokenizer() = default;
 
-Attribute* PathHierarchyTokenizer::GetMutable(TypeInfo::type_id type) noexcept {
-  return irs::GetMutable(_attrs, type);
+namespace {
+
+template<bool SingleChar>
+size_t FindNextDelim(std::string_view data, size_t from,
+                     std::string_view delim) noexcept {
+  if constexpr (SingleChar) {
+    return data.find(delim[0], from);
+  } else {
+    return data.find(delim, from);
+  }
 }
+
+// find previous delimiter strictly before the one ending at `search_end`
+// (right-to-left search)
+template<bool SingleChar>
+size_t FindPrevDelim(std::string_view data, size_t search_end,
+                     std::string_view delim) noexcept {
+  if (search_end <= delim.size()) {
+    return std::string_view::npos;
+  }
+  const size_t actual_search_end = search_end - delim.size() - 1;
+  if constexpr (SingleChar) {
+    return data.rfind(delim[0], actual_search_end);
+  } else {
+    return data.rfind(delim, actual_search_end);
+  }
+}
+
+template<bool SingleChar>
+bool IsDelimAt(std::string_view data, size_t pos,
+               std::string_view delim) noexcept {
+  if constexpr (SingleChar) {
+    return pos < data.size() && data[pos] == delim[0];
+  } else {
+    return pos + delim.size() <= data.size() &&
+           data.substr(pos, delim.size()) == delim;
+  }
+}
+
+// copy data[from, to) into out, delimiters replaced
+template<bool SingleChar>
+void CopyReplaced(std::string_view data, size_t from, size_t to,
+                  std::string_view delim, std::string_view replacement,
+                  byte_type* out) noexcept {
+  auto* dst = reinterpret_cast<char*>(out);
+  size_t pos = from;
+  while (pos < to) {
+    const size_t next = FindNextDelim<SingleChar>(data, pos, delim);
+    if (next >= to || next + delim.size() > to) {
+      std::memcpy(dst, data.data() + pos, to - pos);
+      return;
+    }
+    std::memcpy(dst, data.data() + pos, next - pos);
+    dst += next - pos;
+    std::memcpy(dst, replacement.data(), replacement.size());
+    dst += replacement.size();
+    pos = next + delim.size();
+  }
+}
+
+template<TokenLayout Layout, bool SingleChar>
+void EmitPrefixViews(TokenSink& sink, std::string_view value,
+                     size_t prefix_start_in_input, size_t delimiter_search_from,
+                     std::string_view delimiter) {
+  const auto emit = [&](size_t token_end_position) {
+    SDB_ASSERT(prefix_start_in_input <= token_end_position);
+    SDB_ASSERT(token_end_position <= value.size());
+    sink.Emit<Layout>(MakeTermView(value.data() + prefix_start_in_input,
+                                   static_cast<uint32_t>(token_end_position -
+                                                         prefix_start_in_input),
+                                   value.data() + value.size()),
+                      Offs{static_cast<uint32_t>(prefix_start_in_input),
+                           static_cast<uint32_t>(token_end_position)});
+  };
+  for (size_t pos =
+         FindNextDelim<SingleChar>(value, delimiter_search_from, delimiter);
+       pos != std::string_view::npos;
+       pos =
+         FindNextDelim<SingleChar>(value, pos + delimiter.size(), delimiter)) {
+    emit(pos);
+  }
+  emit(value.size());
+}
+
+// every token is a prefix of the fully converted path: the sink stages
+// one block per wave (restage rebuilds the committed prefix), each gen
+// call scans to the next delimiter and appends only its token's delta;
+// the emit count is exact -- one per delimiter past the cursor, plus the
+// full-path token
+template<TokenLayout Layout, bool SingleChar>
+void EmitReplacedPrefixes(TokenSink& sink, std::string_view value,
+                          size_t prefix_start_in_input,
+                          size_t delimiter_search_from, size_t ndelims,
+                          std::string_view delimiter,
+                          std::string_view replacement) {
+  const size_t delimiter_size = delimiter.size();
+  const size_t replacement_size = replacement.size();
+  size_t tail_ndelims = 0;
+  for (size_t pos =
+         FindNextDelim<SingleChar>(value, delimiter_search_from, delimiter);
+       pos != std::string_view::npos;
+       pos =
+         FindNextDelim<SingleChar>(value, pos + delimiter_size, delimiter)) {
+    ++tail_ndelims;
+  }
+  const size_t total_ndelims = tail_ndelims + ndelims;
+  const size_t total_converted = (value.size() - prefix_start_in_input) -
+                                 total_ndelims * delimiter_size +
+                                 total_ndelims * replacement_size;
+  size_t built_size = 0;
+  size_t built_input_end = prefix_start_in_input;
+  bool delta_starts_with_delim = ndelims == 1;
+  sink.EmitK<Layout>(
+    tail_ndelims + 1, total_converted,
+    [&](byte_type* mem, size_t) IRS_FORCE_INLINE {
+      CopyReplaced<SingleChar>(value, prefix_start_in_input, built_input_end,
+                               delimiter, replacement, mem);
+    },
+    [&](size_t, byte_type* mem) IRS_FORCE_INLINE {
+      size_t token_end_position = value.size();
+      const size_t next_delimiter_position =
+        FindNextDelim<SingleChar>(value, delimiter_search_from, delimiter);
+      const bool more = next_delimiter_position != std::string_view::npos;
+      if (more) {
+        token_end_position = next_delimiter_position;
+        delimiter_search_from = next_delimiter_position + delimiter_size;
+      }
+      SDB_ASSERT(prefix_start_in_input <= token_end_position);
+      SDB_ASSERT(token_end_position <= value.size());
+      const size_t converted_size =
+        (token_end_position - prefix_start_in_input) -
+        ndelims * delimiter_size + ndelims * replacement_size;
+      auto* dst = mem + built_size;
+      size_t src = built_input_end;
+      if (delta_starts_with_delim) {
+        SDB_ASSERT(IsDelimAt<SingleChar>(value, src, delimiter));
+        std::memcpy(dst, replacement.data(), replacement_size);
+        dst += replacement_size;
+        src += delimiter_size;
+      }
+      std::memcpy(dst, value.data() + src, token_end_position - src);
+      built_size = converted_size;
+      built_input_end = token_end_position;
+      ndelims += more;
+      delta_starts_with_delim = more;
+      return EmitKSlot{0, static_cast<uint32_t>(converted_size),
+                       Offs{static_cast<uint32_t>(prefix_start_in_input),
+                            static_cast<uint32_t>(token_end_position)}};
+    });
+}
+
+template<TokenLayout Layout, bool SingleChar>
+void EmitSuffixViews(TokenSink& sink, std::string_view value,
+                     size_t suffix_window_end, std::string_view delimiter) {
+  SDB_ASSERT(suffix_window_end <= value.size());
+  size_t suffix_start_in_input = 0;
+  for (;;) {
+    SDB_ASSERT(suffix_start_in_input <= suffix_window_end);
+
+    sink.Emit<Layout>(MakeTermView(value.data() + suffix_start_in_input,
+                                   static_cast<uint32_t>(suffix_window_end -
+                                                         suffix_start_in_input),
+                                   value.data() + value.size()),
+                      Offs{static_cast<uint32_t>(suffix_start_in_input),
+                           static_cast<uint32_t>(suffix_window_end)});
+
+    const size_t next_delimiter_position =
+      FindNextDelim<SingleChar>(value, suffix_start_in_input, delimiter);
+    if (next_delimiter_position == std::string_view::npos ||
+        next_delimiter_position >= suffix_window_end) {
+      return;
+    }
+    suffix_start_in_input = next_delimiter_position + delimiter.size();
+    if (suffix_start_in_input >= suffix_window_end) {
+      return;
+    }
+  }
+}
+
+// every token is a suffix of the current staged window: the sink stages
+// the window per wave, gens emit its converted suffixes and advance the
+// left edge; a delimiter ending exactly at the window end yields no
+// extra (empty) token
+template<TokenLayout Layout, bool SingleChar>
+void EmitReplacedSuffixes(TokenSink& sink, std::string_view value,
+                          size_t suffix_window_end, std::string_view delimiter,
+                          std::string_view replacement) {
+  const size_t delimiter_size = delimiter.size();
+  const size_t replacement_size = replacement.size();
+  size_t suffix_start_in_input = 0;
+  size_t ndelims = 0;
+  size_t last_delimiter_position = std::string_view::npos;
+  for (size_t pos = FindNextDelim<SingleChar>(value, 0, delimiter);
+       pos < suffix_window_end && pos + delimiter_size <= suffix_window_end;
+       pos =
+         FindNextDelim<SingleChar>(value, pos + delimiter_size, delimiter)) {
+    last_delimiter_position = pos;
+    ++ndelims;
+  }
+  const bool trailing =
+    ndelims != 0 &&
+    last_delimiter_position + delimiter_size == suffix_window_end;
+  size_t staged_converted = 0;
+  sink.EmitK<Layout>(
+    ndelims + 1 - trailing,
+    (suffix_window_end - suffix_start_in_input) - ndelims * delimiter_size +
+      ndelims * replacement_size,
+    [&](byte_type* mem, size_t) IRS_FORCE_INLINE {
+      staged_converted = (suffix_window_end - suffix_start_in_input) -
+                         ndelims * delimiter_size + ndelims * replacement_size;
+      CopyReplaced<SingleChar>(value, suffix_start_in_input, suffix_window_end,
+                               delimiter, replacement, mem);
+    },
+    [&](size_t, byte_type*) IRS_FORCE_INLINE {
+      SDB_ASSERT(suffix_start_in_input <= suffix_window_end);
+      const size_t converted_size =
+        (suffix_window_end - suffix_start_in_input) - ndelims * delimiter_size +
+        ndelims * replacement_size;
+      const Offs offs{static_cast<uint32_t>(suffix_start_in_input),
+                      static_cast<uint32_t>(suffix_window_end)};
+      const auto begin =
+        static_cast<uint32_t>(staged_converted - converted_size);
+      const size_t next_delimiter_position =
+        FindNextDelim<SingleChar>(value, suffix_start_in_input, delimiter);
+      if (next_delimiter_position != std::string_view::npos &&
+          next_delimiter_position + delimiter_size <= suffix_window_end) {
+        suffix_start_in_input = next_delimiter_position + delimiter_size;
+        --ndelims;
+      }
+      return EmitKSlot{begin, static_cast<uint32_t>(begin + converted_size),
+                       offs};
+    });
+}
+
+}  // namespace
 
 // Template parameters:
 //   SingleChar: true if delimiter.size() == 1 (fast path)
 //   NoReplacement: true if delimiter == replacement (zero-copy path)
 template<bool SingleChar, bool NoReplacement>
-class ForwardPathHierarchyTokenizer final : public PathHierarchyTokenizer {
+class ForwardPathHierarchyTokenizer final
+  : public TypedTokenizer<
+      ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>>,
+    public PathHierarchyTokenizer {
  public:
   explicit ForwardPathHierarchyTokenizer(Options&& options) noexcept
     : PathHierarchyTokenizer(std::move(options)) {}
+  TokenTraits Traits() const noexcept final { return {.offsets = true}; }
 
-  bool reset(std::string_view data) final;
-  bool next() final;
-
- private:
-  // delimiter search
-  size_t FindNextDelimiter(size_t from_position) const noexcept {
-    if constexpr (SingleChar) {
-      return _data.find(_options.delimiter[0], from_position);
-    } else {
-      return _data.find(_options.delimiter, from_position);
-    }
-  }
-
-  // check if substring at position matches delimiter
-  bool IsDelimiterAt(size_t position) const noexcept {
-    if constexpr (SingleChar) {
-      return position < _data.size() &&
-             _data[position] == _options.delimiter[0];
-    } else {
-      return position + _delimiter_size <= _data.size() &&
-             _data.substr(position, _delimiter_size) == _options.delimiter;
-    }
-  }
-
-  std::string _buffer;  // buffer for NoReplacement = false mode
-  size_t _prefix_start_in_input =
-    0;  // left edge of prefix; every token's offset.start
-  size_t _prefix_end_in_input =
-    0;  // input merged into _buffer ends before this index
-  size_t _delimiter_search_from = 0;  // find(next delimiter) starts here
-  size_t _delimiter_size = 0;         // delimiter length
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 };
 
 template<bool SingleChar, bool NoReplacement>
-bool ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>::reset(
-  std::string_view data) {
-  _data = data;
-  _term_eof = data.empty();
-
-  if (_term_eof) {
+template<TokenLayout Layout>
+bool ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>::DoFill(
+  duckdb::string_t raw, TokenSink& sink) {
+  const std::string_view value{raw.GetData(), raw.GetSize()};
+  if (value.empty()) {
     return true;
   }
 
-  _delimiter_size = _options.delimiter.size();
-  SDB_ASSERT(_delimiter_size > 0);
+  const std::string_view delimiter{_options.delimiter};
+  const std::string_view replacement{_options.replacement};
+  const size_t delimiter_size = delimiter.size();
+  SDB_ASSERT(delimiter_size > 0);
 
-  _prefix_start_in_input = 0;
+  // left edge of prefix; every token's offset.start
+  size_t prefix_start_in_input = 0;
 
   // skip: walk left-to-right, advancing prefix start to skip leading tokens
   if (_options.skip > 0) {
@@ -103,90 +314,41 @@ bool ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>::reset(
     // leading delimiter counts as one skip step: (/a/b/c equal a/b/c)
     // without +1, skip would line up wrong on paths that start with a delimiter
     size_t delimiter_steps_to_skip =
-      _options.skip + (FindNextDelimiter(0) == 0);
+      _options.skip + (FindNextDelim<SingleChar>(value, 0, delimiter) == 0);
 
     while (skip_step_idx < delimiter_steps_to_skip) {
-      size_t next_delimiter_position = FindNextDelimiter(scan_from);
+      size_t next_delimiter_position =
+        FindNextDelim<SingleChar>(value, scan_from, delimiter);
       if (next_delimiter_position == std::string_view::npos) {
-        _term_eof = true;
         return true;
       }
 
-      _prefix_start_in_input = next_delimiter_position;
-      scan_from = next_delimiter_position + _delimiter_size;
+      prefix_start_in_input = next_delimiter_position;
+      scan_from = next_delimiter_position + delimiter_size;
       ++skip_step_idx;
     }
   }
 
-  _prefix_end_in_input = _prefix_start_in_input;
-  _delimiter_search_from = _prefix_start_in_input;
+  // find(next delimiter) starts here
+  size_t delimiter_search_from = prefix_start_in_input;
+  // delimiters inside the current token's input range
+  size_t ndelims = 0;
 
   // for leading delimiter: /a/b/c
   // bump search cursor past it so the first segment token isn't empty
-  if (IsDelimiterAt(_delimiter_search_from)) {
-    _delimiter_search_from += _delimiter_size;
+  if (IsDelimAt<SingleChar>(value, delimiter_search_from, delimiter)) {
+    delimiter_search_from += delimiter_size;
+    ndelims = 1;
   }
-
-  if constexpr (!NoReplacement) {
-    // buffered path: delimiter != replacement
-    _buffer.clear();
-    _buffer.reserve(_options.buffer_size);
-  }
-
-  return true;
-}
-
-template<bool SingleChar, bool NoReplacement>
-bool ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
-  if (_term_eof) {
-    return false;
-  }
-
-  auto& term_attr = std::get<TermAttr>(_attrs);
-  auto& offset_attr = std::get<OffsAttr>(_attrs);
-  auto& inc_attr = std::get<IncAttr>(_attrs);
-
-  // find next delimiter from search position
-  size_t token_end_position = _data.size();
-  size_t next_delimiter_position = FindNextDelimiter(_delimiter_search_from);
-
-  if (next_delimiter_position != std::string_view::npos) {
-    token_end_position = next_delimiter_position;
-    _delimiter_search_from = next_delimiter_position + _delimiter_size;
-  } else {
-    _term_eof = true;
-  }
-
-  SDB_ASSERT(_prefix_start_in_input <= token_end_position);
-  SDB_ASSERT(token_end_position <= _data.size());
 
   if constexpr (NoReplacement) {
-    term_attr.value = ViewCast<byte_type>(_data.substr(
-      _prefix_start_in_input, token_end_position - _prefix_start_in_input));
+    EmitPrefixViews<Layout, SingleChar>(sink, value, prefix_start_in_input,
+                                        delimiter_search_from, delimiter);
   } else {
-    SDB_ASSERT(_prefix_end_in_input <= token_end_position);
-
-    // when first character isn't delimiter: a/b/c
-    // if cursor is on delimiter, emit replacement then tail; else append input
-    if (IsDelimiterAt(_prefix_end_in_input)) {
-      _buffer.append(_options.replacement);
-
-      size_t segment_len = _prefix_end_in_input + _delimiter_size;
-      _buffer.append(_data.data() + segment_len,
-                     token_end_position - segment_len);
-    } else {
-      _buffer.append(_data.data() + _prefix_end_in_input,
-                     token_end_position - _prefix_end_in_input);
-    }
-
-    _prefix_end_in_input = token_end_position;
-    term_attr.value = ViewCast<byte_type>(std::string_view(_buffer));
+    EmitReplacedPrefixes<Layout, SingleChar>(sink, value, prefix_start_in_input,
+                                             delimiter_search_from, ndelims,
+                                             delimiter, replacement);
   }
-
-  offset_attr.start = static_cast<uint32_t>(_prefix_start_in_input);
-  offset_attr.end = static_cast<uint32_t>(token_end_position);
-  inc_attr.value = 1;
-
   return true;
 }
 
@@ -194,169 +356,90 @@ bool ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
 //   SingleChar: true if delimiter.size() == 1 (fast path)
 //   NoReplacement: true if delimiter == replacement (zero-copy path)
 template<bool SingleChar, bool NoReplacement>
-class ReversePathHierarchyTokenizer final : public PathHierarchyTokenizer {
+class ReversePathHierarchyTokenizer final
+  : public TypedTokenizer<
+      ReversePathHierarchyTokenizer<SingleChar, NoReplacement>>,
+    public PathHierarchyTokenizer {
  public:
   explicit ReversePathHierarchyTokenizer(Options&& options) noexcept
     : PathHierarchyTokenizer(std::move(options)) {}
+  TokenTraits Traits() const noexcept final { return {.offsets = true}; }
 
-  bool reset(std::string_view data) final;
-  bool next() final;
-
- private:
-  // delimiter search
-  size_t FindNextDelimiter(size_t from_position) const noexcept {
-    if constexpr (SingleChar) {
-      return _data.find(_options.delimiter[0], from_position);
-    } else {
-      return _data.find(_options.delimiter, from_position);
-    }
-  }
-
-  // find previous delimiter (right-to-left search)
-  size_t FindPreviousDelimiter(size_t search_end) const noexcept {
-    if (search_end <= _delimiter_size) {
-      return std::string_view::npos;
-    }
-
-    // search from one position before the end minus delimiter size to skip past
-    // the current delimiter boundary and find the previous one
-    size_t actual_search_end = search_end - _delimiter_size - 1;
-    if constexpr (SingleChar) {
-      return _data.rfind(_options.delimiter[0], actual_search_end);
-    } else {
-      return _data.rfind(_options.delimiter, actual_search_end);
-    }
-  }
-
-  std::string _buffer;                 // buffer for NoReplacement = false mode
-  size_t _suffix_start_in_buffer = 0;  // current token's left edge in _buffer
-  size_t _suffix_start_in_input =
-    0;  // current token's left edge in input (for offset.start)
-  size_t _suffix_window_end =
-    0;  // path ends here after skip-from-right (past last byte)
-  size_t _delimiter_size = 0;  // delimiter length
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 };
 
 template<bool SingleChar, bool NoReplacement>
-bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::reset(
-  std::string_view data) {
-  _data = data;
-  _term_eof = data.empty();
-
-  if (_term_eof) {
+template<TokenLayout Layout>
+bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::DoFill(
+  duckdb::string_t raw, TokenSink& sink) {
+  const std::string_view value{raw.GetData(), raw.GetSize()};
+  if (value.empty()) {
     return true;
   }
 
-  _delimiter_size = _options.delimiter.size();
-  SDB_ASSERT(_delimiter_size > 0);
+  const std::string_view delimiter{_options.delimiter};
+  const std::string_view replacement{_options.replacement};
+  const size_t delimiter_size = delimiter.size();
+  SDB_ASSERT(delimiter_size > 0);
 
   // skip: walk right-to-left, dropping trailing segments
-  size_t trimmed_window_end = data.size();
+  // path ends here after skip-from-right (past last byte)
+  size_t suffix_window_end = value.size();
   for (size_t skip_idx = 0; skip_idx < _options.skip; ++skip_idx) {
-    if (trimmed_window_end <= _delimiter_size) {
-      _term_eof = true;
+    if (suffix_window_end <= delimiter_size) {
       return true;
     }
 
-    size_t rfind_delimiter_position = FindPreviousDelimiter(trimmed_window_end);
+    size_t rfind_delimiter_position =
+      FindPrevDelim<SingleChar>(value, suffix_window_end, delimiter);
     if (rfind_delimiter_position == std::string_view::npos) {
-      _term_eof = true;
       return true;
     }
-    trimmed_window_end = rfind_delimiter_position + _delimiter_size;
+    suffix_window_end = rfind_delimiter_position + delimiter_size;
   }
-  _suffix_window_end = trimmed_window_end;
-  _suffix_start_in_input = 0;
 
   if constexpr (NoReplacement) {
-    if (_suffix_window_end == 0) {
-      _term_eof = true;
-    }
-    return true;
-  }
-
-  // buffered path: delimiter != replacement
-  // pre-build full buffer with all delimiters replaced (left-to-right)
-  _buffer.clear();
-  _buffer.reserve(_options.buffer_size);
-  _suffix_start_in_buffer = 0;
-
-  // scan left-to-right through window, joining segments with replacement
-  size_t scan_from = 0;
-  while (scan_from < _suffix_window_end) {
-    size_t next_delimiter_position = FindNextDelimiter(scan_from);
-    if (next_delimiter_position == std::string_view::npos) {
-      SDB_ASSERT(scan_from <= _suffix_window_end);
-      _buffer.append(data.data() + scan_from, _suffix_window_end - scan_from);
-      break;
-    }
-    SDB_ASSERT(next_delimiter_position + _delimiter_size <= _suffix_window_end);
-
-    _buffer.append(data.data() + scan_from,
-                   next_delimiter_position - scan_from);
-    _buffer.append(_options.replacement);
-
-    scan_from = next_delimiter_position + _delimiter_size;
-  }
-
-  if (_buffer.size() == 0) {
-    _term_eof = true;
-    return true;
+    EmitSuffixViews<Layout, SingleChar>(sink, value, suffix_window_end,
+                                        delimiter);
+  } else {
+    EmitReplacedSuffixes<Layout, SingleChar>(sink, value, suffix_window_end,
+                                             delimiter, replacement);
   }
   return true;
 }
+
+}  // namespace irs::analysis
+namespace irs {
 
 template<bool SingleChar, bool NoReplacement>
-bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
-  if (_term_eof) {
-    return false;
-  }
+struct Type<analysis::ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>>
+  : Type<analysis::PathHierarchyTokenizer> {};
 
-  SDB_ASSERT(_suffix_window_end <= _data.size());
-  SDB_ASSERT(_suffix_start_in_input <= _suffix_window_end);
+template<bool SingleChar, bool NoReplacement>
+struct Type<analysis::ReversePathHierarchyTokenizer<SingleChar, NoReplacement>>
+  : Type<analysis::PathHierarchyTokenizer> {};
 
-  auto& term_attr = std::get<TermAttr>(_attrs);
-  auto& offset_attr = std::get<OffsAttr>(_attrs);
-  auto& inc_attr = std::get<IncAttr>(_attrs);
+}  // namespace irs
+namespace irs::analysis {
+namespace {
 
-  if constexpr (NoReplacement) {
-    term_attr.value = ViewCast<byte_type>(_data.substr(
-      _suffix_start_in_input, _suffix_window_end - _suffix_start_in_input));
-  } else {
-    SDB_ASSERT(_suffix_start_in_buffer <= _buffer.size());
-    term_attr.value = ViewCast<byte_type>(
-      std::string_view(_buffer).substr(_suffix_start_in_buffer));
-  }
-
-  offset_attr.start = static_cast<uint32_t>(_suffix_start_in_input);
-  offset_attr.end = static_cast<uint32_t>(_suffix_window_end);
-  inc_attr.value = 1;
-
-  size_t next_delimiter_position = FindNextDelimiter(_suffix_start_in_input);
-
-  if (next_delimiter_position == std::string_view::npos ||
-      next_delimiter_position >= _suffix_window_end) {
-    _term_eof = true;
-  } else {
-    SDB_ASSERT(next_delimiter_position >= _suffix_start_in_input);
-    SDB_ASSERT(next_delimiter_position + _delimiter_size <= _suffix_window_end);
-
-    size_t segment_len = next_delimiter_position - _suffix_start_in_input;
-    _suffix_start_in_input = next_delimiter_position + _delimiter_size;
-
-    if constexpr (!NoReplacement) {
-      _suffix_start_in_buffer += segment_len + _options.replacement.size();
+template<template<bool, bool> class Tok>
+Tokenizer::ptr MakePathHierarchy(PathHierarchyTokenizer::Options&& opts,
+                                 bool single_char, bool no_replacement) {
+  const auto pick = [&]<bool SingleChar>() -> Tokenizer::ptr {
+    if (no_replacement) {
+      return std::make_unique<Tok<SingleChar, true>>(std::move(opts));
     }
-
-    if (_suffix_start_in_input >= _suffix_window_end) {
-      _term_eof = true;
-    }
-  }
-
-  return true;
+    return std::make_unique<Tok<SingleChar, false>>(std::move(opts));
+  };
+  return single_char ? pick.template operator()<true>()
+                     : pick.template operator()<false>();
 }
 
-Analyzer::ptr PathHierarchyTokenizer::Make(Options opts) {
+}  // namespace
+
+Tokenizer::ptr PathHierarchyTokenizer::Make(Options opts) {
   if (opts.delimiter.empty()) {
     THROW_SQL_ERROR(ERR_MSG("path_hierarchy: empty delimiter"));
   }
@@ -368,35 +451,10 @@ Analyzer::ptr PathHierarchyTokenizer::Make(Options opts) {
   const bool single_char = (opts.delimiter.size() == 1);
   const bool no_replacement = (opts.delimiter == opts.replacement);
 
-  if (opts.reverse) {
-    if (single_char && no_replacement) {
-      return std::make_unique<ReversePathHierarchyTokenizer<true, true>>(
-        std::move(opts));
-    } else if (single_char && !no_replacement) {
-      return std::make_unique<ReversePathHierarchyTokenizer<true, false>>(
-        std::move(opts));
-    } else if (!single_char && no_replacement) {
-      return std::make_unique<ReversePathHierarchyTokenizer<false, true>>(
-        std::move(opts));
-    } else {
-      return std::make_unique<ReversePathHierarchyTokenizer<false, false>>(
-        std::move(opts));
-    }
-  } else {
-    if (single_char && no_replacement) {
-      return std::make_unique<ForwardPathHierarchyTokenizer<true, true>>(
-        std::move(opts));
-    } else if (single_char && !no_replacement) {
-      return std::make_unique<ForwardPathHierarchyTokenizer<true, false>>(
-        std::move(opts));
-    } else if (!single_char && no_replacement) {
-      return std::make_unique<ForwardPathHierarchyTokenizer<false, true>>(
-        std::move(opts));
-    } else {
-      return std::make_unique<ForwardPathHierarchyTokenizer<false, false>>(
-        std::move(opts));
-    }
-  }
+  return opts.reverse ? MakePathHierarchy<ReversePathHierarchyTokenizer>(
+                          std::move(opts), single_char, no_replacement)
+                      : MakePathHierarchy<ForwardPathHierarchyTokenizer>(
+                          std::move(opts), single_char, no_replacement);
 }
 
 }  // namespace irs::analysis

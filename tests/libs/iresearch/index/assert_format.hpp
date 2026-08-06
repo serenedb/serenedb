@@ -52,8 +52,9 @@ class Posting {
   Posting(Posting&& rhs) noexcept = default;
   Posting& operator=(Posting&& rhs) noexcept = default;
 
-  void insert(uint32_t pos, uint32_t offs_start,
-              const irs::AttributeProvider& attrs);
+  void insert(uint32_t pos);
+  void insert(uint32_t pos, uint32_t offs_start, bool has_offs,
+              uint32_t tok_offs_start, uint32_t tok_offs_end);
 
   bool operator<(const Posting& rhs) const { return _id < rhs._id; }
 

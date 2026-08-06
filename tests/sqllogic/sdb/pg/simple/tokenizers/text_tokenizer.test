@@ -2258,6 +2258,7 @@ Text Search Dictionary:
     inputtype (string) [default: utf8] - Input stream encoding: binary, utf8
     startmarker (string) - Prefix marker appended at n-gram boundary
     endmarker (string) - Suffix marker appended at n-gram boundary
+    mode (string) [default: all] - Mode of generation: all, only_prefix, only_suffix, only_prefix_and_suffix
   nearest_neighbors:
     modellocation (string) - Path to the ML model file
     topk (integer) [default: 1] - Number of top results to return
@@ -2287,6 +2288,8 @@ Text Search Dictionary:
   segmentation:
     case (string) [default: none] - Text case conversion: none, lower, upper
     break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha
+  split_by_non_alpha:
+    case (string) [default: none] - Text case conversion: none, lower, upper
   pipeline:
     (no additional options)
   pattern:
@@ -2322,6 +2325,16 @@ Text Search Dictionary:
       optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
   keyword:
     (no additional options)
+  sql:
+    expression[required] (string) [default: none] - DuckDB scalar expression over the pseudo-column `input` (VARCHAR), returning VARCHAR (one token per value) or LIST(VARCHAR) (token list); built-in functions only, no subqueries, no volatile functions
+  shingle:
+    mingram (integer) [default: 2] - Minimum shingle (word n-gram) size (minimum 2)
+    maxgram (integer) [default: 2] - Maximum shingle (word n-gram) size (>= mingram)
+    outputunigrams (boolean) [default: true] - Index individual tokens alongside the shingles
+    outputunigramsifnoshingles (boolean) [default: false] - Index unigrams only when the input is too short to form a shingle
+    storetokens (boolean) [default: true] - Persist the per-document token stream (verification source for phrases longer than maxgram). When false the index stores terms only
+    frequentwords (string) - Comma-separated words (typically stopwords). When non-empty, shingles of mingram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
+    fillertoken (string) - Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
   solr_synonyms:
     synonyms[required] (string) [default: none] - Inline Solr-format synonyms file content: one rule per line, comma-separated terms; `=>` separates LHS from RHS for one-way mappings
   wordnet_synonyms:

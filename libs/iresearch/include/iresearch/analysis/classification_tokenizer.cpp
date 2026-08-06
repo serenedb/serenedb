@@ -27,6 +27,7 @@
 
 #include <string_view>
 
+#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -35,7 +36,7 @@ namespace {
 
 std::atomic<ClassificationTokenizer::model_provider_f> gModelProvider = nullptr;
 
-Analyzer::ptr Construct(const ClassificationTokenizer::Options& options) {
+Tokenizer::ptr Construct(const ClassificationTokenizer::Options& options) {
   auto provider = gModelProvider.load(std::memory_order_relaxed);
 
   ClassificationTokenizer::model_ptr model;
@@ -70,7 +71,7 @@ Analyzer::ptr Construct(const ClassificationTokenizer::Options& options) {
 
 }  // namespace
 
-Analyzer::ptr ClassificationTokenizer::Make(Options opts) {
+Tokenizer::ptr ClassificationTokenizer::Make(Options opts) {
   if (opts.model_location.empty()) {
     THROW_SQL_ERROR(ERR_MSG("classification: empty model location"));
   }
@@ -92,43 +93,34 @@ ClassificationTokenizer::set_model_provider(
 ClassificationTokenizer::ClassificationTokenizer(const Options& options,
                                                  model_ptr model) noexcept
   : _model{std::move(model)},
-    _predictions_it{_predictions.end()},
     _threshold{options.threshold},
     _top_k{options.top_k} {
   SDB_ASSERT(_model);
 }
 
-bool ClassificationTokenizer::next() {
-  if (_predictions_it == _predictions.end()) {
-    return false;
-  }
-
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = {
-    reinterpret_cast<const byte_type*>(_predictions_it->second.c_str()),
-    _predictions_it->second.size()};
-
-  auto& inc = std::get<IncAttr>(_attrs);
-  inc.value = static_cast<uint32_t>(_predictions_it == _predictions.begin());
-
-  ++_predictions_it;
-
-  return true;
-}
-
-bool ClassificationTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = static_cast<uint32_t>(data.size());
-
-  BytesViewInput s_input{ViewCast<byte_type>(data)};
-  InputBuf buf{&s_input};
-  std::istream ss{&buf};
+template<TokenLayout Layout>
+bool ClassificationTokenizer::DoFill(duckdb::string_t raw,
+                                     TokenSink& sink) {
+  const auto size = static_cast<uint32_t>(raw.GetSize());
+  BytesViewInput s_input{
+    bytes_view{reinterpret_cast<const byte_type*>(raw.GetData()), size}};
+  InputBuf in_buf{&s_input};
+  std::istream ss{&in_buf};
   _predictions.clear();
   _model->predictLine(ss, _predictions, _top_k, static_cast<float>(_threshold));
-  _predictions_it = _predictions.begin();
 
+  for (const auto& [score, label] : _predictions) {
+    sink.Emit<Layout>(
+      label.size(),
+      [&](byte_type* mem) IRS_FORCE_INLINE {
+        std::memcpy(mem, label.data(), label.size());
+        return static_cast<uint32_t>(label.size());
+      },
+      1);
+  }
   return true;
 }
+
+template class TypedTokenizer<ClassificationTokenizer>;
 
 }  // namespace irs::analysis

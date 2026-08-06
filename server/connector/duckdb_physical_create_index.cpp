@@ -126,8 +126,8 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
 struct CreateIndexLocalState : public duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<DuckDBSearchSinkInsertWriter> writer;
-  std::vector<std::string> row_keys;
   std::unique_ptr<duckdb::Vector> pk_scratch;
+  std::vector<duckdb::string_t> key_terms;
   size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
 
   ~CreateIndexLocalState() override {
@@ -582,8 +582,8 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   lstate->search_trx->SetFieldOptions(
     basics::downCast<const catalog::InvertedIndex>(gstate.index_for_providers));
 
-  auto tokenizer_provider =
-    MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
+  auto tokenizer_provider = MakeTokenizerProvider(
+    context.client, gstate.snapshot_for_providers, inverted_index);
   auto entry_info_provider = MakeEntryInfoProvider(inverted_index);
   auto indexed_exprs = MakeIndexedExpressions(inverted_index, context.client);
   const auto& index_options = inverted_index.GetOptions();
@@ -593,6 +593,25 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     std::move(indexed_exprs),
     PkPolicy{.index_term = index_options.pk_term,
              .column = index_options.pk_column});
+
+  if (index_options.pk_term && estimated_cardinality > 0) {
+    // Every row is one PK term, so this sink's row share is an ~exact
+    // dictionary hint. The memory cap keeps an over-estimate from exceeding
+    // the segment budget (FlushRequired counts dictionary capacity): an
+    // uncapped reserve would cut a segment after the first batch.
+    const uint64_t sinks =
+      context.pipeline ? std::max<uint64_t>(context.pipeline->GetMaxThreads(), 1)
+                       : 1;
+    constexpr uint64_t kDictBytesPerTerm = 40;
+    const uint64_t cap = index_options.segment_memory_max / 2 / kDictBytesPerTerm;
+    const auto hint = std::min<uint64_t>(
+      {estimated_cardinality / sinks, cap,
+       std::numeric_limits<uint32_t>::max()});
+    if (hint) {
+      lstate->search_trx->SetReserveHint(catalog::term_dict::kPKFieldId,
+                                         static_cast<uint32_t>(hint));
+    }
+  }
 
   if (IsDuckDBTable()) {
     auto& slot = lstate->uncommitted_min_slot;
@@ -625,8 +644,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   auto* writer = lstate->writer.get();
 
   PkChunk pk;
-  auto& row_keys = lstate->row_keys;
-  std::vector<std::string_view> key_views;
+  auto& key_terms = lstate->key_terms;
   if (gstate.pk_column == catalog::PkColumnKind::Has) {
     switch (gstate.pk_shape) {
       case PkShape::Single:
@@ -661,15 +679,13 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     duckdb::UnifiedVectorFormat fmt;
     pk_vec.ToUnifiedFormat(num_rows, fmt);
     auto* pks = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
-    row_keys.clear();
-    row_keys.reserve(num_rows);
-    key_views.reserve(num_rows);
+    key_terms.clear();
+    key_terms.reserve(num_rows);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      auto& key = row_keys.emplace_back();
-      primary_key::AppendSigned(key, pks[fmt.sel->get_index(row)]);
-      key_views.emplace_back(key);
+      key_terms.push_back(
+        duckdb_primary_key::SignedKeyTerm(pks[fmt.sel->get_index(row)]));
     }
-    pk.keys = key_views;
+    pk.key_terms = key_terms;
   }
 
   bool committed = false;

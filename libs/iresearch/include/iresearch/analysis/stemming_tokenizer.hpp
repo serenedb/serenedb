@@ -25,11 +25,11 @@
 
 #include <unicode/locid.h>
 
-#include "analyzer.hpp"
+#include "iresearch/analysis/stem_cache.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/icu_locale_serde.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs {
 namespace analysis {
@@ -37,7 +37,7 @@ namespace analysis {
 // an tokenizer capable of stemming the text, treated as a single token,
 // for supported languages
 // expects UTF-8 encoded input
-class StemmingTokenizer final : public TypedAnalyzer<StemmingTokenizer>,
+class StemmingTokenizer final : public TypedTokenizer<StemmingTokenizer>,
                                 private util::Noncopyable {
  public:
   struct Options {
@@ -49,22 +49,26 @@ class StemmingTokenizer final : public TypedAnalyzer<StemmingTokenizer>,
   static constexpr std::string_view type_name() noexcept { return "stem"; }
 
   explicit StemmingTokenizer(Options options);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+
+  TokenTraits Traits() const noexcept final {
+    return {
+      .unique = true,
+      .offsets = true,
+    };
   }
-  bool next() final;
-  bool reset(std::string_view data) final;
+
+  template<TokenLayout Layout>
+  bool DoFill(const duckdb::string_t& value, TokenSink& sink);
+
+  duckdb::string_t Stem(const duckdb::string_t& data);
 
  private:
-  // token value with evaluated quotes
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-
-  attributes _attrs;
   Options _options;
-  std::string _buf;
   stemmer_ptr _stemmer;
-  bool _term_eof = true;
+  StemCache _cache;
 };
+
+extern template class TypedTokenizer<StemmingTokenizer>;
 
 }  // namespace analysis
 }  // namespace irs

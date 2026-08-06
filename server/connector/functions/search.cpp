@@ -39,7 +39,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
@@ -299,7 +299,7 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   if (!entry) {
     return {};
   }
-  return entry->GetTokenizer();
+  return entry->GetTokenizer(context);
 }
 
 std::shared_ptr<catalog::Tokenizer> ResolveCatalogTokenizer(

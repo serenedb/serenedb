@@ -38,6 +38,7 @@
 #include "executor.h"
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_builder.h"
+#include "insert_field.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -470,10 +471,10 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
     for (auto& line : buf) {
       doc.Fill(line);
       auto trx = ctx.Insert();
-      trx.Insert(doc.fields[0]);
+      ::tests::InsertField(trx, doc.fields[0]);
       irs::tests::StoreFieldAt(*trx.GetColWriter(), kIdId, trx.DocId(),
                                doc.fields[0]);
-      trx.Insert(doc.fields[1]);
+      ::tests::InsertField(trx, doc.fields[1]);
     }
   }
 };

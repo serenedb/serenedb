@@ -23,8 +23,8 @@
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 
 #include "absl/algorithm/container.h"
 #include "basics/containers/flat_hash_set.h"
@@ -42,19 +42,25 @@ namespace sdb::catalog {
 namespace {
 
 ColumnTokenizer BuildColumnTokenizer(
-  const std::shared_ptr<const Snapshot>& snapshot, ObjectId text_dictionary,
-  search::Features features) {
+  duckdb::ClientContext& ctx, const std::shared_ptr<const Snapshot>& snapshot,
+  ObjectId text_dictionary, search::Features features) {
   if (!text_dictionary.isSet()) {
-    auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    auto analyzer = std::make_unique<irs::KeywordTokenizer>();
+    return ColumnTokenizer{
+      .analyzer = Tokenizer::TokenizerWrapper{analyzer.release(),
+                                              Tokenizer::Deleter{nullptr}},
+      .features = features.GetIndexFeatures(),
+      .verbatim = true};
   }
   auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
   if (!dict) {
     THROW_SQL_ERROR(ERR_MSG("Dictionary for inverted index does not exists"));
   }
-  return ColumnTokenizer{.analyzer = dict->GetTokenizer(),
-                         .features = features.GetIndexFeatures()};
+  auto analyzer = dict->GetTokenizer(ctx);
+  const bool verbatim = analyzer->Traits().keyword;
+  return ColumnTokenizer{.analyzer = std::move(analyzer),
+                         .features = features.GetIndexFeatures(),
+                         .verbatim = verbatim};
 }
 
 using persistence::EntryConfigSerialized;
@@ -368,15 +374,15 @@ void InvertedIndex::BuildFieldLookupIndex() {
 }
 
 ColumnTokenizer InvertedIndex::GetTokenizer(
-  const std::shared_ptr<const Snapshot>& snapshot,
+  duckdb::ClientContext& ctx, const std::shared_ptr<const Snapshot>& snapshot,
   irs::field_id field_id) const {
   const auto* entry = FindEntry(field_id);
   if (entry == nullptr) {
     THROW_SQL_ERROR(
       ERR_MSG("Field id ", field_id, " not found in the index definition"));
   }
-  auto tokenizer =
-    BuildColumnTokenizer(snapshot, entry->text_dictionary, entry->features);
+  auto tokenizer = BuildColumnTokenizer(ctx, snapshot, entry->text_dictionary,
+                                        entry->features);
   if (!entry->features.HasFeatures(irs::IndexFeatures::Norm) &&
       irs::field_limits::valid(entry->synthetic_column)) {
     tokenizer.tokenizer_column = entry->synthetic_column;
@@ -397,7 +403,7 @@ bool InvertedIndex::IsKeywordField(const Snapshot& snapshot,
   if (!dict) {
     return false;
   }
-  return std::holds_alternative<irs::StringTokenizer::Options>(
+  return std::holds_alternative<irs::KeywordTokenizer::Options>(
     dict->Config().config);
 }
 

@@ -27,6 +27,7 @@
 
 #include <string_view>
 
+#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/fasttext_utils.hpp"
 #include "pg/sql_exception_macro.h"
@@ -39,7 +40,7 @@ std::atomic<NearestNeighborsTokenizer::model_provider_f> gModelProvider =
 
 }  // namespace
 
-Analyzer::ptr NearestNeighborsTokenizer::Make(Options opts) {
+Tokenizer::ptr NearestNeighborsTokenizer::Make(Options opts) {
   if (opts.model_location.empty()) {
     THROW_SQL_ERROR(ERR_MSG("nearest_neighbors: empty model location"));
   }
@@ -87,56 +88,45 @@ NearestNeighborsTokenizer::set_model_provider(
 
 NearestNeighborsTokenizer::NearestNeighborsTokenizer(const Options& options,
                                                      model_ptr model) noexcept
-  : _model{std::move(model)},
-    _neighbors_it{_neighbors.end()},
-    _top_k{options.top_k} {
+  : _model{std::move(model)}, _top_k{options.top_k} {
   SDB_ASSERT(_model);
 
   _model_dict = _model->getDictionary();
   SDB_ASSERT(_model_dict);
 }
 
-bool NearestNeighborsTokenizer::next() {
-  if (_neighbors_it == _neighbors.end()) {
-    if (_current_token_ind == _n_tokens) {
-      return false;
-    }
-    _neighbors = _model->getNN(
-      _model_dict->getWord(_line_token_ids[_current_token_ind]), _top_k);
-    _neighbors_it = _neighbors.begin();
-    ++_current_token_ind;
-  }
-
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = {
-    reinterpret_cast<const byte_type*>(_neighbors_it->second.c_str()),
-    _neighbors_it->second.size()};
-
-  auto& inc = std::get<IncAttr>(_attrs);
-  inc.value = static_cast<uint32_t>(_neighbors_it == _neighbors.begin());
-
-  ++_neighbors_it;
-
-  return true;
-}
-
-bool NearestNeighborsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = static_cast<uint32_t>(data.size());
-
-  BytesViewInput s_input{ViewCast<byte_type>(data)};
-  InputBuf buf{&s_input};
-  std::istream ss{&buf};
+template<TokenLayout Layout>
+bool NearestNeighborsTokenizer::DoFill(duckdb::string_t raw,
+                                       TokenSink& sink) {
+  const auto size = static_cast<uint32_t>(raw.GetSize());
+  BytesViewInput s_input{
+    bytes_view{reinterpret_cast<const byte_type*>(raw.GetData()), size}};
+  InputBuf in_buf{&s_input};
+  std::istream ss{&in_buf};
 
   _model_dict->getLine(ss, _line_token_ids, _line_token_label_ids);
-  _n_tokens = static_cast<int32_t>(_line_token_ids.size());
-  _current_token_ind = 0;
 
-  _neighbors.clear();
-  _neighbors_it = _neighbors.end();
-
+  uint32_t pos = 0;
+  for (const auto token_id : _line_token_ids) {
+    const auto neighbors =
+      _model->getNN(_model_dict->getWord(token_id), _top_k);
+    if (neighbors.empty()) {
+      continue;
+    }
+    ++pos;
+    for (const auto& [score, word] : neighbors) {
+      sink.Emit<Layout>(
+        word.size(),
+        [&](byte_type* mem) IRS_FORCE_INLINE {
+          std::memcpy(mem, word.data(), word.size());
+          return static_cast<uint32_t>(word.size());
+        },
+        pos);
+    }
+  }
   return true;
 }
+
+template class TypedTokenizer<NearestNeighborsTokenizer>;
 
 }  // namespace irs::analysis

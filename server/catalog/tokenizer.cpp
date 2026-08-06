@@ -24,7 +24,6 @@
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
@@ -44,26 +43,32 @@ using persistence::TokenizerData;
 
 }  // namespace
 
-Tokenizer::TokenizerWrapper Tokenizer::GetTokenizer() {
-  absl::MutexLock lock{&_m};
-  if (_pool.empty()) {
-    auto analyzer = CreateAnalyzer();
+Tokenizer::TokenizerWrapper Tokenizer::GetTokenizer(
+  duckdb::ClientContext& ctx) {
+  auto wrapper = [&]() -> TokenizerWrapper {
+    absl::MutexLock lock{&_m};
+    if (_pool.empty()) {
+      auto analyzer = CreateTokenizer();
+      return TokenizerWrapper{analyzer.release(), Deleter{this}};
+    }
+    auto analyzer = std::move(_pool.back());
+    SDB_ASSERT(analyzer);
+    _pool.pop_back();
     return TokenizerWrapper{analyzer.release(), Deleter{this}};
-  }
-  auto analyzer = std::move(_pool.back());
-  SDB_ASSERT(analyzer);
-  _pool.pop_back();
-  return TokenizerWrapper{analyzer.release(), Deleter{this}};
+  }();
+  wrapper->Bind(ctx);
+  return wrapper;
 }
 
-void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
+void Tokenizer::PushTokenizer(irs::analysis::Tokenizer::ptr analyzer) noexcept {
   SDB_ASSERT(analyzer);
+  analyzer->Unbind();
   absl::MutexLock lock{&_m};
   _pool.push_back(std::move(analyzer));
 }
 
-irs::analysis::Analyzer::ptr Tokenizer::CreateAnalyzer() const {
-  return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
+irs::analysis::Tokenizer::ptr Tokenizer::CreateTokenizer() const {
+  return irs::analysis::CreateTokenizer(irs::analysis::Clone(_config));
 }
 
 Tokenizer::Tokenizer(Permissions perm, ObjectId schema_id, ObjectId id,

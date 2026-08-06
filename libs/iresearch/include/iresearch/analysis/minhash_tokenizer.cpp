@@ -22,106 +22,125 @@
 
 #include "minhash_tokenizer.hpp"
 
-#include <absl/strings/escaping.h>
-#include <simdutf.h>
+#include <absl/base/internal/endian.h>
 
 #include "basics/wyhash.h"
+#include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
-#include "iresearch/analysis/tokenizers.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
 namespace {
 
-constexpr OffsAttr kEmptyOffset;
+constexpr uint64_t kHashSeed = 0xdeadbeef;
+
+// Fixed-shape base64 of one little-endian u64 (standard alphabet, no
+// padding) -- byte-for-byte what simdutf::binary_to_base64 produced here
+// before (the signature bytes are index format; equality is test-pinned).
+IRS_FORCE_INLINE void EncodeSignatureHash(uint64_t value, char* out) noexcept {
+  constexpr char kAlphabet[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  unsigned char b[8];
+  absl::little_endian::Store64(b, value);
+  const auto triple = [&](const unsigned char* p, char* o) {
+    const uint32_t v = (uint32_t{p[0]} << 16) | (uint32_t{p[1]} << 8) | p[2];
+    o[0] = kAlphabet[(v >> 18) & 63];
+    o[1] = kAlphabet[(v >> 12) & 63];
+    o[2] = kAlphabet[(v >> 6) & 63];
+    o[3] = kAlphabet[v & 63];
+  };
+  triple(b, out);
+  triple(b + 3, out + 4);
+  const uint32_t v = (uint32_t{b[6]} << 8) | b[7];
+  out[8] = kAlphabet[(v >> 10) & 63];
+  out[9] = kAlphabet[(v >> 4) & 63];
+  out[10] = kAlphabet[(v << 2) & 63];
+}
+
+class SignatureConsumer final : public TokenConsumer {
+ public:
+  explicit SignatureConsumer(MinHash& minhash) noexcept : _minhash{&minhash} {}
+
+  void Consume(TokenBatch& batch, DocRuns) final {
+    for (const auto& term : batch.Terms()) {
+      _minhash->Insert(
+        sdb::basics::WyHash(term.GetData(), term.GetSize(), kHashSeed));
+    }
+  }
+
+ private:
+  MinHash* _minhash;
+};
 
 }  // namespace
 
-Analyzer::ptr MinHashTokenizer::Make(Options opts) {
-  if (opts.num_hashes == 0) {
+struct MinHashTokenizer::SubSink {
+  explicit SubSink(MinHash& minhash) : consumer{minhash} {
+    writer.Bind(consumer, nullptr);
+  }
+
+  SignatureConsumer consumer;
+  TokenSink writer;
+};
+
+MinHashTokenizer::~MinHashTokenizer() = default;
+
+Tokenizer::ptr MinHashTokenizer::Make(Options opts) {
+  if (!opts.num_hashes) {
     THROW_SQL_ERROR(ERR_MSG("minhash: num_hashes must be positive"));
   }
-  Analyzer::ptr sub;
+  Tokenizer::ptr sub;
   if (opts.analyzer) {
-    sub = CreateAnalyzer(std::move(*opts.analyzer));
+    sub = CreateTokenizer(std::move(*opts.analyzer));
   }
-  // If `analyzer` is absent the ctor falls back to StringTokenizer.
+  // If `analyzer` is absent the ctor falls back to KeywordTokenizer.
   return std::make_unique<MinHashTokenizer>(std::move(sub), opts.num_hashes);
 }
 
-MinHashTokenizer::MinHashTokenizer(analysis::Analyzer::ptr analyzer,
+MinHashTokenizer::MinHashTokenizer(analysis::Tokenizer::ptr analyzer,
                                    uint32_t num_hashes)
   : _analyzer{std::move(analyzer)},
     _num_hashes{num_hashes},
     _minhash{_num_hashes} {
   if (!_analyzer) {
-    // Fallback to default implementation
-    _analyzer = std::make_unique<StringTokenizer>();
+    _analyzer = std::make_unique<KeywordTokenizer>();
   }
-
-  _term = irs::get<TermAttr>(*_analyzer);
-
-  if (!_term) [[unlikely]] {
-    _analyzer = std::make_unique<EmptyAnalyzer>();
-  }
-
-  _offset = irs::get<OffsAttr>(*_analyzer);
-
-  std::get<TermAttr>(_attrs).value = {
-    reinterpret_cast<const byte_type*>(_buf.data()), _buf.size()};
 }
 
-bool MinHashTokenizer::next() {
-  if (_begin == _end) {
+std::tuple<> MinHashTokenizer::PrepareBatch() {
+  if (!_sub_sink) {
+    _sub_sink = std::make_unique<SubSink>(_minhash);
+  }
+  return {};
+}
+
+template<TokenLayout Layout>
+bool MinHashTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  _minhash.Clear();
+  if (!_analyzer->Fill(raw, _sub_sink->writer, TokenLayout::Terms)) {
+    _sub_sink->writer.Discard();
     return false;
   }
-
-  const auto value = absl::little_endian::FromHost(*_begin);
-
-  [[maybe_unused]] const size_t length = simdutf::binary_to_base64(
-    reinterpret_cast<const char*>(&value), sizeof value, _buf.data(),
-    simdutf::base64_default_no_padding);
-  SDB_ASSERT(length == _buf.size());
-
-  std::get<IncAttr>(_attrs).value = std::exchange(_next_inc.value, 0);
-  ++_begin;
-
+  _sub_sink->writer.Finish();
+  EmitSignature<Layout>(sink);
   return true;
 }
 
-bool MinHashTokenizer::reset(std::string_view data) {
-  _begin = _end = {};
-  if (_analyzer->reset(data)) {
-    ComputeSignature();
-    return true;
-  }
-  return false;
-}
-
-void MinHashTokenizer::ComputeSignature() {
-  _minhash.Clear();
-  _next_inc.value = 1;
-
-  if (_analyzer->next()) {
-    SDB_ASSERT(_term);
-
-    const auto* offs = _offset ? _offset : &kEmptyOffset;
-    auto& [start, end] = std::get<OffsAttr>(_attrs);
-    start = offs->start;
-    end = offs->end;
-
-    do {
-      const std::string_view value = ViewCast<char>(_term->value);
-      const auto hash_value =
-        sdb::basics::WyHash(value.data(), value.size(), 0xdeadbeef);
-
-      _minhash.Insert(hash_value);
-      end = offs->end;
-    } while (_analyzer->next());
-
-    _begin = std::begin(_minhash);
-    _end = std::end(_minhash);
+template<TokenLayout Layout>
+void MinHashTokenizer::EmitSignature(TokenSink& sink) {
+  constexpr uint32_t kSignatureSize = 11;
+  for (const auto hash : _minhash) {
+    sink.Emit<Layout>(
+      kSignatureSize,
+      [&](byte_type* mem) IRS_FORCE_INLINE {
+        EncodeSignatureHash(hash, reinterpret_cast<char*>(mem));
+        return kSignatureSize;
+      },
+      1);
   }
 }
+
+template class TypedTokenizer<MinHashTokenizer>;
 
 }  // namespace irs::analysis

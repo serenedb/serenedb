@@ -20,19 +20,17 @@
 
 #pragma once
 
-#include "analyzer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
+#include <array>
+#include <string>
+#include <tuple>
+#include <vector>
+
 #include "re2/re2.h"
-#include "token_attributes.hpp"
-
-namespace re2 {
-
-class RE2;
-}
+#include "tokenizer.hpp"
 
 namespace irs::analysis {
 
-class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
+class PatternTokenizer final : public TypedTokenizer<PatternTokenizer>,
                                private util::Noncopyable {
  public:
   struct Options {
@@ -55,28 +53,50 @@ class PatternTokenizer final : public TypedAnalyzer<PatternTokenizer>,
   explicit PatternTokenizer(std::string_view pattern, int group = -1);
   ~PatternTokenizer() override;
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
+  // Which fill path a value takes -- fixed at construction
+  // (DetectFastSplit), so it resolves once per chunk instead of branching
+  // per value.
+  enum class Mode : uint8_t {
+    ByteSet,  // single-byte delimiter set: block-classified scan
+    Literal,  // multi-byte fixed delimiter: memchr + memcmp
+    Regex,    // general RE2 match/split
+  };
 
-  bool next() final;
-  bool reset(std::string_view data) final;
+  auto PrepareBatch() const { return std::tuple{_mode}; }
+
+  TokenTraits Traits() const noexcept final { return {.offsets = true}; }
+
+  template<TokenLayout Layout, Mode M>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 
  private:
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  template<TokenLayout Layout>
+  void FillValue(TokenSink& sink, duckdb::string_t value);
+  template<TokenLayout Layout>
+  void FastSplitValue(TokenSink& sink, duckdb::string_t value);
+  template<TokenLayout Layout>
+  void FastLiteralSplitValue(TokenSink& sink, duckdb::string_t value);
+  void DetectFastSplit();
 
-  std::string_view _data;  // buffer to store the entire input string
-  re2::RE2 _pattern;       // compiled regex pattern
-  int _group;              // which group to extract (-1 for split)
+  bool IsDelimByte(byte_type c) const noexcept {
+    return (_delim_bitmap[c >> 6] >> (c & 63)) & 1;
+  }
 
-  // State for pattern matching
-  size_t _current_pos = 0;  // current position in _data
-  bool _exhausted = false;  // whether we've exhausted the input
-  int _num_groups;          // number of capturing groups in the pattern
+  re2::RE2 _pattern;  // compiled regex pattern
+  int _group;         // which group to extract (-1 for split)
+
+  int _num_groups;  // number of capturing groups in the pattern
 
   std::vector<re2::StringPiece> _matches;  // buffer for regex matches
 
-  attributes _attrs;
+  std::array<uint64_t, 4> _delim_bitmap{};
+  // byte-set members when the set is small enough for block classification
+  std::array<byte_type, 8> _block_delims{};
+  uint8_t _nblock = 0;
+  std::string _split_literal;  // multi-byte fixed delimiter (split mode)
+  Mode _mode = Mode::Regex;
 };
+
+extern template class TypedTokenizer<PatternTokenizer>;
 
 }  // namespace irs::analysis

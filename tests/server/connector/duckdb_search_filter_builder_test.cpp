@@ -26,14 +26,15 @@
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
-#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/formats/formats.hpp>
+#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/geo_filter.hpp>
@@ -49,6 +50,7 @@
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -57,6 +59,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/duckdb_engine.h"
 #include "connector/functions/search.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
@@ -66,6 +69,14 @@ namespace {
 using namespace sdb;
 using sdb::connector::ColumnGetter;
 using sdb::connector::SearchColumnInfo;
+
+// Leaked on purpose: tests_main shuts the engine down before main returns,
+// so a static Connection destructor would outlive it.
+duckdb::ClientContext& TestContext() {
+  static auto* conn =
+    new duckdb::Connection{::sdb::DuckDBEngine::Instance().instance()};
+  return *conn->context;
+}
 
 // Sentinel tokenizer column id shared by analyzer-provider stubs that need
 // a non-null column reference but do not care which one. Use a value
@@ -141,23 +152,23 @@ struct ColumnSpec {
 using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 
 catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
-  static catalog::Tokenizer gStringTokenizer(
+  static catalog::Tokenizer gKeywordTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12345},
     "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
-    irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
-  auto tokenizer = gStringTokenizer.GetTokenizer();
+    irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
+  auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::None};
 }
 
 template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
-  static catalog::Tokenizer gStringTokenizer(
+  static catalog::Tokenizer gKeywordTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12346}, "test_segmentation",
     {}, DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::SegmentationTokenizer::Options{}});
-  auto tokenizer = gStringTokenizer.GetTokenizer();
+  auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
   return {.analyzer = std::move(tokenizer), .features = Features};
 }
 
@@ -177,7 +188,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     catalog::Permissions{}, ObjectId{0}, ObjectId{12347}, "test_ngram", {},
     DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
-  auto tokenizer = gNgramTokenizer.GetTokenizer();
+  auto tokenizer = gNgramTokenizer.GetTokenizer(TestContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
@@ -186,14 +197,14 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   irs::analysis::WildcardAnalyzer::Options wildcard_opts{
     .base_analyzer = std::make_unique<irs::analysis::TokenizerConfig>(
       irs::analysis::TokenizerConfig{.config =
-                                       irs::StringTokenizer::Options{}}),
+                                       irs::KeywordTokenizer::Options{}}),
     .ngram_size = 3,
   };
   static catalog::Tokenizer gWildcardTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12348}, "test_wildcard", {},
     DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
-  auto tokenizer = gWildcardTokenizer.GetTokenizer();
+  auto tokenizer = gWildcardTokenizer.GetTokenizer(TestContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
@@ -207,7 +218,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonAnalyzer::Options{}});
-  auto tokenizer = gGeoTokenizer.GetTokenizer();
+  auto tokenizer = gGeoTokenizer.GetTokenizer(TestContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::None,
@@ -241,22 +252,17 @@ irs::ByTerm& AddTermFilter(Filter& root, uint64_t column, const T& value) {
   *term.mutable_field_id() = ExpectedFieldId(column);
   if constexpr (std::is_same_v<T, bool>) {
     term.mutable_options()->term.assign(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(value)));
+      irs::ViewCast<irs::byte_type>(irs::BooleanTerm(value)));
   } else if constexpr (std::is_same_v<T, std::string_view> ||
                        std::is_same_v<T, std::string>) {
-    irs::StringTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    stream.reset(value);
-    stream.next();
-    term.mutable_options()->term.assign(token->value);
+    term.mutable_options()->term.assign(
+      irs::ViewCast<irs::byte_type>(std::string_view{value}));
   } else {
     static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
                   "Unexpected term type");
-    irs::NumericTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    stream.reset(value);
-    stream.next();
-    term.mutable_options()->term.assign(token->value);
+    irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+    term.mutable_options()->term.assign(
+      irs::numeric_utils::EncodeNumericTerm(buf, value));
   }
   return term;
 }
@@ -272,21 +278,17 @@ irs::FilterWithBoost& AddRangeFilter(Filter& root, uint64_t column,
     auto& range = AddFilter<irs::ByRange>(root);
     *range.mutable_field_id() = ExpectedFieldId(column);
     auto& options = range.mutable_options()->range;
-    irs::StringTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
     if (min_value.has_value()) {
-      stream.reset(*min_value);
-      stream.next();
-      options.min.assign(token->value);
+      options.min.assign(
+        irs::ViewCast<irs::byte_type>(std::string_view{*min_value}));
       options.min_type =
         min_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     } else {
       options.min_type = irs::BoundType::Unbounded;
     }
     if (max_value.has_value()) {
-      stream.reset(*max_value);
-      stream.next();
-      options.max.assign(token->value);
+      options.max.assign(
+        irs::ViewCast<irs::byte_type>(std::string_view{*max_value}));
       options.max_type =
         max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     } else {
@@ -299,18 +301,15 @@ irs::FilterWithBoost& AddRangeFilter(Filter& root, uint64_t column,
     auto& range = AddFilter<irs::ByGranularRange>(root);
     *range.mutable_field_id() = ExpectedFieldId(column);
     auto& options = range.mutable_options()->range;
-    irs::NumericTokenizer stream;
     if (min_value.has_value()) {
-      stream.reset(*min_value);
-      irs::SetGranularTerm(options.min, stream);
+      irs::SetGranularNumericTerm(options.min, *min_value);
       options.min_type =
         min_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     } else {
       options.min_type = irs::BoundType::Unbounded;
     }
     if (max_value.has_value()) {
-      stream.reset(*max_value);
-      irs::SetGranularTerm(options.max, stream);
+      irs::SetGranularNumericTerm(options.max, *max_value);
       options.max_type =
         max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     } else {
@@ -325,7 +324,7 @@ irs::ByTerm& AddNullFilter(Filter& root, uint64_t null_field) {
   auto& term = AddFilter<irs::ByTerm>(root);
   *term.mutable_field_id() = ExpectedFieldId(null_field);
   term.mutable_options()->term.assign(
-    irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+    irs::ViewCast<irs::byte_type>(irs::kNullTerm));
   return term;
 }
 
@@ -494,22 +493,17 @@ irs::ByTerms& AddTermsFilter(Filter& root, uint64_t column,
   for (const auto& value : values) {
     if constexpr (std::is_same_v<T, bool>) {
       terms.mutable_options()->terms.emplace(
-        irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(value)));
+        irs::ViewCast<irs::byte_type>(irs::BooleanTerm(value)));
     } else if constexpr (std::is_same_v<T, std::string_view> ||
                          std::is_same_v<T, std::string>) {
-      irs::StringTokenizer stream;
-      const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      stream.reset(value);
-      stream.next();
-      terms.mutable_options()->terms.emplace(token->value);
+      terms.mutable_options()->terms.emplace(
+        irs::ViewCast<irs::byte_type>(std::string_view{value}));
     } else {
       static_assert(std::is_floating_point_v<T> || std::is_integral_v<T>,
                     "Unexpected term type");
-      irs::NumericTokenizer stream;
-      const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      stream.reset(value);
-      stream.next();
-      terms.mutable_options()->terms.emplace(token->value);
+      irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+      terms.mutable_options()->terms.emplace(
+        irs::numeric_utils::EncodeNumericTerm(buf, value));
     }
   }
   return terms;
@@ -2146,15 +2140,15 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_IntegerColumn) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLessEq_BooleanColumn) {
-  // LESS_EQUAL on a BOOLEAN column emits irs::ByRange via BooleanTokenizer.
+  // LESS_EQUAL on a BOOLEAN column emits irs::ByRange via the boolean term
+  // encoding.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
   irs::And expected;
   auto& range = expected.add<irs::ByRange>();
   *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
-  opts.max.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
+  opts.max.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(true)));
   opts.max_type = irs::BoundType::Inclusive;
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_le(true)", columns,
                true);
@@ -2965,7 +2959,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
                "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, false, SegmentationAnalyzerProvider,
-               "Analyzer for field is not a geo analyzer");
+               "Tokenizer for field is not a geo analyzer");
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
@@ -3090,7 +3084,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
                columns, false, SegmentationAnalyzerProvider,
-               "Analyzer for field is not a geo analyzer");
+               "Tokenizer for field is not a geo analyzer");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLevenshtein) {
@@ -3760,11 +3754,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Not) {
   auto& not_group = expected.add<irs::Not>();
   auto& inner = not_group.filter<irs::ByTerm>();
   *inner.mutable_field_id() = ExpectedFieldId(1);
-  irs::StringTokenizer stream;
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-  stream.reset(std::string_view{"spam"});
-  stream.next();
-  inner.mutable_options()->term.assign(token->value);
+  inner.mutable_options()->term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"spam"}));
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ !!'spam'", columns,
                true);
 }
@@ -4079,11 +4070,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBool) {
   auto& range = expected.add<irs::ByRange>();
   *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
-  opts.min.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(false)));
+  opts.min.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(false)));
   opts.min_type = irs::BoundType::Inclusive;
-  opts.max.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
+  opts.max.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(true)));
   opts.max_type = irs::BoundType::Inclusive;
   AssertFilter(
     expected,
@@ -4300,8 +4289,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBoolOpenRight) {
   auto& range = expected.add<irs::ByRange>();
   *range.mutable_field_id() = ExpectedFieldId(1);
   auto& opts = range.mutable_options()->range;
-  opts.min.assign(
-    irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(false)));
+  opts.min.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(false)));
   opts.min_type = irs::BoundType::Inclusive;
   AssertFilter(
     expected,
@@ -5073,16 +5061,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PlainToTsqueryAnd) {
     *terms.mutable_field_id() = ExpectedFieldId(1);
     auto& opts = *terms.mutable_options();
     opts.min_match = 2;  // ALL of 2 tokens
-    {
-      irs::StringTokenizer stream;
-      const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      stream.reset(std::string_view{"quick"});
-      stream.next();
-      opts.terms.emplace(token->value);
-      stream.reset(std::string_view{"fox"});
-      stream.next();
-      opts.terms.emplace(token->value);
-    }
+    opts.terms.emplace(
+      irs::ViewCast<irs::byte_type>(std::string_view{"quick"}));
+    opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"fox"}));
   }
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ plainto_tsquery('quick fox')",
@@ -5181,13 +5162,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchNegation) {
   auto& not_group = and_group.add<irs::Not>();
   auto& inner = not_group.filter<irs::ByTerm>();
   *inner.mutable_field_id() = ExpectedFieldId(1);
-  {
-    irs::StringTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    stream.reset(std::string_view{"spam"});
-    stream.next();
-    inner.mutable_options()->term.assign(token->value);
-  }
+  inner.mutable_options()->term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"spam"}));
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('quick -spam')", columns,
@@ -5207,13 +5183,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchFullExample) {
   auto& not_group = and_group.add<irs::Not>();
   auto& inner = not_group.filter<irs::ByTerm>();
   *inner.mutable_field_id() = ExpectedFieldId(1);
-  {
-    irs::StringTokenizer stream;
-    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-    stream.reset(std::string_view{"spam"});
-    stream.next();
-    inner.mutable_options()->term.assign(token->value);
-  }
+  inner.mutable_options()->term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"spam"}));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
                "websearch_to_tsquery('\"Quick Fox\" OR slow -spam')",

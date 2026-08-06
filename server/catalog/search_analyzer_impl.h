@@ -22,14 +22,11 @@
 
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/string.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
-
-#include "basics/object_pool.hpp"
-#include "pg/sql_exception_macro.h"
 
 namespace sdb::search {
 
@@ -74,25 +71,5 @@ class Features final {
 };
 
 bool IsGeoAnalyzer(std::string_view type) noexcept;
-
-class AnalyzerImpl final {
- public:
-  // type tags for primitive token streams
-  struct StringStreamTag {};
-  struct NumberStreamTag {};
-  struct BoolStreamTag {};
-  struct NullStreamTag {};
-
-  struct Builder {
-    using ptr = irs::analysis::Analyzer::ptr;
-
-    static ptr make(StringStreamTag);
-    static ptr make(NumberStreamTag);
-    static ptr make(BoolStreamTag);
-    static ptr make(NullStreamTag);
-  };
-
-  using CacheType = irs::UnboundedObjectPool<Builder>;
-};
 
 }  // namespace sdb::search

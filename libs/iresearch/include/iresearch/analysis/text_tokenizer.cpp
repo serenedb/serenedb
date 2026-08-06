@@ -25,27 +25,43 @@
 
 #include "text_tokenizer.hpp"
 
+#include <absl/strings/ascii.h>
 #include <libstemmer.h>
+#include <simdutf.h>
 #include <unicode/brkiter.h>      // for icu::BreakIterator
 #include <unicode/normalizer2.h>  // for icu::Normalizer2
 #include <unicode/translit.h>     // for icu::Transliterator
 #include <unicode/uclean.h>       // for u_cleanup
 
 #include <cctype>  // for std::isspace(...)
+#include <duckdb/common/vector/flat_vector.hpp>
 #include <filesystem>
 #include <fstream>
 #include <string_view>
 
 #include "absl/strings/str_cat.h"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/file_utils_ext.hpp"
 #include "basics/log.h"
 #include "basics/misc.hpp"
+#include "basics/string_utils.h"
+#include "iresearch/analysis/ascii_words.hpp"
+#include "iresearch/analysis/classify.hpp"
+#include "iresearch/analysis/stem_cache.hpp"
+#include "iresearch/analysis/term_view.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/utils/first_len_filter.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
+
+// Whole-value fold shadows go through the member scratch; cap what the
+// scratch retains so adversarial values do not pin memory. Larger values
+// fold per token.
+constexpr size_t kBulkFoldLimit = 16 * 1024;
 namespace {
 
 struct IcuObjects {
@@ -69,35 +85,24 @@ struct IcuObjects {
 
 }  // namespace
 
-struct TextTokenizer::StateT : IcuObjects {
-  struct NGramState {
-    const byte_type* it = nullptr;
-    uint32_t length = 0;
-  };
-
-  icu::UnicodeString data;
-  icu::UnicodeString token;
+struct TextTokenizer::State : IcuObjects {
   Options options;
-  stopwords_t stopwords;
-  bstring term_buf;
-  std::string tmp_buf;  // used by processTerm(...)
-  NGramState ngram;
-  bytes_view term;
-  uint32_t start{};
-  uint32_t end{};
+  Prefiltered<stopwords_t> stopwords;
+  StemCache stem_cache;
+  icu::UnicodeString token;  // normalize target scratch
+  std::string word_buf;      // utf8 word / ascii case-conversion scratch
+  std::string fold_buf;      // whole-value ascii fold shadow (bulk path)
 
-  StateT(Options opts, stopwords_t stopw)
-    : options(std::move(opts)), stopwords(std::move(stopw)) {}
+  State(Options opts, stopwords_t stopw)
+    : options{std::move(opts)}, stopwords{std::move(stopw)} {}
 
-  bool IsSearchNGram() const {
-    // if min or max or preserveOriginal are set then search ngram
-    return options.min_gram_set || options.max_gram_set ||
-           options.preserve_original_set;
+  std::string_view StemCached(std::string_view word) {
+    SDB_ASSERT(stemmer);
+    if (const auto stemmed = stem_cache.Stem(stemmer.get(), word)) {
+      return *stemmed;
+    }
+    return word;
   }
-
-  bool IsNGramFinished() const { return 0 == ngram.length; }
-
-  void SetNGramFinished() noexcept { ngram.length = 0; }
 };
 
 namespace {
@@ -138,7 +143,7 @@ bool GetStopwords(TextTokenizer::stopwords_t& buf, std::string_view language,
       SDB_TRACE(IRESEARCH,
                 absl::StrCat("Failed to load stopwords from default path: ",
                              stopword_path.string(),
-                             ". Analyzer will continue without stopwords"));
+                             ". Tokenizer will continue without stopwords"));
       return true;
     }
 
@@ -234,42 +239,39 @@ bool BuildStopwords(const TextTokenizer::Options& options,
   return true;
 }
 
-bool ProcessTerm(TextTokenizer::StateT& state, icu::UnicodeString&& data) {
+template<Case C>
+bool ProcessTerm(TextTokenizer::State& state, icu::UnicodeString&& data,
+                 std::string_view& term) {
+  auto& token = state.token;
+  std::string& word_utf8 = state.word_buf;
   // normalize unicode
   auto err =
     UErrorCode::U_ZERO_ERROR;  // a value that passes the U_SUCCESS() test
 
-  state.normalizer->normalize(data, state.token, err);
+  state.normalizer->normalize(data, token, err);
 
   if (!U_SUCCESS(err)) {
-    state.token =
+    token =
       std::move(data);  // use non-normalized value if normalization failure
   }
 
   // case-convert unicode
-  switch (state.options.case_convert) {
-    case Case::Lower:
-      state.token.toLower(state.options.locale);  // inplace case-conversion
-      break;
-    case Case::Upper:
-      state.token.toUpper(state.options.locale);  // inplace case-conversion
-      break;
-    case Case::None:
-      break;
+  if constexpr (C == Case::Lower) {
+    token.toLower(state.options.locale);  // inplace case-conversion
+  } else if constexpr (C == Case::Upper) {
+    token.toUpper(state.options.locale);  // inplace case-conversion
   }
 
   // collate value, e.g. remove accents
   if (state.transliterator) {
-    state.transliterator->transliterate(state.token);
+    state.transliterator->transliterate(token);
   }
 
-  std::string& word_utf8 = state.tmp_buf;
-
   word_utf8.clear();
-  state.token.toUTF8String(word_utf8);
+  token.toUTF8String(word_utf8);
 
   // skip ignored tokens
-  if (state.stopwords.contains(word_utf8)) {
+  if (state.stopwords.Contains(word_utf8)) {
     return false;
   }
 
@@ -282,8 +284,7 @@ bool ProcessTerm(TextTokenizer::StateT& state, icu::UnicodeString&& data) {
                             static_cast<int>(word_utf8.size()));
 
     if (value) {
-      static_assert(sizeof(byte_type) == sizeof(sb_symbol));
-      state.term = bytes_view(reinterpret_cast<const byte_type*>(value),
+      term = std::string_view(reinterpret_cast<const char*>(value),
                               sb_stemmer_length(state.stemmer.get()));
 
       return true;
@@ -291,10 +292,7 @@ bool ProcessTerm(TextTokenizer::StateT& state, icu::UnicodeString&& data) {
   }
 
   // use the value of the unstemmed token
-  static_assert(sizeof(byte_type) == sizeof(char));
-  state.term_buf.assign(reinterpret_cast<const byte_type*>(word_utf8.c_str()),
-                        word_utf8.size());
-  state.term = state.term_buf;
+  term = word_utf8;
 
   return true;
 }
@@ -381,7 +379,7 @@ bool InitFromOptions(const TextTokenizer::Options& options, IcuObjects* objects,
 
 }  // namespace
 
-void TextTokenizer::StateDeleterT::operator()(StateT* p) const noexcept {
+void TextTokenizer::StateDeleter::operator()(State* p) const noexcept {
   delete p;
 }
 
@@ -389,9 +387,19 @@ const char* TextTokenizer::gStopwordPathEnvVariable =
   "IRESEARCH_TEXT_STOPWORD_PATH";
 
 TextTokenizer::TextTokenizer(Options options, stopwords_t stopwords)
-  : _state{new StateT{std::move(options), std::move(stopwords)}} {}
+  : _state{new State{std::move(options), std::move(stopwords)}} {
+  const auto& opts = _state->options;
+  _case_convert = opts.case_convert;
+  _search_ngram =
+    opts.min_gram_set || opts.max_gram_set || opts.preserve_original_set;
+  _ascii_fast = AsciiCaseSafe(opts.locale.getName());
+  if (!InitFromOptions(opts, _state.get(), true)) {
+    THROW_SQL_ERROR(
+      ERR_MSG("text: failed to initialize the analyzer for the locale"));
+  }
+}
 
-Analyzer::ptr TextTokenizer::Make(Options opts) {
+Tokenizer::ptr TextTokenizer::Make(Options opts) {
   if (opts.locale.isBogus()) {
     THROW_SQL_ERROR(ERR_MSG("text: invalid locale"));
   }
@@ -403,75 +411,34 @@ Analyzer::ptr TextTokenizer::Make(Options opts) {
     THROW_SQL_ERROR(
       ERR_MSG("text: failed to load stopwords from the configured path"));
   }
-  IcuObjects obj;
-  if (!InitFromOptions(opts, &obj, true)) {
-    THROW_SQL_ERROR(
-      ERR_MSG("text: failed to initialize the analyzer for the locale"));
-  }
   return std::make_unique<TextTokenizer>(std::move(opts), std::move(stopwords));
 }
 
-bool TextTokenizer::reset(std::string_view data) {
-  if (data.size() > std::numeric_limits<uint32_t>::max()) {
-    // can't handle data which is longer than
-    // std::numeric_limits<uint32_t>::max()
+template<TokenLayout Layout, Case C, bool SearchNGram>
+bool TextTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+  const auto size = raw.GetSize();
+  if (size > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
     return false;
   }
 
-  if (!_state->Valid() &&
-      !InitFromOptions(_state->options, _state.get(), false)) {
-    _state->Clear();
-    return false;
-  }
-
-  // Create ICU UnicodeString
-  if (data.size() >
-      static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
-    return false;
-  }
-
-  _state->data = icu::UnicodeString::fromUTF8(
-    icu::StringPiece{data.data(), static_cast<int32_t>(data.size())});
-
-  // tokenise the unicode data
-  _state->break_iterator->setText(_state->data);
-
-  // reset term state for ngrams
-  _state->term = {};
-  _state->start = 0;
-  _state->end = 0;
-  _state->SetNGramFinished();
-  std::get<IncAttr>(_attrs).value = 1;
-
-  return true;
-}
-
-bool TextTokenizer::next() {
-  if (_state->IsSearchNGram()) {
-    while (true) {
-      // if a word has not started for ngrams yet
-      if (_state->IsNGramFinished() && !next_word()) {
-        return false;
-      }
-      // get next ngram taking into account min and max
-      if (next_ngram()) {
-        return true;
-      }
-    }
-  } else if (next_word()) {
-    std::get<TermAttr>(_attrs).value = _state->term;
-
-    auto& offset = std::get<OffsAttr>(_attrs);
-    offset.start = _state->start;
-    offset.end = _state->end;
-
+  const char* const data = raw.GetData();
+  if (_ascii_fast && simdutf::validate_ascii(data, size)) {
+    AsciiFillValue<Layout, C, SearchNGram>(sink, raw);
     return true;
   }
 
-  return false;
+  const auto udata = icu::UnicodeString::fromUTF8(
+    icu::StringPiece{data, static_cast<int32_t>(size)});
+
+  // tokenise the unicode data
+  _state->break_iterator->setText(udata);
+
+  FillValue<Layout, C, SearchNGram>(udata, sink);
+  return true;
 }
 
-bool TextTokenizer::next_word() {
+template<Case C>
+bool TextTokenizer::next_word(const icu::UnicodeString& data, Word& word) {
   // find boundaries of the next word
   for (auto start = _state->break_iterator->current(), prev_end = start,
             end = _state->break_iterator->next();
@@ -479,28 +446,22 @@ bool TextTokenizer::next_word() {
        start = end, end = _state->break_iterator->next()) {
     // skip whitespace and unsuccessful terms
     if (UWordBreak::UBRK_WORD_NONE == _state->break_iterator->getRuleStatus() ||
-        !ProcessTerm(*_state, _state->data.tempSubString(start, end - start))) {
+        !ProcessTerm<C>(*_state, data.tempSubString(start, end - start),
+                        word.term)) {
       continue;
     }
 
-    // TODO(mbkkt) simdutf::utf8_length_from_utf16
-    auto utf8_length = [data = &_state->data](uint32_t begin,
-                                              uint32_t end) noexcept {
-      uint32_t length = 0;
-      while (begin < end) {
-        const auto cp = data->char32At(begin);
-        if (cp == utf8_utils::kInvalidChar32) {
-          SDB_ASSERT(length == 0);
-          return 0U;
-        }
-        length += utf8_utils::LengthFromChar32(cp);
-        begin += 1U + uint32_t{!U_IS_BMP(cp)};
-      }
-      return length;
+    // `data` comes from fromUTF8 (always well-formed UTF-16) and the break
+    // iterator lands on code-point boundaries, so the range never splits a
+    // surrogate pair.
+    auto utf8_length = [&data](uint32_t begin, uint32_t end) noexcept {
+      return static_cast<uint32_t>(simdutf::utf8_length_from_utf16(
+        reinterpret_cast<const char16_t*>(data.getBuffer()) + begin,
+        end - begin));
     };
 
-    _state->start = _state->end + utf8_length(prev_end, start);
-    _state->end = _state->start + utf8_length(start, end);
+    word.start = word.end + utf8_length(prev_end, start);
+    word.end = word.start + utf8_length(start, end);
 
     return true;
   }
@@ -508,73 +469,184 @@ bool TextTokenizer::next_word() {
   return false;
 }
 
-bool TextTokenizer::next_ngram() {
-  const auto* begin = _state->term.data();
-  const auto* end = _state->term.data() + _state->term.size();
+// All ngrams of the current word, first at the word's (advanced) position,
+// the rest at the same position; min/max/preserve_original rules unchanged
+// from the legacy per-call iteration.
+template<TokenLayout Layout, bool StableTerm>
+void TextTokenizer::EmitWordNGrams(TokenSink& sink, uint32_t& pos,
+                                   std::string_view term, uint32_t offs_start) {
+  const auto* begin = reinterpret_cast<const byte_type*>(term.data());
+  const auto* end = begin + term.size();
   SDB_ASSERT(begin != end);
+  const auto& options = _state->options;
 
-  auto& inc = std::get<IncAttr>(_attrs);
+  const byte_type* it = begin;
+  uint32_t length = 0;
+  do {
+    it = utf8_utils::Next(it, end);
+  } while (++length < options.min_gram && it != end);
 
-  // if there are no ngrams yet then a new word started
-  if (_state->IsNGramFinished()) {
-    _state->ngram.it = begin;
-    inc.value = 1;
-    // find the first ngram > min
-    do {
-      _state->ngram.it = utf8_utils::Next(_state->ngram.it, end);
-    } while (++_state->ngram.length < _state->options.min_gram &&
-             _state->ngram.it != end);
-  } else {
-    // not first ngram in a word
-    inc.value = 0;  // staying on the current pos
-    _state->ngram.it = utf8_utils::Next(_state->ngram.it, end);
-    ++_state->ngram.length;
+  // every ngram is a prefix of the word: a cycle-stable word (view into the
+  // input) is emitted verbatim, a volatile one is copied per gram (short
+  // grams inline-pack with no arena traffic)
+  bool first = true;
+  for (;;) {
+    bool word_done = it == end;
+    if (options.max_gram_set && length > options.max_gram) {
+      word_done = true;
+      if (!options.preserve_original) {
+        return;
+      }
+      it = end;
+    }
+    if (length >= options.min_gram || options.preserve_original) {
+      const auto size = static_cast<uint32_t>(std::distance(begin, it));
+      if (first) {
+        ++pos;
+        first = false;
+      }
+      if constexpr (StableTerm) {
+        sink.Emit<Layout>(MakeTermView(begin, size), pos,
+                          Offs{offs_start, offs_start + size});
+      } else {
+        sink.Emit<Layout>(
+          size,
+          [&](byte_type* mem) IRS_FORCE_INLINE {
+            std::memcpy(mem, begin, size);
+            return size;
+          },
+          pos, Offs{offs_start, offs_start + size});
+      }
+    }
+    if (word_done) {
+      return;
+    }
+    it = utf8_utils::Next(it, end);
+    ++length;
   }
+}
 
-  bool finished{};
-  Finally set_ngram_finished = [this, &finished]() noexcept -> void {
-    if (finished) {
-      _state->SetNGramFinished();
+// ASCII values skip ICU wholesale: word boundaries via the shared ASCII
+// UAX#29 scan (only alnum-bearing segments are words, matching the break
+// iterator's UBRK_WORD_NONE filter), normalization and accent stripping are
+// identity on ASCII, case conversion is a bulk ASCII map (tailored-case
+// locales keep the unicode path), stopwords compare post-case bytes, and
+// stems are memoized per distinct word.
+template<TokenLayout Layout, Case C, bool SearchNGram>
+void TextTokenizer::AsciiFillValue(TokenSink& sink, duckdb::string_t value) {
+  const char* const data = value.GetData();
+  const uint32_t n = value.GetSize();
+  auto& state = *_state;
+  uint32_t pos = 0;
+  const auto fold = [](char* dst, const char* src, uint32_t n) {
+    if constexpr (C == Case::Lower) {
+      absl::ascii_internal::AsciiStrToLower(dst, src, n);
+    } else {
+      absl::ascii_internal::AsciiStrToUpper(dst, src, n);
     }
   };
-
-  // if a word has finished
-  if (_state->ngram.it == end) {
-    // no unwatched ngrams in a word
-    finished = true;
-  }
-
-  // if length > max
-  if (_state->options.max_gram_set &&
-      _state->ngram.length > _state->options.max_gram) {
-    // no unwatched ngrams in a word
-    finished = true;
-    if (_state->options.preserve_original) {
-      _state->ngram.it = end;
-    } else {
-      return false;
+  // one whole-value fold into the member scratch instead of a per-word
+  // Reserve+fold; short words emit as inline interned views of it
+  const char* shadow = nullptr;
+  if constexpr (C != Case::None && !SearchNGram) {
+    if (n <= kBulkFoldLimit) [[likely]] {
+      sdb::basics::StrResizeAmortized(state.fold_buf, n);
+      fold(state.fold_buf.data(), data, n);
+      shadow = state.fold_buf.data();
     }
   }
+  ScanAsciiWords(value, [&](const AsciiSegment& seg) {
+    if (!seg.has_alpha && !seg.has_digit) {
+      return;
+    }
+    const uint32_t size = seg.end - seg.begin;
+    const char* src = data + seg.begin;
 
-  // if length >= min or preserveOriginal
-  if (_state->ngram.length >= _state->options.min_gram ||
-      _state->options.preserve_original) {
-    // ensure disambiguating casts below are safe. Casts required for clang
-    // compiler on Mac
-    static_assert(sizeof(byte_type) == sizeof(char));
-
-    auto size = static_cast<uint32_t>(std::distance(begin, _state->ngram.it));
-    _term_buf.assign(_state->term.data(), size);
-    std::get<TermAttr>(_attrs).value = _term_buf;
-
-    auto& offset = std::get<OffsAttr>(_attrs);
-    offset.start = _state->start;
-    offset.end = _state->start + size;
-
-    return true;
-  }
-
-  return false;
+    if constexpr (SearchNGram) {
+      std::string_view word;
+      if constexpr (C == Case::None) {
+        word = {src, size};
+      } else {
+        sdb::basics::StrResizeAmortized(state.word_buf, size);
+        fold(state.word_buf.data(), src, size);
+        word = {state.word_buf.data(), size};
+      }
+      if (state.stopwords.Contains(word)) {
+        return;
+      }
+      const std::string_view term =
+        state.stemmer ? state.StemCached(word) : word;
+      // the word survived as a view into the input: stable across cycles
+      if constexpr (C == Case::None) {
+        if (term.data() == src) {
+          EmitWordNGrams<Layout, true>(sink, pos, term, seg.begin);
+          return;
+        }
+      }
+      EmitWordNGrams<Layout, false>(sink, pos, term, seg.begin);
+    } else {
+      std::string_view word;
+      if constexpr (C == Case::None) {
+        word = {src, size};
+      } else if (shadow != nullptr) [[likely]] {
+        word = {shadow + seg.begin, size};
+      } else {
+        sdb::basics::StrResizeAmortized(state.word_buf, size);
+        fold(state.word_buf.data(), src, size);
+        word = {state.word_buf.data(), size};
+      }
+      if (state.stopwords.Contains(word)) {
+        return;
+      }
+      const Offs offs{seg.begin, seg.end};
+      const auto intern = [&](std::string_view term) IRS_FORCE_INLINE {
+        sink.Emit<Layout>(
+          term.size(),
+          [&](byte_type* mem) IRS_FORCE_INLINE {
+            std::memcpy(mem, term.data(), term.size());
+            return static_cast<uint32_t>(term.size());
+          },
+          ++pos, offs);
+      };
+      if (state.stemmer) {
+        const std::string_view term = state.StemCached(word);
+        if constexpr (C == Case::None) {
+          if (term.data() == word.data()) {
+            sink.Emit<Layout>(MakeTermView(word.data(), size), ++pos, offs);
+            return;
+          }
+        }
+        intern(term);
+      } else if constexpr (C == Case::None) {
+        sink.Emit<Layout>(MakeTermView(word.data(), size), ++pos, offs);
+      } else {
+        intern(word);
+      }
+    }
+  });
 }
+
+template<TokenLayout Layout, Case C, bool SearchNGram>
+void TextTokenizer::FillValue(const icu::UnicodeString& data, TokenSink& sink) {
+  uint32_t pos = 0;
+  Word word;
+  if constexpr (SearchNGram) {
+    while (next_word<C>(data, word)) {
+      EmitWordNGrams<Layout, false>(sink, pos, word.term, word.start);
+    }
+    return;
+  }
+  while (next_word<C>(data, word)) {
+    sink.Emit<Layout>(
+      word.term.size(),
+      [&](byte_type* mem) IRS_FORCE_INLINE {
+        std::memcpy(mem, word.term.data(), word.term.size());
+        return static_cast<uint32_t>(word.term.size());
+      },
+      ++pos, Offs{word.start, word.end});
+  }
+}
+
+template class TypedTokenizer<TextTokenizer>;
 
 }  // namespace irs::analysis

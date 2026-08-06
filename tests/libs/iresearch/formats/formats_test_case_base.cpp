@@ -554,20 +554,18 @@ TEST_P(FormatTestCase, fields_seek_ge) {
 
   // seek_ge before every term
   {
-    irs::NumericTokenizer stream;
-    auto* term = irs::get<irs::TermAttr>(stream);
-    ASSERT_NE(nullptr, term);
+    irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
 
     auto it = field->iterator(irs::SeekMode::NORMAL);
     ASSERT_NE(nullptr, it);
 
     for (size_t begin = 74, end = 7000, step = 2; begin < end; begin += step) {
-      stream.reset(double_t(begin));
-      ASSERT_TRUE(stream.next());
-      ASSERT_EQ(irs::SeekResult::NotFound, it->seek_ge(term->value));
+      const auto term =
+        irs::numeric_utils::EncodeNumericTerm(buf, double_t(begin));
+      ASSERT_EQ(irs::SeekResult::NotFound, it->seek_ge(term));
 
       auto expected_it =
-        std::lower_bound(all_terms.begin(), all_terms.end(), term->value,
+        std::lower_bound(all_terms.begin(), all_terms.end(), term,
                          [](const irs::bstring& lhs,
                             const irs::bytes_view& rhs) { return lhs < rhs; });
       ASSERT_NE(all_terms.end(), expected_it);

@@ -103,7 +103,10 @@ std::vector<float> MakeDirClusters(uint32_t d, size_t n_clusters,
 }
 
 CentroidsBuildParams DeepParams() {
-  return {.posting_size = 4, .max_fanout = 4};
+  return {
+    .posting_size = 4,
+    .max_fanout = 4,
+  };
 }
 
 void WriteVectorColumn(Directory& dir, duckdb::DatabaseInstance& db,

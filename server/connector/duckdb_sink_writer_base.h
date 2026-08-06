@@ -38,8 +38,10 @@ struct ColumnDescriptor {
   duckdb::LogicalType type;
 };
 
+// PK terms arrive on exactly one lane: `key_terms` (inline string_t, the
+// single-i64 fast path) or `keys` (composite string builders).
 struct PkChunk {
-  std::span<const std::string_view> keys;
+  std::span<const duckdb::string_t> key_terms;
   const duckdb::Vector* column = nullptr;
 };
 

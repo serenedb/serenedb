@@ -25,18 +25,20 @@
 
 #include <string>
 
-#include "analyzer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
-#include "token_attributes.hpp"
+#include "tokenizer.hpp"
 
 namespace irs::analysis {
 
 // an analyzer capable of breaking up delimited text into tokens as per
 // RFC4180 (without starting new records on newlines)
-class DelimitedTokenizer final : public TypedAnalyzer<DelimitedTokenizer>,
+class DelimitedTokenizer final : public TypedTokenizer<DelimitedTokenizer>,
                                  private util::Noncopyable {
  public:
   static constexpr std::string_view type_name() noexcept { return "delimiter"; }
+
+  // an empty delimiter splits per symbol with quote handling
+  enum class Mode : uint8_t { Chars, Single, Multi };
 
   struct Options {
     using Owner = DelimitedTokenizer;
@@ -45,21 +47,25 @@ class DelimitedTokenizer final : public TypedAnalyzer<DelimitedTokenizer>,
   static ptr Make(Options opts);
 
   explicit DelimitedTokenizer(std::string_view delimiter);
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-  bool next() final;
-  bool reset(std::string_view data) final;
+  TokenTraits Traits() const noexcept final { return {.offsets = true}; }
+
+  auto PrepareBatch() const { return std::tuple{_mode}; }
+
+  template<TokenLayout Layout, Mode M>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
 
  private:
-  // token value with evaluated quotes
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  template<TokenLayout Layout>
+  void FastFillValue(TokenSink& sink, const byte_type* p, size_t size);
+  template<TokenLayout Layout>
+  void CharsFillValue(TokenSink& sink, const byte_type* p, size_t size);
+  template<TokenLayout Layout>
+  void QuotedFillValue(TokenSink& sink, const byte_type* p, size_t size);
 
-  bytes_view _data;
-  bytes_view _delim;
-  bstring _delim_buf;
-  bstring _term_buf;  // buffer for the last evaluated term
-  attributes _attrs;
+  bstring _delim;
+  Mode _mode;
 };
+
+extern template class TypedTokenizer<DelimitedTokenizer>;
 
 }  // namespace irs::analysis

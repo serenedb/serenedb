@@ -22,11 +22,11 @@
 
 #include <tuple>
 
+#include "basics/down_cast.h"
 #include "basics/serializer.h"
 #include "basics/shared.hpp"
-#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
-#include "token_attributes.hpp"
 #include "tokenizer.hpp"
 
 namespace irs::analysis {
@@ -45,28 +45,40 @@ struct TokenizerConfig;
 // OffsAttr is not exposed because interleaving tokens from independent
 // tokenizers over the same input violates the monotonic offset invariant
 // required by the indexer.
-class UnionTokenizer final : public TypedAnalyzer<UnionTokenizer>,
+class UnionTokenizer final : public TypedTokenizer<UnionTokenizer>,
                              private util::Noncopyable {
  public:
   struct Options {
     using Owner = UnionTokenizer;
     std::vector<std::unique_ptr<TokenizerConfig>> children;
   };
-  static Analyzer::ptr Make(Options opts);
+  static Tokenizer::ptr Make(Options opts);
 
   static constexpr std::string_view type_name() noexcept { return "union"; }
 
-  explicit UnionTokenizer(std::vector<Analyzer::ptr> children);
+  explicit UnionTokenizer(std::vector<Tokenizer::ptr> children);
 
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    // Only return union-owned attributes. Do not delegate to sub-analyzers:
-    // the "active" sub changes on each next() call, so any delegated pointer
-    // would be unstable.
-    return irs::GetMutable(_attrs, id);
+  TokenTraits Traits() const noexcept final { return {.explicit_pos = true}; }
+  std::tuple<> PrepareBatch();
+
+  template<TokenLayout Layout>
+  bool DoFill(duckdb::string_t value, TokenSink& sink);
+
+  void DoFillColumn(std::span<const duckdb::string_t> values,
+                    std::span<const doc_id_t> docs, TokenSink& sink,
+                    TokenLayout layout);
+
+  void Bind(duckdb::ClientContext& ctx) final {
+    for (auto& sub : _subs) {
+      sub.GetMutableStream().Bind(ctx);
+    }
   }
 
-  bool next() final;
-  bool reset(std::string_view data) final;
+  void Unbind() noexcept final {
+    for (auto& sub : _subs) {
+      sub.GetMutableStream().Unbind();
+    }
+  }
 
   /// @brief calls visitor on union members in respective order.
   /// Visiting is interrupted on first visitor returning false.
@@ -90,40 +102,39 @@ class UnionTokenizer final : public TypedAnalyzer<UnionTokenizer>,
 
  private:
   struct SubAnalyzer {
-    explicit SubAnalyzer(Analyzer::ptr a);
-    SubAnalyzer();
+    explicit SubAnalyzer(Tokenizer::ptr a);
 
-    bool DoReset(std::string_view data);
-    bool Advance();
-
-    const Analyzer& GetStream() const noexcept {
+    const Tokenizer& GetStream() const noexcept {
       SDB_ASSERT(_analyzer);
       return *_analyzer;
     }
 
-    const TermAttr* term{nullptr};
-    const IncAttr* inc{nullptr};
-    const PayAttr* pay{nullptr};  // nullptr if sub has no payload
-    bool has_token{false};
-    uint32_t position{0};
+    Tokenizer& GetMutableStream() noexcept {
+      SDB_ASSERT(_analyzer);
+      return *_analyzer;
+    }
+
+    // Traits() is stable per instance; cached so CollectSubs doesn't pay a
+    // virtual call per sub per value.
+    bool dense = false;
 
    private:
-    Analyzer::ptr _analyzer;
+    Tokenizer::ptr _analyzer;
   };
 
-  uint32_t FindMinPosition() const noexcept;
+  void CollectSubs(duckdb::string_t data);
+  template<TokenLayout Layout, bool Copy>
+  void EmitMerged(TokenSink& sink);
+
+  struct SubSink;
+  struct SubSinkDeleter {
+    void operator()(SubSink* p) const noexcept;
+  };
 
   using SubAnalyzers = std::vector<SubAnalyzer>;
-  using Attributes = std::tuple<IncAttr, TermAttr, AttributePtr<PayAttr>>;
 
   SubAnalyzers _subs;
-  size_t _emit_index = 0;
-  uint32_t _current_min_pos = std::numeric_limits<uint32_t>::max();
-  uint32_t _last_emitted_pos = 0;
-  PayAttr _payload;
-  bstring _term_buf;
-  bstring _payload_buf;
-  Attributes _attrs;
+  std::unique_ptr<SubSink, SubSinkDeleter> _sub_sink;
 };
 
 template<typename Context>
@@ -136,5 +147,7 @@ void SerdeRead(Context ctx, UnionTokenizer::Options& o) {
   auto refs = std::tie(o.children);
   sdb::basics::ReadTuple(ctx.io(), refs, ctx.arg());
 }
+
+extern template class TypedTokenizer<UnionTokenizer>;
 
 }  // namespace irs::analysis

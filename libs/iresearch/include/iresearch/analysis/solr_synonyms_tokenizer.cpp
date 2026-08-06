@@ -27,8 +27,8 @@
 #include <string_view>
 #include <utility>
 
-#include "basics/log.h"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/term_view.hpp"
+#include "iresearch/analysis/token_batch.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
@@ -36,6 +36,7 @@ namespace {
 
 SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line,
                                               const size_t line_number) {
+
   std::vector<std::string_view> outputs(absl::StrSplit(line, ','));
 
   for (auto& s : outputs) {
@@ -51,6 +52,16 @@ SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line,
   outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
 
   return outputs;
+}
+
+SolrSynonymsTokenizer::SynonymsTerms ToTerms(
+  const SolrSynonymsTokenizer::SynonymsList& views) {
+  SolrSynonymsTokenizer::SynonymsTerms terms;
+  terms.reserve(views.size());
+  for (const auto view : views) {
+    terms.emplace_back(view.data(), static_cast<uint32_t>(view.size()));
+  }
+  return terms;
 }
 
 }  // namespace
@@ -79,9 +90,9 @@ SolrSynonymsTokenizer::SynonymsLines SolrSynonymsTokenizer::ParseSynonymsLines(
       }
 
       synonyms_line.in = SplitLine(sides[0], line_number);
-      synonyms_line.out = SplitLine(sides[1], line_number);
+      synonyms_line.out = ToTerms(SplitLine(sides[1], line_number));
     } else {
-      synonyms_line.out = SplitLine(sides[0], line_number);
+      synonyms_line.out = ToTerms(SplitLine(sides[0], line_number));
     }
 
     synonyms_lines.push_back(std::move(synonyms_line));
@@ -95,8 +106,9 @@ SolrSynonymsTokenizer::SynonymsMap SolrSynonymsTokenizer::Parse(
   SynonymsMap result;
   for (const auto& synonyms_line : lines) {
     if (synonyms_line.in.empty()) {
-      for (std::string_view synonym : synonyms_line.out) {
-        result[synonym] = &synonyms_line.out;
+      for (const auto& synonym : synonyms_line.out) {
+        result[std::string_view{synonym.GetData(), synonym.GetSize()}] =
+          &synonyms_line.out;
       }
     } else {
       for (std::string_view synonym : synonyms_line.in) {
@@ -122,45 +134,29 @@ SolrSynonymsTokenizer::MakeState(std::string text) {
   // Populate each buffer before deriving views from it.
   state->text = std::move(text);
   state->lines = ParseSynonymsLines(state->text);
-  state->synonyms = Parse(state->lines);
+  state->synonyms = Prefiltered{Parse(state->lines)};
 
   return state;
 }
 
-Analyzer::ptr SolrSynonymsTokenizer::Make(Options opts) {
+Tokenizer::ptr SolrSynonymsTokenizer::Make(Options opts) {
   return std::make_unique<SolrSynonymsTokenizer>(
     MakeState(std::move(opts.synonyms_text)));
 }
 
-bool SolrSynonymsTokenizer::next() {
-  if (_curr == _end) {
-    return false;
-  }
-
-  auto& inc = std::get<IncAttr>(_attrs);
-  inc.value = (_curr == _begin) ? 1 : 0;
-
-  auto& term = std::get<TermAttr>(_attrs);
-  term.value = ViewCast<byte_type>(*_curr++);
-  return true;
-}
-
-bool SolrSynonymsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<OffsAttr>(_attrs);
-  offset.start = 0;
-  offset.end = data.size();
-
-  const auto& synonyms = _state->synonyms;
-  if (const auto it = synonyms.find(data); it == synonyms.end()) {
-    _holder = data;
-    _begin = _curr = &_holder;
-    _end = _curr + 1;
+template<TokenLayout Layout>
+bool SolrSynonymsTokenizer::DoFill(const duckdb::string_t& raw, TokenSink& sink) {
+  if (const auto* list = Lookup(raw);
+      list != nullptr) {
+    for (const auto synonym : *list) {
+      sink.Emit<Layout>(synonym, 1);
+    }
   } else {
-    _begin = _curr = it->second->data();
-    _end = _curr + it->second->size();
+    sink.Emit<Layout>(raw, 1);
   }
-
   return true;
 }
+
+template class TypedTokenizer<SolrSynonymsTokenizer>;
 
 }  // namespace irs::analysis

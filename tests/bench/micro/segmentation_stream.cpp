@@ -25,6 +25,8 @@
 
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 
+#include "bench_token_sink.hpp"
+
 namespace {
 
 using namespace irs::analysis;
@@ -37,12 +39,11 @@ void BmSegmentationAnalyzer(benchmark::State& state) {
 
   auto stream = SegmentationTokenizer::Make(std::move(opts));
 
-  const std::string_view str = "QUICK BROWN FOX JUMPS OVER THE LAZY DOG";
+  const duckdb::string_t str{"QUICK BROWN FOX JUMPS OVER THE LAZY DOG"};
+  bench::DrainSink sink;
   for (auto _ : state) {
-    stream->reset(str);
-    while (bool has_next = stream->next()) {
-      benchmark::DoNotOptimize(has_next);
-    }
+    stream->Fill(str, sink.writer, sink.layout);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 }
 
@@ -85,11 +86,11 @@ BENCHMARK_DEFINE_F(AsciiOptimizationFixture,
 
   auto stream = SegmentationTokenizer::Make(std::move(opts));
 
+  bench::DrainSink sink;
+
   for (auto _ : state) {
-    stream->reset(data);
-    while (bool has_next = stream->next()) {
-      benchmark::DoNotOptimize(has_next);
-    }
+    stream->Fill(data, sink.writer, sink.layout);
+    benchmark::DoNotOptimize(sink.Consume());
   }
 }
 

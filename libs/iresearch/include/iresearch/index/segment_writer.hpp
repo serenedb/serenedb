@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "basics/bit_utils.hpp"
 #include "basics/containers/bitset.hpp"
 #include "basics/noncopyable.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -30,8 +31,9 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
-#include "iresearch/index/field_data.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/inverter/fields_inverter.hpp"
+#include "iresearch/index/typed_terms.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -67,28 +69,120 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Begin a batch. Returns first valid doc_id in the batch.
   doc_id_t begin(DocContext ctx, doc_id_t batch_size = 1);
 
-  void ResetNorms() noexcept { _doc.clear(); }
-
-  template<typename Field>
-  bool insert(Field&& field) {
-    SDB_ASSERT(LastDocId() < doc_limits::eof());
-    return insert(std::forward<Field>(field), LastDocId());
+  bool InsertKeywordBlock(FieldInverter& slot,
+                          std::span<const duckdb::string_t> values,
+                          std::span<const doc_id_t> docs) {
+    SDB_ASSERT(values.size() == docs.size());
+    AssertDocRange(docs);
+    return InvertChecked([&] { return slot.InvertKeywordBlock(values, docs); });
   }
 
-  template<typename Field>
-  bool insert(Field&& field, doc_id_t doc) {
-    if (!_valid) [[unlikely]] {
+  bool InsertDenseKeywordBlock(FieldInverter& slot,
+                               std::span<const duckdb::string_t> values,
+                               doc_id_t first_doc) {
+    SDB_ASSERT(values.empty() || !_valid ||
+               (first_doc >= _batch_first_doc_id &&
+                first_doc + values.size() - 1 <= LastDocId()));
+    return InvertChecked(
+      [&] { return slot.InvertDenseKeywordBlock(values, first_doc); });
+  }
+
+  bool InsertUniqueKeywordBlock(FieldInverter& slot,
+                                std::span<const duckdb::string_t> values,
+                                doc_id_t first_doc) {
+    SDB_ASSERT(values.empty() || !_valid ||
+               (first_doc >= _batch_first_doc_id &&
+                first_doc + values.size() - 1 <= LastDocId()));
+    return InvertChecked(
+      [&] { return slot.InvertUniqueKeywordBlock(values, first_doc); });
+  }
+
+  bool InsertConstantBlock(FieldInverter& slot, bytes_view term,
+                           std::span<const doc_id_t> docs) {
+    AssertDocRange(docs);
+    return InvertChecked([&] { return slot.InvertConstantBlock(term, docs); });
+  }
+
+  bool InsertKeywordBlock(field_id id, IndexFeatures index_features,
+                          std::span<const duckdb::string_t> values,
+                          std::span<const doc_id_t> docs) {
+    auto* slot = Field(id, index_features);
+    if (!slot) [[unlikely]] {
+      _valid = false;
       return false;
     }
-    SDB_ASSERT(doc <= LastDocId());
-    SDB_ASSERT(doc >= _batch_first_doc_id);
-    return index(std::forward<Field>(field), doc);
+    return InsertKeywordBlock(*slot, values, docs);
   }
 
+  template<typename T>
+  bool InsertDenseKeywordBlock(field_id id, IndexFeatures index_features,
+                               std::span<const T> values, doc_id_t first_doc) {
+    auto* slot = Field(id, index_features);
+    if (!slot) [[unlikely]] {
+      _valid = false;
+      return false;
+    }
+    return InsertDenseKeywordBlock(*slot, values, first_doc);
+  }
+
+  bool InsertConstantBlock(field_id id, IndexFeatures index_features,
+                           bytes_view term, std::span<const doc_id_t> docs) {
+    auto* slot = Field(id, index_features);
+    if (!slot) [[unlikely]] {
+      _valid = false;
+      return false;
+    }
+    return InsertConstantBlock(*slot, term, docs);
+  }
+
+  bool InsertNullBlock(field_id id, IndexFeatures index_features,
+                       std::span<const doc_id_t> docs) {
+    return InsertConstantBlock(id, index_features,
+                               ViewCast<byte_type>(kNullTerm), docs);
+  }
+
+  // Block ingest: `runs` segments the batch's tokens by doc (whole
+  // field-major columns in one call).
+  bool InsertBlock(field_id id, IndexFeatures index_features, TokenBatch& batch,
+                   DocRuns runs) {
+    auto* slot = Field(id, index_features);
+    if (!slot) [[unlikely]] {
+      _valid = false;
+      return false;
+    }
+    return InsertBlock(*slot, batch, runs);
+  }
+
+  bool InsertStridedBlock(FieldInverter& slot,
+                          std::span<const duckdb::string_t> terms,
+                          std::span<const doc_id_t> docs,
+                          uint32_t tokens_per_doc) {
+    AssertDocRange(docs);
+    return InvertChecked(
+      [&] { return slot.InvertStridedBlock(terms, docs, tokens_per_doc); });
+  }
+
+  // Slot-direct flush for column-based writers: the slot comes from Field()
+  // once per column, so repeated flushes skip the lookup and feature check.
+  bool InsertBlock(FieldInverter& slot, TokenBatch& batch, DocRuns runs) {
+    return InvertChecked([&] {
+      AssertRunRange(runs);
+      return slot.InvertBlock(batch, runs);
+    });
+  }
+
+  // Per-column slot acquisition: resolves (creating on first sight) and
+  // validates the requested features once; null on a feature mismatch.
+  FieldInverter* Field(field_id id, IndexFeatures index_features) {
+    auto* slot = _fields.Emplace(id, index_features);
+    return IsSubsetOf(index_features, slot->RequestedFeatures()) ? slot
+                                                                 : nullptr;
+  }
+
+  duckdb::Allocator& Allocator() const noexcept { return _fields.Allocator(); }
+
   void commit() {
-    if (_valid) {
-      finish();
-    } else {
+    if (!_valid) {
       rollback();
     }
   }
@@ -153,18 +247,12 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return _field_options ? _field_options.get() : _fallback_field_options;
   }
 
- private:
-  bool index(field_id id, doc_id_t doc, IndexFeatures index_features,
-             Tokenizer& tokens);
-
-  template<typename Field>
-  bool index(Field&& field, doc_id_t doc) {
-    auto& tokens = static_cast<Tokenizer&>(field.GetTokens());
-    return index(field.Id(), doc, field.GetIndexFeatures(), tokens);
+  // Forwarded operator-cardinality reserve hint; observed history wins.
+  void SeedTermsHistory(field_id id, uint32_t expected_terms) {
+    _fields.SeedHistory(id, expected_terms);
   }
 
-  void finish();
-
+ private:
   void FlushFields(FlushState& state,
                    std::span<const BasicTermReader* const> extra);
 
@@ -177,8 +265,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   std::unique_ptr<ColReader> _col_reader;
   ManagedVector<DocContext> _docs_context;
   DocsMask _docs_mask;
-  FieldsData _fields;
-  std::vector<const FieldData*> _doc;
+  FieldsInverter _fields;
   std::string _seg_name;
   std::unique_ptr<burst_trie::FieldWriter> _field_writer;
   duckdb::DatabaseInstance& _db;
@@ -188,6 +275,30 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;
   std::unique_ptr<ColWriter> _col_writer;
+  template<typename Invert>
+  bool InvertChecked(Invert&& invert) {
+    if (!_valid) [[unlikely]] {
+      return false;
+    }
+    if (invert()) {
+      return true;
+    }
+    _valid = false;
+    return false;
+  }
+
+  void AssertDocRange([[maybe_unused]] std::span<const doc_id_t> docs) const {
+    SDB_ASSERT(
+      docs.empty() || !_valid ||
+      (docs.front() >= _batch_first_doc_id && docs.back() <= LastDocId()));
+  }
+
+  void AssertRunRange([[maybe_unused]] DocRuns runs) const {
+    for ([[maybe_unused]] const auto& run : runs) {
+      SDB_ASSERT(run.doc >= _batch_first_doc_id && run.doc <= LastDocId());
+    }
+  }
+
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;

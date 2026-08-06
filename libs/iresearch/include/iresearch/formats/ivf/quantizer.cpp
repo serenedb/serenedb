@@ -74,6 +74,9 @@ constexpr size_t kFastScanBits = 4;
 constexpr size_t kFastScanKsub = size_t{1} << kFastScanBits;
 constexpr uint32_t kPanoramaMinDim = 64;
 constexpr uint32_t kPanoramaLevelWidth = 32;
+constexpr size_t kPqTrainResiduals = kFastScanKsub * 256;
+constexpr size_t kPcaMinRows = 1024;
+constexpr size_t kPcaTrainRows = 4096;
 
 size_t RoundUp(size_t n, size_t multiple) noexcept {
   return (n + multiple - 1) / multiple * multiple;
@@ -186,8 +189,16 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
   PanoramaQuantizerWriter(uint32_t d, VectorMetric metric)
     : _d{d}, _metric{metric} {}
 
+  size_t TrainSamples(size_t rows) const noexcept final {
+    if (!PanoramaApplies(_metric, _d) ||
+        rows < std::max<size_t>(kPcaMinRows, size_t{8} * _d)) {
+      return 0;
+    }
+    return std::max<size_t>(kPcaTrainRows, size_t{8} * _d);
+  }
+
   void Train(const float* vecs, size_t n) final {
-    if (!PanoramaApplies(_metric, _d)) {
+    if (!PanoramaApplies(_metric, _d) || n < _d) {
       return;
     }
     _rotation = TrainPcaRotation(vecs, n, _d);
@@ -476,6 +487,10 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
     _sq.trained.assign(2 * static_cast<size_t>(_d), 0.f);
   }
 
+  size_t TrainSamples(size_t /*rows*/) const noexcept final {
+    return kTrainStreaming;
+  }
+
   void Train(const float* vecs, size_t n) final {
     if (n == 0) {
       return;
@@ -664,6 +679,10 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
     }
+  }
+
+  size_t TrainSamples(size_t rows) const noexcept final {
+    return std::min<size_t>(rows, kPqTrainResiduals);
   }
 
   void Train(const float* vecs, size_t n) final {

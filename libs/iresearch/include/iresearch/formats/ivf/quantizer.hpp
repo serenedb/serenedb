@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 
@@ -46,7 +47,11 @@ struct PayloadBlockSetting {
 
 class QuantizerWriter {
  public:
+  static constexpr size_t kTrainStreaming = std::numeric_limits<size_t>::max();
+
   virtual ~QuantizerWriter() = default;
+
+  virtual size_t TrainSamples(size_t /*rows*/) const noexcept { return 0; }
 
   virtual void Train(const float* vecs, size_t n) = 0;
 

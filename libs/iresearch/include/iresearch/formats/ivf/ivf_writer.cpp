@@ -52,10 +52,7 @@ namespace {
 
 constexpr uint32_t kDefaultClusterIters = 25;
 constexpr uint64_t kMinCentroidTrainSample = 256;
-constexpr size_t kPqTrainResiduals = 65536;
-constexpr uint32_t kPqTrainSeed = 0x51ED270Bu;
-constexpr size_t kPcaMinRows = 1024;
-constexpr size_t kPcaTrainRows = 4096;
+constexpr uint32_t kTrainSeed = 0x51ED270Bu;
 
 struct DocRowView {
   const doc_id_t* docs;
@@ -80,14 +77,12 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     return result;
   }
 
-  const bool pq = _info.quant.kind == VectorQuantization::PQ;
-  const bool sq_train = _info.quant.kind == VectorQuantization::SQ8 ||
-                        _info.quant.kind == VectorQuantization::SQ4;
   const bool needs_centroid = QuantizerNeedsCentroid(_info.quant.kind);
   const bool normalize = _info.metric == VectorMetric::Cosine;
-  const bool pca = _info.quant.kind == VectorQuantization::None &&
-                   PanoramaApplies(_info.metric, d) &&
-                   rows >= std::max<size_t>(kPcaMinRows, size_t{8} * d);
+  const size_t train_cap = qw->TrainSamples(rows);
+  const bool stream_train = train_cap == QuantizerWriter::kTrainStreaming;
+  const bool sample_train = train_cap != 0 && !stream_train;
+  const bool train_residuals = sample_train && needs_centroid;
 
   auto centroids = CentroidsBuilder::Create(
     vector_column, ctx, rows, _info.metric, d,
@@ -98,15 +93,9 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     });
   const size_t n_clusters = centroids.NumClusters();
 
-  std::vector<float> pq_train_res;
-  size_t pq_res_seen = 0;
-  const size_t pq_res_cap = pq ? std::min<size_t>(rows, kPqTrainResiduals) : 0;
-  std::vector<float> pca_train;
-  size_t pca_seen = 0;
-  const size_t pca_cap =
-    pca ? std::min<size_t>(rows, std::max<size_t>(kPcaTrainRows, size_t{8} * d))
-        : 0;
-  absl::InsecureBitGen pq_rng(std::seed_seq{kPqTrainSeed});
+  std::vector<float> train;
+  size_t train_seen = 0;
+  absl::InsecureBitGen train_rng(std::seed_seq{kTrainSeed});
 
   std::vector<uint32_t> doc_cluster;
   doc_cluster.reserve(rows);
@@ -119,16 +108,15 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     std::vector<std::span<const float>> cents(
       needs_centroid ? STANDARD_VECTOR_SIZE : 0);
     size_t gathered = 0;
-    const auto reservoir = [&](std::vector<float>& buf, size_t& seen,
-                               size_t cap) -> float* {
-      size_t slot = seen;
-      if (seen >= cap) {
-        slot = absl::Uniform(pq_rng, 0u, seen);
+    const auto reservoir = [&]() -> float* {
+      size_t slot = train_seen;
+      if (train_seen >= train_cap) {
+        slot = absl::Uniform<size_t>(train_rng, 0, train_seen + 1);
       } else {
-        buf.insert(buf.end(), d, 0.f);
+        train.insert(train.end(), d, 0.f);
       }
-      ++seen;
-      return slot < cap ? buf.data() + slot * d : nullptr;
+      ++train_seen;
+      return slot < train_cap ? train.data() + slot * d : nullptr;
     };
     const auto flush = [&] {
       if (gathered == 0) {
@@ -151,22 +139,21 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
           SDB_ASSERT(!cents[j].empty());
           result.cluster_centroids.try_emplace(cluster, cents[j]);
         }
-        if (pq) {
-          const float* v = gather.data() + j * d;
-          const auto c = cents[j];
-          if (float* dst = reservoir(pq_train_res, pq_res_seen, pq_res_cap)) {
-            for (uint32_t t = 0; t < d; ++t) {
-              dst[t] = v[t] - c[t];
+        if (sample_train) {
+          if (float* dst = reservoir()) {
+            const float* v = gather.data() + j * d;
+            if (train_residuals) {
+              const auto c = cents[j];
+              for (uint32_t t = 0; t < d; ++t) {
+                dst[t] = v[t] - c[t];
+              }
+            } else {
+              std::memcpy(dst, v, size_t{d} * sizeof(float));
             }
           }
         }
-        if (pca) {
-          if (float* dst = reservoir(pca_train, pca_seen, pca_cap)) {
-            std::memcpy(dst, gather.data() + j * d, size_t{d} * sizeof(float));
-          }
-        }
       }
-      if (sq_train) {
+      if (stream_train) {
         qw->Train(gather.data(), gathered);
       }
       gather.clear();
@@ -192,12 +179,8 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     SDB_ASSERT(doc_cluster.size() == valid_rows.size());
   }
 
-  if (pq) {
-    SDB_ASSERT(!pq_train_res.empty());
-    qw->Train(pq_train_res.data(), pq_train_res.size() / d);
-  }
-  if (pca && pca_train.size() / d >= d) {
-    qw->Train(pca_train.data(), pca_train.size() / d);
+  if (sample_train && train_seen != 0) {
+    qw->Train(train.data(), train.size() / d);
   }
 
   result.cluster_offsets.assign(n_clusters + 1, 0);

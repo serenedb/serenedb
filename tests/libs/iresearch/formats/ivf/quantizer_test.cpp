@@ -25,14 +25,15 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "basics/misc.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/search/score_function.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
@@ -43,9 +44,9 @@ namespace {
 
 constexpr score_t kNoPrune = std::numeric_limits<score_t>::lowest();
 
-// Drives a reader the way QVectorIterator does: a VectorBlockReader over the
-// cluster payload, reads aligned on the reader's group size, whole groups per
-// ComputeBlock call.
+// Drives a reader the way QVectorIterator does: reads over the cluster
+// payload aligned on the reader's group size, whole groups per ComputeBlock
+// call.
 class ClusterScorer {
  public:
   ClusterScorer(const std::shared_ptr<const QuantizerCodebook>& codebook,
@@ -53,10 +54,10 @@ class ClusterScorer {
                 const float* centroid)
     : _qr{MakeQuantizerReader(codebook)},
       _setting{_qr->BlockSetting()},
-      _pay{std::make_unique<MemoryIndexInput>(file), _setting.record_size},
+      _in{std::make_unique<MemoryIndexInput>(file)},
+      _base{pay_start},
       _total{total},
       _records{_setting.RecordCount(total)} {
-    _pay.Reset(pay_start);
     _qr->StartCluster(centroid);
   }
 
@@ -69,7 +70,7 @@ class ClusterScorer {
   // Whole cluster in one ComputeBlock call, so multi-group blocks are covered.
   std::vector<score_t> All(score_t threshold = kNoPrune) {
     std::vector<score_t> out(_records);
-    _qr->ComputeBlock(_pay.Read(0, _records), threshold, out.data());
+    _qr->ComputeBlock(Read(0, _records), threshold, out.data());
     out.resize(_total);
     return out;
   }
@@ -80,7 +81,7 @@ class ClusterScorer {
       const size_t first = offset / gs * gs;
       const size_t records = std::min(first + gs, _records) - first;
       _cache.resize(records);
-      _qr->ComputeBlock(_pay.Read(first, records), threshold, _cache.data());
+      _qr->ComputeBlock(Read(first, records), threshold, _cache.data());
       const size_t take =
         std::min(count, std::min(records, _total - first) - (offset - first));
       std::copy_n(_cache.begin() + (offset - first), take, out);
@@ -91,9 +92,22 @@ class ClusterScorer {
   }
 
  private:
+  std::span<const byte_type> Read(size_t index, size_t count) {
+    const uint64_t offset = _base + index * _setting.record_size;
+    const size_t bytes = count * size_t{_setting.record_size};
+    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
+      return {p, bytes};
+    }
+    _buf.resize(bytes);
+    _in->ReadData(offset, _buf.data(), bytes);
+    return _buf;
+  }
+
   std::unique_ptr<QuantizerReader> _qr;
   PayloadBlockSetting _setting;
-  VectorBlockReader _pay;
+  IndexInput::ptr _in;
+  std::vector<byte_type> _buf;
+  uint64_t _base;
   size_t _total;
   size_t _records;
   std::vector<score_t> _cache;

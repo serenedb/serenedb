@@ -38,7 +38,6 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"
@@ -52,6 +51,33 @@
 
 namespace irs {
 namespace {
+
+class VectorBlockReader {
+ public:
+  VectorBlockReader(IndexInput::ptr&& in, uint32_t record_size) noexcept
+    : _in{std::move(in)}, _record_size{record_size} {
+    SDB_ASSERT(_in);
+  }
+
+  void Reset(uint64_t base_offset) noexcept { _base = base_offset; }
+
+  std::span<const byte_type> Read(size_t index, size_t count) {
+    const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
+    const size_t bytes = count * size_t{_record_size};
+    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
+      return {p, bytes};
+    }
+    _buf.resize(bytes);
+    _in->ReadData(offset, _buf.data(), bytes);
+    return _buf;
+  }
+
+ private:
+  IndexInput::ptr _in;
+  std::vector<byte_type> _buf;
+  uint64_t _base = 0;
+  uint32_t _record_size;
+};
 
 class RawVectorReader {
  public:

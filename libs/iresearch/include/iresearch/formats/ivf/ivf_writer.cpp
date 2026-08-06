@@ -422,12 +422,8 @@ void IvfWriter::FlushTree() {
   }
   auto& out = _idx->BlocksOut();
   const auto tree_span = _result.data.centroids.Serialize(out);
-  const auto stats = _result.qw->Serialize();
   const uint64_t stats_offset = out.Position();
-  out.WriteU64(stats.size());
-  if (!stats.empty()) {
-    out.WriteData(stats.data(), stats.size());
-  }
+  _result.qw->Serialize(out);
   const uint64_t stats_byte_size = out.Position() - stats_offset;
   _idx->AddIvf(_info.centroids_id,
                IvfCentroidMeta{.tree_offset = tree_span.offset,

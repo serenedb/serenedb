@@ -31,6 +31,7 @@ namespace irs {
 
 class ColumnReader;
 class ReadContext;
+class DataOutput;
 class IndexOutput;
 
 struct PayloadBlockSetting {
@@ -58,7 +59,7 @@ class QuantizerWriter {
 
   virtual void FinishCluster(IndexOutput& /*out*/) {}
 
-  virtual bstring Serialize() const = 0;
+  virtual void Serialize(DataOutput& out) const = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
 

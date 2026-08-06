@@ -20,33 +20,22 @@
 
 #pragma once
 
-#include <memory>
-#include <vector>
-
-#include "iresearch/index/column_info.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/vector_filter_util.hpp"
 
 namespace irs {
 
 class ByRadius;
 
-struct ByRadiusOptions {
+struct ByRadiusOptions : VectorFilterOptions {
   using FilterType = ByRadius;
 
-  std::vector<float> query;
-  field_id centroids_id = field_limits::invalid();
-  field_id postings_id = field_limits::invalid();
-  VectorMetric metric = VectorMetric::L2Sqr;
-  VectorQuantization quant = VectorQuantization::None;
   float radius = 0.f;
   bool inclusive = false;
-  std::shared_ptr<const Filter> inner;
 
   bool operator==(const ByRadiusOptions& rhs) const noexcept {
-    return query == rhs.query && centroids_id == rhs.centroids_id &&
-           postings_id == rhs.postings_id && metric == rhs.metric &&
-           quant == rhs.quant && radius == rhs.radius &&
-           inclusive == rhs.inclusive && inner == rhs.inner;
+    return VectorFilterOptions::operator==(rhs) && radius == rhs.radius &&
+           inclusive == rhs.inclusive;
   }
 };
 

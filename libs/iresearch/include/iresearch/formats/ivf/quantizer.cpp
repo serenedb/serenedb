@@ -126,8 +126,8 @@ void RotateInto(const float* signs, const float* in, float* out, uint32_t d,
 }
 
 template<typename H>
-void WritePodHeader(const H& h, byte_type* out) noexcept {
-  std::memcpy(out, &h, sizeof(H));
+void WritePod(DataOutput& out, const H& h) {
+  out.WriteData(reinterpret_cast<const byte_type*>(&h), sizeof(H));
 }
 
 template<typename H>
@@ -239,17 +239,15 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     _carry.clear();
   }
 
-  bstring Serialize() const final {
+  void Serialize(DataOutput& out) const final {
     if (!_pano) {
-      return {};
+      out.WriteU64(0);
+      return;
     }
-    bstring out;
-    out.resize(sizeof(PanoramaStatsHeader) +
-               _rotation.A.size() * sizeof(float));
-    WritePodHeader(PanoramaStatsHeader{PanoramaLevels(_d), _d}, out.data());
-    std::memcpy(out.data() + sizeof(PanoramaStatsHeader), _rotation.A.data(),
-                _rotation.A.size() * sizeof(float));
-    return out;
+    const auto a = FloatSpan(_rotation.A);
+    out.WriteU64(sizeof(PanoramaStatsHeader) + a.size());
+    WritePod(out, PanoramaStatsHeader{PanoramaLevels(_d), _d});
+    out.WriteData(a.data(), a.size());
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -479,6 +477,9 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   }
 
   void Train(const float* vecs, size_t n) final {
+    if (n == 0) {
+      return;
+    }
     for (size_t i = 0; i < n; ++i) {
       const float* v = vecs + i * _d;
       for (uint32_t j = 0; j < _d; ++j) {
@@ -487,9 +488,8 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
       }
     }
     for (uint32_t j = 0; j < _d; ++j) {
-      const bool seen = _vmin[j] <= _vmax[j];
-      _sq.trained[j] = seen ? _vmin[j] : 0.f;
-      _sq.trained[_d + j] = seen ? (_vmax[j] - _vmin[j]) : 0.f;
+      _sq.trained[j] = _vmin[j];
+      _sq.trained[_d + j] = _vmax[j] - _vmin[j];
     }
   }
 
@@ -503,9 +503,10 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
     out.WriteData(_code.data(), _code.size());
   }
 
-  bstring Serialize() const final {
+  void Serialize(DataOutput& out) const final {
     const auto bytes = FloatSpan(_sq.trained);
-    return {bytes.data(), bytes.size()};
+    out.WriteU64(bytes.size());
+    out.WriteData(bytes.data(), bytes.size());
   }
 
   VectorQuantization Kind() const noexcept final { return _quant; }
@@ -757,18 +758,16 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  bstring Serialize() const final {
+  void Serialize(DataOutput& out) const final {
     if (!_trained) {
-      return {};
+      out.WriteU64(0);
+      return;
     }
-    bstring out;
-    out.resize(sizeof(PqStatsHeader) + _pq.centroids.size() * sizeof(float));
-    WritePodHeader(PqStatsHeader{static_cast<uint32_t>(_pq.M),
-                                 static_cast<uint32_t>(_pq.ksub)},
-                   out.data());
-    std::memcpy(out.data() + sizeof(PqStatsHeader), _pq.centroids.data(),
-                _pq.centroids.size() * sizeof(float));
-    return out;
+    const auto cents = FloatSpan(_pq.centroids);
+    out.WriteU64(sizeof(PqStatsHeader) + cents.size());
+    WritePod(out, PqStatsHeader{static_cast<uint32_t>(_pq.M),
+                                static_cast<uint32_t>(_pq.ksub)});
+    out.WriteData(cents.data(), cents.size());
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -1066,11 +1065,9 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     _packed.clear();
   }
 
-  bstring Serialize() const final {
-    bstring out;
-    out.resize(sizeof(RaBitQStatsHeader));
-    WritePodHeader(RaBitQStatsHeader{_nb_bits, _d}, out.data());
-    return out;
+  void Serialize(DataOutput& out) const final {
+    out.WriteU64(sizeof(RaBitQStatsHeader));
+    WritePod(out, RaBitQStatsHeader{_nb_bits, _d});
   }
 
   VectorQuantization Kind() const noexcept final {

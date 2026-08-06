@@ -20,121 +20,22 @@
 
 #include "iresearch/search/vector_similarity_filter.hpp"
 
-#include <array>
 #include <span>
-#include <vector>
+#include <utility>
 
 #include "basics/memory.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/index/idx_reader.hpp"
-#include "iresearch/formats/ivf/centroids.hpp"
-#include "iresearch/formats/ivf/ivf_reader.hpp"
-#include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/formats/posting/common.hpp"
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/vector_filter_util.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 
 QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   const auto& opts = options();
-  if (opts.query.empty() || opts.nprobe == 0 ||
-      !field_limits::valid(opts.centroids_id) ||
-      !field_limits::valid(opts.postings_id)) {
-    return QueryBuilder::Empty();
-  }
-
-  const auto* postings = segment.field(opts.postings_id);
-  const auto* ivf = segment.Ivf(opts.centroids_id);
-  const auto* vector_col = segment.Column(field_id());
-  if (!postings || !ivf || ivf->Empty() || opts.query.size() != ivf->Dim()) {
-    return QueryBuilder::Empty();
-  }
-
-  auto idx_in = segment.ReopenIvf();
-  if (!idx_in) {
-    return QueryBuilder::Empty();
-  }
-
-  const auto quant = opts.quant;
-  const uint32_t d = static_cast<uint32_t>(ivf->Dim());
-
-  std::vector<float> normalized_query;
-  std::span<const float> query = opts.query;
-  if (opts.metric == VectorMetric::Cosine) {
-    normalized_query.resize(opts.query.size());
-    vector::L2Space<float, float, float>::Normalize(
-      reinterpret_cast<const byte_type*>(opts.query.data()),
-      static_cast<uint16_t>(d), normalized_query.data());
-    query = normalized_query;
-  }
-
-  auto codebook =
-    ReadQuantizerCodebook(*ivf, *idx_in, quant, d, opts.metric, query);
-  if (!codebook) {
-    return QueryBuilder::Empty();
-  }
-  const bool needs_centroids = QuantizerNeedsCentroid(quant);
-
-  std::vector<uint32_t> fine_ids;
-  std::vector<float> probed_centroids;
-  ivf->Search(query, *idx_in, opts.nprobe, fine_ids,
-              needs_centroids ? &probed_centroids : nullptr);
-  if (fine_ids.empty()) {
-    return QueryBuilder::Empty();
-  }
-
-  auto terms = postings->iterator(SeekMode::NORMAL);
-  if (!terms) {
-    return QueryBuilder::Empty();
-  }
-  const auto* term_meta = irs::get<TermMeta>(*terms);
-
   VectorState state{ctx.memory};
-  state.reader = postings;
-  state.vector_column = vector_col;
-  state.quant = quant;
-  state.d = d;
-  state.codebook = std::move(codebook);
-
-  state.cookies.reserve(fine_ids.size());
-  state.pay_starts.reserve(fine_ids.size());
-  state.cluster_counts.reserve(fine_ids.size());
-  if (needs_centroids) {
-    state.cluster_centroids.reserve(fine_ids.size() * d);
-  }
-
-  std::array<byte_type, kCentroidTermWidth> term_buf{};
-  CostAttr::Type estimation = 0;
-  for (size_t i = 0; i < fine_ids.size(); ++i) {
-    const uint32_t c = fine_ids[i];
-    if (!SeekClusterTerm(*terms, c, term_buf)) {
-      continue;
-    }
-    if (term_meta) {
-      estimation += term_meta->docs_count;
-      state.pay_starts.push_back(
-        static_cast<const TermMetaImpl*>(term_meta)->pay_start);
-      state.cluster_counts.push_back(term_meta->docs_count);
-    }
-    if (needs_centroids) {
-      const float* cen = probed_centroids.data() + i * d;
-      state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
-                                     cen + d);
-    }
-    state.cookies.emplace_back(terms->cookie());
-  }
-  state.estimation = estimation;
-
-  if (state.cookies.empty()) {
-    return QueryBuilder::Empty();
-  }
-
   QueryBuilder::ptr inner;
-  if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+  if (!PrepareVectorState(segment, ctx, field_id(), opts, opts.nprobe, state,
+                          inner)) {
     return QueryBuilder::Empty();
   }
 

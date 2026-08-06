@@ -59,6 +59,9 @@ struct VariadicPhraseState {
   using TermState = std::pair<SeekCookie::ptr, score_t>;
 
   ManagedVector<size_t> num_terms;  // number of terms per phrase part
+  // Per-slot connectivity-component ids over query term sets (see
+  // ComputeTermGroups in phrase_filter.cpp). Empty on the slop == 0 paths.
+  ManagedVector<uint32_t> term_groups;
   using Terms = ManagedVector<TermState>;
   Terms terms;
   const TermReader* reader{};

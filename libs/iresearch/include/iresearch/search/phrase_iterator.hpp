@@ -46,6 +46,14 @@ class PhrasePosition final : public PosAttr, public Frequency {
     std::tie(_start, _end) = this->GetOffsets();
   }
 
+  explicit PhrasePosition(
+    std::vector<typename Frequency::TermPosition>&& pos,
+    PosAttr::value_t max_slop,
+    std::vector<PosAttr::value_t>&& expected_steps) noexcept
+    : Frequency{std::move(pos), max_slop, std::move(expected_steps)} {
+    std::tie(_start, _end) = this->GetOffsets();
+  }
+
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return type == irs::Type<OffsAttr>::id() ? &_offset : nullptr;
   }
@@ -82,6 +90,10 @@ struct TermInterval {
   PosAttr::value_t offs_max{};
   PosAttr::value_t offs_min{};
   PosAttr::value_t lead_offset{};
+  // Per-slot term-group id: equal ids == same connectivity component of
+  // query term sets (fixed: same term; variadic: ComputeTermGroups in
+  // phrase_filter.cpp). 0 for all slots when unused (slop == 0 paths).
+  uint32_t term_group{};
 };
 
 // position attribute + desired offset in the phrase
@@ -969,6 +981,42 @@ class PhraseIterator : public DocIterator {
                  std::vector<TermPosition>&& pos, const FieldProperties& field,
                  const byte_type* stats, score_t boost)
     : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos)} {
+    _stats = stats;
+    _boost = boost;
+    _field = field;
+  }
+
+  template<typename Adapters>
+  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
+                 std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
+                 std::vector<PosAttr::value_t>&& expected_steps)
+    : _approx{ScoreMergeType::Noop, docs_count,
+              [](auto itrs) {
+                absl::c_sort(itrs,
+                             [](const auto& lhs, const auto& rhs) noexcept {
+                               return CostAttr::extract(lhs, CostAttr::kMax) <
+                                      CostAttr::extract(rhs, CostAttr::kMax);
+                             });
+                return std::move(itrs);
+              }(std::forward<Adapters>(itrs))},
+      _freq{std::move(pos), max_slop, std::move(expected_steps)} {
+    _cost = irs::GetMutable<CostAttr>(&_approx);
+    if constexpr (Frequency::kHasBoost) {
+      _collected_boosts.value = std::allocator<score_t>{}.allocate(kScoreBlock);
+    }
+    if constexpr (Frequency::kHasFreq) {
+      _collected_freqs.value = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+    }
+  }
+
+  template<typename Adapters>
+  PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
+                 std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
+                 std::vector<PosAttr::value_t>&& expected_steps,
+                 const FieldProperties& field, const byte_type* stats,
+                 score_t boost)
+    : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos),
+                     max_slop, std::move(expected_steps)} {
     _stats = stats;
     _boost = boost;
     _field = field;

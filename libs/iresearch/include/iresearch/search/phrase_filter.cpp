@@ -22,6 +22,8 @@
 
 #include "phrase_filter.hpp"
 
+#include <absl/container/flat_hash_map.h>
+
 #include "basics/system-compiler.h"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -40,6 +42,7 @@
 #include "iresearch/search/top_terms_selector.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 namespace {
@@ -188,17 +191,24 @@ class PhraseTermVisitor final : public FilterVisitor,
       ++_term_offset;
       _volatile_boost |= (boost != kNoBoost);
     }
+    if (_visited_terms) {
+      // The view is valid only while the iterator sits on the term.
+      const auto term = _terms->value();
+      _visited_terms->emplace_back(term.data(), term.size());
+    }
     _phrase_states.emplace_back(_terms->cookie(), boost);
     return true;
   }
 
   void Reset() noexcept { _volatile_boost = false; }
 
-  void Reset(std::vector<TermCollector>* part) noexcept {
+  void Reset(std::vector<TermCollector>* part,
+             std::vector<bstring>* visited_terms = nullptr) noexcept {
     _found = false;
     _terms = nullptr;
     _part = part;
     _term_offset = 0;
+    _visited_terms = visited_terms;
   }
 
   bool Found() const noexcept { return _found; }
@@ -210,6 +220,7 @@ class PhraseTermVisitor final : public FilterVisitor,
   const TermReader* _reader{};
   PhraseStates& _phrase_states;
   std::vector<TermCollector>* _part = nullptr;
+  std::vector<bstring>* _visited_terms = nullptr;
   SeekTermIterator* _terms = nullptr;
   size_t _term_offset = 0;
   bool _found = false;
@@ -223,6 +234,15 @@ bool Valid(const TermReader* reader) noexcept {
   return reader != nullptr && (reader->meta().index_features &
                                FixedPhraseQuery::kRequiredFeatures) ==
                                 FixedPhraseQuery::kRequiredFeatures;
+}
+
+bool HasIntervalOffsets(const ByPhraseOptions& options) noexcept {
+  for (const auto& info : options) {
+    if (info.offs_min != info.offs_max) {
+      return true;
+    }
+  }
+  return false;
 }
 
 PhraseQueryKind GetKind(irs::field_id field, const ByPhraseOptions& options) {
@@ -248,13 +268,85 @@ FixedPhraseQuery::positions_t MakeFixedPositions(
   FixedPhraseQuery::positions_t positions(options.size());
   auto pos_itr = positions.begin();
   PosAttr::value_t look_back = 0;
+  // Per-slot term-group ids: a slot gets the index of the first slot holding
+  // the same term, so equal ids == same term.
+  std::vector<bytes_view> seen_terms;
+  seen_terms.reserve(options.size());
   for (const auto& term : options) {
     pos_itr->offs_max = term.offs_max;
     pos_itr->offs_min = term.offs_min;
     pos_itr->lead_offset = look_back += term.offs_max;
+    const bytes_view term_bytes{std::get<ByTermOptions>(term.part).term};
+    uint32_t group = static_cast<uint32_t>(seen_terms.size());
+    for (uint32_t k = 0; k < seen_terms.size(); ++k) {
+      if (seen_terms[k] == term_bytes) {
+        group = k;
+        break;
+      }
+    }
+    seen_terms.push_back(term_bytes);
+    pos_itr->term_group = group;
     ++pos_itr;
   }
   return positions;
+}
+
+// Slot connectivity components over query term sets, per segment. Repeats
+// are detected over the terms of the QUERY (Elasticsearch semantics), so
+// literal parts contribute their full query-level sets (a shared term
+// absent from the segment still connects its slots), while pattern parts
+// have no query-level set and contribute their per-segment expansion
+// instead.
+ManagedVector<uint32_t> ComputeTermGroups(
+  const ByPhraseOptions& options,
+  const std::vector<std::vector<bstring>>& part_terms,
+  IResourceManager& memory) {
+  const auto n = options.size();
+  std::vector<uint32_t> parent(n);
+  for (size_t i = 0; i < n; ++i) {
+    parent[i] = static_cast<uint32_t>(i);
+  }
+  const auto find = [&](uint32_t x) {
+    while (parent[x] != x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  };
+
+  absl::flat_hash_map<bytes_view, uint32_t> first_owner;
+  const auto add_term = [&](bytes_view term, uint32_t part) {
+    const auto [it, inserted] = first_owner.emplace(term, part);
+    if (!inserted) {
+      const auto a = find(it->second);
+      const auto b = find(part);
+      if (a != b) {
+        parent[b] = a;
+      }
+    }
+  };
+
+  uint32_t part = 0;
+  for (const auto& word : options) {
+    if (const auto* t = std::get_if<ByTermOptions>(&word.part)) {
+      add_term(t->term, part);
+    } else if (const auto* ts = std::get_if<ByTermsOptions>(&word.part)) {
+      for (const auto& st : ts->terms) {
+        add_term(st.term, part);
+      }
+    } else {
+      for (const auto& term : part_terms[part]) {
+        add_term(term, part);
+      }
+    }
+    ++part;
+  }
+
+  ManagedVector<uint32_t> groups(n, {memory});
+  for (size_t i = 0; i < n; ++i) {
+    groups[i] = find(static_cast<uint32_t>(i));
+  }
+  return groups;
 }
 
 QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
@@ -298,7 +390,7 @@ QueryBuilder::ptr FixedPrepareSegment(const SubReader& segment,
 
   return memory::make_tracked<FixedPhraseQuery>(
     ctx.memory, segment, std::move(state), MakeFixedPositions(options),
-    ctx.boost);
+    ctx.boost, options.slop());
 }
 
 QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
@@ -349,13 +441,36 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
       }
     }
 
+    // Slot grouping is consumed only by the sloppy matcher; skip the term
+    // bookkeeping entirely at slop == 0. Literal parts are grouped from the
+    // query-level options, so only pattern parts collect their expansions.
+    const bool collect_groups = options.slop() > 0;
+    std::vector<std::vector<bstring>> part_terms;
+    std::vector<bool> needs_expansion;
+    if (collect_groups) {
+      part_terms.resize(phrase_size);
+      needs_expansion.reserve(phrase_size);
+      for (const auto& word : options) {
+        needs_expansion.push_back(
+          !std::holds_alternative<ByTermOptions>(word.part) &&
+          !std::holds_alternative<ByTermsOptions>(word.part));
+      }
+    }
+
     PhraseTermVisitor<decltype(state.terms)> ptv(state.terms);
     ptv.Reset();
 
     size_t found_parts = 0;
+    size_t part_idx = 0;
     for (auto& visitor : phrase_part_visitors) {
       const auto was_terms_count = state.terms.size();
-      ptv.Reset(collector ? &collector->Part(found_parts) : nullptr);
+      std::vector<bstring>* visited = nullptr;
+      if (collect_groups && needs_expansion[part_idx]) {
+        part_terms[part_idx].clear();
+        visited = &part_terms[part_idx];
+      }
+      ++part_idx;
+      ptv.Reset(collector ? &collector->Part(found_parts) : nullptr, visited);
       visitor(segment, *reader, ptv);
       const auto new_terms_count = state.terms.size() - was_terms_count;
       if (new_terms_count != 0) {
@@ -367,6 +482,9 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
 
     if (found_parts == phrase_size) {
       state.num_terms = std::move(num_terms);
+      if (collect_groups) {
+        state.term_groups = ComputeTermGroups(options, part_terms, ctx.memory);
+      }
       state.reader = reader;
       state.volatile_boost = !is_ord_empty && ptv.VolatileBoost();
       SDB_ASSERT(phrase_size == state.num_terms.size());
@@ -391,7 +509,8 @@ QueryBuilder::ptr VariadicPrepareSegment(const SubReader& segment,
   }
 
   return memory::make_tracked<VariadicPhraseQuery>(
-    ctx.memory, segment, std::move(state), std::move(positions), ctx.boost);
+    ctx.memory, segment, std::move(state), std::move(positions), ctx.boost,
+    options.slop());
 }
 
 }  // namespace
@@ -400,7 +519,14 @@ QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.Boost(Boost());
-  switch (GetKind(field_id(), options())) {
+  const auto kind = GetKind(field_id(), options());
+  if (kind == PhraseQueryKind::kFixed || kind == PhraseQueryKind::kVariadic) {
+    // Rejected before any per-segment work; Execute relies on this via
+    // SDB_ASSERT (see phrase_query.cpp).
+    SDB_ENSURE(options().slop() == 0 || !HasIntervalOffsets(options()),
+               "slop and intervals are mutually exclusive");
+  }
+  switch (kind) {
     case PhraseQueryKind::kEmpty:
       return QueryBuilder::Empty();
     case PhraseQueryKind::kSingleWord:

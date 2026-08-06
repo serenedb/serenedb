@@ -1,0 +1,61 @@
+# dict_fsst cut sizing: the selection-width bump on the NEVER-ENCODED path.
+#
+# A dictionary that stays under ENCODE_THRESHOLD raw bytes never FSST-encodes, so the segment is
+# gated only by MaybeEncodeOrCutSmall's byte trigger -- and at a few bits of selection per row such
+# a segment holds hundreds of thousands of rows. One NEW entry that pushes dict_count across a
+# bitpacking width boundary re-prices every one of those rows at once: at ~292k rows the 7->8 bit
+# bump is a ~36KB jump, an order of magnitude past ROW_HEADROOM, landing the segment far beyond the
+# block before the trigger can see it. The same whole-segment re-price NearBlock watches for on the
+# encoded path, on the path that has no NearBlock.
+#
+# The shape: 127 distinct 4-char values cycling for 292k rows (width 7, dictionary complete and
+# stable), then value #128 arrives and bumps the width, then a short mixed tail. ROW_GROUP_SIZE is
+# raised so one row group can hold the whole run -- with the 122,880-row default a segment never
+# grows wide enough for the jump to clear the block, which is why default-sized tables rarely hit
+# this. Deterministic: single source, ORDER BY. Without the width guard this aborts at CHECKPOINT
+# in debug and writes past the block buffer in release.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfsw_small.db' AS dfsw (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+CREATE TABLE dfsw.smallw AS
+  SELECT ord, CASE WHEN ord < 292000 THEN 'w' || lpad((ord % 127)::VARCHAR, 3, '0')
+                   ELSE 'w' || lpad((ord % 128)::VARCHAR, 3, '0') END AS s
+  FROM range(300000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfsw;
+
+
+# every row survived with its exact value, and the late value #128 is really present
+query
+SELECT count(*) AS n,
+       count(DISTINCT s) AS dn,
+       bool_and(s = CASE WHEN ord < 292000 THEN 'w' || lpad((ord % 127)::VARCHAR, 3, '0')
+                         ELSE 'w' || lpad((ord % 128)::VARCHAR, 3, '0') END) AS rows_match
+  FROM dfsw.smallw;
+----
+n	dn	rows_match
+300000	128	t
+
+
+# the column landed in dict_fsst and the near-block segment was cut rather than overflowed: the
+# width bump forces at least one extra segment boundary
+query
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfsw.smallw', include_segment_info=true)
+         WHERE column_name='s' AND compression='DICT_FSST') AS has_dict_fsst,
+       (SELECT count(*) >= 2 FROM pragma_storage_info('dfsw.smallw', include_segment_info=true)
+         WHERE column_name='s' AND segment_type='VARCHAR') AS was_cut;
+----
+has_dict_fsst	was_cut
+t	t
+
+
+statement ok
+DETACH dfsw;

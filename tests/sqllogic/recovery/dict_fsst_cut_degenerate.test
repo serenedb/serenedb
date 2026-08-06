@@ -1,0 +1,159 @@
+# dict_fsst cut sizing: the degenerate dictionaries, where the cut's preconditions barely hold.
+#
+# The cut paths carry assumptions that only bite at the edges: tuple_count == 1 is a special case in
+# both CutPlain and CutCleaved (there is no row to exclude), CleaveEncoded has separate paths for
+# n == 1 and n >= 2, the prefix-group budget is floored at 1, and a segment that never encodes at all
+# takes the small-dictionary cut instead. A rewind also needs a certificate to rewind TO, so a segment
+# whose very first near-block cleave already overflows has to recover without one.
+#
+# None of these shapes should reach a block boundary at all; they are here so the edge paths are
+# exercised and keep round-tripping, not because they are near the block.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfd_degen.db' AS dfd (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfd_degen_native.db' AS dfdn (TYPE duckdb);
+
+
+statement ok
+CREATE TABLE dfd.one_row AS SELECT 0 AS ord, 'only' AS s;
+
+
+statement ok
+CREATE TABLE dfd.one_null AS SELECT 0 AS ord, NULL::VARCHAR AS s;
+
+
+statement ok
+CREATE TABLE dfd.all_null AS SELECT ord, NULL::VARCHAR AS s FROM range(40000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfd.all_empty AS SELECT ord, '' AS s FROM range(40000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfd.all_identical AS SELECT ord, 'the/same/value/every/time' AS s FROM range(40000) t(ord) ORDER BY ord;
+
+
+# a one-entry dictionary that is also enormous: a single value wider than most segments
+statement ok
+CREATE TABLE dfd.one_huge AS SELECT ord, repeat('H', 60000) AS s FROM range(40) t(ord) ORDER BY ord;
+
+
+# every value shares ONE prefix, so the whole dictionary is a single group (budget floor of 1)
+statement ok
+CREATE TABLE dfd.single_group AS
+  SELECT ord, 'one/shared/prefix/for/absolutely/everything/'||substr(md5(ord::VARCHAR),1,12) AS s
+  FROM range(40000) t(ord) ORDER BY ord;
+
+
+# empty strings and NULLs interleaved through a normal dictionary
+statement ok
+CREATE TABLE dfd.mixed_holes AS
+  SELECT ord, CASE WHEN ord % 7 = 0 THEN NULL WHEN ord % 7 = 1 THEN ''
+                   ELSE 'p/'||lpad((ord//8)::VARCHAR,7,'0')||'/'||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(40000) t(ord) ORDER BY ord;
+
+
+# stays under the encode threshold for its whole life, so it never FSST-encodes and takes the
+# small-dictionary cut path instead of any cleave
+statement ok
+CREATE TABLE dfd.tiny_dict AS SELECT ord, ('v'||(ord % 3)::VARCHAR) AS s FROM range(40000) t(ord) ORDER BY ord;
+
+
+# adversarial for the group pricing: every sorted-adjacent pair shares exactly ONE byte, so a cleave
+# would want thousands of groups each saving a single byte while costing more than that in metadata.
+# The DP prices groups, so these must all come out plain-or-native rather than bloating a plus layout.
+statement ok
+CREATE TABLE dfd.junk_lcp1 AS
+  SELECT ord, chr(65 + ((ord//2) % 26)::INT) || md5(ord::VARCHAR) AS s FROM range(60000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfdn.one_row AS SELECT 0 AS ord, 'only' AS s;
+
+
+statement ok
+CREATE TABLE dfdn.all_null AS SELECT ord, NULL::VARCHAR AS s FROM range(40000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfdn.mixed_holes AS
+  SELECT ord, CASE WHEN ord % 7 = 0 THEN NULL WHEN ord % 7 = 1 THEN ''
+                   ELSE 'p/'||lpad((ord//8)::VARCHAR,7,'0')||'/'||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(40000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfd;
+
+
+statement ok
+CHECKPOINT dfdn;
+
+
+query
+SELECT 'all_empty' AS shape, count(*) AS n, bool_and(s = '') AS rows_match FROM dfd.all_empty
+UNION ALL SELECT 'all_identical', count(*), bool_and(s = 'the/same/value/every/time') FROM dfd.all_identical
+UNION ALL SELECT 'all_null', count(*), bool_and(s IS NULL) FROM dfd.all_null
+UNION ALL SELECT 'junk_lcp1', count(*), bool_and(s = chr(65 + ((ord//2) % 26)::INT) || md5(ord::VARCHAR)) FROM dfd.junk_lcp1
+UNION ALL SELECT 'mixed_holes', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord % 7 = 0 THEN NULL WHEN ord % 7 = 1 THEN '' ELSE 'p/'||lpad((ord//8)::VARCHAR,7,'0')||'/'||substr(md5(ord::VARCHAR),1,12) END) FROM dfd.mixed_holes
+UNION ALL SELECT 'one_huge', count(*), bool_and(s = repeat('H',60000)) FROM dfd.one_huge
+UNION ALL SELECT 'one_null', count(*), bool_and(s IS NULL) FROM dfd.one_null
+UNION ALL SELECT 'one_row', count(*), bool_and(s = 'only') FROM dfd.one_row
+UNION ALL SELECT 'single_group', count(*), bool_and(s = 'one/shared/prefix/for/absolutely/everything/'||substr(md5(ord::VARCHAR),1,12)) FROM dfd.single_group
+UNION ALL SELECT 'tiny_dict', count(*), bool_and(s = 'v'||(ord % 3)::VARCHAR) FROM dfd.tiny_dict
+UNION ALL SELECT 'nat_all_null', count(*), bool_and(s IS NULL) FROM dfdn.all_null
+UNION ALL SELECT 'nat_mixed_holes', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord % 7 = 0 THEN NULL WHEN ord % 7 = 1 THEN '' ELSE 'p/'||lpad((ord//8)::VARCHAR,7,'0')||'/'||substr(md5(ord::VARCHAR),1,12) END) FROM dfdn.mixed_holes
+UNION ALL SELECT 'nat_one_row', count(*), bool_and(s = 'only') FROM dfdn.one_row
+ORDER BY shape;
+----
+shape	n	rows_match
+all_empty	40000	t
+all_identical	40000	t
+all_null	40000	t
+junk_lcp1	60000	t
+mixed_holes	40000	t
+nat_all_null	40000	t
+nat_mixed_holes	40000	t
+nat_one_row	1	t
+one_huge	40	t
+one_null	1	t
+one_row	1	t
+single_group	40000	t
+tiny_dict	40000	t
+
+
+# the junk shape must not have been paid for with a bloated plus layout: single-byte prefixes cannot
+# fund a group's metadata, so the segments come out native
+query
+SELECT bool_and(segment_info NOT LIKE '%PLUS%') AS junk_stays_native
+  FROM pragma_storage_info('dfd.junk_lcp1', include_segment_info=true)
+ WHERE column_name='s' AND segment_type='VARCHAR';
+----
+junk_stays_native
+t
+
+
+# NULLs and empty strings stay distinguishable through the round trip, on both storage versions
+query
+SELECT (SELECT count(*) FROM dfd.mixed_holes WHERE s IS NULL) AS own_nulls,
+       (SELECT count(*) FROM dfd.mixed_holes WHERE s = '') AS own_empties,
+       (SELECT count(*) FROM dfdn.mixed_holes WHERE s IS NULL) AS nat_nulls,
+       (SELECT count(*) FROM dfdn.mixed_holes WHERE s = '') AS nat_empties;
+----
+own_nulls	own_empties	nat_nulls	nat_empties
+5715	5715	5715	5715
+
+
+statement ok
+DETACH dfd;
+
+
+statement ok
+DETACH dfdn;

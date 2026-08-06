@@ -1,0 +1,142 @@
+# dict_fsst cut sizing: the rewind, under every candidate a segment can have committed to.
+#
+# fit_rows certifies a segment size FOR THE CANDIDATE it was measured under. When a later row pushes
+# the segment over the block the cut rewinds to that checkpoint and moves the excess rows to the next
+# segment -- which restores the exact state the certificate was taken in, INCLUDING all-unique when
+# the offending row is among the ones moved out. If the commitment has been poisoned in between (the
+# flip kills the row candidate), flushing under it writes a layout the certificate never priced:
+# sorted needs a per-row selection buffer the row cut did not pay for. FlushRewind therefore restores
+# fit_commit, the commitment the certificate belongs to.
+#
+# The three commitments reachable here, one shape each:
+#   PLUS_ROW    -- row-ORDER neighbours share a prefix, so the row cleave wins (no selection buffer)
+#   PLUS_SORTED -- only SORTED neighbours share a prefix, so the row cleave has nothing to group
+#   PLAIN       -- native attach, allow_plus false, so every cut runs CutPlain instead
+#
+# Each is driven over the block by a duplicate and again by a NULL, since both end all-unique.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfc_rewind.db' AS dfc (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfc_rewind_native.db' AS dfcn (TYPE duckdb);
+
+
+# --- PLUS_ROW: row-order neighbours share the 'cNNNNNNN<US>' prefix, all values unique ------------
+statement ok
+CREATE TABLE dfc.row_dup AS
+  SELECT ord, CASE WHEN ord = 25000
+                   THEN 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12)
+                   ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(25001) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfc.row_null AS
+  SELECT ord, CASE WHEN ord = 25000 THEN NULL
+                   ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(25001) t(ord) ORDER BY ord;
+
+
+# the flip lands EARLY, so the rewind target is far behind the overshoot
+statement ok
+CREATE TABLE dfc.row_early_flip AS
+  SELECT ord, CASE WHEN ord = 12000
+                   THEN 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12)
+                   ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(25001) t(ord) ORDER BY ord;
+
+
+# --- PLUS_SORTED: the prefix families exist only in sorted order, so row order cannot group --------
+# ord is shuffled by hash so consecutive rows land in different families
+statement ok
+CREATE TABLE dfc.sorted_dup AS
+  SELECT ord, CASE WHEN ord = 25000
+                   THEN 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12)
+                   ELSE 'c'||lpad((ord%3000)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(25001) t(ord) ORDER BY hash(ord);
+
+
+statement ok
+CREATE TABLE dfc.sorted_null AS
+  SELECT ord, CASE WHEN ord = 25000 THEN NULL
+                   ELSE 'c'||lpad((ord%3000)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(25001) t(ord) ORDER BY hash(ord);
+
+
+# --- PLAIN: native storage, so the plus candidates never enter the decision -----------------------
+statement ok
+CREATE TABLE dfcn.plain_dup AS
+  SELECT ord, CASE WHEN ord = 25000
+                   THEN 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12)
+                   ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(25001) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfcn.plain_null AS
+  SELECT ord, CASE WHEN ord = 25000 THEN NULL
+                   ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(25001) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfc;
+
+
+statement ok
+CHECKPOINT dfcn;
+
+
+query
+SELECT 'row_dup' AS shape, count(*) AS n, bool_and(s IS NOT DISTINCT FROM CASE WHEN ord = 25000 THEN 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12) ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END) AS rows_match FROM dfc.row_dup
+UNION ALL SELECT 'row_null', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord = 25000 THEN NULL ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END) FROM dfc.row_null
+UNION ALL SELECT 'row_early_flip', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord = 12000 THEN 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12) ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END) FROM dfc.row_early_flip
+UNION ALL SELECT 'sorted_dup', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord = 25000 THEN 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12) ELSE 'c'||lpad((ord%3000)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END) FROM dfc.sorted_dup
+UNION ALL SELECT 'sorted_null', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord = 25000 THEN NULL ELSE 'c'||lpad((ord%3000)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END) FROM dfc.sorted_null
+UNION ALL SELECT 'plain_dup', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord = 25000 THEN 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12) ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END) FROM dfcn.plain_dup
+UNION ALL SELECT 'plain_null', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord = 25000 THEN NULL ELSE 'c'||lpad((ord//8)::VARCHAR,7,'0')||chr(31)||substr(md5(ord::VARCHAR),1,12) END) FROM dfcn.plain_null
+ORDER BY shape;
+----
+shape	n	rows_match
+plain_dup	25001	t
+plain_null	25001	t
+row_dup	25001	t
+row_early_flip	25001	t
+row_null	25001	t
+sorted_dup	25001	t
+sorted_null	25001	t
+
+
+# the row-order shapes really do reach a cleaved mode (that is what makes them commit to a plus
+# candidate and so exercise the rewind's restore), while native storage never writes one
+query
+SELECT (SELECT bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfc.row_dup', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS row_has_plus,
+       (SELECT bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfc.sorted_dup', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS sorted_has_plus,
+       (SELECT bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfcn.plain_dup', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS native_has_plus;
+----
+row_has_plus	sorted_has_plus	native_has_plus
+t	t	f
+
+
+# the duplicated value appears exactly twice and the NULL exactly once: a rewind that dropped or
+# double-counted the moved rows shows up here even when the byte comparison passes
+query
+SELECT (SELECT count(*) FROM dfc.row_dup WHERE s = 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12)) AS row_dup_hits,
+       (SELECT count(*) FROM dfc.row_null WHERE s IS NULL) AS row_nulls,
+       (SELECT count(*) FROM dfcn.plain_dup WHERE s = 'c'||lpad('0',7,'0')||chr(31)||substr(md5('0'),1,12)) AS plain_dup_hits;
+----
+row_dup_hits	row_nulls	plain_dup_hits
+2	1	2
+
+
+statement ok
+DETACH dfc;
+
+
+statement ok
+DETACH dfcn;

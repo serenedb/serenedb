@@ -1,0 +1,128 @@
+# dict_fsst cut sizing: the prefix-group budget at and around its doubling boundaries.
+#
+# CleavedUpperBound is the cheap gate that decides whether to run the exact cut check. Its prefix
+# terms cannot be predicted from the last cleave -- the cleave is an optimal-savings DP over the LCP
+# Cartesian tree and one inserted entry can flip take_whole anywhere in it -- and the only bound that
+# holds for an unconstrained cleave, half the entries, is far too loose to gate on. So the budget runs
+# the other way: prefix_cap is what the cleave is ALLOWED to emit, the gate prices exactly that, and
+# CleaveEncoded honours it. This pins the behaviour where that budget is under pressure.
+#
+# Group size k sets how many groups a dictionary wants. At roughly 12k entries per segment the count
+# is ~12000/k, so these k land on or just under the budget's doublings (64, 129, 259, 519, 1039,
+# 2079, 4159), and k=2 drives it to the entry_n/2 ceiling where it cannot grow any further. k=1 is
+# the control: no shared prefixes at all, so nothing to group and no cleaved mode.
+#
+# A budget that under-prices its own gate lets the segment outgrow the block, which aborts at
+# CHECKPOINT in debug and silently writes past the block buffer in release -- so every shape is
+# verified BY VALUE, not merely by surviving.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfb_budget.db' AS dfb (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+CREATE TABLE dfb.k0002 AS SELECT i, 'g'||lpad((i//2)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CREATE TABLE dfb.k0003 AS SELECT i, 'g'||lpad((i//3)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CREATE TABLE dfb.k0012 AS SELECT i, 'g'||lpad((i//12)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CREATE TABLE dfb.k0024 AS SELECT i, 'g'||lpad((i//24)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CREATE TABLE dfb.k0048 AS SELECT i, 'g'||lpad((i//48)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CREATE TABLE dfb.k0096 AS SELECT i, 'g'||lpad((i//96)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CREATE TABLE dfb.k0194 AS SELECT i, 'g'||lpad((i//194)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CREATE TABLE dfb.k1024 AS SELECT i, 'g'||lpad((i//1024)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CREATE TABLE dfb.k0001 AS SELECT i, md5(i::VARCHAR)||md5((i*7)::VARCHAR) AS s FROM range(60000) t(i) ORDER BY i;
+
+
+statement ok
+CHECKPOINT dfb;
+
+
+# every row of every shape still carries the exact bytes it was built from
+query
+SELECT 'k0002' AS shape, count(*) AS n, bool_and(s = 'g'||lpad((i//2)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR)) AS rows_match FROM dfb.k0002
+UNION ALL SELECT 'k0003', count(*), bool_and(s = 'g'||lpad((i//3)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR)) FROM dfb.k0003
+UNION ALL SELECT 'k0012', count(*), bool_and(s = 'g'||lpad((i//12)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR)) FROM dfb.k0012
+UNION ALL SELECT 'k0024', count(*), bool_and(s = 'g'||lpad((i//24)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR)) FROM dfb.k0024
+UNION ALL SELECT 'k0048', count(*), bool_and(s = 'g'||lpad((i//48)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR)) FROM dfb.k0048
+UNION ALL SELECT 'k0096', count(*), bool_and(s = 'g'||lpad((i//96)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR)) FROM dfb.k0096
+UNION ALL SELECT 'k0194', count(*), bool_and(s = 'g'||lpad((i//194)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR)) FROM dfb.k0194
+UNION ALL SELECT 'k1024', count(*), bool_and(s = 'g'||lpad((i//1024)::VARCHAR,7,'0')||'|'||md5(i::VARCHAR)) FROM dfb.k1024
+UNION ALL SELECT 'k0001', count(*), bool_and(s = md5(i::VARCHAR)||md5((i*7)::VARCHAR)) FROM dfb.k0001
+ORDER BY shape;
+----
+shape	n	rows_match
+k0001	60000	t
+k0002	60000	t
+k0003	60000	t
+k0012	60000	t
+k0024	60000	t
+k0048	60000	t
+k0096	60000	t
+k0194	60000	t
+k1024	60000	t
+
+
+# every grouped shape reaches a cleaved mode (so the budgeted path is the one under test), and the
+# ungrouped control does not -- there is nothing to group, so no group budget is ever spent
+query
+SELECT 'k0002' AS shape, bool_or(segment_info LIKE '%PLUS%') AS has_plus FROM pragma_storage_info('dfb.k0002', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'k0003', bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfb.k0003', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'k0012', bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfb.k0012', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'k0024', bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfb.k0024', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'k0048', bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfb.k0048', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'k0096', bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfb.k0096', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'k0194', bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfb.k0194', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'k1024', bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfb.k1024', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'k0001', bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfb.k0001', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+ORDER BY shape;
+----
+shape	has_plus
+k0001	f
+k0002	t
+k0003	t
+k0012	t
+k0024	t
+k0048	t
+k0096	t
+k0194	t
+k1024	t
+
+
+# The budget must not cost packing. Grouped shapes pack MORE rows per segment than the ungrouped
+# control (the prefixes are what buy the room), which fails if the budget starves the cleave.
+query
+SELECT (SELECT round(avg(count)) FROM pragma_storage_info('dfb.k0024', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR')
+       > (SELECT round(avg(count)) FROM pragma_storage_info('dfb.k0001', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS grouped_packs_better;
+----
+grouped_packs_better
+t
+
+
+statement ok
+DETACH dfb;

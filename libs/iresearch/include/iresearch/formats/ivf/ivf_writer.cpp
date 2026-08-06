@@ -86,7 +86,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool needs_centroid = QuantizerNeedsCentroid(_info.quant.kind);
   const bool normalize = _info.metric == VectorMetric::Cosine;
   const bool pca = _info.quant.kind == VectorQuantization::None &&
-                   _info.metric != VectorMetric::L1 && d >= kPanoramaMinDim &&
+                   PanoramaApplies(_info.metric, d) &&
                    rows >= std::max<size_t>(kPcaMinRows, size_t{8} * d);
 
   auto centroids = CentroidsBuilder::Create(
@@ -422,7 +422,7 @@ void IvfWriter::FlushTree() {
   }
   auto& out = _idx->BlocksOut();
   const auto tree_span = _result.data.centroids.Serialize(out);
-  const auto stats = _result.qw->StatsBytes();
+  const auto stats = _result.qw->Serialize();
   const uint64_t stats_offset = out.Position();
   out.WriteU64(stats.size());
   if (!stats.empty()) {

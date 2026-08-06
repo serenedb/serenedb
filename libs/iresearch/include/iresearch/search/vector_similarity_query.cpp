@@ -38,6 +38,7 @@
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"
@@ -181,11 +182,16 @@ using QVectorPosting =
 class QVectorIterator : public VectorDistanceIterator {
  public:
   QVectorIterator(DocIterator::ptr&& src, std::unique_ptr<QuantizerReader> qr,
-                  score_t boost, CostAttr::Type estimation)
+                  VectorBlockReader&& pay, score_t boost,
+                  CostAttr::Type estimation)
     : VectorDistanceIterator{std::move(src), boost, estimation},
       _qr{std::move(qr)},
+      _pay{std::move(pay)},
       _total{estimation} {
     SDB_ASSERT(_qr);
+    _setting = _qr->BlockSetting();
+    SDB_ASSERT(_setting.group_size <= _cache.size());
+    _records = static_cast<uint32_t>(_setting.RecordCount(_total));
     _posting = sdb::basics::downCast<QVectorPosting>(_src.get());
   }
 
@@ -194,12 +200,10 @@ class QVectorIterator : public VectorDistanceIterator {
       return;
     }
     _threshold_src = src;
-    _qr->SetPruningThreshold(&_prune_threshold);
   }
 
   void BindConstantThreshold(score_t threshold) noexcept {
     _prune_threshold = threshold;
-    _qr->SetPruningThreshold(&_prune_threshold);
   }
 
   doc_id_t advance() final {
@@ -240,8 +244,7 @@ class QVectorIterator : public VectorDistanceIterator {
     const uint32_t remaining = _posting->RemainingDocs();
     SDB_ASSERT(remaining < _total);
     _base = static_cast<uint32_t>(_total - 1 - remaining);
-    RefreshThreshold();
-    _qr->ComputeBlock(_base, 1, &_cur_dist);
+    ComputeRange(_base, 1, &_cur_dist);
     ++_base;
     return _doc = doc;
   }
@@ -298,17 +301,62 @@ class QVectorIterator : public VectorDistanceIterator {
   }
 
  private:
-  void RefreshThreshold() noexcept {
+  score_t CurrentThreshold() noexcept {
     if (_threshold_src != nullptr) {
       _prune_threshold = *_threshold_src / _boost;
     }
+    return _prune_threshold;
+  }
+
+  uint32_t GroupRecords(uint32_t first) const noexcept {
+    return std::min(first + _setting.group_size, _records) - first;
+  }
+
+  uint32_t ServeGroup(uint32_t base, uint32_t len, score_t threshold,
+                      score_t* out) {
+    if (base < _cached_first || base >= _cached_end) {
+      const uint32_t gs = _setting.group_size;
+      const uint32_t first = base / gs * gs;
+      const uint32_t records = GroupRecords(first);
+      _qr->ComputeBlock(_pay.Read(first, records), threshold, _cache.data());
+      _cached_first = first;
+      _cached_end = first + std::min<uint32_t>(records, _total - first);
+    }
+    const uint32_t take = std::min(len, _cached_end - base);
+    std::copy_n(_cache.begin() + (base - _cached_first), take, out);
+    return take;
+  }
+
+  void ComputeRange(uint32_t base, uint32_t len, score_t* out) {
+    SDB_ASSERT(base + len <= _total);
+    const uint32_t gs = _setting.group_size;
+    const score_t threshold = CurrentThreshold();
+    if (base % gs != 0) {
+      const uint32_t take = ServeGroup(base, len, threshold, out);
+      base += take;
+      out += take;
+      len -= take;
+    }
+    if (const uint32_t full = len / gs * gs; full != 0) {
+      _qr->ComputeBlock(_pay.Read(base, full), threshold, out);
+      base += full;
+      out += full;
+      len -= full;
+    }
+    if (len == 0) {
+      return;
+    }
+    if (const uint32_t records = GroupRecords(base); records == len) {
+      _qr->ComputeBlock(_pay.Read(base, records), threshold, out);
+      return;
+    }
+    ServeGroup(base, len, threshold, out);
   }
 
   void FillDistancesBlock() {
     SDB_ASSERT(_len > 0);
     SDB_ASSERT(_len <= _dist.size());
-    RefreshThreshold();
-    _qr->ComputeBlock(_base, _len, _dist.data());
+    ComputeRange(_base, _len, _dist.data());
     _base += _len;
   }
 
@@ -318,12 +366,18 @@ class QVectorIterator : public VectorDistanceIterator {
   }
 
   std::unique_ptr<QuantizerReader> _qr;
+  VectorBlockReader _pay;
   QVectorPosting* _posting = nullptr;
   CostAttr::Type _total;
   std::span<const doc_id_t> _docs;
   std::array<score_t, kPostingBlock> _dist;
+  std::array<score_t, kPostingBlock> _cache;
+  PayloadBlockSetting _setting;
   const score_t* _threshold_src = nullptr;
   score_t _prune_threshold = std::numeric_limits<score_t>::lowest();
+  uint32_t _records = 0;
+  uint32_t _cached_first = 0;
+  uint32_t _cached_end = 0;
   uint32_t _base = 0;
   uint16_t _len = 0;
   uint16_t _pos = 0;
@@ -436,6 +490,7 @@ DocIterator::ptr MergeWithInner(Primary&& primary, Inner&& inner,
 struct ClusterInputs {
   DocIterator::ptr postings;
   std::unique_ptr<QuantizerReader> vr;
+  VectorBlockReader pay;
 };
 
 std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
@@ -447,12 +502,14 @@ std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
   if (!postings) {
     return std::nullopt;
   }
-  auto vr = MakeQuantizerReader(state.codebook, pay_root.Dup());
+  auto vr = MakeQuantizerReader(state.codebook);
   SDB_ASSERT(vr);
   const float* centroid =
     has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
-  vr->StartCluster(state.pay_starts[c], state.cluster_counts[c], centroid);
-  return ClusterInputs{std::move(postings), std::move(vr)};
+  vr->StartCluster(centroid);
+  VectorBlockReader pay{pay_root.Dup(), vr->BlockSetting().record_size};
+  pay.Reset(state.pay_starts[c]);
+  return ClusterInputs{std::move(postings), std::move(vr), std::move(pay)};
 }
 
 using QVectorIterators = std::vector<memory::managed_ptr<QVectorIterator>>;
@@ -471,9 +528,9 @@ bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
     if (!ci) {
       continue;
     }
-    auto qit = memory::make_managed<QVectorIterator>(std::move(ci->postings),
-                                                     std::move(ci->vr), boost,
-                                                     state.cluster_counts[c]);
+    auto qit = memory::make_managed<QVectorIterator>(
+      std::move(ci->postings), std::move(ci->vr), std::move(ci->pay), boost,
+      state.cluster_counts[c]);
     if constexpr (std::is_same_v<Out, ScoreAdapters>) {
       out.emplace_back(DocIterator::ptr{std::move(qit)});
     } else {
@@ -498,9 +555,9 @@ bool BuildRangeClusterIterators(const VectorState& state, score_t boost,
     if (!ci) {
       continue;
     }
-    auto qit = memory::make_managed<QVectorIterator>(std::move(ci->postings),
-                                                     std::move(ci->vr), boost,
-                                                     state.cluster_counts[c]);
+    auto qit = memory::make_managed<QVectorIterator>(
+      std::move(ci->postings), std::move(ci->vr), std::move(ci->pay), boost,
+      state.cluster_counts[c]);
     qit->BindConstantThreshold(threshold);
     out.emplace_back(
       DocIterator::ptr{memory::make_managed<VectorRangeIterator<Inclusive>>(

@@ -31,6 +31,7 @@
 #include "basics/misc.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/memory_directory.hpp"
@@ -39,6 +40,64 @@
 using namespace irs;
 
 namespace {
+
+constexpr score_t kNoPrune = std::numeric_limits<score_t>::lowest();
+
+// Drives a reader the way QVectorIterator does: a VectorBlockReader over the
+// cluster payload, reads aligned on the reader's group size, whole groups per
+// ComputeBlock call.
+class ClusterScorer {
+ public:
+  ClusterScorer(const std::shared_ptr<const QuantizerCodebook>& codebook,
+                MemoryFile& file, uint64_t pay_start, size_t total,
+                const float* centroid)
+    : _qr{MakeQuantizerReader(codebook)},
+      _setting{_qr->BlockSetting()},
+      _pay{std::make_unique<MemoryIndexInput>(file), _setting.record_size},
+      _total{total},
+      _records{_setting.RecordCount(total)} {
+    _pay.Reset(pay_start);
+    _qr->StartCluster(centroid);
+  }
+
+  const PayloadBlockSetting& Setting() const noexcept { return _setting; }
+
+  size_t ByteSize() const noexcept {
+    return _records * size_t{_setting.record_size};
+  }
+
+  // Whole cluster in one ComputeBlock call, so multi-group blocks are covered.
+  std::vector<score_t> All(score_t threshold = kNoPrune) {
+    std::vector<score_t> out(_records);
+    _qr->ComputeBlock(_pay.Read(0, _records), threshold, out.data());
+    out.resize(_total);
+    return out;
+  }
+
+  void Block(size_t offset, size_t count, score_t threshold, score_t* out) {
+    const size_t gs = _setting.group_size;
+    while (count != 0) {
+      const size_t first = offset / gs * gs;
+      const size_t records = std::min(first + gs, _records) - first;
+      _cache.resize(records);
+      _qr->ComputeBlock(_pay.Read(first, records), threshold, _cache.data());
+      const size_t take =
+        std::min(count, std::min(records, _total - first) - (offset - first));
+      std::copy_n(_cache.begin() + (offset - first), take, out);
+      offset += take;
+      out += take;
+      count -= take;
+    }
+  }
+
+ private:
+  std::unique_ptr<QuantizerReader> _qr;
+  PayloadBlockSetting _setting;
+  VectorBlockReader _pay;
+  size_t _total;
+  size_t _records;
+  std::vector<score_t> _cache;
+};
 
 // Builds a writer, trains it on `n_train` copies of the 3 canonical
 // `points` (so k-means has >= ksub=16 samples to work with), then encodes
@@ -77,20 +136,15 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
     out.Flush();
   }
 
-  auto stats =
-    MakeQuantizerStats(VectorQuantization::PQ, d, writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::PQ, d, blob, metric);
   EXPECT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  EXPECT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, 3, centroid.data());
-
-  std::array<score_t, 3> scores{};
-  reader->ComputeBlock(0, 3, scores.data());
-  return scores;
+  ClusterScorer scorer{codebook, file, pay_start, 3, centroid.data()};
+  const auto scores = scorer.All();
+  return {scores[0], scores[1], scores[2]};
 }
 
 }  // namespace
@@ -119,7 +173,7 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   ASSERT_NE(writer, nullptr);
   EXPECT_EQ(writer->Kind(), VectorQuantization::None);
   EXPECT_EQ(writer->CodeSize(), d * sizeof(float));
-  EXPECT_TRUE(writer->StatsBytes().empty());
+  EXPECT_TRUE(writer->Serialize().empty());
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
@@ -140,20 +194,16 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
     EXPECT_EQ(out.Position() - pay_start, n * d * sizeof(float));
   }
 
-  auto stats = MakeQuantizerStats(VectorQuantization::None, d,
-                                  writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::None, d, blob, metric);
   ASSERT_NE(stats, nullptr);
   EXPECT_EQ(stats->Kind(), VectorQuantization::None);
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, /*centroid=*/nullptr);
-
-  std::vector<score_t> scores(n);
-  reader->ComputeBlock(0, n, scores.data());
+  ClusterScorer scorer{codebook, file, pay_start, n, /*centroid=*/nullptr};
+  EXPECT_EQ(scorer.ByteSize(), n * d * sizeof(float));
+  const auto scores = scorer.All();
 
   ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
     for (size_t i = 0; i < n; ++i) {
@@ -164,7 +214,7 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   });
 
   std::vector<score_t> tail(n - kFirstBatch);
-  reader->ComputeBlock(kFirstBatch, tail.size(), tail.data());
+  scorer.Block(kFirstBatch, tail.size(), kNoPrune, tail.data());
   for (size_t i = 0; i < tail.size(); ++i) {
     EXPECT_EQ(tail[i], scores[kFirstBatch + i]) << "row " << i;
   }
@@ -210,6 +260,7 @@ struct PanoramaIndex {
   SimpleMemoryAccounter memory;
   MemoryFile file;
   std::unique_ptr<QuantizerWriter> writer;
+  bstring blob;
   uint64_t pay_start = 0;
   size_t n = 0;
 
@@ -231,11 +282,11 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
                                      /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/0);
   ASSERT_NE(index.writer, nullptr);
   index.writer->Train(points.data(), index.n);
-  ASSERT_FALSE(index.writer->StatsBytes().empty())
+  index.blob = index.writer->Serialize();
+  ASSERT_FALSE(index.blob.empty())
     << "the rotation must have been trained for d=" << d;
-  EXPECT_EQ(index.writer->StatsBytes().size(),
+  EXPECT_EQ(index.blob.size(),
             2 * sizeof(uint32_t) + size_t{d} * d * sizeof(float));
-  EXPECT_EQ(index.writer->CodeSize(), PanoramaRecordSize(d, PanoramaLevels(d)));
 
   MemoryIndexOutput out{index.file};
   index.pay_start = out.Position();
@@ -247,27 +298,22 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
   }
   index.writer->FinishCluster(out);
   out.Flush();
-  EXPECT_EQ(out.Position() - index.pay_start,
-            index.n * PanoramaRecordSize(d, PanoramaLevels(d)));
 }
 
-std::unique_ptr<QuantizerReader> OpenPanorama(PanoramaIndex& index, uint32_t d,
-                                              VectorMetric metric,
-                                              const std::vector<float>& raw_q) {
+ClusterScorer OpenPanorama(PanoramaIndex& index, uint32_t d,
+                           VectorMetric metric,
+                           const std::vector<float>& raw_q) {
   auto query = raw_q;
   if (metric == VectorMetric::Cosine) {
     NormalizeRows(query.data(), 1, d);
   }
-  auto stats = MakeQuantizerStats(VectorQuantization::None, d,
-                                  index.writer->StatsBytes(), metric);
+  auto stats =
+    MakeQuantizerStats(VectorQuantization::None, d, index.blob, metric);
   EXPECT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
-  auto reader = MakeQuantizerReader(
-    codebook, std::make_unique<MemoryIndexInput>(index.file));
-  EXPECT_NE(reader, nullptr);
-  reader->StartCluster(index.pay_start, index.n, /*centroid=*/nullptr);
-  return reader;
+  return ClusterScorer{codebook, index.file, index.pay_start, index.n,
+                       /*centroid=*/nullptr};
 }
 
 }  // namespace
@@ -284,13 +330,12 @@ TEST_P(panorama_quantizer_test, unpruned_matches_raw_basis) {
   PanoramaIndex index;
   BuildPanorama(index, d, metric, points);
   ASSERT_FALSE(::testing::Test::HasFatalFailure());
-  auto reader = OpenPanorama(index, d, metric, query);
-  ASSERT_NE(reader, nullptr);
+  auto scorer = OpenPanorama(index, d, metric, query);
 
   std::vector<score_t> scores(n);
   for (size_t b = 0; b < n; b += kPostingBlock) {
     const size_t m = std::min<size_t>(kPostingBlock, n - b);
-    reader->ComputeBlock(b, m, scores.data() + b);
+    scorer.Block(b, m, kNoPrune, scores.data() + b);
   }
 
   ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
@@ -321,16 +366,13 @@ TEST_P(panorama_quantizer_test, pruning_preserves_topk) {
     auto query = MakePanoramaData(d, 1, 1000 + qi);
 
     const auto topk = [&](bool prune) {
-      auto reader = OpenPanorama(index, d, metric, query);
-      score_t threshold = std::numeric_limits<score_t>::lowest();
-      if (prune) {
-        reader->SetPruningThreshold(&threshold);
-      }
+      auto scorer = OpenPanorama(index, d, metric, query);
+      score_t threshold = kNoPrune;
       std::vector<score_t> block(kPostingBlock);
       std::vector<std::pair<score_t, size_t>> best;
       for (size_t b = 0; b < n; b += kPostingBlock) {
         const size_t m = std::min<size_t>(kPostingBlock, n - b);
-        reader->ComputeBlock(b, m, block.data());
+        scorer.Block(b, m, prune ? threshold : kNoPrune, block.data());
         for (size_t i = 0; i < m; ++i) {
           if (block[i] > threshold) {
             best.emplace_back(block[i], b + i);
@@ -374,11 +416,10 @@ TEST_P(panorama_quantizer_test, bound_never_drops_a_live_candidate) {
 
   std::vector<score_t> exact(n);
   {
-    auto reader = OpenPanorama(index, d, metric, query);
-    ASSERT_NE(reader, nullptr);
+    auto scorer = OpenPanorama(index, d, metric, query);
     for (size_t b = 0; b < n; b += kPostingBlock) {
-      reader->ComputeBlock(b, std::min<size_t>(kPostingBlock, n - b),
-                           exact.data() + b);
+      scorer.Block(b, std::min<size_t>(kPostingBlock, n - b), kNoPrune,
+                   exact.data() + b);
     }
   }
 
@@ -390,12 +431,10 @@ TEST_P(panorama_quantizer_test, bound_never_drops_a_live_candidate) {
   // fraction rather than depending on the metric's absolute scale.
   for (size_t q = 1; q < 10; ++q) {
     const score_t threshold = sorted[n * q / 10];
-    auto reader = OpenPanorama(index, d, metric, query);
-    ASSERT_NE(reader, nullptr);
-    reader->SetPruningThreshold(&threshold);
+    auto scorer = OpenPanorama(index, d, metric, query);
     for (size_t b = 0; b < n; b += kPostingBlock) {
-      reader->ComputeBlock(b, std::min<size_t>(kPostingBlock, n - b),
-                           got.data() + b);
+      scorer.Block(b, std::min<size_t>(kPostingBlock, n - b), threshold,
+                   got.data() + b);
     }
     for (size_t i = 0; i < n; ++i) {
       if (got[i] == exact[i]) {
@@ -424,17 +463,19 @@ TEST(panorama_writer_test, l1_and_small_dims_decline_the_rotation) {
                                 /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/0);
   ASSERT_NE(l1, nullptr);
   l1->Train(points.data(), n);
-  EXPECT_TRUE(l1->StatsBytes().empty());
+  EXPECT_TRUE(l1->Serialize().empty());
   EXPECT_EQ(l1->CodeSize(), d * sizeof(float));
+  EXPECT_FALSE(PanoramaApplies(VectorMetric::L1, d));
 
-  constexpr uint32_t small = kPanoramaMinDim - 1;
+  constexpr uint32_t small = 32;
+  ASSERT_FALSE(PanoramaApplies(VectorMetric::L2Sqr, small));
   auto narrow = MakePanoramaData(small, n, 17);
   auto tiny = MakeQuantizerWriter(VectorQuantization::None, small,
                                   VectorMetric::L2Sqr, /*pq_m=*/0,
                                   /*pq_niter=*/0, /*nb_bits=*/0);
   ASSERT_NE(tiny, nullptr);
   tiny->Train(narrow.data(), n);
-  EXPECT_TRUE(tiny->StatsBytes().empty());
+  EXPECT_TRUE(tiny->Serialize().empty());
 }
 
 class rabitq_quantizer_test : public ::testing::TestWithParam<uint32_t> {};
@@ -458,7 +499,7 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
                                     /*pq_m=*/0, /*pq_niter=*/0, nb_bits);
   ASSERT_NE(writer, nullptr);
   EXPECT_EQ(writer->Kind(), VectorQuantization::RaBitQ);
-  EXPECT_EQ(writer->StatsBytes().size(), 2 * sizeof(uint32_t));
+  EXPECT_EQ(writer->Serialize().size(), 2 * sizeof(uint32_t));
   writer->SetClusterCentroid(centroid.data());
 
   SimpleMemoryAccounter memory;
@@ -475,19 +516,14 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
 
   std::vector<float> query(d, 0.f);
   query[0] = 1.5f;
-  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d,
-                                  writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d, blob, metric);
   ASSERT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
-
-  std::array<score_t, n> scores{};
-  reader->ComputeBlock(0, n, scores.data());
+  ClusterScorer scorer{codebook, file, pay_start, n, centroid.data()};
+  const auto scores = scorer.All();
 
   EXPECT_GT(scores[0], scores[1]);
   EXPECT_GT(scores[1], scores[2]);
@@ -529,19 +565,14 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
 
   // Query closest to p0 (distance 0.5), then p1 (2.5), then p2 (18.5).
   const std::vector<float> query{1.5f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d,
-                                  writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d, blob, metric);
   ASSERT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
-
-  std::array<score_t, n> scores{};
-  reader->ComputeBlock(0, n, scores.data());
+  ClusterScorer scorer{codebook, file, pay_start, n, centroid.data()};
+  const auto scores = scorer.All();
 
   // L2 scores are negated distances (larger = nearer), so p0 > p1 > p2.
   EXPECT_GT(scores[0], scores[1]);
@@ -600,19 +631,14 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   }
 
   const std::vector<float> query{3.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d,
-                                  writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d, blob, metric);
   ASSERT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
-
-  std::array<score_t, n> scores{};
-  reader->ComputeBlock(0, n, scores.data());
+  ClusterScorer scorer{codebook, file, pay_start, n, centroid.data()};
+  const auto scores = scorer.All();
 
   // IP: higher raw value means a larger inner product with the query.
   // Exact order by <query, p_i> is p0 (6) > p1 (0) > p2 (-6).
@@ -647,20 +673,14 @@ std::vector<score_t> RaBitQRoundtrip(uint32_t d, uint32_t nb_bits,
     out.Flush();
   }
 
-  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d,
-                                  writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d, blob, metric);
   EXPECT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  EXPECT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
-
-  std::vector<score_t> scores(n);
-  reader->ComputeBlock(0, n, scores.data());
-  return scores;
+  ClusterScorer scorer{codebook, file, pay_start, n, centroid.data()};
+  return scorer.All();
 }
 
 }  // namespace
@@ -743,21 +763,23 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
 
   std::vector<float> query(d, 5.f);
   query[0] = 7.f;
-  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d,
-                                  writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::RaBitQ, d, blob, metric);
   ASSERT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  ASSERT_NE(reader, nullptr);
-
   std::array<score_t, 4> scores{};
-  reader->StartCluster(pay_start1, 2, c1.data());
-  reader->ComputeBlock(0, 2, scores.data());
-  reader->StartCluster(pay_start2, 2, c2.data());
-  reader->ComputeBlock(0, 2, scores.data() + 2);
+  {
+    ClusterScorer s1{codebook, file, pay_start1, 2, c1.data()};
+    const auto got = s1.All();
+    std::copy(got.begin(), got.end(), scores.begin());
+  }
+  {
+    ClusterScorer s2{codebook, file, pay_start2, 2, c2.data()};
+    const auto got = s2.All();
+    std::copy(got.begin(), got.end(), scores.begin() + 2);
+  }
 
   EXPECT_GT(scores[0], scores[1]);
   EXPECT_GT(scores[1], scores[2]);
@@ -930,21 +952,23 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
 
   std::vector<float> query(d, 0.f);
   query[0] = 2.f;
-  auto stats =
-    MakeQuantizerStats(VectorQuantization::PQ, d, writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::PQ, d, blob, metric);
   ASSERT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  ASSERT_NE(reader, nullptr);
-
   std::array<score_t, 4> scores{};
-  reader->StartCluster(pay_start1, 2, c1.data());
-  reader->ComputeBlock(0, 2, scores.data());
-  reader->StartCluster(pay_start2, 2, c2.data());
-  reader->ComputeBlock(0, 2, scores.data() + 2);
+  {
+    ClusterScorer s1{codebook, file, pay_start1, 2, c1.data()};
+    const auto got = s1.All();
+    std::copy(got.begin(), got.end(), scores.begin());
+  }
+  {
+    ClusterScorer s2{codebook, file, pay_start2, 2, c2.data()};
+    const auto got = s2.All();
+    std::copy(got.begin(), got.end(), scores.begin() + 2);
+  }
 
   EXPECT_GT(scores[0], scores[1]);
   EXPECT_GT(scores[1], scores[2]);
@@ -990,19 +1014,14 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   }
 
   const std::vector<float> query{1.5f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
-  auto stats =
-    MakeQuantizerStats(VectorQuantization::PQ, d, writer->StatsBytes(), metric);
+  const bstring blob = writer->Serialize();
+  auto stats = MakeQuantizerStats(VectorQuantization::PQ, d, blob, metric);
   ASSERT_NE(stats, nullptr);
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
-  ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
-
-  std::vector<score_t> scores(n);
-  reader->ComputeBlock(0, n, scores.data());
+  ClusterScorer scorer{codebook, file, pay_start, n, centroid.data()};
+  const auto scores = scorer.All();
 
   score_t min_near = std::numeric_limits<score_t>::infinity();
   score_t max_far = -std::numeric_limits<score_t>::infinity();

@@ -22,6 +22,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
+#include <utility>
 #include <vector>
 
 #include "basics/assert.h"
@@ -32,24 +34,26 @@ namespace irs {
 
 class VectorBlockReader {
  public:
-  VectorBlockReader(IndexInput& in, uint32_t record_size)
-    : _in{in}, _record_size{record_size} {}
+  VectorBlockReader(IndexInput::ptr&& in, uint32_t record_size) noexcept
+    : _in{std::move(in)}, _record_size{record_size} {
+    SDB_ASSERT(_in);
+  }
 
-  void Reset(uint64_t base_offset) { _base = base_offset; }
+  void Reset(uint64_t base_offset) noexcept { _base = base_offset; }
 
-  const byte_type* Read(size_t index, size_t count) {
+  std::span<const byte_type> Read(size_t index, size_t count) {
     const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
     const size_t bytes = count * size_t{_record_size};
-    if (const byte_type* p = _in.ReadVolatile(offset, bytes)) {
-      return p;
+    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
+      return {p, bytes};
     }
     _buf.resize(bytes);
-    _in.ReadData(offset, _buf.data(), bytes);
-    return _buf.data();
+    _in->ReadData(offset, _buf.data(), bytes);
+    return _buf;
   }
 
  private:
-  IndexInput& _in;
+  IndexInput::ptr _in;
   std::vector<byte_type> _buf;
   uint64_t _base = 0;
   uint32_t _record_size;

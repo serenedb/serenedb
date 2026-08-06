@@ -24,7 +24,6 @@
 #include <memory>
 #include <span>
 
-#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
@@ -33,7 +32,16 @@ namespace irs {
 class ColumnReader;
 class ReadContext;
 class IndexOutput;
-class IndexInput;
+
+struct PayloadBlockSetting {
+  uint32_t group_size = 1;
+  uint32_t record_size = 0;
+  bool pad_tail = false;
+
+  size_t RecordCount(size_t docs) const noexcept {
+    return pad_tail ? (docs + group_size - 1) / group_size * group_size : docs;
+  }
+};
 
 class QuantizerWriter {
  public:
@@ -50,7 +58,7 @@ class QuantizerWriter {
 
   virtual void FinishCluster(IndexOutput& /*out*/) {}
 
-  virtual std::span<const byte_type> StatsBytes() const = 0;
+  virtual bstring Serialize() const = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
 
@@ -60,18 +68,17 @@ class QuantizerWriter {
 class QuantizerReader {
  public:
   virtual ~QuantizerReader() = default;
-  virtual void StartCluster(uint64_t pay_start, size_t num_docs,
-                            const float* centroid) = 0;
-  virtual void ComputeBlock(size_t offset, size_t length, score_t* out) = 0;
-  virtual void SetPruningThreshold(const score_t* /*threshold*/) noexcept {}
+  virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
+  virtual void StartCluster(const float* centroid) = 0;
+  virtual void ComputeBlock(std::span<const byte_type> block, score_t threshold,
+                            score_t* out) = 0;
 };
 
 class QuantizerCodebook
   : public std::enable_shared_from_this<QuantizerCodebook> {
  public:
   virtual ~QuantizerCodebook() = default;
-  virtual std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const = 0;
+  virtual std::unique_ptr<QuantizerReader> MakeReader() const = 0;
 };
 
 // Query-independent, deserialized quantizer statistics. Parsed once from the
@@ -89,18 +96,7 @@ constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
   return quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
 }
 
-inline constexpr uint32_t kPanoramaMinDim = 64;
-
-inline constexpr uint32_t kPanoramaLevelWidth = 32;
-
-constexpr uint32_t PanoramaLevels(uint32_t d) noexcept {
-  return (d + kPanoramaLevelWidth - 1) / kPanoramaLevelWidth;
-}
-
-constexpr uint32_t PanoramaRecordSize(uint32_t d, uint32_t n_levels) noexcept {
-  return (d + (n_levels != 0 ? n_levels + 1 : 0)) *
-         static_cast<uint32_t>(sizeof(float));
-}
+bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
@@ -111,7 +107,6 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorMetric metric);
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  const std::shared_ptr<const QuantizerCodebook>& codebook,
-  std::unique_ptr<IndexInput> pay_in);
+  const std::shared_ptr<const QuantizerCodebook>& codebook);
 
 }  // namespace irs

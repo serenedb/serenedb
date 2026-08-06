@@ -502,7 +502,6 @@ class FixedPhraseFrequency {
         }
       }
 
-      Traits::ResetPos(*rarest_term_it);
       rarest_pos = rarest_term.seek(rarest_term_it_offset);
       rarest_term_it_offset = rarest_pos + 1;
     }
@@ -1053,8 +1052,8 @@ class PhraseIterator : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc = value(); target <= doc) [[unlikely]] {
-      return doc;
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
     }
     const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || _freq.Match()) {
@@ -1064,9 +1063,9 @@ class PhraseIterator : public DocIterator {
   }
 
   doc_id_t LazySeek(doc_id_t target) final {
-    // TODO(mbkkt) should be SDB_ASSERT(target > value())
-    // but depends on underlying iterator implementation
-    SDB_ASSERT(target >= value());
+    if (target <= _doc) [[unlikely]] {
+      return _doc;
+    }
     const auto doc = _approx.LazySeek(target);
     if (target != doc) {
       return doc;

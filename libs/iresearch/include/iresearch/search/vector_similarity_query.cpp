@@ -207,7 +207,7 @@ using QVectorPosting =
 class QVectorIterator : public VectorDistanceIterator {
  public:
   QVectorIterator(DocIterator::ptr&& src, std::unique_ptr<QuantizerReader> qr,
-                  VectorBlockReader&& pay, score_t boost,
+                  VectorBlockReader&& pay, uint32_t lane0, score_t boost,
                   CostAttr::Type estimation)
     : VectorDistanceIterator{std::move(src), boost, estimation},
       _qr{std::move(qr)},
@@ -216,7 +216,10 @@ class QVectorIterator : public VectorDistanceIterator {
     SDB_ASSERT(_qr);
     _setting = _qr->BlockSetting();
     SDB_ASSERT(_setting.group_size <= _cache.size());
-    _records = static_cast<uint32_t>(_setting.RecordCount(_total));
+    _lane0 = _setting.pad_tail ? lane0 : 0;
+    SDB_ASSERT(_lane0 < std::max<uint32_t>(1, _setting.group_size));
+    _end = _lane0 + static_cast<uint32_t>(_total);
+    _records = static_cast<uint32_t>(_setting.RecordCount(_end));
     _posting = sdb::basics::downCast<QVectorPosting>(_src.get());
   }
 
@@ -337,45 +340,46 @@ class QVectorIterator : public VectorDistanceIterator {
     return std::min(first + _setting.group_size, _records) - first;
   }
 
-  uint32_t ServeGroup(uint32_t base, uint32_t len, score_t threshold,
+  uint32_t ServeGroup(uint32_t lane, uint32_t len, score_t threshold,
                       score_t* out) {
-    if (base < _cached_first || base >= _cached_end) {
+    if (lane < _cached_first || lane >= _cached_end) {
       const uint32_t gs = _setting.group_size;
-      const uint32_t first = base / gs * gs;
+      const uint32_t first = lane / gs * gs;
       const uint32_t records = GroupRecords(first);
       _qr->ComputeBlock(_pay.Read(first, records), threshold, _cache.data());
       _cached_first = first;
-      _cached_end = first + std::min<uint32_t>(records, _total - first);
+      _cached_end = first + std::min<uint32_t>(records, _end - first);
     }
-    const uint32_t take = std::min(len, _cached_end - base);
-    std::copy_n(_cache.begin() + (base - _cached_first), take, out);
+    const uint32_t take = std::min(len, _cached_end - lane);
+    std::copy_n(_cache.begin() + (lane - _cached_first), take, out);
     return take;
   }
 
   void ComputeRange(uint32_t base, uint32_t len, score_t* out) {
     SDB_ASSERT(base + len <= _total);
+    uint32_t lane = _lane0 + base;
     const uint32_t gs = _setting.group_size;
     const score_t threshold = CurrentThreshold();
-    if (base % gs != 0) {
-      const uint32_t take = ServeGroup(base, len, threshold, out);
-      base += take;
+    if (lane % gs != 0) {
+      const uint32_t take = ServeGroup(lane, len, threshold, out);
+      lane += take;
       out += take;
       len -= take;
     }
     if (const uint32_t full = len / gs * gs; full != 0) {
-      _qr->ComputeBlock(_pay.Read(base, full), threshold, out);
-      base += full;
+      _qr->ComputeBlock(_pay.Read(lane, full), threshold, out);
+      lane += full;
       out += full;
       len -= full;
     }
     if (len == 0) {
       return;
     }
-    if (const uint32_t records = GroupRecords(base); records == len) {
-      _qr->ComputeBlock(_pay.Read(base, records), threshold, out);
+    if (const uint32_t records = GroupRecords(lane); records == len) {
+      _qr->ComputeBlock(_pay.Read(lane, records), threshold, out);
       return;
     }
-    ServeGroup(base, len, threshold, out);
+    ServeGroup(lane, len, threshold, out);
   }
 
   void FillDistancesBlock() {
@@ -400,6 +404,8 @@ class QVectorIterator : public VectorDistanceIterator {
   PayloadBlockSetting _setting;
   const score_t* _threshold_src = nullptr;
   score_t _prune_threshold = std::numeric_limits<score_t>::lowest();
+  uint32_t _lane0 = 0;
+  uint32_t _end = 0;
   uint32_t _records = 0;
   uint32_t _cached_first = 0;
   uint32_t _cached_end = 0;
@@ -554,8 +560,8 @@ bool BuildClusterIterators(const VectorState& state, score_t boost,
       continue;
     }
     out.emplace_back(memory::make_managed<QVectorIterator>(
-      std::move(ci->postings), std::move(ci->vr), std::move(ci->pay), boost,
-      state.cluster_counts[c]));
+      std::move(ci->postings), std::move(ci->vr), std::move(ci->pay),
+      state.pay_lanes[c], boost, state.cluster_counts[c]));
   }
   return true;
 }

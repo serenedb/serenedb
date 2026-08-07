@@ -74,6 +74,72 @@ std::vector<float> MakeSpread(uint32_t d, size_t n, uint32_t seed) {
   return out;
 }
 
+// Mirrors IvfTermReader's driving loop: rows are encoded into a carry buffer
+// against the centroid current at that moment, and only whole groups are
+// flushed -- so a group can hold lanes from two clusters, and only the stream's
+// final group is padded.
+class PayloadStream {
+ public:
+  struct Cluster {
+    uint64_t pay_start = 0;
+    uint32_t lane0 = 0;
+    size_t count = 0;
+  };
+
+  explicit PayloadStream(QuantizerWriter& writer)
+    : _writer{writer},
+      _setting{writer.BlockSetting()},
+      _group{std::max<size_t>(1, _setting.group_size)},
+      _row{writer.CodeSize()} {}
+
+  Cluster Add(IndexOutput& out, const float* vecs, size_t n) {
+    const Cluster c{out.Position(), static_cast<uint32_t>(_carry_n), n};
+    _carry.resize((_carry_n + n) * _row);
+    _writer.Encode(_carry.data() + _carry_n * _row, vecs, n);
+    _carry_n += n;
+    Flush(out, /*all=*/!_setting.pad_tail);
+    return c;
+  }
+
+  void Finish(IndexOutput& out) { Flush(out, /*all=*/true); }
+
+ private:
+  void Flush(IndexOutput& out, bool all) {
+    const size_t rows = all ? _carry_n : _carry_n / _group * _group;
+    if (rows == 0) {
+      return;
+    }
+    _writer.WriteCodes(out, _carry.data(), rows);
+    const size_t rest = _carry_n - rows;
+    if (rest != 0) {
+      std::memmove(_carry.data(), _carry.data() + rows * _row, rest * _row);
+    }
+    _carry_n = rest;
+  }
+
+  QuantizerWriter& _writer;
+  PayloadBlockSetting _setting;
+  size_t _group;
+  size_t _row;
+  bstring _carry;
+  size_t _carry_n = 0;
+};
+
+uint64_t EncodeCluster(QuantizerWriter& writer, IndexOutput& out,
+                       const float* vecs, size_t n) {
+  PayloadStream stream{writer};
+  const auto c = stream.Add(out, vecs, n);
+  stream.Finish(out);
+  return c.pay_start;
+}
+
+bstring ReadPayload(MemoryFile& file, uint64_t start, uint64_t end) {
+  bstring payload(end - start, 0);
+  MemoryIndexInput in{file};
+  in.ReadData(start, payload.data(), payload.size());
+  return payload;
+}
+
 bstring EncodeChunks(QuantizerWriter& writer, const std::vector<float>& points,
                      uint32_t d, std::span<const size_t> chunks) {
   SimpleMemoryAccounter memory;
@@ -83,18 +149,17 @@ bstring EncodeChunks(QuantizerWriter& writer, const std::vector<float>& points,
   {
     MemoryIndexOutput out{file};
     start = out.Position();
+    PayloadStream stream{writer};
     size_t off = 0;
     for (const size_t m : chunks) {
-      writer.EncodeBlock(out, points.data() + off * d, m);
+      stream.Add(out, points.data() + off * d, m);
       off += m;
     }
+    stream.Finish(out);
     out.Flush();
     end = out.Position();
   }
-  bstring payload(end - start, 0);
-  MemoryIndexInput in{file};
-  in.ReadData(start, payload.data(), payload.size());
-  return payload;
+  return ReadPayload(file, start, end);
 }
 
 void ExpectBytesEq(const bstring& want, const bstring& got) {
@@ -111,13 +176,15 @@ class ClusterScorer {
  public:
   ClusterScorer(const std::shared_ptr<const QuantizerCodebook>& codebook,
                 MemoryFile& file, uint64_t pay_start, size_t total,
-                const float* centroid)
+                const float* centroid, uint32_t lane0 = 0)
     : _qr{MakeQuantizerReader(codebook)},
       _setting{_qr->BlockSetting()},
       _in{std::make_unique<MemoryIndexInput>(file)},
       _base{pay_start},
+      _lane0{_setting.pad_tail ? lane0 : 0},
       _total{total},
-      _records{_setting.RecordCount(total)} {
+      _end{_lane0 + total},
+      _records{_setting.RecordCount(_end)} {
     _qr->StartCluster(centroid);
   }
 
@@ -128,24 +195,28 @@ class ClusterScorer {
   }
 
   // Whole cluster in one ComputeBlock call, so multi-group blocks are covered.
+  // With a shared stream the cluster's lanes need not start on a group, so this
+  // scores every group it touches and then drops the neighbours' lanes.
   std::vector<score_t> All(score_t threshold = kNoPrune) {
     std::vector<score_t> out(_records);
     _qr->ComputeBlock(Read(0, _records), threshold, out.data());
+    out.erase(out.begin(), out.begin() + _lane0);
     out.resize(_total);
     return out;
   }
 
   void Block(size_t offset, size_t count, score_t threshold, score_t* out) {
     const size_t gs = _setting.group_size;
+    size_t lane = _lane0 + offset;
     while (count != 0) {
-      const size_t first = offset / gs * gs;
+      const size_t first = lane / gs * gs;
       const size_t records = std::min(first + gs, _records) - first;
       _cache.resize(records);
       _qr->ComputeBlock(Read(first, records), threshold, _cache.data());
       const size_t take =
-        std::min(count, std::min(records, _total - first) - (offset - first));
-      std::copy_n(_cache.begin() + (offset - first), take, out);
-      offset += take;
+        std::min(count, std::min(records, _end - first) - (lane - first));
+      std::copy_n(_cache.begin() + (lane - first), take, out);
+      lane += take;
       out += take;
       count -= take;
     }
@@ -168,7 +239,9 @@ class ClusterScorer {
   IndexInput::ptr _in;
   std::vector<byte_type> _buf;
   uint64_t _base;
+  size_t _lane0;
   size_t _total;
+  size_t _end;
   size_t _records;
   std::vector<score_t> _cache;
 };
@@ -204,7 +277,7 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->EncodeBlock(out, points.data(), 3);
+    EncodeCluster(*writer, out, points.data(), 3);
     out.Flush();
   }
 
@@ -258,8 +331,12 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
     out.WriteByte(0xEF);
     pay_start = out.Position();
     ASSERT_NE(pay_start % alignof(float), 0);
-    writer->EncodeBlock(out, points.data(), kFirstBatch);
-    writer->EncodeBlock(out, points.data() + kFirstBatch * d, n - kFirstBatch);
+    {
+      PayloadStream stream{*writer};
+      stream.Add(out, points.data(), kFirstBatch);
+      stream.Add(out, points.data() + kFirstBatch * d, n - kFirstBatch);
+      stream.Finish(out);
+    }
     out.Flush();
     EXPECT_EQ(out.Position() - pay_start, n * d * sizeof(float));
   }
@@ -368,9 +445,13 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
   MemoryIndexOutput out{index.file};
   index.pay_start = out.Position();
   constexpr size_t kBatch = kPostingBlock;
-  for (size_t b = 0; b < index.n; b += kBatch) {
-    const size_t m = std::min(kBatch, index.n - b);
-    index.writer->EncodeBlock(out, points.data() + b * d, m);
+  {
+    PayloadStream stream{*index.writer};
+    for (size_t b = 0; b < index.n; b += kBatch) {
+      const size_t m = std::min(kBatch, index.n - b);
+      stream.Add(out, points.data() + b * d, m);
+    }
+    stream.Finish(out);
   }
   out.Flush();
 }
@@ -593,7 +674,7 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->EncodeBlock(out, points.data(), n);
+    EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
   }
 
@@ -640,7 +721,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->EncodeBlock(out, points.data(), n);
+    EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
   }
 
@@ -705,7 +786,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->EncodeBlock(out, points.data(), n);
+    EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
   }
 
@@ -746,7 +827,7 @@ std::vector<score_t> RaBitQRoundtrip(uint32_t d, uint32_t nb_bits,
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->EncodeBlock(out, points.data(), n);
+    EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
   }
 
@@ -821,16 +902,16 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start1;
-  uint64_t pay_start2;
+  PayloadStream::Cluster cl1;
+  PayloadStream::Cluster cl2;
   {
     MemoryIndexOutput out{file};
-    pay_start1 = out.Position();
+    PayloadStream stream{*writer};
     writer->SetClusterCentroid(c1.data());
-    writer->EncodeBlock(out, points1.data(), 2);
-    pay_start2 = out.Position();
+    cl1 = stream.Add(out, points1.data(), 2);
     writer->SetClusterCentroid(c2.data());
-    writer->EncodeBlock(out, points2.data(), 2);
+    cl2 = stream.Add(out, points2.data(), 2);
+    stream.Finish(out);
     out.Flush();
   }
 
@@ -844,12 +925,12 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
 
   std::array<score_t, 4> scores{};
   {
-    ClusterScorer s1{codebook, file, pay_start1, 2, c1.data()};
+    ClusterScorer s1{codebook, file, cl1.pay_start, 2, c1.data(), cl1.lane0};
     const auto got = s1.All();
     std::copy(got.begin(), got.end(), scores.begin());
   }
   {
-    ClusterScorer s2{codebook, file, pay_start2, 2, c2.data()};
+    ClusterScorer s2{codebook, file, cl2.pay_start, 2, c2.data(), cl2.lane0};
     const auto got = s2.All();
     std::copy(got.begin(), got.end(), scores.begin() + 2);
   }
@@ -1006,16 +1087,16 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start1;
-  uint64_t pay_start2;
+  PayloadStream::Cluster cl1;
+  PayloadStream::Cluster cl2;
   {
     MemoryIndexOutput out{file};
-    pay_start1 = out.Position();
+    PayloadStream stream{*writer};
     writer->SetClusterCentroid(c1.data());
-    writer->EncodeBlock(out, points1.data(), 2);
-    pay_start2 = out.Position();
+    cl1 = stream.Add(out, points1.data(), 2);
     writer->SetClusterCentroid(c2.data());
-    writer->EncodeBlock(out, points2.data(), 2);
+    cl2 = stream.Add(out, points2.data(), 2);
+    stream.Finish(out);
     out.Flush();
   }
 
@@ -1029,12 +1110,12 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
 
   std::array<score_t, 4> scores{};
   {
-    ClusterScorer s1{codebook, file, pay_start1, 2, c1.data()};
+    ClusterScorer s1{codebook, file, cl1.pay_start, 2, c1.data(), cl1.lane0};
     const auto got = s1.All();
     std::copy(got.begin(), got.end(), scores.begin());
   }
   {
-    ClusterScorer s2{codebook, file, pay_start2, 2, c2.data()};
+    ClusterScorer s2{codebook, file, cl2.pay_start, 2, c2.data(), cl2.lane0};
     const auto got = s2.All();
     std::copy(got.begin(), got.end(), scores.begin() + 2);
   }
@@ -1076,7 +1157,7 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->EncodeBlock(out, points.data(), n);
+    EncodeCluster(*writer, out, points.data(), n);
     out.Flush();
   }
 
@@ -1159,6 +1240,108 @@ void ExpectGroupsAreSelfContained(
                   EncodeChunks(*tail_w, tail, d, rest));
 }
 
+// A cluster's lanes need not start on a group boundary, so one group can hold
+// two clusters' documents -- encoded against different centroids. Every
+// document must score exactly as it does when its cluster is alone in the
+// stream: a lane mis-mapping silently returns a neighbour's distance, which
+// still looks like a plausible result.
+void ExpectSharedGroupsMatchSoloClusters(
+  const std::function<std::unique_ptr<QuantizerWriter>()>& make,
+  VectorQuantization quant, uint32_t d, VectorMetric metric,
+  std::span<const size_t> sizes, const std::vector<float>& points,
+  const std::vector<float>& centroids, const std::vector<float>& query) {
+  ASSERT_EQ(centroids.size(), sizes.size() * d);
+  ASSERT_EQ(SerializeStats(*make()), SerializeStats(*make()));
+
+  SimpleMemoryAccounter memory;
+  MemoryFile shared_file{memory};
+  std::vector<PayloadStream::Cluster> spans;
+  auto shared_w = make();
+  ASSERT_TRUE(shared_w->BlockSetting().pad_tail);
+  uint64_t shared_bytes = 0;
+  {
+    MemoryIndexOutput out{shared_file};
+    PayloadStream stream{*shared_w};
+    size_t off = 0;
+    for (size_t c = 0; c < sizes.size(); ++c) {
+      shared_w->SetClusterCentroid(centroids.data() + c * d);
+      spans.push_back(stream.Add(out, points.data() + off * d, sizes[c]));
+      off += sizes[c];
+    }
+    stream.Finish(out);
+    out.Flush();
+    shared_bytes = out.Position();
+  }
+  // The whole point: one padded group for the stream, not one per cluster.
+  size_t total = 0;
+  size_t shared_groups = 0;
+  size_t solo_groups = 0;
+  const size_t group = shared_w->BlockSetting().group_size;
+  for (const size_t s : sizes) {
+    total += s;
+    solo_groups += (s + group - 1) / group;
+  }
+  shared_groups = (total + group - 1) / group;
+  ASSERT_LT(shared_groups, solo_groups);
+  EXPECT_EQ(shared_bytes, shared_groups * group *
+                            size_t{shared_w->BlockSetting().record_size})
+    << "the stream must hold exactly " << shared_groups << " groups";
+  auto stats = MakeQuantizerStats(quant, d, SerializeStats(*shared_w), metric);
+  ASSERT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
+  ASSERT_NE(codebook, nullptr);
+
+  bool shares = false;
+  size_t off = 0;
+  for (size_t c = 0; c < sizes.size(); ++c) {
+    const float* cen = centroids.data() + c * d;
+    shares = shares || spans[c].lane0 != 0;
+
+    MemoryFile solo_file{memory};
+    auto solo_w = make();
+    uint64_t solo_start = 0;
+    {
+      MemoryIndexOutput out{solo_file};
+      solo_w->SetClusterCentroid(cen);
+      solo_start =
+        EncodeCluster(*solo_w, out, points.data() + off * d, sizes[c]);
+      out.Flush();
+    }
+    auto solo_stats =
+      MakeQuantizerStats(quant, d, SerializeStats(*solo_w), metric);
+    ASSERT_NE(solo_stats, nullptr);
+    auto solo_cb = solo_stats->MakeCodebook(query);
+    ASSERT_NE(solo_cb, nullptr);
+
+    ClusterScorer want{solo_cb, solo_file, solo_start, sizes[c], cen};
+    ClusterScorer got{codebook, shared_file, spans[c].pay_start,
+                      sizes[c], cen,         spans[c].lane0};
+    const auto want_scores = want.All();
+    const auto got_scores = got.All();
+    ASSERT_EQ(want_scores.size(), sizes[c]);
+    ASSERT_EQ(got_scores.size(), sizes[c]);
+    for (size_t i = 0; i < sizes[c]; ++i) {
+      EXPECT_EQ(want_scores[i], got_scores[i])
+        << "cluster " << c << " lane0 " << spans[c].lane0 << " doc " << i;
+    }
+
+    // Again through the windowed path, which serves a partially consumed group
+    // from its cache instead of scoring the whole cluster at once.
+    std::vector<score_t> windowed(sizes[c], kNoPrune);
+    constexpr size_t kWindow = 7;
+    for (size_t b = 0; b < sizes[c]; b += kWindow) {
+      const size_t m = std::min(kWindow, sizes[c] - b);
+      got.Block(b, m, kNoPrune, windowed.data() + b);
+    }
+    for (size_t i = 0; i < sizes[c]; ++i) {
+      EXPECT_EQ(want_scores[i], windowed[i])
+        << "windowed cluster " << c << " doc " << i;
+    }
+    off += sizes[c];
+  }
+  EXPECT_TRUE(shares) << "sizes must not all be group-aligned";
+}
+
 }  // namespace
 
 TEST(pq_quantizer_test, block_split_is_transparent_l2) {
@@ -1168,7 +1351,7 @@ TEST(pq_quantizer_test, block_split_is_transparent_l2) {
   const auto make = [&] {
     return MakeTrainedPq(VectorMetric::L2Sqr, d, 2, pts, cen);
   };
-  const size_t chunks[] = {kFastScanBbs, 2 * kFastScanBbs, 4};
+  const size_t chunks[] = {5, 40, 7, 48};
   ExpectBlockSplitIsTransparent(make, d, pts, chunks);
 }
 
@@ -1229,7 +1412,7 @@ TEST(rabitq_quantizer_test, block_split_is_transparent_one_bit) {
   const auto pts = MakeSpread(d, 100, 23);
   const std::vector<float> cen(d, 0.25f);
   const auto make = [&] { return MakeRaBitQ(d, /*nb_bits=*/1, cen); };
-  const size_t chunks[] = {kFastScanBbs, 2 * kFastScanBbs, 4};
+  const size_t chunks[] = {5, 40, 7, 48};
   ExpectBlockSplitIsTransparent(make, d, pts, chunks);
 }
 
@@ -1256,4 +1439,89 @@ TEST(rabitq_quantizer_test, groups_are_self_contained_one_bit) {
   const std::vector<float> cen(d, 0.25f);
   const auto make = [&] { return MakeRaBitQ(d, /*nb_bits=*/1, cen); };
   ExpectGroupsAreSelfContained(make, d, pts, kFastScanBbs);
+}
+
+namespace {
+
+// Clusters of 5, 40 and 7 at a group size of 32: every boundary lands inside a
+// group, and the last group is the only padded one.
+constexpr size_t kRaggedSizes[] = {5, 40, 7};
+constexpr size_t kRaggedTotal = 52;
+
+std::vector<float> RaggedCentroids(uint32_t d) {
+  std::vector<float> cen(std::size(kRaggedSizes) * d);
+  for (size_t c = 0; c < std::size(kRaggedSizes); ++c) {
+    std::fill_n(cen.begin() + c * d, d, 0.25f + 0.5f * static_cast<float>(c));
+  }
+  return cen;
+}
+
+}  // namespace
+
+TEST(pq_quantizer_test, shared_groups_match_solo_clusters_l2) {
+  constexpr uint32_t d = 8;
+  const auto pts = MakeSpread(d, kRaggedTotal, 31);
+  const auto cen = RaggedCentroids(d);
+  const std::vector<float> cen0(cen.begin(), cen.begin() + d);
+  const auto make = [&] {
+    return MakeTrainedPq(VectorMetric::L2Sqr, d, 2, pts, cen0);
+  };
+  const auto query = MakeSpread(d, 1, 41);
+  ExpectSharedGroupsMatchSoloClusters(make, VectorQuantization::PQ, d,
+                                      VectorMetric::L2Sqr, kRaggedSizes, pts,
+                                      cen, query);
+}
+
+TEST(pq_quantizer_test, shared_groups_match_solo_clusters_inner_product) {
+  constexpr uint32_t d = 8;
+  const auto pts = MakeSpread(d, kRaggedTotal, 31);
+  const auto cen = RaggedCentroids(d);
+  const std::vector<float> cen0(cen.begin(), cen.begin() + d);
+  const auto make = [&] {
+    return MakeTrainedPq(VectorMetric::InnerProduct, d, 2, pts, cen0);
+  };
+  const auto query = MakeSpread(d, 1, 41);
+  ExpectSharedGroupsMatchSoloClusters(make, VectorQuantization::PQ, d,
+                                      VectorMetric::InnerProduct, kRaggedSizes,
+                                      pts, cen, query);
+}
+
+TEST(pq_quantizer_test, shared_groups_match_solo_clusters_odd_m) {
+  constexpr uint32_t d = 9;
+  const auto pts = MakeSpread(d, kRaggedTotal, 33);
+  const auto cen = RaggedCentroids(d);
+  const std::vector<float> cen0(cen.begin(), cen.begin() + d);
+  const auto make = [&] {
+    return MakeTrainedPq(VectorMetric::L2Sqr, d, 3, pts, cen0);
+  };
+  const auto query = MakeSpread(d, 1, 43);
+  ExpectSharedGroupsMatchSoloClusters(make, VectorQuantization::PQ, d,
+                                      VectorMetric::L2Sqr, kRaggedSizes, pts,
+                                      cen, query);
+}
+
+TEST(rabitq_quantizer_test, shared_groups_match_solo_clusters_one_bit) {
+  constexpr uint32_t d = 8;
+  const auto pts = MakeSpread(d, kRaggedTotal, 35);
+  const auto cen = RaggedCentroids(d);
+  const auto make = [&] {
+    return MakeRaBitQ(d, /*nb_bits=*/1, std::vector<float>(d, 0.25f));
+  };
+  const auto query = MakeSpread(d, 1, 45);
+  ExpectSharedGroupsMatchSoloClusters(make, VectorQuantization::RaBitQ, d,
+                                      VectorMetric::L2Sqr, kRaggedSizes, pts,
+                                      cen, query);
+}
+
+TEST(rabitq_quantizer_test, shared_groups_match_solo_clusters_multibit) {
+  constexpr uint32_t d = 96;
+  const auto pts = MakeSpread(d, kRaggedTotal, 37);
+  const auto cen = RaggedCentroids(d);
+  const auto make = [&] {
+    return MakeRaBitQ(d, /*nb_bits=*/8, std::vector<float>(d, 0.25f));
+  };
+  const auto query = MakeSpread(d, 1, 47);
+  ExpectSharedGroupsMatchSoloClusters(make, VectorQuantization::RaBitQ, d,
+                                      VectorMetric::L2Sqr, kRaggedSizes, pts,
+                                      cen, query);
 }

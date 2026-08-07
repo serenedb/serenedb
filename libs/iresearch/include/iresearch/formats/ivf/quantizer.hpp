@@ -59,7 +59,12 @@ class QuantizerWriter {
 
   virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
 
-  virtual void EncodeBlock(IndexOutput& out, const float* vecs, size_t n) = 0;
+  virtual uint32_t CodeSize() const noexcept = 0;
+
+  virtual void Encode(byte_type* codes, const float* vecs, size_t n) = 0;
+
+  virtual void WriteCodes(IndexOutput& out, const byte_type* codes,
+                          size_t rows) = 0;
 
   virtual void Serialize(DataOutput& out) const = 0;
 

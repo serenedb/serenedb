@@ -211,6 +211,7 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
   }
   if (IndexFeatures::None != (features & IndexFeatures::Pay)) {
     term_meta.pay_start += vread<uint64_t>(p);
+    term_meta.pos_offset = *p++;
   }
 
   if (1 == term_meta.docs_count) {

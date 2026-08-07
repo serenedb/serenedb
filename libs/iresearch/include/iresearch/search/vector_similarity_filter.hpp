@@ -34,9 +34,8 @@ struct ByVectorSimilarityOptions : VectorFilterOptions {
 
   uint32_t nprobe = 1;
 
-  bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept {
-    return VectorFilterOptions::operator==(rhs) && nprobe == rhs.nprobe;
-  }
+  bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept =
+    default;
 };
 
 class ByVectorSimilarity final

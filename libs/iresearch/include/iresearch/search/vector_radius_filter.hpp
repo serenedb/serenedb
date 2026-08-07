@@ -33,10 +33,7 @@ struct ByRadiusOptions : VectorFilterOptions {
   float radius = 0.f;
   bool inclusive = false;
 
-  bool operator==(const ByRadiusOptions& rhs) const noexcept {
-    return VectorFilterOptions::operator==(rhs) && radius == rhs.radius &&
-           inclusive == rhs.inclusive;
-  }
+  bool operator==(const ByRadiusOptions& rhs) const noexcept = default;
 };
 
 class ByRadius final : public FilterWithField<ByRadiusOptions> {

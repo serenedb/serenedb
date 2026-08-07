@@ -394,6 +394,8 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
   }
   if (_features.HasPayload()) {
     out.WriteV64(meta.pay_start - _last_state.pay_start);
+    SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
+    out.WriteByte(meta.pos_offset);
   }
 
   if (meta.docs_count == 1) {
@@ -764,6 +766,7 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
   if (has_payload) {
     SDB_ASSERT(_pay_out && _term_pay);
     meta.pay_start = _pay_out->Position();
+    meta.pos_offset = _term_pay->PendingLanes();
     _term_pay->WriteTermPayload(*_pay_out, _term_docs);
   }
 }

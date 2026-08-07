@@ -47,11 +47,7 @@ struct VectorFilterOptions {
   VectorQuantization quant = VectorQuantization::None;
   std::shared_ptr<const Filter> inner;
 
-  bool operator==(const VectorFilterOptions& rhs) const noexcept {
-    return query == rhs.query && centroids_id == rhs.centroids_id &&
-           postings_id == rhs.postings_id && metric == rhs.metric &&
-           quant == rhs.quant && inner == rhs.inner;
-  }
+  bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
 };
 
 template<typename TermIterator>
@@ -159,6 +155,7 @@ inline bool PrepareVectorState(const SubReader& segment,
 
   state.cookies.reserve(fine_ids.size());
   state.pay_starts.reserve(fine_ids.size());
+  state.pay_lanes.reserve(fine_ids.size());
   state.cluster_counts.reserve(fine_ids.size());
   if (needs_centroids) {
     state.cluster_centroids.reserve(fine_ids.size() * d);
@@ -171,9 +168,10 @@ inline bool PrepareVectorState(const SubReader& segment,
       continue;
     }
     if (term_meta) {
+      const auto* impl = static_cast<const TermMetaImpl*>(term_meta);
       estimation += term_meta->docs_count;
-      state.pay_starts.push_back(
-        static_cast<const TermMetaImpl*>(term_meta)->pay_start);
+      state.pay_starts.push_back(impl->pay_start);
+      state.pay_lanes.push_back(static_cast<uint32_t>(impl->pos_offset));
       state.cluster_counts.push_back(term_meta->docs_count);
     }
     if (needs_centroids) {

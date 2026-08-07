@@ -98,7 +98,7 @@ namespace {
 // 22 names the relation of a store op by id. It was written as the store
 // table's name and parsed back to the id on the way out, a round trip through
 // a spelling no reader wanted.
-constexpr uint8_t kEntryVersion = 26;
+constexpr uint8_t kEntryVersion = 27;
 
 constexpr uint8_t kFrameSnapshot = 1U << 0U;
 
@@ -358,8 +358,8 @@ Tag TagOf(const Entry& entry) noexcept {
         return Tag::DropSequence;
       } else if constexpr (std::is_same_v<T, wal::PrepareCommit>) {
         return Tag::PrepareCommit;
-      } else if constexpr (std::is_same_v<T, wal::StoreOps>) {
-        return Tag::StoreOps;
+      } else if constexpr (std::is_same_v<T, store_op::Targeted>) {
+        return Tag::StoreOp;
       } else {
         // No catch-all: a new entry type falling through here would be
         // silently tagged as something else.
@@ -437,9 +437,8 @@ void SerializeEntries(FrameHeader header, std::span<const Entry> entries,
         } else if constexpr (std::is_same_v<T, wal::DropSequence> ||
                              std::is_same_v<T, wal::PrepareCommit>) {
           Write(stream, e.id);
-        } else if constexpr (std::is_same_v<T, wal::StoreOps>) {
-          Write(stream, e.database_id);
-          store_op::SerializeOps(*e.ops, stream);
+        } else if constexpr (std::is_same_v<T, store_op::Targeted>) {
+          store_op::SerializeOp(e, stream);
         } else {
           static_assert(false, "entry type is not serialized");
         }
@@ -569,14 +568,9 @@ ParsedFrame ParseEntries(std::span<const uint8_t> frame) {
         entries.push_back({tag, e});
         break;
       }
-      case Tag::StoreOps: {
-        wal::StoreOps e;
-        e.database_id = ReadId(stream);
-        e.ops = std::make_shared<const std::vector<store_op::Targeted>>(
-          store_op::DeserializeOps(e.database_id, stream));
-        entries.push_back({tag, std::move(e)});
+      case Tag::StoreOp:
+        entries.push_back({tag, store_op::DeserializeOp(stream)});
         break;
-      }
       default:
         SDB_FATAL(STARTUP, "catalog wal: unknown entry tag ",
                   static_cast<int>(tag));

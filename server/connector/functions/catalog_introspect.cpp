@@ -25,6 +25,7 @@
 
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
@@ -110,6 +111,21 @@ std::optional<std::string> RenderJson(
   SDB_ENSURE(sb.view().get(body) == simdjson::SUCCESS,
              "catalog introspection: json render failed");
   return std::string{body};
+}
+
+// A store op renders as the DDL it is: duckdb writes the SQL for its own parse
+// infos, and the two halves of the hierarchy each spell their own.
+std::string RenderStoreOp(const duckdb::ParseInfo& info) {
+  switch (info.info_type) {
+    case duckdb::ParseInfoType::ALTER_INFO:
+      return info.Cast<duckdb::AlterInfo>().ToString();
+    case duckdb::ParseInfoType::CREATE_INFO:
+      return info.Cast<duckdb::CreateInfo>().ToString();
+    case duckdb::ParseInfoType::DROP_INFO:
+      return info.Cast<duckdb::DropInfo>().ToString();
+    default:
+      return {};
+  }
 }
 
 // The `def` column. The object renders its own tuple as named fields, so
@@ -219,9 +235,11 @@ EntryRow MakeEntryRow(const catalog::wal::TaggedEntry& tagged) {
         row.type = ObjectTypeName(e.type);
         row.id = e.id.id();
         row.def = RenderCreateInfo(e.type, *e.info);
-      } else if constexpr (std::is_same_v<T, StoreOps>) {
-        row.id = e.database_id.id();
-        row.def = absl::StrCat(e.ops->size(), " store op(s)");
+      } else if constexpr (std::is_same_v<T, catalog::store_op::Targeted>) {
+        row.parent_id = e.database_id.id();
+        row.id = e.relation_id.id();
+        row.def =
+          e.info == nullptr ? "materialize storage" : RenderStoreOp(*e.info);
       } else {
         // Falling through here is how two entry types once rendered blank.
         static_assert(false, "entry type has no row");

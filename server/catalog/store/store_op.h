@@ -22,8 +22,6 @@
 
 #include <duckdb/parser/parsed_data/parse_info.hpp>
 #include <memory>
-#include <span>
-#include <vector>
 
 #include "catalog/identifiers/object_id.h"
 
@@ -64,14 +62,8 @@ struct Targeted {
 // data work follows it. Everything else creates or reshapes.
 bool IsDestructive(const Targeted& op) noexcept;
 
-// The store half of a catalog batch, as it goes into and comes out of the
-// catalog log. Invariant 3b: every record reconstructs into its store
-// operation, so the ops travel with the records that describe their result and
-// a database whose committed position is behind replays them verbatim.
-void SerializeOps(std::span<const Targeted> ops, duckdb::MemoryStream& stream);
-// The batch's database is written once, on the record that carries the ops.
-std::vector<Targeted> DeserializeOps(ObjectId database_id,
-                                     duckdb::MemoryStream& stream);
+void SerializeOp(const Targeted& op, duckdb::MemoryStream& stream);
+Targeted DeserializeOp(duckdb::MemoryStream& stream);
 
 }  // namespace store_op
 }  // namespace sdb::catalog

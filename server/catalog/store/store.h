@@ -119,7 +119,7 @@ duckdb::AlterEntryData StoreTarget(duckdb::OnEntryNotFound if_not_found =
 // A crash between the two leaves the database's committed position behind the
 // log tail. Boot compares one number per database and replays exactly the
 // frames in between -- never a scan, never a diff of catalog against store --
-// which is why every frame that has a data half carries it (wal::StoreOps).
+// which is why every frame that has a data half carries the operations.
 //
 // See docs/catalog-wal-operations.md for the per-operation mapping.
 class CatalogStore {

@@ -207,25 +207,18 @@ struct PrepareCommit {
   ObjectId id;
 };
 
-// The store half of the batch this frame's records describe: the operations
-// that have to run against `database_id`'s own file for its rows to match them.
-//
-// This is invariant 3b made concrete. The catalog commits first and the
-// database's duckdb commit follows, carrying the store change and the new log
-// position atomically; a database whose committed position is behind the log
-// tail replays exactly the batches in between. That is only possible if every
-// record reconstructs into its store operation, so the reconstruction travels
-// with the records rather than being inferred from them -- `ALTER COLUMN TYPE`
-// is the case that proves the point, because the resulting definition says
-// where the column lands but not the USING expression that moves the data.
-struct StoreOps {
-  ObjectId database_id;
-  std::shared_ptr<const std::vector<store_op::Targeted>> ops;
-};
-
+// The store half of a frame is invariant 3b made concrete: the catalog commits
+// first and the database's duckdb commit follows, carrying the store change and
+// the new log position atomically, so a database whose committed position is
+// behind the log tail replays exactly the frames in between. That works only if
+// every record reconstructs into its store operation, so the operation travels
+// in the frame beside the records -- `ALTER COLUMN TYPE` is the case that
+// proves the point, because the resulting definition says where the column
+// lands but not the USING expression that moves the data. One entry per
+// operation: an op already names the database whose file holds the rows.
 using Entry = std::variant<PutTable, PutEntry, DropObject, DropChildren,
                            DropPrepare, SetSequence, BumpSequence, DropSequence,
-                           PrepareCommit, StoreOps>;
+                           PrepareCommit, store_op::Targeted>;
 
 // Written ahead of each entry.
 enum class Tag : uint8_t {
@@ -238,7 +231,7 @@ enum class Tag : uint8_t {
   BumpSequence,
   DropSequence,
   PrepareCommit,
-  StoreOps,
+  StoreOp,
 };
 
 // The object an entry names.

@@ -649,6 +649,7 @@ void CatalogStore::ApplyEntries(std::span<const wal::Entry> entries,
     }
   };
 
+  containers::FlatHashMap<uint64_t, std::vector<store_op::Targeted>> frame_ops;
   for (const auto& entry : entries) {
     std::visit(
       [&](const auto& e) ABSL_NO_THREAD_SAFETY_ANALYSIS {
@@ -676,13 +677,14 @@ void CatalogStore::ApplyEntries(std::span<const wal::Entry> entries,
           set_sequence(e.id, e.value, false);
         } else if constexpr (std::is_same_v<T, wal::BumpSequence>) {
           set_sequence(e.id, e.value, true);
-        } else if constexpr (std::is_same_v<T, wal::StoreOps>) {
+        } else if constexpr (std::is_same_v<T, store_op::Targeted>) {
           // Log-only: it is not state, it is what a database behind this
           // position has to run to catch up. Held until that database's data
-          // half is known durable, which is what compaction waits for.
+          // half is known durable, which is what compaction waits for. The
+          // frame's ops are gathered into one batch below: a frame lands
+          // atomically, so it is the unit a database catches up in.
           if (position != 0) {
-            _unacked[e.database_id.id()].push_back(
-              PendingBatch{.position = position, .ops = e.ops});
+            frame_ops[e.database_id.id()].push_back(e);
           }
         } else if constexpr (std::is_same_v<T, wal::DropSequence>) {
           absl::MutexLock seq_lock{&_seq_mutex};
@@ -692,6 +694,12 @@ void CatalogStore::ApplyEntries(std::span<const wal::Entry> entries,
         }
       },
       entry);
+  }
+  for (auto& [database_id, ops] : frame_ops) {
+    _unacked[database_id].push_back(PendingBatch{
+      .position = position,
+      .ops = std::make_shared<const std::vector<store_op::Targeted>>(
+        std::move(ops))});
   }
 }
 
@@ -1091,7 +1099,9 @@ void CatalogStore::Write(
   const auto database_id = store_ops.front().database_id;
   auto ops = std::make_shared<const std::vector<store_op::Targeted>>(
     std::move(store_ops));
-  entries.emplace_back(wal::StoreOps{.database_id = database_id, .ops = ops});
+  for (const auto& op : *ops) {
+    entries.emplace_back(op);
+  }
   // The data work takes duckdb's WAL and table locks, and DDL operators call in
   // here while holding table locks -- so it must never run under _mutex
   // (lock-order inversion against committing writers). Store-op batches

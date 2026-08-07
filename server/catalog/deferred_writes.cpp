@@ -43,12 +43,12 @@ class DeferredCatalogWrites final : public duckdb::ClientContextState {
  public:
   std::span<const wal::Entry> Queue(std::vector<wal::Entry> entries) {
     for (const auto& entry : entries) {
-      if (const auto* ops = std::get_if<wal::StoreOps>(&entry)) {
+      if (const auto* op = std::get_if<store_op::Targeted>(&entry)) {
         // At most one per transaction in practice -- a transaction writes one
         // attached database -- but the position has to reach every database a
         // frame named, so it is a set rather than a field.
-        if (!absl::c_linear_search(_store_databases, ops->database_id)) {
-          _store_databases.push_back(ops->database_id);
+        if (!absl::c_linear_search(_store_databases, op->database_id)) {
+          _store_databases.push_back(op->database_id);
         }
       }
     }

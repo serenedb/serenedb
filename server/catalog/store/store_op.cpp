@@ -85,40 +85,31 @@ bool IsDestructive(const Targeted& op) noexcept {
   }
 }
 
-void SerializeOps(std::span<const Targeted> ops, duckdb::MemoryStream& stream) {
-  stream.Write<uint32_t>(static_cast<uint32_t>(ops.size()));
-  for (const auto& op : ops) {
-    WriteId(stream, op.relation_id);
-    stream.Write<uint8_t>(static_cast<uint8_t>(PayloadOf(op.info.get())));
-    if (op.info != nullptr) {
-      duckdb::BinarySerializer::Serialize(*op.info, stream,
-                                          duckdb::VersionStorageOptions());
-    }
+void SerializeOp(const Targeted& op, duckdb::MemoryStream& stream) {
+  WriteId(stream, op.database_id);
+  WriteId(stream, op.relation_id);
+  stream.Write<uint8_t>(static_cast<uint8_t>(PayloadOf(op.info.get())));
+  if (op.info != nullptr) {
+    duckdb::BinarySerializer::Serialize(*op.info, stream,
+                                        duckdb::VersionStorageOptions());
   }
 }
 
-std::vector<Targeted> DeserializeOps(ObjectId database_id,
-                                     duckdb::MemoryStream& stream) {
-  const auto count = stream.Read<uint32_t>();
-  std::vector<Targeted> ops;
-  ops.reserve(count);
-  for (uint32_t i = 0; i < count; ++i) {
-    Targeted op{.database_id = database_id, .relation_id = ReadId(stream)};
-    switch (static_cast<Payload>(stream.Read<uint8_t>())) {
-      case Payload::None:
-        break;
-      case Payload::Parse:
-        op.info =
-          duckdb::BinaryDeserializer::Deserialize<duckdb::ParseInfo>(stream);
-        break;
-      case Payload::Create:
-        op.info =
-          duckdb::BinaryDeserializer::Deserialize<duckdb::CreateInfo>(stream);
-        break;
-    }
-    ops.push_back(std::move(op));
+Targeted DeserializeOp(duckdb::MemoryStream& stream) {
+  Targeted op{.database_id = ReadId(stream), .relation_id = ReadId(stream)};
+  switch (static_cast<Payload>(stream.Read<uint8_t>())) {
+    case Payload::None:
+      break;
+    case Payload::Parse:
+      op.info =
+        duckdb::BinaryDeserializer::Deserialize<duckdb::ParseInfo>(stream);
+      break;
+    case Payload::Create:
+      op.info =
+        duckdb::BinaryDeserializer::Deserialize<duckdb::CreateInfo>(stream);
+      break;
   }
-  return ops;
+  return op;
 }
 
 }  // namespace sdb::catalog::store_op

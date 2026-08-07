@@ -560,7 +560,7 @@ std::vector<irs::bstring> DrainTerms(irs::TermIterator& it) {
 std::vector<irs::bstring> AcceptedTerms(const irs::TermReader& reader,
                                         const irs::TermPredicate& pred) {
   std::vector<irs::bstring> terms;
-  auto it = reader.iterator(irs::SeekMode::NORMAL);
+  auto it = reader.iterator();
   while (it->next()) {
     if (pred.Accepts(it->value())) {
       terms.emplace_back(it->value());
@@ -619,12 +619,11 @@ TEST_P(TermsFilterTestCase, compile_term_iterator_matches_predicate) {
     check(f, true);
   }
   {
-    auto dfa = irs::FromRegexp(std::string_view{"a.*|v.*"});
-    ASSERT_NE(0, dfa.NumStates());
     irs::AutomatonFilter f;
     *f.mutable_field_id() = kDuplicatedId;
     *f.mutable_options() =
-      irs::AutomatonOptions{std::move(dfa), B("a.*|v.*"), 1024};
+      irs::AutomatonOptions{B("a.*|v.*"), irs::PatternKind::RegexpPerl, 1024};
+    ASSERT_TRUE(f.options().source->ok());
     check(f, true);
   }
 }

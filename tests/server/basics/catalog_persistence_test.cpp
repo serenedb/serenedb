@@ -167,7 +167,6 @@ TEST(CatalogPersistence, tokenizer) {
                  .name = "tok",
                  .config = {},
                  .features = search::Features{},
-                 .norm_row_group_size = 7,
                  .perm = Permissions{ObjectId{42},
                                      {AclItem{.grantee = ObjectId{7},
                                               .grantor = ObjectId{42},
@@ -211,8 +210,6 @@ TEST(CatalogPersistence, entry_config_serialized) {
       .features = search::Features{},
       .ivf_config = std::nullopt,
       .synthetic_column = irs::field_limits::invalid(),
-      .row_group_size = 100,
-      .norm_row_group_size = 50,
     });
 }
 
@@ -236,8 +233,6 @@ TEST(CatalogPersistence, entry_config_serialized_ivf) {
           .compression = false,
         },
       .synthetic_column = irs::field_limits::invalid(),
-      .row_group_size = 100,
-      .norm_row_group_size = 50,
     });
 }
 
@@ -255,8 +250,7 @@ TEST(CatalogPersistence, inverted_index) {
                                .return_type = duckdb::LogicalType::DOUBLE,
                                .pretty_printed = "x + 1"},
         .field_id = 7}},
-      .entries = {{1, EntryConfigSerialized{.text_dictionary = ObjectId{5},
-                                            .row_group_size = 100}}},
+      .entries = {{1, EntryConfigSerialized{.text_dictionary = ObjectId{5}}}},
       .options = InvertedIndexOptions{.row_group_size = 1024},
       .comment = "inv note",
     });
@@ -339,7 +333,6 @@ TEST(CatalogPersistence, role_data) {
 TEST(CatalogPersistence, inverted_index_options) {
   CheckFixture("inverted_index_options.bin", InvertedIndexOptions{
                                                .row_group_size = 1024,
-                                               .norm_row_group_size = 512,
                                                .refresh_interval_ms = 100,
                                                .compaction_interval_ms = 200,
                                                .cleanup_interval_step = 3,

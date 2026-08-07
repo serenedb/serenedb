@@ -21,17 +21,24 @@
 // Microbenchmark: dictionary enumeration strategies over the burst trie.
 //
 // Decides whether ts_dict / multiterm drivers should compile every claimable
-// filter to a DFA and ride the lockstep automaton iterator, or keep the
+// filter to an acceptor and ride the lockstep term iterator, or keep the
 // seek-based paths (RandomOnly exact seek, seek_ge + bounded scan,
-// seek-per-candidate IN merge). OpenFST costs are reported split:
+// seek-per-candidate IN merge). Acceptor costs are reported split:
 //
-//   *_AutomatonBuild -- constructing the DFA (MakeTermAcceptor /
-//                       MakePrefixAcceptor / FromRegexp / IntersectAcceptors)
-//   *_MatcherBuild   -- constructing the table matcher (CompiledAcceptor)
-//   *_Walk           -- pure enumeration with everything prebuilt
+//   *_AcceptorBuild -- constructing the acceptor, which is where the whole
+//                      determinization now happens (`RegexpAcceptor` compiles
+//                      its transition table in its constructor)
+//   *_SourceBuild   -- constructing the `TermAcceptorSource` a filter owns,
+//                      i.e. the acceptor plus the pattern classification and
+//                      the bounds derivation around it
+//   *_Walk          -- pure enumeration with everything prebuilt
 //
 // against the seek paths that need no build step at all. FullWalk and
-// FullWalkPredicate bound the fallback (plain walk + per-term Accept).
+// FullWalkPredicate bound the fallback (plain walk + per-term Matches),
+// StepRun* prices the run test the walk skips whole dictionary blocks with,
+// and the Fused* / Or* families price the two decisions the optimizer makes:
+// one fused walk versus a driver plus a residual, and one union acceptor
+// versus N separate child walks.
 //
 // Dictionary: N unique keyword terms "<a..z><%05x>" in one segment, one doc
 // per term; the first letter gives 26 disjoint prefix regions (~N/26 terms
@@ -45,13 +52,13 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/str_format.h"
+#include "basics/assert.h"
 #include "basics/containers/bitset.hpp"
 #include "basics/duckdb_engine.h"
-#include "fst/arcsort.h"
-#include "fst/minimize.h"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/directory_reader.hpp"
@@ -60,10 +67,13 @@
 #include "iresearch/search/bitset_doc_iterator.hpp"
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/regexp_filter.hpp"
+#include "iresearch/search/term_acceptor.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
 #include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -158,12 +168,32 @@ const irs::TermReader& FieldOf(const CachedIndex& index) {
   return *field;
 }
 
-size_t DrainMatcher(const irs::TermReader& field,
-                    const irs::automaton_table_matcher& matcher) {
-  auto it = field.iterator(matcher);
+template<typename Acceptor>
+size_t DrainAcceptor(const irs::TermReader& field, const Acceptor& acceptor) {
+  auto it = field.iterator(acceptor);
   size_t n = 0;
   while (it->next()) {
     benchmark::DoNotOptimize(it->value().data());
+    ++n;
+  }
+  return n;
+}
+
+size_t DrainSource(const irs::TermReader& field,
+                   const irs::TermAcceptorSource& source) {
+  auto it = source.Iterator(field);
+  size_t n = 0;
+  while (it->next()) {
+    benchmark::DoNotOptimize(it->value().data());
+    ++n;
+  }
+  return n;
+}
+
+size_t DrainIterator(irs::TermIterator& it) {
+  size_t n = 0;
+  while (it.next()) {
+    benchmark::DoNotOptimize(it.value().data());
     ++n;
   }
   return n;
@@ -179,11 +209,25 @@ std::vector<std::string> SampleTerms(const CachedIndex& index, size_t count) {
   return sampled;
 }
 
+void ReportTerms(benchmark::State& state, size_t produced) {
+  state.counters["terms"] = benchmark::Counter(
+    static_cast<double>(produced) / static_cast<double>(state.iterations()));
+  state.SetItemsProcessed(static_cast<int64_t>(produced));
+}
+
 void ApplySizes(benchmark::internal::Benchmark* b) {
   b->Arg(10'000)->Arg(500'000)->Unit(benchmark::kMicrosecond);
 }
 
 // -- exact term ---------------------------------------------------------
+
+// The dictionary holds no wildcard metacharacter, so a term is its own
+// wildcard pattern -- which is how a `WildcardType::Term` filter reaches the
+// acceptor at all.
+irs::RegexpAcceptor WildcardAcceptorOf(std::string_view pattern) {
+  return irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
+                             AsBytes(pattern)};
+}
 
 void ExactSeekRandomOnly(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
@@ -191,7 +235,7 @@ void ExactSeekRandomOnly(benchmark::State& state) {
   const auto targets = SampleTerms(index, 1000);
   size_t i = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::RandomOnly);
+    auto it = field.iterator();
     const bool found = it->seek(AsBytes(targets[i++ % targets.size()]));
     benchmark::DoNotOptimize(found);
   }
@@ -204,47 +248,50 @@ void ExactSeekNormal(benchmark::State& state) {
   const auto targets = SampleTerms(index, 1000);
   size_t i = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     const bool found = it->seek(AsBytes(targets[i++ % targets.size()]));
     benchmark::DoNotOptimize(found);
   }
   state.SetItemsProcessed(state.iterations());
 }
 
-void ExactAutomatonBuild(benchmark::State& state) {
+void ExactAcceptorBuild(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto targets = SampleTerms(index, 1000);
   size_t i = 0;
   for (auto _ : state) {
-    auto a = irs::MakeTermAcceptor(AsBytes(targets[i++ % targets.size()]));
-    benchmark::DoNotOptimize(a.NumStates());
+    auto a = WildcardAcceptorOf(targets[i++ % targets.size()]);
+    benchmark::DoNotOptimize(a.ok());
   }
   state.SetItemsProcessed(state.iterations());
 }
 
-void ExactMatcherBuild(benchmark::State& state) {
+void ExactSourceBuild(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
-  const auto a = irs::MakeTermAcceptor(AsBytes(index.terms.front()));
+  const auto targets = SampleTerms(index, 1000);
+  size_t i = 0;
   for (auto _ : state) {
-    irs::automaton_table_matcher matcher{a, irs::kTestAutomatonProps};
-    benchmark::DoNotOptimize(&matcher);
+    auto source = irs::MakePatternSource(
+      irs::bstring{AsBytes(targets[i++ % targets.size()])},
+      irs::PatternKind::Wildcard);
+    benchmark::DoNotOptimize(source->ok());
   }
   state.SetItemsProcessed(state.iterations());
 }
 
-void ExactLockstepWalk(benchmark::State& state) {
+void ExactAcceptorWalk(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
   const auto targets = SampleTerms(index, 1000);
-  std::vector<irs::CompiledAcceptor> compiled;
+  std::vector<irs::RegexpAcceptor> compiled;
   compiled.reserve(targets.size());
   for (const auto& t : targets) {
-    compiled.emplace_back(irs::MakeTermAcceptor(AsBytes(t)));
+    compiled.emplace_back(WildcardAcceptorOf(t));
   }
   size_t i = 0;
   size_t produced = 0;
   for (auto _ : state) {
-    produced += DrainMatcher(field, compiled[i++ % compiled.size()].matcher);
+    produced += DrainAcceptor(field, compiled[i++ % compiled.size()]);
   }
   benchmark::DoNotOptimize(produced);
   state.SetItemsProcessed(state.iterations());
@@ -264,7 +311,7 @@ void PrefixSeekScan(benchmark::State& state) {
   const auto target = AsBytes(prefix);
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     if (irs::SeekResult::End != it->seek_ge(target) &&
         it->value().starts_with(target)) {
@@ -276,58 +323,54 @@ void PrefixSeekScan(benchmark::State& state) {
     }
     produced += n;
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
-void PrefixAutomatonBuild(benchmark::State& state) {
-  const std::string prefix = PrefixOf(static_cast<size_t>(state.range(1)));
+void PrefixAcceptorBuild(benchmark::State& state) {
+  const std::string pattern =
+    PrefixOf(static_cast<size_t>(state.range(1))) + '%';
   for (auto _ : state) {
-    auto a = irs::MakePrefixAcceptor(AsBytes(prefix));
-    benchmark::DoNotOptimize(a.NumStates());
+    auto a = WildcardAcceptorOf(pattern);
+    benchmark::DoNotOptimize(a.ok());
   }
   state.SetItemsProcessed(state.iterations());
 }
 
-void PrefixMatcherBuild(benchmark::State& state) {
-  const std::string prefix = PrefixOf(static_cast<size_t>(state.range(1)));
-  const auto a = irs::MakePrefixAcceptor(AsBytes(prefix));
+void PrefixSourceBuild(benchmark::State& state) {
+  const std::string pattern =
+    PrefixOf(static_cast<size_t>(state.range(1))) + '%';
   for (auto _ : state) {
-    irs::automaton_table_matcher matcher{a, irs::kTestAutomatonProps};
-    benchmark::DoNotOptimize(&matcher);
+    auto source = irs::MakePatternSource(irs::bstring{AsBytes(pattern)},
+                                         irs::PatternKind::Wildcard);
+    benchmark::DoNotOptimize(source->ok());
   }
   state.SetItemsProcessed(state.iterations());
 }
 
-void PrefixLockstepWalk(benchmark::State& state) {
+void PrefixAcceptorWalk(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
-  const std::string prefix = PrefixOf(static_cast<size_t>(state.range(1)));
-  const irs::CompiledAcceptor compiled{
-    irs::MakePrefixAcceptor(AsBytes(prefix))};
+  const std::string pattern =
+    PrefixOf(static_cast<size_t>(state.range(1))) + '%';
+  const auto compiled = WildcardAcceptorOf(pattern);
   size_t produced = 0;
   for (auto _ : state) {
-    produced += DrainMatcher(field, compiled.matcher);
+    produced += DrainAcceptor(field, compiled);
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
-void PrefixLockstepWithBuild(benchmark::State& state) {
+void PrefixAcceptorWithBuild(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
-  const std::string prefix = PrefixOf(static_cast<size_t>(state.range(1)));
+  const std::string pattern =
+    PrefixOf(static_cast<size_t>(state.range(1))) + '%';
   size_t produced = 0;
   for (auto _ : state) {
-    const irs::CompiledAcceptor compiled{
-      irs::MakePrefixAcceptor(AsBytes(prefix))};
-    produced += DrainMatcher(field, compiled.matcher);
+    const auto compiled = WildcardAcceptorOf(pattern);
+    produced += DrainAcceptor(field, compiled);
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
 // -- range ----------------------------------------------------------------
@@ -344,7 +387,7 @@ void RangeSeekScan(benchmark::State& state) {
   const auto max_bytes = AsBytes(max);
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     if (irs::SeekResult::End != it->seek_ge(min_bytes)) {
       do {
@@ -357,33 +400,47 @@ void RangeSeekScan(benchmark::State& state) {
     }
     produced += n;
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
-void RangeAutomatonBuild(benchmark::State& state) {
-  const auto [min, max] = RangeBoundsOf(static_cast<int>(state.range(1)));
-  for (auto _ : state) {
-    auto a = irs::MakeRangeAcceptor(AsBytes(min), AsBytes(max), true, false);
-    benchmark::DoNotOptimize(a.NumStates());
-  }
-  state.SetItemsProcessed(state.iterations());
-}
-
-void RangeLockstepWalk(benchmark::State& state) {
+// The range has no acceptor of its own any more: the bounds are the walk, and
+// the per-key test is trivially true. This is what a range costs when it is
+// driven through the same wrapper a fused conjunction uses.
+void RangeBoundedWalk(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
   const auto [min, max] = RangeBoundsOf(static_cast<int>(state.range(1)));
-  const irs::CompiledAcceptor compiled{
-    irs::MakeRangeAcceptor(AsBytes(min), AsBytes(max), true, false)};
   size_t produced = 0;
   for (auto _ : state) {
-    produced += DrainMatcher(field, compiled.matcher);
+    const auto predicate = irs::MakeTermPredicate(irs::AcceptAllTerms{});
+    irs::BoundedTermIterator it{field.iterator(), AsBytes(min), AsBytes(max),
+                                predicate.get()};
+    size_t n = 0;
+    while (it.next()) {
+      benchmark::DoNotOptimize(it.value().data());
+      ++n;
+    }
+    produced += n;
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
+}
+
+void RangeIteratorScan(benchmark::State& state) {
+  const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
+  const auto& field = FieldOf(index);
+  const auto [min, max] = RangeBoundsOf(static_cast<int>(state.range(1)));
+  irs::ByRange filter;
+  auto& range = filter.mutable_options()->range;
+  range.min = AsBytes(min);
+  range.min_type = irs::BoundType::Inclusive;
+  range.max = AsBytes(max);
+  range.max_type = irs::BoundType::Exclusive;
+  size_t produced = 0;
+  for (auto _ : state) {
+    auto it = filter.CompileTermIterator(field);
+    produced += DrainIterator(*it);
+  }
+  ReportTerms(state, produced);
 }
 
 // -- IN (seek per candidate) ---------------------------------------------
@@ -395,7 +452,7 @@ void InSeeks(benchmark::State& state) {
     SampleTerms(index, static_cast<size_t>(state.range(1)));
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     for (const auto& candidate : candidates) {
       if (it->seek(AsBytes(candidate))) {
@@ -405,44 +462,95 @@ void InSeeks(benchmark::State& state) {
     }
     produced += n;
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
-// -- fused AND vs driver + predicate --------------------------------------
+// -- regexp ---------------------------------------------------------------
 
-const irs::automaton& RegexpAcceptorFor() {
-  static const auto kAcceptor = irs::FromRegexp(
-    AsBytes(std::string_view{"a.*[02468ace]"}), irs::kDefaultMaxDfaStates);
+constexpr std::string_view kRegexpPattern = "a.*[02468ace]";
+
+const irs::RegexpAcceptor& RegexpAcceptorFor() {
+  static const irs::RegexpAcceptor kAcceptor{AsBytes(kRegexpPattern)};
   return kAcceptor;
 }
 
-void FusedIntersectBuild(benchmark::State& state) {
-  const std::string prefix = PrefixOf(1);
-  const auto lhs = irs::MakePrefixAcceptor(AsBytes(prefix));
-  const auto& rhs = RegexpAcceptorFor();
+void RegexpAcceptorBuild(benchmark::State& state) {
   for (auto _ : state) {
-    auto product = irs::IntersectAcceptors(lhs, rhs, irs::kDefaultMaxDfaStates);
-    benchmark::DoNotOptimize(product.has_value());
+    const irs::RegexpAcceptor a{AsBytes(kRegexpPattern)};
+    benchmark::DoNotOptimize(a.ok());
   }
   state.SetItemsProcessed(state.iterations());
 }
 
-void FusedLockstepWalk(benchmark::State& state) {
+void RegexpSourceBuild(benchmark::State& state) {
+  for (auto _ : state) {
+    auto source = irs::MakePatternSource(irs::bstring{AsBytes(kRegexpPattern)},
+                                         irs::PatternKind::RegexpPerl);
+    benchmark::DoNotOptimize(source->ok());
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
+void RegexpAcceptorWalk(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
-  const auto product =
-    irs::IntersectAcceptors(irs::MakePrefixAcceptor(AsBytes(PrefixOf(1))),
-                            RegexpAcceptorFor(), irs::kDefaultMaxDfaStates);
-  const irs::CompiledAcceptor compiled{*product};
   size_t produced = 0;
   for (auto _ : state) {
-    produced += DrainMatcher(field, compiled.matcher);
+    produced += DrainAcceptor(field, RegexpAcceptorFor());
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
+}
+
+// -- fused AND vs driver + predicate --------------------------------------
+
+irs::TermAcceptorSource::ptr PrefixDriverSource() {
+  return irs::MakePatternSource(irs::bstring{AsBytes(PrefixOf(1) + '%')},
+                                irs::PatternKind::Wildcard);
+}
+
+irs::TermBounds PrefixDriverBounds() {
+  const auto prefix = PrefixOf(1);
+  return {.lower = irs::bstring{AsBytes(prefix)},
+          .upper = irs::UpperBoundOf(AsBytes(prefix))};
+}
+
+void FusedSourceBuild(benchmark::State& state) {
+  for (auto _ : state) {
+    auto source = irs::MakeConjunctionSource(
+      PrefixDriverSource(), PrefixDriverBounds(),
+      irs::CreateByRegexp(kKwFieldId, AsBytes(kRegexpPattern)));
+    benchmark::DoNotOptimize(source->ok());
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
+void FusedSourceWalk(benchmark::State& state) {
+  const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
+  const auto& field = FieldOf(index);
+  const auto source = irs::MakeConjunctionSource(
+    PrefixDriverSource(), PrefixDriverBounds(),
+    irs::CreateByRegexp(kKwFieldId, AsBytes(kRegexpPattern)));
+  size_t produced = 0;
+  for (auto _ : state) {
+    produced += DrainSource(field, *source);
+  }
+  ReportTerms(state, produced);
+}
+
+// The bounds-only shape: no driver acceptor at all, the prefix range plus the
+// residual test. This is what the optimizer falls back to when the driver's
+// language is not exact.
+void FusedBoundsOnlyWalk(benchmark::State& state) {
+  const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
+  const auto& field = FieldOf(index);
+  const auto source = irs::MakeConjunctionSource(
+    nullptr, PrefixDriverBounds(),
+    irs::CreateByRegexp(kKwFieldId, AsBytes(kRegexpPattern)));
+  size_t produced = 0;
+  for (auto _ : state) {
+    produced += DrainSource(field, *source);
+  }
+  ReportTerms(state, produced);
 }
 
 void FusedDriverPlusPredicate(benchmark::State& state) {
@@ -453,14 +561,14 @@ void FusedDriverPlusPredicate(benchmark::State& state) {
   const auto& predicate = RegexpAcceptorFor();
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     if (irs::SeekResult::End != it->seek_ge(target)) {
       do {
         if (!it->value().starts_with(target)) {
           break;
         }
-        if (bool(irs::Accept(predicate, it->value()))) {
+        if (predicate.Matches(it->value())) {
           benchmark::DoNotOptimize(it->value().data());
           ++n;
         }
@@ -468,9 +576,77 @@ void FusedDriverPlusPredicate(benchmark::State& state) {
     }
     produced += n;
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
+}
+
+// The alternative the fusion rule rejects: walk each operand's own language
+// and intersect the two term lists afterwards.
+void FusedSeparateWalks(benchmark::State& state) {
+  const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
+  const auto& field = FieldOf(index);
+  const auto driver = WildcardAcceptorOf(PrefixOf(1) + '%');
+  const auto& residual = RegexpAcceptorFor();
+  size_t produced = 0;
+  for (auto _ : state) {
+    std::vector<irs::bstring> lhs;
+    {
+      auto it = field.iterator(driver);
+      while (it->next()) {
+        lhs.emplace_back(it->value());
+      }
+    }
+    size_t n = 0;
+    {
+      auto it = field.iterator(residual);
+      auto cursor = lhs.begin();
+      while (it->next()) {
+        const auto key = it->value();
+        while (cursor != lhs.end() && irs::bytes_view{*cursor} < key) {
+          ++cursor;
+        }
+        if (cursor != lhs.end() && irs::bytes_view{*cursor} == key) {
+          benchmark::DoNotOptimize(key.data());
+          ++n;
+        }
+      }
+    }
+    produced += n;
+  }
+  ReportTerms(state, produced);
+}
+
+// -- StepRun vs stepping byte by byte -------------------------------------
+
+// `kCheapRuns` claims a bit test per byte beats a table step per byte, and the
+// walk branches on it to decide whether a whole dictionary block can be tested
+// in one pass. These two are the same bytes through the two paths.
+void StepRunSelfLoop(benchmark::State& state) {
+  static const irs::RegexpAcceptor kAny{AsBytes(std::string_view{".*"})};
+  const std::string run(static_cast<size_t>(state.range(0)), 'a');
+  const auto* p = reinterpret_cast<const irs::byte_type*>(run.data());
+  for (auto _ : state) {
+    irs::RegexpAcceptor::State out{};
+    const size_t consumed = kAny.StepRun(kAny.Start(), p, run.size(), out);
+    benchmark::DoNotOptimize(consumed);
+    benchmark::DoNotOptimize(out);
+  }
+  state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) *
+                          static_cast<int64_t>(run.size()));
+}
+
+void StepPerByte(benchmark::State& state) {
+  static const irs::RegexpAcceptor kAny{AsBytes(std::string_view{".*"})};
+  const std::string run(static_cast<size_t>(state.range(0)), 'a');
+  const auto* p = reinterpret_cast<const irs::byte_type*>(run.data());
+  for (auto _ : state) {
+    auto s = kAny.Start();
+    for (size_t i = 0; i != run.size(); ++i) {
+      s = kAny.Step(s, p[i]);
+    }
+    benchmark::DoNotOptimize(s);
+  }
+  state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) *
+                          static_cast<int64_t>(run.size()));
 }
 
 // -- baselines -------------------------------------------------------------
@@ -480,7 +656,7 @@ void FullWalk(benchmark::State& state) {
   const auto& field = FieldOf(index);
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     while (it->next()) {
       benchmark::DoNotOptimize(it->value().data());
@@ -497,10 +673,10 @@ void FullWalkPredicate(benchmark::State& state) {
   const auto& predicate = RegexpAcceptorFor();
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     while (it->next()) {
-      if (bool(irs::Accept(predicate, it->value()))) {
+      if (predicate.Matches(it->value())) {
         ++n;
       }
     }
@@ -508,47 +684,6 @@ void FullWalkPredicate(benchmark::State& state) {
   }
   state.SetItemsProcessed(static_cast<int64_t>(produced));
 }
-
-BENCHMARK(ExactSeekRandomOnly)->Apply(ApplySizes);
-BENCHMARK(ExactSeekNormal)->Apply(ApplySizes);
-BENCHMARK(ExactAutomatonBuild)->Apply(ApplySizes);
-BENCHMARK(ExactMatcherBuild)->Apply(ApplySizes);
-BENCHMARK(ExactLockstepWalk)->Apply(ApplySizes);
-
-BENCHMARK(PrefixSeekScan)
-  ->ArgsProduct({{10'000, 500'000}, {1, 3}})
-  ->Unit(benchmark::kMicrosecond);
-BENCHMARK(PrefixAutomatonBuild)
-  ->ArgsProduct({{10'000}, {1, 3}})
-  ->Unit(benchmark::kMicrosecond);
-BENCHMARK(PrefixMatcherBuild)
-  ->ArgsProduct({{10'000}, {1, 3}})
-  ->Unit(benchmark::kMicrosecond);
-BENCHMARK(PrefixLockstepWalk)
-  ->ArgsProduct({{10'000, 500'000}, {1, 3}})
-  ->Unit(benchmark::kMicrosecond);
-
-BENCHMARK(PrefixLockstepWithBuild)
-  ->ArgsProduct({{10'000, 500'000}, {1, 3}})
-  ->Unit(benchmark::kMicrosecond);
-
-BENCHMARK(RangeSeekScan)
-  ->ArgsProduct({{10'000, 500'000}, {1, 4}})
-  ->Unit(benchmark::kMicrosecond);
-BENCHMARK(RangeAutomatonBuild)
-  ->ArgsProduct({{10'000}, {1, 4}})
-  ->Unit(benchmark::kMicrosecond);
-BENCHMARK(RangeLockstepWalk)
-  ->ArgsProduct({{10'000, 500'000}, {1, 4}})
-  ->Unit(benchmark::kMicrosecond);
-
-BENCHMARK(InSeeks)
-  ->ArgsProduct({{10'000, 500'000}, {10, 1000}})
-  ->Unit(benchmark::kMicrosecond);
-
-BENCHMARK(FusedIntersectBuild)->Arg(10'000)->Unit(benchmark::kMicrosecond);
-BENCHMARK(FusedLockstepWalk)->Apply(ApplySizes);
-BENCHMARK(FusedDriverPlusPredicate)->Apply(ApplySizes);
 
 void WhereProbeWalk(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
@@ -560,10 +695,9 @@ void WhereProbeWalk(benchmark::State& state) {
   std::vector<irs::bitset::word_t> set(words, ~irs::bitset::word_t{0});
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     while (it->next()) {
-      it->read();
       std::vector<irs::ScoreAdapter> itrs;
       itrs.emplace_back(it->postings(irs::IndexFeatures::None));
       itrs.emplace_back(irs::memory::make_managed<irs::BitsetDocIterator>(
@@ -577,10 +711,6 @@ void WhereProbeWalk(benchmark::State& state) {
   state.SetItemsProcessed(static_cast<int64_t>(produced));
 }
 
-BENCHMARK(FullWalk)->Apply(ApplySizes);
-BENCHMARK(FullWalkPredicate)->Apply(ApplySizes);
-BENCHMARK(WhereProbeWalk)->Apply(ApplySizes);
-
 // -- compiled TermIterator wrappers vs the raw loops above ------------------
 
 void ExactIterator(benchmark::State& state) {
@@ -592,12 +722,7 @@ void ExactIterator(benchmark::State& state) {
   for (auto _ : state) {
     filter.mutable_options()->term = AsBytes(targets[i++ % targets.size()]);
     auto it = filter.CompileTermIterator(field);
-    size_t n = 0;
-    while (it->next()) {
-      benchmark::DoNotOptimize(it->value().data());
-      ++n;
-    }
-    benchmark::DoNotOptimize(n);
+    benchmark::DoNotOptimize(DrainIterator(*it));
   }
   state.SetItemsProcessed(state.iterations());
 }
@@ -611,16 +736,9 @@ void PrefixIteratorScan(benchmark::State& state) {
   size_t produced = 0;
   for (auto _ : state) {
     auto it = prefix_filter.CompileTermIterator(field);
-    size_t n = 0;
-    while (it->next()) {
-      benchmark::DoNotOptimize(it->value().data());
-      ++n;
-    }
-    produced += n;
+    produced += DrainIterator(*it);
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
 void FullWalkFilteredIterator(benchmark::State& state) {
@@ -630,21 +748,15 @@ void FullWalkFilteredIterator(benchmark::State& state) {
   size_t produced = 0;
   for (auto _ : state) {
     irs::FilteredTermIterator it{
-      field.iterator(irs::SeekMode::NORMAL),
-      irs::MakeTermPredicate([&](irs::bytes_view term) {
-        return bool(irs::Accept(predicate, term));
+      field.iterator(), irs::MakeTermPredicate([&](irs::bytes_view term) {
+        return predicate.Matches(term);
       })};
-    size_t n = 0;
-    while (it.next()) {
-      benchmark::DoNotOptimize(it.value().data());
-      ++n;
-    }
-    produced += n;
+    produced += DrainIterator(it);
   }
   state.SetItemsProcessed(static_cast<int64_t>(produced));
 }
 
-// -- OR fusion: N separate child enumerations vs one union DFA --------------
+// -- OR fusion: N separate child enumerations vs one union acceptor ---------
 
 std::vector<std::string> DisjointPrefixes(size_t n) {
   std::vector<std::string> prefixes;
@@ -665,26 +777,35 @@ std::vector<std::string> RegexpPatternsFor(size_t n) {
   return patterns;
 }
 
-std::vector<irs::automaton> RegexpAcceptorsFor(size_t n) {
-  std::vector<irs::automaton> acceptors;
-  acceptors.reserve(n);
-  for (const auto& pattern : RegexpPatternsFor(n)) {
-    acceptors.push_back(
-      irs::FromRegexp(AsBytes(pattern), irs::kDefaultMaxDfaStates));
+std::vector<irs::RegexpAcceptor> RegexpAcceptorsFor(
+  std::span<const std::string> patterns) {
+  std::vector<irs::RegexpAcceptor> acceptors;
+  acceptors.reserve(patterns.size());
+  for (const auto& pattern : patterns) {
+    acceptors.emplace_back(AsBytes(pattern));
   }
   return acceptors;
 }
 
-irs::automaton RegexUnionOf(std::span<const std::string> patterns) {
+irs::RegexpAcceptor RegexUnionOf(std::span<const std::string> patterns) {
   std::string rendered;
   for (const auto& pattern : patterns) {
     rendered += rendered.empty() ? "(?:" : "|(?:";
     rendered += pattern;
     rendered += ')';
   }
-  auto dfa = irs::FromRegexp(AsBytes(rendered), irs::kDefaultMaxDfaStates);
-  SDB_ASSERT(dfa.NumStates() != 0);
-  return dfa;
+  irs::RegexpAcceptor a{AsBytes(rendered)};
+  SDB_ASSERT(a.ok());
+  return a;
+}
+
+std::vector<std::string> PrefixPatternsFor(size_t n) {
+  std::vector<std::string> patterns;
+  patterns.reserve(n);
+  for (const auto& prefix : DisjointPrefixes(n)) {
+    patterns.push_back(prefix + ".*");
+  }
+  return patterns;
 }
 
 void OrPrefixesSeparateSeekScans(benchmark::State& state) {
@@ -698,32 +819,18 @@ void OrPrefixesSeparateSeekScans(benchmark::State& state) {
     for (const auto& prefix : prefixes) {
       prefix_filter.mutable_options()->term = AsBytes(prefix);
       auto it = prefix_filter.CompileTermIterator(field);
-      while (it->next()) {
-        benchmark::DoNotOptimize(it->value().data());
-        ++n;
-      }
+      n += DrainIterator(*it);
     }
     produced += n;
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
-}
-
-std::vector<std::string> PrefixPatternsFor(size_t n) {
-  std::vector<std::string> patterns;
-  patterns.reserve(n);
-  for (const auto& prefix : DisjointPrefixes(n)) {
-    patterns.push_back(prefix + ".*");
-  }
-  return patterns;
+  ReportTerms(state, produced);
 }
 
 void OrPrefixesUnionBuild(benchmark::State& state) {
   const auto patterns = PrefixPatternsFor(static_cast<size_t>(state.range(1)));
   for (auto _ : state) {
-    const irs::CompiledAcceptor compiled{RegexUnionOf(patterns)};
-    benchmark::DoNotOptimize(&compiled.matcher);
+    const auto fused = RegexUnionOf(patterns);
+    benchmark::DoNotOptimize(fused.ok());
   }
   state.SetItemsProcessed(state.iterations());
 }
@@ -731,116 +838,139 @@ void OrPrefixesUnionBuild(benchmark::State& state) {
 void OrPrefixesFusedWalk(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
-  const irs::CompiledAcceptor compiled{
-    RegexUnionOf(PrefixPatternsFor(static_cast<size_t>(state.range(1))))};
+  const auto fused =
+    RegexUnionOf(PrefixPatternsFor(static_cast<size_t>(state.range(1))));
   size_t produced = 0;
   for (auto _ : state) {
-    produced += DrainMatcher(field, compiled.matcher);
+    produced += DrainAcceptor(field, fused);
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
 void OrRegexpsSeparateWalks(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
-  auto children = RegexpAcceptorsFor(static_cast<size_t>(state.range(1)));
-  std::vector<irs::CompiledAcceptor> compiled;
-  compiled.reserve(children.size());
-  for (auto& a : children) {
-    compiled.emplace_back(std::move(a));
-  }
+  const auto children =
+    RegexpAcceptorsFor(RegexpPatternsFor(static_cast<size_t>(state.range(1))));
   size_t produced = 0;
   for (auto _ : state) {
     size_t n = 0;
-    for (const auto& c : compiled) {
-      n += DrainMatcher(field, c.matcher);
+    for (const auto& child : children) {
+      n += DrainAcceptor(field, child);
     }
     produced += n;
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
 void OrRegexpsUnionBuild(benchmark::State& state) {
   const auto patterns = RegexpPatternsFor(static_cast<size_t>(state.range(1)));
   for (auto _ : state) {
-    const irs::CompiledAcceptor compiled{RegexUnionOf(patterns)};
-    benchmark::DoNotOptimize(&compiled.matcher);
+    const auto fused = RegexUnionOf(patterns);
+    benchmark::DoNotOptimize(fused.ok());
   }
   state.SetItemsProcessed(state.iterations());
+}
+
+void OrRegexpsFusedWalk(benchmark::State& state) {
+  const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
+  const auto& field = FieldOf(index);
+  const auto fused =
+    RegexUnionOf(RegexpPatternsFor(static_cast<size_t>(state.range(1))));
+  size_t produced = 0;
+  for (auto _ : state) {
+    produced += DrainAcceptor(field, fused);
+  }
+  ReportTerms(state, produced);
 }
 
 std::vector<std::string> OverlappingRegexpPatterns() {
   return {"a.*[0-7]", "a.*[4-9abcdef]"};
 }
 
-std::vector<irs::automaton> OverlappingRegexpAcceptors() {
-  std::vector<irs::automaton> acceptors;
-  for (const auto& pattern : OverlappingRegexpPatterns()) {
-    acceptors.push_back(
-      irs::FromRegexp(AsBytes(pattern), irs::kDefaultMaxDfaStates));
-  }
-  return acceptors;
-}
-
 void OrRegexpsOverlapSeparateWalks(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
-  auto children = OverlappingRegexpAcceptors();
-  std::vector<irs::CompiledAcceptor> compiled;
-  compiled.reserve(children.size());
-  for (auto& a : children) {
-    compiled.emplace_back(std::move(a));
-  }
+  const auto children = RegexpAcceptorsFor(OverlappingRegexpPatterns());
   size_t produced = 0;
   for (auto _ : state) {
     size_t n = 0;
-    for (const auto& c : compiled) {
-      n += DrainMatcher(field, c.matcher);
+    for (const auto& child : children) {
+      n += DrainAcceptor(field, child);
     }
     produced += n;
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
 void OrRegexpsOverlapFusedWalk(benchmark::State& state) {
   const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
   const auto& field = FieldOf(index);
-  const irs::CompiledAcceptor compiled{
-    RegexUnionOf(OverlappingRegexpPatterns())};
+  const auto fused = RegexUnionOf(OverlappingRegexpPatterns());
   size_t produced = 0;
   for (auto _ : state) {
-    produced += DrainMatcher(field, compiled.matcher);
+    produced += DrainAcceptor(field, fused);
   }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
+  ReportTerms(state, produced);
 }
 
-void OrRegexpsFusedWalk(benchmark::State& state) {
-  const auto& index = IndexOf(static_cast<size_t>(state.range(0)));
-  const auto& field = FieldOf(index);
-  const irs::CompiledAcceptor compiled{
-    RegexUnionOf(RegexpPatternsFor(static_cast<size_t>(state.range(1))))};
-  size_t produced = 0;
-  for (auto _ : state) {
-    produced += DrainMatcher(field, compiled.matcher);
-  }
-  state.counters["terms"] = benchmark::Counter(
-    static_cast<double>(produced) / static_cast<double>(state.iterations()));
-  state.SetItemsProcessed(static_cast<int64_t>(produced));
-}
-
+BENCHMARK(ExactSeekRandomOnly)->Apply(ApplySizes);
+BENCHMARK(ExactSeekNormal)->Apply(ApplySizes);
+BENCHMARK(ExactAcceptorBuild)->Apply(ApplySizes);
+BENCHMARK(ExactSourceBuild)->Apply(ApplySizes);
+BENCHMARK(ExactAcceptorWalk)->Apply(ApplySizes);
 BENCHMARK(ExactIterator)->Apply(ApplySizes);
+
+BENCHMARK(PrefixSeekScan)
+  ->ArgsProduct({{10'000, 500'000}, {1, 3}})
+  ->Unit(benchmark::kMicrosecond);
+BENCHMARK(PrefixAcceptorBuild)
+  ->ArgsProduct({{10'000}, {1, 3}})
+  ->Unit(benchmark::kMicrosecond);
+BENCHMARK(PrefixSourceBuild)
+  ->ArgsProduct({{10'000}, {1, 3}})
+  ->Unit(benchmark::kMicrosecond);
+BENCHMARK(PrefixAcceptorWalk)
+  ->ArgsProduct({{10'000, 500'000}, {1, 3}})
+  ->Unit(benchmark::kMicrosecond);
+BENCHMARK(PrefixAcceptorWithBuild)
+  ->ArgsProduct({{10'000, 500'000}, {1, 3}})
+  ->Unit(benchmark::kMicrosecond);
 BENCHMARK(PrefixIteratorScan)
   ->ArgsProduct({{10'000, 500'000}, {1, 3}})
   ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK(RangeSeekScan)
+  ->ArgsProduct({{10'000, 500'000}, {1, 4}})
+  ->Unit(benchmark::kMicrosecond);
+BENCHMARK(RangeBoundedWalk)
+  ->ArgsProduct({{10'000, 500'000}, {1, 4}})
+  ->Unit(benchmark::kMicrosecond);
+BENCHMARK(RangeIteratorScan)
+  ->ArgsProduct({{10'000, 500'000}, {1, 4}})
+  ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK(InSeeks)
+  ->ArgsProduct({{10'000, 500'000}, {10, 1000}})
+  ->Unit(benchmark::kMicrosecond);
+
+BENCHMARK(RegexpAcceptorBuild)->Unit(benchmark::kMicrosecond);
+BENCHMARK(RegexpSourceBuild)->Unit(benchmark::kMicrosecond);
+BENCHMARK(RegexpAcceptorWalk)->Apply(ApplySizes);
+
+BENCHMARK(FusedSourceBuild)->Unit(benchmark::kMicrosecond);
+BENCHMARK(FusedSourceWalk)->Apply(ApplySizes);
+BENCHMARK(FusedBoundsOnlyWalk)->Apply(ApplySizes);
+BENCHMARK(FusedDriverPlusPredicate)->Apply(ApplySizes);
+BENCHMARK(FusedSeparateWalks)->Apply(ApplySizes);
+
+BENCHMARK(StepRunSelfLoop)->Arg(8)->Arg(64)->Arg(1024);
+BENCHMARK(StepPerByte)->Arg(8)->Arg(64)->Arg(1024);
+
+BENCHMARK(FullWalk)->Apply(ApplySizes);
+BENCHMARK(FullWalkPredicate)->Apply(ApplySizes);
 BENCHMARK(FullWalkFilteredIterator)->Apply(ApplySizes);
+BENCHMARK(WhereProbeWalk)->Apply(ApplySizes);
 
 BENCHMARK(OrPrefixesSeparateSeekScans)
   ->ArgsProduct({{10'000, 500'000}, {2, 4, 8}})
@@ -857,11 +987,11 @@ BENCHMARK(OrRegexpsSeparateWalks)
 BENCHMARK(OrRegexpsUnionBuild)
   ->ArgsProduct({{10'000}, {2, 4, 8}})
   ->Unit(benchmark::kMicrosecond);
-BENCHMARK(OrRegexpsOverlapSeparateWalks)->Apply(ApplySizes);
-BENCHMARK(OrRegexpsOverlapFusedWalk)->Apply(ApplySizes);
 BENCHMARK(OrRegexpsFusedWalk)
   ->ArgsProduct({{10'000, 500'000}, {2, 4, 8}})
   ->Unit(benchmark::kMicrosecond);
+BENCHMARK(OrRegexpsOverlapSeparateWalks)->Apply(ApplySizes);
+BENCHMARK(OrRegexpsOverlapFusedWalk)->Apply(ApplySizes);
 
 }  // namespace
 

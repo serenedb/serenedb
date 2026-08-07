@@ -30,7 +30,6 @@
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
 
@@ -1116,7 +1115,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_literal) {
   ASSERT_NE(nullptr, reader);
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
-    auto automaton = irs::FromRegexp(term);
+    auto automaton =
+      irs::MakePatternSource(irs::bstring{term}, irs::PatternKind::RegexpPerl);
     tests::EmptyFilterVisitor v;
     auto fv = irs::AutomatonFilter::visitor(automaton);
     ASSERT_TRUE(fv);
@@ -1138,7 +1138,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_prefix) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("ab.*"));
     tests::EmptyFilterVisitor v;
-    auto automaton = irs::FromRegexp(p);
+    auto automaton =
+      irs::MakePatternSource(irs::bstring{p}, irs::PatternKind::RegexpPerl);
     auto fv = irs::AutomatonFilter::visitor(automaton);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1158,7 +1159,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_wildcard_like) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
     tests::EmptyFilterVisitor v;
-    auto automaton = irs::FromRegexp(p);
+    auto automaton =
+      irs::MakePatternSource(irs::bstring{p}, irs::PatternKind::RegexpPerl);
     auto fv = irs::AutomatonFilter::visitor(automaton);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
@@ -1179,7 +1181,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
     tests::EmptyFilterVisitor v;
-    auto automaton = irs::FromRegexp(p);
+    auto automaton =
+      irs::MakePatternSource(irs::bstring{p}, irs::PatternKind::RegexpPerl);
     auto fv = irs::AutomatonFilter::visitor(automaton);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
@@ -1188,7 +1191,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
     tests::EmptyFilterVisitor v;
-    auto automaton = irs::FromRegexp(p);
+    auto automaton =
+      irs::MakePatternSource(irs::bstring{p}, irs::PatternKind::RegexpPerl);
     auto fv = irs::AutomatonFilter::visitor(automaton);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
@@ -1685,15 +1689,15 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
   auto p = irs::ViewCast<irs::byte_type>(std::string_view("\\d+"));
   {
     auto automaton =
-      irs::FromRegexp(p, irs::kDefaultMaxDfaStates, irs::RegexpSyntax::Perl);
+      irs::MakePatternSource(irs::bstring{p}, irs::PatternKind::RegexpPerl);
     auto fv = irs::AutomatonFilter::visitor(automaton);
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;
     fv(segment, *reader, v);
   }
   {
-    auto automaton = irs::FromRegexp(p, irs::kDefaultMaxDfaStates,
-                                     irs::RegexpSyntax::PosixEre);
+    auto automaton =
+      irs::MakePatternSource(irs::bstring{p}, irs::PatternKind::RegexpPosixEre);
     auto fv = irs::AutomatonFilter::visitor(automaton);
     ASSERT_TRUE(fv);
     tests::EmptyFilterVisitor v;

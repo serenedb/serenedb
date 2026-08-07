@@ -93,8 +93,7 @@ void ValidateTerms(
   ASSERT_EQ(term_size, terms.size());
   ASSERT_EQ(index_features, terms.meta().index_features);
 
-  for (auto term_itr = terms.iterator(irs::SeekMode::NORMAL);
-       term_itr->next();) {
+  for (auto term_itr = terms.iterator(); term_itr->next();) {
     auto itr = expected_terms.find(static_cast<T>(term_itr->value()));
 
     ASSERT_NE(expected_terms.end(), itr);
@@ -1365,7 +1364,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   index_segment.codec = codec_ptr;
 
   const irs::FunctionFieldOptions field_options{
-    nullptr, irs::tests::MakeNormColumnOptionsProvider()};
+    nullptr, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
   const irs::SegmentWriterOptions options{
     .scorers_features = {},
     .db = &::sdb::DuckDBEngine::Instance().instance(),

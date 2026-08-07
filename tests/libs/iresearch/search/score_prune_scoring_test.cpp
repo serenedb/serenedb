@@ -81,16 +81,17 @@ irs::field_id ColumnIdFor(std::string_view name) {
 
 using namespace tests;
 
-// Top-k executor that wraps the WAND iterator in a TableFilterDocIterator --
-// the production row-filter path -- applying a score cutoff: docs with score >=
-// `reject_score` are dropped before they reach the collector, so we exercise
-// WAND block-max skipping together with a table filter. The filter runs after
-// scoring (inside Collect), so WAND is unaware of it and skips purely on the
-// collector threshold (the kth passing score), exactly as in production.
+// Top-k executor that wraps the pruning iterator in a TableFilterDocIterator
+// -- the production row-filter path -- applying a score cutoff: docs with
+// score >= `reject_score` are dropped before they reach the collector, so we
+// exercise block-max score pruning together with a table filter. The filter
+// runs after scoring (inside Collect), so pruning is unaware of it and skips
+// purely on the collector threshold (the kth passing score), exactly as in
+// production.
 uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
                              const irs::Filter& filter,
                              const irs::Scorer& scorer, size_t k,
-                             irs::WandContext wand, irs::score_t reject_score,
+                             bool score_prune, irs::score_t reject_score,
                              std::span<irs::ScoreDoc> hits) {
   SDB_ASSERT(irs::BlockSize(k) == hits.size());
 
@@ -135,7 +136,7 @@ uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
     SDB_ASSERT(col_reader != nullptr);
     irs::DocIterator::ptr it =
       irs::memory::make_managed<sdb::connector::TableFilterDocIterator>(
-        query->Execute({.wand = wand}, stats), *col_reader,
+        query->Execute({.score_prune = score_prune}, stats), *col_reader,
         std::span<const sdb::connector::TableFilterDocIterator::FilterSpec>{
           &spec, 1},
         ctx, filter_states);
@@ -190,8 +191,8 @@ class TokenizedField final : public tests::Ifield {
   mutable std::unique_ptr<irs::analysis::DelimitedTokenizer> _tokenizer;
 };
 
-void WandScoringFieldFactory(tests::Document& doc, const std::string& name,
-                             const tests::JsonDocGenerator::JsonValue& data) {
+void ScorePruneFieldFactory(tests::Document& doc, const std::string& name,
+                            const tests::JsonDocGenerator::JsonValue& data) {
   if (JsonDocGenerator::ValueType::STRING == data.vt) {
     if (name == "content") {
       doc.insert(std::make_shared<TokenizedField>(ColumnIdFor(name), data.str));
@@ -231,7 +232,7 @@ void WandScoringFieldFactory(tests::Document& doc, const std::string& name,
   }
 }
 
-class WandScoringTestCase : public IndexTestBase {
+class ScorePruneScoringTestCase : public IndexTestBase {
  protected:
   void WriteSegment(irs::IndexWriter& writer, auto& gens) {
     auto& index = const_cast<tests::index_t&>(this->index());
@@ -252,11 +253,11 @@ class WandScoringTestCase : public IndexTestBase {
     std::vector<tests::JsonDocGenerator> gens;
     for (size_t i = 0; i < multiplier; ++i) {
       gens.emplace_back(resource("block_scoring_segment1.json"),
-                        &WandScoringFieldFactory);
+                        &ScorePruneFieldFactory);
       gens.emplace_back(resource("block_scoring_segment2.json"),
-                        &WandScoringFieldFactory);
+                        &ScorePruneFieldFactory);
       gens.emplace_back(resource("block_scoring_segment3.json"),
-                        &WandScoringFieldFactory);
+                        &ScorePruneFieldFactory);
     }
 
     WriteSegment(*writer, gens);
@@ -280,7 +281,7 @@ class WandScoringTestCase : public IndexTestBase {
 
     for (const auto& file : files) {
       for (size_t i = 0; i < multiplier; ++i) {
-        tests::JsonDocGenerator gen(resource(file), &WandScoringFieldFactory);
+        tests::JsonDocGenerator gen(resource(file), &ScorePruneFieldFactory);
         index_ref.emplace_back();
         write_segment(*writer, index_ref.back(), gen);
       }
@@ -356,38 +357,38 @@ class WandScoringTestCase : public IndexTestBase {
     return f;
   }
 
-  // Compare WAND vs non-WAND results for a single-term query.
-  // WAND top-K must match non-WAND top-K.
-  void CompareWandVsNonWand(const irs::DirectoryReader& reader,
-                            const irs::Filter& filter,
-                            const irs::Scorer& scorer, size_t k) {
+  // Compare pruned vs unpruned results for a single-term query.
+  // The pruned top-K must match the unpruned top-K.
+  void ComparePrunedVsBaseline(const irs::DirectoryReader& reader,
+                               const irs::Filter& filter,
+                               const irs::Scorer& scorer, size_t k) {
     std::vector<irs::ScoreDoc> baseline_hits(irs::BlockSize(k));
-    std::vector<irs::ScoreDoc> wand_hits(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> pruned_hits(irs::BlockSize(k));
 
     size_t baseline_count = irs::ExecuteTopKWithCount(reader, filter, scorer, k,
                                                       std::span{baseline_hits});
-    size_t wand_count = irs::ExecuteTopK(reader, filter, scorer, k,
-                                         {.wand_enabled = true, .strict = true},
-                                         std::span{wand_hits});
+    size_t pruned_count =
+      irs::ExecuteTopK(reader, filter, scorer, k, true, std::span{pruned_hits});
 
     auto baseline_k = std::min(baseline_count, k);
-    auto wand_k = std::min(wand_count, k);
+    auto pruned_k = std::min(pruned_count, k);
 
-    std::cout << "baseline=" << baseline_count << " wand=" << wand_count
+    std::cout << "baseline=" << baseline_count << " pruned=" << pruned_count
               << " k=" << k << std::endl;
 
-    // WAND must return the same number of top-K results
-    ASSERT_EQ(baseline_k, wand_k) << "WAND top-K size differs from baseline";
+    // Pruning must return the same number of top-K results
+    ASSERT_EQ(baseline_k, pruned_k)
+      << "pruned top-K size differs from baseline";
 
-    // WAND may process fewer total docs (block pruning)
-    EXPECT_LE(wand_count, baseline_count)
-      << "WAND count should not exceed baseline count";
+    // Pruning may process fewer total docs (block skipping)
+    EXPECT_LE(pruned_count, baseline_count)
+      << "pruned count should not exceed baseline count";
 
     // Compare actual top-K docs and scores
     for (size_t i = 0; i < baseline_k; ++i) {
-      EXPECT_EQ(baseline_hits[i].doc, wand_hits[i].doc)
+      EXPECT_EQ(baseline_hits[i].doc, pruned_hits[i].doc)
         << "Doc ID mismatch at position " << i;
-      EXPECT_FLOAT_EQ(baseline_hits[i].score, wand_hits[i].score)
+      EXPECT_FLOAT_EQ(baseline_hits[i].score, pruned_hits[i].score)
         << "Score mismatch at position " << i;
     }
   }
@@ -409,34 +410,34 @@ class WandScoringTestCase : public IndexTestBase {
 };
 
 // TFIDF single-term, 4200 docs (~1260 matching "database" = ~10 blocks)
-TEST_P(WandScoringTestCase, TfidfWandVsBaseline) {
+TEST_P(ScorePruneScoringTestCase, TfidfPrunedVsBaseline) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateLargeIndex(scorer, 10);
 
   auto filter = ParseQuery("topic:database");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, scorer, 10);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
 }
 
 // BM25 single-term, 4200 docs (~840 matching "search" = ~6 blocks)
-TEST_P(WandScoringTestCase, Bm25WandVsBaseline) {
+TEST_P(ScorePruneScoringTestCase, Bm25PrunedVsBaseline) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
 
   auto filter = ParseQuery("topic:search");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, scorer, 15);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 15);
 }
 
 // Anti-correlated row filter: the highest-scoring docs all FAIL the filter and
-// only lower-scoring docs pass. Block-max WAND must NOT skip the (low-scoring)
-// passing blocks just because high scorers dominate -- because the threshold is
-// the kth-best *passing* score, the rejected high scorers never lift it. Proven
-// by equality with the non-WAND baseline (which cannot skip): if WAND wrongly
-// skipped a passing block, its top-k would differ.
-TEST_P(WandScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
+// only lower-scoring docs pass. Block-max score pruning must NOT skip the
+// (low-scoring) passing blocks just because high scorers dominate -- because
+// the threshold is the kth-best *passing* score, the rejected high scorers
+// never lift it. Proven by equality with the unpruned baseline (which cannot
+// skip): if pruning wrongly skipped a passing block, its top-k would differ.
+TEST_P(ScorePruneScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);  // single segment, ~4200 docs
   ASSERT_EQ(1, reader.size());
@@ -447,7 +448,7 @@ TEST_P(WandScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
   auto filter = ParseQuery("content:quantum");
   ASSERT_NE(nullptr, filter);
 
-  // 1. Identify the top scorers with a brute-force (non-WAND) pass.
+  // 1. Identify the top scorers with a brute-force (unpruned) pass.
   constexpr size_t kReject = 150;  // > kBlockSize (128): rejects > a full block
   std::vector<irs::ScoreDoc> top(irs::BlockSize(kReject));
   const auto df =
@@ -462,85 +463,83 @@ TEST_P(WandScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
   const irs::score_t cutoff = top[kReject - 1].score;
   ASSERT_LT(cutoff, top[0].score) << "need score variation to reject a subset";
 
-  // 3. Filtered top-k: WAND (block-max skip ON) vs baseline (skip OFF), both
-  // through the TableFilterDocIterator score filter.
+  // 3. Filtered top-k: pruning (block-max skip ON) vs baseline (skip OFF),
+  // both through the TableFilterDocIterator score filter.
   constexpr size_t kTopK = 10;
-  std::vector<irs::ScoreDoc> wand_hits(irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> pruned_hits(irs::BlockSize(kTopK));
   std::vector<irs::ScoreDoc> base_hits(irs::BlockSize(kTopK));
 
-  const auto wand_count = ExecuteTopKFiltered(
-    reader, *filter, scorer, kTopK, {.wand_enabled = true, .strict = true},
-    cutoff, std::span{wand_hits});
-  const auto base_count =
-    ExecuteTopKFiltered(reader, *filter, scorer, kTopK, {.wand_enabled = false},
-                        cutoff, std::span{base_hits});
+  const auto pruned_count = ExecuteTopKFiltered(
+    reader, *filter, scorer, kTopK, true, cutoff, std::span{pruned_hits});
+  const auto base_count = ExecuteTopKFiltered(
+    reader, *filter, scorer, kTopK, false, cutoff, std::span{base_hits});
 
-  const auto wand_k = std::min<size_t>(wand_count, kTopK);
+  const auto pruned_k = std::min<size_t>(pruned_count, kTopK);
   const auto base_k = std::min<size_t>(base_count, kTopK);
 
   ASSERT_GT(base_k, 0u)
     << "lower-scoring passing docs must exist below the top";
-  ASSERT_EQ(base_k, wand_k) << "WAND top-k size differs from baseline";
+  ASSERT_EQ(base_k, pruned_k) << "pruned top-k size differs from baseline";
 
-  // 4. WAND must return exactly the baseline's filtered top-k, and none of the
-  //    rejected high scorers (score >= cutoff) may leak through.
+  // 4. Pruning must return exactly the baseline's filtered top-k, and none of
+  //    the rejected high scorers (score >= cutoff) may leak through.
   for (size_t i = 0; i < base_k; ++i) {
-    EXPECT_EQ(base_hits[i].doc, wand_hits[i].doc)
-      << "WAND dropped/reordered a passing doc at position " << i;
-    EXPECT_FLOAT_EQ(base_hits[i].score, wand_hits[i].score)
+    EXPECT_EQ(base_hits[i].doc, pruned_hits[i].doc)
+      << "pruning dropped/reordered a passing doc at position " << i;
+    EXPECT_FLOAT_EQ(base_hits[i].score, pruned_hits[i].score)
       << "score mismatch at position " << i;
-    EXPECT_LT(wand_hits[i].score, cutoff)
+    EXPECT_LT(pruned_hits[i].score, cutoff)
       << "a rejected high scorer leaked into the filtered top-k at position "
       << i;
   }
 }
 
 // BM25 with small k=3, 4200 docs (~2100 matching "tech" = ~16 blocks)
-TEST_P(WandScoringTestCase, WandSmallK) {
+TEST_P(ScorePruneScoringTestCase, ScorePruneSmallK) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
 
   auto filter = ParseQuery("category:tech");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, scorer, 3);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 3);
 }
 
-// WAND with k larger than matches -- no pruning expected
-TEST_P(WandScoringTestCase, WandLargeK) {
+// Score pruning with k larger than matches -- no pruning expected
+TEST_P(ScorePruneScoringTestCase, ScorePruneLargeK) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateLargeIndex(scorer);
 
   auto filter = ParseQuery("topic:chemistry");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, scorer, 1000);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 1000);
 }
 
 // BM15 (b=0), 4200 docs (~850 matching "physics" = ~6 blocks)
-TEST_P(WandScoringTestCase, WandBm15) {
+TEST_P(ScorePruneScoringTestCase, ScorePruneBm15) {
   auto scorer = irs::BM25{irs::BM25::K(), 0.0f};
   auto reader = CreateLargeIndex(scorer, 10);
 
   auto filter = ParseQuery("topic:physics");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, scorer, 10);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 10);
 }
 
 // k=1 -- aggressive threshold, 4200 docs
-TEST_P(WandScoringTestCase, WandKOne) {
+TEST_P(ScorePruneScoringTestCase, ScorePruneKOne) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
 
   auto filter = ParseQuery("category:tech");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, scorer, 1);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 1);
 }
 
 // Multi-segment TFIDF, 3 segments x 1400 docs each
-TEST_P(WandScoringTestCase, WandMultisegTfidf) {
+TEST_P(ScorePruneScoringTestCase, ScorePruneMultisegTfidf) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateMultiSegmentIndex(scorer, 10);
   ASSERT_EQ(3, reader.size());
@@ -548,11 +547,11 @@ TEST_P(WandScoringTestCase, WandMultisegTfidf) {
   auto filter = ParseQuery("topic:database");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, scorer, 15);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 15);
 }
 
 // Multi-segment BM25, 3 segments x 1400 docs each
-TEST_P(WandScoringTestCase, WandMultisegBm25) {
+TEST_P(ScorePruneScoringTestCase, ScorePruneMultisegBm25) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateMultiSegmentIndex(scorer, 10);
   ASSERT_EQ(3, reader.size());
@@ -560,11 +559,11 @@ TEST_P(WandScoringTestCase, WandMultisegBm25) {
   auto filter = ParseQuery("topic:search");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, scorer, 20);
+  ComparePrunedVsBaseline(reader, *filter, scorer, 20);
 }
 
-// WAND with empty result set
-TEST_P(WandScoringTestCase, WandEmptyResults) {
+// Score pruning with empty result set
+TEST_P(ScorePruneScoringTestCase, ScorePruneEmptyResults) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateLargeIndex(scorer);
 
@@ -575,13 +574,12 @@ TEST_P(WandScoringTestCase, WandEmptyResults) {
   std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, scorer, kTopK,
-                     {.wand_enabled = true, .strict = true}, std::span{hits});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, true, std::span{hits});
   ASSERT_EQ(0, count);
 }
 
-// Verify WAND returns valid results with correct scores
-TEST_P(WandScoringTestCase, WandResultValues) {
+// Verify score pruning returns valid results with correct scores
+TEST_P(ScorePruneScoringTestCase, ScorePruneResultValues) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
   ASSERT_EQ(1, reader.size());
@@ -593,16 +591,15 @@ TEST_P(WandScoringTestCase, WandResultValues) {
   std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, scorer, kTopK,
-                     {.wand_enabled = true, .strict = true}, std::span{hits});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, true, std::span{hits});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
   VerifyScoresAndDocs(hits, result_count);
 }
 
-// Multi-segment WAND with result value verification
-TEST_P(WandScoringTestCase, WandMultisegResultValues) {
+// Multi-segment score pruning with result value verification
+TEST_P(ScorePruneScoringTestCase, ScorePruneMultisegResultValues) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateMultiSegmentIndex(scorer, 10);
   ASSERT_EQ(3, reader.size());
@@ -614,8 +611,7 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
   std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, scorer, kTopK,
-                     {.wand_enabled = true, .strict = true}, std::span{hits});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, true, std::span{hits});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
@@ -624,9 +620,9 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(WandScoringTest, WandScoringTestCase,
+INSTANTIATE_TEST_SUITE_P(ScorePruneScoringTest, ScorePruneScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
                                             ::testing::Values("1_5simd")),
-                         WandScoringTestCase::to_string);
+                         ScorePruneScoringTestCase::to_string);
 
 }  // namespace

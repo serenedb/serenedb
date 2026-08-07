@@ -48,7 +48,6 @@
 #include "iresearch/search/term_query.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
@@ -16774,7 +16773,8 @@ const irs::AutomatonFilter* FusedOf(const irs::Filter::ptr& filter) {
 }
 
 bool FusedAccepts(const irs::AutomatonFilter& fused, std::string_view term) {
-  return bool(irs::Accept(fused.options().compiled->acceptor, B(term)));
+  const auto predicate = fused.options().source->Predicate();
+  return predicate && predicate->Accepts(B(term));
 }
 
 }  // namespace
@@ -16846,7 +16846,7 @@ TEST(AndNullExclusion_test, prunes_anchored_marker) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -16867,7 +16867,7 @@ TEST(AndNullExclusion_test, keeps_unanchored_and_foreign_markers) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -16897,7 +16897,7 @@ TEST(AndNullExclusion_test, prunes_marker_anchored_by_or_intersection) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -16932,8 +16932,8 @@ TEST(AndNullExclusion_test, or_intersection_spans_and_branches) {
   Append<irs::ByTerm>(group, kMarkerB, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarkerA] = kField;
-  markers[kMarkerB] = kOther;
+  markers[kField] = kMarkerA;
+  markers[kOther] = kMarkerB;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -16969,8 +16969,8 @@ TEST(AndNullExclusion_test, anchors_through_nested_exclusion_include) {
   Append<irs::ByTerm>(group, kMarkerB, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarkerA] = kField;
-  markers[kMarkerB] = kOther;
+  markers[kField] = kMarkerA;
+  markers[kOther] = kMarkerB;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -17003,7 +17003,7 @@ TEST(AndNullExclusion_test, keeps_marker_for_cross_field_or) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -17020,7 +17020,7 @@ TEST(AndNullExclusion_test, keeps_marker_without_include_anchor) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -17041,7 +17041,7 @@ TEST(AndNullExclusion_test, min_match_zero_terms_do_not_anchor) {
   Append<irs::ByTerm>(group, kMarker, "");
 
   sdb::containers::FlatHashMap<irs::field_id, irs::field_id> markers;
-  markers[kMarker] = kField;
+  markers[kField] = kMarker;
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.null_markers = &markers});
 
@@ -17588,6 +17588,26 @@ TEST(OrAcceptorFusion_test, keeps_non_perl_regexp) {
   EXPECT_EQ(irs::Type<irs::Or>::id(), filter->type());
 }
 
+// The rendering is one regexp and the rule installs it only once RE2 has
+// built it. Both ways that build can fail -- a branch that does not parse,
+// and one whose determinization exhausts `RegexpAcceptor::kDefaultMaxMem` --
+// leave the acceptor rejecting every key, so the guard is the only thing
+// between a fusable `Or` and an empty result set. It declines instead, and
+// the `Or` runs as separate walks.
+TEST(OrAcceptorFusion_test, keeps_unbuildable_fused_regexp) {
+  auto root = std::make_unique<irs::Or>();
+  Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
+  auto& re = root->add<irs::ByRegexp>();
+  *re.mutable_field_id() = kFieldTestField;
+  re.mutable_options()->pattern = irs::bstring{B("[z-a]")};
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter);
+
+  ASSERT_EQ(irs::Type<irs::Or>::id(), filter->type());
+  EXPECT_EQ(2, sdb::basics::downCast<irs::Or>(*filter).size());
+}
+
 TEST(AndAcceptorFusion_test, fuses_same_field_acceptors) {
   auto root = std::make_unique<irs::And>();
   Append<irs::ByPrefix>(*root, kFieldTestField, "ax");
@@ -17599,7 +17619,7 @@ TEST(AndAcceptorFusion_test, fuses_same_field_acceptors) {
   const auto* fused = FusedOf(filter);
   ASSERT_NE(nullptr, fused);
   EXPECT_EQ(kFieldTestField, fused->field_id());
-  EXPECT_EQ(irs::bstring{B("ax%&%le")}, fused->options().pattern);
+  EXPECT_EQ(irs::bstring{B("%le&ax%")}, fused->options().pattern);
   EXPECT_TRUE(FusedAccepts(*fused, "axle"));
   EXPECT_TRUE(FusedAccepts(*fused, "axolotle"));
   EXPECT_FALSE(FusedAccepts(*fused, "apple"));
@@ -17654,12 +17674,36 @@ TEST(AndAcceptorFusion_test, levenshtein_driver_bails) {
   Append<irs::ByEditDistance>(*root, kFieldTestField, "apple")
     .mutable_options()
     ->max_distance = 1;
+  Append<irs::ByEditDistance>(*root, kFieldTestField, "berry")
+    .mutable_options()
+    ->max_distance = 1;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  ASSERT_EQ(irs::Type<irs::And>::id(), filter->type());
+  const auto& node = sdb::basics::downCast<irs::And>(*filter);
+  ASSERT_EQ(2, node.size());
+  EXPECT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), node[0].type());
+}
+
+TEST(AndAcceptorFusion_test, levenshtein_yields_driver_to_automaton) {
+  auto root = std::make_unique<irs::And>();
+  Append<irs::ByEditDistance>(*root, kFieldTestField, "apple")
+    .mutable_options()
+    ->max_distance = 1;
   Append<irs::ByWildcard>(*root, kFieldTestField, "%le");
 
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {.fuse_acceptor_intersections = true});
 
-  EXPECT_EQ(irs::Type<irs::And>::id(), filter->type());
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("%le&apple~")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "apple"));
+  EXPECT_TRUE(FusedAccepts(*fused, "aple"));
+  EXPECT_FALSE(FusedAccepts(*fused, "axle"));
+  EXPECT_FALSE(FusedAccepts(*fused, "apply"));
 }
 
 TEST(AndAcceptorFusion_test, levenshtein_predicate_fuses) {

@@ -27,6 +27,7 @@
 #include <faiss/utils/distances.h>
 
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -43,8 +44,8 @@
 #include "iresearch/store/fs_directory.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/mmap_directory.hpp"
-#include "iresearch/utils/fstext/fst_table_matcher.hpp"
 #include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "iresearch/utils/vector.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
@@ -261,11 +262,11 @@ irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts) {
     opts.reader_options.db = &::sdb::DuckDBEngine::Instance().instance();
   }
   // With a cs writer present, a Norm-featured field requires a
-  // norm_column_options callback (FieldsData::emplace asserts it). Provide
+  // norm_column_id callback (FieldsData::emplace asserts it). Provide
   // the shared monotonic allocator when a fixture didn't set one. This only
   // affects fields that actually carry the Norm feature.
-  if (!opts.norm_column_options) {
-    opts.norm_column_options = irs::tests::MakeNormColumnOptionsProvider();
+  if (!opts.norm_column_id) {
+    opts.norm_column_id = irs::tests::MakeNormColumnIdProvider();
   }
   return opts;
 }
@@ -411,18 +412,26 @@ void IndexTestBase::add_segment_batched(
 
 }  // namespace tests
 
+// `TermReader::term` and `ReadDocs` were whole-field conveniences; a
+// reader answers per term now, so these do the seek the caller used to be
+// spared.
+irs::PostingMeta PostingMetaOf(const irs::TermReader& field,
+                               irs::bytes_view term) {
+  auto it = field.iterator();
+  return it && it->seek(term) ? it->cookie() : irs::PostingMeta{};
+}
+
 class IndexTestCase : public tests::IndexTestBase {
  public:
   void assert_index(size_t skip = 0,
-                    irs::automaton_table_matcher* matcher = nullptr) const {
-    // index_test_base::assert_index(irs::IndexFeatures::None, skip, matcher);
-    IndexTestBase::assert_index(irs::IndexFeatures::Freq, skip, matcher);
+                    const irs::RegexpAcceptor* acceptor = nullptr) const {
+    IndexTestBase::assert_index(irs::IndexFeatures::Freq, skip, acceptor);
     IndexTestBase::assert_index(
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos, skip, matcher);
+      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos, skip, acceptor);
     IndexTestBase::assert_index(irs::IndexFeatures::Freq |
                                   irs::IndexFeatures::Pos |
                                   irs::IndexFeatures::Offs,
-                                skip, matcher);
+                                skip, acceptor);
   }
 
   void ClearWriter() {
@@ -682,7 +691,7 @@ class IndexTestCase : public tests::IndexTestBase {
               std::lock_guard lock(mutex);
             }
 
-            auto act_term_itr = act_terms->iterator(irs::SeekMode::NORMAL);
+            auto act_term_itr = act_terms->iterator();
             auto exp_terms_itr = exp_terms->iterator();
             ASSERT_FALSE(!act_term_itr);
             ASSERT_FALSE(!exp_terms_itr);
@@ -702,7 +711,7 @@ class IndexTestCase : public tests::IndexTestBase {
 
     // validate docs async
     {
-      auto actual_term_itr = actual_terms->iterator(irs::SeekMode::NORMAL);
+      auto actual_term_itr = actual_terms->iterator();
 
       while (actual_term_itr->next()) {
         for (size_t i = 0; i < thread_count; ++i) {
@@ -1043,7 +1052,7 @@ class IndexTestCase : public tests::IndexTestBase {
         irs::tests::BlobPointReader values{segment, *column};
         auto terms = segment.field(kSameFieldId);
         ASSERT_NE(nullptr, terms);
-        auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+        auto term_itr = terms->iterator();
         ASSERT_TRUE(term_itr->next());
         auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1060,7 +1069,7 @@ class IndexTestCase : public tests::IndexTestBase {
         irs::tests::BlobPointReader values{segment, *column};
         auto terms = segment.field(kSameFieldId);
         ASSERT_NE(nullptr, terms);
-        auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+        auto term_itr = terms->iterator();
         ASSERT_TRUE(term_itr->next());
         auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1148,7 +1157,7 @@ class IndexTestCase : public tests::IndexTestBase {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1222,7 +1231,7 @@ class IndexTestCase : public tests::IndexTestBase {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     // skip docs deleted during batch rollback
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -1384,7 +1393,7 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_NE(nullptr, field);
         ASSERT_EQ(1, field->size());
         ASSERT_EQ(2, field->docs_count());
-        auto term = field->iterator(irs::SeekMode::NORMAL);
+        auto term = field->iterator();
         ASSERT_TRUE(term->next());
         ASSERT_EQ(0, term->value().size());
         ASSERT_FALSE(term->next());
@@ -1395,7 +1404,7 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_NE(nullptr, field);
         ASSERT_EQ(1, field->size());
         ASSERT_EQ(1, field->docs_count());
-        auto term = field->iterator(irs::SeekMode::NORMAL);
+        auto term = field->iterator();
         ASSERT_TRUE(term->next());
         ASSERT_EQ(0, term->value().size());
         ASSERT_FALSE(term->next());
@@ -1558,23 +1567,21 @@ void IndexTestCase::DocsBitUnion(irs::IndexFeatures features,
   ASSERT_EQ(field.Id(), term_reader->meta().id);
   ASSERT_EQ(field.GetIndexFeatures(), term_reader->meta().index_features);
 
-  irs::SeekCookie::ptr cookies[2];
+  irs::PostingMeta cookies[2];
 
-  auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+  auto term = term_reader->iterator();
   ASSERT_TRUE(term->next());
   ASSERT_EQ("A", irs::ViewCast<char>(term->value()));
-  term->read();
   cookies[0] = term->cookie();
   ASSERT_TRUE(term->next());
-  term->read();
   cookies[1] = term->cookie();
   ASSERT_EQ("B", irs::ViewCast<char>(term->value()));
 
   auto cookie_provider =
     [begin = std::begin(cookies),
-     end = std::end(cookies)]() mutable -> const irs::SeekCookie* {
+     end = std::end(cookies)]() mutable -> const irs::PostingMeta* {
     if (begin != end) {
-      auto cookie = begin->get();
+      auto* cookie = begin;
       ++begin;
       return cookie;
     }
@@ -1639,10 +1646,9 @@ TEST_P(IndexTestCase, s2sequence) {
   auto& expected_field = index().front().fields().at(kValueFieldId);
 
   {
-    auto terms = field->iterator(irs::SeekMode::RandomOnly);
+    auto terms = field->iterator();
     ASSERT_NE(nullptr, terms);
-    auto* meta = irs::get<irs::TermMeta>(*terms);
-    ASSERT_NE(nullptr, meta);
+    // The counts come from the term the iterator stands on.
 
     auto expected_term = expected_field.iterator();
     ASSERT_NE(nullptr, expected_term);
@@ -1657,17 +1663,15 @@ TEST_P(IndexTestCase, s2sequence) {
 
       if (res) {
         ASSERT_EQ(expected_term->value(), terms->value());
-        terms->read();
-        ASSERT_EQ(meta->docs_count, 1);
+        ASSERT_EQ(terms->cookie().docs_count, 1);
       }
     }
   }
 
   {
-    auto terms = field->iterator(irs::SeekMode::NORMAL);
+    auto terms = field->iterator();
     ASSERT_NE(nullptr, terms);
-    auto* meta = irs::get<irs::TermMeta>(*terms);
-    ASSERT_NE(nullptr, meta);
+    // The counts come from the term the iterator stands on.
 
     auto expected_term = expected_field.iterator();
     ASSERT_NE(nullptr, expected_term);
@@ -1682,17 +1686,15 @@ TEST_P(IndexTestCase, s2sequence) {
 
       if (res) {
         ASSERT_EQ(expected_term->value(), terms->value());
-        terms->read();
-        ASSERT_EQ(meta->docs_count, 1);
+        ASSERT_EQ(terms->cookie().docs_count, 1);
       }
     }
   }
 
   {
-    auto terms = field->iterator(irs::SeekMode::NORMAL);
+    auto terms = field->iterator();
     ASSERT_NE(nullptr, terms);
-    auto* meta = irs::get<irs::TermMeta>(*terms);
-    ASSERT_NE(nullptr, meta);
+    // The counts come from the term the iterator stands on.
 
     auto expected_term = expected_field.iterator();
     ASSERT_NE(nullptr, expected_term);
@@ -1707,8 +1709,7 @@ TEST_P(IndexTestCase, s2sequence) {
 
       if (res != irs::SeekResult::End) {
         ASSERT_EQ(expected_term->value(), terms->value());
-        terms->read();
-        ASSERT_EQ(meta->docs_count, 1);
+        ASSERT_EQ(terms->cookie().docs_count, 1);
       }
     }
   }
@@ -1989,6 +1990,10 @@ TEST_P(IndexTestCase, europarl_docs_batched) {
   assert_index();
 }
 
+// The whole index read through an acceptor-driven term iterator: terms, doc
+// lists, frequencies, positions and offsets, against an independently filtered
+// expected index. A walk that prunes a sub-block it should have kept shows up
+// as a missing term; one that mis-reads a record shows up in the postings.
 TEST_P(IndexTestCase, europarl_docs_automaton) {
   {
     tests::EuroparlDocTemplate doc;
@@ -1996,25 +2001,18 @@ TEST_P(IndexTestCase, europarl_docs_automaton) {
     add_segment(gen);
   }
 
-  // prefix
-  {
-    auto acceptor = irs::FromWildcard("forb%");
-    irs::automaton_table_matcher matcher(acceptor, true);
-    assert_index(0, &matcher);
-  }
+  constexpr std::string_view kPatterns[]{
+    "forb%",   // prefix
+    "%ende%",  // part
+    "%ione",   // suffix
+  };
 
-  // part
-  {
-    auto acceptor = irs::FromWildcard("%ende%");
-    irs::automaton_table_matcher matcher(acceptor, true);
-    assert_index(0, &matcher);
-  }
-
-  // suffix
-  {
-    auto acceptor = irs::FromWildcard("%ione");
-    irs::automaton_table_matcher matcher(acceptor, true);
-    assert_index(0, &matcher);
+  for (const auto pattern : kPatterns) {
+    SCOPED_TRACE(testing::Message("Pattern: '") << pattern << "'");
+    const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
+                                       irs::ViewCast<irs::byte_type>(pattern)};
+    ASSERT_TRUE(acceptor.ok());
+    assert_index(0, &acceptor);
   }
 }
 
@@ -2041,25 +2039,18 @@ TEST_P(IndexTestCase, europarl_docs_big_automaton) {
     add_segment(gen);
   }
 
-  // prefix
-  {
-    auto acceptor = irs::FromWildcard("forb%");
-    irs::automaton_table_matcher matcher(acceptor, true);
-    assert_index(0, &matcher);
-  }
+  constexpr std::string_view kPatterns[]{
+    "forb%",   // prefix
+    "%ende%",  // part
+    "%ione",   // suffix
+  };
 
-  // part
-  {
-    auto acceptor = irs::FromWildcard("%ende%");
-    irs::automaton_table_matcher matcher(acceptor, true);
-    assert_index(0, &matcher);
-  }
-
-  // suffix
-  {
-    auto acceptor = irs::FromWildcard("%ione");
-    irs::automaton_table_matcher matcher(acceptor, true);
-    assert_index(0, &matcher);
+  for (const auto pattern : kPatterns) {
+    SCOPED_TRACE(testing::Message("Pattern: '") << pattern << "'");
+    const irs::RegexpAcceptor acceptor{irs::RegexpAcceptor::WildcardTag{},
+                                       irs::ViewCast<irs::byte_type>(pattern)};
+    ASSERT_TRUE(acceptor.ok());
+    assert_index(0, &acceptor);
   }
 }
 
@@ -2217,7 +2208,7 @@ TEST_P(IndexTestCase, concurrent_add_remove_mt) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -2439,7 +2430,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2485,7 +2476,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2554,7 +2545,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2628,7 +2619,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2666,7 +2657,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2705,7 +2696,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2748,7 +2739,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2799,7 +2790,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2855,7 +2846,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -2872,7 +2863,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2909,7 +2900,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2951,7 +2942,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3011,7 +3002,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -3028,7 +3019,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3069,7 +3060,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3115,7 +3106,7 @@ TEST_P(IndexTestCase, document_context) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3179,7 +3170,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -3198,7 +3189,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3254,7 +3245,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -3315,7 +3306,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -3332,7 +3323,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3379,7 +3370,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -3396,7 +3387,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3449,7 +3440,7 @@ TEST_P(IndexTestCase, document_context) {
           ASSERT_NE(nullptr, actual_value);
           auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
-          auto termItr = terms->iterator(irs::SeekMode::NORMAL);
+          auto termItr = terms->iterator();
           ASSERT_TRUE(termItr->next());
           auto docsItr =
        segment.mask(termItr->postings(irs::IndexFeatures::DOCS));
@@ -3470,7 +3461,7 @@ TEST_P(IndexTestCase, document_context) {
           ASSERT_NE(nullptr, actual_value);
           auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
-          auto termItr = terms->iterator(irs::SeekMode::NORMAL);
+          auto termItr = terms->iterator();
           ASSERT_TRUE(termItr->next());
           auto docsItr =
        termItr->postings(irs::IndexFeatures::DOCS);
@@ -3491,7 +3482,7 @@ TEST_P(IndexTestCase, document_context) {
           ASSERT_NE(nullptr, actual_value);
           auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
-          auto termItr = terms->iterator(irs::SeekMode::NORMAL);
+          auto termItr = terms->iterator();
           ASSERT_TRUE(termItr->next());
           auto docsItr =
        termItr->postings(irs::IndexFeatures::DOCS);
@@ -3540,7 +3531,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -3557,7 +3548,7 @@ TEST_P(IndexTestCase, document_context) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3609,7 +3600,7 @@ TEST_P(IndexTestCase, document_context) {
           ASSERT_NE(nullptr, actual_value);
           auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
-          auto termItr = terms->iterator(irs::SeekMode::NORMAL);
+          auto termItr = terms->iterator();
           ASSERT_TRUE(termItr->next());
           auto docsItr =
        segment.mask(termItr->postings(irs::IndexFeatures::DOCS));
@@ -3630,7 +3621,7 @@ TEST_P(IndexTestCase, document_context) {
           ASSERT_NE(nullptr, actual_value);
           auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
-          auto termItr = terms->iterator(irs::SeekMode::NORMAL);
+          auto termItr = terms->iterator();
           ASSERT_TRUE(termItr->next());
           auto docsItr =
        termItr->postings(irs::IndexFeatures::DOCS);
@@ -3651,7 +3642,7 @@ TEST_P(IndexTestCase, document_context) {
           ASSERT_NE(nullptr, actual_value);
           auto terms = segment.field(kSameFieldId);
           ASSERT_NE(nullptr, terms);
-          auto termItr = terms->iterator(irs::SeekMode::NORMAL);
+          auto termItr = terms->iterator();
           ASSERT_TRUE(termItr->next());
           auto docsItr =
        termItr->postings(irs::IndexFeatures::DOCS);
@@ -3690,19 +3681,21 @@ TEST_P(IndexTestCase, get_term) {
   ASSERT_NE(nullptr, field);
 
   {
-    const auto meta = field->term(irs::ViewCast<irs::byte_type>("invalid"sv));
+    const auto meta =
+      PostingMetaOf(*field, irs::ViewCast<irs::byte_type>("invalid"sv));
     ASSERT_EQ(0, meta.docs_count);
     ASSERT_EQ(0, meta.freq);
   }
 
   {
-    const auto meta = field->term(irs::ViewCast<irs::byte_type>("A"sv));
+    const auto meta =
+      PostingMetaOf(*field, irs::ViewCast<irs::byte_type>("A"sv));
     ASSERT_EQ(1, meta.docs_count);
     ASSERT_EQ(1, meta.freq);
   }
 }
 
-TEST_P(IndexTestCase, read_documents) {
+TEST_P(IndexTestCase, ReadDocs) {
   {
     tests::JsonDocGenerator gen(
       resource("simple_sequential.json"),
@@ -3736,7 +3729,7 @@ TEST_P(IndexTestCase, read_documents) {
       *begin++ = doc;
       return begin != end;
     };
-    field->read_documents(term, acceptor);
+    field->ReadDocs(term, acceptor);
     const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(0, size);
     ASSERT_TRUE(
@@ -3755,7 +3748,7 @@ TEST_P(IndexTestCase, read_documents) {
       *begin++ = doc;
       return begin != end;
     };
-    field->read_documents(term, acceptor);
+    field->ReadDocs(term, acceptor);
     const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(1, size);
     ASSERT_EQ(1, docs.front());
@@ -3773,7 +3766,7 @@ TEST_P(IndexTestCase, read_documents) {
       calls++;
       return false;
     };
-    field->read_documents(term, acceptor);
+    field->ReadDocs(term, acceptor);
     ASSERT_EQ(1, calls);
   }
 
@@ -3789,7 +3782,7 @@ TEST_P(IndexTestCase, read_documents) {
       *begin++ = doc;
       return begin != end;
     };
-    field->read_documents(term, acceptor);
+    field->ReadDocs(term, acceptor);
     const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(1, size);
     ASSERT_EQ(3, docs.front());
@@ -3809,7 +3802,7 @@ TEST_P(IndexTestCase, read_documents) {
       *begin++ = doc;
       return begin != end;
     };
-    field->read_documents(term, acceptor);
+    field->ReadDocs(term, acceptor);
     const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(6, size);
     ASSERT_EQ(1, docs[0]);
@@ -3834,7 +3827,7 @@ TEST_P(IndexTestCase, read_documents) {
       *begin++ = doc;
       return begin != end;
     };
-    field->read_documents(term, acceptor);
+    field->ReadDocs(term, acceptor);
     const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(3, size);
     ASSERT_EQ(1, docs[0]);
@@ -3852,7 +3845,7 @@ TEST_P(IndexTestCase, read_documents) {
       calls++;
       return false;
     };
-    field->read_documents(term, acceptor);
+    field->ReadDocs(term, acceptor);
     // no calls after false returned
     ASSERT_EQ(1, calls);
   }
@@ -3871,7 +3864,7 @@ TEST_P(IndexTestCase, read_documents) {
       }
       return begin != end;
     };
-    field->read_documents(term, acceptor);
+    field->ReadDocs(term, acceptor);
     const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(5, size);
     ASSERT_EQ(5, docs[0]);
@@ -3926,7 +3919,7 @@ TEST_P(IndexTestCase, doc_removal) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3956,7 +3949,7 @@ TEST_P(IndexTestCase, doc_removal) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -3986,7 +3979,7 @@ TEST_P(IndexTestCase, doc_removal) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4016,7 +4009,7 @@ TEST_P(IndexTestCase, doc_removal) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4046,7 +4039,7 @@ TEST_P(IndexTestCase, doc_removal) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4079,7 +4072,7 @@ TEST_P(IndexTestCase, doc_removal) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4115,7 +4108,7 @@ TEST_P(IndexTestCase, doc_removal) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4149,7 +4142,7 @@ TEST_P(IndexTestCase, doc_removal) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4184,7 +4177,7 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4201,7 +4194,7 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4239,7 +4232,7 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4256,7 +4249,7 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4308,7 +4301,7 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4325,7 +4318,7 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4342,7 +4335,7 @@ TEST_P(IndexTestCase, doc_removal) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4455,7 +4448,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4484,7 +4477,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4514,7 +4507,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4548,7 +4541,7 @@ TEST_P(IndexTestCase, doc_update) {
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4565,7 +4558,7 @@ TEST_P(IndexTestCase, doc_update) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4600,7 +4593,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4639,7 +4632,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4671,7 +4664,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4702,7 +4695,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4742,7 +4735,7 @@ TEST_P(IndexTestCase, doc_update) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4759,7 +4752,7 @@ TEST_P(IndexTestCase, doc_update) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -4793,7 +4786,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4829,7 +4822,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4863,7 +4856,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4903,7 +4896,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -4994,7 +4987,7 @@ TEST_P(IndexTestCase, doc_update) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5158,7 +5151,7 @@ TEST_P(IndexTestCase, import_reader) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5198,7 +5191,7 @@ TEST_P(IndexTestCase, import_reader) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5236,7 +5229,7 @@ TEST_P(IndexTestCase, import_reader) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5285,7 +5278,7 @@ TEST_P(IndexTestCase, import_reader) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5328,7 +5321,7 @@ TEST_P(IndexTestCase, import_reader) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5375,7 +5368,7 @@ TEST_P(IndexTestCase, import_reader) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5395,7 +5388,7 @@ TEST_P(IndexTestCase, import_reader) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5449,7 +5442,7 @@ TEST_P(IndexTestCase, refresh_reader) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5482,7 +5475,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5503,7 +5496,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -5534,7 +5527,7 @@ TEST_P(IndexTestCase, refresh_reader) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5552,7 +5545,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -5569,7 +5562,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -5605,7 +5598,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -5622,7 +5615,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr =
         segment.mask(term_itr->postings(irs::IndexFeatures::None));
@@ -5643,7 +5636,7 @@ TEST_P(IndexTestCase, refresh_reader) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -5818,7 +5811,7 @@ TEST_P(IndexTestCase, segment_column_user_system) {
             segment.docs_count());  // total count of documents (+1 for doc0)
   auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+  auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
 
   for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -5948,7 +5941,7 @@ TEST_P(IndexTestCase, import_concurrent) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     while (!irs::doc_limits::eof(docs_itr->advance())) {
@@ -6078,7 +6071,7 @@ TEST_P(IndexTestCase, concurrent_compaction) {
   irs::tests::BlobPointReader values{segment, *column};
   auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+  auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
   auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
   while (!irs::doc_limits::eof(docs_itr->advance())) {
@@ -6206,7 +6199,7 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
   irs::tests::BlobPointReader values{segment, *column};
   auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+  auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
   auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
   while (!irs::doc_limits::eof(docs_itr->advance())) {
@@ -6336,7 +6329,7 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
   irs::tests::BlobPointReader values{segment, *column};
   auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+  auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
   auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
   while (!irs::doc_limits::eof(docs_itr->advance())) {
@@ -6451,7 +6444,7 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
   irs::tests::BlobPointReader values{segment, *column};
   auto terms = segment.field(kSameFieldId);
   ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+  auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
   auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
   while (!irs::doc_limits::eof(docs_itr->advance())) {
@@ -6586,7 +6579,7 @@ TEST_P(IndexTestCase, compact_single_segment) {
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -6743,7 +6736,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -6761,7 +6754,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -6779,7 +6772,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -6903,7 +6896,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -6921,7 +6914,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -6939,7 +6932,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_EQ(1, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -7054,7 +7047,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_EQ(2, segment.live_docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       // including deleted docs
@@ -7202,7 +7195,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_EQ(2, segment.live_docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       // including deleted docs
@@ -7529,7 +7522,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -7619,7 +7612,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -7640,7 +7633,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -7736,7 +7729,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -7757,7 +7750,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_EQ(3, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -7879,7 +7872,7 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
     ASSERT_EQ(2, segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -8047,7 +8040,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -8160,7 +8153,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -8181,7 +8174,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -8306,7 +8299,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -8327,7 +8320,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -8348,7 +8341,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -8465,7 +8458,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       // with deleted docs
@@ -8605,7 +8598,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       // with deleted docs
@@ -8740,7 +8733,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
                   segment.live_docs_count());  // total count of live documents
         auto terms = segment.field(kSameFieldId);
         ASSERT_NE(nullptr, terms);
-        auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+        auto term_itr = terms->iterator();
         ASSERT_TRUE(term_itr->next());
 
         // with deleted docs
@@ -9154,7 +9147,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       // with deleted docs
@@ -9203,7 +9196,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -9324,7 +9317,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -9342,7 +9335,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       // with deleted docs
@@ -9510,7 +9503,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(2, segment.live_docs_count());  // total count of live documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -9533,7 +9526,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -9822,7 +9815,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -9866,7 +9859,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_EQ(1, segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -9912,7 +9905,7 @@ TEST_P(IndexTestCase, segment_compact) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -9958,7 +9951,7 @@ TEST_P(IndexTestCase, segment_compact) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10079,7 +10072,7 @@ TEST_P(IndexTestCase, segment_compact) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10128,7 +10121,7 @@ TEST_P(IndexTestCase, segment_compact) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10179,7 +10172,7 @@ TEST_P(IndexTestCase, segment_compact) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10230,7 +10223,7 @@ TEST_P(IndexTestCase, segment_compact) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10286,7 +10279,7 @@ TEST_P(IndexTestCase, segment_compact) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10345,7 +10338,7 @@ TEST_P(IndexTestCase, segment_compact) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10416,7 +10409,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10499,7 +10492,7 @@ TEST_P(IndexTestCase, segment_compact) {
 
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -10587,7 +10580,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10611,7 +10604,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -10658,7 +10651,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       const auto* column = segment.Column(kNameColumnId);
@@ -10682,7 +10675,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       const auto* column = segment.Column(kNameColumnId);
@@ -10729,7 +10722,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
               segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
     const auto* column = segment.Column(kNameColumnId);
@@ -10775,7 +10768,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       const auto* column = segment.Column(kNameColumnId);
@@ -10798,7 +10791,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       ASSERT_EQ(expected_name.size(), segment.docs_count());
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       const auto* column = segment.Column(kNameColumnId);
@@ -10849,7 +10842,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
               segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
     const auto* column = segment.Column(kNameColumnId);
@@ -10902,7 +10895,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
                                         // B, C, D masked)
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       const auto* column = segment.Column(kNameColumnId);
@@ -10927,7 +10920,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       const auto* column = segment.Column(kNameColumnId);
@@ -10979,7 +10972,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
               segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameFieldId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
     const auto* column = segment.Column(kNameColumnId);
@@ -11033,7 +11026,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
         segment.docs_count());  // total count of documents (+1 == B masked)
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       const auto* column = segment.Column(kNameColumnId);
@@ -11059,7 +11052,7 @@ TEST_P(IndexTestCase, segment_compact_policy) {
         segment.docs_count());  // total count of documents (+1 == D masked)
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       const auto* column = segment.Column(kNameColumnId);
@@ -11161,7 +11154,7 @@ TEST_P(IndexTestCase, segment_options) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -11206,7 +11199,7 @@ TEST_P(IndexTestCase, segment_options) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -11230,7 +11223,7 @@ TEST_P(IndexTestCase, segment_options) {
                 segment.docs_count());  // total count of documents
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -11275,7 +11268,7 @@ TEST_P(IndexTestCase, segment_options) {
       ASSERT_EQ(expected_name.size(), segment.docs_count());
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -11299,7 +11292,7 @@ TEST_P(IndexTestCase, segment_options) {
       ASSERT_EQ(expected_name.size(), segment.docs_count());
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -11356,7 +11349,7 @@ TEST_P(IndexTestCase, segment_options) {
       ASSERT_EQ(expected_name.size(), segment.docs_count());
       auto terms = segment.field(kSameFieldId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
       for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);

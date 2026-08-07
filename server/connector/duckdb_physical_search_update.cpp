@@ -29,11 +29,11 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/primary_key.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -45,16 +45,14 @@ namespace {
 struct SearchUpdateGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
+  std::shared_ptr<const catalog::Snapshot> snapshot;
   query::Transaction* sdb_txn = nullptr;
 
   std::vector<catalog::Column::Id> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  std::vector<duckdb_primary_key::PKColumn> new_pk_columns;
   std::vector<duckdb::idx_t> new_row_src;
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
   std::unique_ptr<SearchSinkInsertBaseImpl> insert_sink;
-
-  std::vector<duckdb_primary_key::PKColumn> old_pk_columns;
 
   std::shared_lock<std::shared_mutex> table_lock;
   duckdb::idx_t update_count = 0;
@@ -90,7 +88,6 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
 
   const auto& columns = _table->Columns();
-  const auto& pk_col_ids = _table->PKColumns();
 
   containers::FlatHashMap<catalog::Column::Id, size_t> pos_of;
   for (const auto& col : columns) {
@@ -114,31 +111,14 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->new_row_src[it->second] = i;
   }
 
-  state->new_pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
+  SDB_ASSERT(_pk_col_indices.size() == 1);
 
-  for (size_t i = 0; i < _pk_col_indices.size(); ++i) {
-    duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
-    if (i < pk_col_ids.size()) {
-      for (const auto& col : columns) {
-        if (col.GetId() == pk_col_ids[i]) {
-          pk_type = col.type;
-          break;
-        }
-      }
-    }
-    state->old_pk_columns.push_back(duckdb_primary_key::PKColumn{
-      .input_col_idx = _pk_col_indices[i],
-      .type = pk_type,
-    });
-  }
-
-  if (pk_col_ids.empty()) {
-    state->generated_pk_seq =
-      snapshot->GetObject<catalog::Sequence>(_table->GetGeneratedPkSeqId());
-    SDB_ASSERT(state->generated_pk_seq);
-  }
+  state->generated_pk_seq =
+    snapshot->GetObject<catalog::Sequence>(_table->GetGeneratedPkSeqId());
+  SDB_ASSERT(state->generated_pk_seq);
 
   state->sdb_txn = &conn_ctx;
+  state->snapshot = std::move(snapshot);
   return state;
 }
 
@@ -156,15 +136,16 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
 
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(num_rows);
-  std::vector<duckdb::UnifiedVectorFormat> old_pk_formats;
-  duckdb_primary_key::PreparePKFormats(chunk, gstate.old_pk_columns,
-                                       old_pk_formats);
+  duckdb::UnifiedVectorFormat gen_pk;
+  chunk.data[_pk_col_indices[0]].ToUnifiedFormat(num_rows, gen_pk);
+  const auto* gen_pk_data =
+    duckdb::UnifiedVectorFormat::GetData<int64_t>(gen_pk);
   std::vector<std::string> wal_pks;
   wal_pks.reserve(num_rows);
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     pk.clear();
-    duckdb_primary_key::Create(old_pk_formats, gstate.old_pk_columns, row, pk);
+    primary_key::AppendSigned(pk, gen_pk_data[gen_pk.sel->get_index(row)]);
     remover.DeleteRowImpl(pk);
     wal_pks.emplace_back(pk);
   }
@@ -179,7 +160,8 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   new_row.SetCardinality(num_rows);
 
   if (!gstate.insert_sink) {
-    gstate.insert_sink = MakeSearchTableInsertSink(trx);
+    gstate.insert_sink = MakeSearchTableInsertSink(
+      trx, *gstate.search_table, gstate.snapshot, context.client);
   }
   const bool uses_generated_pk = gstate.generated_pk_seq != nullptr;
   const uint64_t pk_base =
@@ -188,7 +170,7 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
   // changed. Looks not big win now. But for future optimizations.
   WriteChunkToSearchSink(*gstate.insert_sink, new_row, gstate.column_ids,
-                         gstate.new_pk_columns, uses_generated_pk, pk_base);
+                         pk_base, gstate.table_id, context.client);
   gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
     gstate.search_table,
     duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,

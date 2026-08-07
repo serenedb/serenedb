@@ -1,0 +1,65 @@
+# WAND top-k on a search-table index. With a matching optimize_top_k scorer, a
+# `WHERE <filter> ORDER BY <scorer>(idx.tableoid) DESC LIMIT k` pushes the score
+# + top-k INTO the scan and enables WAND block-max pruning (`Top: k, optimized`)
+# -- the same parity a transactional inverted index gets. Commit-time only, so
+# rows are observed after VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bm(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true,
+    norm = true
+);
+
+statement ok
+CREATE TABLE w (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX w_idx ON w USING inverted (body bm)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+INSERT INTO w VALUES
+  (1, 'the quick brown fox'),
+  (2, 'fox runs fast'),
+  (3, 'the lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) w;
+
+# Top-2 by BM25: the shorter matching doc (row 2) outranks the longer (row 1).
+query
+SELECT id FROM w_idx WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(w_idx.tableoid) DESC, id LIMIT 2;
+----
+id
+2
+1
+
+# The scan carries the score + top-k with WAND pruning engaged (Top: k,
+# optimized), and the filter names the real column.
+query
+EXPLAIN SELECT id FROM w_idx WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(w_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ TOP_N ────────────────────────────────╮
+│ Top: 2                                 │
+│ Order By: #1 DESC                      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: w_idx                           │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Term ──────────────╮                │
+│ │ Field: body(string) │                │
+│ │ Value: fox          │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Top: 2, optimized                      │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯

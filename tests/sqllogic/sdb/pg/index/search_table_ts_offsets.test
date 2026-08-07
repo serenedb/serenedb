@@ -1,0 +1,48 @@
+# ts_offsets over a search-table index. ts_offsets reads the stored match
+# offsets for the term filter, which live under the index's own allocated term
+# field on a search table (not the column id); the offsets collector matches the
+# scan's term query on that field. ts_highlight then renders them. Commit-time
+# only, so rows are observed after VACUUM (REFRESH_TABLE).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY offs_en(
+    template = 'text', locale = 'en_US.UTF-8', case = 'lower',
+    stemming = false, accent = false, frequency = true, position = true,
+    offset = true
+);
+
+statement ok
+CREATE TABLE d (id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX d_off ON d USING inverted (body offs_en);
+
+statement ok
+INSERT INTO d VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) d;
+
+# 'quick' occupies bytes [4,9) in row 1.
+query
+SELECT id, ts_offsets(body) AS bo FROM d_off WHERE body @@ 'quick' ORDER BY id;
+----
+id	bo
+1	{4,9}
+
+# 'the' occupies [0,3) in both rows.
+query
+SELECT id, ts_offsets(body) AS bo FROM d_off WHERE body @@ 'the' ORDER BY id;
+----
+id	bo
+1	{0,3}
+2	{0,3}
+
+# ts_highlight consumes the offsets to wrap the match.
+query
+SELECT id, ts_highlight(body, ts_offsets(body)) AS hl
+FROM d_off WHERE body @@ 'fox' ORDER BY id;
+----
+id	hl
+1	the quick brown <b>fox</b>

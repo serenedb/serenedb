@@ -1,0 +1,101 @@
+# Indexed expressions on search tables. An indexed expression is synthetic and
+# single-field: it has no stored column, so the write path evaluates it per row
+# and emits its value + terms under the expression's own allocated field. A
+# predicate on the expression pushes down through the index scan (matching a
+# transactional expression index). Empty-table-only CREATE INDEX, commit-time
+# only, so rows are observed after VACUUM (REFRESH_TABLE).
+
+# --- Scalar numeric expression ---
+statement ok
+CREATE TABLE num (id BIGINT PRIMARY KEY, a INT, b INT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX num_idx ON num USING inverted ((a + b));
+
+statement ok
+INSERT INTO num VALUES (1, 10, 20), (2, 5, 5), (3, 100, 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) num;
+
+query
+SELECT id FROM num_idx WHERE a + b = 30;
+----
+id
+1
+
+query
+SELECT id FROM num_idx WHERE a + b = 10;
+----
+id
+2
+
+# The predicate pushes down to the expression's own term field.
+query
+EXPLAIN SELECT id FROM num_idx WHERE a + b = 30;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: num_idx              │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────────╮ │
+│ │ Field: (a + b)(numeric) │ │
+│ │ Value: 30               │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+# --- String expression ---
+statement ok
+CREATE TABLE str (id BIGINT PRIMARY KEY, s1 TEXT, s2 TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX str_idx ON str USING inverted ((s1 || s2));
+
+statement ok
+INSERT INTO str VALUES (1, 'foo', 'bar'), (2, 'hello', 'world');
+
+statement ok
+VACUUM (REFRESH_TABLE) str;
+
+query
+SELECT id FROM str_idx WHERE s1 || s2 = 'foobar';
+----
+id
+1
+
+query
+SELECT id FROM str_idx WHERE s1 || s2 = 'helloworld';
+----
+id
+2
+
+# --- JSON-leaf expression (exercises the synthetic null/bool/numeric leaves) ---
+statement ok
+CREATE TABLE j (id BIGINT PRIMARY KEY, doc JSON)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX j_idx ON j USING inverted ((doc->>'name'));
+
+statement ok
+INSERT INTO j VALUES (1, '{"name":"alice"}'), (2, '{"name":"bob"}');
+
+statement ok
+VACUUM (REFRESH_TABLE) j;
+
+query
+SELECT id FROM j_idx WHERE doc->>'name' = 'alice' ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM j_idx WHERE doc->>'name' = 'bob' ORDER BY id;
+----
+id
+2

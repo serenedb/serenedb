@@ -229,11 +229,18 @@ ObjectId NextId();
 
 ObjectId NextNIds(uint64_t n);
 
+// Opaque-enum declaration (fixed underlying type => usable as a member) avoids
+// an include cycle with table_options.h.
+enum class TableEngine : uint8_t;
+
 struct ReadContext {
   ObjectId id;
   ObjectId database_id;
   ObjectId schema_id;
   ObjectId relation_id;
+  // The owning relation's engine; omitting it in aggregate init yields
+  // TableEngine{0} == Transactional. Selects the serialized layout on reads.
+  TableEngine engine;
 };
 
 inline std::string_view SerializeObject(const Object& obj,

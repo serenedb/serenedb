@@ -46,6 +46,10 @@ namespace sdb::connector {
 void RejectIfSearchTable(const catalog::Table& table,
                          std::string_view operation);
 
+// v1 does not index existing rows, hence the empty-table requirement.
+void ValidateSearchTableCreateIndex(const catalog::Table& table,
+                                    std::string_view index_type);
+
 catalog::TableEngine ReadStorageEngine(
   const duckdb::case_insensitive_map_t<
     duckdb::unique_ptr<duckdb::ParsedExpression>>& with_options);

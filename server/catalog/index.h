@@ -157,7 +157,7 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
   const std::shared_ptr<const Snapshot>& snapshot, InvertedIndexOptions options,
-  ExpressionData predicate);
+  ExpressionData predicate, bool search_engine);
 
 }  // namespace catalog
 }  // namespace sdb

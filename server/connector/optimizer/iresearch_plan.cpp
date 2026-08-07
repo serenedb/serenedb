@@ -47,6 +47,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
+#include "catalog/table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/functions/search.h"
@@ -61,6 +62,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search/search_table.h"
 
 namespace sdb::optimizer {
 
@@ -315,13 +317,12 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return it->second;
   };
 
-  const auto make_info = [&](irs::field_id field_id,
+  const auto make_info = [&](irs::field_id field_id, catalog::Column::Id col_id,
                              const catalog::InvertedIndexEntryInfo* info,
                              duckdb::LogicalType type, bool column) {
     auto column_info = MakeSearchColumnInfo(
       field_id, info, std::move(type), index.GetTokenizer(snapshot, field_id));
-    if (column && table &&
-        column_not_null(static_cast<catalog::Column::Id>(field_id))) {
+    if (column && table && column_not_null(col_id)) {
       column_info.null_field_id = irs::field_limits::invalid();
     }
     if (irs::field_limits::valid(column_info.null_field_id)) {
@@ -349,7 +350,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (type.id() == duckdb::LogicalTypeId::INVALID) {
       return std::nullopt;
     }
-    return make_info(col_id, info, std::move(type), true);
+    return make_info(index.TermFieldForColumn(col_id), col_id, info,
+                     std::move(type), true);
   };
 
   connector::ExpressionGetter expr_getter = [&](const duckdb::Expression& expr)
@@ -366,7 +368,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       return std::nullopt;
     }
     const auto* info = index.FindEntry(field_id);
-    return make_info(field_id, info, expr_data->return_type, false);
+    return make_info(field_id, catalog::Column::kInvalidId, info,
+                     expr_data->return_type, false);
   };
 
   return fn(SearchGetters{getter, expr_getter, analyzed_fields, null_markers});
@@ -710,14 +713,18 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   const bool is_text = col_info->text_dictionary.isSet();
   const bool offs_stored =
     col_info->features.HasFeatures(irs::IndexFeatures::Offs);
+  const auto read_field = static_cast<catalog::Column::Id>(
+    found.bind_data->inverted_index->TermFieldForColumn(target_col_id));
 
   if (is_text && !offs_stored) {
     auto bind = duckdb::make_uniq<connector::OffsetsBindData>();
     bind->inverted_index = found.bind_data->inverted_index;
     bind->column_id = target_col_id;
     bind->limit = limit;
-    search_scan.offsets.push_back(
-      {.column_id = target_col_id, .limit = limit, .bind = bind.get()});
+    search_scan.offsets.push_back({.column_id = target_col_id,
+                                   .display_id = target_col_id,
+                                   .limit = limit,
+                                   .bind = bind.get()});
     func.BindInfoMutable() = std::move(bind);
     func.FunctionMutable().SetFunctionCallback(connector::OffsetsScalarFn);
     auto body_expr = std::move(func.GetChildrenMutable()[0]);
@@ -732,7 +739,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   duckdb::idx_t get_col_idx = duckdb::DConstants::INVALID_INDEX;
   const auto existing = absl::c_find_if(
     search_scan.offsets,
-    [&](const auto& req) { return req.column_id == target_col_id; });
+    [&](const auto& req) { return req.column_id == read_field; });
   if (existing != search_scan.offsets.end()) {
     if (existing->limit != limit) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -748,8 +755,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
     get_col_idx = AppendVirtualGetColumn(
       *found.bind_data, *found.get, catalog::Column::kInvertedIndexOffsetsId,
       col_type, offsets_col_name);
-    search_scan.offsets.push_back(
-      {.column_id = target_col_id, .limit = limit, .get_col_idx = get_col_idx});
+    search_scan.offsets.push_back({.column_id = read_field,
+                                   .display_id = target_col_id,
+                                   .limit = limit,
+                                   .get_col_idx = get_col_idx});
   }
   const auto binding =
     ExposeGetColumnAt(root, col_ref.Binding().table_index, *found.get,
@@ -1013,47 +1022,91 @@ bool TryClaimAnnRange(
   return false;
 }
 
+bool ClaimSearchConjuncts(
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
+  connector::SereneDBScanBindData& bind_data, const SearchGetters& getters,
+  duckdb::ClientContext& context) {
+  auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
+  auto& scan = bind_data;
+
+  auto root_and = std::make_unique<irs::And>();
+  bool any_claimed = false;
+  for (size_t i = 0; i < filters.size();) {
+    if (TryClaimIResearchConjunct(*root_and, filters[i], getter, expr_getter,
+                                  context)) {
+      any_claimed = true;
+      std::swap(filters[i], filters.back());
+      filters.pop_back();
+    } else {
+      ++i;
+    }
+  }
+  if (!any_claimed) {
+    return false;
+  }
+
+  irs::Filter::ptr root = std::move(root_and);
+  irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
+                       .analyzed_fields = std::move(analyzed_fields),
+                       .null_markers = &null_markers});
+
+  scan.stored_filter = std::move(root);
+  for (auto& req : scan.offsets) {
+    if (req.bind) {
+      req.bind->stored_filter = scan.stored_filter;
+    }
+  }
+  return true;
+}
+
 bool TryClaimSearchFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
   const catalog::InvertedIndex& index,
   std::shared_ptr<const catalog::Snapshot> snapshot,
   duckdb::ClientContext& context) {
-  return WithSearchGetters(
-    get, bind_data, index, snapshot, context,
-    [&](const SearchGetters& getters) {
-      auto& [getter, expr_getter, analyzed_fields, null_markers] = getters;
-      auto& scan = bind_data;
+  return WithSearchGetters(get, bind_data, index, snapshot, context,
+                           [&](const SearchGetters& getters) {
+                             return ClaimSearchConjuncts(filters, bind_data,
+                                                         getters, context);
+                           });
+}
 
-      auto root_and = std::make_unique<irs::And>();
-      bool any_claimed = false;
-      for (size_t i = 0; i < filters.size();) {
-        if (TryClaimIResearchConjunct(*root_and, filters[i], getter,
-                                      expr_getter, context)) {
-          any_claimed = true;
-          std::swap(filters[i], filters.back());
-          filters.pop_back();
-        } else {
-          ++i;
-        }
-      }
-      if (!any_claimed) {
-        return false;
-      }
-
-      irs::Filter::ptr root = std::move(root_and);
-      irs::Optimize(root, {.scored = scan.text_scorer.has_value(),
-                           .analyzed_fields = std::move(analyzed_fields),
-                           .null_markers = &null_markers});
-
-      scan.stored_filter = std::move(root);
-      for (auto& req : scan.offsets) {
-        if (req.bind) {
-          req.bind->stored_filter = scan.stored_filter;
-        }
-      }
-      return true;
-    });
+bool TryClaimSearchTableFilter(
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
+  duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
+  const search::SearchTable& shard,
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
+  duckdb::ClientContext& context) {
+  // Hold one immutable config snapshot for the whole claim so entry pointers
+  // stay valid if DDL swaps the config mid-plan.
+  auto config = shard.GetIndexConfig();
+  containers::FlatHashSet<irs::field_id> analyzed_fields;
+  containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
+  connector::ColumnGetter getter =
+    [&](const duckdb::BoundColumnRefExpression& ref)
+    -> std::optional<connector::SearchColumnInfo> {
+    const auto col_id = ResolveColumnId(ref.Binding(), bind_data, get);
+    if (col_id == catalog::Column::kInvalidId) {
+      return std::nullopt;
+    }
+    const auto field_id = static_cast<irs::field_id>(col_id);
+    auto it = config->find(field_id);
+    if (it == config->end() || !it->second.IsTermDict()) {
+      return std::nullopt;
+    }
+    auto type = bind_data.ColumnTypeById(col_id);
+    if (type.id() == duckdb::LogicalTypeId::INVALID) {
+      return std::nullopt;
+    }
+    return MakeSearchColumnInfo(col_id, &it->second, std::move(type),
+                                shard.GetTokenizer(snapshot, field_id));
+  };
+  connector::ExpressionGetter expr_getter = [](const duckdb::Expression&)
+    -> std::optional<connector::SearchColumnInfo> { return std::nullopt; };
+  return ClaimSearchConjuncts(
+    filters, bind_data,
+    SearchGetters{getter, expr_getter, analyzed_fields, null_markers}, context);
 }
 
 void RewriteSearchCallsToColumnRefs(
@@ -1075,9 +1128,16 @@ void IResearchPushdownComplexFilter(
   auto& conn_ctx = connector::GetSereneDBContext(context);
   auto& bind_data = bind_data_ptr->Cast<connector::SereneDBScanBindData>();
   auto& ss = bind_data;
-  // A search table's iresearch store IS the table: there is no index-side
-  // predicate, so leave every filter for the standard column-filter pushdown.
   if (!bind_data.inverted_index) {
+    if (!bind_data.stored_filter && bind_data.IsSearchTableEntry() &&
+        bind_data.GetKind() == connector::SereneDBScanBindData::Kind::Table) {
+      const auto& table_bd = bind_data.As<connector::TableScanBindData>();
+      if (table_bd.table && table_bd.table->GetData()) {
+        TryClaimSearchTableFilter(filters, get, bind_data,
+                                  *table_bd.table->GetData(),
+                                  conn_ctx.CatalogSnapshot(), context);
+      }
+    }
     return;
   }
   if (ss.TsDictMode()) {

@@ -720,20 +720,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
                                                   op.estimated_cardinality);
     }
 
-    // A Search table has no separate inverted indexes, so its scan appends only
-    // the PK virtuals (BuildRowIdColumns): [real..., pk_0..pk_{n-1}] for
-    // explicit-PK tables, or [real..., generated_pk] for generated-PK ones.
-    const auto& pk_col_ids = sdb_table->PKColumns();
     const auto child_cols = plan.types.size();
     std::vector<duckdb::idx_t> pk_indices;
-    if (pk_col_ids.empty()) {
-      pk_indices.push_back(child_cols - 1);  // generated-PK slot is last
-    } else {
-      const auto num_pk = pk_col_ids.size();
-      for (size_t i = 0; i < num_pk; ++i) {
-        pk_indices.push_back(child_cols - num_pk + i);
-      }
-    }
+    pk_indices.push_back(child_cols - 1);  // generated-PK slot is last
     auto& search_del = planner.Make<SereneDBSearchDelete>(
       std::move(sdb_table), std::move(pk_indices), op.estimated_cardinality);
     search_del.children.push_back(plan);
@@ -759,13 +748,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
     // passes every projected new-row column through -- the SET values, duckdb's
     // recomputed STORED generated columns, and the old-value passthroughs that
-    // BindUpdateConstraints added -- plus the PK virtuals, so
-    // SereneDBSearchUpdate sees [resolved new-row vals, pk_virtuals]. A Search
-    // table has no separate inverted indexes, so BuildRowIdColumns appends only
-    // the PK virtuals: [real..., pk_0..pk_{n-1}] / [real..., generated_pk].
-    const auto& pk_col_ids = sdb_table->PKColumns();
-    const auto num_pk = pk_col_ids.size();
-    const auto num_virtual = pk_col_ids.empty() ? 1 : num_pk;
+    // BindUpdateConstraints added -- plus the synthetic rowid virtual.
+    const duckdb::idx_t num_virtual = 1;
     const auto child_cols = plan.types.size();
 
     const auto num_updates = op.expressions.size();
@@ -800,15 +784,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     proj.children.push_back(plan);
 
     std::vector<duckdb::idx_t> pk_indices;
-    if (pk_col_ids.empty()) {
-      // generated PK is the single virtual, after the SET vals.
-      pk_indices.push_back(num_updates + num_virtual - 1);
-    } else {
-      pk_indices.reserve(num_pk);
-      for (size_t i = 0; i < num_pk; ++i) {
-        pk_indices.push_back(num_updates + i);
-      }
-    }
+    // generated PK is the single rowid virtual, after the SET vals.
+    pk_indices.push_back(num_updates + num_virtual - 1);
 
     auto& search_upd = planner.Make<SereneDBSearchUpdate>(
       std::move(sdb_table), std::move(pk_indices), std::move(op.columns),
@@ -872,7 +849,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     auto& table_entry =
       RequireBaseTable(target.Cast<duckdb::TableCatalogEntry>());
     auto sdb_table = table_entry.GetSereneDBTable();
-    RejectIfSearchTable(*sdb_table, "CREATE INDEX");
+    ValidateSearchTableCreateIndex(
+      *sdb_table, stmt.info->Cast<duckdb::CreateIndexInfo>().index_type);
   }
 
   // View-backed indexes are STATIC -- captured at CREATE INDEX, no DML refresh.
@@ -1203,8 +1181,12 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       for (auto pos : projection) {
         get.types.push_back(rel_columns[pos].second);
       }
-      get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
-      get.types.push_back(duckdb::LogicalType::ROW_TYPE);
+      // A Search-table index is storage-less and never backfilled here (the
+      // table is empty), so it needs no base rowid to bridge doc-id spaces.
+      if (sdb_table->GetEngine() != catalog::TableEngine::Search) {
+        get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+        get.types.push_back(duckdb::LogicalType::ROW_TYPE);
+      }
     }
     SDB_ASSERT(get.bind_data,
                "base-table LogicalGet missing SereneDB bind_data");

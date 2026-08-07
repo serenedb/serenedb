@@ -104,7 +104,19 @@ void InitInvertedIndexes() {
         }
         auto inv_storage =
           basics::downCast<const catalog::InvertedIndex>(*idx).GetData();
-        SDB_ASSERT(inv_storage);
+        if (!inv_storage) {
+          // The only storage-less inverted index is one on a Search table: its
+          // terms live in the table's own store, so there is no separate delta
+          // to bind or recover here.
+          SDB_ASSERT([&] {
+            const auto relation = snapshot->GetObject(idx->GetRelationId());
+            return relation &&
+                   relation->GetType() == catalog::ObjectType::Table &&
+                   basics::downCast<const catalog::Table>(*relation)
+                       .GetEngine() == catalog::TableEngine::Search;
+          }());
+          continue;
+        }
         // Keep ordinals monotone across restarts.
         TickDomain::Instance().SeedAtLeast(inv_storage->GetRecoveryTick());
         inv_storage->StartTasks();

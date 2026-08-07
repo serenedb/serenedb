@@ -733,7 +733,7 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
   const std::shared_ptr<const Snapshot>& snapshot, InvertedIndexOptions options,
-  ExpressionData predicate) {
+  ExpressionData predicate, bool search_engine) {
   SDB_ASSERT(options.row_group_size != 0);
   SDB_ASSERT(options.norm_row_group_size != 0);
   ValidateInvertedIndexColumns(columns);
@@ -741,6 +741,10 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   InvertedIndex::Entries entries;
   std::vector<Column::Id> key_columns;
   std::vector<ExpressionKey> expression_keys;
+  // Search-table indexes allocate a distinct term field_id per column (so two
+  // indexes on one column don't collide in the shared store); empty for a
+  // transactional index (field_id == column id).
+  containers::FlatHashMap<Column::Id, irs::field_id> col_to_term_field;
   key_columns.reserve(columns.size());
   const uint64_t expressions_cnt = std::ranges::count_if(
     columns, [](const auto& c) { return c.IsIndexedExpression(); });
@@ -775,13 +779,27 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
       expression_keys.emplace_back(expr_data, field_id);
       continue;
     }
-    const auto col_field_id =
-      static_cast<irs::field_id>(c.GetCatalogColumn().GetId());
+    const auto column = c.GetCatalogColumn().GetId();
+    irs::field_id col_field_id;
+    if (search_engine && !c.IsBuiltin(kIVFKind)) {
+      // Reuse the field when the column is mentioned again in the same index
+      // (e.g. `col dict, col included(...)`).
+      auto [m_it, m_new] =
+        col_to_term_field.try_emplace(column, irs::field_limits::invalid());
+      if (m_new) {
+        m_it->second = static_cast<irs::field_id>(NextId());
+      }
+      col_field_id = m_it->second;
+    } else {
+      // IVF stays at the column id so it attaches to the stored vector value;
+      // transactional indexes too.
+      col_field_id = static_cast<irs::field_id>(column);
+    }
     auto [col_it, col_inserted] =
       entries.try_emplace(col_field_id, InvertedIndexEntryInfo{});
     auto& index_col = col_it->second;
     if (col_inserted) {
-      key_columns.push_back(c.GetCatalogColumn().GetId());
+      key_columns.push_back(column);
     }
     if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kIVFKind)) {
       index_col.indexed_term_dict = true;
@@ -811,7 +829,8 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),
     std::move(key_columns), std::move(expression_keys), std::move(entries),
-    std::move(options), std::move(predicate));
+    std::move(options), std::move(predicate), std::move(col_to_term_field),
+    search_engine);
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,

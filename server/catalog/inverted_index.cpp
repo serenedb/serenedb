@@ -39,15 +39,20 @@
 #include "search/inverted_index_storage.h"
 
 namespace sdb::catalog {
+
+ColumnTokenizer DefaultColumnTokenizer() {
+  auto analyzer = std::make_unique<irs::StringTokenizer>();
+  return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
+                           analyzer.release(), Tokenizer::Deleter{nullptr}}};
+}
+
 namespace {
 
 ColumnTokenizer BuildColumnTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot, ObjectId text_dictionary,
   search::Features features) {
   if (!text_dictionary.isSet()) {
-    auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
-                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    return DefaultColumnTokenizer();
   }
   auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
   if (!dict) {
@@ -57,8 +62,11 @@ ColumnTokenizer BuildColumnTokenizer(
                          .features = features.GetIndexFeatures()};
 }
 
+using persistence::ColumnKey;
 using persistence::EntryConfigSerialized;
 using persistence::InvertedIndexData;
+using persistence::InvertedIndexDataT;
+using persistence::SearchInvertedIndexData;
 
 EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
   return EntryConfigSerialized{
@@ -78,17 +86,17 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
   };
 }
 
-InvertedIndexData PackEntries(std::string_view name,
-                              const std::vector<Column::Id>& columns,
-                              const std::vector<ExpressionKey>& expression_keys,
-                              const InvertedIndex::Entries& entries,
-                              const InvertedIndexOptions& options,
-                              const ExpressionData& predicate) {
-  InvertedIndexData data;
+template<typename ColumnEntry>
+InvertedIndexDataT<ColumnEntry> PackEntries(
+  std::string_view name, std::vector<ColumnEntry> columns,
+  const std::vector<ExpressionKey>& expression_keys,
+  const InvertedIndex::Entries& entries, const InvertedIndexOptions& options,
+  const ExpressionData& predicate) {
+  InvertedIndexDataT<ColumnEntry> data;
   data.name = std::string{name};
   data.options = options;
   data.predicate = predicate;
-  data.columns.assign(columns.begin(), columns.end());
+  data.columns = std::move(columns);
   data.expression_keys.assign(expression_keys.begin(), expression_keys.end());
   data.entries.reserve(entries.size());
   for (const auto& [field_id, entry] : entries) {
@@ -97,8 +105,9 @@ InvertedIndexData PackEntries(std::string_view name,
   return data;
 }
 
-std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
-                                             ReadContext ctx) {
+template<typename ColumnEntry>
+std::shared_ptr<InvertedIndex> UnpackEntries(
+  InvertedIndexDataT<ColumnEntry> data, ReadContext ctx) {
   InvertedIndex::Entries entries;
   entries.reserve(data.entries.size());
   for (auto& [field_id, cfg] : data.entries) {
@@ -118,11 +127,27 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
                                 .numeric_field_id = cfg.numeric_field_id,
                               });
   }
+  // The Search layout carries a ColumnKey per column (allocated term field_id);
+  // the legacy layout is bare column ids (empty map).
+  constexpr bool kSearch = std::is_same_v<ColumnEntry, ColumnKey>;
+  std::vector<Column::Id> columns;
+  containers::FlatHashMap<Column::Id, irs::field_id> col_to_term_field;
+  columns.reserve(data.columns.size());
+  if constexpr (kSearch) {
+    for (const auto& ck : data.columns) {
+      columns.push_back(ck.column);
+      col_to_term_field.emplace(ck.column, ck.field_id);
+    }
+  } else {
+    for (const auto col : data.columns) {
+      columns.push_back(col);
+    }
+  }
   auto index = std::make_shared<InvertedIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
-    std::move(data.name), std::move(data.columns),
-    std::move(data.expression_keys), std::move(entries),
-    std::move(data.options), std::move(data.predicate));
+    std::move(data.name), std::move(columns), std::move(data.expression_keys),
+    std::move(entries), std::move(data.options), std::move(data.predicate),
+    std::move(col_to_term_field), kSearch);
   index->SetComment(data.comment);
   return index;
 }
@@ -131,12 +156,30 @@ std::shared_ptr<InvertedIndex> UnpackEntries(InvertedIndexData data,
 
 std::shared_ptr<InvertedIndex> InvertedIndex::Deserialize(
   duckdb::Deserializer& src, ReadContext ctx) {
+  if (ctx.engine == TableEngine::Search) {
+    SearchInvertedIndexData data;
+    basics::ReadTuple(src, data);
+    return UnpackEntries(std::move(data), ctx);
+  }
   InvertedIndexData data;
   basics::ReadTuple(src, data);
   return UnpackEntries(std::move(data), ctx);
 }
 
 void InvertedIndex::Serialize(duckdb::Serializer& sink) const {
+  if (_search_engine) {
+    std::vector<ColumnKey> column_keys;
+    column_keys.reserve(GetColumns().size());
+    for (const auto col : GetColumns()) {
+      column_keys.push_back(
+        {.column = col, .field_id = TermFieldForColumn(col)});
+    }
+    auto data = PackEntries(GetName(), std::move(column_keys), _expression_keys,
+                            _entries, _options, _predicate);
+    data.comment = Comment();
+    basics::WriteTuple(sink, data);
+    return;
+  }
   auto data = PackEntries(GetName(), GetColumns(), _expression_keys, _entries,
                           _options, _predicate);
   data.comment = Comment();
@@ -165,6 +208,11 @@ void InvertedIndex::BuildSerializedExprIndex() {
 void InvertedIndex::BumpTickServerForEntryIds() {
   for (const auto& key : _expression_keys) {
     UpdateTickServer(key.field_id);
+  }
+  // Per-column allocated term field_ids (Search-table indexes): floor the
+  // allocator so a future NextId() can't re-issue one to a different field.
+  for (const auto& kv : _col_to_term_field) {
+    UpdateTickServer(kv.second);
   }
   for (const auto& [field_id, entry] : _entries) {
     if (irs::field_limits::valid(entry.synthetic_column)) {
@@ -196,9 +244,9 @@ const ExpressionData* InvertedIndex::ExpressionByFieldId(
 
 const InvertedIndexEntryInfo* InvertedIndex::FindColumnInfo(
   catalog::Column::Id column_id) const noexcept {
-  const auto field_id = static_cast<irs::field_id>(column_id);
-  // An expression key's allocated field_id never equals a column id, so a hit
-  // here means `field_id` is genuinely a plain-column key.
+  const auto field_id = TermFieldForColumn(column_id);
+  // An expression key's allocated field_id never equals a plain column's term
+  // field, so a hit here means `field_id` is genuinely a plain-column key.
   if (ExpressionByFieldId(field_id)) {
     return nullptr;
   }
@@ -367,6 +415,18 @@ void InvertedIndex::BuildFieldLookupIndex() {
   insert(term_dict::kPKFieldId, nullptr, term_dict::kPKFieldId);
 }
 
+ColumnTokenizer TokenizerForEntry(
+  const std::shared_ptr<const Snapshot>& snapshot,
+  const InvertedIndexEntryInfo& entry) {
+  auto tokenizer =
+    BuildColumnTokenizer(snapshot, entry.text_dictionary, entry.features);
+  if (!entry.features.HasFeatures(irs::IndexFeatures::Norm) &&
+      irs::field_limits::valid(entry.synthetic_column)) {
+    tokenizer.tokenizer_column = entry.synthetic_column;
+  }
+  return tokenizer;
+}
+
 ColumnTokenizer InvertedIndex::GetTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   irs::field_id field_id) const {
@@ -375,13 +435,7 @@ ColumnTokenizer InvertedIndex::GetTokenizer(
     THROW_SQL_ERROR(
       ERR_MSG("Field id ", field_id, " not found in the index definition"));
   }
-  auto tokenizer =
-    BuildColumnTokenizer(snapshot, entry->text_dictionary, entry->features);
-  if (!entry->features.HasFeatures(irs::IndexFeatures::Norm) &&
-      irs::field_limits::valid(entry->synthetic_column)) {
-    tokenizer.tokenizer_column = entry->synthetic_column;
-  }
-  return tokenizer;
+  return TokenizerForEntry(snapshot, *entry);
 }
 
 bool InvertedIndex::IsKeywordField(const Snapshot& snapshot,
@@ -410,13 +464,12 @@ irs::field_id InvertedIndex::FindFieldIdBySerialized(
   return it->second;
 }
 
-std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
-  irs::field_id field_id) const {
-  const auto* entry = FindEntry(field_id);
-  if (!entry || !entry->ivf_config) {
+std::optional<irs::IvfInfo> IvfInfoForEntry(
+  irs::field_id field_id, const InvertedIndexEntryInfo& entry) {
+  if (!entry.ivf_config) {
     return std::nullopt;
   }
-  const auto& cfg = *entry->ivf_config;
+  const auto& cfg = *entry.ivf_config;
   return irs::IvfInfo{
     .centroids_id = field_id,
     .postings_id = field_id,
@@ -426,6 +479,15 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .sample_factor = cfg.sample_factor,
     .posting_size = cfg.posting_size,
   };
+}
+
+std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
+  irs::field_id field_id) const {
+  const auto* entry = FindEntry(field_id);
+  if (!entry) {
+    return std::nullopt;
+  }
+  return IvfInfoForEntry(field_id, *entry);
 }
 
 irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
@@ -480,12 +542,15 @@ containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
 std::shared_ptr<Object> InvertedIndex::Clone() const {
   duckdb::MemoryStream stream;
   auto cloned = DeserializeObject<InvertedIndex>(
-    SerializeObject(*this, stream), {
-                                      .id = GetId(),
-                                      .database_id = GetDatabaseId(),
-                                      .schema_id = GetParentId(),
-                                      .relation_id = GetRelationId(),
-                                    });
+    SerializeObject(*this, stream),
+    {
+      .id = GetId(),
+      .database_id = GetDatabaseId(),
+      .schema_id = GetParentId(),
+      .relation_id = GetRelationId(),
+      .engine =
+        _search_engine ? TableEngine::Search : TableEngine::Transactional,
+    });
   // Carry the iresearch runtime storage to the new metadata version: a clone
   // (e.g. rename) is the same index backed by the same on-disk storage (keyed
   // by ids, not name), so the runtime must survive the metadata mutation.

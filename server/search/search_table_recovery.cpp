@@ -20,12 +20,14 @@
 
 #include "search/search_table_recovery.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
 #include <chrono>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/connection.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
 #include <memory>
@@ -36,12 +38,12 @@
 
 #include "basics/assert.h"
 #include "basics/containers/node_hash_map.h"
+#include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -58,14 +60,20 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   SDB_ASSERT(snapshot);
   auto& engine = GetSearchEngine();
 
+  // A dedicated connection whose ClientContext drives indexed-expression
+  // evaluation for replayed rows (the WAL stores raw columns; expressions must
+  // be recomputed). Rolled back at the end -- it never writes anything.
+  duckdb::Connection expr_conn(DuckDBEngine::Instance().instance());
+  expr_conn.BeginTransaction();
+  absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
+  auto& expr_context = *expr_conn.context;
+
   // Per-shard replay metadata, built once from the catalog table so the
   // recovered key matches the written one.
   struct ShardInfo {
     std::shared_ptr<SearchTable> shard;  // keeps the table store alive
     SearchTable* search = nullptr;
     std::vector<catalog::Column::Id> column_ids;
-    std::vector<connector::duckdb_primary_key::PKColumn> pk_columns;
-    bool uses_generated_pk = false;
   };
   // Per-shard replay context: one open iresearch trx accumulated across all of
   // the shard's records, with an insert sink and a delete sink that share it.
@@ -98,8 +106,6 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
           }
           info.column_ids.push_back(col.GetId());
         }
-        info.pk_columns = connector::duckdb_primary_key::BuildPKColumns(*table);
-        info.uses_generated_pk = table->PKColumns().empty();
         shards.emplace(table->GetId(), std::move(info));
       }
     }
@@ -126,7 +132,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       }
 
       if (!ctx.insert_sink) {
-        ctx.insert_sink = connector::MakeSearchTableInsertSink(ctx.trx);
+        ctx.insert_sink = connector::MakeSearchTableInsertSink(
+          ctx.trx, *info.shard, snapshot, expr_context);
         ctx.delete_sink =
           std::make_unique<connector::SearchSinkDeleteBaseImpl>(ctx.trx);
       }
@@ -137,8 +144,8 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
       connector::WriteChunkToSearchSink(*ctx.insert_sink, chunk,
-                                        info.column_ids, info.pk_columns,
-                                        info.uses_generated_pk, pk_base);
+                                        info.column_ids, pk_base, table_id,
+                                        expr_context);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     // Each DELETE op replays as one removal batch on the shared trx; feeding it

@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <optional>
 #include <string>
 
@@ -33,6 +34,7 @@
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config_variable_names.h"
+#include "search/search_table.h"
 
 namespace sdb::connector {
 namespace {
@@ -109,6 +111,27 @@ void RejectIfSearchTable(const catalog::Table& table,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG(operation, " on a search-backed table is not yet supported"));
+  }
+}
+
+void ValidateSearchTableCreateIndex(const catalog::Table& table,
+                                    std::string_view index_type) {
+  if (table.GetEngine() != catalog::TableEngine::Search) {
+    return;
+  }
+  if (duckdb::StringUtil::Lower(std::string{index_type}) != "inverted") {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("only inverted indexes are supported on a search-backed table"));
+  }
+  const auto& shard = table.GetData();
+  SDB_ASSERT(shard);
+  shard->VacuumRefresh();  // publish committed WAL rows so live_docs is exact
+  if (shard->GetDirectoryReader().live_docs_count() != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("CREATE INDEX on a non-empty search-backed table is not yet "
+              "supported (indexing existing rows)"));
   }
 }
 

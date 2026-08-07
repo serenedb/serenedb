@@ -77,11 +77,23 @@ struct ExpressionKey {
   irs::field_id field_id = irs::field_limits::invalid();
 };
 
-struct InvertedIndexData {
+// One plain-column key: the column plus its allocated term field_id. For a
+// transactional index `field_id == column` (identity); for a Search-table index
+// the field_id is a distinct allocation.
+struct ColumnKey {
+  Column::Id column = Column::kInvalidId;
+  irs::field_id field_id = irs::field_limits::invalid();
+};
+
+// Persisted inverted-index catalog tuple, templated on the `columns` element:
+// a transactional index serializes bare `Column::Id`s (byte-identical to the
+// pre-search-table format, so old datadirs load unchanged); a Search-table
+// index serializes `ColumnKey`s carrying each column's allocated term field_id.
+template<typename ColumnEntry>
+struct InvertedIndexDataT {
   std::string name;
-  // Plain-column keys (de-duped). Each column key's field_id is its column id,
-  // so no separate field_id is stored. Order is not load-bearing for inverted.
-  std::vector<Column::Id> columns;
+  // Plain-column keys (de-duped). Order is not load-bearing for inverted.
+  std::vector<ColumnEntry> columns;
   std::vector<ExpressionKey> expression_keys;
   // Per-field iresearch config keyed by field_id.
   containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;
@@ -92,5 +104,8 @@ struct InvertedIndexData {
   ExpressionData predicate;
   std::string comment;
 };
+
+using InvertedIndexData = InvertedIndexDataT<Column::Id>;
+using SearchInvertedIndexData = InvertedIndexDataT<ColumnKey>;
 
 }  // namespace sdb::catalog::persistence

@@ -246,6 +246,10 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
   duckdb::vector<duckdb::column_t> result;
   const auto& pk_col_ids = table.PKColumns();
 
+  if (table.GetEngine() == catalog::TableEngine::Search) {
+    return {kColumnIdentifierGeneratedPk};
+  }
+
   // PK positions (O(1) per id), in PK order; then indexed positions not already
   // covered by the PK set.
   containers::FlatHashSet<size_t> pk_positions;
@@ -305,9 +309,9 @@ duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
   result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn("", duckdb::LogicalType::BOOLEAN)});
 
-  // Generated-PK virtual column: only declared on tables without an
-  // explicit PK.
-  if (pk_col_ids.empty()) {
+  // Generated-PK virtual column: declared on tables without an explicit PK and
+  // on every Search table (which always uses the synthetic rowid).
+  if (pk_col_ids.empty() || table.GetEngine() == catalog::TableEngine::Search) {
     result.insert(
       {kColumnIdentifierGeneratedPk,
        duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
@@ -508,7 +512,8 @@ SereneDBTableEntry::SearchSegmentInfoBindings() const {
 duckdb::column_t SereneDBTableEntry::RowIdentityColumnId(
   const catalog::Table& table) {
   const auto& pk_col_ids = table.PKColumns();
-  if (!pk_col_ids.empty()) {
+  if (table.GetEngine() != catalog::TableEngine::Search &&
+      !pk_col_ids.empty()) {
     const auto pos = table.ColumnPosById(pk_col_ids.front());
     if (pos < table.Columns().size()) {
       return duckdb::VIRTUAL_COLUMN_START + pos;

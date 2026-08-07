@@ -169,9 +169,7 @@ catalog::Table* SereneDBPhysicalCreateIndex::TableOrNull() const noexcept {
 
 bool SereneDBPhysicalCreateIndex::IsDuckDBTable() const noexcept {
   auto* table = TableOrNull();
-  SDB_ASSERT(!table ||
-             table->GetEngine() == catalog::TableEngine::Transactional);
-  return table;
+  return table && table->GetEngine() == catalog::TableEngine::Transactional;
 }
 
 const std::vector<catalog::Column>& SereneDBPhysicalCreateIndex::Columns()

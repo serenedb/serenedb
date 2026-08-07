@@ -20,11 +20,13 @@
 
 #include "search/search_table.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 
 #include <chrono>
 #include <duckdb/common/file_system.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
@@ -34,10 +36,16 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <mutex>
+#include <shared_mutex>
 #include <system_error>
 
+#include "basics/down_cast.h"
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
+#include "catalog/catalog.h"
+#include "catalog/index.h"
+#include "catalog/inverted_index.h"
+#include "database/ticks.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
@@ -101,20 +109,197 @@ absl::Status SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
 
 std::shared_ptr<SearchTable> SearchTable::Create(
   ObjectId db_id, ObjectId schema_id, ObjectId table_id, bool is_new,
-  const catalog::SearchTableOptions& options) {
+  const catalog::SearchTableOptions& options,
+  std::vector<catalog::Column::Id> pk_columns) {
   return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
-                                       options);
+                                       options, std::move(pk_columns));
 }
+
+namespace {
+
+// Each PRIMARY KEY column is term-indexed under its own column id so PK
+// predicates push down. That term field is the column id itself -- distinct
+// from the ids user indexes allocate, so it never collides. store_values is
+// off: the value is stored under the column id, not this term field.
+void BuildPkInto(catalog::InvertedIndex::Entries& entries,
+                 SearchTable::TermsByColumn& terms,
+                 const std::vector<catalog::Column::Id>& pk_columns) {
+  for (auto id : pk_columns) {
+    catalog::InvertedIndexEntryInfo info;
+    info.store_values = false;
+    info.indexed_term_dict = true;
+    const auto field_id = static_cast<irs::field_id>(id);
+    entries.emplace(field_id, info);
+    terms[id].push_back(field_id);
+  }
+}
+
+// Fold each of `index`'s plain-column entries into the merged config, keyed by
+// the index's own allocated term field_id so several indexes on one column get
+// independent posting lists. store_values is forced off (value stored under the
+// column id). Only genuinely term-indexed entries contribute to `terms`.
+void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
+                    SearchTable::TermsByColumn& terms,
+                    const catalog::InvertedIndex& index) {
+  for (auto col_id : index.GetColumns()) {
+    const auto* entry = index.FindColumnInfo(col_id);
+    if (!entry) {
+      continue;
+    }
+    const auto term_field = index.TermFieldForColumn(col_id);
+    auto merged = *entry;
+    merged.store_values = false;
+    entries.insert_or_assign(term_field, merged);
+    if (merged.IsTermDict()) {
+      terms[col_id].push_back(term_field);
+    }
+  }
+  // Indexed expressions are synthetic and single-field: value + terms (and any
+  // IVF/JSON-leaf/norm sub-fields) live under the expression's own field id, so
+  // fold each entry verbatim and add nothing to `terms`.
+  for (const auto& key : index.ExpressionKeys()) {
+    if (const auto* entry = index.FindEntry(key.field_id)) {
+      entries.insert_or_assign(key.field_id, *entry);
+    }
+  }
+}
+
+// The iresearch encoding config the search writer asks for at flush/merge,
+// resolved from the merged config.
+class MergedFieldOptions final : public irs::IndexFieldOptions {
+ public:
+  explicit MergedFieldOptions(
+    std::shared_ptr<const catalog::InvertedIndex::Entries> entries)
+    : _entries{std::move(entries)} {}
+
+  irs::ColumnOptions GetColumnOptions(irs::field_id id) const final {
+    const auto it = _entries->find(id);
+    if (it == _entries->end()) {
+      return {};  // not a merged-config field -> writer baseline (non-zero rgs)
+    }
+    const auto& entry = it->second;
+    irs::ColumnOptions opts;
+    if (entry.row_group_size != 0) {
+      opts.row_group_size = entry.row_group_size;
+    }
+    opts.compression = entry.compression;
+    opts.hyperloglog = entry.hyperloglog;
+    // An IVF entry keys the merged config by its column id (the value column),
+    // not a per-index term field, so this attaches the ANN index to that
+    // column.
+    opts.ivf_info = catalog::IvfInfoForEntry(id, entry);
+    return opts;
+  }
+
+  irs::NormColumnOptions GetNormColumnOptions(irs::field_id id) const final {
+    const auto it = _entries->find(id);
+    SDB_ASSERT(it != _entries->end(),
+               "MergedFieldOptions::GetNormColumnOptions: unknown id ", id);
+    const auto& entry = it->second;
+    SDB_ASSERT(irs::field_limits::valid(entry.synthetic_column),
+               "MergedFieldOptions::GetNormColumnOptions: no norm reservation "
+               "for id ",
+               id);
+    irs::NormColumnOptions opts;
+    opts.id = entry.synthetic_column;
+    if (entry.norm_row_group_size != 0) {
+      opts.row_group_size = entry.norm_row_group_size;
+    }
+    return opts;
+  }
+
+ private:
+  std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
+};
+
+std::shared_ptr<const irs::IndexFieldOptions> MakeFieldOptions(
+  std::shared_ptr<const catalog::InvertedIndex::Entries> entries) {
+  return std::make_shared<const MergedFieldOptions>(std::move(entries));
+}
+
+}  // namespace
 
 SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
                          bool is_new,
-                         const catalog::SearchTableOptions& options)
-  : _table_id{table_id}, _db_id{db_id}, _schema_id{schema_id}, _is_new{is_new} {
+                         const catalog::SearchTableOptions& options,
+                         std::vector<catalog::Column::Id> pk_columns)
+  : _table_id{table_id},
+    _db_id{db_id},
+    _schema_id{schema_id},
+    _is_new{is_new},
+    _pk_columns{std::move(pk_columns)} {
+  catalog::InvertedIndex::Entries entries;
+  TermsByColumn terms;
+  BuildPkInto(entries, terms, _pk_columns);
+  _entries =
+    std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
+  _terms_by_column = std::make_shared<const TermsByColumn>(std::move(terms));
+  _field_options = MakeFieldOptions(_entries);
   OpenWriter();
 
   _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
   _maint_settings.compaction_interval_msec = options.compaction_interval_ms;
   _maint_settings.cleanup_interval_step = options.cleanup_interval_step;
+}
+
+std::shared_ptr<const catalog::InvertedIndex::Entries>
+SearchTable::GetIndexConfig() const noexcept {
+  std::shared_lock lock(_table_lock);
+  return _entries;
+}
+
+std::shared_ptr<const SearchTable::TermsByColumn>
+SearchTable::GetTermsByColumn() const noexcept {
+  std::shared_lock lock(_table_lock);
+  return _terms_by_column;
+}
+
+std::shared_ptr<const irs::IndexFieldOptions> SearchTable::GetFieldOptions()
+  const noexcept {
+  std::shared_lock lock(_table_lock);
+  return _field_options;
+}
+
+catalog::ColumnTokenizer SearchTable::GetTokenizer(
+  const std::shared_ptr<const catalog::Snapshot>& snapshot,
+  irs::field_id field_id) const {
+  auto config = GetIndexConfig();
+  auto it = config->find(field_id);
+  if (it == config->end()) {
+    return catalog::DefaultColumnTokenizer();
+  }
+  return catalog::TokenizerForEntry(snapshot, it->second);
+}
+
+void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
+  std::unique_lock lock(_table_lock);
+  auto merged_entries =
+    std::make_shared<catalog::InvertedIndex::Entries>(*_entries);
+  auto merged_terms = std::make_shared<TermsByColumn>(*_terms_by_column);
+  MergeIndexInto(*merged_entries, *merged_terms, index);
+  _entries = std::move(merged_entries);
+  _terms_by_column = std::move(merged_terms);
+  _field_options = MakeFieldOptions(_entries);
+}
+
+void SearchTable::RebuildIndexConfig(const catalog::Snapshot& snapshot) {
+  catalog::InvertedIndex::Entries entries;
+  TermsByColumn terms;
+  BuildPkInto(entries, terms, _pk_columns);
+  for (const auto& index : snapshot.GetIndexesByRelation(_table_id)) {
+    if (index->GetType() != catalog::ObjectType::InvertedIndex) {
+      continue;
+    }
+    MergeIndexInto(entries, terms,
+                   basics::downCast<const catalog::InvertedIndex>(*index));
+  }
+  auto next_entries =
+    std::make_shared<const catalog::InvertedIndex::Entries>(std::move(entries));
+  auto next_terms = std::make_shared<const TermsByColumn>(std::move(terms));
+  std::unique_lock lock(_table_lock);
+  _entries = std::move(next_entries);
+  _terms_by_column = std::move(next_terms);
+  _field_options = MakeFieldOptions(_entries);
 }
 
 SearchTable::~SearchTable() {
@@ -176,6 +361,29 @@ void SearchTable::OpenWriter() {
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (payload.size() >= sizeof(uint64_t)) {
       _last_committed_tick = absl::big_endian::Load64(payload.data());
+    }
+
+    // Floor the id allocator (gCurrentTick / NextId) from this store's own
+    // field ids: it is in-memory and re-derived at boot only from LIVE catalog
+    // ids, so a dropped index's ids -- still occupying slots in this SHARED
+    // store -- could be re-issued to a new index and collide at merge. Scan
+    // BOTH term-dict field ids AND columnstore ids (one shared allocation
+    // pool). Skip reserved system fields (> kMaxRealIdValue): they are not
+    // drawn from NextId, so flooring to them would exhaust the allocator.
+    const auto floor_from = [](irs::field_id id) {
+      if (id <= catalog::Column::kMaxRealIdValue) {
+        UpdateTickServer(id);
+      }
+    };
+    for (const auto& segment : reader) {
+      for (const auto field : segment.field_ids()) {
+        floor_from(field);
+      }
+      if (const auto* col_reader = segment.GetColReader()) {
+        for (const auto& column : col_reader->Columns()) {
+          floor_from(column->Id());
+        }
+      }
     }
   }
 

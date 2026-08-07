@@ -201,18 +201,19 @@ a	b
 9	nine
 
 
-# All access methods rejected (including USING inverted -- iresearch on
-# top of iresearch makes no sense).
+# A non-inverted index is rejected outright (only inverted is supported on a
+# search table). An inverted index is supported, but only on an empty table --
+# indexing existing rows is not yet implemented -- and search_dml has rows.
 statement error
 CREATE INDEX search_dml_idx ON search_dml (b);
 ----
-db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
+db error: ERROR: only inverted indexes are supported on a search-backed table
 
 
 statement error
 CREATE INDEX search_dml_inv_idx ON search_dml USING inverted (b);
 ----
-db error: ERROR: CREATE INDEX on a search-backed table is not yet supported
+db error: ERROR: CREATE INDEX on a non-empty search-backed table is not yet supported (indexing existing rows)
 
 
 # Search tables have a fixed iresearch schema: structural ALTERs are rejected.

@@ -118,9 +118,12 @@ CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
     .alive = true, .keepalive = std::move(index), .field_options = options};
 }
 
-CompactionOptions PinCompactionOptions(SearchTable& /*table*/) {
-  // No per-field config yet -- the merge uses the writer's baseline encoding.
-  return {.alive = true, .keepalive = nullptr, .field_options = nullptr};
+CompactionOptions PinCompactionOptions(SearchTable& table) {
+  // Pin the merged encoding config so norm/compression applies to merged
+  // segments and stays alive across the merge.
+  auto options = table.GetFieldOptions();
+  const irs::IndexFieldOptions* ptr = options.get();
+  return {.alive = true, .keepalive = std::move(options), .field_options = ptr};
 }
 
 template<class Storage>

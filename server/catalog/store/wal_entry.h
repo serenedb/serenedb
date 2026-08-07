@@ -40,11 +40,6 @@ class CreateInfo;
 class MemoryStream;
 
 }  // namespace duckdb
-namespace sdb::catalog {
-
-class CreateTableInfo;
-
-}  // namespace sdb::catalog
 namespace sdb::catalog::wal {
 
 // One entry per catalog operation, each carrying the fields that operation
@@ -89,14 +84,14 @@ struct OwnedSequence {
 // part of the same operation, so they ride the same entry -- which is the one
 // thing that keeps a table off PutEntry.
 //
-// The definition is duckdb's own CreateTableInfo, extended with the per-column
-// grants a ColumnDefinition has nowhere to keep; `perm` travels beside it
-// exactly as it does on PutEntry.
+// The definition is duckdb's own duckdb::CreateTableInfo, extended with the
+// per-column grants a ColumnDefinition has nowhere to keep; `perm` travels
+// beside it exactly as it does on PutEntry.
 struct PutTable {
   ObjectId schema_id;
   ObjectId id;
   PutMode mode{PutMode::Create};
-  std::shared_ptr<const CreateTableInfo> info;
+  std::shared_ptr<const duckdb::CreateTableInfo> info;
   Permissions perm;
   std::vector<OwnedSequence> sequences;
 };

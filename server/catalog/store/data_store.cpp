@@ -267,8 +267,8 @@ absl::Status DataStore::ExecuteStoreOps(
     if (table == nullptr) {
       continue;
     }
-    const auto* column = table->Definition()->ColumnByName(
-      alter.GetColumnName().GetIdentifierName());
+    const auto* column = catalog::ColumnByName(
+      *table->Definition(), alter.GetColumnName().GetIdentifierName());
     if (column != nullptr) {
       _dropping_columns.insert(ObjectId{column->CatalogOid()});
     }
@@ -739,8 +739,8 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
   std::vector<ObjectId> table_ids;
   connector::VisitTables(
     nullptr, database_id, [&](const TableInfoRef& table, const Permissions&) {
-      if (table->GetEngine() == TableEngine::Transactional) {
-        table_ids.push_back(table->GetId());
+      if (catalog::TableEngineOf(*table) == TableEngine::Transactional) {
+        table_ids.push_back(catalog::IdOf(*table));
       }
     });
   containers::FlatHashMap<ObjectId, std::vector<ObjectId>> index_ids;

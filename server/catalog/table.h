@@ -127,10 +127,10 @@ class TableRuntime {
 };
 
 // One table, in the form a catalog entry is built from. duckdb's own
-// CreateTableInfo already carries the columns, the constraints and -- through
-// CreateInfo::tags -- the engine, the search options and the auto-PK sequence,
-// so this extends it rather than replacing it: the ids ride the duckdb
-// structures (ColumnDefinition::oid, Constraint::oid,
+// duckdb::CreateTableInfo already carries the columns, the constraints and --
+// through CreateInfo::tags -- the engine, the search options and the auto-PK
+// sequence, so this extends it rather than replacing it: the ids ride the
+// duckdb structures (ColumnDefinition::oid, Constraint::oid,
 // UniqueConstraint::host_index_id) and only what upstream has nowhere to put
 // is added here.
 //
@@ -141,109 +141,125 @@ class TableRuntime {
 //
 // Mutations return a fresh info -- it is const and shared, and it is what a
 // catalog entry is built from.
-class CreateTableInfo final : public duckdb::CreateTableInfo {
- public:
-  CreateTableInfo();
+// A table is duckdb's own duckdb::CreateTableInfo. Every identity rides a
+// duckdb structure -- CreateInfo::oid/parent_oid,
+// ColumnDefinition::catalog_oid, Constraint::oid,
+// UniqueConstraint::host_index_id -- the engine, the search options and the
+// auto-PK sequence ride CreateInfo::tags, and the owner, the ACL and the
+// per-column grants live on the entry's permissions. Nothing is left for a
+// subclass to hold, so what serenedb adds is the operations below.
+using TableInfoRef = std::shared_ptr<const duckdb::CreateTableInfo>;
 
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
+std::shared_ptr<duckdb::CreateTableInfo> NewTableInfo();
 
-  // duckdb's CreateInfo dispatch hands back the base class, and this is what
-  // puts a payload read from the catalog log into ours.
-  static std::shared_ptr<CreateTableInfo> Adopt(duckdb::CreateTableInfo& base);
+inline std::string_view TableNameOf(
+  const duckdb::CreateTableInfo& info) noexcept {
+  return info.GetTableName().GetIdentifierName();
+}
 
-  ObjectId GetId() const noexcept { return ObjectId{oid}; }
-  ObjectId GetParentId() const noexcept { return ObjectId{parent_oid}; }
+// Which engine owns the rows, the background-maintenance intervals that go with
+// it, and the sequence feeding the synthetic primary key of a table that
+// declares none. All three ride in `tags`, which is definition.
+inline TableEngine TableEngineOf(const duckdb::CreateTableInfo& info) noexcept {
+  return ReadTableEngineTag(info.tags);
+}
+inline SearchTableOptions SearchOptionsOf(
+  const duckdb::CreateTableInfo& info) noexcept {
+  return ReadSearchOptionTags(info.tags);
+}
+inline ObjectId GeneratedPkSeqIdOf(
+  const duckdb::CreateTableInfo& info) noexcept {
+  return ReadGeneratedPkSeqTag(info.tags);
+}
+inline void SetTableTags(duckdb::CreateTableInfo& info, TableEngine engine,
+                         const SearchTableOptions& options,
+                         ObjectId generated_pk_seq_id) {
+  WriteTableTags(info.tags, engine, options, generated_pk_seq_id);
+}
 
-  std::string_view GetName() const noexcept {
-    return GetTableName().GetIdentifierName();
-  }
+// Empty when the table carries no COMMENT ON.
+inline std::string_view TableCommentOf(
+  const duckdb::CreateTableInfo& info) noexcept {
+  return info.comment.IsNull() ? std::string_view{}
+                               : duckdb::StringValue::Get(info.comment);
+}
 
-  // Which engine owns the rows, the background-maintenance intervals that go
-  // with it, and the sequence feeding the synthetic primary key of a table that
-  // declares none. All three ride in `tags`, which is definition.
-  TableEngine GetEngine() const noexcept { return ReadTableEngineTag(tags); }
-  SearchTableOptions SearchOptions() const noexcept {
-    return ReadSearchOptionTags(tags);
-  }
-  ObjectId GetGeneratedPkSeqId() const noexcept {
-    return ReadGeneratedPkSeqTag(tags);
-  }
-  void SetTableTags(TableEngine engine, const SearchTableOptions& options,
-                    ObjectId generated_pk_seq_id) {
-    WriteTableTags(tags, engine, options, generated_pk_seq_id);
-  }
+// The column `column_id` names, or null when the table lists no such column.
+const duckdb::ColumnDefinition* ColumnById(const duckdb::CreateTableInfo& info,
+                                           ObjectId column_id) noexcept;
+// The column `name` names, matched exactly -- serenedb folds unquoted
+// identifiers at parse time, so `t("A" int, "a" int)` is two columns.
+const duckdb::ColumnDefinition* ColumnByName(
+  const duckdb::CreateTableInfo& info, std::string_view name) noexcept;
 
-  // Empty when the table carries no COMMENT ON.
-  std::string_view Comment() const noexcept {
-    return comment.IsNull() ? std::string_view{}
-                            : duckdb::StringValue::Get(comment);
-  }
+// Whether a NOT NULL constraint covers `column_id`.
+bool IsColumnNotNull(const duckdb::CreateTableInfo& info,
+                     ObjectId column_id) noexcept;
 
-  // The column `column_id` names, or null when the table lists no such column.
-  const duckdb::ColumnDefinition* ColumnById(ObjectId column_id) const noexcept;
-  // The column `name` names, matched exactly -- serenedb folds unquoted
-  // identifiers at parse time, so `t("A" int, "a" int)` is two columns.
-  const duckdb::ColumnDefinition* ColumnByName(
-    std::string_view name) const noexcept;
+// A copy of this version, ready to be edited into the next one.
+std::shared_ptr<duckdb::CreateTableInfo> Clone(
+  const duckdb::CreateTableInfo& info);
 
-  // Whether a NOT NULL constraint covers `column_id`.
-  bool IsColumnNotNull(ObjectId column_id) const noexcept;
-
-  // Mutations. Each returns the next version of the definition, throwing a
-  // PG-compatible pg::SqlException on a user error (missing column or
-  // constraint, duplicate name); a null return is a sanctioned no-op, which is
-  // what IF [NOT] EXISTS asks for.
-  std::shared_ptr<CreateTableInfo> RenameColumn(
-    std::string_view old_name, std::string_view new_name) const;
-  std::shared_ptr<CreateTableInfo> RenameConstraint(
-    std::string_view old_name, std::string_view new_name) const;
-  std::shared_ptr<CreateTableInfo> DropConstraint(std::string_view name,
-                                                  bool missing_ok) const;
-  std::shared_ptr<CreateTableInfo> DropConstraint(ObjectId constraint_id) const;
-  // `constraint_id` names the implied NOT NULL; see PrimaryKeyIds for why every
-  // mutation takes its ids rather than allocating them.
-  std::shared_ptr<CreateTableInfo> SetNotNull(std::string_view column_name,
-                                              ObjectId constraint_id) const;
-  std::shared_ptr<CreateTableInfo> DropNotNull(
-    std::string_view column_name) const;
-  // expr == nullptr drops the default; otherwise sets it.
-  std::shared_ptr<CreateTableInfo> SetDefault(
-    std::string_view column_name,
-    duckdb::unique_ptr<duckdb::ParsedExpression> expr) const;
-  std::shared_ptr<CreateTableInfo> DropColumnDefault(ObjectId column_id) const;
-  // Appends a CHECK; the name is uniquified against the existing constraints.
-  std::shared_ptr<CreateTableInfo> AddCheckConstraint(
-    std::string name, duckdb::unique_ptr<duckdb::ParsedExpression> expr,
-    ObjectId constraint_id) const;
-  // Sets the primary key to `pk_columns` (by id) and adds the implied NOT NULL
-  // for each key column. Throws if a PK already exists (a table can have only
-  // one). `ids.not_null_ids` must hold one id per entry of `pk_columns`. An
-  // empty `name` takes PG's own, which is fixed here rather than derived later:
-  // the info is the durable record, and postgres does not move a constraint's
-  // name when the table is renamed either.
-  std::shared_ptr<CreateTableInfo> AddPrimaryKey(
-    std::span<const ObjectId> pk_columns, std::string name,
-    const PrimaryKeyIds& ids) const;
-  std::shared_ptr<CreateTableInfo> AddUniqueConstraint(
-    std::span<const ObjectId> columns, std::string name, ObjectId constraint_id,
-    ObjectId index_id) const;
-  // `column` must carry its host id; the catalog allocates one before the
-  // mutation for the same reason PrimaryKeyIds exists.
-  std::shared_ptr<CreateTableInfo> AddColumn(duckdb::ColumnDefinition column,
-                                             bool if_not_exists) const;
-  std::shared_ptr<CreateTableInfo> DropColumn(ObjectId column_id) const;
-  std::shared_ptr<CreateTableInfo> ChangeColumnType(
-    std::string_view column_name, duckdb::LogicalType new_type) const;
-  std::shared_ptr<CreateTableInfo> SetComment(std::string_view comment) const;
-  std::shared_ptr<CreateTableInfo> SetColumnComment(
-    std::string_view column_name, std::string_view comment) const;
-  std::shared_ptr<CreateTableInfo> DropForeignKeysReferencing(
-    ObjectId referenced_table) const;
-
-  // A copy of this version, ready to be edited into the next one. Shares the
-  // runtime -- same table, same rows.
-  std::shared_ptr<CreateTableInfo> Clone() const;
-};
+// Mutations. Each returns the next version of the definition, throwing a
+// PG-compatible pg::SqlException on a user error (missing column or
+// constraint, duplicate name); a null return is a sanctioned no-op, which is
+// what IF [NOT] EXISTS asks for.
+std::shared_ptr<duckdb::CreateTableInfo> RenameColumn(
+  const duckdb::CreateTableInfo& info, std::string_view old_name,
+  std::string_view new_name);
+std::shared_ptr<duckdb::CreateTableInfo> RenameConstraint(
+  const duckdb::CreateTableInfo& info, std::string_view old_name,
+  std::string_view new_name);
+std::shared_ptr<duckdb::CreateTableInfo> DropConstraint(
+  const duckdb::CreateTableInfo& info, std::string_view name, bool missing_ok);
+std::shared_ptr<duckdb::CreateTableInfo> DropConstraint(
+  const duckdb::CreateTableInfo& info, ObjectId constraint_id);
+// `constraint_id` names the implied NOT NULL; see PrimaryKeyIds for why every
+// mutation takes its ids rather than allocating them.
+std::shared_ptr<duckdb::CreateTableInfo> SetNotNull(
+  const duckdb::CreateTableInfo& info, std::string_view column_name,
+  ObjectId constraint_id);
+std::shared_ptr<duckdb::CreateTableInfo> DropNotNull(
+  const duckdb::CreateTableInfo& info, std::string_view column_name);
+// expr == nullptr drops the default; otherwise sets it.
+std::shared_ptr<duckdb::CreateTableInfo> SetDefault(
+  const duckdb::CreateTableInfo& info, std::string_view column_name,
+  duckdb::unique_ptr<duckdb::ParsedExpression> expr);
+std::shared_ptr<duckdb::CreateTableInfo> DropColumnDefault(
+  const duckdb::CreateTableInfo& info, ObjectId column_id);
+// Appends a CHECK; the name is uniquified against the existing constraints.
+std::shared_ptr<duckdb::CreateTableInfo> AddCheckConstraint(
+  const duckdb::CreateTableInfo& info, std::string name,
+  duckdb::unique_ptr<duckdb::ParsedExpression> expr, ObjectId constraint_id);
+// Sets the primary key to `pk_columns` (by id) and adds the implied NOT NULL
+// for each key column. Throws if a PK already exists (a table can have only
+// one). `ids.not_null_ids` must hold one id per entry of `pk_columns`. An
+// empty `name` takes PG's own, which is fixed here rather than derived later:
+// the info is the durable record, and postgres does not move a constraint's
+// name when the table is renamed either.
+std::shared_ptr<duckdb::CreateTableInfo> AddPrimaryKey(
+  const duckdb::CreateTableInfo& info, std::span<const ObjectId> pk_columns,
+  std::string name, const PrimaryKeyIds& ids);
+std::shared_ptr<duckdb::CreateTableInfo> AddUniqueConstraint(
+  const duckdb::CreateTableInfo& info, std::span<const ObjectId> columns,
+  std::string name, ObjectId constraint_id, ObjectId index_id);
+// `column` must carry its catalog oid; the catalog allocates one before the
+// mutation for the same reason PrimaryKeyIds exists.
+std::shared_ptr<duckdb::CreateTableInfo> AddColumn(
+  const duckdb::CreateTableInfo& info, duckdb::ColumnDefinition column,
+  bool if_not_exists);
+std::shared_ptr<duckdb::CreateTableInfo> DropColumn(
+  const duckdb::CreateTableInfo& info, ObjectId column_id);
+std::shared_ptr<duckdb::CreateTableInfo> ChangeColumnType(
+  const duckdb::CreateTableInfo& info, std::string_view column_name,
+  duckdb::LogicalType new_type);
+std::shared_ptr<duckdb::CreateTableInfo> SetComment(
+  const duckdb::CreateTableInfo& info, std::string_view comment);
+std::shared_ptr<duckdb::CreateTableInfo> SetColumnComment(
+  const duckdb::CreateTableInfo& info, std::string_view column_name,
+  std::string_view comment);
+std::shared_ptr<duckdb::CreateTableInfo> DropForeignKeysReferencing(
+  const duckdb::CreateTableInfo& info, ObjectId referenced_table);
 
 // What a DROP of the referenced object does to a table that names it: the four
 // definition rewrites a surviving table can need, which is the one thing
@@ -264,7 +280,6 @@ struct TableReference {
   TableRefKind kind{TableRefKind::ColumnType};
 };
 
-using TableInfoRef = std::shared_ptr<const CreateTableInfo>;
 // A table beside the owner and ACL of the entry holding it. The entry is their
 // one home, so a reader wanting both -- the pg_catalog projections, the
 // checkpoint writer -- takes them side by side.
@@ -283,6 +298,7 @@ const duckdb::UniqueConstraint* TablePrimaryKey(
 // referenced side never reaches the referencing table's own definition, so the
 // names in it are only what they were when it was written.
 duckdb::vector<duckdb::Identifier> ReferencedKeyNames(
-  const duckdb::ForeignKeyConstraint& fk, const CreateTableInfo* referenced);
+  const duckdb::ForeignKeyConstraint& fk,
+  const duckdb::CreateTableInfo* referenced);
 
 }  // namespace sdb::catalog

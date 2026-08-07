@@ -250,7 +250,8 @@ SereneDBTableEntry::SereneDBTableEntry(
     _engine(catalog::ReadTableEngineTag(tags)) {
   // The definition is a record in the serenedb catalog log, so duckdb neither
   // writes nor reclaims it.
-  catalog::AdoptEntryIdentity(*this, _sdb_table->GetId(), std::move(perm));
+  catalog::AdoptEntryIdentity(*this, catalog::IdOf(*_sdb_table),
+                              std::move(perm));
   if (IsSearchTable()) {
     return;
   }

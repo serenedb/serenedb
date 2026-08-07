@@ -61,8 +61,8 @@ Oid CatalogClassOid(duckdb::CatalogType type) {
 
 namespace {
 
-using catalog::CreateTableInfo;
 using catalog::Permissions;
+using duckdb::CreateTableInfo;
 
 // A relation, a function or a type as pg_depend names the referenced side of
 // an edge pointing at it.
@@ -83,7 +83,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   connector::VisitTables(
     context, db_id,
     [&](const catalog::TableInfoRef& table, const Permissions&) {
-      tables.emplace(table->GetId(), table);
+      tables.emplace(catalog::IdOf(*table), table);
     });
   std::vector<const duckdb::ViewCatalogEntry*> views;
   connector::VisitViews(
@@ -113,8 +113,9 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
                        ObjectId{}, Oid{PgType::kId}});
     });
   const connector::DependencyView dependents{context};
-  const auto attnum = [](const CreateTableInfo& info, ObjectId col) -> int32_t {
-    const auto* column = info.ColumnById(col);
+  const auto attnum = [](const duckdb::CreateTableInfo& info,
+                         ObjectId col) -> int32_t {
+    const auto* column = catalog::ColumnById(info, col);
     return column == nullptr
              ? 0
              : static_cast<int32_t>(column->Logical().index) + 1;
@@ -192,7 +193,8 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
     }
   };
   // The indexes over one relation, as pg_depend addresses them.
-  const auto emit_indexes = [&](ObjectId ref, const CreateTableInfo* info,
+  const auto emit_indexes = [&](ObjectId ref,
+                                const duckdb::CreateTableInfo* info,
                                 ObjectId pk_index) {
     for (const auto& index : indexes.Of(ref)) {
       const auto idx = index->GetId();
@@ -217,7 +219,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   };
   for (const auto& [table_id, held] : tables) {
     const auto& info = *held;
-    emit(table_id, 0, Oid{PgClass::kId}, info.GetParentId(), 0,
+    emit(table_id, 0, Oid{PgClass::kId}, catalog::ParentIdOf(info), 0,
          Oid{PgNamespace::kId}, PgDepend::Deptype::Normal);
     emit_graph(table_id, Oid{PgClass::kId});
     const auto* pk = catalog::TablePrimaryKey(info);

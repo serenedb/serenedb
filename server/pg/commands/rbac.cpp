@@ -181,13 +181,13 @@ void ChangeSchemaOwner(const catalog::AccessContext& ax, ObjectId schema_id,
 // rewrite of the version the statement resolved -- re-read here because the
 // mutation scope was taken after that resolution.
 void ChangeTableAcl(const catalog::AccessContext& ax,
-                    const catalog::CreateTableInfo& table,
+                    const duckdb::CreateTableInfo& table,
                     duckdb::CatalogType type, auth::AclMutator mutate) {
-  const auto* current =
-    connector::FindTable(ax.context, table.GetParentId(), table.GetId());
+  const auto* current = connector::FindTable(
+    ax.context, catalog::ParentIdOf(table), catalog::IdOf(table));
   if (current == nullptr) {
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
-                                      table.GetName());
+                                      catalog::TableNameOf(table));
   }
   connector::PutEntry(ax.context, current->name.GetIdentifierName(),
                       current->Definition(),
@@ -198,22 +198,23 @@ void ChangeTableAcl(const catalog::AccessContext& ax,
 // Returns the new version, so a caller changing several columns feeds each
 // result into the next call instead of re-resolving the name.
 catalog::TableInfoRef ChangeColumnAcl(const catalog::AccessContext& ax,
-                                      const catalog::CreateTableInfo& table,
+                                      const duckdb::CreateTableInfo& table,
                                       std::string_view column,
                                       auth::AclMutator mutate) {
-  const auto schema_id = table.GetParentId();
-  const auto table_id = table.GetId();
+  const auto schema_id = catalog::ParentIdOf(table);
+  const auto table_id = catalog::IdOf(table);
   const auto* entry = connector::FindTable(ax.context, schema_id, table_id);
   if (entry == nullptr) {
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
-                                      table.GetName());
+                                      catalog::TableNameOf(table));
   }
   const auto current = entry->Definition();
-  const auto* definition = current->ColumnByName(column);
+  const auto* definition = catalog::ColumnByName(*current, column);
   if (definition == nullptr) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column, "\" of relation \"",
-                            current->GetName(), "\" does not exist"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+      ERR_MSG("column \"", column, "\" of relation \"",
+              catalog::TableNameOf(*current), "\" does not exist"));
   }
   const ObjectId column_id{definition->CatalogOid()};
   // A grant is not a change to what the table is, so the definition is
@@ -224,7 +225,8 @@ catalog::TableInfoRef ChangeColumnAcl(const catalog::AccessContext& ax,
                    catalog::ColumnAclOf(perm.column_acl, column_id).end()};
   mutate(owner, acl);
   catalog::SetColumnAcl(perm.column_acl, column_id, std::move(acl));
-  connector::PutEntry(ax.context, current->GetName(), current, std::move(perm));
+  connector::PutEntry(ax.context, catalog::TableNameOf(*current), current,
+                      std::move(perm));
   return current;
 }
 
@@ -1044,15 +1046,17 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
   // Only a table has column grants to follow the relation's -- a view under the
   // same relation namespace landed on its own entry instead.
   if (revoke && target && type == duckdb::CatalogType::TABLE_ENTRY) {
-    const auto* tbl_entry = connector::FindTable(
-      &ctx.GetClientContext(), target->GetParentId(), target->GetId());
+    const auto* tbl_entry = connector::FindTable(&ctx.GetClientContext(),
+                                                 catalog::ParentIdOf(*target),
+                                                 catalog::IdOf(*target));
     if (tbl_entry != nullptr) {
       auto tbl = tbl_entry->Definition();
       // The column list is read off one version, but each revoke has to build
       // on the previous one's result, so the returned versions chain.
       std::vector<std::string> granted;
       for (const auto& entry : tbl_entry->permissions.column_acl) {
-        if (const auto* column = tbl->ColumnById(ObjectId{entry.catalog_oid})) {
+        if (const auto* column =
+              catalog::ColumnById(*tbl, ObjectId{entry.catalog_oid})) {
           granted.emplace_back(column->Name().GetIdentifierName());
         }
       }
@@ -1105,8 +1109,8 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
     connector::VisitTables(
       &ctx.GetClientContext(), db,
       [&](const catalog::TableInfoRef& table, const catalog::Permissions&) {
-        if (table->GetParentId() == schema_id) {
-          names.emplace_back(table->GetName());
+        if (catalog::ParentIdOf(*table) == schema_id) {
+          names.emplace_back(catalog::TableNameOf(*table));
         }
       });
   }

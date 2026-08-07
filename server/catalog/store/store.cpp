@@ -157,8 +157,8 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> TryStoreDatabase(
 }
 
 duckdb::unique_ptr<duckdb::CreateIndexInfo> MakeStoreIndexInfo(
-  const CreateTableInfo& table, const CreateIndexInfoBase& index) {
-  if (table.GetEngine() != TableEngine::Transactional) {
+  const duckdb::CreateTableInfo& table, const CreateIndexInfoBase& index) {
+  if (catalog::TableEngineOf(table) != TableEngine::Transactional) {
     return nullptr;
   }
   auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
@@ -210,7 +210,7 @@ duckdb::unique_ptr<duckdb::CreateIndexInfo> MakeStoreIndexInfo(
         push_key(std::move(parsed.front()));
         continue;
       }
-      const auto* col = table.ColumnById(column);
+      const auto* col = catalog::ColumnById(table, column);
       if (!col || !art_indexable(col->Type())) {
         return nullptr;
       }
@@ -229,7 +229,7 @@ duckdb::unique_ptr<duckdb::CreateIndexInfo> MakeStoreIndexInfo(
     return nullptr;
   }
   for (auto col_id : index.GetReferencedColumns()) {
-    if (!table.ColumnById(col_id)) {
+    if (!catalog::ColumnById(table, col_id)) {
       return nullptr;
     }
   }
@@ -273,17 +273,17 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
 namespace {}  // namespace
 
 void CatalogStore::WriteContext::Catalog::PutTable(
-  const CreateTableInfo& table, wal::PutMode mode, Permissions perm,
+  const duckdb::CreateTableInfo& table, wal::PutMode mode, Permissions perm,
   std::vector<wal::OwnedSequence> sequences) {
-  const auto schema_id = table.GetParentId();
+  const auto schema_id = catalog::ParentIdOf(table);
   SDB_ASSERT(schema_id.isSet());
   // A later version of a table names no sequence, so the owned ones are
   // performed under the table's own mode.
   SDB_ASSERT(sequences.empty() || mode == wal::PutMode::Create);
   _entries.emplace_back(wal::PutTable{.schema_id = schema_id,
-                                      .id = table.GetId(),
+                                      .id = catalog::IdOf(table),
                                       .mode = mode,
-                                      .info = table.Clone(),
+                                      .info = catalog::Clone(table),
                                       .perm = std::move(perm),
                                       .sequences = std::move(sequences)});
 }
@@ -371,8 +371,8 @@ void CatalogStore::WriteContext::Store::RenameIndex(ObjectId database_id,
 }
 
 void CatalogStore::WriteContext::Store::ReshapeTable(
-  ObjectId database_id, ObjectId table, const CreateTableInfo& before,
-  const CreateTableInfo& after) {
+  ObjectId database_id, ObjectId table, const duckdb::CreateTableInfo& before,
+  const duckdb::CreateTableInfo& after) {
   const auto had = [&](const duckdb::Constraint& constraint) {
     return absl::c_any_of(before.constraints, [&](const auto& previous) {
       return previous->oid == constraint.oid;
@@ -386,10 +386,10 @@ void CatalogStore::WriteContext::Store::ReshapeTable(
   // A key over a nested column has no store-side equivalent, and a key naming
   // a column the store does not have is not one either.
   const auto key_names = [](const duckdb::UniqueConstraint& unique,
-                            const CreateTableInfo& info) {
+                            const duckdb::CreateTableInfo& info) {
     duckdb::vector<duckdb::Identifier> names;
     for (const auto& key : unique.GetColumnNames()) {
-      const auto* column = info.ColumnByName(key.GetIdentifierName());
+      const auto* column = catalog::ColumnByName(info, key.GetIdentifierName());
       if (column == nullptr || column->Type().IsNested()) {
         return duckdb::vector<duckdb::Identifier>{};
       }
@@ -405,7 +405,8 @@ void CatalogStore::WriteContext::Store::ReshapeTable(
   // without it when the expression calls a function the store connection
   // cannot bind.
   for (const auto& column : after.columns.Logical()) {
-    const auto* previous = before.ColumnById(ObjectId{column.CatalogOid()});
+    const auto* previous =
+      catalog::ColumnById(before, ObjectId{column.CatalogOid()});
     if (previous != nullptr) {
       if (previous->Name().GetIdentifierName() !=
           column.Name().GetIdentifierName()) {
@@ -904,10 +905,11 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
     std::vector<HeldTable> tables;
     connector::VisitTables(
       context, db_id, [&](const TableInfoRef& table, const Permissions& perm) {
-        tables.emplace_back(table->Clone(), perm);
+        tables.emplace_back(table, perm);
       });
-    std::ranges::sort(
-      tables, {}, [](const HeldTable& table) { return table.first->GetId(); });
+    std::ranges::sort(tables, {}, [](const HeldTable& table) {
+      return catalog::IdOf(*table.first).id();
+    });
     std::vector<const duckdb::ViewCatalogEntry*> views;
     connector::VisitViews(
       context, db_id,
@@ -972,10 +974,10 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
                      function->permissions);
       }
       for (const auto& [table, perm] : tables) {
-        if (table->GetParentId() != schema_id) {
+        if (catalog::ParentIdOf(*table) != schema_id) {
           continue;
         }
-        const auto table_id = table->GetId();
+        const auto table_id = catalog::IdOf(*table);
         // Owned sequences are definitions of their own in the catalog, so they
         // come back as their own entries rather than riding this one.
         out.PutTable(*table, wal::PutMode::Create, perm);

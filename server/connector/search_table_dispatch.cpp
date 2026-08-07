@@ -168,7 +168,7 @@ void BuildReturnedRow(duckdb::DataChunk& out, duckdb::DataChunk& chunk,
 }
 
 void ApplyStorageKind(
-  duckdb::ClientContext& context, catalog::CreateTableInfo& info,
+  duckdb::ClientContext& context, duckdb::CreateTableInfo& info,
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     with_options) {
   const auto engine = ReadStorageEngine(with_options);
@@ -190,7 +190,7 @@ void ApplyStorageKind(
   }
   // The sequence feeding the synthetic primary key is not known until the
   // create runs under the catalog mutex; the tags are rewritten there.
-  info.SetTableTags(engine, search_options, ObjectId{});
+  catalog::SetTableTags(info, engine, search_options, ObjectId{});
 }
 
 }  // namespace sdb::connector

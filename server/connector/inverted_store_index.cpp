@@ -1022,7 +1022,7 @@ InvertedStoreIndex::InvertedStoreIndex(
   std::vector<FeedColumn> ref_columns)
   : BoundIndex(duckdb::Identifier{name}, kTypeName,
                duckdb::IndexConstraintType::NONE, column_ids, io, exprs, db),
-    _table_id{attached_table->GetId()},
+    _table_id{catalog::IdOf(*attached_table)},
     _index_id{attached_index->GetId()},
     _attached_table{std::move(attached_table)},
     _attached_index{std::move(attached_index)},
@@ -1682,14 +1682,14 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
     for (const auto& key : info.ExpressionKeys()) {
       auto bound =
         DeserializeBoundExpression(key.data.serialized_expr, *context);
-      exprs.push_back(RebindColumnRefsToIndexPositions(*bound, table->GetId(),
-                                                       col_id_to_pos));
+      exprs.push_back(RebindColumnRefsToIndexPositions(
+        *bound, catalog::IdOf(*table), col_id_to_pos));
       expr_fields.push_back({key.field_id, info.IsGeoJsonKey(key)});
     }
     if (const auto* data = info.Predicate()) {
       auto bound = DeserializeBoundExpression(data->serialized_expr, *context);
-      exprs.push_back(RebindColumnRefsToIndexPositions(*bound, table->GetId(),
-                                                       col_id_to_pos));
+      exprs.push_back(RebindColumnRefsToIndexPositions(
+        *bound, catalog::IdOf(*table), col_id_to_pos));
       has_predicate = true;
     }
   }

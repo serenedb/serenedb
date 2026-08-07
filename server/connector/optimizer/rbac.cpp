@@ -107,8 +107,8 @@ Governed SereneDBRelation(const duckdb::CatalogEntry* entry) {
   if (const auto* facade =
         dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
     const auto& table = facade->Table();
-    return {duckdb::CatalogType::TABLE_ENTRY, table.GetId(), table.GetName(),
-            &facade->permissions, facade};
+    return {duckdb::CatalogType::TABLE_ENTRY, catalog::IdOf(table),
+            catalog::TableNameOf(table), &facade->permissions, facade};
   }
   if (const auto* view =
         dynamic_cast<const connector::SereneDBViewEntry*>(entry)) {

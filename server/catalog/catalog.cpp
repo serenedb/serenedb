@@ -405,7 +405,8 @@ duckdb::LogicalDependencyList ReferenceList(std::vector<ObjectId> ids) {
 
 }  // namespace
 
-std::vector<TableReference> TableReferences(const CreateTableInfo& info) {
+std::vector<TableReference> TableReferences(
+  const duckdb::CreateTableInfo& info) {
   std::vector<TableReference> out;
   const auto collect = [&](const duckdb::ParsedExpression& expr, ObjectId sub,
                            TableRefKind kind) {
@@ -440,15 +441,15 @@ std::vector<TableReference> TableReferences(const CreateTableInfo& info) {
     }
     const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
     const ObjectId referenced{fk.host_referenced_id};
-    if (referenced.isSet() && referenced != info.GetId()) {
+    if (referenced.isSet() && referenced != catalog::IdOf(info)) {
       out.push_back({referenced, ObjectId{fk.oid}, TableRefKind::ForeignKey});
     }
   }
   return out;
 }
 
-duckdb::LogicalDependencyList TableDependencies(const CreateTableInfo& info,
-                                                const Permissions& perm) {
+duckdb::LogicalDependencyList TableDependencies(
+  const duckdb::CreateTableInfo& info, const Permissions& perm) {
   std::vector<ObjectId> ids;
   CollectRoleRefs(perm, ids);
   // A column carries grants of its own, which name roles the table's ACL does
@@ -467,7 +468,7 @@ duckdb::LogicalDependencyList TableDependencies(const CreateTableInfo& info,
 
 TableInfoRef NextTableVersion(duckdb::ClientContext* context, ObjectId id,
                               ObjectId schema_id, TableInfoRef info) {
-  auto next = info->Clone();
+  auto next = catalog::Clone(*info);
   SetIdentity(*next, id, schema_id);
   const auto database_id = connector::SchemaDatabaseId(context, schema_id);
   // One member for both, as duckdb keeps them: a DEFAULT on a plain column, the
@@ -635,9 +636,9 @@ DatabaseTables CollectDatabaseTables(duckdb::ClientContext* context,
   connector::VisitTables(
     context, database_id,
     [&](const TableInfoRef& table, const Permissions& perm) {
-      const auto id = table->GetId();
-      out.by_schema[table->GetParentId()].push_back(id);
-      out.by_id.emplace(id, HeldTable{table->Clone(), perm});
+      const auto id = catalog::IdOf(*table);
+      out.by_schema[catalog::ParentIdOf(*table)].push_back(id);
+      out.by_id.emplace(id, HeldTable{catalog::Clone(*table), perm});
     });
   return out;
 }
@@ -769,7 +770,7 @@ class DropCascade {
     if (held == nullptr) {
       return nullptr;
     }
-    slot.schema_id = held->first->GetParentId();
+    slot.schema_id = catalog::ParentIdOf(*held->first);
     slot.id = table_id;
     slot.before = held->first;
     slot.perm = held->second;
@@ -801,8 +802,8 @@ class DropCascade {
   // What the drop of `self` does to a table that names it. The four rewrites
   // are read off the table's own definition -- which column, which constraint,
   // and therefore which one -- so nothing about the cascade is written down.
-  void ApplyToTable(const CreateTableInfo& table, ObjectId self) {
-    const auto table_id = table.GetId();
+  void ApplyToTable(const duckdb::CreateTableInfo& table, ObjectId self) {
+    const auto table_id = catalog::IdOf(table);
     for (const auto& reference : TableReferences(table)) {
       if (reference.referenced != self) {
         continue;
@@ -810,17 +811,18 @@ class DropCascade {
       switch (reference.kind) {
         case TableRefKind::ForeignKey:
           if (auto* slot = RewriteSlot(table_id)) {
-            slot->info = slot->info->DropForeignKeysReferencing(self);
+            slot->info = catalog::DropForeignKeysReferencing(*slot->info, self);
           }
           break;
         case TableRefKind::Check:
           if (auto* slot = RewriteSlot(table_id)) {
-            slot->info = slot->info->DropConstraint(reference.sub_id);
+            slot->info = catalog::DropConstraint(*slot->info, reference.sub_id);
           }
           break;
         case TableRefKind::ColumnDefault:
           if (auto* slot = RewriteSlot(table_id)) {
-            slot->info = slot->info->DropColumnDefault(reference.sub_id);
+            slot->info =
+              catalog::DropColumnDefault(*slot->info, reference.sub_id);
           }
           break;
         case TableRefKind::ColumnType:
@@ -950,7 +952,7 @@ DropPlan DropCascade::Run() && {
     auto& slot = it->second;
     auto reshaped = slot.info;
     for (auto col_id : columns) {
-      reshaped = reshaped->DropColumn(col_id);
+      reshaped = catalog::DropColumn(*reshaped, col_id);
     }
     slot.reshaped = std::move(reshaped);
   }
@@ -988,18 +990,18 @@ DropPlan ComputeColumnDropPlan(duckdb::ClientContext* context,
                                const TableInfoRef& table,
                                const Permissions& perm, ObjectId col_id) {
   DropPlan plan;
-  const auto table_id = table->GetId();
+  const auto table_id = catalog::IdOf(*table);
   auto& rw = plan.table_rewrites[table_id];
-  rw.schema_id = table->GetParentId();
+  rw.schema_id = catalog::ParentIdOf(*table);
   rw.id = table_id;
   rw.before = table;
   rw.perm = perm;
   rw.info = table;
   // Nothing but the column changes, so there is no shape-preserving half to
   // make durable ahead of the data.
-  rw.reshaped = table->DropColumn(col_id);
+  rw.reshaped = catalog::DropColumn(*table, col_id);
   auto indexes =
-    connector::RelationIndexes(context, table->GetParentId(), table_id);
+    connector::RelationIndexes(context, catalog::ParentIdOf(*table), table_id);
   for (auto& index : indexes) {
     if (index->ReferencesColumn(col_id)) {
       plan.index_drops.push_back(index);
@@ -1018,7 +1020,7 @@ bool CheckSchemaEmptyDependency(duckdb::ClientContext* context,
   }
   connector::VisitTables(context, database_id,
                          [&](const TableInfoRef& table, const Permissions&) {
-                           empty &= table->GetParentId() != schema_id;
+                           empty &= catalog::ParentIdOf(*table) != schema_id;
                          });
   connector::VisitFunctions(
     context, database_id, [&](const duckdb::MacroCatalogEntry& function) {
@@ -1063,14 +1065,15 @@ void CommitDropPlan(duckdb::ClientContext* context,
     // leftover entry would name a column no reader can resolve while still
     // holding its grantee's role dependency open.
     std::erase_if(rw.perm.column_acl, [&](const auto& granted) {
-      return final_table->ColumnById(ObjectId{granted.catalog_oid}) == nullptr;
+      return catalog::ColumnById(*final_table, ObjectId{granted.catalog_oid}) ==
+             nullptr;
     });
     ctx.catalog().PutTable(*final_table, wal::PutMode::Replace, rw.perm);
     rw.published = final_table;
     // Cascades can drop columns of surviving tables (e.g. a column whose
     // dependency lived in the dropped schema) -- the store table follows.
-    if (final_table->GetEngine() != TableEngine::Transactional || !rw.before ||
-        !rw.reshaped) {
+    if (catalog::TableEngineOf(*final_table) != TableEngine::Transactional ||
+        !rw.before || !rw.reshaped) {
       continue;
     }
     const auto& old_info = *rw.before;
@@ -1079,13 +1082,13 @@ void CommitDropPlan(duckdb::ClientContext* context,
       // Dropping the last column is refused by ALTER; rebuild the rows instead
       // (PG keeps the zero-column table).
       ctx.store().DropTable(db_id, tid);
-      ctx.store().CreateTable(db_id, final_table->GetId());
+      ctx.store().CreateTable(db_id, catalog::IdOf(*final_table));
       continue;
     }
     std::vector<std::pair<std::string, ObjectId>> dropped_columns;
     for (const auto& column : old_info.columns.Logical()) {
       const ObjectId column_id{column.CatalogOid()};
-      if (rw.reshaped->ColumnById(column_id) == nullptr) {
+      if (catalog::ColumnById(*rw.reshaped, column_id) == nullptr) {
         dropped_columns.emplace_back(column.Name().GetIdentifierName(),
                                      column_id);
       }
@@ -1144,8 +1147,8 @@ void PublishDropPlan(duckdb::ClientContext* context, const DropPlan& plan) {
     if (!rw.published) {
       continue;
     }
-    connector::PutEntry(context, rw.published->GetName(), rw.published,
-                        rw.perm);
+    connector::PutEntry(context, catalog::TableNameOf(*rw.published),
+                        rw.published, rw.perm);
     // The keys the cascade stripped: the referenced half of one is derived from
     // the edges this table states, so every table the version before it pointed
     // at and that outlived the cascade has to be rebuilt.
@@ -1165,7 +1168,7 @@ std::string DropPlan::FormatDependentsDetail(std::string_view seed_kind,
   for (const auto& [tid, rewrite] : table_rewrites) {
     if (rewrite.info) {
       add(pg::ToPgObjectTypeName(duckdb::CatalogType::TABLE_ENTRY),
-          rewrite.info->GetName());
+          catalog::TableNameOf(*rewrite.info));
     }
   }
   for (const auto& drop : entry_drops) {
@@ -1300,8 +1303,8 @@ void Catalog::RecordSequence(
 }
 
 void Catalog::RecordTable(duckdb::ClientContext* context,
-                          const CreateTableInfo& table, wal::PutMode mode,
-                          Permissions perm) {
+                          const duckdb::CreateTableInfo& table,
+                          wal::PutMode mode, Permissions perm) {
   Apply(context, [&](auto& ctx) {
     ctx.catalog().PutTable(table, mode, std::move(perm));
   });
@@ -1349,11 +1352,11 @@ std::shared_ptr<IndexDrop> Catalog::CreateIndexDrop(
 std::shared_ptr<TableDropBase> Catalog::CreateTableDrop(
   ObjectId db_id, ObjectId schema_id, const TableInfoRef& table,
   const SequenceOwners& sequences, const IndexOwners& indexes, bool is_root) {
-  const auto table_id = table->GetId();
+  const auto table_id = catalog::IdOf(*table);
   auto owned_sequences = sequences.Of(table_id);
 
   std::shared_ptr<TableDropBase> task;
-  if (table->GetEngine() == TableEngine::Search) {
+  if (catalog::TableEngineOf(*table) == TableEngine::Search) {
     const auto* entry = connector::FindTableEntryIn(nullptr, db_id, table_id);
     task = std::make_shared<SearchTableDrop>(
       table, entry != nullptr ? entry->GetSearchData() : nullptr, db_id,
@@ -1381,7 +1384,7 @@ std::shared_ptr<SchemaDrop> Catalog::CreateSchemaDrop(
   std::vector<TableInfoRef> tables;
   connector::VisitTables(context, db_id,
                          [&](const TableInfoRef& table, const Permissions&) {
-                           if (table->GetParentId() == schema_id) {
+                           if (catalog::ParentIdOf(*table) == schema_id) {
                              tables.push_back(table);
                            }
                          });
@@ -1678,7 +1681,7 @@ ResolvedIndexRelation ResolveIndexRelation(const IndexRelation& relation) {
                          std::string{column.Name().GetIdentifierName()},
                          column.Type()});
     }
-    return ResolvedIndexRelation{.relation_id = relation.table->GetId(),
+    return ResolvedIndexRelation{.relation_id = catalog::IdOf(*relation.table),
                                  .columns = std::move(columns)};
   }
   if (relation.view != nullptr) {
@@ -1978,10 +1981,10 @@ IndexInfoRef Catalog::CreateInvertedIndex(
 
 TableInfoRef Catalog::CreateTable(
   const AccessContext& ax, ObjectId database_id, std::string_view schema,
-  std::shared_ptr<CreateTableInfo> info,
+  std::shared_ptr<duckdb::CreateTableInfo> info,
   std::vector<SerialSequence> sequence_specs,
   CreateTableOperationOptions operation_options) {
-  const auto name = std::string{info->GetName()};
+  const auto name = std::string{catalog::TableNameOf(*info)};
   // Uniqueness keys are enforced by the store table's DuckDB ART, which cannot
   // index nested types. Reject a nested-type key column up front with a clear
   // error instead of silently creating the table with the constraint dropped.
@@ -1993,7 +1996,8 @@ TableInfoRef Catalog::CreateTable(
     const std::string_view what =
       unique.IsPrimaryKey() ? "primary key" : "unique constraint";
     for (const auto& key : unique.GetColumnNames()) {
-      const auto* column = info->ColumnByName(key.GetIdentifierName());
+      const auto* column =
+        catalog::ColumnByName(*info, key.GetIdentifierName());
       if (column != nullptr && column->Type().IsNested()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -2093,7 +2097,7 @@ TableInfoRef Catalog::CreateTable(
     return catalog::MakeSequenceInfo(NextId(), *schema_id, std::move(opts));
   };
   for (const auto& spec : sequence_specs) {
-    const auto* column = info->ColumnById(spec.column_id);
+    const auto* column = catalog::ColumnById(*info, spec.column_id);
     SDB_ASSERT(column != nullptr);
     auto resolved = pick_unique_name(
       absl::StrCat(name, "_", column->Name().GetIdentifierName(), "_seq"));
@@ -2119,19 +2123,20 @@ TableInfoRef Catalog::CreateTable(
     generated_pk_seq_id = catalog::IdOf(*generated_pk_seq);
     sequences.push_back(generated_pk_seq);
   }
-  info->SetTableTags(info->GetEngine(), info->SearchOptions(),
-                     generated_pk_seq_id);
+  catalog::SetTableTags(*info, catalog::TableEngineOf(*info),
+                        catalog::SearchOptionsOf(*info), generated_pk_seq_id);
 
   auto table =
     NextTableVersion(ax.context, table_id, *schema_id, std::move(info));
-  bool store_table = table->GetEngine() == TableEngine::Transactional;
+  bool store_table =
+    catalog::TableEngineOf(*table) == TableEngine::Transactional;
   // Runtime state, bound onto the entry once it is placed: the shard the rows
   // of a search table live in, and the counter the insert path reserves from.
   std::shared_ptr<search::SearchTable> search_data;
-  if (table->GetEngine() == TableEngine::Search) {
-    search_data =
-      search::SearchTable::Create(database_id, *schema_id, table_id,
-                                  /*is_new=*/true, table->SearchOptions());
+  if (catalog::TableEngineOf(*table) == TableEngine::Search) {
+    search_data = search::SearchTable::Create(database_id, *schema_id, table_id,
+                                              /*is_new=*/true,
+                                              catalog::SearchOptionsOf(*table));
   }
 
   // The names the op registers, checked here in the order it registers them:
@@ -2443,15 +2448,16 @@ void Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
 }
 
 void Catalog::ChangeTableOwner(const AccessContext& ax,
-                               const CreateTableInfo& table,
+                               const duckdb::CreateTableInfo& table,
                                duckdb::CatalogType type, ObjectId new_owner,
                                std::string_view new_owner_name) {
   absl::MutexLock lock{&_mutex};
-  const auto table_id = table.GetId();
-  const auto schema_id = table.GetParentId();
+  const auto table_id = catalog::IdOf(table);
+  const auto schema_id = catalog::ParentIdOf(table);
   const auto* live = connector::FindTable(ax.context, schema_id, table_id);
   if (live == nullptr) {
-    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY, table.GetName());
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
   }
   const auto& perm = live->permissions;
   const auto name = live->name.GetIdentifierName();
@@ -2515,15 +2521,17 @@ void Catalog::ChangeDatabaseAcl(const AccessContext& ax, ObjectId database_id,
   connector::PutDatabase(ax.context, name, std::move(updated), std::move(perm));
 }
 
-void Catalog::ChangeTable(const AccessContext& ax, const CreateTableInfo& table,
+void Catalog::ChangeTable(const AccessContext& ax,
+                          const duckdb::CreateTableInfo& table,
                           TableChange change) {
   JoinStoreTransaction(ax.context);
   absl::MutexLock lock{&_mutex};
-  const auto table_id = table.GetId();
-  const auto schema_id = table.GetParentId();
+  const auto table_id = catalog::IdOf(table);
+  const auto schema_id = catalog::ParentIdOf(table);
   const auto* current = connector::FindTable(ax.context, schema_id, table_id);
   if (current == nullptr) {
-    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY, table.GetName());
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
   }
   const auto& perm = current->permissions;
   RequireOwner(ax.context, ax.role, perm, "table",
@@ -2552,7 +2560,8 @@ void Catalog::ChangeTable(const AccessContext& ax, const CreateTableInfo& table,
     connector::RelationIndexes(ax.context, schema_id, table_id), old_info,
     new_info);
 
-  const bool reshape = updated->GetEngine() == TableEngine::Transactional;
+  const bool reshape =
+    catalog::TableEngineOf(*updated) == TableEngine::Transactional;
   const auto db_id = connector::SchemaDatabaseId(ax.context, schema_id);
 
   RecordedScope recorded;
@@ -2567,7 +2576,8 @@ void Catalog::ChangeTable(const AccessContext& ax, const CreateTableInfo& table,
   });
   // After the records and before the index wrappers: the entry the wrappers
   // project has to be the rewritten one.
-  connector::PutEntry(ax.context, updated->GetName(), updated, perm);
+  connector::PutEntry(ax.context, catalog::TableNameOf(*updated), updated,
+                      perm);
   // What the new version states is refreshed by the write; a key it no longer
   // states leaves its referenced half behind on a table that still exists.
   connector::RefreshForeignKeyTargets(ax.context, *current_info);
@@ -2838,28 +2848,29 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
 }
 
 void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
-                              const CreateTableInfo& table,
+                              const duckdb::CreateTableInfo& table,
                               std::string_view column, bool if_exists) {
   JoinStoreTransaction(ax.context);
   absl::MutexLock lock{&_mutex};
-  const auto table_id = table.GetId();
+  const auto table_id = catalog::IdOf(table);
   const auto* entry =
-    connector::FindTable(ax.context, table.GetParentId(), table_id);
+    connector::FindTable(ax.context, catalog::ParentIdOf(table), table_id);
   if (entry == nullptr) {
-    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY, table.GetName());
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
   }
   const auto& perm = entry->permissions;
   const auto live = entry->Definition();
   RequireOwner(ax.context, ax.role, perm, "table",
                entry->name.GetIdentifierName());
-  const auto* col = live->ColumnByName(column);
+  const auto* col = catalog::ColumnByName(*live, column);
   if (col == nullptr) {
     if (if_exists) {
       return;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                     ERR_MSG("column \"", column, "\" of relation \"",
-                            live->GetName(), "\" does not exist"));
+                            catalog::TableNameOf(*live), "\" does not exist"));
   }
   const ObjectId col_id{col->CatalogOid()};
 
@@ -2871,26 +2882,27 @@ void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
 }
 
 void Catalog::ChangeColumnType(
-  const AccessContext& ax, const CreateTableInfo& table,
+  const AccessContext& ax, const duckdb::CreateTableInfo& table,
   std::string_view column, duckdb::LogicalType new_type,
   duckdb::unique_ptr<duckdb::ParsedExpression> using_expr) {
   JoinStoreTransaction(ax.context);
   absl::MutexLock lock{&_mutex};
-  const auto table_id = table.GetId();
-  const auto schema_id = table.GetParentId();
+  const auto table_id = catalog::IdOf(table);
+  const auto schema_id = catalog::ParentIdOf(table);
   const auto* entry = connector::FindTable(ax.context, schema_id, table_id);
   if (entry == nullptr) {
-    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY, table.GetName());
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
   }
   const auto& perm = entry->permissions;
   const auto live = entry->Definition();
   RequireOwner(ax.context, ax.role, perm, "table",
                entry->name.GetIdentifierName());
-  const auto* col = live->ColumnByName(column);
+  const auto* col = catalog::ColumnByName(*live, column);
   if (col == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                     ERR_MSG("column \"", column, "\" of relation \"",
-                            live->GetName(), "\" does not exist"));
+                            catalog::TableNameOf(*live), "\" does not exist"));
   }
   const ObjectId col_id{col->CatalogOid()};
 
@@ -2906,13 +2918,15 @@ void Catalog::ChangeColumnType(
     }
   }
 
-  auto updated = NextTableVersion(ax.context, table_id, schema_id,
-                                  live->ChangeColumnType(column, new_type));
+  auto updated =
+    NextTableVersion(ax.context, table_id, schema_id,
+                     catalog::ChangeColumnType(*live, column, new_type));
 
-  const bool reshape = updated->GetEngine() == TableEngine::Transactional;
+  const bool reshape =
+    catalog::TableEngineOf(*updated) == TableEngine::Transactional;
   duckdb::Identifier store_column;
   if (reshape) {
-    if (const auto* moved = updated->ColumnById(col_id)) {
+    if (const auto* moved = catalog::ColumnById(*updated, col_id)) {
       store_column = moved->Name();
     }
   }
@@ -2945,7 +2959,8 @@ void Catalog::ChangeColumnType(
       ctx.store().CreateIndex(db_id, std::move(info), updated, std::move(idx));
     }
   });
-  connector::PutEntry(ax.context, updated->GetName(), updated, perm);
+  connector::PutEntry(ax.context, catalog::TableNameOf(*updated), updated,
+                      perm);
 }
 
 bool Catalog::DropIndex(const AccessContext& ax, std::string_view database,
@@ -3165,8 +3180,8 @@ void BindOwnedSequence(duckdb::ClientContext* context, ObjectId database_id,
   }
   const auto* owner =
     connector::FindTableEntryIn(context, database_id, owner_id);
-  if (owner != nullptr &&
-      owner->Definition()->GetGeneratedPkSeqId() == ObjectId{sequence.oid}) {
+  if (owner != nullptr && catalog::GeneratedPkSeqIdOf(*owner->Definition()) ==
+                            ObjectId{sequence.oid}) {
     owner->Runtime()->SetGeneratedPkSequence(sequence.Counter());
   }
 }

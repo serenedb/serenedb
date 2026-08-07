@@ -66,7 +66,8 @@ using ChangeCallback = absl::AnyInvocable<void(const T&, std::shared_ptr<T>&)>;
 
 // The same for a table, whose next version is a fresh info rather than an edit
 // of the one handed in. Null means a sanctioned no-op.
-using TableChange = absl::AnyInvocable<TableInfoRef(const CreateTableInfo&)>;
+using TableChange =
+  absl::AnyInvocable<TableInfoRef(const duckdb::CreateTableInfo&)>;
 
 // Raised when a catalog mutation reaches an object a concurrently committed
 // transaction has dropped. We do not take PostgreSQL's ACCESS EXCLUSIVE lock on
@@ -106,16 +107,16 @@ struct IndexRelation {
   Permissions perm;
 
   ObjectId GetId() const noexcept {
-    return table ? table->GetId()
+    return table ? catalog::IdOf(*table)
                  : (view != nullptr ? ObjectId{view->oid} : ObjectId{});
   }
   ObjectId GetParentId() const noexcept {
-    return table ? table->GetParentId()
+    return table ? catalog::ParentIdOf(*table)
                  : (view != nullptr ? ObjectId{view->ParentSchema().oid}
                                     : ObjectId{});
   }
   std::string_view GetName() const noexcept {
-    return table ? table->GetName()
+    return table ? catalog::TableNameOf(*table)
                  : (view != nullptr ? view->name.GetIdentifierName()
                                     : std::string_view{});
   }
@@ -200,14 +201,15 @@ void RequireAccess(duckdb::ClientContext* context, ObjectId role,
 // it: derived from the info, never stored. The ids its columns and foreign keys
 // carry directly are already there, and what its DEFAULT, generated-column and
 // CHECK bodies name is on the expression node stating it.
-std::vector<TableReference> TableReferences(const CreateTableInfo& info);
+std::vector<TableReference> TableReferences(
+  const duckdb::CreateTableInfo& info);
 
 // The same as duckdb's dependency list, with the roles the table and its
 // columns grant to. Nothing else produces an edge, which is why the reverse
 // index can be rebuilt from the definitions alone -- at boot, and for the
 // objects a transaction has rewritten but not yet committed.
-duckdb::LogicalDependencyList TableDependencies(const CreateTableInfo& info,
-                                                const Permissions& perm);
+duckdb::LogicalDependencyList TableDependencies(
+  const duckdb::CreateTableInfo& info, const Permissions& perm);
 
 // The next version of one view, function or index: the same definition with
 // the resolution its body implies taken now, on duckdb's own
@@ -332,7 +334,7 @@ class Catalog final {
   // none of which the statement can do for itself.
   TableInfoRef CreateTable(const AccessContext& ax, ObjectId database_id,
                            std::string_view schema,
-                           std::shared_ptr<CreateTableInfo> info,
+                           std::shared_ptr<duckdb::CreateTableInfo> info,
                            std::vector<SerialSequence> sequences,
                            CreateTableOperationOptions operation_options);
   // `relation` is the already-resolved table or view the index is built on;
@@ -375,8 +377,8 @@ class Catalog final {
   // the live one, or null for a sanctioned no-op (what IF [NOT] EXISTS asks
   // for). The caller resolves the table, so a name that turns out to hold
   // something else is its error to phrase.
-  void ChangeTable(const AccessContext& ax, const CreateTableInfo& table,
-                   TableChange change);
+  void ChangeTable(const AccessContext& ax,
+                   const duckdb::CreateTableInfo& table, TableChange change);
   void ChangeRole(const AccessContext& ax, std::string_view name,
                   std::string_view verb, bool allow_self,
                   ChangeCallback<CreateRoleInfo> callback);
@@ -390,13 +392,14 @@ class Catalog final {
   // `type` is the type the statement names the table as; it drives the error
   // phrasing and the ACL shape, and differs from Table only for the index
   // kinds, which a statement may name a table by.
-  void ChangeTableOwner(const AccessContext& ax, const CreateTableInfo& table,
+  void ChangeTableOwner(const AccessContext& ax,
+                        const duckdb::CreateTableInfo& table,
                         duckdb::CatalogType type, ObjectId new_owner,
                         std::string_view new_owner_name);
   void ChangeDatabaseAcl(const AccessContext& ax, ObjectId database_id,
                          AclMutator mutate);
   void ChangeColumnType(
-    const AccessContext& ax, const CreateTableInfo& table,
+    const AccessContext& ax, const duckdb::CreateTableInfo& table,
     std::string_view column, duckdb::LogicalType new_type,
     duckdb::unique_ptr<duckdb::ParsedExpression> using_expr);
 
@@ -432,8 +435,8 @@ class Catalog final {
   void DropUncommittedIndex(duckdb::ClientContext& context,
                             ObjectId database_id, ObjectId index_id);
   void DropTableColumn(const AccessContext& ax, ObjectId database_id,
-                       const CreateTableInfo& table, std::string_view column,
-                       bool if_exists);
+                       const duckdb::CreateTableInfo& table,
+                       std::string_view column, bool if_exists);
 
   // Applies one frame of catalog records, as boot reads them back. The records
   // are the intent and this is where they are performed: a definition record
@@ -474,8 +477,9 @@ class Catalog final {
                    Permissions perm);
   // The same for a table, whose record carries the store table's shape and the
   // sequences a create hands it.
-  void RecordTable(duckdb::ClientContext* context, const CreateTableInfo& table,
-                   wal::PutMode mode, Permissions perm);
+  void RecordTable(duckdb::ClientContext* context,
+                   const duckdb::CreateTableInfo& table, wal::PutMode mode,
+                   Permissions perm);
   // A sequence's definition and the value its counter starts from, in one
   // frame: a sequence is never durable without the value it hands out from.
   void RecordSequence(

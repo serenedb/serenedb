@@ -42,9 +42,9 @@
 namespace sdb::catalog {
 namespace {
 
-std::shared_ptr<CreateTableInfo> MakeTable(
+std::shared_ptr<duckdb::CreateTableInfo> MakeTable(
   std::initializer_list<std::pair<const char*, uint64_t>> columns) {
-  auto info = std::make_shared<CreateTableInfo>();
+  auto info = sdb::catalog::NewTableInfo();
   info->SetTableName(duckdb::Identifier{"t"});
   info->SetSchema(duckdb::Identifier{"public"});
   for (const auto& [name, oid] : columns) {
@@ -60,7 +60,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> Expr(const std::string& sql) {
   return std::move(duckdb::Parser::ParseExpressionList(sql).front());
 }
 
-const duckdb::UniqueConstraint* FindUnique(const CreateTableInfo& info,
+const duckdb::UniqueConstraint* FindUnique(const duckdb::CreateTableInfo& info,
                                            std::string_view name) {
   for (const auto& constraint : info.constraints) {
     if (constraint->constraint_name == name) {
@@ -70,7 +70,7 @@ const duckdb::UniqueConstraint* FindUnique(const CreateTableInfo& info,
   return nullptr;
 }
 
-std::vector<std::string> ColumnNames(const CreateTableInfo& info) {
+std::vector<std::string> ColumnNames(const duckdb::CreateTableInfo& info) {
   std::vector<std::string> names;
   for (const auto& column : info.columns.Logical()) {
     names.emplace_back(column.Name().GetIdentifierName());
@@ -78,7 +78,7 @@ std::vector<std::string> ColumnNames(const CreateTableInfo& info) {
   return names;
 }
 
-std::vector<std::string> ConstraintNames(const CreateTableInfo& info) {
+std::vector<std::string> ConstraintNames(const duckdb::CreateTableInfo& info) {
   std::vector<std::string> names;
   for (const auto& constraint : info.constraints) {
     names.push_back(constraint->constraint_name);
@@ -88,21 +88,23 @@ std::vector<std::string> ConstraintNames(const CreateTableInfo& info) {
 
 TEST(CatalogTableInfo, rename_column_moves_every_reference) {
   auto info = MakeTable({{"a", 1}, {"b", 2}});
-  info = info->AddPrimaryKey(std::vector<ObjectId>{ObjectId{1}}, {},
-                             PrimaryKeyIds{.constraint_id = ObjectId{10},
-                                           .index_id = ObjectId{11},
-                                           .not_null_ids = {ObjectId{12}}});
-  info = info->AddCheckConstraint("t_check", Expr("a > 0"), ObjectId{13});
-  info = info->SetDefault("b", Expr("a + 1"));
+  info = catalog::AddPrimaryKey(*info, std::vector<ObjectId>{ObjectId{1}}, {},
+                                PrimaryKeyIds{.constraint_id = ObjectId{10},
+                                              .index_id = ObjectId{11},
+                                              .not_null_ids = {ObjectId{12}}});
+  info =
+    catalog::AddCheckConstraint(*info, "t_check", Expr("a > 0"), ObjectId{13});
+  info = catalog::SetDefault(*info, "b", Expr("a + 1"));
 
-  auto renamed = info->RenameColumn("a", "c");
+  auto renamed = catalog::RenameColumn(*info, "a", "c");
   EXPECT_EQ(ColumnNames(*renamed), (std::vector<std::string>{"c", "b"}));
   const auto* pk = FindUnique(*renamed, "t_pkey");
   ASSERT_NE(pk, nullptr);
   ASSERT_EQ(pk->GetColumnNames().size(), 1);
   EXPECT_EQ(pk->GetColumnNames()[0].GetIdentifierName(), "c");
-  EXPECT_EQ(renamed->ColumnById(ObjectId{2})->DefaultValue().ToString(),
-            "(c + 1)");
+  EXPECT_EQ(
+    catalog::ColumnById(*renamed, ObjectId{2})->DefaultValue().ToString(),
+    "(c + 1)");
   for (const auto& constraint : renamed->constraints) {
     if (constraint->type == duckdb::ConstraintType::CHECK) {
       EXPECT_EQ(
@@ -116,32 +118,32 @@ TEST(CatalogTableInfo, rename_column_moves_every_reference) {
 
 TEST(CatalogTableInfo, column_lookup_is_case_sensitive) {
   auto info = MakeTable({{"A", 1}, {"a", 2}});
-  ASSERT_NE(info->ColumnByName("A"), nullptr);
-  EXPECT_EQ(info->ColumnByName("A")->CatalogOid(), 1);
-  EXPECT_EQ(info->ColumnByName("a")->CatalogOid(), 2);
+  ASSERT_NE(catalog::ColumnByName(*info, "A"), nullptr);
+  EXPECT_EQ(catalog::ColumnByName(*info, "A")->CatalogOid(), 1);
+  EXPECT_EQ(catalog::ColumnByName(*info, "a")->CatalogOid(), 2);
 
-  auto renamed = info->RenameColumn("a", "b");
+  auto renamed = catalog::RenameColumn(*info, "a", "b");
   EXPECT_EQ(ColumnNames(*renamed), (std::vector<std::string>{"A", "b"}));
-  EXPECT_THROW(info->RenameColumn("a", "A"), SqlException);
-  EXPECT_THROW(info->RenameColumn("zz", "b"), SqlException);
+  EXPECT_THROW(catalog::RenameColumn(*info, "a", "A"), SqlException);
+  EXPECT_THROW(catalog::RenameColumn(*info, "zz", "b"), SqlException);
 }
 
 TEST(CatalogTableInfo, drop_column_moves_positions_and_narrows_the_key) {
   auto info = MakeTable({{"a", 1}, {"b", 2}, {"c", 3}});
-  info = info->AddPrimaryKey(
-    std::vector<ObjectId>{ObjectId{1}, ObjectId{2}}, {},
+  info = catalog::AddPrimaryKey(
+    *info, std::vector<ObjectId>{ObjectId{1}, ObjectId{2}}, {},
     PrimaryKeyIds{.constraint_id = ObjectId{10},
                   .index_id = ObjectId{11},
                   .not_null_ids = {ObjectId{12}, ObjectId{13}}});
-  info = info->AddUniqueConstraint(std::vector<ObjectId>{ObjectId{2}}, {},
-                                   ObjectId{14}, ObjectId{15});
-  info = info->SetNotNull("c", ObjectId{16});
-  ASSERT_TRUE(info->IsColumnNotNull(ObjectId{3}));
+  info = catalog::AddUniqueConstraint(*info, std::vector<ObjectId>{ObjectId{2}},
+                                      {}, ObjectId{14}, ObjectId{15});
+  info = catalog::SetNotNull(*info, "c", ObjectId{16});
+  ASSERT_TRUE(catalog::IsColumnNotNull(*info, ObjectId{3}));
 
-  auto dropped = info->DropColumn(ObjectId{2});
+  auto dropped = catalog::DropColumn(*info, ObjectId{2});
   EXPECT_EQ(ColumnNames(*dropped), (std::vector<std::string>{"a", "c"}));
   // "c" moved from position 2 to position 1 and its NOT NULL moved with it.
-  EXPECT_TRUE(dropped->IsColumnNotNull(ObjectId{3}));
+  EXPECT_TRUE(catalog::IsColumnNotNull(*dropped, ObjectId{3}));
   // The primary key narrows to what is left of it; the unique key over the
   // dropped column goes.
   const auto* pk = FindUnique(*dropped, "t_pkey");
@@ -150,59 +152,64 @@ TEST(CatalogTableInfo, drop_column_moves_positions_and_narrows_the_key) {
   EXPECT_EQ(pk->GetColumnNames()[0].GetIdentifierName(), "a");
   EXPECT_EQ(FindUnique(*dropped, "t_b_key"), nullptr);
   // The NOT NULL the key implied for the dropped column goes with it.
-  EXPECT_FALSE(dropped->IsColumnNotNull(ObjectId{2}));
+  EXPECT_FALSE(catalog::IsColumnNotNull(*dropped, ObjectId{2}));
 }
 
 TEST(CatalogTableInfo, a_primary_key_implies_not_null_and_is_unique) {
   auto info = MakeTable({{"a", 1}});
-  info = info->AddPrimaryKey(std::vector<ObjectId>{ObjectId{1}}, {},
-                             PrimaryKeyIds{.constraint_id = ObjectId{10},
-                                           .index_id = ObjectId{11},
-                                           .not_null_ids = {ObjectId{12}}});
-  EXPECT_TRUE(info->IsColumnNotNull(ObjectId{1}));
+  info = catalog::AddPrimaryKey(*info, std::vector<ObjectId>{ObjectId{1}}, {},
+                                PrimaryKeyIds{.constraint_id = ObjectId{10},
+                                              .index_id = ObjectId{11},
+                                              .not_null_ids = {ObjectId{12}}});
+  EXPECT_TRUE(catalog::IsColumnNotNull(*info, ObjectId{1}));
   const auto* pk = FindUnique(*info, "t_pkey");
   ASSERT_NE(pk, nullptr);
   EXPECT_EQ(pk->oid, 10);
   EXPECT_EQ(pk->host_index_id, 11);
   EXPECT_THROW(
-    info->AddPrimaryKey(std::vector<ObjectId>{ObjectId{1}}, {},
-                        PrimaryKeyIds{.constraint_id = ObjectId{20},
-                                      .index_id = ObjectId{21},
-                                      .not_null_ids = {ObjectId{22}}}),
+    catalog::AddPrimaryKey(*info, std::vector<ObjectId>{ObjectId{1}}, {},
+                           PrimaryKeyIds{.constraint_id = ObjectId{20},
+                                         .index_id = ObjectId{21},
+                                         .not_null_ids = {ObjectId{22}}}),
     SqlException);
 }
 
 TEST(CatalogTableInfo, constraints_stay_in_verification_order) {
   auto info = MakeTable({{"a", 1}, {"b", 2}});
-  info = info->AddCheckConstraint("t_check", Expr("a > 0"), ObjectId{10});
-  info = info->AddUniqueConstraint(std::vector<ObjectId>{ObjectId{2}}, {},
-                                   ObjectId{11}, ObjectId{12});
-  info = info->SetNotNull("a", ObjectId{13});
+  info =
+    catalog::AddCheckConstraint(*info, "t_check", Expr("a > 0"), ObjectId{10});
+  info = catalog::AddUniqueConstraint(*info, std::vector<ObjectId>{ObjectId{2}},
+                                      {}, ObjectId{11}, ObjectId{12});
+  info = catalog::SetNotNull(*info, "a", ObjectId{13});
   EXPECT_EQ(ConstraintNames(*info),
             (std::vector<std::string>{"t_a_not_null", "t_b_key", "t_check"}));
 }
 
 TEST(CatalogTableInfo, dropping_a_constraint_takes_a_name_or_an_id) {
   auto info = MakeTable({{"a", 1}});
-  info = info->AddCheckConstraint("t_check", Expr("a > 0"), ObjectId{10});
-  EXPECT_EQ(info->DropConstraint("nope", /*missing_ok=*/true), nullptr);
-  EXPECT_THROW(info->DropConstraint("nope", /*missing_ok=*/false),
+  info =
+    catalog::AddCheckConstraint(*info, "t_check", Expr("a > 0"), ObjectId{10});
+  EXPECT_EQ(catalog::DropConstraint(*info, "nope", /*missing_ok=*/true),
+            nullptr);
+  EXPECT_THROW(catalog::DropConstraint(*info, "nope", /*missing_ok=*/false),
                SqlException);
+  EXPECT_TRUE(catalog::DropConstraint(*info, "t_check", /*missing_ok=*/false)
+                ->constraints.empty());
   EXPECT_TRUE(
-    info->DropConstraint("t_check", /*missing_ok=*/false)->constraints.empty());
-  EXPECT_TRUE(info->DropConstraint(ObjectId{10})->constraints.empty());
+    catalog::DropConstraint(*info, ObjectId{10})->constraints.empty());
 }
 
 TEST(CatalogTableInfo, comments_that_change_nothing_write_no_version) {
   auto info = MakeTable({{"a", 1}});
-  EXPECT_EQ(info->SetComment(""), nullptr);
-  info = info->SetComment("hello");
-  EXPECT_EQ(info->SetComment("hello"), nullptr);
+  EXPECT_EQ(catalog::SetComment(*info, ""), nullptr);
+  info = catalog::SetComment(*info, "hello");
+  EXPECT_EQ(catalog::SetComment(*info, "hello"), nullptr);
   EXPECT_EQ(duckdb::StringValue::Get(info->comment), "hello");
-  info = info->SetColumnComment("a", "col");
-  EXPECT_EQ(info->SetColumnComment("a", "col"), nullptr);
-  EXPECT_EQ(duckdb::StringValue::Get(info->ColumnByName("a")->Comment()),
-            "col");
+  info = catalog::SetColumnComment(*info, "a", "col");
+  EXPECT_EQ(catalog::SetColumnComment(*info, "a", "col"), nullptr);
+  EXPECT_EQ(
+    duckdb::StringValue::Get(catalog::ColumnByName(*info, "a")->Comment()),
+    "col");
 }
 
 TEST(CatalogTableInfo, a_column_grant_lives_on_the_permissions) {
@@ -243,10 +250,11 @@ TEST(CatalogTableInfo, foreign_keys_are_dropped_by_the_id_they_reference) {
   fk->host_referenced_id = 42;
   info->constraints.push_back(std::move(fk));
 
-  EXPECT_EQ(info->DropForeignKeysReferencing(ObjectId{43})->constraints.size(),
+  EXPECT_EQ(catalog::DropForeignKeysReferencing(*info, ObjectId{43})
+              ->constraints.size(),
             1);
-  EXPECT_TRUE(
-    info->DropForeignKeysReferencing(ObjectId{42})->constraints.empty());
+  EXPECT_TRUE(catalog::DropForeignKeysReferencing(*info, ObjectId{42})
+                ->constraints.empty());
 }
 
 TEST(CatalogTableInfo, adding_a_column_honours_if_not_exists) {
@@ -254,13 +262,16 @@ TEST(CatalogTableInfo, adding_a_column_honours_if_not_exists) {
   duckdb::ColumnDefinition column{duckdb::Identifier{"a"},
                                   duckdb::LogicalType::INTEGER};
   column.SetCatalogOid(2);
-  EXPECT_EQ(info->AddColumn(column.Copy(), /*if_not_exists=*/true), nullptr);
-  EXPECT_THROW(info->AddColumn(column.Copy(), /*if_not_exists=*/false),
-               SqlException);
+  EXPECT_EQ(catalog::AddColumn(*info, column.Copy(), /*if_not_exists=*/true),
+            nullptr);
+  EXPECT_THROW(
+    catalog::AddColumn(*info, column.Copy(), /*if_not_exists=*/false),
+    SqlException);
   duckdb::ColumnDefinition fresh{duckdb::Identifier{"b"},
                                  duckdb::LogicalType::INTEGER};
   fresh.SetCatalogOid(2);
-  auto wider = info->AddColumn(std::move(fresh), /*if_not_exists=*/false);
+  auto wider =
+    catalog::AddColumn(*info, std::move(fresh), /*if_not_exists=*/false);
   EXPECT_EQ(ColumnNames(*wider), (std::vector<std::string>{"a", "b"}));
 }
 

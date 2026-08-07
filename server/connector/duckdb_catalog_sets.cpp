@@ -166,7 +166,7 @@ void RecordVersion(duckdb::ClientContext* context,
     // A table's record carries the store table's shape and the sequences a
     // create hands it, so it is the one kind whose record is not the plain one.
     catalog::GetCatalog().RecordTable(
-      context, *std::static_pointer_cast<const catalog::CreateTableInfo>(info),
+      context, *std::static_pointer_cast<const duckdb::CreateTableInfo>(info),
       mode, perm);
     return;
   }
@@ -184,7 +184,7 @@ duckdb::LogicalDependencyList EntryEdges(
   const catalog::Permissions& perm) {
   if (info->type == duckdb::CatalogType::TABLE_ENTRY) {
     return catalog::TableDependencies(
-      *std::static_pointer_cast<const catalog::CreateTableInfo>(info), perm);
+      *std::static_pointer_cast<const duckdb::CreateTableInfo>(info), perm);
   }
   return EntryDependencies(*info, perm);
 }
@@ -2187,8 +2187,8 @@ void ReplayTableRecord(const catalog::wal::PutTable& e) {
 }
 
 void RefreshForeignKeyTargets(duckdb::ClientContext* context,
-                              const catalog::CreateTableInfo& table) {
-  const auto schema = FindSchema(context, table.GetParentId());
+                              const duckdb::CreateTableInfo& table) {
+  const auto schema = FindSchema(context, catalog::ParentIdOf(table));
   const auto database_id = schema ? catalog::ParentIdOf(*schema) : ObjectId{};
   for (const auto& constraint : table.constraints) {
     if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
@@ -2196,7 +2196,7 @@ void RefreshForeignKeyTargets(duckdb::ClientContext* context,
     }
     const ObjectId target{
       constraint->Cast<duckdb::ForeignKeyConstraint>().host_referenced_id};
-    if (!target.isSet() || target == table.GetId()) {
+    if (!target.isSet() || target == catalog::IdOf(table)) {
       continue;
     }
     if (const auto* held = FindTableIn(context, database_id, target)) {
@@ -2222,7 +2222,7 @@ void RefreshForeignKeyReferents(duckdb::ClientContext* context,
         }
         const ObjectId target{
           constraint->Cast<duckdb::ForeignKeyConstraint>().host_referenced_id};
-        if (target.isSet() && target != table->GetId()) {
+        if (target.isSet() && target != catalog::IdOf(*table)) {
           referenced.emplace_back(target, ObjectId{});
         }
       }

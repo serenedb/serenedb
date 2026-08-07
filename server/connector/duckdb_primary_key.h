@@ -189,7 +189,7 @@ inline std::vector<PKColumn> BuildPKColumns(
 // column list. Empty when it declares none -- there the row identity is the
 // generated PK instead.
 inline std::vector<PKColumn> BuildPKColumns(
-  const catalog::CreateTableInfo& info) {
+  const duckdb::CreateTableInfo& info) {
   const auto* key = catalog::TablePrimaryKey(info);
   if (key == nullptr) {
     return {};
@@ -197,7 +197,7 @@ inline std::vector<PKColumn> BuildPKColumns(
   std::vector<PKColumn> result;
   result.reserve(key->GetColumnNames().size());
   for (const auto& name : key->GetColumnNames()) {
-    const auto* column = info.ColumnByName(name.GetIdentifierName());
+    const auto* column = catalog::ColumnByName(info, name.GetIdentifierName());
     if (column == nullptr) {
       continue;
     }

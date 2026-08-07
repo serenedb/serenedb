@@ -41,7 +41,7 @@ class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
   SereneDBPhysicalCTAS(duckdb::PhysicalPlan& plan,
                        duckdb::PhysicalOperator& insert, ObjectId database_id,
                        std::string database_name, std::string schema_name,
-                       std::shared_ptr<catalog::CreateTableInfo> options,
+                       std::shared_ptr<duckdb::CreateTableInfo> options,
                        ObjectId table_id, duckdb::OnCreateConflict on_conflict,
                        duckdb::idx_t estimated_cardinality);
 
@@ -91,7 +91,7 @@ class SereneDBPhysicalCTAS final : public duckdb::PhysicalOperator {
   std::string _database_name;
   std::string _schema_name;
   // The facade table is created at execution (once) with this pre-allocated id.
-  std::shared_ptr<catalog::CreateTableInfo> _options;
+  std::shared_ptr<duckdb::CreateTableInfo> _options;
   ObjectId _table_id;
   // REPLACE_ON_CONFLICT for CREATE OR REPLACE TABLE AS: at execution the
   // pre-existing table of this name is dropped (cascade) before the

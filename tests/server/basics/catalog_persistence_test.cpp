@@ -167,20 +167,20 @@ TEST(CatalogPersistence, secondary_index) {
                });
 }
 
-// A table's durable form is duckdb's own CreateTableInfo, so the fixture is
-// the frame the catalog log writes: the reflected info tuple followed by the
-// per-column grants a ColumnDefinition has nowhere to keep. The whole record
-// goes through the writer and reader the log uses, because that pairing is
-// what a restart depends on.
+// A table's durable form is duckdb's own duckdb::CreateTableInfo, so the
+// fixture is the frame the catalog log writes: the reflected info tuple
+// followed by the per-column grants a ColumnDefinition has nowhere to keep. The
+// whole record goes through the writer and reader the log uses, because that
+// pairing is what a restart depends on.
 TEST(CatalogPersistence, table) {
-  auto info = std::make_shared<CreateTableInfo>();
+  auto info = catalog::NewTableInfo();
   info->SetTableName(duckdb::Identifier{"t"});
   info->SetSchema(duckdb::Identifier{"public"});
-  info->SetTableTags(TableEngine::Search,
-                     {.refresh_interval_ms = 500,
-                      .compaction_interval_ms = 7000,
-                      .cleanup_interval_step = 3},
-                     ObjectId{9});
+  catalog::SetTableTags(*info, TableEngine::Search,
+                        {.refresh_interval_ms = 500,
+                         .compaction_interval_ms = 7000,
+                         .cleanup_interval_step = 3},
+                        ObjectId{9});
 
   duckdb::ColumnDefinition col_a{duckdb::Identifier{"a"},
                                  duckdb::LogicalType::INTEGER};

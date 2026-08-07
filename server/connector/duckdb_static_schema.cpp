@@ -38,6 +38,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeSystemTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   std::string_view entry_name, const catalog::VirtualTable& table) {
   auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
+  // serenedb matches column names exactly; duckdb's default keying folds.
+  info->columns = duckdb::ColumnList(/*allow_duplicate_names=*/false,
+                                     /*case_sensitive=*/true);
   info->SetTableName(duckdb::Identifier{entry_name});
   info->SetSchema(schema.name);
   for (auto& [column_name, column_type] :

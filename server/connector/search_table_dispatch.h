@@ -103,7 +103,7 @@ catalog::TableEngine ReadStorageEngine(
 // the search-only maintenance intervals -- into `info`'s tags, leaving whatever
 // the caller's unrecognized-parameter check still has to reject.
 void ApplyStorageKind(
-  duckdb::ClientContext& context, catalog::CreateTableInfo& info,
+  duckdb::ClientContext& context, duckdb::CreateTableInfo& info,
   duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     with_options);
 

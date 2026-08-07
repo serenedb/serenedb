@@ -82,20 +82,19 @@ namespace {
 // PutEntry names one parent and an index has two ancestors. 17 deleted
 // PutObject: with every kind but a table on PutEntry, the record whose payload
 // was a definition object was reachable only for a table, which has PutTable of
-// its own. 18 taught PutEntry to carry a table: duckdb's own CreateTableInfo,
-// with the ids on the column and constraint structures it already has room for,
-// and the per-column grants written after it -- a column has no entry of its
-// own to keep them on, and duckdb's ColumnDefinition has nowhere to put them.
-// 19 moved PutTable onto the same payload: every record's definition is now a
-// CreateInfo. It keeps a record of its own only because the sequences a
-// table's SERIAL columns own ride it.
-// 20 was the last version keyed on a SereneDB object-type enum.
-// 21 keys every record on duckdb::CatalogType instead -- different byte values,
-// and one CatalogType covers both index kinds, so a record naming an index
-// carries which of the two it is beside the type.
-// 22 names the relation of a store op by id. It was written as the store
-// table's name and parsed back to the id on the way out, a round trip through
-// a spelling no reader wanted.
+// its own. 18 taught PutEntry to carry a table: duckdb's own
+// duckdb::CreateTableInfo, with the ids on the column and constraint structures
+// it already has room for, and the per-column grants written after it -- a
+// column has no entry of its own to keep them on, and duckdb's ColumnDefinition
+// has nowhere to put them. 19 moved PutTable onto the same payload: every
+// record's definition is now a CreateInfo. It keeps a record of its own only
+// because the sequences a table's SERIAL columns own ride it. 20 was the last
+// version keyed on a SereneDB object-type enum. 21 keys every record on
+// duckdb::CatalogType instead -- different byte values, and one CatalogType
+// covers both index kinds, so a record naming an index carries which of the two
+// it is beside the type. 22 names the relation of a store op by id. It was
+// written as the store table's name and parsed back to the id on the way out, a
+// round trip through a spelling no reader wanted.
 constexpr uint8_t kEntryVersion = 30;
 
 constexpr uint8_t kFrameSnapshot = 1U << 0U;
@@ -269,7 +268,10 @@ std::shared_ptr<const duckdb::CreateInfo> ReadInfoPayload(
       // and its per-column grants have nowhere to live on duckdb's.
       CreateInfoOwned<duckdb::CreateTableInfo> data;
       basics::ReadTuple(src, data);
-      return CreateTableInfo::Adopt(*data.info);
+      // duckdb's own dispatch already built the definition; the record adds
+      // nothing to it but the identity ReadInfoInline stamps back.
+      return std::shared_ptr<const duckdb::CreateTableInfo>{
+        data.info.release()};
     }
     default:
       SDB_FATAL(STARTUP, "catalog wal: object type ", static_cast<int>(type),
@@ -446,8 +448,9 @@ ParsedFrame ParseEntries(std::span<const uint8_t> frame) {
         e.schema_id = ReadId(stream);
         e.id = ReadId(stream);
         e.mode = static_cast<PutMode>(stream.Read<uint8_t>());
-        e.info = std::static_pointer_cast<const CreateTableInfo>(ReadInfoInline(
-          duckdb::CatalogType::TABLE_ENTRY, false, e.schema_id, e.id, stream));
+        e.info = std::static_pointer_cast<const duckdb::CreateTableInfo>(
+          ReadInfoInline(duckdb::CatalogType::TABLE_ENTRY, false, e.schema_id,
+                         e.id, stream));
         e.perm = ReadPermissions(stream);
         const auto seqs = stream.Read<uint32_t>();
         e.sequences.reserve(seqs);

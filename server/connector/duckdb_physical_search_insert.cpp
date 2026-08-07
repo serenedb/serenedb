@@ -115,10 +115,10 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
   std::optional<duckdb::ColumnDataCollection> returned;
 };
 
-SearchWriteTarget CtasWriteTarget(const catalog::CreateTableInfo& table,
+SearchWriteTarget CtasWriteTarget(const duckdb::CreateTableInfo& table,
                                   const SereneDBTableEntry& entry) {
   SearchWriteTarget target;
-  target.table_id = table.GetId();
+  target.table_id = catalog::IdOf(table);
   target.data = entry.GetSearchData();
   const auto& columns = table.columns;
   target.column_ids.reserve(columns.LogicalColumnCount());
@@ -144,7 +144,7 @@ catalog::TableInfoRef CreateCtasTable(duckdb::ClientContext& context,
   auto& create_info = info.Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
-  auto options = std::make_shared<catalog::CreateTableInfo>();
+  auto options = catalog::NewTableInfo();
   options->SetTableName(table_info.GetTableName());
   options->SetSchema(schema.name);
   for (auto& col : table_info.columns.Logical()) {
@@ -160,7 +160,7 @@ catalog::TableInfoRef CreateCtasTable(duckdb::ClientContext& context,
   }
   // CTAS declares no PRIMARY KEY, so the create wires up a generated one.
   ApplyStorageKind(context, *options, table_info.options);
-  SDB_ASSERT(options->GetEngine() == catalog::TableEngine::Search,
+  SDB_ASSERT(catalog::TableEngineOf(*options) == catalog::TableEngine::Search,
              "SereneDBSearchInsert CTAS mode used for non-Search engine");
 
   auto& catalog_impl = catalog::GetCatalog();
@@ -236,8 +236,8 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
       return nullptr;
     }
     const auto* entry = FindTableEntryIn(
-      &context, SchemaDatabaseId(&context, table->GetParentId()),
-      table->GetId());
+      &context, SchemaDatabaseId(&context, catalog::ParentIdOf(*table)),
+      catalog::IdOf(*table));
     if (entry == nullptr) {
       return nullptr;
     }

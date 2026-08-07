@@ -306,15 +306,15 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
     _info && absl::EqualsIgnoreCase(_info->index_type, "inverted");
 }
 
-const catalog::CreateTableInfo* SereneDBPhysicalCreateIndex::TableOrNull()
+const duckdb::CreateTableInfo* SereneDBPhysicalCreateIndex::TableOrNull()
   const noexcept {
   return _relation.table.get();
 }
 
 bool SereneDBPhysicalCreateIndex::IsDuckDBTable() const noexcept {
   auto* table = TableOrNull();
-  SDB_ASSERT(!table ||
-             table->GetEngine() == catalog::TableEngine::Transactional);
+  SDB_ASSERT(!table || catalog::TableEngineOf(*table) ==
+                         catalog::TableEngine::Transactional);
   return table;
 }
 

@@ -166,7 +166,7 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
   const catalog::TableInfoRef& Definition() const noexcept {
     return _sdb_table;
   }
-  const catalog::CreateTableInfo& Table() const noexcept { return *_sdb_table; }
+  const duckdb::CreateTableInfo& Table() const noexcept { return *_sdb_table; }
 
   // The grants a column-level GRANT left on this version's columns, keyed by
   // the column's ObjectId -- the same id ColumnDefinition::CatalogOid()

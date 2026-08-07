@@ -233,7 +233,7 @@ struct TableDropBase : public DropTask {
   TableDropBase(const TableInfoRef& table, ObjectId db_id,
                 std::vector<ObjectId> owned_sequences, ObjectId schema_id,
                 bool is_root)
-    : DropTask{table->GetId(), table, schema_id, is_root},
+    : DropTask{catalog::IdOf(*table), table, schema_id, is_root},
       _db_id{db_id},
       _owned_sequences{std::move(owned_sequences)} {}
 

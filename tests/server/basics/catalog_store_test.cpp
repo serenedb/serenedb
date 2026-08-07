@@ -117,9 +117,9 @@ class Applier {
                sequence != nullptr) {
       name = std::string{sdb::catalog::SequenceNameOf(*sequence)};
     } else if (const auto* table =
-                 dynamic_cast<const sdb::catalog::CreateTableInfo*>(info.get());
+                 dynamic_cast<const duckdb::CreateTableInfo*>(info.get());
                table != nullptr) {
-      name = std::string{table->GetName()};
+      name = std::string{sdb::catalog::TableNameOf(*table)};
     }
     _defs[{parent.id(), type, id.id()}] = std::move(name);
   }
@@ -138,14 +138,14 @@ class Applier {
 // rebuild it: these name each definition after the value the test asserts on.
 sdb::catalog::TableInfoRef MakeTable(ObjectId schema, ObjectId id,
                                      std::string_view name) {
-  auto info = std::make_shared<sdb::catalog::CreateTableInfo>();
+  auto info = sdb::catalog::NewTableInfo();
   info->SetTableName(duckdb::Identifier{name});
   sdb::catalog::SetIdentity(*info, id, schema);
   return info;
 }
 
 // PutTable takes the definition by reference and the owner beside it.
-void PutTable(CatalogStore& store, const sdb::catalog::CreateTableInfo& table,
+void PutTable(CatalogStore& store, const duckdb::CreateTableInfo& table,
               sdb::catalog::wal::PutMode mode) {
   store.Write([&](CatalogStore::WriteContext& ctx) {
     ctx.catalog().PutTable(table, mode, sdb::catalog::Permissions{ObjectId{1}});
@@ -449,18 +449,19 @@ TEST_F(CatalogStoreTest, parse_frame_round_trips_wal_records) {
   ASSERT_TRUE(put.has_value());
   EXPECT_EQ(put->schema_id.id(), 50);
   EXPECT_EQ(put->id.id(), 51);
-  EXPECT_EQ(put->info->GetName(), "def-bytes");
+  EXPECT_EQ(sdb::catalog::TableNameOf(*put->info), "def-bytes");
 }
 
-// A table's definition is duckdb's CreateTableInfo plus what it has no room
-// for, so the record has to bring back the ids on the columns and constraints,
-// the exact-match keying of the column list and the per-column grants.
+// A table's definition is duckdb's duckdb::CreateTableInfo plus what it has no
+// room for, so the record has to bring back the ids on the columns and
+// constraints, the exact-match keying of the column list and the per-column
+// grants.
 TEST_F(CatalogStoreTest, table_info_round_trips_through_put_entry) {
   namespace catalog = sdb::catalog;
   const ObjectId schema{60};
   const ObjectId table_id{61};
 
-  auto info = std::make_shared<catalog::CreateTableInfo>();
+  auto info = sdb::catalog::NewTableInfo();
   info->SetTableName(duckdb::Identifier{"orders"});
   info->SetSchema(duckdb::Identifier{"public"});
   info->comment = duckdb::Value("a table");
@@ -530,15 +531,19 @@ TEST_F(CatalogStoreTest, table_info_round_trips_through_put_entry) {
   EXPECT_EQ(put->id.id(), table_id.id());
   EXPECT_EQ(put->perm.owner, 1);
   const auto* read =
-    dynamic_cast<const catalog::CreateTableInfo*>(put->info.get());
+    dynamic_cast<const duckdb::CreateTableInfo*>(put->info.get());
   ASSERT_NE(read, nullptr);
-  EXPECT_EQ(read->GetName(), "orders");
+  EXPECT_EQ(sdb::catalog::TableNameOf(*read), "orders");
   EXPECT_EQ(duckdb::StringValue::Get(read->comment), "a table");
   ASSERT_TRUE(read->columns.IsCaseSensitive());
   ASSERT_EQ(read->columns.LogicalColumnCount(), 2);
-  ASSERT_NE(read->ColumnById(ObjectId{101}), nullptr);
-  EXPECT_EQ(read->ColumnById(ObjectId{101})->Name().GetIdentifierName(), "A");
-  EXPECT_EQ(read->ColumnById(ObjectId{102})->Name().GetIdentifierName(), "a");
+  ASSERT_NE(sdb::catalog::ColumnById(*read, ObjectId{101}), nullptr);
+  EXPECT_EQ(
+    sdb::catalog::ColumnById(*read, ObjectId{101})->Name().GetIdentifierName(),
+    "A");
+  EXPECT_EQ(
+    sdb::catalog::ColumnById(*read, ObjectId{102})->Name().GetIdentifierName(),
+    "a");
   ASSERT_EQ(read->constraints.size(), 3);
   EXPECT_EQ(read->constraints[0]->oid, 201);
   EXPECT_EQ(read->constraints[1]->oid, 202);

@@ -74,7 +74,7 @@ struct TableInfoAndIndices {
 // all three -- so the durable identities are what the entry is built from and
 // the names are derived here.
 void RetargetForeignKeys(duckdb::CreateTableInfo& info,
-                         const catalog::CreateTableInfo& table,
+                         const duckdb::CreateTableInfo& table,
                          duckdb::Catalog& catalog,
                          duckdb::ClientContext* context) {
   for (auto& constraint : info.constraints) {
@@ -83,21 +83,21 @@ void RetargetForeignKeys(duckdb::CreateTableInfo& info,
     }
     auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
     const ObjectId referenced_id{fk.host_referenced_id};
-    const catalog::CreateTableInfo* referenced = nullptr;
+    const duckdb::CreateTableInfo* referenced = nullptr;
     catalog::TableInfoRef held;
     duckdb::Identifier referenced_schema = info.GetQualifiedName().Schema();
     duckdb::Identifier referenced_name = info.GetTableName();
-    if (referenced_id.isSet() && referenced_id != table.GetId()) {
+    if (referenced_id.isSet() && referenced_id != catalog::IdOf(table)) {
       const auto* found = FindTableIn(context, catalog, referenced_id);
       if (found == nullptr) {
         continue;
       }
       held = found->Definition();
       referenced = held.get();
-      auto schema = FindSchema(context, held->GetParentId());
+      auto schema = FindSchema(context, catalog::ParentIdOf(*held));
       referenced_schema = duckdb::Identifier{
         schema ? catalog::SchemaNameOf(*schema) : std::string_view{}};
-      referenced_name = duckdb::Identifier{held->GetName()};
+      referenced_name = duckdb::Identifier{catalog::TableNameOf(*held)};
     } else {
       referenced = &table;
     }
@@ -106,7 +106,8 @@ void RetargetForeignKeys(duckdb::CreateTableInfo& info,
     fk.pk_columns = catalog::ReferencedKeyNames(fk, referenced);
     fk.info.pk_keys.clear();
     for (const auto& name : fk.pk_columns) {
-      const auto* column = referenced->ColumnByName(name.GetIdentifierName());
+      const auto* column =
+        catalog::ColumnByName(*referenced, name.GetIdentifierName());
       fk.info.pk_keys.emplace_back(column == nullptr ? 0
                                                      : column->Logical().index);
     }
@@ -121,11 +122,11 @@ void RetargetForeignKeys(duckdb::CreateTableInfo& info,
 // definition on every write, so it has to be derived here instead, from the
 // foreign-key edges the referencing tables recorded against this one.
 void AddReferencedForeignKeys(duckdb::CreateTableInfo& info,
-                              const catalog::CreateTableInfo& table,
+                              const duckdb::CreateTableInfo& table,
                               duckdb::Catalog& catalog,
                               duckdb::ClientContext* context) {
   const DependencyView dependents{context};
-  for (const auto& dependent : dependents.Dependents(table.GetId())) {
+  for (const auto& dependent : dependents.Dependents(catalog::IdOf(table))) {
     if (dependent.type != duckdb::CatalogType::TABLE_ENTRY) {
       continue;
     }
@@ -134,29 +135,30 @@ void AddReferencedForeignKeys(duckdb::CreateTableInfo& info,
       continue;
     }
     const auto referencing = referencing_entry->Definition();
-    auto schema = FindSchema(context, referencing->GetParentId());
+    auto schema = FindSchema(context, catalog::ParentIdOf(*referencing));
     for (const auto& constraint : referencing->constraints) {
       if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
         continue;
       }
       const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
-      if (ObjectId{fk.host_referenced_id} != table.GetId()) {
+      if (ObjectId{fk.host_referenced_id} != catalog::IdOf(table)) {
         continue;
       }
       duckdb::ForeignKeyInfo mirror;
       mirror.type = duckdb::ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE;
       mirror.schema = duckdb::Identifier{schema ? catalog::SchemaNameOf(*schema)
                                                 : std::string_view{}};
-      mirror.table = duckdb::Identifier{referencing->GetName()};
+      mirror.table = duckdb::Identifier{catalog::TableNameOf(*referencing)};
       auto pk_columns = catalog::ReferencedKeyNames(fk, &table);
       for (const auto& name : pk_columns) {
-        const auto* column = table.ColumnByName(name.GetIdentifierName());
+        const auto* column =
+          catalog::ColumnByName(table, name.GetIdentifierName());
         mirror.pk_keys.emplace_back(
           column == nullptr ? 0 : column->Logical().index);
       }
       for (const auto& name : fk.fk_columns) {
         const auto* column =
-          referencing->ColumnByName(name.GetIdentifierName());
+          catalog::ColumnByName(*referencing, name.GetIdentifierName());
         mirror.fk_keys.emplace_back(
           column == nullptr ? 0 : column->Logical().index);
       }
@@ -172,7 +174,7 @@ void AddReferencedForeignKeys(duckdb::CreateTableInfo& info,
 
 TableInfoAndIndices BuildTableInfoAndIndices(
   std::string_view name, SereneDBSchemaEntry& schema, duckdb::Catalog& catalog,
-  const catalog::CreateTableInfo& table, duckdb::ClientContext* context) {
+  const duckdb::CreateTableInfo& table, duckdb::ClientContext* context) {
   TableInfoAndIndices out;
   out.info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTableInfo>(
@@ -184,9 +186,9 @@ TableInfoAndIndices BuildTableInfoAndIndices(
 
   containers::FlatHashSet<size_t> idx_set;
   VisitRelationIndexEntries(
-    context, schema, table.GetId(), [&](SereneDBIndexEntry& index) {
+    context, schema, catalog::IdOf(table), [&](SereneDBIndexEntry& index) {
       for (auto col_id : index.Definition()->GetReferencedColumns()) {
-        if (const auto* column = table.ColumnById(col_id)) {
+        if (const auto* column = catalog::ColumnById(table, col_id)) {
           idx_set.insert(column->Logical().index);
         }
       }
@@ -305,6 +307,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexScanEntry(
     }
     const auto& vinfo = *view_columns;
     auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
+    info->columns = duckdb::ColumnList(/*allow_duplicate_names=*/false,
+                                       /*case_sensitive=*/true);
     info->SetTableName(duckdb::Identifier{entry_name});
     info->SetSchema(schema.name);
     for (size_t i = 0; i < vinfo.names.size(); ++i) {
@@ -336,9 +340,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexScanEntry(
   const auto table = table_entry->Definition();
   auto built =
     BuildTableInfoAndIndices(entry_name, schema, catalog, *table, context);
-  IndexedRelation relation{.id = table->GetId(),
+  IndexedRelation relation{.id = catalog::IdOf(*table),
                            .type = duckdb::CatalogType::TABLE_ENTRY,
-                           .name = std::string{table->GetName()},
+                           .name = std::string{catalog::TableNameOf(*table)},
                            .perm = table_perm,
                            .column_acls = table_perm.column_acl};
 
@@ -378,7 +382,7 @@ duckdb::unique_ptr<duckdb::StandardEntry> MakeEntry(
   switch (info->type) {
     using enum duckdb::CatalogType;
     case TABLE_ENTRY: {
-      auto table = InfoAs<catalog::CreateTableInfo>(info);
+      auto table = InfoAs<duckdb::CreateTableInfo>(info);
       // A table's trigger set is shared by every version of it rather than
       // versioned with the definition, and the rows carry on under the next
       // version, so each rewrite has to inherit what its predecessor held.
@@ -551,20 +555,21 @@ std::shared_ptr<const duckdb::CreateInfo> RewrittenTable(
   std::string_view name, std::optional<std::string_view> comment) {
   catalog::TableInfoRef info;
   if (!name.empty()) {
-    auto renamed = table->Clone();
+    auto renamed = catalog::Clone(*table);
     renamed->SetTableName(duckdb::Identifier{name});
     info = std::move(renamed);
   }
   if (comment) {
-    if (auto commented = (info ? *info : *table).SetComment(*comment)) {
+    if (auto commented = catalog::SetComment(info ? *info : *table, *comment)) {
       info = std::move(commented);
     }
   }
   if (!info) {
     return nullptr;
   }
-  return catalog::NextTableVersion(context, table->GetId(),
-                                   table->GetParentId(), std::move(info));
+  return catalog::NextTableVersion(context, catalog::IdOf(*table),
+                                   catalog::ParentIdOf(*table),
+                                   std::move(info));
 }
 
 }  // namespace
@@ -666,8 +671,8 @@ void RefreshEntrySiblings(duckdb::ClientContext* context,
         return;
       }
       const auto& definition = table->Definition();
-      RefreshRelationIndexEntries(context, definition->GetParentId(),
-                                  definition->GetId());
+      RefreshRelationIndexEntries(context, catalog::ParentIdOf(*definition),
+                                  catalog::IdOf(*definition));
       RefreshForeignKeyTargets(context, *definition);
       return;
     }

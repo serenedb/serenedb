@@ -695,6 +695,8 @@ void SereneDBCatalog::AlterStorage(duckdb::CatalogTransaction transaction,
     auto& rows = table.GetStorage();
     auto shape = duckdb::make_uniq<duckdb::CreateTableInfo>(
       table.ParentSchema(), table.name);
+    shape->columns = duckdb::ColumnList(/*allow_duplicate_names=*/false,
+                                        /*case_sensitive=*/true);
     for (const auto& column : rows.Columns()) {
       shape->columns.AddColumn(column.Copy());
     }
@@ -763,7 +765,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   auto& schema_entry = op.schema.Cast<SereneDBSchemaEntry>();
   auto database_id = schema_entry.GetDatabaseId();
 
-  auto options = std::make_shared<catalog::CreateTableInfo>();
+  auto options = catalog::NewTableInfo();
   options->SetTableName(table_info.GetTableName());
   options->SetSchema(op.schema.name);
   // Consume the storage WITH-option (Transactional on this path) so the

@@ -56,8 +56,6 @@ namespace catalog {
 inline constexpr std::string_view kInvertedIndexType = "inverted";
 inline constexpr std::string_view kSecondaryIndexType = "secondary";
 
-class CreateTableInfo;
-
 inline constexpr std::string_view kIncludedKind = "included";
 inline constexpr std::string_view kIVFKind = "ivf";
 
@@ -295,8 +293,8 @@ IndexInfoRef ReoptionedIndex(const CreateIndexInfoBase& index,
 // expression is column-id keyed and unaffected. Only the indexes whose text
 // actually changed are returned -- the others are already right.
 std::vector<IndexInfoRef> RerenderedIndexes(
-  std::span<const IndexInfoRef> indexes, const CreateTableInfo& before,
-  const CreateTableInfo& after);
+  std::span<const IndexInfoRef> indexes, const duckdb::CreateTableInfo& before,
+  const duckdb::CreateTableInfo& after);
 
 }  // namespace catalog
 }  // namespace sdb

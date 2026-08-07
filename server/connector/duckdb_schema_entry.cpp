@@ -129,7 +129,7 @@ std::string FindConstraintColumn(const duckdb::ParsedExpression& root) {
 // The ALTER's target, or a throw naming what the relation namespace actually
 // holds under that name. Every ALTER TABLE action but a handful is a table's
 // alone, and postgres reports the kind mismatch rather than a missing name.
-const catalog::CreateTableInfo& RequireAlterTable(
+const duckdb::CreateTableInfo& RequireAlterTable(
   const catalog::TableInfoRef& table, std::string_view name) {
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
@@ -341,15 +341,15 @@ bool RenameFunctionObject(const catalog::AccessContext& ax,
 
 // ALTER TABLE ... RENAME TO.
 void RenameTableObject(const catalog::AccessContext& ax,
-                       const catalog::CreateTableInfo& table,
+                       const duckdb::CreateTableInfo& table,
                        std::string_view new_name) {
   catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
-  const auto schema_id = table.GetParentId();
-  const auto table_id = table.GetId();
+  const auto schema_id = catalog::ParentIdOf(table);
+  const auto table_id = catalog::IdOf(table);
   const auto* current_entry = FindTable(ax.context, schema_id, table_id);
   if (current_entry == nullptr) {
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
-                                      table.GetName());
+                                      catalog::TableNameOf(table));
   }
   const auto& perm = current_entry->permissions;
   const auto current = current_entry->Definition();
@@ -357,17 +357,18 @@ void RenameTableObject(const catalog::AccessContext& ax,
   // dropped the table and committed since the binder resolved it, and renaming
   // a version nothing holds any more would resurrect it. The statement asked
   // about a name, so that is what the answer is about.
-  if (TableVanished(ax.context, schema_id, current->GetName())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-      ERR_MSG("relation \"", current->GetName(), "\" does not exist"));
+  if (TableVanished(ax.context, schema_id, catalog::TableNameOf(*current))) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", catalog::TableNameOf(*current),
+                            "\" does not exist"));
   }
-  catalog::RequireOwner(ax.context, ax.role, perm, "table", current->GetName());
-  if (current->GetName() == new_name) {
+  catalog::RequireOwner(ax.context, ax.role, perm, "table",
+                        catalog::TableNameOf(*current));
+  if (catalog::TableNameOf(*current) == new_name) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("relation \"", new_name, "\" already exists"));
   }
-  if (current->GetName() != table.GetName()) {
+  if (catalog::TableNameOf(*current) != catalog::TableNameOf(table)) {
     // Another transaction renamed the same table and committed first. The
     // mutation re-resolves by id, so it would happily rename the table away
     // from a name the statement never asked about -- the one same-object pair
@@ -376,7 +377,7 @@ void RenameTableObject(const catalog::AccessContext& ax,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
       ERR_MSG("could not serialize access due to concurrent rename of \"",
-              table.GetName(), "\""));
+              catalog::TableNameOf(table), "\""));
   }
   if (FindTable(ax.context, schema_id, new_name) ||
       FindSequence(ax.context, schema_id, new_name) ||
@@ -384,11 +385,11 @@ void RenameTableObject(const catalog::AccessContext& ax,
       FindView(ax.context, schema_id, new_name)) {
     catalog::ThrowDuplicateName(catalog::NameKind::Relation, new_name);
   }
-  auto info = current->Clone();
+  auto info = catalog::Clone(*current);
   info->SetTableName(duckdb::Identifier{new_name});
   // Store tables are id-named, so every rename is catalog-only.
   PutEntry(
-    ax.context, current->GetName(),
+    ax.context, catalog::TableNameOf(*current),
     catalog::NextTableVersion(ax.context, table_id, schema_id, std::move(info)),
     perm);
 }
@@ -505,8 +506,8 @@ void SetObjectComment(const catalog::AccessContext& ax, ObjectId database_id,
     case duckdb::CatalogType::TABLE_ENTRY:
       if (table) {
         catalog_impl.ChangeTable(
-          ax, *table, [&comment](const catalog::CreateTableInfo& info) {
-            return info.SetComment(comment);
+          ax, *table, [&comment](const duckdb::CreateTableInfo& info) {
+            return catalog::SetComment(info, comment);
           });
         return;
       }
@@ -811,7 +812,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // that info with the per-column grants added, so what the binder produced is
   // what the catalog keeps. Only the identities and the serenedb-specific
   // rewrites below are added to it.
-  auto built = catalog::CreateTableInfo::Adopt(table_info);
+  auto built = catalog::Clone(table_info);
   built->SetSchema(name);
 
   // Consume the SereneDB-specific `storage` WITH option (selects the table
@@ -937,7 +938,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
 
   const auto require_column = [&](const duckdb::Identifier& column_name,
                                   std::string_view what) {
-    const auto* column = built->ColumnByName(column_name.GetIdentifierName());
+    const auto* column =
+      catalog::ColumnByName(*built, column_name.GetIdentifierName());
     if (column == nullptr) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                       ERR_MSG("column \"", column_name.GetIdentifierName(),
@@ -1073,13 +1075,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
               ERR_MSG("referenced table \"", fk.info.table.GetIdentifierName(),
                       "\" does not exist"));
           }
-          referenced_id = referenced->GetId();
+          referenced_id = catalog::IdOf(*referenced);
           out_info.type = duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE;
           out_info.schema = duckdb::Identifier{referenced_schema};
-          out_info.table = duckdb::Identifier{referenced->GetName()};
+          out_info.table =
+            duckdb::Identifier{catalog::TableNameOf(*referenced)};
           for (const auto& key : fk.pk_columns) {
             const auto* column =
-              referenced->ColumnByName(key.GetIdentifierName());
+              catalog::ColumnByName(*referenced, key.GetIdentifierName());
             if (column == nullptr) {
               THROW_SQL_ERROR(
                 ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
@@ -1167,7 +1170,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // CreateIndex.
   if (created) {
     const auto* entry =
-      FindTableEntryIn(&context, database_id, created->GetId());
+      FindTableEntryIn(&context, database_id, catalog::IdOf(*created));
     if (entry != nullptr && entry->IsSearchTable()) {
       entry->GetSearchData()->StartTasks();
     }
@@ -1223,7 +1226,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
       const auto& col_name = col_ref.GetColumnName().GetIdentifierName();
-      const auto* cat_col = sdb_table->ColumnByName(col_name);
+      const auto* cat_col = catalog::ColumnByName(*sdb_table, col_name);
       if (cat_col == nullptr) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
@@ -1687,8 +1690,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     catalog_impl.ChangeTable(
       ax, *table,
       [column = comment_info.column_name.GetIdentifierName(),
-       comment](const catalog::CreateTableInfo& info_in) {
-        return info_in.SetColumnComment(column, comment);
+       comment](const duckdb::CreateTableInfo& info_in) {
+        return catalog::SetColumnComment(info_in, column, comment);
       });
     return;
   }
@@ -1881,7 +1884,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       break;
   }
   if (!unsupported_search_op.empty() && relation) {
-    RejectIfSearchTable(relation->GetEngine(), unsupported_search_op);
+    RejectIfSearchTable(catalog::TableEngineOf(*relation),
+                        unsupported_search_op);
   }
 
   switch (table_info.alter_table_type) {
@@ -1905,8 +1909,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         ax, *relation,
         [constraint_name = drop_info.constraint_name,
          if_not_found = drop_info.if_constraint_not_found](
-          const catalog::CreateTableInfo& info_in) {
-          return info_in.DropConstraint(constraint_name, if_not_found);
+          const duckdb::CreateTableInfo& info_in) {
+          return catalog::DropConstraint(info_in, constraint_name,
+                                         if_not_found);
         });
       return;
     }
@@ -1931,8 +1936,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       catalog_impl.ChangeTable(
         ax, *relation,
         [old_name = rename_info.old_name, new_name = rename_info.new_name](
-          const catalog::CreateTableInfo& info_in) {
-          return info_in.RenameConstraint(old_name, new_name);
+          const duckdb::CreateTableInfo& info_in) {
+          return catalog::RenameConstraint(info_in, old_name, new_name);
         });
       return;
     }
@@ -1949,8 +1954,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         ax, *relation,
         [old_name = rename_info.old_name.GetIdentifierName(),
          new_name = rename_info.new_name.GetIdentifierName()](
-          const catalog::CreateTableInfo& info_in) {
-          return info_in.RenameColumn(old_name, new_name);
+          const duckdb::CreateTableInfo& info_in) {
+          return catalog::RenameColumn(info_in, old_name, new_name);
         });
       return;
     }
@@ -1963,8 +1968,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         ax, *relation,
         [column = not_null_info.column_name.GetIdentifierName(),
          constraint_id =
-           catalog::NextId()](const catalog::CreateTableInfo& info_in) {
-          return info_in.SetNotNull(column, constraint_id);
+           catalog::NextId()](const duckdb::CreateTableInfo& info_in) {
+          return catalog::SetNotNull(info_in, column, constraint_id);
         });
       return;
     }
@@ -1976,8 +1981,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       catalog_impl.ChangeTable(
         ax, *relation,
         [column = not_null_info.column_name.GetIdentifierName()](
-          const catalog::CreateTableInfo& info_in) {
-          return info_in.DropNotNull(column);
+          const duckdb::CreateTableInfo& info_in) {
+          return catalog::DropNotNull(info_in, column);
         });
       return;
     }
@@ -1991,8 +1996,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         [column = default_info.column_name.GetIdentifierName(),
          expr = default_info.expression
                   ? default_info.expression->Copy()
-                  : nullptr](const catalog::CreateTableInfo& info_in) {
-          return info_in.SetDefault(column, expr ? expr->Copy() : nullptr);
+                  : nullptr](const duckdb::CreateTableInfo& info_in) {
+          return catalog::SetDefault(info_in, column,
+                                     expr ? expr->Copy() : nullptr);
         });
       return;
     }
@@ -2030,7 +2036,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
              std::vector<duckdb::Identifier>{unique.GetColumnNames().begin(),
                                              unique.GetColumnNames().end()},
            constraint_name =
-             unique.constraint_name](const catalog::CreateTableInfo& info_in) {
+             unique.constraint_name](const duckdb::CreateTableInfo& info_in) {
             std::vector<ObjectId> column_ids;
             if (column_index) {
               if (*column_index >= info_in.columns.LogicalColumnCount()) {
@@ -2043,7 +2049,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
             } else {
               for (const auto& cn : column_names) {
                 const auto* column =
-                  info_in.ColumnByName(cn.GetIdentifierName());
+                  catalog::ColumnByName(info_in, cn.GetIdentifierName());
                 if (column == nullptr) {
                   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                                   ERR_MSG("column does not exist"));
@@ -2052,10 +2058,12 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
               }
             }
             if (is_pk) {
-              return info_in.AddPrimaryKey(column_ids, constraint_name, ids);
+              return catalog::AddPrimaryKey(info_in, column_ids,
+                                            constraint_name, ids);
             }
-            return info_in.AddUniqueConstraint(column_ids, constraint_name,
-                                               ids.constraint_id, ids.index_id);
+            return catalog::AddUniqueConstraint(
+              info_in, column_ids, constraint_name, ids.constraint_id,
+              ids.index_id);
           });
         return;
       }
@@ -2074,16 +2082,16 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                             : absl::StrCat(table_name, "_", col, "_check");
       }
       RequireAlterTable(relation, table_name);
-      catalog_impl.ChangeTable(
-        ax, *relation,
-        [cname = std::move(cname),
-         expr =
-           std::shared_ptr<duckdb::ParsedExpression>{
-             check.expression->Copy().release()},
-         constraint_id =
-           catalog::NextId()](const catalog::CreateTableInfo& info_in) {
-          return info_in.AddCheckConstraint(cname, expr->Copy(), constraint_id);
-        });
+      catalog_impl.ChangeTable(ax, *relation,
+                               [cname = std::move(cname),
+                                expr =
+                                  std::shared_ptr<duckdb::ParsedExpression>{
+                                    check.expression->Copy().release()},
+                                constraint_id = catalog::NextId()](
+                                 const duckdb::CreateTableInfo& info_in) {
+                                 return catalog::AddCheckConstraint(
+                                   info_in, cname, expr->Copy(), constraint_id);
+                               });
       return;
     }
 
@@ -2105,9 +2113,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       catalog_impl.ChangeTable(ax, *relation,
                                [column = std::move(column),
                                 if_not_exists = add_info.if_column_not_exists](
-                                 const catalog::CreateTableInfo& info_in) {
-                                 return info_in.AddColumn(column.Copy(),
-                                                          if_not_exists);
+                                 const duckdb::CreateTableInfo& info_in) {
+                                 return catalog::AddColumn(
+                                   info_in, column.Copy(), if_not_exists);
                                });
       return;
     }
@@ -2143,7 +2151,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       if (!relation) {
         ThrowRelationMissing(table_name);
       }
-      const auto* root = relation->ColumnByName(root_column);
+      const auto* root = catalog::ColumnByName(*relation, root_column);
       if (root == nullptr) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                         ERR_MSG("column \"", root_column, "\" of relation \"",

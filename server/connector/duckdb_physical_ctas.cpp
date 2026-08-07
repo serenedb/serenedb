@@ -69,7 +69,7 @@ struct CTASSourceState final : public duckdb::GlobalSourceState {
 SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(
   duckdb::PhysicalPlan& plan, duckdb::PhysicalOperator& insert,
   ObjectId database_id, std::string database_name, std::string schema_name,
-  std::shared_ptr<catalog::CreateTableInfo> options, ObjectId table_id,
+  std::shared_ptr<duckdb::CreateTableInfo> options, ObjectId table_id,
   duckdb::OnCreateConflict on_conflict, duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(
       plan, duckdb::PhysicalOperatorType::CREATE_TABLE_AS,
@@ -88,7 +88,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // pre-allocated, and the load that follows appends into the rows that entry
   // owns.
   auto& catalog_impl = catalog::GetCatalog();
-  const auto table_name = std::string{_options->GetName()};
+  const auto table_name = std::string{catalog::TableNameOf(*_options)};
   // CREATE OR REPLACE TABLE AS: drop the pre-existing table (cascade) before
   // creating the replacement. Both halves belong to this transaction, so a
   // crash before it commits leaves neither -- the same recovery contract as a
@@ -107,7 +107,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   op_options.table_id = _table_id;
   // Ownership is attributed to the creating role via the access context.
   catalog_impl.CreateTable(catalog::ActingAs(context), _database_id,
-                           _schema_name, _options->Clone(), {}, op_options);
+                           _schema_name, catalog::Clone(*_options), {},
+                           op_options);
 
   auto state = duckdb::make_uniq<CTASGlobalSinkState>();
   // Handed to the load rather than looked up by it: the nested insert asks the

@@ -24,6 +24,8 @@
 
 namespace duckdb {
 
+struct CreateTableInfo;
+
 struct CreateSequenceInfo;
 
 struct CreateSchemaInfo;
@@ -35,8 +37,7 @@ struct CreateMacroInfo;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-class CreateTableInfo;
-using TableInfoRef = std::shared_ptr<const CreateTableInfo>;
+using TableInfoRef = std::shared_ptr<const duckdb::CreateTableInfo>;
 class CreateRoleInfo;
 class CreateDatabaseInfo;
 using SchemaRef = std::shared_ptr<const duckdb::CreateSchemaInfo>;

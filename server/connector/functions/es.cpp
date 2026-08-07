@@ -268,7 +268,7 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
   std::vector<catalog::CreateIndexColumn> idx_columns;
   idx_columns.reserve(text_columns.size());
   for (const auto name : text_columns) {
-    const auto* column = table->ColumnByName(name);
+    const auto* column = catalog::ColumnByName(*table, name);
     SDB_ASSERT(column != nullptr);
     idx_columns.push_back(catalog::CreateIndexColumn{
       // A view into the definition, which outlives the create: the field is a
@@ -291,7 +291,8 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
       ResolveUintSetting(context, kCleanupIntervalStepSetting),
   };
 
-  const auto index_name = absl::StrCat(table->GetName(), kEsTextIndexSuffix);
+  const auto index_name =
+    absl::StrCat(catalog::TableNameOf(*table), kEsTextIndexSuffix);
   auto created = catalog.CreateInvertedIndex(
     catalog::NoAccessCheck(context), context, database_id, kEsSchema,
     catalog::IndexRelation{table, nullptr, catalog::Permissions{}}, index_name,
@@ -330,7 +331,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
                          /*if_not_exists=*/true);
   }
 
-  auto options = std::make_shared<catalog::CreateTableInfo>();
+  auto options = catalog::NewTableInfo();
   options->SetTableName(duckdb::Identifier{data.index});
   options->SetSchema(duckdb::Identifier{kEsSchema});
   std::vector<std::string_view> text_columns;

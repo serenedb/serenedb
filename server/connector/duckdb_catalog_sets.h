@@ -541,7 +541,7 @@ void RefreshForeignKeyReferents(duckdb::ClientContext* context,
 // it. duckdb stores the half instead and unstores it in DuckSchemaEntry::
 // DropEntry; with nothing stored there is nothing for that pass to undo.
 void RefreshForeignKeyTargets(duckdb::ClientContext* context,
-                              const catalog::CreateTableInfo& table);
+                              const duckdb::CreateTableInfo& table);
 
 // Whether the version of `name` this statement resolved is a committed one
 // that a committed read no longer finds: another transaction dropped the table

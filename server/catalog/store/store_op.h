@@ -27,13 +27,14 @@
 
 namespace duckdb {
 
+struct CreateTableInfo;
+
 class MemoryStream;
 
 }  // namespace duckdb
 namespace sdb::catalog {
 
-class CreateTableInfo;
-using TableInfoRef = std::shared_ptr<const CreateTableInfo>;
+using TableInfoRef = std::shared_ptr<const duckdb::CreateTableInfo>;
 class CreateIndexInfoBase;
 using IndexInfoRef = std::shared_ptr<const CreateIndexInfoBase>;
 

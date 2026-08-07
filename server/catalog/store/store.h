@@ -52,8 +52,6 @@ struct CreateIndexInfo;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-class CreateTableInfo;
-
 // duckdb's DBConfig::host_table_provider: the entry `catalog_id` names in `db`.
 // A checkpoint records only the rows of such a table, so the load reads the
 // definition off this entry and hands it the rows it was checkpointed with.
@@ -88,7 +86,7 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
 // ART-unfriendly key types). The relation is left unnamed: the executor fills
 // it in off the entry it resolves by id, which is the current one.
 duckdb::unique_ptr<duckdb::CreateIndexInfo> MakeStoreIndexInfo(
-  const CreateTableInfo& table, const CreateIndexInfoBase& index);
+  const duckdb::CreateTableInfo& table, const CreateIndexInfoBase& index);
 // True for the mirror of an ART, which is built by a plan; an inverted one is
 // injected from the catalog objects instead.
 bool IsPlainStoreIndex(const duckdb::CreateIndexInfo& info) noexcept;
@@ -145,7 +143,7 @@ class CatalogStore {
       // whose target a concurrent commit dropped has to be refused rather than
       // resurrect it. The sequences its SERIAL columns own are part of the same
       // operation, so they ride along -- only a create names any.
-      void PutTable(const CreateTableInfo& table, wal::PutMode mode,
+      void PutTable(const duckdb::CreateTableInfo& table, wal::PutMode mode,
                     Permissions perm,
                     std::vector<wal::OwnedSequence> sequences = {});
       // Creates or replaces an object whose definition is the CreateInfo its
@@ -214,8 +212,8 @@ class CatalogStore {
       // difference between the two. Nothing for a table with no store table of
       // its own -- a search-backed one owns its storage.
       void ReshapeTable(ObjectId database_id, ObjectId table,
-                        const CreateTableInfo& before,
-                        const CreateTableInfo& after);
+                        const duckdb::CreateTableInfo& before,
+                        const duckdb::CreateTableInfo& after);
 
      private:
       friend class WriteContext;

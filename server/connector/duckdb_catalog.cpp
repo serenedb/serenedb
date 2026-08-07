@@ -720,9 +720,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
                                                   op.estimated_cardinality);
     }
 
-    // A Search table's row identity is always the synthetic generated PK, so
-    // its scan appends a single rowid virtual (BuildRowIdColumns):
-    // [real..., generated_pk].
     const auto child_cols = plan.types.size();
     std::vector<duckdb::idx_t> pk_indices;
     pk_indices.push_back(child_cols - 1);  // generated-PK slot is last
@@ -751,10 +748,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
     // passes every projected new-row column through -- the SET values, duckdb's
     // recomputed STORED generated columns, and the old-value passthroughs that
-    // BindUpdateConstraints added -- plus the synthetic rowid virtual, so
-    // SereneDBSearchUpdate sees [resolved new-row vals, generated_pk]. A Search
-    // table's row identity is always the generated PK, so BuildRowIdColumns
-    // appends a single rowid virtual: [real..., generated_pk].
+    // BindUpdateConstraints added -- plus the synthetic rowid virtual.
     const duckdb::idx_t num_virtual = 1;
     const auto child_cols = plan.types.size();
 

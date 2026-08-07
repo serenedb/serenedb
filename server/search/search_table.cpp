@@ -117,12 +117,10 @@ std::shared_ptr<SearchTable> SearchTable::Create(
 
 namespace {
 
-// Base config every search table carries independent of declared indexes: each
-// PRIMARY KEY column is term-indexed at its own column id so PK predicates push
-// down. The PK's term field is the column id itself -- distinct from the
-// allocated ids user indexes use, so it never collides. store_values is off:
-// the value is stored once by the write fan-out (AppendValueColumn), keyed by
-// the same column id, so the term field carries only postings.
+// Each PRIMARY KEY column is term-indexed under its own column id so PK
+// predicates push down. That term field is the column id itself -- distinct
+// from the ids user indexes allocate, so it never collides. store_values is
+// off: the value is stored under the column id, not this term field.
 void BuildPkInto(catalog::InvertedIndex::Entries& entries,
                  SearchTable::TermsByColumn& terms,
                  const std::vector<catalog::Column::Id>& pk_columns) {
@@ -136,13 +134,10 @@ void BuildPkInto(catalog::InvertedIndex::Entries& entries,
   }
 }
 
-// Fold each of `index`'s plain-column entries (analyzers/features and all) into
-// the merged config, keyed by the index's own allocated term field_id
-// (TermFieldForColumn) so several indexes on one column get independent posting
-// lists. store_values is forced OFF: the value is stored once under the column
-// id by the write fan-out, so the per-index term field carries only postings
-// (else the column would be stored once per index). Only genuinely term-indexed
-// entries contribute a term field to `terms`.
+// Fold each of `index`'s plain-column entries into the merged config, keyed by
+// the index's own allocated term field_id so several indexes on one column get
+// independent posting lists. store_values is forced off (value stored under the
+// column id). Only genuinely term-indexed entries contribute to `terms`.
 void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
                     SearchTable::TermsByColumn& terms,
                     const catalog::InvertedIndex& index) {
@@ -159,11 +154,9 @@ void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
       terms[col_id].push_back(term_field);
     }
   }
-  // Indexed expressions are synthetic and single-field: their value + terms
-  // (and any IVF / JSON-leaf / norm sub-fields) live under the expression's own
-  // allocated field id, so fold each entry verbatim. The write path evaluates
-  // the expression and emits it directly under that field -- no column fan-out,
-  // so nothing is added to `terms`.
+  // Indexed expressions are synthetic and single-field: value + terms (and any
+  // IVF/JSON-leaf/norm sub-fields) live under the expression's own field id, so
+  // fold each entry verbatim and add nothing to `terms`.
   for (const auto& key : index.ExpressionKeys()) {
     if (const auto* entry = index.FindEntry(key.field_id)) {
       entries.insert_or_assign(key.field_id, *entry);
@@ -172,13 +165,7 @@ void MergeIndexInto(catalog::InvertedIndex::Entries& entries,
 }
 
 // The iresearch encoding config the search writer asks for at flush/merge,
-// resolved from the merged config (mirrors catalog::InvertedIndex, which is
-// itself an IndexFieldOptions, over that index's own entries). Only fields the
-// merged config knows carry per-index encoding; every other opened column
-// (each value column keyed by its column id, the generated-PK rowid, synthetic
-// blob sub-columns) gets the writer's baseline defaults. IVF is intentionally
-// not attached here -- a vector value is stored under its column id, not the
-// per-index field, so IVF stays a separate follow-up.
+// resolved from the merged config.
 class MergedFieldOptions final : public irs::IndexFieldOptions {
  public:
   explicit MergedFieldOptions(
@@ -197,10 +184,9 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
     }
     opts.compression = entry.compression;
     opts.hyperloglog = entry.hyperloglog;
-    // An IVF entry keys the merged config by its column id (not an allocated
-    // term field), so this fires for the vector value column the fan-out stores
-    // -- attaching the ANN index to it. `id` is that column id, matching the
-    // read (InvertedIndex::GetIvfInfo(col_id)).
+    // An IVF entry keys the merged config by its column id (the value column),
+    // not a per-index term field, so this attaches the ANN index to that
+    // column.
     opts.ivf_info = catalog::IvfInfoForEntry(id, entry);
     return opts;
   }
@@ -288,7 +274,7 @@ catalog::ColumnTokenizer SearchTable::GetTokenizer(
 void SearchTable::MergeIndexConfig(const catalog::InvertedIndex& index) {
   std::unique_lock lock(_table_lock);
   auto merged_entries =
-    std::make_shared<catalog::InvertedIndex::Entries>(*_entries);  // copy
+    std::make_shared<catalog::InvertedIndex::Entries>(*_entries);
   auto merged_terms = std::make_shared<TermsByColumn>(*_terms_by_column);
   MergeIndexInto(*merged_entries, *merged_terms, index);
   _entries = std::move(merged_entries);
@@ -378,17 +364,12 @@ void SearchTable::OpenWriter() {
     }
 
     // Floor the id allocator (gCurrentTick / NextId) from this store's own
-    // field ids. gCurrentTick is in-memory and re-derived at boot only from
-    // LIVE catalog ids, so a dropped index's field ids -- gone from the catalog
-    // but still occupying their numeric slots in this SHARED store (postings
-    // linger; no orphan cleanup in v1) -- would be re-issued to a new index and
-    // collide with the orphaned data at merge. The store is the true
-    // high-water mark. Scan BOTH the term-dict field ids AND the columnstore
-    // ids: value columns and synthetic (null/bool/numeric/norm) sub-columns
-    // share the same allocation pool, so the term ids alone under-count. Skip
-    // the reserved system fields (> kMaxRealIdValue: the PK blob, generated-PK
-    // rowid, inverted-index score/offset sentinels) -- those are NOT drawn from
-    // NextId, so flooring to them would exhaust the allocator.
+    // field ids: it is in-memory and re-derived at boot only from LIVE catalog
+    // ids, so a dropped index's ids -- still occupying slots in this SHARED
+    // store -- could be re-issued to a new index and collide at merge. Scan
+    // BOTH term-dict field ids AND columnstore ids (one shared allocation
+    // pool). Skip reserved system fields (> kMaxRealIdValue): they are not
+    // drawn from NextId, so flooring to them would exhaust the allocator.
     const auto floor_from = [](irs::field_id id) {
       if (id <= catalog::Column::kMaxRealIdValue) {
         UpdateTickServer(id);

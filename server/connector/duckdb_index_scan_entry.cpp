@@ -93,9 +93,8 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
 
   if (_sdb_table->GetEngine() == catalog::TableEngine::Search) {
     // Storage-less index: it shares the table's own iresearch store, so serve
-    // the scan exactly like a plain search-table scan -- every column from the
-    // columnstore + the generated-PK rowid, the shard's merged config (which
-    // already folds in this index) drives pushdown. No separate index reader.
+    // the scan exactly like a plain search-table scan. No separate index
+    // reader.
     const auto& search = _sdb_table->GetData();
     auto reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
       _sdb_table->GetId(), [&] { return search->GetDirectoryReader(); });
@@ -103,12 +102,8 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     data->lookup_label = "search";
     data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader});
-    // Carry the selected index so pushdown claims its predicates against this
-    // index's own term fields (the analyzer/features it declared), read from
-    // the table's shared store. entry_kind stays SearchTable and the snapshot
-    // is the table reader, so the runtime still scans the columnstore; the
-    // index only steers which fields the filter targets. A bare table scan
-    // leaves this null and claims PK/default terms only.
+    // Carry the selected index so pushdown targets its own term fields, while
+    // entry_kind SearchTable still scans the table's columnstore.
     data->inverted_index = _inverted_index;
   } else {
     data->entry_kind = ScanEntryKind::InvertedIndex;

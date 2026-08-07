@@ -88,6 +88,28 @@ SCAN_THREADS="${PERF_SCAN_THREADS:-1}"
 # to its timing in the log. Turn off with PERF_EXPLAIN=0.
 PERF_EXPLAIN="${PERF_EXPLAIN:-1}"
 
+# After the sole-table comparison, run a SECOND suite on a fresh data dir where
+# BOTH the transactional and the search table carry an inverted index over a
+# numeric + a text column, created BEFORE the load (a search-table index has no
+# other option today). It measures insert + refresh on both. The size catch: a
+# transactional table's inverted index ALSO lands in engine_search (its own
+# subtree), so "transactional + index" = engine_duckdb columns + that subtree,
+# compared against the search table's single engine_search store. Off with 0.
+PERF_INDEXED_RUN="${PERF_INDEXED_RUN:-1}"
+# The columns indexed in the second run. Defaults are hits-dataset columns: a
+# BIGINT (WatchID) and a text column (URL, keyword-indexed -- whole value as one
+# term, no dictionary needed). Override for other datasets.
+PERF_INDEX_NUMERIC_COL="${PERF_INDEX_NUMERIC_COL:-WatchID}"
+PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL:-URL}"
+
+# After the indexed run, a third cold load -- TRANSACTIONAL ONLY -- that builds
+# the same inverted index AFTER the rows are loaded (the "backfill" path). The
+# load runs against an unindexed table, then CREATE INDEX builds over the
+# committed rows in one shot (no refresh -- a backfill commits its own
+# segments). Insert and index build are timed separately, so the cost of a
+# post-hoc build can be set against the "index before load" numbers. Off with 0.
+PERF_BACKFILL_RUN="${PERF_BACKFILL_RUN:-1}"
+
 if [[ ! -f "${PARQUET_FILE}" ]]; then
 	echo "missing ${PARQUET_FILE} -- run scripts/perf/download_hits.sh first" >&2
 	echo "(override the location with PERF_PARQUET_FILE=...)" >&2
@@ -105,33 +127,52 @@ RUN_LOG="${RESULTS_DIR}/run-$(date -u +%Y%m%dT%H%M%SZ).log"
 # Per-section last `Time: ...` ms value, populated by run_sql/run_setup.
 declare -A TIMINGS=()
 
-# Fresh server every run -- the CTAS time is the measurement.
-killall -9 serened >/dev/null 2>&1 || true
-sleep 1
-rm -rf "${SERENED_DATA_DIR}"
-rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
-
-echo "starting ${SERENED_BIN} on port ${PORT} with data dir ${SERENED_DATA_DIR}"
-"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
-	--listen="postgres://0.0.0.0:${PORT}" \
-	>"${LOG}" 2>&1 &
-SERENED_PID=$!
-trap "kill -9 ${SERENED_PID} >/dev/null 2>&1 || true" EXIT
-
-# Wait until the server accepts a connection. A SELECT 1 is the cheapest PG
-# reachability probe; PSQL_CONN points psql at the running instance.
+# PSQL_CONN points psql at the running instance.
 PSQL_CONN="postgres://postgres@localhost:${PORT}/postgres"
-for _ in $(seq 1 30); do
-	if psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1; then
-		break
+
+# (Re)start serened on a FRESH data dir and block until it accepts connections.
+# Called once per cold-load run (sole, indexed, backfill); each run first kills
+# any prior instance, and the exit trap kills the last one when the script ends.
+start_serened() {
+	killall -9 serened >/dev/null 2>&1 || true
+	sleep 1
+	rm -rf "${SERENED_DATA_DIR}"
+	rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
+
+	echo "starting ${SERENED_BIN} on port ${PORT} with data dir ${SERENED_DATA_DIR}"
+	"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
+		--listen="postgres://0.0.0.0:${PORT}" \
+		>"${LOG}" 2>&1 &
+
+	# A SELECT 1 is the cheapest PG reachability probe.
+	for _ in $(seq 1 30); do
+		if psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1; then
+			break
+		fi
+		sleep 0.5
+	done
+	if ! psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1; then
+		echo "serened did not come up -- last 50 lines of ${LOG}:" >&2
+		tail -50 "${LOG}" >&2
+		exit 1
 	fi
-	sleep 0.5
-done
-if ! psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1; then
-	echo "serened did not come up -- last 50 lines of ${LOG}:" >&2
-	tail -50 "${LOG}" >&2
-	exit 1
-fi
+}
+# Kill our serened, matched by its unique data dir on the command line. This is
+# robust where $! and the port are not: serened forks a child listener, so $! is
+# stale (and could be a reused pid by exit), and an unprivileged `lsof -i` often
+# can't attribute the socket. pkill -f matches every process carrying our data
+# dir (this run's instance only) with no privileges or lsof needed; killall is
+# the fallback if pkill is absent. Runs on normal exit AND on Ctrl-C / TERM.
+cleanup() {
+	if command -v pkill >/dev/null 2>&1; then
+		pkill -9 -f -- "${SERENED_DATA_DIR}" >/dev/null 2>&1 || true
+	else
+		killall -9 serened >/dev/null 2>&1 || true
+	fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+start_serened
 
 # Pull the LAST `Time: <ms> ms ...` line from the captured psql output, kept in
 # fractional milliseconds (as printed by psql `\timing on`).
@@ -206,6 +247,51 @@ du_bytes() {
 	[[ -e "${p}" ]] && du -sb "${p}" | awk '{print $1}' || echo 0
 }
 
+du_search_committed() {
+	# engine_search bytes EXCLUDING the per-database WAL dir(s). The WAL holds
+	# the raw chunks until GC and can dwarf the committed index right after a
+	# load, so counting it would drown out the index-size comparison. Committed
+	# columnstore + term index only.
+	local dir="$1"
+	[[ -e "${dir}" ]] || {
+		echo 0
+		return
+	}
+	local total wal
+	total=$(du -sb "${dir}" | awk '{print $1}')
+	wal=$(find "${dir}" -type d -name wal -prune -exec du -sb {} + 2>/dev/null |
+		awk '{s+=$1} END{printf "%d", s+0}')
+	echo $((total - wal))
+}
+
+# Committed byte size of the transactional store (__sdb_store == engine_duckdb/
+# store.db), read from the store's own block accounting rather than a du of the
+# directory. A du is unreliable here: an INSERT's committed rows can sit in the
+# store WAL / buffer and not enlarge store.db on disk until a checkpoint, so du
+# reads ~0 for a fully-loaded table on slower storage (observed on the test
+# box). CHECKPOINT folds the WAL into blocks first, then used_blocks*block_size
+# is the true committed size. Runs off the benchmark clock (measurement only).
+store_used_bytes() {
+	psql "${PSQL_CONN}" -tAc 'CHECKPOINT;' >/dev/null 2>&1 || true
+	local v
+	v=$(psql "${PSQL_CONN}" -tAc \
+		"SELECT COALESCE(SUM(block_size * used_blocks), 0)::BIGINT FROM pragma_database_size() WHERE database_name = '__sdb_store';" \
+		2>/dev/null | tr -d '[:space:]')
+	echo "${v:-0}"
+}
+
+# Recreate the read_parquet view over SRC_PARQUET. Called on each fresh catalog
+# (both runs). SRC_PARQUET is resolved once during setup and persists across the
+# data-dir wipe (it lives next to hits.parquet, not in the serened dir).
+create_view() {
+	local pq
+	pq=$(printf '%s' "${SRC_PARQUET}" | sed "s/'/''/g")
+	run_sql "create_view" "${BUILD_THREADS}" "
+CREATE VIEW hits_view AS
+SELECT * FROM read_parquet('${pq}');
+"
+}
+
 # --- 1. Source parquet (+ optional sample) ------------------------------------
 # With no row cap we read hits.parquet directly. With PERF_ROW_LIMIT set we
 # sample that many rows into a standalone parquet file ONCE (the LIMIT
@@ -228,11 +314,7 @@ COPY (SELECT * FROM read_parquet('${SAMPLE_SRC_SQL}') LIMIT ${PERF_ROW_LIMIT})
 	fi
 fi
 
-PQ_SQL_PATH=$(printf '%s' "${SRC_PARQUET}" | sed "s/'/''/g")
-run_sql "create_view" "${BUILD_THREADS}" "
-CREATE VIEW hits_view AS
-SELECT * FROM read_parquet('${PQ_SQL_PATH}');
-"
+create_view
 
 TXN_DIR="${SERENED_DATA_DIR}/engine_duckdb"
 SEARCH_DIR="${SERENED_DATA_DIR}/engine_search"
@@ -424,6 +506,185 @@ ratio() {
 		"$(ratio "${NATIVE_BYTES}" "${TXN_TABLE_BYTES}")"
 	echo "========================================="
 } | tee -a "${RUN_LOG}"
+
+# --- 8. Indexed comparison (guarded by PERF_INDEXED_RUN, default on) ----------
+# A second cold load on a FRESH data dir where BOTH the transactional and the
+# search table carry an inverted index over a numeric + a text column, created
+# before the load. We measure insert + refresh on each. Only these two engines
+# (no native -- DuckDB's inverted index is a different feature).
+#
+# Size trick: a transactional table's inverted index is a per-index iresearch
+# store under engine_search/<db>/<schema>/<table_id>/<index_id>, while the
+# search table's whole store is engine_search/<db>/<schema>/<table_id> -- both
+# under engine_search but in disjoint table_id subtrees. So we read engine_search
+# (WAL excluded -- transient) at two checkpoints and take the delta: after the
+# transactional table+index it is exactly the transactional index; the further
+# growth after the search table+index is the search store. The transactional
+# TOTAL is then engine_duckdb columns + that index; the search table is its one
+# store (columns + index). That is the apples-to-apples size comparison.
+run_indexed_comparison() {
+	printf '\n\n' | tee -a "${RUN_LOG}"
+	{
+		echo "############ INDEXED COMPARISON (inverted index on both tables) ############"
+		echo "index columns: \"${PERF_INDEX_NUMERIC_COL}\", \"${PERF_INDEX_TEXT_COL}\" (created before load)"
+	} | tee -a "${RUN_LOG}"
+
+	start_serened
+	create_view
+
+	local idx_cols="\"${PERF_INDEX_NUMERIC_COL}\", \"${PERF_INDEX_TEXT_COL}\""
+
+	# Baselines before any indexed table exists.
+	local base_store base_search
+	base_store=$(store_used_bytes)
+	base_search=$(du_search_committed "${SEARCH_DIR}")
+
+	# --- transactional table + inverted index ---
+	# Empty table (schema only) -> index on the empty table -> load -> refresh.
+	run_setup "idx_txn_create" "${BUILD_THREADS}" "
+CREATE TABLE hits_txn_idx WITH (storage = 'transactional') AS
+SELECT * FROM hits_view WHERE false;
+"
+	run_setup "idx_txn_create_index" "${BUILD_THREADS}" "
+CREATE INDEX hits_txn_inv ON hits_txn_idx USING inverted (${idx_cols});
+"
+	run_sql "idx_txn_insert" "${BUILD_THREADS}" "
+INSERT INTO hits_txn_idx SELECT * FROM hits_view;
+"
+	# refresh: VACUUM (REFRESH_TABLE) commits the transactional table's inverted
+	# index (InvertedIndexStorage::Refresh) -- the analogue of the search commit.
+	run_setup "idx_txn_refresh" "${BUILD_THREADS}" "
+VACUUM (REFRESH_TABLE) hits_txn_idx;
+"
+	local txn_cols search_after_txn txn_index
+	txn_cols=$(($(store_used_bytes) - base_store))
+	search_after_txn=$(du_search_committed "${SEARCH_DIR}")
+	txn_index=$((search_after_txn - base_search))
+
+	# --- search table + inverted index ---
+	run_setup "idx_search_create" "${BUILD_THREADS}" "
+CREATE TABLE hits_search_idx
+  WITH (storage = 'search', compaction_interval = 0) AS
+SELECT * FROM hits_view WHERE false;
+"
+	run_setup "idx_search_create_index" "${BUILD_THREADS}" "
+CREATE INDEX hits_search_inv ON hits_search_idx USING inverted (${idx_cols});
+"
+	run_sql "idx_search_insert" "${BUILD_THREADS}" "
+INSERT INTO hits_search_idx SELECT * FROM hits_view;
+"
+	run_setup "idx_search_refresh" "${BUILD_THREADS}" "
+VACUUM (REFRESH_TABLE) hits_search_idx;
+"
+	# engine_search growth since the transactional index (a disjoint table_id
+	# subtree) is the search table's single store (columns + index).
+	local search_total
+	search_total=$(($(du_search_committed "${SEARCH_DIR}") - search_after_txn))
+
+	# --- report ---
+	local t_ins t_ref s_ins s_ref t_total s_total txn_total
+	t_ins="${TIMINGS[idx_txn_insert]:-}"
+	t_ref="${TIMINGS[idx_txn_refresh]:-}"
+	s_ins="${TIMINGS[idx_search_insert]:-}"
+	s_ref="${TIMINGS[idx_search_refresh]:-}"
+	isum() { [[ -n "$1" && -n "$2" ]] && awk -v a="$1" -v b="$2" 'BEGIN{printf "%s", a+b}'; }
+	t_total=$(isum "${t_ins}" "${t_ref}")
+	s_total=$(isum "${s_ins}" "${s_ref}")
+	txn_total=$((txn_cols + txn_index))
+	{
+		echo
+		echo "======== INDEXED SUMMARY (both tables inverted-indexed) ========"
+		echo "index columns: ${idx_cols}"
+		echo
+		irow() { printf "%-16s %13s %13s   %7s\n" "$1" "$2" "$3" "$4"; }
+		irow "phase" "txn" "search" "s/txn"
+		irow "----------------" "-------------" "-------------" "-------"
+		irow "insert" "$(fmt_ms "${t_ins}")" "$(fmt_ms "${s_ins}")" "$(ratio "${s_ins}" "${t_ins}")"
+		irow "refresh" "$(fmt_ms "${t_ref}")" "$(fmt_ms "${s_ref}")" "$(ratio "${s_ref}" "${t_ref}")"
+		irow "total (ins+ref)" "$(fmt_ms "${t_total}")" "$(fmt_ms "${s_total}")" "$(ratio "${s_total}" "${t_total}")"
+		echo
+		printf "%-30s %14s   %s\n" "storage (committed, no WAL)" "bytes" "vs txn total"
+		printf "%-30s %14s   %s\n" "------------------------------" "--------------" "------------"
+		printf "%-30s %14d (%s)\n" "transactional columns (duckdb)" "${txn_cols}" "$(human "${txn_cols}")"
+		printf "%-30s %14d (%s)\n" "transactional index (search)" "${txn_index}" "$(human "${txn_index}")"
+		printf "%-30s %14d (%s)\n" "transactional TOTAL" "${txn_total}" "$(human "${txn_total}")"
+		printf "%-30s %14d (%s)   %s\n" "search table (single store)" "${search_total}" \
+			"$(human "${search_total}")" "$(ratio "${search_total}" "${txn_total}")"
+		echo "================================================================"
+	} | tee -a "${RUN_LOG}"
+}
+
+if [[ "${PERF_INDEXED_RUN}" == "1" ]]; then
+	run_indexed_comparison
+fi
+
+# --- 9. Transactional backfill (guarded by PERF_BACKFILL_RUN, default on) -----
+# TRANSACTIONAL ONLY. Same shape as the indexed run's transactional half, but
+# the index is built AFTER the load: empty table -> INSERT the rows (no index
+# present, so no per-row index maintenance) -> CREATE INDEX, which scans the
+# committed rows and builds the index in one shot. No VACUUM (REFRESH_TABLE) --
+# a backfill build commits its own segments. Insert and index build are timed
+# separately so "load then build" can be compared against "index before load".
+run_transactional_backfill() {
+	printf '\n\n' | tee -a "${RUN_LOG}"
+	{
+		echo "###### TRANSACTIONAL BACKFILL (index built AFTER load) ######"
+		echo "index columns: \"${PERF_INDEX_NUMERIC_COL}\", \"${PERF_INDEX_TEXT_COL}\" (created after load)"
+	} | tee -a "${RUN_LOG}"
+
+	start_serened
+	create_view
+
+	local idx_cols="\"${PERF_INDEX_NUMERIC_COL}\", \"${PERF_INDEX_TEXT_COL}\""
+
+	local base_store base_search
+	base_store=$(store_used_bytes)
+	base_search=$(du_search_committed "${SEARCH_DIR}")
+
+	run_setup "backfill_create" "${BUILD_THREADS}" "
+CREATE TABLE hits_txn_bf WITH (storage = 'transactional') AS
+SELECT * FROM hits_view WHERE false;
+"
+	# insert into an UNINDEXED table -- no per-row index maintenance.
+	run_sql "backfill_insert" "${BUILD_THREADS}" "
+INSERT INTO hits_txn_bf SELECT * FROM hits_view;
+"
+	# CREATE INDEX over the populated table == the backfill build.
+	run_setup "backfill_index" "${BUILD_THREADS}" "
+CREATE INDEX hits_txn_bf_inv ON hits_txn_bf USING inverted (${idx_cols});
+"
+	local txn_cols txn_index
+	txn_cols=$(($(store_used_bytes) - base_store))
+	txn_index=$(($(du_search_committed "${SEARCH_DIR}") - base_search))
+
+	local b_ins b_idx b_total txn_total
+	b_ins="${TIMINGS[backfill_insert]:-}"
+	b_idx="${TIMINGS[backfill_index]:-}"
+	b_total=$(awk -v a="${b_ins}" -v b="${b_idx}" 'BEGIN{if(a!=""&&b!="")printf "%s", a+b}')
+	txn_total=$((txn_cols + txn_index))
+	{
+		echo
+		echo "==== TRANSACTIONAL BACKFILL SUMMARY (index after load) ===="
+		echo "index columns: ${idx_cols}"
+		echo
+		printf "%-26s %13s\n" "phase" "txn"
+		printf "%-26s %13s\n" "-------------------------" "-------------"
+		printf "%-26s %13s\n" "insert (no index)" "$(fmt_ms "${b_ins}")"
+		printf "%-26s %13s\n" "create index (backfill)" "$(fmt_ms "${b_idx}")"
+		printf "%-26s %13s\n" "total (insert+index)" "$(fmt_ms "${b_total}")"
+		echo
+		printf "%-30s %14s\n" "storage (committed, no WAL)" "bytes"
+		printf "%-30s %14s\n" "------------------------------" "--------------"
+		printf "%-30s %14d (%s)\n" "transactional columns (duckdb)" "${txn_cols}" "$(human "${txn_cols}")"
+		printf "%-30s %14d (%s)\n" "transactional index (search)" "${txn_index}" "$(human "${txn_index}")"
+		printf "%-30s %14d (%s)\n" "transactional TOTAL" "${txn_total}" "$(human "${txn_total}")"
+		echo "==========================================================="
+	} | tee -a "${RUN_LOG}"
+}
+
+if [[ "${PERF_BACKFILL_RUN}" == "1" ]]; then
+	run_transactional_backfill
+fi
 
 echo
 echo "log: ${RUN_LOG}"

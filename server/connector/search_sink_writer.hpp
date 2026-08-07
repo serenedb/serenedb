@@ -119,9 +119,8 @@ inline EntryInfoProvider AllStoredEntryInfoProvider() {
   return [](irs::field_id) { return AllStoredEntry(); };
 }
 
-// Providers over one immutable SearchTable index-config snapshot. Holding the
-// shared_ptr for the sink's lifetime keeps entry pointers valid even if a
-// concurrent CREATE/DROP INDEX swaps in a new config.
+// Holds one immutable index-config snapshot for the sink's lifetime so entry
+// pointers stay valid if a concurrent CREATE/DROP INDEX swaps the config.
 inline EntryInfoProvider MakeConfigEntryInfoProvider(
   std::shared_ptr<const catalog::InvertedIndex::Entries> config) {
   return [config = std::move(config)](
@@ -165,15 +164,10 @@ class SearchSinkInsertBaseImpl {
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
 
-  // Store one column's value verbatim in the columnstore (the search table's
-  // data), keyed by the column id -- once per column, shared by every index on
-  // it.
   void AppendValueColumn(irs::field_id field_id,
                          const duckdb::LogicalType& type,
                          const duckdb::Vector& vec, duckdb::idx_t count);
 
-  // The term field_ids to emit for a column (PK default + every index's own
-  // allocated field). Empty for a column no index term-indexes.
   std::span<const irs::field_id> TermFieldsForColumn(
     catalog::Column::Id col_id) const noexcept;
 
@@ -388,15 +382,11 @@ class DuckDBSearchSinkDeleteWriter final : public DuckDBSinkIndexWriter,
   void Abort() final { AbortImpl(); }
 };
 
-// Builds the search-table insert sink: merged tokenizer/entry providers, the
-// writer's field options, the term fan-out map, and every declared index's
-// indexed expressions (evaluated per chunk by WriteChunkToSearchSink).
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   std::shared_ptr<const catalog::Snapshot> snapshot,
   duckdb::ClientContext& context);
 
-// `table_id` + `context` drive per-index expression evaluation over the chunk.
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             duckdb::DataChunk& chunk,
                             std::span<const catalog::Column::Id> column_ids,

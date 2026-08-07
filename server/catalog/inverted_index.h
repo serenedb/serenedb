@@ -161,11 +161,8 @@ struct InvertedIndexEntryInfo {
   bool IsStored() const noexcept { return store_values || IsIVF(); }
 };
 
-// The writer/reader IVF descriptor for an entry with an ivf_config (nullopt
-// otherwise), keyed off `field_id` (its centroids/postings ids). Shared by the
-// read path (InvertedIndex::GetIvfInfo) and the search table's write-side
-// MergedFieldOptions so both derive identical params -- a mismatch would make
-// the built index and the query disagree.
+// The IVF descriptor for an entry with an ivf_config (nullopt otherwise), keyed
+// off `field_id` (its centroids/postings ids).
 std::optional<irs::IvfInfo> IvfInfoForEntry(
   irs::field_id field_id, const InvertedIndexEntryInfo& entry);
 
@@ -179,9 +176,7 @@ ColumnTokenizer DefaultColumnTokenizer();
 
 // Resolves the analyzer + features for one entry: builds the tokenizer from the
 // entry's text dictionary (default string tokenizer when absent) and carries
-// its synthetic tokenizer column. Shared by InvertedIndex::GetTokenizer and the
-// Search-engine SearchTable::GetTokenizer so both resolve analyzers
-// identically.
+// its synthetic tokenizer column.
 ColumnTokenizer TokenizerForEntry(
   const std::shared_ptr<const Snapshot>& snapshot,
   const InvertedIndexEntryInfo& entry);
@@ -237,9 +232,7 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
     BumpTickServerForEntryIds();
   }
 
-  // The allocated term field_id for a plain column: the per-index allocation
-  // for a Search-table index, else the column id itself (transactional
-  // identity).
+  // The allocated term field_id for a plain column.
   irs::field_id TermFieldForColumn(Column::Id column) const noexcept {
     if (auto it = _col_to_term_field.find(column);
         it != _col_to_term_field.end()) {
@@ -248,9 +241,8 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
     return static_cast<irs::field_id>(column);
   }
 
-  // Reverse of TermFieldForColumn: the plain column a Search-table allocated
-  // term field belongs to. Call only with such a field (asserted); used for
-  // display, e.g. a filter's field name in EXPLAIN.
+  // The plain column a Search-table allocated term field belongs to; call only
+  // with such a field (asserted).
   Column::Id ColumnForTermField(irs::field_id field_id) const noexcept {
     for (const auto& [column, term_field] : _col_to_term_field) {
       if (term_field == field_id) {
@@ -368,13 +360,10 @@ class InvertedIndex final : public Index, public irs::IndexFieldOptions {
 
   Entries _entries;
   std::vector<ExpressionKey> _expression_keys;
-  // Per-column allocated term field_id (Search-table indexes only; empty =>
-  // identity field_id == column id). Rebuilt from the persisted ColumnKey
-  // pairs.
+  // Per-column allocated term field_id (Search-table indexes only).
   containers::FlatHashMap<Column::Id, irs::field_id> _col_to_term_field;
-  // Selects the serialized layout: a Search-table index writes ColumnKey pairs
-  // (allocated term field_ids), a transactional index the legacy bare-column
-  // format. Set from the owning table's engine at construction.
+  // Selects the serialized layout: a Search-table index writes ColumnKey pairs,
+  // a transactional index the legacy bare-column format.
   bool _search_engine = false;
   // Bridge: field_id -> the owning expression key's payload (nullptr-absent for
   // column keys). Pointers are stable (into the immutable _expression_keys).

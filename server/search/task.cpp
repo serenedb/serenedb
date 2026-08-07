@@ -119,8 +119,8 @@ CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
 }
 
 CompactionOptions PinCompactionOptions(SearchTable& table) {
-  // Pin the merged encoding config for the whole merge so norm/compression is
-  // applied to merged segments too (and kept alive across the merge).
+  // Pin the merged encoding config so norm/compression applies to merged
+  // segments and stays alive across the merge.
   auto options = table.GetFieldOptions();
   const irs::IndexFieldOptions* ptr = options.get();
   return {.alive = true, .keepalive = std::move(options), .field_options = ptr};

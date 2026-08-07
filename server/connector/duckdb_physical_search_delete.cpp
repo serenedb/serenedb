@@ -89,9 +89,6 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
     gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
 
-  // The removal key is the row's synthetic generated PK, read from the single
-  // rowid slot the scan materialised and encoded with AppendSigned exactly as
-  // the insert wrote it.
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(num_rows);
 

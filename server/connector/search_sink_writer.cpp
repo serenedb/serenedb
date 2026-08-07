@@ -493,12 +493,9 @@ std::span<const irs::field_id> SearchSinkInsertBaseImpl::TermFieldsForColumn(
   return it->second;
 }
 
-// Emits term postings for one field and, only when the field's config entry
-// asks for it (store_values), stores the value inline. On a search table every
-// plain-column term field carries store_values=false -- the value is written
-// once by AppendValueColumn, so calling this per index term field just adds
-// postings. Indexed expressions keep store_values=true and store inline here
-// (they are synthetic, with no separate value column).
+// Emits term postings for one field; stores the value inline only when the
+// field's config entry has store_values. Plain-column term fields keep it off
+// so the value is not stored once per index; indexed expressions keep it on.
 void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
                                                const duckdb::LogicalType& type,
                                                const duckdb::Vector& vec,
@@ -825,9 +822,8 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   std::shared_ptr<const catalog::Snapshot> snapshot,
   duckdb::ClientContext& context) {
   auto config = shard.GetIndexConfig();
-  // Gather every declared index's indexed expressions. Each index keeps its own
-  // allocated field ids, so the union is collision-free; the write path
-  // evaluates them per chunk and emits each under its field.
+  // Each index keeps its own allocated field ids, so unioning every declared
+  // index's indexed expressions is collision-free.
   std::vector<IndexedExpression> indexed_exprs;
   for (const auto& index : snapshot->GetIndexesByRelation(shard.GetTableId())) {
     if (index->GetType() != catalog::ObjectType::InvertedIndex) {
@@ -839,8 +835,8 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
                          std::make_move_iterator(exprs.begin()),
                          std::make_move_iterator(exprs.end()));
   }
-  // Hand the writer the merged encoding config so norm-featured fields flush
-  // (else the writer asserts) and per-index compression/row-group is honored.
+  // Norm-featured fields must get the merged encoding config or the writer
+  // asserts.
   trx.SetFieldOptions(shard.GetFieldOptions());
   return std::make_unique<SearchSinkInsertBaseImpl>(
     trx, MakeConfigTokenizerProvider(config, snapshot),
@@ -871,9 +867,8 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
 
   sink.InitImpl(num_rows, PkChunk{.keys = key_views});
   // Each column's value is stored once (keyed by column id); its term postings
-  // are emitted once per index that term-indexes it -- the PK's default term at
-  // the column id plus every user index's own allocated field -- so several
-  // indexes on one column coexist with independent analyzers.
+  // are emitted once per index that term-indexes it, so several indexes on one
+  // column coexist with independent analyzers.
   auto write_column = [&](catalog::Column::Id col_id,
                           const duckdb::LogicalType& type,
                           const duckdb::Vector& vec) {
@@ -893,10 +888,6 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   }
   write_column(catalog::Column::kGeneratedPKId, duckdb::LogicalType::BIGINT,
                gen_pk);
-  // Indexed expressions: evaluate each over the chunk and emit it under its own
-  // allocated field (single-field -- value + terms + any IVF live together, no
-  // fan-out). `column_ids` is the chunk slot -> column id map the expression's
-  // column refs resolve against.
   for (const auto& indexed_expr : sink.IndexedExpressionImpl()) {
     SDB_ASSERT(indexed_expr.normalized_expr);
     auto result =

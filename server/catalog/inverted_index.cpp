@@ -127,9 +127,8 @@ std::shared_ptr<InvertedIndex> UnpackEntries(
                                 .numeric_field_id = cfg.numeric_field_id,
                               });
   }
-  // Rebuild the base column list plus the per-column term-field map. The Search
-  // layout carries a ColumnKey per column (each with its allocated term
-  // field_id); the legacy layout is bare column ids (identity => empty map).
+  // The Search layout carries a ColumnKey per column (allocated term field_id);
+  // the legacy layout is bare column ids (empty map).
   constexpr bool kSearch = std::is_same_v<ColumnEntry, ColumnKey>;
   std::vector<Column::Id> columns;
   containers::FlatHashMap<Column::Id, irs::field_id> col_to_term_field;
@@ -245,8 +244,6 @@ const ExpressionData* InvertedIndex::ExpressionByFieldId(
 
 const InvertedIndexEntryInfo* InvertedIndex::FindColumnInfo(
   catalog::Column::Id column_id) const noexcept {
-  // The term field is the column's allocated id (Search-table) or the column id
-  // itself (transactional identity).
   const auto field_id = TermFieldForColumn(column_id);
   // An expression key's allocated field_id never equals a plain column's term
   // field, so a hit here means `field_id` is genuinely a plain-column key.

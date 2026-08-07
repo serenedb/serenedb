@@ -2228,12 +2228,7 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
                                   index->GetId(), bytes);
       }
       auto table = clone->template GetObject<Table>(index->GetRelationId());
-      // An index relation is always a Table or a PgSqlView
-      // (ResolveIndexRelation enforces this before every CreateIndexImpl), so a
-      // null `table` here means a view-backed index -- never a Search table,
-      // which is a Table with engine Search. Assert that so the "not search"
-      // branch below can't silently misclassify a Search table if that
-      // invariant ever changes.
+      // A null table means a view-backed index, never a Search table.
       const bool search_backed =
         table && table->GetEngine() == TableEngine::Search;
       SDB_ASSERT(table || [&] {
@@ -2242,10 +2237,8 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
       }());
       // The inverted index's mutable iresearch storage hangs off the metadata
       // object itself, so the CREATE INDEX build (GetGlobalSinkState) reaches
-      // it via the index's GetData(). A transactional-table or view-backed
-      // index keeps its own storage, bound here before the build runs. A
-      // Search-table index shares the table's own iresearch store, so it stays
-      // storage-less (GetData() == null).
+      // it via the index's GetData(). A Search-table index instead shares the
+      // table's own store, so it stays storage-less (GetData() == null).
       if (index->GetType() == ObjectType::InvertedIndex && !search_backed) {
         const auto& inverted = basics::downCast<const InvertedIndex>(*index);
         inverted.SetData(search::InvertedIndexStorage::Create(
@@ -2267,13 +2260,8 @@ void Catalog::CreateIndexImpl(std::string_view relation_schema,
           }
         }
       }
-      // A Search-table index term-indexes into the table's own store: fold its
-      // columns into the shard's merged config so DML term-indexes them and the
-      // table scan pushes their predicates down. Last so an earlier throw
-      // (rolled back below) can't leave the config referencing a dropped index.
+      // A Search-table index folds its columns into the shard's merged config.
       if (index->GetType() == ObjectType::InvertedIndex && search_backed) {
-        // search_backed implies the shard is attached (Table::GetData's own
-        // invariant: _data is set iff engine is Search).
         table->GetData()->MergeIndexConfig(
           basics::downCast<const InvertedIndex>(*index));
       }
@@ -2560,8 +2548,6 @@ bool Catalog::CreateInvertedIndex(
     }
     c.catalog_column = &*it;
   }
-  // A Search-table index allocates a distinct term field per column (shared
-  // store); a transactional index keeps field_id == column id.
   const bool search_engine =
     rel->GetType() == ObjectType::Table &&
     basics::downCast<const Table>(*rel).GetEngine() == TableEngine::Search;
@@ -4732,15 +4718,11 @@ void Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
     clone->UnregisterObject(index, schema_id);
     DropTask::Schedule(std::move(task)).Detach();
 
-    // A Search-table index shares the table's store, so dropping it can't just
-    // remove a directory -- rebuild the shard's merged config from the indexes
-    // that remain (`clone` no longer has this one) so its columns stop pushing
-    // down unless still covered by the PK or another index.
+    // Dropping a Search-table index rebuilds the shard's merged config from the
+    // indexes that remain in `clone`, since it has no directory of its own.
     if (index->GetType() == ObjectType::InvertedIndex) {
       if (auto table = clone->GetObject<Table>(index->GetRelationId());
           table && table->GetEngine() == TableEngine::Search) {
-        // A search table always has its shard attached (Table::GetData
-        // invariant), so no null-shard guard is needed here.
         table->GetData()->RebuildIndexConfig(*clone);
       }
     }
@@ -5511,8 +5493,6 @@ void OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
 void OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
                             ObjectId table_id, std::shared_ptr<Table> table) {
   const auto engine = table->GetEngine();
-  // The shard (opened by RegisterSearchTable) is needed to fold each declared
-  // inverted index into its merged config as the index rows are read below.
   auto* shard =
     engine == TableEngine::Search ? table->GetData().get() : nullptr;
   _catalog.RegisterTable(db_id, schema_id, std::move(table));
@@ -5554,9 +5534,8 @@ void OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
   SDB_ASSERT(counter == 0);
 #endif
 
-  // A Search-table index is storage-less (it shares the table's own iresearch
-  // store): instead of reopening a directory, fold its columns into the shard's
-  // merged term-index config so replay + queries see them right after boot.
+  // A Search-table index folds its columns into the shard's merged config
+  // instead of opening its own storage.
   if (entry_type == ObjectType::InvertedIndex) {
     if (engine == TableEngine::Search) {
       SDB_ASSERT(shard);

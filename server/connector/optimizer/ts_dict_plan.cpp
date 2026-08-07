@@ -291,9 +291,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
-  // Read the dictionary from the index's own term field (the allocated field
-  // for a Search-table plain column, the column id itself for a transactional
-  // one), but name the output column from the column id.
   const auto read_field =
     found.bind_data->inverted_index->TermFieldForColumn(col_id);
   return MakeTsDictAggregate(root, context, found, read_field,

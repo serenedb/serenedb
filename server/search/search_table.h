@@ -78,50 +78,41 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
 
   // The merged per-field index config: PRIMARY KEY columns (term-indexed +
   // still stored, so PK predicates push down) unioned with every declared
-  // inverted index's entries (analyzers/features carried verbatim). The
-  // Search-engine analogue of InvertedIndex::Entries, consumed by the write
-  // sink + the read-side pushdown. Returned by shared_ptr so a caller can hold
-  // one immutable snapshot across a whole read/write op while
-  // RebuildIndexConfig swaps in a new one under _table_lock (entry pointers
-  // stay valid).
+  // inverted index's entries. Returned by shared_ptr so a caller can hold one
+  // immutable snapshot across a whole op while the config is RCU-swapped.
   std::shared_ptr<const catalog::InvertedIndex::Entries> GetIndexConfig()
     const noexcept;
 
-  // Per-column list of term field_ids the write path must emit under. A search
+  // Per-column list of term field_ids the write path emits under. A search
   // table stores each column value once (keyed by column id) but term-indexes
-  // it once per declared index (each index's own allocated field_id) plus the
-  // PK's default term at the column id, so several indexes on one column
-  // coexist with independent analyzers. Swapped together with the merged config
-  // under _table_lock; hold the shared_ptr across a whole write op.
+  // it once per declared index (each index's own field_id) plus the PK's term
+  // at the column id, so several indexes on one column keep independent
+  // analyzers.
   using TermsByColumn =
     containers::FlatHashMap<catalog::Column::Id, std::vector<irs::field_id>>;
   std::shared_ptr<const TermsByColumn> GetTermsByColumn() const noexcept;
 
   // The per-field iresearch encoding config (norms/compression/row-group) the
-  // writer asks for at flush + merge, resolved against the merged config. The
-  // Search-engine analogue of handing the writer a transactional index's own
-  // IndexFieldOptions -- without it a norm-featured field trips a writer
-  // assert. Swapped together with the merged config; cached so it stays
-  // pointer-stable within a config generation (segment-reuse gate is pointer
-  // identity).
+  // writer asks for at flush + merge, resolved against the merged config;
+  // without it a norm-featured field trips a writer assert. Must stay
+  // pointer-stable within a config generation -- the segment-reuse gate is
+  // pointer identity.
   std::shared_ptr<const irs::IndexFieldOptions> GetFieldOptions()
     const noexcept;
 
   // Resolve the analyzer/features for `field_id` from the current config; PK
-  // and keyword columns fall back to the default string tokenizer. Mirrors
-  // InvertedIndex::GetTokenizer via the shared catalog::TokenizerForEntry.
+  // and keyword columns fall back to the default string tokenizer.
   catalog::ColumnTokenizer GetTokenizer(
     const std::shared_ptr<const catalog::Snapshot>& snapshot,
     irs::field_id field_id) const;
 
-  // Fold one inverted index's entries into the merged config. Incremental (no
-  // snapshot needed), so it drives the paths where the new index is in hand:
-  // the per-index catalog bootstrap read and CREATE INDEX commit.
+  // Fold one inverted index's entries into the merged config, incrementally
+  // (no snapshot needed).
   void MergeIndexConfig(const catalog::InvertedIndex& index);
 
   // Rebuild the merged config from scratch: PK columns + every inverted index
-  // the relation still has in `snapshot`. Used by DROP INDEX, where an index's
-  // columns must drop out but may still be covered by the PK or another index.
+  // the relation still has in `snapshot`. Needed for DROP INDEX -- a dropped
+  // index's columns may still be covered by the PK or another index.
   void RebuildIndexConfig(const catalog::Snapshot& snapshot);
 
   auto& GetTableLock() noexcept { return _table_lock; }
@@ -244,12 +235,10 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   std::atomic<int64_t> _num_rows{0};
   mutable std::shared_mutex _table_lock;
   // Merged per-field index config (PK + declared inverted indexes), RCU-swapped
-  // by RebuildIndexConfig under _table_lock so readers holding an old snapshot
-  // keep valid entry pointers. Never null after construction.
+  // under _table_lock so readers holding an old snapshot keep valid entry
+  // pointers. Never null after construction.
   std::shared_ptr<const catalog::InvertedIndex::Entries> _entries;
-  // Column -> its term field_ids, RCU-swapped together with _entries. Drives
-  // the write-side fan-out (value stored once per column, term emitted per
-  // field).
+  // Column -> its term field_ids, RCU-swapped together with _entries.
   std::shared_ptr<const TermsByColumn> _terms_by_column;
   // Writer encoding config over the merged _entries, RCU-swapped with them.
   std::shared_ptr<const irs::IndexFieldOptions> _field_options;

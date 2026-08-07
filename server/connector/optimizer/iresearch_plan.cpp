@@ -350,10 +350,6 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (type.id() == duckdb::LogicalTypeId::INVALID) {
       return std::nullopt;
     }
-    // Query the index's own term field: the column id itself for a
-    // transactional index (identity), a distinct allocated id for a
-    // Search-table index (so the filter targets exactly the fields this index
-    // wrote, under its analyzer).
     return make_info(index.TermFieldForColumn(col_id), col_id, info,
                      std::move(type), true);
   };
@@ -717,10 +713,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
   const bool is_text = col_info->text_dictionary.isSet();
   const bool offs_stored =
     col_info->features.HasFeatures(irs::IndexFeatures::Offs);
-  // The stored offsets live under the index's own term field (the allocated
-  // field for a Search-table plain column), which is what the scan's term
-  // query iterates and the offsets collector matches on. The column id is kept
-  // only for the display name.
   const auto read_field = static_cast<catalog::Column::Id>(
     found.bind_data->inverted_index->TermFieldForColumn(target_col_id));
 
@@ -1086,9 +1078,8 @@ bool TryClaimSearchTableFilter(
   const search::SearchTable& shard,
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
   duckdb::ClientContext& context) {
-  // Hold one immutable config snapshot for the whole claim so the entry
-  // pointers handed to MakeSearchColumnInfo stay valid if DDL swaps the config
-  // mid-plan.
+  // Hold one immutable config snapshot for the whole claim so entry pointers
+  // stay valid if DDL swaps the config mid-plan.
   auto config = shard.GetIndexConfig();
   containers::FlatHashSet<irs::field_id> analyzed_fields;
   containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;

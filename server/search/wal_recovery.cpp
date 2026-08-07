@@ -106,9 +106,8 @@ void InitInvertedIndexes() {
           basics::downCast<const catalog::InvertedIndex>(*idx).GetData();
         if (!inv_storage) {
           // The only storage-less inverted index is one on a Search table: its
-          // terms live in the table's own store (opened by
-          // RegisterSearchTable), so there is no separate delta to bind or
-          // recover here.
+          // terms live in the table's own store, so there is no separate delta
+          // to bind or recover here.
           SDB_ASSERT([&] {
             const auto relation = snapshot->GetObject(idx->GetRelationId());
             return relation &&

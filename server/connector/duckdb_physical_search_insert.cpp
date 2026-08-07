@@ -58,7 +58,6 @@ namespace {
 struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
-  // DDL snapshot the insert runs against; resolves index-column analyzers.
   std::shared_ptr<const catalog::Snapshot> snapshot;
   query::Transaction* sdb_txn = nullptr;
   std::vector<catalog::Column::Id> column_ids;

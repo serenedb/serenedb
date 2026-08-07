@@ -229,8 +229,8 @@ ObjectId NextId();
 
 ObjectId NextNIds(uint64_t n);
 
-// Opaque-enum declaration (fixed underlying type => complete type usable as a
-// member) avoids pulling table_options.h, which itself includes this header.
+// Opaque-enum declaration (fixed underlying type => usable as a member) avoids
+// an include cycle with table_options.h.
 enum class TableEngine : uint8_t;
 
 struct ReadContext {
@@ -238,9 +238,8 @@ struct ReadContext {
   ObjectId database_id;
   ObjectId schema_id;
   ObjectId relation_id;
-  // The owning relation's engine. Value-initialized (== TableEngine{0} ==
-  // Transactional) at the call sites that omit it; only inverted-index reads
-  // set it, to pick the transactional vs Search-table serialized layout.
+  // The owning relation's engine; omitting it in aggregate init yields
+  // TableEngine{0} == Transactional. Selects the serialized layout on reads.
   TableEngine engine;
 };
 

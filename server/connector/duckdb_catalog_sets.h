@@ -139,7 +139,7 @@ void RequireIndexOwner(const catalog::AccessContext& ax,
 // set is offered, including the ones with no definition of their own.
 void VisitCatalogSetEntries(
   duckdb::ClientContext& context, ObjectId database, duckdb::CatalogType set,
-  absl::FunctionRef<void(const catalog::CreateSchemaInfo&,
+  absl::FunctionRef<void(const duckdb::CreateSchemaInfo&,
                          duckdb::CatalogEntry&)>
     visitor);
 
@@ -147,7 +147,7 @@ void VisitCatalogSetEntries(
 // pg_class, pg_attribute, pg_attrdef, pg_constraint and pg_index all want
 // exactly this subset of TABLE_ENTRY.
 void VisitTableEntries(duckdb::ClientContext& context, ObjectId database,
-                       absl::FunctionRef<void(const catalog::CreateSchemaInfo&,
+                       absl::FunctionRef<void(const duckdb::CreateSchemaInfo&,
                                               const SereneDBTableEntry&)>
                          visitor);
 
@@ -286,7 +286,7 @@ void BumpDatabaseGeneration() noexcept;
 // reads what is committed; a transaction that has written a schema bypasses
 // the cache and reads its own version out of the set.
 void VisitSchemas(duckdb::ClientContext* context, ObjectId database,
-                  absl::FunctionRef<void(const catalog::CreateSchemaInfo&,
+                  absl::FunctionRef<void(const duckdb::CreateSchemaInfo&,
                                          const catalog::Permissions&)>
                     visitor);
 catalog::SchemaRef FindSchema(duckdb::ClientContext* context, ObjectId database,
@@ -306,7 +306,7 @@ ObjectId SchemaDatabaseId(duckdb::ClientContext* context, ObjectId schema_id);
 // A schema entry is created and dropped, never replaced: a write that finds
 // the entry already there sets its definition in place.
 void PutSchema(duckdb::ClientContext* context, std::string_view old_name,
-               std::shared_ptr<const catalog::CreateSchemaInfo> schema,
+               std::shared_ptr<const duckdb::CreateSchemaInfo> schema,
                catalog::Permissions perm);
 void DropSchemaEntry(duckdb::ClientContext* context, ObjectId database,
                      std::string_view name);

@@ -71,7 +71,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexScanEntry(
 // it.
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeSequenceEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-  const catalog::CreateSequenceInfo& sequence,
+  const duckdb::CreateSequenceInfo& sequence,
   std::shared_ptr<catalog::SequenceCounter> counter, catalog::Permissions perm);
 
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeViewEntry(

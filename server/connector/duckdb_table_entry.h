@@ -175,12 +175,12 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
   // gives a column no owner of its own, so the entry's own owner answers for
   // all of them.
   const catalog::CreateTableInfo::ColumnAcls& GetColumnAcls() const noexcept {
-    return _column_acls;
+    return _sdb_table->GetColumnAcls();
   }
   // A view into this version, never a copy: the pg_catalog projections build an
   // AclView over what they get back and read it after the walk.
   catalog::AclView GetColumnAcl(ObjectId column_id) const noexcept {
-    return catalog::ColumnAclOf(&_column_acls, column_id);
+    return _sdb_table->GetColumnAcl(column_id);
   }
 
   // Which engine owns the rows, and the background-maintenance intervals that
@@ -244,10 +244,6 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
     duckdb::ClientContext& context);
 
   catalog::TableInfoRef _sdb_table;
-  // Copied off the definition this version was built from: duckdb's entry has
-  // no slot for a column-level grant, and the pg_catalog projections read them
-  // off the entry they are already walking.
-  catalog::CreateTableInfo::ColumnAcls _column_acls;
   std::shared_ptr<catalog::TableRuntime> _runtime;
   duckdb::vector<duckdb::LogicalIndex> _pk_columns;
   std::vector<size_t> _indexed_col_indices;

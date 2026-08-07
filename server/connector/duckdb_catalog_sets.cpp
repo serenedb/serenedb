@@ -234,14 +234,15 @@ SchemaAt OpenSchema(duckdb::ClientContext* context, ObjectId schema_id,
   if (!schema) {
     return at;
   }
-  at.catalog = DatabaseCatalogOf(context, schema->GetParentId());
+  at.catalog = DatabaseCatalogOf(context, catalog::ParentIdOf(*schema));
   if (!at.catalog) {
     return at;
   }
   at.transaction = context != nullptr
                      ? at.catalog->GetCatalogTransaction(*context)
                      : at.catalog->CommittedRead();
-  at.schema = at.catalog->TryGetSchemaEntry(*at.transaction, schema->GetName());
+  at.schema = at.catalog->TryGetSchemaEntry(*at.transaction,
+                                            catalog::SchemaNameOf(*schema));
   if (at.schema && for_write && context != nullptr) {
     duckdb::MetaTransaction::Get(*context).ModifyDatabase(
       at.catalog->GetAttached(), duckdb::DatabaseModificationType::ALTER_TABLE);
@@ -1118,7 +1119,7 @@ catalog::SchemaRef FindSchemaIn(duckdb::ClientContext* context,
                                 catalog::Permissions* perm) {
   catalog::SchemaRef found;
   ScanSchemasOf(context, database, [&](catalog::HeldSchema held) {
-    if (held.first->GetId() == id) {
+    if (catalog::IdOf(*held.first) == id) {
       if (perm != nullptr) {
         *perm = held.second;
       }
@@ -1146,10 +1147,10 @@ std::shared_ptr<const SchemaCache> LoadSchemaCache() {
   // The name view points into the info the map holds, so it stays valid for as
   // long as the cache does.
   const auto add = [&](catalog::HeldSchema ref) {
-    fresh->by_name.emplace(
-      std::pair{ref.first->GetParentId(), ref.first->GetName()},
-      ref.first->GetId());
-    fresh->by_id.emplace(ref.first->GetId(), std::move(ref));
+    fresh->by_name.emplace(std::pair{catalog::ParentIdOf(*ref.first),
+                                     catalog::SchemaNameOf(*ref.first)},
+                           catalog::IdOf(*ref.first));
+    fresh->by_id.emplace(catalog::IdOf(*ref.first), std::move(ref));
   };
   std::vector<ObjectId> databases;
   VisitDatabases(
@@ -1183,7 +1184,7 @@ std::vector<catalog::HeldSchema> DatabaseSchemas(duckdb::ClientContext* context,
 }
 
 void VisitSchemas(duckdb::ClientContext* context, ObjectId database,
-                  absl::FunctionRef<void(const catalog::CreateSchemaInfo&,
+                  absl::FunctionRef<void(const duckdb::CreateSchemaInfo&,
                                          const catalog::Permissions&)>
                     visitor) {
   if (ReadsOwnSchemas(context)) {
@@ -1193,7 +1194,7 @@ void VisitSchemas(duckdb::ClientContext* context, ObjectId database,
     return;
   }
   for (const auto& [id, held] : LoadSchemaCache()->by_id) {
-    if (held.first->GetParentId() == database) {
+    if (catalog::ParentIdOf(*held.first) == database) {
       visitor(*held.first, held.second);
     }
   }
@@ -1205,7 +1206,7 @@ catalog::SchemaRef FindSchema(duckdb::ClientContext* context, ObjectId database,
   if (ReadsOwnSchemas(context)) {
     catalog::SchemaRef found;
     ScanSchemasOf(context, database, [&](catalog::HeldSchema held) {
-      if (held.first->GetName() == name) {
+      if (catalog::SchemaNameOf(*held.first) == name) {
         if (perm != nullptr) {
           *perm = held.second;
         }
@@ -1239,8 +1240,8 @@ catalog::SchemaRef FindSchema(duckdb::ClientContext* context, ObjectId id,
     auto cache = LoadSchemaCache();
     const auto placed = cache->by_id.find(id);
     if (placed != cache->by_id.end()) {
-      return FindSchemaIn(context, placed->second.first->GetParentId(), id,
-                          perm);
+      return FindSchemaIn(context, catalog::ParentIdOf(*placed->second.first),
+                          id, perm);
     }
     std::vector<ObjectId> databases;
     VisitDatabases(
@@ -1266,20 +1267,20 @@ catalog::SchemaRef FindSchema(duckdb::ClientContext* context, ObjectId id,
 ObjectId FindSchemaId(duckdb::ClientContext* context, ObjectId database,
                       std::string_view name) {
   auto schema = FindSchema(context, database, name);
-  return schema ? schema->GetId() : ObjectId{};
+  return schema ? catalog::IdOf(*schema) : ObjectId{};
 }
 
 ObjectId SchemaDatabaseId(duckdb::ClientContext* context, ObjectId schema_id) {
   auto schema = FindSchema(context, schema_id);
-  return schema ? schema->GetParentId() : ObjectId{};
+  return schema ? catalog::ParentIdOf(*schema) : ObjectId{};
 }
 
 void PutSchema(duckdb::ClientContext* context, std::string_view old_name,
-               std::shared_ptr<const catalog::CreateSchemaInfo> schema,
+               std::shared_ptr<const duckdb::CreateSchemaInfo> schema,
                catalog::Permissions perm) try {
-  const auto database_id = schema->GetDatabaseId();
+  const auto database_id = catalog::ParentIdOf(*schema);
   RecordPut(context, old_name, database_id, duckdb::CatalogType::SCHEMA_ENTRY,
-            schema->GetId(), schema, perm);
+            catalog::IdOf(*schema), schema, perm);
   auto catalog = DatabaseCatalogOf(context, database_id);
   if (!catalog) {
     // The database went with a DROP and its catalog with it: there is nothing
@@ -1294,8 +1295,8 @@ void PutSchema(duckdb::ClientContext* context, std::string_view old_name,
       catalog->GetAttached(), duckdb::DatabaseModificationType::ALTER_TABLE);
     GetSereneDBContext(*context).wrote_schemas = true;
   }
-  const auto name = schema->GetName();
-  const auto entry_id = schema->GetId();
+  const auto name = catalog::SchemaNameOf(*schema);
+  const auto entry_id = catalog::IdOf(*schema);
   // Stated separately, as every schema's are: the entry is mutated in place
   // rather than versioned, so no create call carries them.
   const auto deps = EntryDependencies(*schema, perm);
@@ -2027,7 +2028,8 @@ std::string EntryNameOfKind(duckdb::ClientContext* context,
       return DatabaseName(context, id);
     case SCHEMA_ENTRY: {
       auto schema = FindSchema(context, id);
-      return schema ? std::string{schema->GetName()} : std::string{};
+      return schema ? std::string{catalog::SchemaNameOf(*schema)}
+                    : std::string{};
     }
     case FOREIGN_SERVER_ENTRY: {
       auto server = FindForeignServer(context, parent_id, id);
@@ -2093,9 +2095,9 @@ namespace {
 // advances the one both share.
 void ReplaySequenceRecord(
   ObjectId schema_id, ObjectId id, std::string_view old_name, bool replace,
-  std::shared_ptr<const catalog::CreateSequenceInfo> info,
+  std::shared_ptr<const duckdb::CreateSequenceInfo> info,
   const catalog::Permissions& perm) {
-  const auto& options = info->Options();
+  const auto& options = catalog::SequenceOptionsOf(*info);
   auto placed = PutEntry(nullptr, old_name, std::move(info), perm);
   // A rewrite inherited its predecessor's counter when the entry was built; a
   // sequence the log is meeting for the first time gets one seeded from the
@@ -2140,12 +2142,12 @@ void ReplayEntryRecord(const catalog::wal::PutEntry& e) {
       return;
     }
     case SCHEMA_ENTRY:
-      PutSchema(nullptr, old_name, RecordInfo<catalog::CreateSchemaInfo>(e),
+      PutSchema(nullptr, old_name, RecordInfo<duckdb::CreateSchemaInfo>(e),
                 e.perm);
       return;
     case SEQUENCE_ENTRY:
       ReplaySequenceRecord(e.parent_id, e.id, old_name, replace,
-                           RecordInfo<catalog::CreateSequenceInfo>(e), e.perm);
+                           RecordInfo<duckdb::CreateSequenceInfo>(e), e.perm);
       return;
     case TOKENIZER_ENTRY:
     case TYPE_ENTRY:
@@ -2187,7 +2189,7 @@ void ReplayTableRecord(const catalog::wal::PutTable& e) {
 void RefreshForeignKeyTargets(duckdb::ClientContext* context,
                               const catalog::CreateTableInfo& table) {
   const auto schema = FindSchema(context, table.GetParentId());
-  const auto database_id = schema ? schema->GetParentId() : ObjectId{};
+  const auto database_id = schema ? catalog::ParentIdOf(*schema) : ObjectId{};
   for (const auto& constraint : table.constraints) {
     if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
       continue;
@@ -2260,7 +2262,7 @@ void VisitRelationIndexEntries(
 
 void VisitCatalogSetEntries(
   duckdb::ClientContext& context, ObjectId database, duckdb::CatalogType set,
-  absl::FunctionRef<void(const catalog::CreateSchemaInfo&,
+  absl::FunctionRef<void(const duckdb::CreateSchemaInfo&,
                          duckdb::CatalogEntry&)>
     visitor) {
   auto duck_catalog = DatabaseCatalogOf(&context, database);
@@ -2280,12 +2282,12 @@ void VisitCatalogSetEntries(
 }
 
 void VisitTableEntries(duckdb::ClientContext& context, ObjectId database,
-                       absl::FunctionRef<void(const catalog::CreateSchemaInfo&,
+                       absl::FunctionRef<void(const duckdb::CreateSchemaInfo&,
                                               const SereneDBTableEntry&)>
                          visitor) {
   VisitCatalogSetEntries(
     context, database, duckdb::CatalogType::TABLE_ENTRY,
-    [&](const catalog::CreateSchemaInfo& schema,
+    [&](const duckdb::CreateSchemaInfo& schema,
         duckdb::CatalogEntry& object_entry) {
       // Views and the index-name-as-table wrappers share this set; neither is
       // a SereneDBTableEntry, so the cast is the filter.

@@ -660,7 +660,7 @@ void SereneDBSchemaEntry::SetDefinition(catalog::SchemaRef schema,
   // pg_namespace.oid and duckdb_schemas().oid are one number. The owner and
   // ACL do not go on the entry with it: this entry is mutated in place, so
   // they are published atomically beside the definition instead.
-  catalog::AdoptEntryIdentity(*this, schema->GetId());
+  catalog::AdoptEntryIdentity(*this, catalog::IdOf(*schema));
   std::atomic_store(&_definition,
                     std::make_shared<const catalog::HeldSchema>(
                       catalog::HeldSchema{std::move(schema), std::move(perm)}));
@@ -807,20 +807,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     }
   }
 
-  auto built = std::make_shared<catalog::CreateTableInfo>();
-  built->SetTableName(table_info.GetTableName());
+  // The definition duckdb bound, taken over rather than copied across: ours is
+  // that info with the per-column grants added, so what the binder produced is
+  // what the catalog keeps. Only the identities and the serenedb-specific
+  // rewrites below are added to it.
+  auto built = catalog::CreateTableInfo::Adopt(table_info);
   built->SetSchema(name);
-  built->comment = table_info.comment;
 
   // Consume the SereneDB-specific `storage` WITH option (selects the table
   // engine) + any Search maintenance-interval options before validating that no
   // unknown options remain.
-  ApplyStorageKind(context, *built, table_info.options);
+  ApplyStorageKind(context, *built, built->options);
 
-  if (!table_info.options.empty()) {
+  if (!built->options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("unrecognized parameter \"",
-                            table_info.options.begin()->first, "\""));
+                            built->options.begin()->first, "\""));
   }
 
   // PG-style constraint name generator with dedup against everything named so
@@ -887,16 +889,19 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // SERIAL expands to base int + nextval default + NOT NULL. The sequence name
   // and nextval default are resolved by the catalog under its mutex.
   std::vector<catalog::SerialSequence> sequences;
-  for (auto& col : table_info.columns.Logical()) {
-    auto column = duckdb::ColumnDefinition(col.Name(), col.Type());
+  // A generated column duckdb bound as VIRTUAL becomes STORED, which moves it
+  // into the row layout -- so the list has to be laid out again afterwards.
+  bool relayout = false;
+  const auto column_count = built->columns.LogicalColumnCount();
+  for (duckdb::idx_t index = 0; index < column_count; ++index) {
+    auto& column = built->columns.GetColumnMutable(duckdb::LogicalIndex{index});
     const auto column_id = catalog::NextId();
     column.SetCatalogOid(column_id.id());
-    column.SetCompressionType(col.CompressionType());
-    column.SetComment(col.Comment());
 
-    const bool is_smallserial = pg::IsSmallserial(col.Type());
-    const bool is_serial = pg::IsSerial(col.Type());
-    const bool is_bigserial = pg::IsBigserial(col.Type());
+    const auto type_id = column.Type().id();
+    const bool is_smallserial = pg::IsSmallserial(column.Type());
+    const bool is_serial = pg::IsSerial(column.Type());
+    const bool is_bigserial = pg::IsBigserial(column.Type());
     if (is_smallserial || is_serial || is_bigserial) {
       catalog::SequenceOptions seq_opts;
       if (is_smallserial) {
@@ -906,19 +911,28 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
       } else {
         seq_opts.max_value = std::numeric_limits<int64_t>::max();
       }
-      column.SetType(duckdb::LogicalType{col.Type().id()});
+      column.SetType(duckdb::LogicalType{type_id});
+      // The nextval the sequence feeds is the column's default; anything the
+      // statement wrote alongside SERIAL is not.
+      if (!column.Generated() && column.HasDefaultValue()) {
+        column.SetDefaultValue(nullptr);
+      }
       sequences.push_back({column_id, seq_opts});
-      built->columns.AddColumn(std::move(column));
-      append_not_null(built->columns.LogicalColumnCount() - 1);
+      append_not_null(index);
       continue;
     }
-    if (col.Generated()) {
-      column.SetGeneratedExpression(col.GeneratedExpression().Copy(),
+    if (column.Category() == duckdb::TableColumnType::GENERATED_VIRTUAL) {
+      column.SetGeneratedExpression(column.GeneratedExpression().Copy(),
                                     duckdb::TableColumnType::GENERATED_STORED);
-    } else if (col.HasDefaultValue()) {
-      column.SetDefaultValue(col.DefaultValue().Copy());
+      relayout = true;
     }
-    built->columns.AddColumn(std::move(column));
+  }
+  if (relayout) {
+    duckdb::ColumnList laid_out{built->columns.IsCaseSensitive()};
+    for (const auto& column : built->columns.Logical()) {
+      laid_out.AddColumn(column.Copy());
+    }
+    built->columns = std::move(laid_out);
   }
 
   const auto require_column = [&](const duckdb::Identifier& column_name,
@@ -955,7 +969,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     pk_columns.push_back(column->Name());
   };
 
-  for (auto& constraint : table_info.constraints) {
+  // The bound constraints, taken off the adopted info: what goes back on is
+  // the same set, named and ordered the way the rows are verified.
+  auto bound_constraints = std::move(built->constraints);
+  built->constraints.clear();
+  for (auto& constraint : bound_constraints) {
     switch (constraint->type) {
       case duckdb::ConstraintType::UNIQUE: {
         auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
@@ -1025,12 +1043,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         duckdb::vector<duckdb::Identifier> pk_names;
         std::vector<idx_t> host_pk_column_ids;
         ObjectId referenced_id;
-        const bool self_reference =
-          fk.info.table == table_info.GetTableName().GetIdentifierName();
+        const bool self_reference = fk.info.table == table_name;
         if (self_reference) {
           out_info.type = duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE;
           out_info.schema = name;
-          out_info.table = table_info.GetTableName();
+          out_info.table = built->GetTableName();
           for (const auto& key : fk.pk_columns) {
             const auto* column = require_column(key, "foreign key");
             pk_names.push_back(column->Name());
@@ -1482,8 +1499,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   const catalog::Permissions perm{role};
   // One definition, handed to the record and to the entry: nothing is derived
   // at append time.
-  auto definition = std::make_shared<const catalog::CreateSequenceInfo>(
-    id, schema_id, std::move(options));
+  auto definition =
+    catalog::MakeSequenceInfo(id, schema_id, std::move(options));
   // The counter's seed rides the same frame as the definition, so a sequence
   // is never durable without the value it starts from.
   // Both under one scope: the record above is this write's own, and the entry
@@ -1495,7 +1512,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   // there was no predecessor for the build to inherit one from.
   if (const auto* seq =
         dynamic_cast<const SereneDBSequenceEntry*>(placed.get())) {
-    seq->AdoptCounter(catalog::NewCounter(id, definition->Options()));
+    seq->AdoptCounter(
+      catalog::NewCounter(id, catalog::SequenceOptionsOf(*definition)));
   }
   return nullptr;
 }

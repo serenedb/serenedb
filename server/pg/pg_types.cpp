@@ -638,7 +638,7 @@ std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid) {
     return "information_schema";
   }
   if (auto schema = connector::FindSchema(context, ObjectId{oid})) {
-    return std::string{schema->GetName()};
+    return std::string{catalog::SchemaNameOf(*schema)};
   }
   return absl::StrCat(oid);
 }
@@ -651,7 +651,7 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
     return id::kPgInformationSchema.id();
   }
   if (auto schema = connector::FindSchema(nullptr, ctx.GetDatabaseId(), name)) {
-    return schema->GetId().id();
+    return catalog::IdOf(*schema).id();
   }
   return kInvalidOid;
 }

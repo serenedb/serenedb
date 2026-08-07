@@ -54,7 +54,7 @@ ColumnAclsByTable CollectColumnAcls(duckdb::ClientContext& context,
                                     ObjectId database) {
   ColumnAclsByTable out;
   connector::VisitTableEntries(context, database,
-                               [&](const catalog::CreateSchemaInfo&,
+                               [&](const duckdb::CreateSchemaInfo&,
                                    const connector::SereneDBTableEntry& table) {
                                  if (!table.GetColumnAcls().empty()) {
                                    out.emplace(catalog::IdOf(table),

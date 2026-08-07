@@ -507,7 +507,8 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
                         ERR_MSG("schema with OID ", oid, " does not exist"));
       }
       return static_cast<int64_t>(
-        DatabaseStorageSize(context, schema->GetParentId(), schema->GetName())
+        DatabaseStorageSize(context, catalog::ParentIdOf(*schema),
+                            catalog::SchemaNameOf(*schema))
           .bytes);
     });
 }

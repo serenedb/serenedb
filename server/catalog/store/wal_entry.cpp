@@ -73,21 +73,19 @@ namespace {
 // which a rename makes unrepeatable at boot.
 // 14 moved foreign servers onto PutEntry, taking the owner and ACL out of their
 // own definition too.
-// 15 moved sequences onto PutEntry, carrying a CreateSequenceInfo -- duckdb's
-// own plus the CACHE, the owning table and the stable id it has no room for --
-// with the owner and ACL beside it. A table's owned sequences carry the same
-// definition inline on PutTable.
-// 16 moved both index kinds onto PutEntry, carrying the CreateIndexInfo a
-// catalog entry is built from, and deleted PutIndex. The relation an index
-// covers is written ahead of the info: PutEntry names one parent and an index
-// has two ancestors.
-// 17 deleted PutObject: with every kind but a table on PutEntry, the record
-// whose payload was a definition object was reachable only for a table, which
-// has PutTable of its own.
-// 18 taught PutEntry to carry a table: duckdb's own CreateTableInfo, with the
-// ids on the column and constraint structures it already has room for, and the
-// per-column grants written after it -- a column has no entry of its own to
-// keep them on, and duckdb's ColumnDefinition has nowhere to put them.
+// 15 moved sequences onto PutEntry, carrying a duckdb::CreateSequenceInfo --
+// duckdb's own plus the CACHE, the owning table and the stable id it has no
+// room for -- with the owner and ACL beside it. A table's owned sequences carry
+// the same definition inline on PutTable. 16 moved both index kinds onto
+// PutEntry, carrying the CreateIndexInfo a catalog entry is built from, and
+// deleted PutIndex. The relation an index covers is written ahead of the info:
+// PutEntry names one parent and an index has two ancestors. 17 deleted
+// PutObject: with every kind but a table on PutEntry, the record whose payload
+// was a definition object was reachable only for a table, which has PutTable of
+// its own. 18 taught PutEntry to carry a table: duckdb's own CreateTableInfo,
+// with the ids on the column and constraint structures it already has room for,
+// and the per-column grants written after it -- a column has no entry of its
+// own to keep them on, and duckdb's ColumnDefinition has nowhere to put them.
 // 19 moved PutTable onto the same payload: every record's definition is now a
 // CreateInfo. It keeps a record of its own only because the sequences a
 // table's SERIAL columns own ride it.
@@ -98,7 +96,7 @@ namespace {
 // 22 names the relation of a store op by id. It was written as the store
 // table's name and parsed back to the id on the way out, a round trip through
 // a spelling no reader wanted.
-constexpr uint8_t kEntryVersion = 27;
+constexpr uint8_t kEntryVersion = 29;
 
 constexpr uint8_t kFrameSnapshot = 1U << 0U;
 
@@ -220,12 +218,12 @@ void WriteInfoInline(duckdb::CatalogType type, ObjectId parent_id, ObjectId id,
     case duckdb::CatalogType::INDEX_ENTRY:
     case duckdb::CatalogType::ROLE_ENTRY:
     case duckdb::CatalogType::DATABASE_ENTRY:
-    case duckdb::CatalogType::SCHEMA_ENTRY:
     case duckdb::CatalogType::TOKENIZER_ENTRY:
     case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
-    case duckdb::CatalogType::SEQUENCE_ENTRY:
       info.Serialize(serializer);
       return;
+    case duckdb::CatalogType::SCHEMA_ENTRY:
+    case duckdb::CatalogType::SEQUENCE_ENTRY:
     case duckdb::CatalogType::TYPE_ENTRY:
     case duckdb::CatalogType::MACRO_ENTRY:
     case duckdb::CatalogType::VIEW_ENTRY:
@@ -285,14 +283,12 @@ std::shared_ptr<const duckdb::CreateInfo> ReadInfoPayload(
       return CreateRoleInfo::Deserialize(src, id);
     case duckdb::CatalogType::DATABASE_ENTRY:
       return CreateDatabaseInfo::Deserialize(src, id);
-    case duckdb::CatalogType::SCHEMA_ENTRY:
-      return CreateSchemaInfo::Deserialize(src, id, parent_id);
     case duckdb::CatalogType::TOKENIZER_ENTRY:
       return CreateTokenizerInfo::Deserialize(src, id, parent_id);
     case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
       return CreateForeignServerInfo::Deserialize(src, id, parent_id);
+    case duckdb::CatalogType::SCHEMA_ENTRY:
     case duckdb::CatalogType::SEQUENCE_ENTRY:
-      return CreateSequenceInfo::Deserialize(src, id, parent_id);
     case duckdb::CatalogType::TYPE_ENTRY:
     case duckdb::CatalogType::MACRO_ENTRY:
     case duckdb::CatalogType::VIEW_ENTRY: {
@@ -482,7 +478,7 @@ ParsedFrame ParseEntries(std::span<const uint8_t> frame) {
           auto& seq = e.sequences.emplace_back();
           seq.id = ReadId(stream);
           seq.seed = stream.Read<uint64_t>();
-          seq.info = std::static_pointer_cast<const CreateSequenceInfo>(
+          seq.info = std::static_pointer_cast<const duckdb::CreateSequenceInfo>(
             ReadInfoInline(duckdb::CatalogType::SEQUENCE_ENTRY, false,
                            e.schema_id, seq.id, stream));
           seq.perm = ReadPermissions(stream);

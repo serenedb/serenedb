@@ -109,14 +109,13 @@ class Applier {
            const std::shared_ptr<const duckdb::CreateInfo>& info) {
     std::string name;
     if (const auto* schema =
-          dynamic_cast<const sdb::catalog::CreateSchemaInfo*>(info.get());
+          dynamic_cast<const duckdb::CreateSchemaInfo*>(info.get());
         schema != nullptr) {
-      name = std::string{schema->GetName()};
+      name = std::string{sdb::catalog::SchemaNameOf(*schema)};
     } else if (const auto* sequence =
-                 dynamic_cast<const sdb::catalog::CreateSequenceInfo*>(
-                   info.get());
+                 dynamic_cast<const duckdb::CreateSequenceInfo*>(info.get());
                sequence != nullptr) {
-      name = std::string{sequence->GetName()};
+      name = std::string{sdb::catalog::SequenceNameOf(*sequence)};
     } else if (const auto* table =
                  dynamic_cast<const sdb::catalog::CreateTableInfo*>(info.get());
                table != nullptr) {
@@ -153,12 +152,11 @@ void PutTable(CatalogStore& store, const sdb::catalog::CreateTableInfo& table,
   });
 }
 
-std::shared_ptr<const sdb::catalog::CreateSequenceInfo> MakeSequence(
+std::shared_ptr<const duckdb::CreateSequenceInfo> MakeSequence(
   ObjectId schema, ObjectId id, std::string_view name) {
-  sdb::catalog::persistence::SequenceOptions options;
+  sdb::catalog::SequenceOptions options;
   options.name = std::string{name};
-  return std::make_shared<const sdb::catalog::CreateSequenceInfo>(
-    id, schema, std::move(options));
+  return sdb::catalog::MakeSequenceInfo(id, schema, options);
 }
 
 // A sequence's entry is the object, so its definition goes through PutEntry.
@@ -175,10 +173,9 @@ void PutSequence(CatalogStore& store, ObjectId schema, ObjectId id,
 void PutSchema(CatalogStore& store, ObjectId db, ObjectId id,
                std::string_view name) {
   store.Write([&](CatalogStore::WriteContext& ctx) {
-    ctx.catalog().PutEntry(
-      db, duckdb::CatalogType::SCHEMA_ENTRY, id, kCreate,
-      std::make_shared<const sdb::catalog::CreateSchemaInfo>(id, db, name),
-      sdb::catalog::Permissions{ObjectId{1}});
+    ctx.catalog().PutEntry(db, duckdb::CatalogType::SCHEMA_ENTRY, id, kCreate,
+                           sdb::catalog::MakeSchemaInfo(id, db, name),
+                           sdb::catalog::Permissions{ObjectId{1}});
   });
 }
 

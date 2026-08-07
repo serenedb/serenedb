@@ -83,7 +83,7 @@ catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
 
   connector::VisitCatalogSetEntries(
     context, database_id, duckdb::CatalogType::TABLE_ENTRY,
-    [&](const catalog::CreateSchemaInfo&, duckdb::CatalogEntry& entry) {
+    [&](const duckdb::CreateSchemaInfo&, duckdb::CatalogEntry& entry) {
       if (const auto* table =
             dynamic_cast<const connector::SereneDBTableEntry*>(&entry)) {
         const auto id = catalog::IdOf(*table);

@@ -293,10 +293,11 @@ std::vector<MaintainTarget> CollectMaintainTargets(
   std::vector<MaintainTarget> out;
   connector::VisitTableEntries(
     context, database,
-    [&](const catalog::CreateSchemaInfo& in_schema,
+    [&](const duckdb::CreateSchemaInfo& in_schema,
         const connector::SereneDBTableEntry& table) {
-      if (schema.empty() || in_schema.GetName() == schema) {
-        out.push_back(MakeMaintainTarget(in_schema.GetName(), table));
+      if (schema.empty() || catalog::SchemaNameOf(in_schema) == schema) {
+        out.push_back(
+          MakeMaintainTarget(catalog::SchemaNameOf(in_schema), table));
       }
     });
   return out;

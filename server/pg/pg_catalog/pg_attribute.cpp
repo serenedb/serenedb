@@ -246,7 +246,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   std::vector<PgAttribute> values;
 
   connector::VisitTableEntries(_config.GetClientContext(), GetDatabaseId(),
-                               [&](const catalog::CreateSchemaInfo&,
+                               [&](const duckdb::CreateSchemaInfo&,
                                    const connector::SereneDBTableEntry& table) {
                                  EmitColumnsForTable(table, values);
                                });

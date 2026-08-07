@@ -95,8 +95,8 @@ void RetargetForeignKeys(duckdb::CreateTableInfo& info,
       held = found->Definition();
       referenced = held.get();
       auto schema = FindSchema(context, held->GetParentId());
-      referenced_schema =
-        duckdb::Identifier{schema ? schema->GetName() : std::string_view{}};
+      referenced_schema = duckdb::Identifier{
+        schema ? catalog::SchemaNameOf(*schema) : std::string_view{}};
       referenced_name = duckdb::Identifier{held->GetName()};
     } else {
       referenced = &table;
@@ -145,8 +145,8 @@ void AddReferencedForeignKeys(duckdb::CreateTableInfo& info,
       }
       duckdb::ForeignKeyInfo mirror;
       mirror.type = duckdb::ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE;
-      mirror.schema =
-        duckdb::Identifier{schema ? schema->GetName() : std::string_view{}};
+      mirror.schema = duckdb::Identifier{schema ? catalog::SchemaNameOf(*schema)
+                                                : std::string_view{}};
       mirror.table = duckdb::Identifier{referencing->GetName()};
       auto pk_columns = catalog::ReferencedKeyNames(fk, &table);
       for (const auto& name : pk_columns) {
@@ -241,11 +241,11 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexEntry(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeSequenceEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-  const catalog::CreateSequenceInfo& sequence,
+  const duckdb::CreateSequenceInfo& sequence,
   std::shared_ptr<catalog::SequenceCounter> counter,
   catalog::Permissions perm) {
   auto info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, catalog::CreateSequenceInfo>(
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateSequenceInfo>(
       sequence.Copy());
   info->SetSchema(schema.name);
   // The counter and its durable horizon are serenedb's, written to the catalog
@@ -435,7 +435,7 @@ duckdb::unique_ptr<duckdb::StandardEntry> MakeEntry(
         counter = previous->Counter();
       }
       built = MakeSequenceEntry(catalog, schema,
-                                *InfoAs<catalog::CreateSequenceInfo>(info),
+                                *InfoAs<duckdb::CreateSequenceInfo>(info),
                                 std::move(counter), perm);
       break;
     }
@@ -506,13 +506,17 @@ std::shared_ptr<const duckdb::CreateInfo> Shared(
 }
 
 std::shared_ptr<const duckdb::CreateInfo> RewrittenSequence(
-  const catalog::CreateSequenceInfo& current, std::string_view name,
+  const duckdb::CreateSequenceInfo& current, std::string_view name,
   std::optional<std::string_view> comment) {
-  const bool recomments = comment && current.Comment() != *comment;
+  const auto current_comment =
+    current.comment.IsNull()
+      ? std::string_view{}
+      : std::string_view{duckdb::StringValue::Get(current.comment)};
+  const bool recomments = comment && current_comment != *comment;
   if (name.empty() && !recomments) {
     return nullptr;
   }
-  auto options = current.Options();
+  auto options = catalog::SequenceOptionsOf(current);
   if (!name.empty()) {
     options.name = std::string{name};
   }
@@ -522,8 +526,8 @@ std::shared_ptr<const duckdb::CreateInfo> RewrittenSequence(
   // The counter is not the definition and is not carried here: the entry built
   // for this version inherits its predecessor's, so a nextval running against
   // either advances the one they share.
-  return std::make_shared<const catalog::CreateSequenceInfo>(
-    current.GetId(), current.GetSchemaId(), std::move(options));
+  return catalog::MakeSequenceInfo(
+    catalog::IdOf(current), catalog::ParentIdOf(current), std::move(options));
 }
 
 std::shared_ptr<const duckdb::CreateInfo> RewrittenIndex(

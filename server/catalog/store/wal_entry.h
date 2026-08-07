@@ -34,13 +34,14 @@
 
 namespace duckdb {
 
+struct CreateSequenceInfo;
+
 class CreateInfo;
 class MemoryStream;
 
 }  // namespace duckdb
 namespace sdb::catalog {
 
-class CreateSequenceInfo;
 class CreateTableInfo;
 
 }  // namespace sdb::catalog
@@ -78,7 +79,7 @@ enum class PutMode : uint8_t {
 // sequence.
 struct OwnedSequence {
   ObjectId id;
-  std::shared_ptr<const CreateSequenceInfo> info;
+  std::shared_ptr<const duckdb::CreateSequenceInfo> info;
   Permissions perm;
   uint64_t seed = 0;
 };

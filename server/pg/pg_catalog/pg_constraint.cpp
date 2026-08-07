@@ -77,7 +77,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   containers::FlatHashMap<ObjectId, const connector::SereneDBTableEntry*>
     tables_by_id;
   connector::VisitTableEntries(context, GetDatabaseId(),
-                               [&](const catalog::CreateSchemaInfo&,
+                               [&](const duckdb::CreateSchemaInfo&,
                                    const connector::SereneDBTableEntry& table) {
                                  tables_by_id.emplace(catalog::IdOf(table),
                                                       &table);
@@ -112,10 +112,10 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
 
   connector::VisitTableEntries(
     context, GetDatabaseId(),
-    [&](const catalog::CreateSchemaInfo& schema,
+    [&](const duckdb::CreateSchemaInfo& schema,
         const connector::SereneDBTableEntry& table) {
       const auto relid = catalog::IdOf(table).id();
-      const auto namespace_id = schema.GetId().id();
+      const auto namespace_id = catalog::IdOf(schema).id();
       const auto base = [&](PgConstraint::Contype contype, Oid oid,
                             std::string_view name) {
         return PgConstraint{

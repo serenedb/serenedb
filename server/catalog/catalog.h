@@ -324,8 +324,8 @@ class Catalog final {
   void CreateRole(const AccessContext& ax,
                   std::shared_ptr<CreateRoleInfo> role);
   bool CreateSchema(const AccessContext& ax, ObjectId database_id,
-                    std::shared_ptr<CreateSchemaInfo> schema, Permissions perm,
-                    bool if_not_exists);
+                    std::shared_ptr<duckdb::CreateSchemaInfo> schema,
+                    Permissions perm, bool if_not_exists);
   // Returns the created table, or null for the if_not_exists no-op. The
   // SERIAL columns arrive beside the info: the catalog resolves each sequence's
   // name, stamps the owning table and sets the column's nextval default,
@@ -478,9 +478,10 @@ class Catalog final {
                    wal::PutMode mode, Permissions perm);
   // A sequence's definition and the value its counter starts from, in one
   // frame: a sequence is never durable without the value it hands out from.
-  void RecordSequence(duckdb::ClientContext* context,
-                      std::shared_ptr<const CreateSequenceInfo> sequence,
-                      Permissions perm, uint64_t seed);
+  void RecordSequence(
+    duckdb::ClientContext* context,
+    std::shared_ptr<const duckdb::CreateSequenceInfo> sequence,
+    Permissions perm, uint64_t seed);
 
   // The removal counterpart, for the kinds whose entry is the object:
   // everything the DROP of one does once its target has been resolved and the

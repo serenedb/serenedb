@@ -89,11 +89,11 @@ class SereneDBSequenceEntry final : public duckdb::SequenceCatalogEntry {
  public:
   SereneDBSequenceEntry(duckdb::Catalog& catalog,
                         duckdb::SchemaCatalogEntry& schema,
-                        catalog::CreateSequenceInfo& info,
+                        duckdb::CreateSequenceInfo& info,
                         std::shared_ptr<catalog::SequenceCounter> counter,
                         catalog::Permissions perm)
     : duckdb::SequenceCatalogEntry(catalog, schema, info),
-      _options{info.Options()},
+      _options{catalog::SequenceOptionsOf(info)},
       _counter{std::move(counter)} {
     catalog::AdoptEntryIdentity(*this, ObjectId{info.oid}, std::move(perm));
   }
@@ -111,9 +111,9 @@ class SereneDBSequenceEntry final : public duckdb::SequenceCatalogEntry {
   // This version as a definition again. Rebuilt rather than held: duckdb's own
   // GetInfo() has nowhere to put the CACHE or the owning table, and only a
   // write ever needs the whole thing back.
-  std::shared_ptr<const catalog::CreateSequenceInfo> Definition() const {
-    return std::make_shared<const catalog::CreateSequenceInfo>(
-      ObjectId{oid}, ObjectId{ParentSchema().oid}, _options);
+  std::shared_ptr<const duckdb::CreateSequenceInfo> Definition() const {
+    return catalog::MakeSequenceInfo(ObjectId{oid},
+                                     ObjectId{ParentSchema().oid}, _options);
   }
 
   // The live counter, shared by every version of this sequence: a value a

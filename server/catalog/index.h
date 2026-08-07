@@ -51,6 +51,11 @@ class InvertedIndexStorage;
 namespace sdb {
 namespace catalog {
 
+// Which of the two index kinds an info is, as duckdb's own `index_type` states
+// it: one home for the fact, read by upstream machinery and by us alike.
+inline constexpr std::string_view kInvertedIndexType = "inverted";
+inline constexpr std::string_view kSecondaryIndexType = "secondary";
+
 class CreateTableInfo;
 
 inline constexpr std::string_view kIncludedKind = "included";
@@ -159,12 +164,18 @@ class CreateIndexInfoBase : public duckdb::CreateIndexInfo {
 
   virtual containers::FlatHashSet<ObjectId> GetTokenizers() const { return {}; }
 
-  std::string_view Comment() const noexcept { return _comment; }
+  // CreateInfo::comment is the one home: COMMENT ON reaches it there, and
+  // duckdb's own serialization carries it.
+  std::string_view Comment() const noexcept {
+    return comment.IsNull()
+             ? std::string_view{}
+             : std::string_view{duckdb::StringValue::Get(comment)};
+  }
 
   // Which of the two index kinds this is -- the same fact duckdb's own
   // `index_type` string carries, which is how it tells one index apart from
   // another.
-  bool IsInverted() const noexcept { return _inverted; }
+  bool IsInverted() const noexcept { return index_type == kInvertedIndexType; }
 
   // The iresearch runtime behind an inverted index. Null for a secondary index,
   // whose rows are an ART on the store table.
@@ -234,9 +245,7 @@ class CreateIndexInfoBase : public duckdb::CreateIndexInfo {
   std::vector<ColumnId> _columns;
   std::vector<ColumnId> _referenced_columns;
   containers::FlatHashSet<ColumnId> _referenced_columns_set;
-  std::string _comment;
   ObjectId _relation_id;
-  bool _inverted = false;
 
  private:
   std::shared_ptr<InvertedIndexRuntime> _runtime;

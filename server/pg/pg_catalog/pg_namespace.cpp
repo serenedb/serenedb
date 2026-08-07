@@ -62,15 +62,15 @@ void RetrieveObjects(duckdb::ClientContext& context, ObjectId database_id,
   });
   connector::VisitSchemas(
     &context, database_id,
-    [&](const catalog::CreateSchemaInfo& schema,
+    [&](const duckdb::CreateSchemaInfo& schema,
         const catalog::Permissions& perm) {
       const auto& held = kept.emplace_back(catalog::HeldSchema{
-        std::static_pointer_cast<const catalog::CreateSchemaInfo>(
-          schema.CloneSchema()),
+        std::static_pointer_cast<const duckdb::CreateSchemaInfo>(
+          std::shared_ptr<duckdb::CreateInfo>{schema.Copy()}),
         perm});
       values.push_back(PgNamespace{
-        .oid = held.first->GetId().id(),
-        .nspname = held.first->GetName(),
+        .oid = catalog::IdOf(*held.first).id(),
+        .nspname = catalog::SchemaNameOf(*held.first),
         .nspowner = held.second.owner,
         .nspacl = {catalog::AclView{held.second.acl}},
       });

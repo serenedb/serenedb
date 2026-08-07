@@ -146,11 +146,6 @@ std::optional<std::string> RenderCreateInfo(duckdb::CatalogType type,
         static_cast<const catalog::CreateDatabaseInfo&>(info).WriteJson(sink);
         return true;
       });
-    case duckdb::CatalogType::SCHEMA_ENTRY:
-      return RenderJson([&](basics::JsonSink& sink) {
-        static_cast<const catalog::CreateSchemaInfo&>(info).WriteJson(sink);
-        return true;
-      });
     case duckdb::CatalogType::TOKENIZER_ENTRY:
       return RenderJson([&](basics::JsonSink& sink) {
         static_cast<const catalog::CreateTokenizerInfo&>(info).WriteJson(sink);
@@ -162,16 +157,14 @@ std::optional<std::string> RenderCreateInfo(duckdb::CatalogType type,
           sink);
         return true;
       });
-    case duckdb::CatalogType::SEQUENCE_ENTRY:
-      return RenderJson([&](basics::JsonSink& sink) {
-        static_cast<const catalog::CreateSequenceInfo&>(info).WriteJson(sink);
-        return true;
-      });
+
     case duckdb::CatalogType::INDEX_ENTRY:
       return RenderJson([&](basics::JsonSink& sink) {
         static_cast<const catalog::CreateIndexInfoBase&>(info).WriteJson(sink);
         return true;
       });
+    case duckdb::CatalogType::SCHEMA_ENTRY:
+    case duckdb::CatalogType::SEQUENCE_ENTRY:
     case duckdb::CatalogType::TYPE_ENTRY:
       // duckdb's own info, so it renders as the CREATE statement it came from
       // rather than through our JSON sink.

@@ -460,8 +460,8 @@ void SereneDBCatalog::Initialize(bool /*load_builtin*/) {
   // record is already durable, and a rolled-back CREATE DATABASE takes the
   // whole attachment with it.
   if (auto schema = std::exchange(_public_schema, {}); schema.first) {
-    const auto name = schema.first->GetName();
-    const auto id = schema.first->GetId();
+    const auto name = catalog::SchemaNameOf(*schema.first);
+    const auto id = catalog::IdOf(*schema.first);
     // Stated separately, as every schema's are: the entry is mutated in place
     // rather than versioned, so no create call carries them.
     auto deps = EntryDependencies(*schema.first, schema.second);
@@ -489,7 +489,7 @@ duckdb::CatalogEntryInfo SereneDBCatalog::GetDependencyInfo(
   // addresses its edges like any other.
   if (const auto* schema = dynamic_cast<const SereneDBSchemaEntry*>(&entry)) {
     if (auto definition = schema->Definition()) {
-      return DependencyInfo(definition->GetId());
+      return DependencyInfo(catalog::IdOf(*definition));
     }
   } else if (IsHostedEntry(entry)) {
     return DependencyInfo(catalog::IdOf(entry));
@@ -554,8 +554,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   // <name>" directly. The creator owns the schema (PG current_user).
   auto& catalog_impl = catalog::GetCatalog();
   const ObjectId owner = GetSereneDBContext(client).GetRoleId();
-  auto schema = std::make_shared<catalog::CreateSchemaInfo>(
-    ObjectId{}, GetDatabaseId(), schema_name);
+  auto schema =
+    catalog::MakeSchemaInfo(ObjectId{}, GetDatabaseId(), schema_name);
   if (!catalog_impl.CreateSchema(catalog::ActingAs(owner, client),
                                  GetDatabaseId(), std::move(schema),
                                  catalog::Permissions{owner}, if_not_exists)) {
@@ -1699,8 +1699,9 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
   int64_t blocks = 0;
   VisitCatalogSetEntries(
     context, database_id, duckdb::CatalogType::TABLE_ENTRY,
-    [&](const catalog::CreateSchemaInfo& schema, duckdb::CatalogEntry& entry) {
-      if (!only_schema.empty() && schema.GetName() != only_schema) {
+    [&](const duckdb::CreateSchemaInfo& schema, duckdb::CatalogEntry& entry) {
+      if (!only_schema.empty() &&
+          catalog::SchemaNameOf(schema) != only_schema) {
         return;
       }
       // Views and the index-name-as-table wrappers share this set and own no
@@ -1719,8 +1720,9 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
     });
   VisitCatalogSetEntries(
     context, database_id, duckdb::CatalogType::INDEX_ENTRY,
-    [&](const catalog::CreateSchemaInfo& schema, duckdb::CatalogEntry& entry) {
-      if (!only_schema.empty() && schema.GetName() != only_schema) {
+    [&](const duckdb::CreateSchemaInfo& schema, duckdb::CatalogEntry& entry) {
+      if (!only_schema.empty() &&
+          catalog::SchemaNameOf(schema) != only_schema) {
         return;
       }
       auto* index = dynamic_cast<SereneDBIndexEntry*>(&entry);

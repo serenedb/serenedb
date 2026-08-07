@@ -1279,11 +1279,12 @@ void Catalog::ReplaceFunction(
     perm);
 }
 
-void Catalog::RecordSequence(duckdb::ClientContext* context,
-                             std::shared_ptr<const CreateSequenceInfo> sequence,
-                             Permissions perm, uint64_t seed) {
-  const auto id = sequence->GetId();
-  const auto schema_id = sequence->GetSchemaId();
+void Catalog::RecordSequence(
+  duckdb::ClientContext* context,
+  std::shared_ptr<const duckdb::CreateSequenceInfo> sequence, Permissions perm,
+  uint64_t seed) {
+  const auto id = catalog::IdOf(*sequence);
+  const auto schema_id = catalog::ParentIdOf(*sequence);
   Apply(context, [&](auto& ctx) {
     ctx.catalog().PutEntry(schema_id, duckdb::CatalogType::SEQUENCE_ENTRY, id,
                            wal::PutMode::Create, std::move(sequence),
@@ -1397,8 +1398,9 @@ std::shared_ptr<DatabaseDrop> Catalog::CreateDatabaseDrop(
   duckdb::shared_ptr<void> keep_alive) {
   std::vector<ObjectId> schema_ids;
   connector::VisitSchemas(
-    context, db_id, [&](const CreateSchemaInfo& schema, const Permissions&) {
-      schema_ids.push_back(schema.GetId());
+    context, db_id,
+    [&](const duckdb::CreateSchemaInfo& schema, const Permissions&) {
+      schema_ids.push_back(IdOf(schema));
     });
   std::vector<std::shared_ptr<SchemaDrop>> schemas_drop;
   schemas_drop.reserve(schema_ids.size());
@@ -1469,9 +1471,9 @@ HeldSchema Catalog::CreateDatabase(const AccessContext& ax,
     THROW_SQL_ERROR(ERR_MSG("internal error"));
   }
   Permissions perm{owner};
-  auto schema = std::make_shared<CreateSchemaInfo>(NextId(), database_id,
-                                                   StaticStrings::kPublic);
-  const auto schema_id = schema->GetId();
+  auto schema =
+    catalog::MakeSchemaInfo(NextId(), database_id, StaticStrings::kPublic);
+  const auto schema_id = IdOf(*schema);
   // One frame, not two: a database and its public schema are one operation,
   // and a crash between two appends would leave a database that has no
   // schema to create anything in. Deferred to the transaction's commit like
@@ -1503,25 +1505,23 @@ void RequireDatabaseOwner(duckdb::ClientContext* context, ObjectId role,
 }  // namespace
 
 bool Catalog::CreateSchema(const AccessContext& ax, ObjectId database_id,
-                           std::shared_ptr<CreateSchemaInfo> schema,
+                           std::shared_ptr<duckdb::CreateSchemaInfo> schema,
                            Permissions perm, bool if_not_exists) {
   absl::MutexLock lock{&_mutex};
   // CREATE SCHEMA requires CREATE on the target database.
   RequireDatabaseAccess(ax.context, ax.role,
                         connector::FindDatabase(ax.context, database_id),
                         AclMode::Create);
-  if (FindSchemaId(ax.context, database_id, schema->GetName())) {
+  if (FindSchemaId(ax.context, database_id, SchemaNameOf(*schema))) {
     if (if_not_exists) {
       return false;
     }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
-      ERR_MSG("schema \"", schema->GetName(), "\" already exists"));
+      ERR_MSG("schema \"", SchemaNameOf(*schema), "\" already exists"));
   }
-  if (!schema->GetId().isSet()) {
-    schema->SetId(NextId());
-  }
-  schema->SetDatabaseId(database_id);
+  SetIdentity(*schema, IdOf(*schema).isSet() ? IdOf(*schema) : NextId(),
+              database_id);
   SDB_IF_FAILURE("unable_to_create") {
     THROW_SQL_ERROR(ERR_MSG("internal error"));
   }
@@ -1765,8 +1765,9 @@ void RequireCreateOn(duckdb::ClientContext* context, ObjectId role,
                          AclMode::Create)) {
     return;
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied for schema ", schema->GetName()));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied for schema ", SchemaNameOf(*schema)));
 }
 
 // PG's ownership test for an ALTER or a DROP: the actor must own the object,
@@ -1807,7 +1808,7 @@ void RequireOwnerTransfer(const AccessContext& ax, ObjectId schema_id,
                          AclMode::Create)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied for schema ", schema->GetName()));
+      ERR_MSG("permission denied for schema ", SchemaNameOf(*schema)));
   }
 }
 
@@ -2080,11 +2081,10 @@ TableInfoRef Catalog::CreateTable(
   const ObjectId owner = ax.role;
   const Permissions perm{owner};
   const Permissions sequence_perm{owner};
-  std::vector<std::shared_ptr<const CreateSequenceInfo>> sequences;
+  std::vector<std::shared_ptr<const duckdb::CreateSequenceInfo>> sequences;
   sequences.reserve(sequence_specs.size() + 1);
   const auto make_sequence = [&](SequenceOptions opts) {
-    return std::make_shared<const CreateSequenceInfo>(NextId(), *schema_id,
-                                                      std::move(opts));
+    return catalog::MakeSequenceInfo(NextId(), *schema_id, std::move(opts));
   };
   for (const auto& spec : sequence_specs) {
     const auto* column = info->ColumnById(spec.column_id);
@@ -2102,7 +2102,7 @@ TableInfoRef Catalog::CreateTable(
 
   // Tables without an explicit PK get an auto-PK owned sequence, whose id the
   // definition holds directly so the insert path does not have to look for it.
-  std::shared_ptr<const CreateSequenceInfo> generated_pk_seq;
+  std::shared_ptr<const duckdb::CreateSequenceInfo> generated_pk_seq;
   ObjectId generated_pk_seq_id;
   if (TablePrimaryKey(*info) == nullptr) {
     SequenceOptions opts;
@@ -2110,7 +2110,7 @@ TableInfoRef Catalog::CreateTable(
     opts.cache = 65536;
     opts.owner_table_id = table_id.id();
     generated_pk_seq = make_sequence(std::move(opts));
-    generated_pk_seq_id = generated_pk_seq->GetId();
+    generated_pk_seq_id = catalog::IdOf(*generated_pk_seq);
     sequences.push_back(generated_pk_seq);
   }
   info->SetTableTags(info->GetEngine(), info->SearchOptions(),
@@ -2149,12 +2149,12 @@ TableInfoRef Catalog::CreateTable(
     }
     registering.push_back(name);
     for (const auto& seq : sequences) {
-      if (taken(seq->GetName())) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-          ERR_MSG("relation \"", seq->GetName(), "\" already exists"));
+      if (taken(catalog::SequenceNameOf(*seq))) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                        ERR_MSG("relation \"", catalog::SequenceNameOf(*seq),
+                                "\" already exists"));
       }
-      registering.push_back(seq->GetName());
+      registering.push_back(catalog::SequenceNameOf(*seq));
     }
   }
 
@@ -2177,8 +2177,9 @@ TableInfoRef Catalog::CreateTable(
     // from, and the insert path reserves off the entry's.
     if (const auto* entry =
           dynamic_cast<const connector::SereneDBSequenceEntry*>(placed.get())) {
-      auto counter = NewCounter(seq->GetId(), seq->Options());
-      if (seq->GetId() == generated_pk_seq_id) {
+      auto counter =
+        NewCounter(catalog::IdOf(*seq), catalog::SequenceOptionsOf(*seq));
+      if (catalog::IdOf(*seq) == generated_pk_seq_id) {
         generated_pk_counter = counter;
       }
       entry->AdoptCounter(std::move(counter));
@@ -2191,10 +2192,10 @@ TableInfoRef Catalog::CreateTable(
     std::vector<wal::OwnedSequence> owned;
     owned.reserve(sequences.size());
     for (const auto& seq : sequences) {
-      owned.push_back({.id = seq->GetId(),
+      owned.push_back({.id = catalog::IdOf(*seq),
                        .info = seq,
                        .perm = sequence_perm,
-                       .seed = seq->Options().Seed()});
+                       .seed = catalog::SequenceOptionsOf(*seq).Seed()});
     }
     ctx.catalog().PutTable(*table, wal::PutMode::Create, perm,
                            std::move(owned));
@@ -2463,7 +2464,8 @@ void Catalog::ChangeTableOwner(const AccessContext& ax,
   std::erase_if(sequences, [&](const connector::SereneDBSequenceEntry* seq) {
     return seq->GetOwnerTableId() != table_id;
   });
-  std::vector<std::pair<std::shared_ptr<const CreateSequenceInfo>, Permissions>>
+  std::vector<
+    std::pair<std::shared_ptr<const duckdb::CreateSequenceInfo>, Permissions>>
     rewritten;
   rewritten.reserve(sequences.size());
   for (const auto* sequence : sequences) {
@@ -2478,14 +2480,15 @@ void Catalog::ChangeTableOwner(const AccessContext& ax,
   Apply(ax.context, [&](auto& ctx) {
     ctx.catalog().PutTable(*definition, wal::PutMode::Replace, updated_perm);
     for (const auto& [sequence, sequence_perm] : rewritten) {
-      ctx.catalog().PutEntry(
-        sequence->GetParentId(), duckdb::CatalogType::SEQUENCE_ENTRY,
-        sequence->GetId(), wal::PutMode::Replace, sequence, sequence_perm);
+      ctx.catalog().PutEntry(catalog::ParentIdOf(*sequence),
+                             duckdb::CatalogType::SEQUENCE_ENTRY,
+                             catalog::IdOf(*sequence), wal::PutMode::Replace,
+                             sequence, sequence_perm);
     }
   });
   connector::PutEntry(ax.context, name, definition, updated_perm);
   for (auto& [sequence, sequence_perm] : rewritten) {
-    const auto sequence_name = std::string{sequence->GetName()};
+    const auto sequence_name = std::string{catalog::SequenceNameOf(*sequence)};
     connector::PutEntry(ax.context, sequence_name, std::move(sequence),
                         std::move(sequence_perm));
   }
@@ -2672,8 +2675,9 @@ bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("schema \"", name, "\" does not exist"));
   }
-  const std::optional schema_id{schema->GetId()};
-  RequireOwner(ax.context, ax.role, schema_perm, "schema", schema->GetName());
+  const std::optional schema_id{IdOf(*schema)};
+  RequireOwner(ax.context, ax.role, schema_perm, "schema",
+               SchemaNameOf(*schema));
 
   // The containment index does not hold a tokenizer or a type -- their entry is
   // the object -- so what it contains is asked of the sets that do.
@@ -3361,14 +3365,14 @@ void EnsureSystemDatabase(Catalog& catalog) {
                     id::kSystemDB, StaticStrings::kDefaultDatabase),
                   .perm = Permissions{id::kRootUser}});
   const auto schema_id = NextId();
-  entries.emplace_back(
-    wal::PutEntry{.parent_id = id::kSystemDB,
-                  .type = duckdb::CatalogType::SCHEMA_ENTRY,
-                  .id = schema_id,
-                  .mode = wal::PutMode::Create,
-                  .info = std::make_shared<CreateSchemaInfo>(
-                    schema_id, id::kSystemDB, StaticStrings::kPublic),
-                  .perm = Permissions{id::kRootUser}});
+  entries.emplace_back(wal::PutEntry{
+    .parent_id = id::kSystemDB,
+    .type = duckdb::CatalogType::SCHEMA_ENTRY,
+    .id = schema_id,
+    .mode = wal::PutMode::Create,
+    .info =
+      catalog::MakeSchemaInfo(schema_id, id::kSystemDB, StaticStrings::kPublic),
+    .perm = Permissions{id::kRootUser}});
   // The records are the intent, so they go to the log and through the
   // applier -- not built twice, once for each.
   GetCatalogStore().WriteFrame(entries);

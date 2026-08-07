@@ -20,13 +20,13 @@
 
 #include "catalog/sequence.h"
 
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
+#include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
+
+#include <string>
 #include <utility>
 
 #include "basics/assert.h"
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
 #include "catalog/store/store.h"
 
 namespace sdb::catalog {
@@ -145,53 +145,70 @@ void SequenceCounter::Write(uint64_t value) {
   _cache_begin.store(value + 1, std::memory_order_release);
 }
 
-CreateSequenceInfo::CreateSequenceInfo(ObjectId id, ObjectId schema_id,
-                                       SequenceOptions opts)
-  : _options{std::move(opts)} {
-  SetId(id);
-  SetSchemaId(schema_id);
-  SetSequenceName(duckdb::Identifier{_options.name});
-  // duckdb's own fields are the copy upstream machinery reads
-  // (duckdb_sequences, the entry's ToSQL); ours stay unsigned because the
-  // counter is.
-  start_value = static_cast<int64_t>(_options.start_value);
-  increment = static_cast<int64_t>(_options.increment);
-  min_value = static_cast<int64_t>(_options.min_value);
-  max_value = static_cast<int64_t>(_options.max_value);
-  cycle = _options.cycle;
-  usage_count = 0;
-  if (!_options.comment.empty()) {
-    comment = duckdb::Value(_options.comment);
+namespace {
+
+// CACHE and the owning table are the two things duckdb's
+// duckdb::CreateSequenceInfo has no field for, so they ride the info's tags --
+// definition, like a table's engine, and carried by CreateInfo's own
+// serialization.
+constexpr std::string_view kCacheTag = "sdb_seq_cache";
+constexpr std::string_view kOwnerTableTag = "sdb_seq_owner";
+
+uint64_t ReadTag(const duckdb::InsertionOrderPreservingMap<std::string>& tags,
+                 std::string_view key, uint64_t fallback) noexcept {
+  const auto it = tags.find(std::string{key});
+  if (it == tags.end()) {
+    return fallback;
   }
+  uint64_t value = 0;
+  return absl::SimpleAtoi(it->second, &value) ? value : fallback;
 }
 
-persistence::SequenceOptions CreateSequenceInfo::ToData() const {
-  return _options;
+}  // namespace
+
+std::shared_ptr<duckdb::CreateSequenceInfo> MakeSequenceInfo(
+  ObjectId id, ObjectId schema_id, const SequenceOptions& opts) {
+  auto info = std::make_shared<duckdb::CreateSequenceInfo>();
+  SetIdentity(*info, id, schema_id);
+  info->SetSequenceName(duckdb::Identifier{opts.name});
+  info->start_value = static_cast<int64_t>(opts.start_value);
+  info->increment = static_cast<int64_t>(opts.increment);
+  info->min_value = static_cast<int64_t>(opts.min_value);
+  info->max_value = static_cast<int64_t>(opts.max_value);
+  info->cycle = opts.cycle;
+  info->usage_count = 0;
+  if (!opts.comment.empty()) {
+    info->comment = duckdb::Value(opts.comment);
+  }
+  if (opts.cache != 1) {
+    info->tags.insert(std::string{kCacheTag}, absl::StrCat(opts.cache));
+  }
+  if (opts.owner_table_id != 0) {
+    info->tags.insert(std::string{kOwnerTableTag},
+                      absl::StrCat(opts.owner_table_id));
+  }
+  return info;
 }
 
-void CreateSequenceInfo::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, _options);
+SequenceOptions SequenceOptionsOf(const duckdb::CreateSequenceInfo& info) {
+  return SequenceOptions{
+    .name = std::string{SequenceNameOf(info)},
+    .start_value = static_cast<uint64_t>(info.start_value),
+    .increment = static_cast<uint64_t>(info.increment),
+    .min_value = static_cast<uint64_t>(info.min_value),
+    .max_value = static_cast<uint64_t>(info.max_value),
+    .cache = ReadTag(info.tags, kCacheTag, 1),
+    .owner_table_id = ReadTag(info.tags, kOwnerTableTag, 0),
+    .cycle = info.cycle,
+    .comment = info.comment.IsNull()
+                 ? std::string{}
+                 : std::string{duckdb::StringValue::Get(info.comment)},
+  };
 }
 
-void CreateSequenceInfo::WriteJson(basics::JsonSink& sink) const {
-  basics::WriteObject(sink, _options);
+ObjectId SequenceOwnerTableOf(const duckdb::CreateSequenceInfo& info) noexcept {
+  return ObjectId{ReadTag(info.tags, kOwnerTableTag, 0)};
 }
-
-duckdb::unique_ptr<duckdb::CreateInfo> CreateSequenceInfo::Copy() const {
-  auto copy =
-    duckdb::make_uniq<CreateSequenceInfo>(GetId(), GetSchemaId(), _options);
-  CopyProperties(*copy);
-  return copy;
-}
-
-std::shared_ptr<CreateSequenceInfo> CreateSequenceInfo::Deserialize(
-  duckdb::Deserializer& src, ObjectId id, ObjectId schema_id) {
-  SequenceOptions opts;
-  basics::ReadTuple(src, opts);
-  return std::make_shared<CreateSequenceInfo>(id, schema_id, std::move(opts));
-}
-
-namespace {}  // namespace
 
 std::shared_ptr<SequenceCounter> NewCounter(ObjectId id,
                                             const SequenceOptions& opts) {

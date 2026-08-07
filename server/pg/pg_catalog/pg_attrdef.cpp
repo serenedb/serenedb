@@ -39,7 +39,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
   std::deque<std::string> adbin_storage;
   connector::VisitTableEntries(
     _config.GetClientContext(), GetDatabaseId(),
-    [&](const catalog::CreateSchemaInfo&,
+    [&](const duckdb::CreateSchemaInfo&,
         const connector::SereneDBTableEntry& table) {
       for (const auto& col : table.GetColumns().Logical()) {
         // A generation expression lives here too, as postgres records it.

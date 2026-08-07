@@ -64,7 +64,7 @@ const SereneDBSequenceEntry& ResolveSequence(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  const auto* seq = connector::FindSequence(&context, schema->GetId(),
+  const auto* seq = connector::FindSequence(&context, catalog::IdOf(*schema),
                                             qname.Name().GetIdentifierName());
   if (seq == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

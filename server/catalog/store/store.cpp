@@ -880,7 +880,7 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
     }
     auto schemas = connector::DatabaseSchemas(context, db_id);
     std::ranges::sort(schemas, {}, [](const HeldSchema& schema) {
-      return schema.first->GetId();
+      return IdOf(*schema.first).id();
     });
     // Once for the whole database, because the walk is per database and not
     // per schema.
@@ -938,7 +938,7 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
       }
     };
     for (auto& [schema, schema_perm] : schemas) {
-      const auto schema_id = schema->GetId();
+      const auto schema_id = IdOf(*schema);
       out.PutEntry(db_id, duckdb::CatalogType::SCHEMA_ENTRY, schema_id,
                    wal::PutMode::Create, schema, schema_perm);
       for (auto& [tokenizer, perm] : tokenizers) {

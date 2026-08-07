@@ -71,7 +71,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   containers::FlatHashMap<ObjectId, const connector::SereneDBTableEntry*>
     tables;
   connector::VisitTableEntries(context, GetDatabaseId(),
-                               [&](const catalog::CreateSchemaInfo&,
+                               [&](const duckdb::CreateSchemaInfo&,
                                    const connector::SereneDBTableEntry& table) {
                                  tables.emplace(catalog::IdOf(table), &table);
                                });
@@ -130,7 +130,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   const auto emit_keys = [&](bool primary) {
     connector::VisitTableEntries(
       context, GetDatabaseId(),
-      [&](const catalog::CreateSchemaInfo&,
+      [&](const duckdb::CreateSchemaInfo&,
           const connector::SereneDBTableEntry& table) {
         for (const auto& constraint : table.GetConstraints()) {
           if (constraint->type != duckdb::ConstraintType::UNIQUE) {

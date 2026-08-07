@@ -20,48 +20,16 @@
 
 #include "catalog/schema.h"
 
-#include <duckdb/common/serializer/deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
-
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include <string>
 
 namespace sdb::catalog {
 
-CreateSchemaInfo::CreateSchemaInfo(ObjectId id, ObjectId database_id,
-                                   std::string_view name) {
-  SetId(id);
-  SetDatabaseId(database_id);
-  SetSchemaName(name);
-}
-
-persistence::SchemaOptions CreateSchemaInfo::ToData() const {
-  return persistence::SchemaOptions{.name = std::string{GetName()}};
-}
-
-void CreateSchemaInfo::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, ToData());
-}
-
-void CreateSchemaInfo::WriteJson(basics::JsonSink& sink) const {
-  basics::WriteObject(sink, ToData());
-}
-
-std::shared_ptr<CreateSchemaInfo> CreateSchemaInfo::Deserialize(
-  duckdb::Deserializer& src, ObjectId id, ObjectId database_id) {
-  persistence::SchemaOptions data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<CreateSchemaInfo>(id, database_id, data.name);
-}
-
-std::shared_ptr<CreateSchemaInfo> CreateSchemaInfo::CloneSchema() const {
-  return std::make_shared<CreateSchemaInfo>(GetId(), GetDatabaseId(),
-                                            GetName());
-}
-
-duckdb::unique_ptr<duckdb::CreateInfo> CreateSchemaInfo::Copy() const {
-  return duckdb::make_uniq<CreateSchemaInfo>(GetId(), GetDatabaseId(),
-                                             GetName());
+std::shared_ptr<duckdb::CreateSchemaInfo> MakeSchemaInfo(
+  ObjectId id, ObjectId database_id, std::string_view name) {
+  auto info = std::make_shared<duckdb::CreateSchemaInfo>();
+  SetIdentity(*info, id, database_id);
+  info->SetSchema(duckdb::Identifier{std::string{name}});
+  return info;
 }
 
 }  // namespace sdb::catalog

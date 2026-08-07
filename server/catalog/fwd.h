@@ -24,6 +24,10 @@
 
 namespace duckdb {
 
+struct CreateSequenceInfo;
+
+struct CreateSchemaInfo;
+
 struct CreateTypeInfo;
 struct CreateViewInfo;
 struct CreateMacroInfo;
@@ -35,9 +39,7 @@ class CreateTableInfo;
 using TableInfoRef = std::shared_ptr<const CreateTableInfo>;
 class CreateRoleInfo;
 class CreateDatabaseInfo;
-class CreateSchemaInfo;
-using SchemaRef = std::shared_ptr<const CreateSchemaInfo>;
-class CreateSequenceInfo;
+using SchemaRef = std::shared_ptr<const duckdb::CreateSchemaInfo>;
 class CreateIndexInfoBase;
 using IndexInfoRef = std::shared_ptr<const CreateIndexInfoBase>;
 class CreateInvertedIndexInfo;

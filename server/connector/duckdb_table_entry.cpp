@@ -242,7 +242,6 @@ SereneDBTableEntry::SereneDBTableEntry(
   : duckdb::DuckTableEntry(catalog, schema, *info, StorageAsGiven{},
                            std::move(storage), std::move(inherited_triggers)),
     _sdb_table(std::move(sdb_table)),
-    _column_acls(_sdb_table->GetColumnAcls()),
     _runtime(runtime ? std::move(runtime)
                      : std::make_shared<catalog::TableRuntime>()),
     _pk_columns(TableEntryPKColumns(*this)),

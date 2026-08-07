@@ -159,9 +159,8 @@ void ChangeSchemaAcl(const catalog::AccessContext& ax, ObjectId schema_id,
   auto schema = RequireSchema(ax.context, schema_id, &schema_perm);
   auto perm =
     auth::MutatedAcl(schema_perm, duckdb::CatalogType::SCHEMA_ENTRY, mutate);
-  auto updated = schema->CloneSchema();
-  const auto name = std::string{updated->GetName()};
-  connector::PutSchema(ax.context, name, std::move(updated), std::move(perm));
+  const auto name = std::string{catalog::SchemaNameOf(*schema)};
+  connector::PutSchema(ax.context, name, std::move(schema), std::move(perm));
 }
 
 void ChangeSchemaOwner(const catalog::AccessContext& ax, ObjectId schema_id,
@@ -171,11 +170,11 @@ void ChangeSchemaOwner(const catalog::AccessContext& ax, ObjectId schema_id,
   // A schema has no schema above it, so the parent check has nothing to
   // resolve.
   catalog::RequireOwnerTransfer(ax, ObjectId{}, schema_perm, new_owner,
-                                new_owner_name, "schema", schema->GetName());
+                                new_owner_name, "schema",
+                                catalog::SchemaNameOf(*schema));
   auto perm = auth::TransferredOwner(schema_perm, new_owner);
-  auto updated = schema->CloneSchema();
-  const auto name = std::string{updated->GetName()};
-  connector::PutSchema(ax.context, name, std::move(updated), std::move(perm));
+  const auto name = std::string{catalog::SchemaNameOf(*schema)};
+  connector::PutSchema(ax.context, name, std::move(schema), std::move(perm));
 }
 
 // GRANT / REVOKE on one table. A table's entry is the object, so this is a
@@ -597,7 +596,7 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
         ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
         ERR_MSG("schema \"", opts.in_schema, "\" does not exist"));
     }
-    schema_id = schema->GetId();
+    schema_id = catalog::IdOf(*schema);
   }
 
   const auto type = DefaultAclObjType(objtype_char);
@@ -893,7 +892,7 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                       ERR_MSG("schema \"", obj_name, "\" does not exist"));
     }
-    schema_target = schema->GetId();
+    schema_target = catalog::IdOf(*schema);
   } else if (type == duckdb::CatalogType::TYPE_ENTRY ||
              type == duckdb::CatalogType::MACRO_ENTRY ||
              type == duckdb::CatalogType::VIEW_ENTRY ||
@@ -1071,7 +1070,7 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  const ObjectId schema_id = schema->GetId();
+  const ObjectId schema_id = catalog::IdOf(*schema);
 
   std::vector<std::string> names;
   if (type == duckdb::CatalogType::MACRO_ENTRY) {
@@ -1172,7 +1171,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
     }
     catalog::Catalog::MutationScope mutation{catalog};
     ChangeSchemaOwner(catalog::ActingAs(current_id, ctx.GetClientContext()),
-                      schema->GetId(), new_owner_id, new_owner_name);
+                      catalog::IdOf(*schema), new_owner_id, new_owner_name);
     return;
   }
   {

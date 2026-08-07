@@ -195,11 +195,11 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
 
   connector::VisitCatalogSetEntries(
     context, database_id, duckdb::CatalogType::TABLE_ENTRY,
-    [&](const catalog::CreateSchemaInfo& schema, duckdb::CatalogEntry& entry) {
+    [&](const duckdb::CreateSchemaInfo& schema, duckdb::CatalogEntry& entry) {
       // The index-name-as-table wrappers share this set: their shape is the
       // relation's and pg_class already has that relation's row, so only a
       // table and a view are rows of their own here.
-      const auto schema_id = schema.GetId();
+      const auto schema_id = catalog::IdOf(schema);
       auto* table = dynamic_cast<connector::SereneDBTableEntry*>(&entry);
       if (table != nullptr) {
         relation_owners.emplace(catalog::IdOf(*table),

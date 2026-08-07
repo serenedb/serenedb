@@ -987,9 +987,7 @@ CreateIndexInfoBase::CreateIndexInfoBase(
   : _columns{std::move(derived.columns)},
     _referenced_columns{std::move(derived.referenced_columns)},
     _referenced_columns_set{std::move(derived.referenced_columns_set)},
-    _comment{std::move(comment)},
     _relation_id{relation_id},
-    _inverted{inverted},
     _runtime{inverted ? std::make_shared<InvertedIndexRuntime>() : nullptr} {
   // An unset id means "allocate one": CREATE INDEX names the index before it
   // has an id to give it.
@@ -1000,10 +998,10 @@ CreateIndexInfoBase::CreateIndexInfoBase(
   // duckdb's own half, so upstream machinery -- duckdb_indexes(), the entry's
   // ToSQL, pg_class.reloptions -- reads the same facts our payload carries and
   // nothing builds them a second time.
-  index_type = inverted ? "inverted" : "secondary";
-  if (!_comment.empty()) {
+  index_type = std::string{inverted ? kInvertedIndexType : kSecondaryIndexType};
+  if (!comment.empty()) {
     // Qualified: the constructor parameter of the same name shadows the field.
-    this->comment = duckdb::Value(_comment);
+    this->comment = duckdb::Value(comment);
   }
 }
 

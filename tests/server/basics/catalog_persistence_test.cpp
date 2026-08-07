@@ -49,10 +49,8 @@
 #include "catalog/persistence/index.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/persistence/role.h"
-#include "catalog/persistence/schema.h"
 #include "catalog/persistence/scorer_options.h"
 #include "catalog/persistence/secondary_index.h"
-#include "catalog/persistence/sequence.h"
 #include "catalog/persistence/tokenizer.h"
 #include "catalog/store/wal_entry.h"
 #include "catalog/table.h"
@@ -331,28 +329,6 @@ TEST(CatalogPersistence, database_options) {
   // Owner and ACL are not here: a database's entry is the object, and the
   // record that carries the definition writes the permissions beside it.
   CheckFixture("database_options.bin", DatabaseOptions{.name = "db"});
-}
-
-TEST(CatalogPersistence, schema_options) {
-  // Owner and ACL are not here either: a schema's entry is the object, and the
-  // record that carries the definition writes the permissions beside it.
-  CheckFixture("schema_options.bin", SchemaOptions{.name = "public"});
-}
-
-TEST(CatalogPersistence, sequence_options) {
-  // Owner and ACL are not here either: a sequence's entry is the object, and
-  // the record that carries the definition writes the permissions beside it.
-  CheckFixture("sequence_options.bin", SequenceOptions{
-                                         .name = "seq",
-                                         .start_value = 10,
-                                         .increment = 2,
-                                         .min_value = 1,
-                                         .max_value = 1000,
-                                         .cache = 5,
-                                         .owner_table_id = 3,
-                                         .cycle = true,
-                                         .comment = "seq note",
-                                       });
 }
 
 TEST(CatalogPersistence, role_data) {

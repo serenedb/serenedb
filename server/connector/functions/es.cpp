@@ -323,8 +323,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   auto& catalog = catalog::GetCatalog();
 
   {
-    auto schema = std::make_shared<catalog::CreateSchemaInfo>(
-      ObjectId{}, database_id, kEsSchema);
+    auto schema = catalog::MakeSchemaInfo(ObjectId{}, database_id, kEsSchema);
     catalog.CreateSchema(catalog::NoAccessCheck(context), database_id,
                          std::move(schema),
                          catalog::Permissions{conn_ctx.GetRoleId()},
@@ -525,9 +524,9 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     std::vector<std::string> names;
     connector::VisitTableEntries(
       context, database_id,
-      [&](const catalog::CreateSchemaInfo& schema,
+      [&](const duckdb::CreateSchemaInfo& schema,
           const connector::SereneDBTableEntry& table) {
-        if (schema.GetName() != kEsSchema) {
+        if (catalog::SchemaNameOf(schema) != kEsSchema) {
           return;
         }
         tables.emplace_back(catalog::ParentIdOf(table), catalog::IdOf(table));
@@ -1088,9 +1087,9 @@ void EsRefreshExecute(duckdb::ClientContext& context,
     std::vector<std::pair<ObjectId, ObjectId>> tables;
     connector::VisitTableEntries(
       context, database_id,
-      [&](const catalog::CreateSchemaInfo& schema,
+      [&](const duckdb::CreateSchemaInfo& schema,
           const connector::SereneDBTableEntry& table) {
-        if (schema.GetName() == kEsSchema) {
+        if (catalog::SchemaNameOf(schema) == kEsSchema) {
           tables.emplace_back(catalog::ParentIdOf(table), catalog::IdOf(table));
         }
       });

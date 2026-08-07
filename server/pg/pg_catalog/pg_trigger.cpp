@@ -118,7 +118,7 @@ catalog::MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData() {
   // reading it needs a transaction against the catalog holding it.
   connector::VisitCatalogSetEntries(
     context, GetDatabaseId(), duckdb::CatalogType::TABLE_ENTRY,
-    [&](const catalog::CreateSchemaInfo&, duckdb::CatalogEntry& object_entry) {
+    [&](const duckdb::CreateSchemaInfo&, duckdb::CatalogEntry& object_entry) {
       // Views and the index-name-as-table wrappers share this set; neither is a
       // SereneDBTableEntry, so the cast is the filter.
       auto* table_ptr =

@@ -1,0 +1,66 @@
+# The same cut-sizing bug as dict_fsst_unique_flip_block_overflow.test, pinned to the NATIVE modes.
+# A default-storage attach leaves allow_plus false, so `committed` starts at PLAIN and every cut goes
+# through CutPlain/WriteNative -- the path the original abort came from. The sibling test attaches
+# with STORAGE_VERSION 'serenedb_v1', which sets allow_plus and lets the cleaved modes compete, so it
+# does not pin this configuration.
+#
+# While every row is unique the plain layout is FSST_ONLY, which stores no selection buffer -- row i
+# is entry i. The first duplicate forces DICT_FSST, adding a bitpacked row->entry index for every row
+# already in the segment. NearBlock's growth accumulator only sees that row's ~2 selection bytes, so
+# the cut check was skipped until the segment was tens of KB past the block, where CutPlain's
+# exclude-one-row recovery cannot walk it back: dropping a row returns its own bytes, not the mode
+# flip. Same shape for a bits(max_enc_len) bump, which widens the string-lengths field for every
+# entry at once (the 160-char row).
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfn_uniqflip.db' AS dfn_own (TYPE duckdb);
+
+
+statement ok
+CREATE TABLE dfn_own.flip AS
+  SELECT s, ord FROM (
+    SELECT i AS ord, substr(md5(i::VARCHAR), 1, 12) AS s FROM range(33000) t1(i)
+    UNION ALL
+    SELECT 33000 AS ord,
+           substr(md5('b1')||md5('b2')||md5('b3')||md5('b4')||md5('b5')||md5('b6'), 1, 160) AS s
+    UNION ALL
+    SELECT 33001 + j AS ord, substr(md5('0'), 1, 12) AS s FROM range(1600) t2(j)
+  ) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfn_own;
+
+
+# every row survived and every row still carries its exact original value
+query
+SELECT count(*) AS n,
+       bool_and(s = CASE
+           WHEN ord < 33000 THEN substr(md5(ord::VARCHAR), 1, 12)
+           WHEN ord = 33000 THEN substr(md5('b1')||md5('b2')||md5('b3')||md5('b4')||md5('b5')||md5('b6'), 1, 160)
+           ELSE substr(md5('0'), 1, 12) END) AS rows_match
+  FROM dfn_own.flip;
+----
+n	rows_match
+34601	t
+
+
+# the column did land in dict_fsst, so the sizing path under test is the one that ran
+query
+SELECT count(*) > 0 AS has_dict_fsst
+  FROM pragma_storage_info('dfn_own.flip', include_segment_info=true)
+  WHERE column_name = 's' AND compression = 'DICT_FSST';
+----
+has_dict_fsst
+t
+
+
+statement ok
+DROP TABLE dfn_own.flip;
+
+
+statement ok
+DETACH dfn_own;

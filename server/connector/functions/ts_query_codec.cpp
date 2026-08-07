@@ -63,7 +63,8 @@ std::optional<std::string> RenderTSQueryCall(
 bool IsTSQueryFamilyTypeName(std::string_view name) {
   return absl::EqualsIgnoreCase(name, kTSQueryTypeName) ||
          absl::EqualsIgnoreCase(name, kTokenizerTypeName) ||
-         absl::EqualsIgnoreCase(name, kBoostTypeName);
+         absl::EqualsIgnoreCase(name, kBoostTypeName) ||
+         absl::EqualsIgnoreCase(name, kSlopTypeName);
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
@@ -130,13 +131,18 @@ bool WhitelistWalk(const duckdb::ParsedExpression& expr, size_t depth,
       }
       auto name = func.FunctionName().GetIdentifierName();
       absl::AsciiStrToLower(&name);
+      const auto op = ClassifyTSQueryFunction(name);
       if (name != "list_value" && name != "-" && name != "+" &&
-          ClassifyTSQueryFunction(name) == TSQueryOp::Unknown) {
+          op == TSQueryOp::Unknown) {
         return false;
       }
       return absl::c_all_of(func.GetArguments(), [&](const auto& arg) {
-        return !arg.HasName() &&
-               WhitelistWalk(arg.GetExpression(), depth + 1, nodes);
+        if (arg.HasName() && (op != TSQueryOp::Phrase ||
+                              !absl::EqualsIgnoreCase(
+                                arg.GetName().GetIdentifierName(), "slop"))) {
+          return false;
+        }
+        return WhitelistWalk(arg.GetExpression(), depth + 1, nodes);
       });
     }
     case duckdb::ExpressionClass::CAST: {
@@ -330,6 +336,13 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
     }
     return RenderTokenized(std::move(*child), tokenizer);
   }
+  if (const auto slop = TryGetSlopModifier(target)) {
+    auto child = RenderTSQueryExpression(context, cast.Child());
+    if (!child) {
+      return std::nullopt;
+    }
+    return absl::StrCat(std::move(*child), "::slop(", *slop, ")");
+  }
   if (IsTSQueryStructType(target)) {
     auto child = RenderTSQueryExpression(context, cast.Child());
     if (!child || IsTSQueryStructType(source)) {
@@ -376,8 +389,12 @@ void FoldStructuredConstants(duckdb::ClientContext& context,
     expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST;
   if (!IsTSQueryishType(type) || list_of_tsquery) {
     if (auto value = TryEvaluateScalar(context, *expr)) {
+      auto alias = expr->GetAlias();
       expr =
         duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*value));
+      if (!alias.empty()) {
+        expr->SetAlias(std::move(alias));
+      }
       return;
     }
   }
@@ -431,6 +448,25 @@ std::optional<std::string> RenderTSQueryCall(
   switch (ClassifyTSQueryFunction(name)) {
     case TSQueryOp::Unknown:
       return std::nullopt;
+    case TSQueryOp::Phrase: {
+      std::string out = absl::StrCat(name, "(");
+      for (size_t i = 0; i < children.size(); ++i) {
+        auto rendered = RenderTSQueryExpression(context, *children[i]);
+        if (!rendered) {
+          return std::nullopt;
+        }
+        if (i != 0) {
+          out += ", ";
+        }
+        if (absl::EqualsIgnoreCase(children[i]->GetAlias().GetIdentifierName(),
+                                   "slop")) {
+          out += "slop := ";
+        }
+        out += std::move(*rendered);
+      }
+      out += ")";
+      return out;
+    }
     case TSQueryOp::Boost: {
       if (children.size() != 2) {
         return std::nullopt;

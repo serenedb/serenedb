@@ -106,6 +106,9 @@ struct ParserContext {
     for (; tokenizer->next();) {
       f.mutable_options()->push_back<irs::ByTermOptions>().term = token->value;
     }
+    if (slop > 0) {
+      f.mutable_options()->set_slop(static_cast<irs::PosAttr::value_t>(slop));
+    }
     return f;
   }
 

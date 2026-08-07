@@ -169,10 +169,11 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
   const catalog::CreateTableInfo& Table() const noexcept { return *_sdb_table; }
 
   // The grants a column-level GRANT left on this version's columns, keyed by
-  // the column's ObjectId -- the same id ColumnDefinition::HostId() carries, so
-  // a reader walking the entry's ColumnList finds them without a second lookup.
-  // Only columns some GRANT has named are present; postgres gives a column no
-  // owner of its own, so the entry's own owner answers for all of them.
+  // the column's ObjectId -- the same id ColumnDefinition::CatalogOid()
+  // carries, so a reader walking the entry's ColumnList finds them without a
+  // second lookup. Only columns some GRANT has named are present; postgres
+  // gives a column no owner of its own, so the entry's own owner answers for
+  // all of them.
   const catalog::CreateTableInfo::ColumnAcls& GetColumnAcls() const noexcept {
     return _column_acls;
   }

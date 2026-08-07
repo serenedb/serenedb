@@ -673,7 +673,7 @@ void SereneDBCatalog::AlterStorage(duckdb::CatalogTransaction transaction,
     return;
   }
   auto& context = transaction.GetContext();
-  auto entry = LookupTableById(transaction, info.host_id);
+  auto entry = LookupTableById(transaction, info.oid);
   if (!entry) {
     return;
   }
@@ -786,7 +786,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   for (duckdb::idx_t i = 0; i < column_count; ++i) {
     auto& col = table_info.columns.GetColumnMutable(duckdb::LogicalIndex{i});
     duckdb::ColumnDefinition column{col.Name(), col.Type()};
-    column.SetHostId(catalog::NextId().id());
+    column.SetCatalogOid(catalog::NextId().id());
     column.SetCompressionType(col.CompressionType());
     if (col.Generated()) {
       column.SetGeneratedExpression(col.GeneratedExpression().Copy(),

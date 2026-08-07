@@ -95,7 +95,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
         info.search = search.get();
         info.shard = std::move(search);
         for (const auto& col : entry.GetColumns().Logical()) {
-          info.column_ids.emplace_back(col.HostId());
+          info.column_ids.emplace_back(col.CatalogOid());
         }
         info.pk_columns =
           connector::duckdb_primary_key::BuildPKColumns(*entry.Definition());

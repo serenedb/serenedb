@@ -111,7 +111,7 @@ AsyncResult DropTask::Schedule(std::shared_ptr<DropTask> task) noexcept {
 
 void IndexDrop::Finalize() {
   GetCatalogStore().Write([&](auto& ctx) {
-    ctx.store().DropIndex(_db_id, _id, _parent_id, _name);
+    ctx.store().DropIndex(_db_id, _parent_id, _name);
     if (_is_root) {
       ctx.catalog().PrepareCommit(_id);
     }

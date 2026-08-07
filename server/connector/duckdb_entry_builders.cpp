@@ -163,7 +163,7 @@ void AddReferencedForeignKeys(duckdb::CreateTableInfo& info,
       auto built = duckdb::make_uniq<duckdb::ForeignKeyConstraint>(
         pk_columns, fk.fk_columns, std::move(mirror));
       built->constraint_name = fk.constraint_name;
-      built->host_id = fk.host_id;
+      built->oid = fk.oid;
       built->host_referenced_id = fk.host_referenced_id;
       info.constraints.push_back(std::move(built));
     }

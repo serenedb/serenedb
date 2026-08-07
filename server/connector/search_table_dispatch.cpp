@@ -118,7 +118,7 @@ SearchWriteTarget ResolveSearchWriteTarget(const SereneDBTableEntry& entry) {
   target.column_ids.reserve(columns.LogicalColumnCount());
   target.chunk_types.reserve(columns.LogicalColumnCount());
   for (const auto& column : columns.Logical()) {
-    target.column_ids.emplace_back(column.HostId());
+    target.column_ids.emplace_back(column.CatalogOid());
     target.chunk_types.push_back(column.Type());
   }
   const auto pk_indexes = entry.GetPKColumnIndexes();

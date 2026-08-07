@@ -416,7 +416,7 @@ std::vector<TableReference> TableReferences(const CreateTableInfo& info) {
     }
   };
   for (const auto& column : info.columns.Logical()) {
-    const ObjectId column_id{column.HostId()};
+    const ObjectId column_id{column.CatalogOid()};
     Refs type_refs;
     CollectTypeRefs(column.Type(), type_refs);
     for (const auto type_id : type_refs.types) {
@@ -432,7 +432,7 @@ std::vector<TableReference> TableReferences(const CreateTableInfo& info) {
   for (const auto& constraint : info.constraints) {
     if (constraint->type == duckdb::ConstraintType::CHECK) {
       const auto& check = constraint->Cast<duckdb::CheckConstraint>();
-      collect(*check.expression, ObjectId{check.host_id}, TableRefKind::Check);
+      collect(*check.expression, ObjectId{check.oid}, TableRefKind::Check);
       continue;
     }
     if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
@@ -441,8 +441,7 @@ std::vector<TableReference> TableReferences(const CreateTableInfo& info) {
     const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
     const ObjectId referenced{fk.host_referenced_id};
     if (referenced.isSet() && referenced != info.GetId()) {
-      out.push_back(
-        {referenced, ObjectId{fk.host_id}, TableRefKind::ForeignKey});
+      out.push_back({referenced, ObjectId{fk.oid}, TableRefKind::ForeignKey});
     }
   }
   return out;
@@ -1043,8 +1042,7 @@ void CommitDropPlan(duckdb::ClientContext* context,
                                .id = index->GetId(),
                                .database_id = db_id,
                                .schema_id = index->GetParentId()});
-    ctx.store().DropIndex(db_id, index->GetId(), index->GetRelationId(),
-                          index->GetName());
+    ctx.store().DropIndex(db_id, index->GetRelationId(), index->GetName());
   };
   for (const auto& index : plan.index_drops) {
     drop_index(index);
@@ -1080,7 +1078,7 @@ void CommitDropPlan(duckdb::ClientContext* context,
     }
     std::vector<std::pair<std::string, ObjectId>> dropped_columns;
     for (const auto& column : old_info.columns.Logical()) {
-      const ObjectId column_id{column.HostId()};
+      const ObjectId column_id{column.CatalogOid()};
       if (rw.reshaped->ColumnById(column_id) == nullptr) {
         dropped_columns.emplace_back(column.Name().GetIdentifierName(),
                                      column_id);
@@ -1098,28 +1096,33 @@ void CommitDropPlan(duckdb::ClientContext* context,
       }
       const auto survives = absl::c_any_of(
         rw.reshaped->constraints,
-        [&](const auto& kept) { return kept->host_id == constraint->host_id; });
+        [&](const auto& kept) { return kept->oid == constraint->oid; });
       if (survives) {
         continue;
       }
-      ctx.store().DropCheck(
+      ctx.store().Alter(
         db_id, tid,
-        constraint->Cast<duckdb::CheckConstraint>().expression->ToString());
+        duckdb::make_uniq<duckdb::DropConstraintInfo>(
+          StoreTarget(duckdb::OnEntryNotFound::RETURN_NULL),
+          constraint->Cast<duckdb::CheckConstraint>().expression->ToString(),
+          /*if_constraint_not_found=*/true, /*cascade=*/false));
     }
     // Surviving store indexes block the ALTER whenever they cover a column
     // positioned after the dropped one; recreate them around the drop (data
     // lives in the rows / iresearch, so rebuilds are cheap and inverted
     // instances carry no state of their own).
     for (const auto& idx : rw.surviving_indexes) {
-      ctx.store().DropIndex(db_id, idx->GetId(), idx->GetRelationId(),
-                            idx->GetName());
+      ctx.store().DropIndex(db_id, idx->GetRelationId(), idx->GetName());
     }
     for (auto& [name, column_id] : dropped_columns) {
-      ctx.store().DropColumn(db_id, tid, std::move(name), column_id);
+      ctx.store().Alter(db_id, tid,
+                        duckdb::make_uniq<duckdb::RemoveColumnInfo>(
+                          StoreTarget(), std::move(name),
+                          /*if_column_exists=*/false, /*cascade=*/false));
     }
     for (const auto& idx : rw.surviving_indexes) {
-      if (auto def = MakeStoreIndexDef(*final_table, *idx)) {
-        ctx.store().CreateIndex(db_id, std::move(*def), final_table, idx);
+      if (auto info = MakeStoreIndexInfo(*final_table, *idx)) {
+        ctx.store().CreateIndex(db_id, std::move(info), final_table, idx);
       }
     }
   }
@@ -1612,13 +1615,12 @@ void Catalog::CreateIndexImpl(duckdb::ClientContext* context,
   const auto* entry =
     connector::FindTable(context, schema_id, index->GetRelationId());
   const auto table = entry != nullptr ? entry->Definition() : nullptr;
-  auto def = table ? MakeStoreIndexDef(*table, *stamped) : std::nullopt;
+  auto store_index = table ? MakeStoreIndexInfo(*table, *stamped) : nullptr;
   RecordedScope recorded;
   Apply(context, [&](auto& ctx) {
     PutIndex(ctx, stamped, wal::PutMode::Create);
-    if (def) {
-      def->defer_injection = operation_options.defer_injection;
-      ctx.store().CreateIndex(db_id, std::move(*def), table, stamped);
+    if (store_index) {
+      ctx.store().CreateIndex(db_id, std::move(store_index), table, stamped);
     }
   });
   // After the store op, so a relation another transaction has already dropped
@@ -1639,9 +1641,9 @@ void Catalog::RenameIndex(duckdb::ClientContext* context,
   RecordedScope recorded;
   Apply(context, [&](auto& ctx) {
     PutIndex(ctx, renamed, wal::PutMode::Replace);
-    if (table && MakeStoreIndexDef(*table, index)) {
-      ctx.store().RenameIndex(db_id, index.GetRelationId(), index.GetId(),
-                              index.GetName(), new_name);
+    if (table && MakeStoreIndexInfo(*table, index)) {
+      ctx.store().RenameIndex(db_id, index.GetRelationId(), index.GetName(),
+                              new_name);
     }
   });
   connector::PutEntry(context, index.GetName(), renamed);
@@ -1666,7 +1668,7 @@ ResolvedIndexRelation ResolveIndexRelation(const IndexRelation& relation) {
   if (relation.table) {
     std::vector<IndexableColumn> columns;
     for (const auto& column : relation.table->columns.Logical()) {
-      columns.push_back({ObjectId{column.HostId()},
+      columns.push_back({ObjectId{column.CatalogOid()},
                          std::string{column.Name().GetIdentifierName()},
                          column.Type()});
     }
@@ -2849,7 +2851,7 @@ void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
                     ERR_MSG("column \"", column, "\" of relation \"",
                             live->GetName(), "\" does not exist"));
   }
-  const ObjectId col_id{col->HostId()};
+  const ObjectId col_id{col->CatalogOid()};
 
   auto plan = ComputeColumnDropPlan(ax.context, live, perm, col_id);
 
@@ -2858,11 +2860,10 @@ void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
   PublishDropPlan(ax.context, plan);
 }
 
-void Catalog::ChangeColumnType(const AccessContext& ax,
-                               const CreateTableInfo& table,
-                               std::string_view column,
-                               duckdb::LogicalType new_type,
-                               std::string using_sql) {
+void Catalog::ChangeColumnType(
+  const AccessContext& ax, const CreateTableInfo& table,
+  std::string_view column, duckdb::LogicalType new_type,
+  duckdb::unique_ptr<duckdb::ParsedExpression> using_expr) {
   JoinStoreTransaction(ax.context);
   absl::MutexLock lock{&_mutex};
   const auto table_id = table.GetId();
@@ -2881,7 +2882,7 @@ void Catalog::ChangeColumnType(const AccessContext& ax,
                     ERR_MSG("column \"", column, "\" of relation \"",
                             live->GetName(), "\" does not exist"));
   }
-  const ObjectId col_id{col->HostId()};
+  const ObjectId col_id{col->CatalogOid()};
 
   const auto table_indexes =
     connector::RelationIndexes(ax.context, schema_id, table_id);
@@ -2899,13 +2900,12 @@ void Catalog::ChangeColumnType(const AccessContext& ax,
                                   live->ChangeColumnType(column, new_type));
 
   const bool reshape = updated->GetEngine() == TableEngine::Transactional;
-  std::string store_column;
+  duckdb::Identifier store_column;
   if (reshape) {
     if (const auto* moved = updated->ColumnById(col_id)) {
-      store_column = moved->Name().GetIdentifierName();
+      store_column = moved->Name();
     }
   }
-  std::string type_sql = new_type.ToString();
   const auto db_id = connector::SchemaDatabaseId(ax.context, schema_id);
 
   RecordedScope recorded;
@@ -2918,18 +2918,21 @@ void Catalog::ChangeColumnType(const AccessContext& ax,
     // table; drop the mirrored store indexes, change the type, then
     // recreate them (the data lives in the rows / iresearch, so the
     // rebuild carries no state of its own).
-    std::vector<std::pair<StoreIndexDef, IndexInfoRef>> recreate;
+    std::vector<
+      std::pair<duckdb::unique_ptr<duckdb::CreateIndexInfo>, IndexInfoRef>>
+      recreate;
     for (const auto& idx : table_indexes) {
-      if (auto def = MakeStoreIndexDef(*updated, *idx)) {
-        ctx.store().DropIndex(db_id, idx->GetId(), idx->GetRelationId(),
-                              idx->GetName());
-        recreate.emplace_back(std::move(*def), idx);
+      if (auto info = MakeStoreIndexInfo(*updated, *idx)) {
+        ctx.store().DropIndex(db_id, idx->GetRelationId(), idx->GetName());
+        recreate.emplace_back(std::move(info), idx);
       }
     }
-    ctx.store().ChangeColumnType(db_id, table_id, store_column, type_sql,
-                                 using_sql);
-    for (auto& [def, idx] : recreate) {
-      ctx.store().CreateIndex(db_id, std::move(def), updated, std::move(idx));
+    ctx.store().Alter(db_id, table_id,
+                      duckdb::make_uniq<duckdb::ChangeColumnTypeInfo>(
+                        StoreTarget(), store_column, new_type,
+                        using_expr ? using_expr->Copy() : nullptr));
+    for (auto& [info, idx] : recreate) {
+      ctx.store().CreateIndex(db_id, std::move(info), updated, std::move(idx));
     }
   });
   connector::PutEntry(ax.context, updated->GetName(), updated, perm);
@@ -3028,7 +3031,7 @@ void Catalog::DropIndexLocked(duckdb::ClientContext* context,
                                .id = index_id,
                                .database_id = database_id,
                                .schema_id = schema_id});
-    ctx.store().DropIndex(database_id, index_id, index->GetRelationId(),
+    ctx.store().DropIndex(database_id, index->GetRelationId(),
                           index->GetName());
   });
 
@@ -3050,7 +3053,7 @@ void Catalog::DropUncommittedIndex(duckdb::ClientContext& context,
   // No catalog entries: passing the transaction keeps Write off `_mutex`, and
   // the store op runs inline either way.
   _engine->Write(&context, [&](auto& ctx) {
-    ctx.store().DropIndex(database_id, index_id, relation_id, index->GetName());
+    ctx.store().DropIndex(database_id, relation_id, index->GetName());
   });
   auto task = CreateIndexDrop(database_id, index->GetParentId(), relation_id,
                               *index, true);

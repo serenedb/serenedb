@@ -99,7 +99,7 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
     GetSereneDBContext(context).EnsureSearchSnapshot(*_inverted_index);
   auto data = duckdb::make_uniq<TableScanBindData>();
   for (const auto& col : GetColumns().Logical()) {
-    data->column_ids.emplace_back(col.HostId());
+    data->column_ids.emplace_back(col.CatalogOid());
     data->column_types.push_back(col.Type());
   }
   data->table_entry = this;
@@ -159,7 +159,7 @@ std::vector<IResearchColumnBinding>
 TableInvertedIndexScanEntry::SegmentInfoBindings() const {
   std::vector<IResearchColumnBinding> bindings;
   for (const auto& col : GetColumns().Physical()) {
-    bindings.push_back({col.Physical().index, col.HostId()});
+    bindings.push_back({col.Physical().index, col.CatalogOid()});
   }
   return bindings;
 }

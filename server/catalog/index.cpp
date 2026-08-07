@@ -916,7 +916,7 @@ std::vector<IndexInfoRef> RerenderedIndexes(
   const CreateTableInfo& after) {
   containers::FlatHashMap<std::string, std::string> renames;
   for (const auto& column : before.columns.Logical()) {
-    const auto* now = after.ColumnById(ObjectId{column.HostId()});
+    const auto* now = after.ColumnById(ObjectId{column.CatalogOid()});
     if (now != nullptr &&
         now->Name().GetIdentifierName() != column.Name().GetIdentifierName()) {
       renames.emplace(column.Name().GetIdentifierName(),

@@ -98,7 +98,7 @@ namespace {
 // 22 names the relation of a store op by id. It was written as the store
 // table's name and parsed back to the id on the way out, a round trip through
 // a spelling no reader wanted.
-constexpr uint8_t kEntryVersion = 25;
+constexpr uint8_t kEntryVersion = 26;
 
 constexpr uint8_t kFrameSnapshot = 1U << 0U;
 
@@ -160,7 +160,7 @@ Acl ReadAcl(duckdb::MemoryStream& stream) {
 // The per-column grants of a relation, written after its payload rather than
 // inside it: duckdb's ColumnDefinition has no room for an ACL and a column has
 // no entry of its own to keep one on. Keyed by the column's ObjectId, which is
-// ColumnDefinition::HostId(), and written in id order so one catalog state
+// ColumnDefinition::CatalogOid(), and written in id order so one catalog state
 // writes one frame.
 void WriteColumnAcls(const CreateTableInfo::ColumnAcls& acls,
                      duckdb::MemoryStream& stream) {

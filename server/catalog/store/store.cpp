@@ -32,16 +32,20 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/execution/index/art/art.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
@@ -152,15 +156,15 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> TryStoreDatabase(
     .GetDatabase(duckdb::Identifier{database.Name()});
 }
 
-std::optional<StoreIndexDef> MakeStoreIndexDef(
+duckdb::unique_ptr<duckdb::CreateIndexInfo> MakeStoreIndexInfo(
   const CreateTableInfo& table, const CreateIndexInfoBase& index) {
   if (table.GetEngine() != TableEngine::Transactional) {
-    return std::nullopt;
+    return nullptr;
   }
-  StoreIndexDef def;
-  def.table_id = table.GetId();
-  def.index_id = index.GetId();
-  def.name = std::string{index.GetName()};
+  auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
+  info->oid = index.GetId().id();
+  info->SetIndexName(duckdb::Identifier{index.GetName()});
+  info->index_type = index.index_type;
 
   // Catalog-named types (enums, composites, JSON) cannot be re-parsed by the
   // store connection during the ART build, and ART cannot index nested types.
@@ -171,13 +175,18 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(
   };
 
   if (!index.IsInverted()) {
-    def.kind = StoreIndexDef::Kind::Plain;
+    info->index_type = duckdb::ART::TYPE_NAME;
     const auto& secondary =
       basics::downCast<const CreateSecondaryIndexInfo>(index);
-    def.unique = secondary.IsUnique();
-    auto push_key = [&](std::string rendered) {
-      if (!absl::c_contains(def.keys, rendered)) {
-        def.keys.push_back(std::move(rendered));
+    info->constraint_type = secondary.IsUnique()
+                              ? duckdb::IndexConstraintType::UNIQUE
+                              : duckdb::IndexConstraintType::NONE;
+    containers::FlatHashSet<std::string> seen;
+    // Into parsed_expressions: that is the half duckdb persists, and the
+    // executor fills the binder's own list from it, live and replayed alike.
+    auto push_key = [&](duckdb::unique_ptr<duckdb::ParsedExpression> key) {
+      if (seen.emplace(key->ToString()).second) {
+        info->parsed_expressions.push_back(std::move(key));
       }
     };
     // Walk the positional key list in source order; a sentinel column slot is
@@ -188,42 +197,51 @@ std::optional<StoreIndexDef> MakeStoreIndexDef(
     size_t expr_idx = 0;
     for (auto column : secondary.Columns()) {
       if (column == kInvalidColumnId) {  // expression-key slot
-        // duckdb's ART builds and maintains expression keys natively; the
-        // stored text already names the table's own columns, and a RENAME
-        // COLUMN re-renders it, so it drops straight into the store CREATE
-        // INDEX.
+        // duckdb's ART builds and maintains expression keys natively, and the
+        // stored text is the one form the catalog keeps an expression key in --
+        // a rename re-renders it, so it names the table's own columns.
         const auto& expr = key_expressions[expr_idx++];
         if (!art_indexable(expr.return_type)) {
-          return std::nullopt;
+          return nullptr;
         }
-        push_key(absl::StrCat("(", expr.pretty_printed, ")"));
+        auto parsed = duckdb::Parser::ParseExpressionList(expr.pretty_printed);
+        SDB_ENSURE(parsed.size() == 1, "index key \"", expr.pretty_printed,
+                   "\" is not a single expression");
+        push_key(std::move(parsed.front()));
         continue;
       }
       const auto* col = table.ColumnById(column);
       if (!col || !art_indexable(col->Type())) {
-        return std::nullopt;
+        return nullptr;
       }
-      push_key(duckdb::KeywordHelper::WriteQuoted(
-        std::string{col->Name().GetIdentifierName()}, '"'));
+      push_key(duckdb::make_uniq<duckdb::ColumnRefExpression>(col->Name()));
     }
-    if (def.keys.empty()) {
-      return std::nullopt;
+    if (info->parsed_expressions.empty()) {
+      return nullptr;
     }
-    return def;
+    return info;
   }
 
   // Inverted index: injected as a bound index built straight from the
-  // catalog objects, so the def only names the target; the referenced
+  // catalog objects, so the info only names the target; the referenced
   // columns just have to exist.
   if (index.GetReferencedColumns().empty()) {
-    return std::nullopt;
+    return nullptr;
   }
   for (auto col_id : index.GetReferencedColumns()) {
     if (!table.ColumnById(col_id)) {
-      return std::nullopt;
+      return nullptr;
     }
   }
-  return def;
+  return info;
+}
+
+bool IsPlainStoreIndex(const duckdb::CreateIndexInfo& info) noexcept {
+  return info.index_type == duckdb::ART::TYPE_NAME;
+}
+
+duckdb::AlterEntryData StoreTarget(duckdb::OnEntryNotFound if_not_found) {
+  return duckdb::AlterEntryData{duckdb::QualifiedName{}, if_not_found};
 }
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
@@ -305,148 +323,51 @@ void CatalogStore::WriteContext::Catalog::DropSequence(ObjectId sequence_id) {
 
 void CatalogStore::WriteContext::Store::CreateTable(ObjectId database_id,
                                                     ObjectId table) {
-  _ops.emplace_back(database_id, store_op::CreateTable{.table_id = table});
+  _ops.emplace_back(database_id, table);
 }
 
 void CatalogStore::WriteContext::Store::DropTable(ObjectId database_id,
                                                   ObjectId table) {
-  _ops.emplace_back(database_id, store_op::DropTable{.table_id = table});
+  auto info = duckdb::make_uniq<duckdb::DropInfo>();
+  info->type = duckdb::CatalogType::TABLE_ENTRY;
+  _ops.emplace_back(database_id, table, std::move(info));
 }
 
-void CatalogStore::WriteContext::Store::DropColumn(ObjectId database_id,
-                                                   ObjectId table,
-                                                   std::string name,
-                                                   ObjectId column_id) {
-  _ops.emplace_back(database_id, store_op::DropColumn{
-                                   .table_id = table,
-                                   .column = std::move(name),
-                                   .column_id = column_id,
-                                 });
+void CatalogStore::WriteContext::Store::Alter(
+  ObjectId database_id, ObjectId relation,
+  duckdb::unique_ptr<duckdb::AlterInfo> info) {
+  info->oid = relation.id();
+  _ops.emplace_back(database_id, relation, std::move(info));
 }
 
-void CatalogStore::WriteContext::Store::RenameColumn(ObjectId database_id,
-                                                     ObjectId table,
-                                                     std::string name,
-                                                     std::string new_name) {
-  _ops.emplace_back(database_id, store_op::RenameColumn{
-                                   .table_id = table,
-                                   .column = std::move(name),
-                                   .new_name = std::move(new_name),
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::AddColumn(
-  ObjectId database_id, ObjectId table, std::string name, std::string type_sql,
-  std::string default_sql, duckdb::CompressionType compression) {
-  _ops.emplace_back(database_id, store_op::AddColumn{
-                                   .table_id = table,
-                                   .column = std::move(name),
-                                   .type_sql = std::move(type_sql),
-                                   .default_sql = std::move(default_sql),
-                                   .compression = compression,
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::ChangeColumnType(
-  ObjectId database_id, ObjectId table, std::string name, std::string type_sql,
-  std::string using_sql) {
-  _ops.emplace_back(database_id, store_op::ChangeColumnType{
-                                   .table_id = table,
-                                   .column = std::move(name),
-                                   .type_sql = std::move(type_sql),
-                                   .using_sql = std::move(using_sql),
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::DropCheck(ObjectId database_id,
-                                                  ObjectId table,
-                                                  std::string expr) {
-  _ops.emplace_back(database_id, store_op::DropCheck{
-                                   .table_id = table,
-                                   .expr = std::move(expr),
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::DropNotNull(ObjectId database_id,
-                                                    ObjectId table,
-                                                    std::string column) {
-  _ops.emplace_back(database_id, store_op::DropNotNull{
-                                   .table_id = table,
-                                   .column = std::move(column),
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::AddNotNull(ObjectId database_id,
-                                                   ObjectId table,
-                                                   std::string column) {
-  _ops.emplace_back(database_id, store_op::AddNotNull{
-                                   .table_id = table,
-                                   .column = std::move(column),
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::AddCheck(ObjectId database_id,
-                                                 ObjectId table,
-                                                 std::string expr) {
-  _ops.emplace_back(database_id, store_op::AddCheck{
-                                   .table_id = table,
-                                   .expr = std::move(expr),
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::AddPrimaryKey(
-  ObjectId database_id, ObjectId table, std::string constraint,
-  std::vector<std::string> columns) {
-  _ops.emplace_back(database_id, store_op::AddPrimaryKey{
-                                   .table_id = table,
-                                   .constraint = std::move(constraint),
-                                   .columns = std::move(columns),
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::AddUnique(
-  ObjectId database_id, ObjectId table, std::string constraint,
-  std::vector<std::string> columns) {
-  _ops.emplace_back(database_id, store_op::AddUnique{
-                                   .table_id = table,
-                                   .constraint = std::move(constraint),
-                                   .columns = std::move(columns),
-                                 });
-}
-
-void CatalogStore::WriteContext::Store::CreateIndex(ObjectId database_id,
-                                                    StoreIndexDef def,
-                                                    TableInfoRef table,
-                                                    IndexInfoRef index) {
-  _ops.emplace_back(database_id, store_op::CreateIndex{
-                                   .def = std::move(def),
-                                   .table = std::move(table),
-                                   .index = std::move(index),
-                                 });
+void CatalogStore::WriteContext::Store::CreateIndex(
+  ObjectId database_id, duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
+  TableInfoRef table, IndexInfoRef index) {
+  const auto relation = index->GetRelationId();
+  _ops.emplace_back(database_id, relation, std::move(info), std::move(table),
+                    std::move(index));
 }
 
 void CatalogStore::WriteContext::Store::DropIndex(ObjectId database_id,
-                                                  ObjectId index_id,
                                                   ObjectId relation_id,
                                                   std::string_view name) {
-  _ops.emplace_back(database_id, store_op::DropIndex{
-                                   .def = {.table_id = relation_id,
-                                           .index_id = index_id,
-                                           .name = std::string{name}},
-                                 });
+  auto info = duckdb::make_uniq<duckdb::DropInfo>();
+  info->type = duckdb::CatalogType::INDEX_ENTRY;
+  info->SetName(duckdb::Identifier{name});
+  _ops.emplace_back(database_id, relation_id, std::move(info));
 }
 
 void CatalogStore::WriteContext::Store::RenameIndex(ObjectId database_id,
                                                     ObjectId relation_id,
-                                                    ObjectId index_id,
                                                     std::string_view from,
                                                     std::string_view to) {
-  _ops.emplace_back(database_id, store_op::RenameIndex{
-                                   .table_id = relation_id,
-                                   .index_id = index_id,
-                                   .from = std::string{from},
-                                   .to = std::string{to},
-                                 });
+  duckdb::AlterEntryData target{
+    duckdb::QualifiedName{duckdb::Identifier{}, duckdb::Identifier{},
+                          duckdb::Identifier{from}},
+    duckdb::OnEntryNotFound::RETURN_NULL};
+  _ops.emplace_back(
+    database_id, relation_id,
+    duckdb::make_uniq<duckdb::RenameTableInfo>(target, duckdb::Identifier{to}));
 }
 
 void CatalogStore::WriteContext::Store::ReshapeTable(
@@ -454,51 +375,52 @@ void CatalogStore::WriteContext::Store::ReshapeTable(
   const CreateTableInfo& after) {
   const auto had = [&](const duckdb::Constraint& constraint) {
     return absl::c_any_of(before.constraints, [&](const auto& previous) {
-      return previous->host_id == constraint.host_id;
+      return previous->oid == constraint.oid;
     });
   };
   const auto survives = [&](const duckdb::Constraint& constraint) {
     return absl::c_any_of(after.constraints, [&](const auto& next) {
-      return next->host_id == constraint.host_id;
+      return next->oid == constraint.oid;
     });
   };
   // A key over a nested column has no store-side equivalent, and a key naming
   // a column the store does not have is not one either.
   const auto key_names = [](const duckdb::UniqueConstraint& unique,
                             const CreateTableInfo& info) {
-    std::vector<std::string> names;
+    duckdb::vector<duckdb::Identifier> names;
     for (const auto& key : unique.GetColumnNames()) {
       const auto* column = info.ColumnByName(key.GetIdentifierName());
       if (column == nullptr || column->Type().IsNested()) {
-        return std::vector<std::string>{};
+        return duckdb::vector<duckdb::Identifier>{};
       }
-      names.emplace_back(column->Name().GetIdentifierName());
+      names.emplace_back(column->Name());
     }
     return names;
+  };
+  const auto alter = [&](duckdb::unique_ptr<duckdb::AlterInfo> info) {
+    Alter(database_id, table, std::move(info));
   };
 
   // A constant DEFAULT backfills existing rows; the store handler retries
   // without it when the expression calls a function the store connection
   // cannot bind.
   for (const auto& column : after.columns.Logical()) {
-    const auto* previous = before.ColumnById(ObjectId{column.HostId()});
+    const auto* previous = before.ColumnById(ObjectId{column.CatalogOid()});
     if (previous != nullptr) {
       if (previous->Name().GetIdentifierName() !=
           column.Name().GetIdentifierName()) {
-        RenameColumn(database_id, table,
-                     std::string{previous->Name().GetIdentifierName()},
-                     std::string{column.Name().GetIdentifierName()});
+        alter(duckdb::make_uniq<duckdb::RenameColumnInfo>(
+          StoreTarget(), previous->Name(), column.Name()));
       }
       continue;
     }
-    std::string default_sql;
+    duckdb::ColumnDefinition definition{column.Name(), column.Type()};
+    definition.SetCompressionType(column.CompressionType());
     if (!column.Generated() && column.HasDefaultValue()) {
-      default_sql = column.DefaultValue().ToString();
+      definition.SetDefaultValue(column.DefaultValue().Copy());
     }
-    AddColumn(database_id, table,
-              std::string{column.Name().GetIdentifierName()},
-              column.Type().ToString(), std::move(default_sql),
-              column.CompressionType());
+    alter(duckdb::make_uniq<duckdb::AddColumnInfo>(
+      StoreTarget(), std::move(definition), /*if_column_not_exists=*/false));
   }
   // Constraints the ALTER removed.
   for (const auto& constraint : before.constraints) {
@@ -509,16 +431,17 @@ void CatalogStore::WriteContext::Store::ReshapeTable(
       case duckdb::ConstraintType::NOT_NULL: {
         const auto index = constraint->Cast<duckdb::NotNullConstraint>().index;
         if (index.index < before.columns.LogicalColumnCount()) {
-          DropNotNull(
-            database_id, table,
-            std::string{
-              before.columns.GetColumn(index).Name().GetIdentifierName()});
+          alter(duckdb::make_uniq<duckdb::DropNotNullInfo>(
+            StoreTarget(), before.columns.GetColumn(index).Name()));
         }
       } break;
       case duckdb::ConstraintType::CHECK:
-        DropCheck(
-          database_id, table,
-          constraint->Cast<duckdb::CheckConstraint>().expression->ToString());
+        // No SQL spells "the CHECK with this body", so the expression text is
+        // what names it on the way out as well as on the way in.
+        alter(duckdb::make_uniq<duckdb::DropConstraintInfo>(
+          StoreTarget(duckdb::OnEntryNotFound::RETURN_NULL),
+          constraint->Cast<duckdb::CheckConstraint>().expression->ToString(),
+          /*if_constraint_not_found=*/true, /*cascade=*/false));
         break;
       default:
         break;
@@ -535,10 +458,8 @@ void CatalogStore::WriteContext::Store::ReshapeTable(
       case duckdb::ConstraintType::NOT_NULL: {
         const auto index = constraint->Cast<duckdb::NotNullConstraint>().index;
         if (index.index < after.columns.LogicalColumnCount()) {
-          AddNotNull(
-            database_id, table,
-            std::string{
-              after.columns.GetColumn(index).Name().GetIdentifierName()});
+          alter(duckdb::make_uniq<duckdb::SetNotNullInfo>(
+            StoreTarget(), after.columns.GetColumn(index).Name()));
         }
       } break;
       case duckdb::ConstraintType::UNIQUE: {
@@ -547,17 +468,14 @@ void CatalogStore::WriteContext::Store::ReshapeTable(
         if (names.empty()) {
           break;
         }
+        auto key = duckdb::make_uniq<duckdb::UniqueConstraint>(
+          std::move(names), unique.IsPrimaryKey());
         // The name the ART answers to is the constraint's own, which is what
         // RebuildMissingIndexes looks for and what an error message shows.
-        auto constraint_name =
+        key->constraint_name =
           unique.GetName(after.GetTableName()).GetIdentifierName();
-        if (unique.IsPrimaryKey()) {
-          AddPrimaryKey(database_id, table, std::string{constraint_name},
-                        std::move(names));
-        } else {
-          AddUnique(database_id, table, std::string{constraint_name},
-                    std::move(names));
-        }
+        alter(duckdb::make_uniq<duckdb::AddConstraintInfo>(StoreTarget(),
+                                                           std::move(key)));
       } break;
       case duckdb::ConstraintType::CHECK: {
         // Function calls bind against the store connection's catalog, so a
@@ -576,7 +494,9 @@ void CatalogStore::WriteContext::Store::ReshapeTable(
         };
         scan(*check.expression);
         if (!has_function) {
-          AddCheck(database_id, table, check.expression->ToString());
+          alter(duckdb::make_uniq<duckdb::AddConstraintInfo>(
+            StoreTarget(), duckdb::make_uniq<duckdb::CheckConstraint>(
+                             check.expression->Copy())));
         }
       } break;
       default:
@@ -1240,15 +1160,7 @@ namespace {
 std::string StoreOpsSubject(duckdb::ClientContext* context,
                             std::span<const store_op::Targeted> ops) {
   for (const auto& targeted : ops) {
-    const auto table_id = std::visit(
-      [](const auto& o) -> ObjectId {
-        if constexpr (requires { o.def.table_id; }) {
-          return o.def.table_id;
-        } else {
-          return o.table_id;
-        }
-      },
-      targeted.op);
+    const auto table_id = targeted.relation_id;
     if (!table_id.isSet()) {
       continue;
     }

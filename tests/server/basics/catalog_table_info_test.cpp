@@ -47,10 +47,10 @@ std::shared_ptr<CreateTableInfo> MakeTable(
   auto info = std::make_shared<CreateTableInfo>();
   info->SetTableName(duckdb::Identifier{"t"});
   info->SetSchema(duckdb::Identifier{"public"});
-  for (const auto& [name, host_id] : columns) {
+  for (const auto& [name, oid] : columns) {
     duckdb::ColumnDefinition column{duckdb::Identifier{std::string{name}},
                                     duckdb::LogicalType::INTEGER};
-    column.SetHostId(host_id);
+    column.SetCatalogOid(oid);
     info->columns.AddColumn(std::move(column));
   }
   return info;
@@ -117,8 +117,8 @@ TEST(CatalogTableInfo, rename_column_moves_every_reference) {
 TEST(CatalogTableInfo, column_lookup_is_case_sensitive) {
   auto info = MakeTable({{"A", 1}, {"a", 2}});
   ASSERT_NE(info->ColumnByName("A"), nullptr);
-  EXPECT_EQ(info->ColumnByName("A")->HostId(), 1);
-  EXPECT_EQ(info->ColumnByName("a")->HostId(), 2);
+  EXPECT_EQ(info->ColumnByName("A")->CatalogOid(), 1);
+  EXPECT_EQ(info->ColumnByName("a")->CatalogOid(), 2);
 
   auto renamed = info->RenameColumn("a", "b");
   EXPECT_EQ(ColumnNames(*renamed), (std::vector<std::string>{"A", "b"}));
@@ -162,7 +162,7 @@ TEST(CatalogTableInfo, a_primary_key_implies_not_null_and_is_unique) {
   EXPECT_TRUE(info->IsColumnNotNull(ObjectId{1}));
   const auto* pk = FindUnique(*info, "t_pkey");
   ASSERT_NE(pk, nullptr);
-  EXPECT_EQ(pk->host_id, 10);
+  EXPECT_EQ(pk->oid, 10);
   EXPECT_EQ(pk->host_index_id, 11);
   EXPECT_THROW(
     info->AddPrimaryKey(std::vector<ObjectId>{ObjectId{1}}, {},
@@ -233,7 +233,7 @@ TEST(CatalogTableInfo, foreign_keys_are_dropped_by_the_id_they_reference) {
     duckdb::vector<duckdb::Identifier>{duckdb::Identifier{"a"}},
     std::move(fk_info));
   fk->constraint_name = "t_a_fkey";
-  fk->host_id = 10;
+  fk->oid = 10;
   fk->host_referenced_id = 42;
   info->constraints.push_back(std::move(fk));
 
@@ -247,13 +247,13 @@ TEST(CatalogTableInfo, adding_a_column_honours_if_not_exists) {
   auto info = MakeTable({{"a", 1}});
   duckdb::ColumnDefinition column{duckdb::Identifier{"a"},
                                   duckdb::LogicalType::INTEGER};
-  column.SetHostId(2);
+  column.SetCatalogOid(2);
   EXPECT_EQ(info->AddColumn(column.Copy(), /*if_not_exists=*/true), nullptr);
   EXPECT_THROW(info->AddColumn(column.Copy(), /*if_not_exists=*/false),
                SqlException);
   duckdb::ColumnDefinition fresh{duckdb::Identifier{"b"},
                                  duckdb::LogicalType::INTEGER};
-  fresh.SetHostId(2);
+  fresh.SetCatalogOid(2);
   auto wider = info->AddColumn(std::move(fresh), /*if_not_exists=*/false);
   EXPECT_EQ(ColumnNames(*wider), (std::vector<std::string>{"a", "b"}));
 }

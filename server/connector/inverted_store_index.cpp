@@ -1654,7 +1654,7 @@ duckdb::unique_ptr<InvertedStoreIndex> MakeInjectedInvertedIndex(
   pos_by_id.reserve(table->columns.LogicalColumnCount());
   duckdb::idx_t store_pos = 0;
   for (const auto& column : table->columns.Logical()) {
-    pos_by_id.emplace(ObjectId{column.HostId()}, store_pos++);
+    pos_by_id.emplace(ObjectId{column.CatalogOid()}, store_pos++);
   }
   // The feed reads each indexed column at its position in the store table, so
   // the mapping is built here, from the same lookup the expression rebinding

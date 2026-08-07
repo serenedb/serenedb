@@ -386,7 +386,7 @@ void InitScanState(IResearchScanGlobalState& state,
       const auto& catalog_cols = bind_data.table_entry->GetColumns();
       SDB_ASSERT(cat_idx < catalog_cols.LogicalColumnCount());
       const catalog::ColumnId catalog_col_id{
-        catalog_cols.GetColumn(duckdb::LogicalIndex(cat_idx)).HostId()};
+        catalog_cols.GetColumn(duckdb::LogicalIndex(cat_idx)).CatalogOid()};
       duckdb::idx_t bind_idx = duckdb::DConstants::INVALID_INDEX;
       for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
         if (bind_data.column_ids[i] == catalog_col_id) {

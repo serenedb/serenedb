@@ -182,7 +182,7 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   id_to_pos.reserve(scan_columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
   for (const auto& col : scan_columns.Logical()) {
-    id_to_pos.emplace(col.HostId(), pos++);
+    id_to_pos.emplace(col.CatalogOid(), pos++);
   }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,

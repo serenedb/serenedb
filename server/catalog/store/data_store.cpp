@@ -23,7 +23,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
@@ -31,16 +30,13 @@
 #include <duckdb/execution/index/art/art.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/parser/column_definition.hpp>
-#include <duckdb/parser/constraints/check_constraint.hpp>
-#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
-#include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
-#include <duckdb/parser/parser.hpp>
+#include <duckdb/parser/statement/alter_statement.hpp>
+#include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <duckdb/storage/data_table.hpp>
@@ -72,34 +68,11 @@
 namespace sdb::catalog {
 namespace {
 
-std::string QuotedIdent(const std::string& name) {
-  return duckdb::KeywordHelper::WriteQuoted(name, '"');
-}
-
-// `"postgres"."public"."orders"` -- an index build is the one op still spelled
-// as SQL, and it names the relation the way a session would.
-std::string QualifiedTable(const duckdb::TableCatalogEntry& entry) {
-  return absl::StrCat(
-    QuotedIdent(entry.ParentCatalog().GetName().GetIdentifierName()), ".",
-    QuotedIdent(entry.ParentSchema().name.GetIdentifierName()), ".",
-    QuotedIdent(entry.name.GetIdentifierName()));
-}
-
-std::string QuotedColumns(std::span<const std::string> columns) {
-  return absl::StrJoin(columns, ", ",
-                       [](std::string* out, const std::string& c) {
-                         absl::StrAppend(out, QuotedIdent(c));
-                       });
-}
-
-// One expression of rendered SQL. The op carries the user's own text -- a
-// DEFAULT, a CHECK body, an ALTER COLUMN TYPE USING -- and this is where it
-// becomes a parse tree again; nothing else about a store op is SQL any more.
-duckdb::unique_ptr<duckdb::ParsedExpression> ParseOne(const std::string& sql) {
-  auto list = duckdb::Parser::ParseExpressionList(sql);
-  SDB_ENSURE(list.size() == 1, "store op: \"", sql,
-             "\" is not a single expression");
-  return std::move(list.front());
+// The relation as the binder resolves it: the ops that go through the planner
+// name their target the way a session would.
+duckdb::QualifiedName NameOf(const duckdb::TableCatalogEntry& entry) {
+  return duckdb::QualifiedName{entry.ParentCatalog().GetName(),
+                               entry.ParentSchema().name, entry.name};
 }
 
 // A concurrent statement reshaped the same rows first. duckdb reports it as an
@@ -274,12 +247,30 @@ absl::Status DataStore::ExecuteStoreOps(
   duckdb::ClientContext* context, std::span<const store_op::Targeted> ops) {
   // Published before the first op, not as each one runs: a batch can drop
   // several columns, and the rebuild triggered by the first already has to
-  // know about all of them.
+  // know about all of them. The catalog half of the batch lands after the
+  // store ops, so the definition still names the column being taken away --
+  // and a replay, where the catalog is already past it, needs none of this.
   for (const auto& targeted : ops) {
-    if (const auto* drop = std::get_if<store_op::DropColumn>(&targeted.op)) {
-      if (drop->column_id.isSet()) {
-        _dropping_columns.insert(drop->column_id);
-      }
+    if (!targeted.info ||
+        targeted.info->info_type != duckdb::ParseInfoType::ALTER_INFO) {
+      continue;
+    }
+    const auto& alter = targeted.info->Cast<duckdb::AlterInfo>();
+    if (alter.type != duckdb::AlterType::ALTER_TABLE ||
+        alter.Cast<duckdb::AlterTableInfo>().alter_table_type !=
+          duckdb::AlterTableType::REMOVE_COLUMN) {
+      continue;
+    }
+    const auto* table = context != nullptr ? connector::FindSessionTable(
+                                               *context, targeted.relation_id)
+                                           : nullptr;
+    if (table == nullptr) {
+      continue;
+    }
+    const auto* column = table->Definition()->ColumnByName(
+      alter.GetColumnName().GetIdentifierName());
+    if (column != nullptr) {
+      _dropping_columns.insert(ObjectId{column->CatalogOid()});
     }
   }
   const absl::Cleanup dropping_done = [&] { _dropping_columns.clear(); };
@@ -318,7 +309,7 @@ absl::Status DataStore::ExecuteStoreOps(
         // The database is detached: DROP DATABASE removes the attachment (and
         // the file with it) synchronously, while the cascade's per-table drops
         // run asynchronously afterwards. Their target is already gone.
-        if (store_op::IsDestructive(targeted.op)) {
+        if (store_op::IsDestructive(targeted)) {
           continue;
         }
         return absl::InternalError(absl::StrCat(
@@ -339,17 +330,17 @@ absl::Status DataStore::ExecuteStoreOps(
         _statement = &*statement;
       }
     }
-    if (auto r = ExecuteStoreOp(context, targeted.op); !r.ok()) {
+    if (auto r = ExecuteStoreOp(context, targeted); !r.ok()) {
       return r;
     }
   }
   return absl::OkStatus();
 }
 
-absl::Status DataStore::Exec(const std::string& sql) {
-  SDB_ENSURE(_exec_conn != nullptr,
-             "store statement with no connection: ", sql);
-  auto res = _exec_conn->Query(sql);
+absl::Status DataStore::Run(
+  duckdb::unique_ptr<duckdb::SQLStatement> statement) {
+  SDB_ENSURE(_exec_conn != nullptr, "store statement with no connection");
+  auto res = _exec_conn->Query(std::move(statement));
   if (!res->HasError()) {
     return absl::OkStatus();
   }
@@ -363,9 +354,8 @@ absl::Status DataStore::Exec(const std::string& sql) {
 // The rows an op leaves behind travel with the transaction that produced them
 // rather than being looked up again: only that transaction can see them, and
 // the entry version that carries them is not built until the write.
-absl::Status DataStore::Alter(duckdb::ClientContext* context, ObjectId table_id,
+absl::Status DataStore::Alter(duckdb::ClientContext* context,
                               duckdb::AlterInfo& info) try {
-  info.host_id = table_id.id();
   auto& catalog = _target->GetCatalog().Cast<connector::SereneDBCatalog>();
   auto reshaped = absl::Status{};
   auto apply = [&](duckdb::ClientContext& reshape_context) {
@@ -403,177 +393,137 @@ duckdb::optional_ptr<duckdb::DuckTableEntry> DataStore::ResolveTable(
   return &entry->Cast<duckdb::DuckTableEntry>();
 }
 
-// An AlterInfo names its target twice: by identity, which is what resolves it,
-// and by name, which is what an error message shows. An op carries only the
-// identity, so the name is left for AlterStorage to fill in off the entry it
-// resolves -- the current one, not the one the op was written against.
-duckdb::AlterEntryData DataStore::OpTarget(bool missing_ok) {
-  return duckdb::AlterEntryData{duckdb::QualifiedName{},
-                                missing_ok
-                                  ? duckdb::OnEntryNotFound::RETURN_NULL
-                                  : duckdb::OnEntryNotFound::THROW_EXCEPTION};
-}
-
 absl::Status DataStore::ExecuteStoreOp(duckdb::ClientContext* context,
-                                       const store_op::Op& op) {
-  return std::visit(
-    [this, context](const auto& o) -> absl::Status {
-      using T = std::decay_t<decltype(o)>;
-      if constexpr (std::is_same_v<T, store_op::CreateTable>) {
-        return ExecuteCreateStoreTable(context, o.table_id);
-      } else if constexpr (std::is_same_v<T, store_op::DropTable>) {
-        // The rows go with the entry, whose drop is a duckdb table drop, so
-        // the blocks are reclaimed at commit.
-        return absl::OkStatus();
-      } else if constexpr (std::is_same_v<T, store_op::DropColumn>) {
-        duckdb::RemoveColumnInfo info{OpTarget(), o.column,
-                                      /*if_column_exists=*/false,
-                                      /*cascade=*/false};
-        return Alter(context, o.table_id, info);
-      } else if constexpr (std::is_same_v<T, store_op::RenameColumn>) {
-        duckdb::RenameColumnInfo info{OpTarget(), duckdb::Identifier{o.column},
-                                      duckdb::Identifier{o.new_name}};
-        return Alter(context, o.table_id, info);
-      } else if constexpr (std::is_same_v<T, store_op::DropNotNull>) {
-        duckdb::DropNotNullInfo info{OpTarget(), duckdb::Identifier{o.column}};
-        return Alter(context, o.table_id, info);
-      } else if constexpr (std::is_same_v<T, store_op::AddNotNull>) {
-        duckdb::SetNotNullInfo info{OpTarget(), duckdb::Identifier{o.column}};
-        return Alter(context, o.table_id, info);
-      } else if constexpr (std::is_same_v<T, store_op::AddCheck>) {
-        duckdb::AddConstraintInfo info{
-          OpTarget(),
-          duckdb::make_uniq<duckdb::CheckConstraint>(ParseOne(o.expr))};
-        return Alter(context, o.table_id, info);
-      } else if constexpr (std::is_same_v<T, store_op::AddPrimaryKey> ||
-                           std::is_same_v<T, store_op::AddUnique>) {
-        return ExecuteAddKeyConstraint(
-          context, o.table_id, o.constraint, o.columns,
-          std::is_same_v<T, store_op::AddPrimaryKey>);
-      } else if constexpr (std::is_same_v<T, store_op::DropCheck>) {
-        duckdb::DropConstraintInfo info{OpTarget(/*missing_ok=*/true), o.expr,
-                                        true, false};
-        return Alter(context, o.table_id, info);
-      } else if constexpr (std::is_same_v<T, store_op::CreateIndex>) {
-        return ExecuteCreateStoreIndex(context, o);
-      } else if constexpr (std::is_same_v<T, store_op::DropIndex>) {
-        return ExecuteDropStoreIndex(context, o.def);
-      } else if constexpr (std::is_same_v<T, store_op::RenameIndex>) {
-        return ExecuteRenameStoreIndex(context, o);
-      } else if constexpr (std::is_same_v<T, store_op::AddColumn>) {
-        return ExecuteAddStoreColumn(context, o);
-      } else if constexpr (std::is_same_v<T, store_op::ChangeColumnType>) {
-        duckdb::ChangeColumnTypeInfo info{
-          OpTarget(), duckdb::Identifier{o.column},
-          duckdb::TransformStringToLogicalType(o.type_sql, *_conn->context),
-          o.using_sql.empty() ? nullptr : ParseOne(o.using_sql)};
-        return Alter(context, o.table_id, info);
-      } else {
-        // No catch-all: a new op falling through here would report success
-        // for DDL that never ran.
-        static_assert(false, "store op is not executed");
+                                       const store_op::Targeted& op) {
+  if (!op.info) {
+    return ExecuteCreateStoreTable(context, op.relation_id);
+  }
+  switch (op.info->info_type) {
+    case duckdb::ParseInfoType::ALTER_INFO: {
+      // A copy per execution: AlterStorage resolves the target into the info,
+      // and a replayed batch is held for as long as the database is behind.
+      auto info = op.info->Cast<duckdb::AlterInfo>().Copy();
+      if (info->type == duckdb::AlterType::ALTER_TABLE &&
+          info->Cast<duckdb::AlterTableInfo>().alter_table_type ==
+            duckdb::AlterTableType::RENAME_TABLE) {
+        return ExecuteRenameStoreIndex(context, op.relation_id,
+                                       info->Cast<duckdb::RenameTableInfo>());
       }
-    },
-    op);
+      if (info->IsAddIndexedConstraint()) {
+        // The constraint is backed by an index, and an index over existing
+        // rows is a physical plan -- so this one goes through the planner
+        // rather than straight onto the entry.
+        return RunAlter(context, op.relation_id, std::move(info));
+      }
+      if (info->type == duckdb::AlterType::ALTER_TABLE &&
+          info->Cast<duckdb::AlterTableInfo>().alter_table_type ==
+            duckdb::AlterTableType::ADD_COLUMN) {
+        return ExecuteAddStoreColumn(context, op.relation_id, std::move(info));
+      }
+      return Alter(context, *info);
+    }
+    case duckdb::ParseInfoType::CREATE_INFO:
+      return ExecuteCreateStoreIndex(context, op);
+    case duckdb::ParseInfoType::DROP_INFO: {
+      const auto& drop = op.info->Cast<duckdb::DropInfo>();
+      // The rows of a dropped table go with the entry, whose drop is a duckdb
+      // table drop, so the blocks are reclaimed at commit.
+      if (drop.type != duckdb::CatalogType::INDEX_ENTRY) {
+        return absl::OkStatus();
+      }
+      return ExecuteDropStoreIndex(context, op.relation_id,
+                                   drop.GetQualifiedName().Name());
+    }
+    default:
+      return absl::InternalError(absl::StrCat(
+        "store op ", static_cast<int>(op.info->info_type), " has no executor"));
+  }
 }
 
-// The arms with real bodies, lifted out so the visit above reads as the
-// dispatch table it is.
-absl::Status DataStore::ExecuteAddStoreColumn(duckdb::ClientContext* context,
-                                              const store_op::AddColumn& o) {
-  const auto column = [&](bool with_default) {
-    duckdb::ColumnDefinition cd{
-      duckdb::Identifier{o.column},
-      duckdb::TransformStringToLogicalType(o.type_sql, *_conn->context)};
-    cd.SetCompressionType(o.compression);
-    if (with_default) {
-      cd.SetDefaultValue(ParseOne(o.default_sql));
-    }
-    return cd;
-  };
-  const auto add = [&](bool with_default) {
-    duckdb::AddColumnInfo info{OpTarget(), column(with_default),
-                               /*if_column_not_exists=*/false};
-    return Alter(context, o.table_id, info);
-  };
-  if (o.default_sql.empty()) {
-    return add(/*with_default=*/false);
+// The arms with real bodies, lifted out so the dispatch above reads as the
+// table it is.
+absl::Status DataStore::ExecuteAddStoreColumn(
+  duckdb::ClientContext* context, ObjectId table_id,
+  duckdb::unique_ptr<duckdb::AlterInfo> info) {
+  auto& add = info->Cast<duckdb::AddColumnInfo>();
+  if (!add.new_column.HasDefaultValue()) {
+    return Alter(context, add);
   }
-  auto r = add(/*with_default=*/true);
+  auto bare = info->Copy();
+  auto r = Alter(context, add);
   if (r.ok()) {
     return r;
   }
   // The DEFAULT may name something the reshape cannot bind here. Add the column
   // without it; existing rows get NULL and the definition still carries the
   // default, which is what fills it on insert.
-  SDB_WARN(GENERAL, "relation ", o.table_id.id(), ": ADD COLUMN \"", o.column,
+  SDB_WARN(GENERAL, "relation ", table_id.id(), ": ADD COLUMN \"",
+           add.new_column.Name().GetIdentifierName(),
            "\" DEFAULT not backfilled: ", r.message());
-  return add(/*with_default=*/false);
+  auto& retry = bare->Cast<duckdb::AddColumnInfo>();
+  retry.new_column.SetDefaultValue(nullptr);
+  return Alter(context, retry);
 }
 
 // An index build, not a reshape: the entry alter only records the constraint,
 // while the ART over the existing rows is a physical plan, and a plan is
 // reached by running a statement.
-absl::Status DataStore::ExecuteAddKeyConstraint(
-  duckdb::ClientContext* context, ObjectId table_id,
-  const std::string& constraint, std::span<const std::string> columns,
-  bool primary_key) {
-  auto entry =
-    ResolveTable(context != nullptr ? *context : *_conn->context, table_id);
-  if (!entry) {
-    return absl::InternalError(
-      absl::StrCat("relation ", table_id.id(), " has no rows to key"));
-  }
-  return Exec(absl::StrCat("ALTER TABLE ", QualifiedTable(*entry),
-                           " ADD CONSTRAINT ", QuotedIdent(constraint),
-                           primary_key ? " PRIMARY KEY (" : " UNIQUE (",
-                           QuotedColumns(columns), ")"));
-}
-
-absl::Status DataStore::ExecuteCreateStoreIndex(
-  duckdb::ClientContext* context, const store_op::CreateIndex& o) {
-  const auto& def = o.def;
+absl::Status DataStore::ExecuteCreateStoreIndex(duckdb::ClientContext* context,
+                                                const store_op::Targeted& op) {
   auto& resolve_context = context != nullptr ? *context : *_conn->context;
-  auto table_entry = ResolveTable(resolve_context, def.table_id);
+  auto table_entry = ResolveTable(resolve_context, op.relation_id);
   if (!table_entry) {
     return absl::InternalError(
-      absl::StrCat("relation ", def.table_id.id(), " has no rows to index"));
+      absl::StrCat("relation ", op.relation_id.id(), " has no rows to index"));
   }
-  if (def.kind != StoreIndexDef::Kind::Inverted) {
-    // The index name is bare: CREATE INDEX takes its schema from the relation,
-    // and spelling one here is a syntax error.
-    return Exec(absl::StrCat("CREATE ", def.unique ? "UNIQUE " : "", "INDEX ",
-                             QuotedIdent(def.name), " ON ",
-                             QualifiedTable(*table_entry), " (",
-                             absl::StrJoin(def.keys, ", "), ")"));
+  const auto& create = op.info->Cast<duckdb::CreateIndexInfo>();
+  if (IsPlainStoreIndex(create)) {
+    auto statement = duckdb::make_uniq<duckdb::CreateStatement>();
+    auto info =
+      duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateIndexInfo>(
+        create.Copy());
+    // The relation the op named by id, as the binder resolves it: the current
+    // entry, not the one the op was written against.
+    info->table = table_entry->name;
+    info->SetQualifiedName(NameOf(*table_entry).WithName(info->GetIndexName()));
+    // The keys are persisted as parsed_expressions; the binder reads the other
+    // list, which duckdb's own CREATE INDEX fills the same way.
+    for (const auto& key : info->parsed_expressions) {
+      info->expressions.push_back(key->Copy());
+    }
+    statement->info = std::move(info);
+    return Run(std::move(statement));
   }
-  if (def.defer_injection) {
+  // The physical operator that ran the statement already published this one
+  // into the live list, under the store table's checkpoint lock.
+  auto& storage = table_entry->GetStorage();
+  auto& list = storage.GetDataTableInfo()->GetIndexes();
+  if (!list.NameIsUnique(std::string{create.GetIndexName()})) {
     return absl::OkStatus();
   }
   // A replayed op carries ids, not objects: the two definitions are written by
   // the PutTable and PutEntry records of the very same frame, so re-resolving
   // them by id is exact rather than approximate. That is what keeps the record
   // reconstructable without the log storing each definition twice.
-  auto table = o.table;
-  auto index = o.index;
+  auto table = op.table;
+  auto index = op.index;
+  const ObjectId index_id{create.oid};
   if (!table || !index) {
     if (const auto* found = connector::FindTableIn(
-          nullptr, _target->GetCatalog(), def.table_id)) {
+          nullptr, _target->GetCatalog(), op.relation_id)) {
       table = found->Definition();
     }
     if (const auto* found =
-          connector::FindIndexIn(nullptr, _target->GetCatalog(), def.index_id);
+          connector::FindIndexIn(nullptr, _target->GetCatalog(), index_id);
         found != nullptr && found->IsInverted()) {
       index = found->Definition();
     }
     if (!table || !index) {
       return absl::InternalError(absl::StrCat(
-        "inverted index ", def.index_id.id(), " on relation ",
-        def.table_id.id(), " has no catalog definition to rebuild it from"));
+        "inverted index ", index_id.id(), " on relation ", op.relation_id.id(),
+        " has no catalog definition to rebuild it from"));
     }
   }
-  auto& storage = table_entry->GetStorage();
-  auto& list = storage.GetDataTableInfo()->GetIndexes();
   WithBindContext(*_target, [&](duckdb::ClientContext& bind_ctx) {
     connector::AddInjectedInvertedIndex(
       list,
@@ -583,11 +533,12 @@ absl::Status DataStore::ExecuteCreateStoreIndex(
 }
 
 absl::Status DataStore::ExecuteDropStoreIndex(duckdb::ClientContext* context,
-                                              const StoreIndexDef& def) {
+                                              ObjectId table_id,
+                                              const duckdb::Identifier& name) {
   auto& resolve_context = context != nullptr ? *context : *_conn->context;
   // The table itself may already be gone -- index drops ride table and schema
   // drops -- and then its indexes went with its rows.
-  auto table_entry = ResolveTable(resolve_context, def.table_id);
+  auto table_entry = ResolveTable(resolve_context, table_id);
   if (!table_entry) {
     return absl::OkStatus();
   }
@@ -599,7 +550,7 @@ absl::Status DataStore::ExecuteDropStoreIndex(duckdb::ClientContext* context,
   // Neither kind has a duckdb entry: an inverted index is injected into the
   // list and an ART is built onto it, so for both the list is where the index
   // is and taking it off is what ends it.
-  info.GetIndexes().RemoveIndex(duckdb::Identifier{def.name});
+  info.GetIndexes().RemoveIndex(name);
   return absl::OkStatus();
 }
 
@@ -607,16 +558,33 @@ absl::Status DataStore::ExecuteDropStoreIndex(duckdb::ClientContext* context,
 // including the one a checkpoint already wrote down, which is why the live
 // index is renamed rather than dropped and rebuilt.
 absl::Status DataStore::ExecuteRenameStoreIndex(
-  duckdb::ClientContext* context, const store_op::RenameIndex& o) {
+  duckdb::ClientContext* context, ObjectId table_id,
+  const duckdb::RenameTableInfo& info) {
   auto& resolve_context = context != nullptr ? *context : *_conn->context;
-  auto table_entry = ResolveTable(resolve_context, o.table_id);
+  auto table_entry = ResolveTable(resolve_context, table_id);
   if (!table_entry) {
     return absl::OkStatus();
   }
-  auto& info = *table_entry->GetStorage().GetDataTableInfo();
-  info.GetIndexes().RenameIndex(duckdb::Identifier{o.from},
-                                duckdb::Identifier{o.to});
+  table_entry->GetStorage().GetDataTableInfo()->GetIndexes().RenameIndex(
+    info.GetQualifiedName().Name(), info.new_table_name);
   return absl::OkStatus();
+}
+
+// A reshape duckdb can only reach through its planner: ADD PRIMARY KEY and ADD
+// UNIQUE build an index over the rows already there.
+absl::Status DataStore::RunAlter(duckdb::ClientContext* context,
+                                 ObjectId table_id,
+                                 duckdb::unique_ptr<duckdb::AlterInfo> info) {
+  auto& resolve_context = context != nullptr ? *context : *_conn->context;
+  auto table_entry = ResolveTable(resolve_context, table_id);
+  if (!table_entry) {
+    return absl::InternalError(
+      absl::StrCat("relation ", table_id.id(), " has no rows to reshape"));
+  }
+  info->SetQualifiedName(NameOf(*table_entry));
+  auto statement = duckdb::make_uniq<duckdb::AlterStatement>();
+  statement->info = std::move(info);
+  return Run(std::move(statement));
 }
 
 // The rows of a table the entry in front of them was built without: boot's
@@ -798,13 +766,12 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
         if (index_entry == nullptr) {
           continue;
         }
-        auto def = MakeStoreIndexDef(*table, *index_entry->Definition());
-        if (!def || def->kind != StoreIndexDef::Kind::Plain ||
-            !list.NameIsUnique(def->name)) {
+        auto info = MakeStoreIndexInfo(*table, *index_entry->Definition());
+        if (!info || !IsPlainStoreIndex(*info) ||
+            !list.NameIsUnique(std::string{info->GetIndexName()})) {
           continue;
         }
-        ops.push_back(
-          {database_id, store_op::CreateIndex{*def, nullptr, nullptr}});
+        ops.emplace_back(database_id, table_id, std::move(info));
       }
     }
     // A key constraint's ART is named after the constraint rather than the
@@ -818,23 +785,20 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
       if (!list.NameIsUnique(name.GetIdentifierName())) {
         continue;
       }
-      std::vector<std::string> columns;
+      duckdb::vector<duckdb::Identifier> columns;
       for (const auto& logical : unique.GetLogicalIndexes(table->columns)) {
-        columns.emplace_back(
-          table->columns.GetColumn(logical).Name().GetIdentifierName());
+        columns.emplace_back(table->columns.GetColumn(logical).Name());
       }
       if (columns.empty()) {
         continue;
       }
-      auto op = store_op::AddUnique{table_id, constraint->constraint_name,
-                                    std::move(columns)};
-      if (unique.IsPrimaryKey()) {
-        ops.push_back(
-          {database_id, store_op::AddPrimaryKey{op.table_id, op.constraint,
-                                                std::move(op.columns)}});
-        continue;
-      }
-      ops.push_back({database_id, std::move(op)});
+      auto key = duckdb::make_uniq<duckdb::UniqueConstraint>(
+        std::move(columns), unique.IsPrimaryKey());
+      key->constraint_name = constraint->constraint_name;
+      auto add = duckdb::make_uniq<duckdb::AddConstraintInfo>(StoreTarget(),
+                                                              std::move(key));
+      add->oid = table_id.id();
+      ops.emplace_back(database_id, table_id, std::move(add));
     }
   }
   if (ops.empty()) {

@@ -195,7 +195,7 @@ catalog::ColumnId TableScanBindData::ColumnIdByName(
   const auto& columns = table_entry->GetColumns();
   const duckdb::Identifier key{name};
   return columns.ColumnExists(key)
-           ? catalog::ColumnId{columns.GetColumn(key).HostId()}
+           ? catalog::ColumnId{columns.GetColumn(key).CatalogOid()}
            : catalog::kInvalidColumnId;
 }
 
@@ -213,7 +213,7 @@ duckdb::LogicalType TableScanBindData::ColumnTypeById(
 
 void TableScanBindData::IterateColumns(const ColumnVisitor& cb) const {
   for (const auto& column : table_entry->GetColumns().Logical()) {
-    cb(catalog::ColumnId{column.HostId()}, column.Type());
+    cb(catalog::ColumnId{column.CatalogOid()}, column.Type());
   }
 }
 

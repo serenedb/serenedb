@@ -153,7 +153,7 @@ void EmitColumnsForTable(const connector::SereneDBTableEntry& table,
       .attislocal = true,
       .attinhcount = 0,
       .attcollation = GetCollationForType(type_oid),
-      .attacl = {table.GetColumnAcl(ObjectId{col.HostId()})},
+      .attacl = {table.GetColumnAcl(ObjectId{col.CatalogOid()})},
     };
     values.push_back(std::move(row));
   }

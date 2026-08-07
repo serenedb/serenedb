@@ -474,18 +474,18 @@ TEST_F(CatalogStoreTest, table_info_round_trips_through_put_entry) {
         std::pair<const char*, uint64_t>{"a", 102}}) {
     duckdb::ColumnDefinition column{duckdb::Identifier{std::string{name}},
                                     duckdb::LogicalType::INTEGER};
-    column.SetHostId(host);
+    column.SetCatalogOid(host);
     info->columns.AddColumn(std::move(column));
   }
   auto not_null =
     duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{0});
   not_null->constraint_name = "orders_A_not_null";
-  not_null->host_id = 201;
+  not_null->oid = 201;
   info->constraints.push_back(std::move(not_null));
   auto pk = duckdb::make_uniq<duckdb::UniqueConstraint>(
     duckdb::vector<duckdb::Identifier>{duckdb::Identifier{"A"}}, true);
   pk->constraint_name = "orders_pkey";
-  pk->host_id = 202;
+  pk->oid = 202;
   pk->host_index_id = 203;
   info->constraints.push_back(std::move(pk));
   duckdb::ForeignKeyInfo fk_info;
@@ -497,7 +497,7 @@ TEST_F(CatalogStoreTest, table_info_round_trips_through_put_entry) {
     duckdb::vector<duckdb::Identifier>{duckdb::Identifier{"a"}},
     std::move(fk_info));
   fk->constraint_name = "orders_a_fkey";
-  fk->host_id = 204;
+  fk->oid = 204;
   fk->host_referenced_id = 99;
   info->constraints.push_back(std::move(fk));
   info->SetColumnAcls({{ObjectId{102}, catalog::Acl{catalog::AclItem{
@@ -539,8 +539,8 @@ TEST_F(CatalogStoreTest, table_info_round_trips_through_put_entry) {
   EXPECT_EQ(read->ColumnById(ObjectId{101})->Name().GetIdentifierName(), "A");
   EXPECT_EQ(read->ColumnById(ObjectId{102})->Name().GetIdentifierName(), "a");
   ASSERT_EQ(read->constraints.size(), 3);
-  EXPECT_EQ(read->constraints[0]->host_id, 201);
-  EXPECT_EQ(read->constraints[1]->host_id, 202);
+  EXPECT_EQ(read->constraints[0]->oid, 201);
+  EXPECT_EQ(read->constraints[1]->oid, 202);
   EXPECT_EQ(
     read->constraints[1]->Cast<duckdb::UniqueConstraint>().host_index_id, 203);
   EXPECT_EQ(read->constraints[2]

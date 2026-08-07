@@ -50,7 +50,7 @@ catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
                                   ? col.GeneratedExpression().ToString()
                                   : col.DefaultValue().ToString());
         values.push_back(PgAttrdef{
-          Oid{col.HostId()},
+          Oid{col.CatalogOid()},
           Oid{catalog::IdOf(table).id()},
           static_cast<int16_t>(col.Logical().index + 1),
           adbin_storage.back(),

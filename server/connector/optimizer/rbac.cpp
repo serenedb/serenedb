@@ -149,7 +149,7 @@ std::vector<catalog::AclView> SelectedColumnAcls(
   for (const auto& column : columns.Logical()) {
     if (logical.empty() || logical.contains(i)) {
       acls.push_back(
-        catalog::ColumnAclOf(acls_by_column, ObjectId{column.HostId()}));
+        catalog::ColumnAclOf(acls_by_column, ObjectId{column.CatalogOid()}));
     }
     ++i;
   }

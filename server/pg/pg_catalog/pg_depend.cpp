@@ -234,7 +234,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
       }
       const auto ref_held = tables.find(referenced);
       for (const auto column_id : fk.host_pk_column_ids) {
-        emit(ObjectId{fk.host_id}, 0, Oid{PgConstraint::kId}, referenced,
+        emit(ObjectId{fk.oid}, 0, Oid{PgConstraint::kId}, referenced,
              ref_held == tables.end()
                ? 0
                : attnum(*ref_held->second, ObjectId{column_id}),
@@ -245,7 +245,7 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
       if (!column.HasDefaultValue() && !column.Generated()) {
         continue;
       }
-      const ObjectId column_id{column.HostId()};
+      const ObjectId column_id{column.CatalogOid()};
       if (auto sub = attnum(info, column_id)) {
         emit(column_id, 0, Oid{PgAttrdef::kId}, table_id, sub,
              Oid{PgClass::kId}, PgDepend::Deptype::Auto);

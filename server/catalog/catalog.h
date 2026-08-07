@@ -96,11 +96,6 @@ struct CreateIndexOperationOptions {
   // IF NOT EXISTS: an existing relation of the same name makes the create
   // return null instead of throwing "already exists".
   bool if_not_exists = false;
-  // Online CREATE INDEX injects the inverted index into the store table's
-  // live index list itself, under the table's checkpoint lock; the create
-  // must not do it early (commits between the create and the lock would
-  // straddle the publication).
-  bool defer_injection = false;
 };
 
 // The relation an index is built on -- one of the two kinds that can carry
@@ -400,9 +395,10 @@ class Catalog final {
                         std::string_view new_owner_name);
   void ChangeDatabaseAcl(const AccessContext& ax, ObjectId database_id,
                          AclMutator mutate);
-  void ChangeColumnType(const AccessContext& ax, const CreateTableInfo& table,
-                        std::string_view column, duckdb::LogicalType new_type,
-                        std::string using_sql);
+  void ChangeColumnType(
+    const AccessContext& ax, const CreateTableInfo& table,
+    std::string_view column, duckdb::LogicalType new_type,
+    duckdb::unique_ptr<duckdb::ParsedExpression> using_expr);
 
   // The foreign-server attachments the cascade leaves behind are the caller's:
   // they are instance-global while the entries holding their names are this

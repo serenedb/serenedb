@@ -186,23 +186,23 @@ TEST(CatalogPersistence, table) {
 
   duckdb::ColumnDefinition col_a{duckdb::Identifier{"a"},
                                  duckdb::LogicalType::INTEGER};
-  col_a.SetHostId(1);
+  col_a.SetCatalogOid(1);
   col_a.SetCompressionType(duckdb::CompressionType::COMPRESSION_ZSTD);
   info->columns.AddColumn(std::move(col_a));
   duckdb::ColumnDefinition col_b{duckdb::Identifier{"b"},
                                  duckdb::LogicalType::VARCHAR};
-  col_b.SetHostId(2);
+  col_b.SetCatalogOid(2);
   info->columns.AddColumn(std::move(col_b));
 
   auto not_null =
     duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{0});
-  not_null->host_id = 3;
+  not_null->oid = 3;
   not_null->constraint_name = "t_a_not_null";
   info->constraints.push_back(std::move(not_null));
   auto key = duckdb::make_uniq<duckdb::UniqueConstraint>(
     duckdb::vector<duckdb::Identifier>{duckdb::Identifier{"a"}},
     /*is_primary_key=*/true);
-  key->host_id = 4;
+  key->oid = 4;
   key->host_index_id = 5;
   key->constraint_name = "t_pkey";
   info->constraints.push_back(std::move(key));

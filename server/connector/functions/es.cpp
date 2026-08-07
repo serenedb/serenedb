@@ -274,8 +274,8 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
       // A view into the definition, which outlives the create: the field is a
       // string_view.
       .name = column->Name().GetIdentifierName(),
-      .column =
-        catalog::IndexedColumnRef{ObjectId{column->HostId()}, column->Type()},
+      .column = catalog::IndexedColumnRef{ObjectId{column->CatalogOid()},
+                                          column->Type()},
       .opclass = std::string{kTextTokenizer},
     });
   }
@@ -338,7 +338,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
 
   auto add_column = [&](std::string_view name, duckdb::LogicalType type) {
     duckdb::ColumnDefinition column{duckdb::Identifier{name}, std::move(type)};
-    column.SetHostId(catalog::NextId().id());
+    column.SetCatalogOid(catalog::NextId().id());
     options->columns.AddColumn(std::move(column));
   };
 
@@ -348,14 +348,14 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
     // names CREATE TABLE's own constraint expansion produces.
     auto not_null =
       duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{0});
-    not_null->host_id = catalog::NextId().id();
+    not_null->oid = catalog::NextId().id();
     not_null->constraint_name =
       absl::StrCat(data.index, "_", kIdColumn, "_not_null");
     options->constraints.push_back(std::move(not_null));
     auto key = duckdb::make_uniq<duckdb::UniqueConstraint>(
       duckdb::vector<duckdb::Identifier>{duckdb::Identifier{kIdColumn}},
       /*is_primary_key=*/true);
-    key->host_id = catalog::NextId().id();
+    key->oid = catalog::NextId().id();
     key->host_index_id = catalog::NextId().id();
     key->constraint_name = absl::StrCat(data.index, "_pkey");
     options->constraints.push_back(std::move(key));
@@ -470,7 +470,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
     }
     const auto es_type = LogicalToEsType(
       column.Type(),
-      inverted_columns.contains(catalog::ColumnId{column.HostId()}));
+      inverted_columns.contains(catalog::ColumnId{column.CatalogOid()}));
     if (es_type.empty()) {
       continue;
     }

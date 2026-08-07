@@ -34,9 +34,9 @@
 namespace sdb::catalog {
 
 // A column's identity, stable across a drop of the column before it: the same
-// number duckdb's ColumnDefinition::HostId() carries and pg_attribute keys on.
-// Not a definition of its own -- a column is a member of the relation entry --
-// so the id and the reserved ids below stand on their own here, reachable
+// number duckdb's ColumnDefinition::CatalogOid() carries and pg_attribute keys
+// on. Not a definition of its own -- a column is a member of the relation entry
+// -- so the id and the reserved ids below stand on their own here, reachable
 // without the relation.
 using ColumnId = ObjectId;
 

@@ -87,7 +87,7 @@ duckdb::virtual_column_map_t StoreScanVirtualColumns(
 int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
                          ObjectId column_id) {
   for (const auto& column : table.GetColumns().Logical()) {
-    if (column.HostId() == column_id.id()) {
+    if (column.CatalogOid() == column_id.id()) {
       return static_cast<int16_t>(column.Logical().index + 1);
     }
   }
@@ -97,7 +97,7 @@ int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
 const duckdb::ColumnDefinition* TableEntryColumn(
   const duckdb::TableCatalogEntry& table, ObjectId column_id) {
   for (const auto& column : table.GetColumns().Logical()) {
-    if (column.HostId() == column_id.id()) {
+    if (column.CatalogOid() == column_id.id()) {
       return &column;
     }
   }
@@ -311,7 +311,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
       [&] { return GetSearchData()->GetDirectoryReader(); });
     auto data = duckdb::make_uniq<TableScanBindData>();
     for (const auto& col : GetColumns().Logical()) {
-      data->column_ids.emplace_back(col.HostId());
+      data->column_ids.emplace_back(col.CatalogOid());
       data->column_types.push_back(col.Type());
     }
     data->table_entry = this;
@@ -652,7 +652,7 @@ std::vector<IResearchColumnBinding>
 SereneDBTableEntry::SearchSegmentInfoBindings() const {
   std::vector<IResearchColumnBinding> bindings;
   for (const auto& col : GetColumns().Physical()) {
-    bindings.push_back({col.Physical().index, col.HostId()});
+    bindings.push_back({col.Physical().index, col.CatalogOid()});
   }
   bindings.push_back(
     {RowIdentityColumnId(*this), catalog::kGeneratedPKId.id()});

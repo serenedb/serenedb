@@ -463,7 +463,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       _schema_entry.name.GetIdentifierName(), _relation,
       _info->GetIndexName().GetIdentifierName(), std::move(idx_columns),
       std::move(options), std::move(predicate),
-      {.if_not_exists = if_not_exists, .defer_injection = IsDuckDBTable()});
+      {.if_not_exists = if_not_exists});
   } else {
     const bool unique =
       _info->constraint_type == duckdb::IndexConstraintType::UNIQUE;
@@ -1036,7 +1036,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     for (const auto& column : entry_columns.Logical()) {
       columns.push_back({.name = column.Name().GetIdentifierName(),
                          .type = column.Type(),
-                         .id = catalog::ColumnId{column.HostId()}});
+                         .id = catalog::ColumnId{column.CatalogOid()}});
     }
     const auto pk = table_entry.GetPKColumnIndexes();
     pk_positions.assign(pk.begin(), pk.end());

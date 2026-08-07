@@ -1316,7 +1316,7 @@ bool ColumnPrivHeld(duckdb::ClientContext& context, ObjectId role_id,
                     std::string_view priv) {
   const auto modes = ParsePrivCheckText(priv, duckdb::CatalogType::TABLE_ENTRY);
   const catalog::AclView column_acl =
-    table.GetColumnAcl(ObjectId{column.HostId()});
+    table.GetColumnAcl(ObjectId{column.CatalogOid()});
   const auto closure = auth::ClosureFor(&context, role_id);
   if (modes.privs != catalog::AclMode::NoRights &&
       closure->CanColumns(table.permissions, modes.privs, {&column_acl, 1})) {

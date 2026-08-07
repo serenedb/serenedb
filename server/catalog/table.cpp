@@ -357,7 +357,7 @@ const duckdb::ColumnDefinition* CreateTableInfo::ColumnById(
     return nullptr;
   }
   for (const auto& column : columns.Logical()) {
-    if (column.HostId() == column_id.id()) {
+    if (column.CatalogOid() == column_id.id()) {
       return &column;
     }
   }
@@ -491,7 +491,7 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::DropConstraint(
   SDB_ASSERT(constraint_id.isSet());
   auto next = Clone();
   std::erase_if(next->constraints, [&](const auto& constraint) {
-    return constraint->host_id == constraint_id.id();
+    return constraint->oid == constraint_id.id();
   });
   return next;
 }
@@ -509,7 +509,7 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::SetNotNull(
     duckdb::make_uniq<duckdb::NotNullConstraint>(column.Logical());
   not_null->constraint_name = UniqueConstraintName(
     *next, absl::StrCat(GetName(), "_", column_name, "_not_null"));
-  not_null->host_id = constraint_id.id();
+  not_null->oid = constraint_id.id();
   InsertConstraint(*next, std::move(not_null));
   return next;
 }
@@ -560,7 +560,7 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::AddCheckConstraint(
   auto next = Clone();
   auto check = duckdb::make_uniq<duckdb::CheckConstraint>(std::move(expr));
   check->constraint_name = UniqueConstraintName(*next, std::move(name));
-  check->host_id = constraint_id.id();
+  check->oid = constraint_id.id();
   InsertConstraint(*next, std::move(check));
   return next;
 }
@@ -581,7 +581,7 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::AddPrimaryKey(
                                                 /*is_primary_key=*/true);
   key->constraint_name =
     name.empty() ? absl::StrCat(GetName(), "_pkey") : std::move(name);
-  key->host_id = ids.constraint_id.id();
+  key->oid = ids.constraint_id.id();
   key->host_index_id = ids.index_id.id();
   InsertConstraint(*next, std::move(key));
   // A PK implies NOT NULL on each key column, written through SetNotNull so the
@@ -603,7 +603,7 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::AddUniqueConstraint(
     name.empty()
       ? absl::StrCat(GetName(), "_", names.front().GetIdentifierName(), "_key")
       : std::move(name);
-  unique->host_id = constraint_id.id();
+  unique->oid = constraint_id.id();
   unique->host_index_id = index_id.id();
   InsertConstraint(*next, std::move(unique));
   return next;
@@ -620,7 +620,7 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::AddColumn(
                     ERR_MSG("column \"", column_name, "\" of relation \"",
                             GetName(), "\" already exists"));
   }
-  SDB_ASSERT(column.HostId() != 0);
+  SDB_ASSERT(column.CatalogOid() != 0);
   auto next = Clone();
   next->columns.AddColumn(std::move(column));
   return next;
@@ -750,7 +750,7 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::ChangeColumnType(
 std::shared_ptr<CreateTableInfo> CreateTableInfo::ChangeColumnAcl(
   std::string_view column_name, absl::FunctionRef<void(Acl&)> mutate) const {
   const auto& column = RequireColumn(*this, column_name);
-  const ObjectId column_id{column.HostId()};
+  const ObjectId column_id{column.CatalogOid()};
   auto next = Clone();
   auto acl = next->_column_acls[column_id];
   mutate(acl);

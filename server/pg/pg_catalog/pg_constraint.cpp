@@ -147,7 +147,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           continue;
         }
         conname_storage.emplace_back(constraint->constraint_name);
-        auto row = base(PgConstraint::Contype::Check, constraint->host_id,
+        auto row = base(PgConstraint::Contype::Check, constraint->oid,
                         conname_storage.back());
         if (constraint->type == duckdb::ConstraintType::CHECK) {
           conbin_storage.push_back(

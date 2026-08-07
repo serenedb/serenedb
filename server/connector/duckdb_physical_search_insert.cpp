@@ -124,7 +124,7 @@ SearchWriteTarget CtasWriteTarget(const catalog::CreateTableInfo& table,
   target.column_ids.reserve(columns.LogicalColumnCount());
   target.chunk_types.reserve(columns.LogicalColumnCount());
   for (const auto& col : columns.Logical()) {
-    target.column_ids.emplace_back(col.HostId());
+    target.column_ids.emplace_back(col.CatalogOid());
     target.chunk_types.push_back(col.Type());
   }
   target.pk_columns = duckdb_primary_key::BuildPKColumns(table);
@@ -149,7 +149,7 @@ catalog::TableInfoRef CreateCtasTable(duckdb::ClientContext& context,
   options->SetSchema(schema.name);
   for (auto& col : table_info.columns.Logical()) {
     duckdb::ColumnDefinition column{col.Name(), col.Type()};
-    column.SetHostId(catalog::NextId().id());
+    column.SetCatalogOid(catalog::NextId().id());
     if (col.Generated()) {
       column.SetGeneratedExpression(col.GeneratedExpression().Copy(),
                                     duckdb::TableColumnType::GENERATED_STORED);

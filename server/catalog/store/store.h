@@ -24,6 +24,8 @@
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
+#include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <memory>
 #include <optional>
@@ -44,6 +46,7 @@ namespace duckdb {
 
 class AttachedDatabase;
 class Constraint;
+struct AlterInfo;
 struct CreateIndexInfo;
 
 }  // namespace duckdb
@@ -80,11 +83,22 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
   duckdb::ClientContext& context, ObjectId database_id, ObjectId table_id,
   duckdb::OnEntryNotFound if_not_found);
 
-// Store mirror of an index, or nullopt when the index is not mirrored
-// (non-Transactional table, expression/INCLUDE columns, or ART-unfriendly
-// key types).
-std::optional<StoreIndexDef> MakeStoreIndexDef(
+// Store mirror of an index as duckdb's own CREATE INDEX, or null when the index
+// is not mirrored (non-Transactional table, expression/INCLUDE columns, or
+// ART-unfriendly key types). The relation is left unnamed: the executor fills
+// it in off the entry it resolves by id, which is the current one.
+duckdb::unique_ptr<duckdb::CreateIndexInfo> MakeStoreIndexInfo(
   const CreateTableInfo& table, const CreateIndexInfoBase& index);
+// True for the mirror of an ART, which is built by a plan; an inverted one is
+// injected from the catalog objects instead.
+bool IsPlainStoreIndex(const duckdb::CreateIndexInfo& info) noexcept;
+
+// An AlterInfo names its target twice: by identity, which is what resolves it,
+// and by name, which is what an error message shows. A store op carries only
+// the identity, so the name is left for the executor to fill in off the entry
+// it resolves -- the current one, not the one the op was written against.
+duckdb::AlterEntryData StoreTarget(duckdb::OnEntryNotFound if_not_found =
+                                     duckdb::OnEntryNotFound::THROW_EXCEPTION);
 
 // The catalog's persistent form: an append-only log of record frames under
 // <datadir>/engine_catalog/, replayed into resident maps at boot. Store-table
@@ -170,54 +184,29 @@ class CatalogStore {
     // op names the database whose file holds the rows.
     class Store {
      public:
+      // Builds the storage of a table whose definition reached this database
+      // ahead of its rows -- boot's gap replay. A live create needs nothing:
+      // the entry builds its own rows as it is written.
       void CreateTable(ObjectId database_id, ObjectId table);
+      // The rows go with the entry, whose drop is a duckdb table drop; the
+      // record is what puts this database's commit in step with the frame.
       void DropTable(ObjectId database_id, ObjectId table);
-      void DropColumn(ObjectId database_id, ObjectId table, std::string name,
-                      ObjectId column_id);
-      void RenameColumn(ObjectId database_id, ObjectId table, std::string name,
-                        std::string new_name);
-      // Adds a column. `type_sql` is the SQL type text; `default_sql` is the
-      // DEFAULT expression text (empty for none) used to backfill existing
-      // rows.
-      void AddColumn(ObjectId database_id, ObjectId table, std::string name,
-                     std::string type_sql, std::string default_sql,
-                     duckdb::CompressionType compression);
-      // Changes a column's type. `using_sql` is the USING cast text (empty for
-      // the implicit cast).
-      void ChangeColumnType(ObjectId database_id, ObjectId table,
-                            std::string name, std::string type_sql,
-                            std::string using_sql);
-      // Removes the CHECK constraint with this expression text.
-      void DropCheck(ObjectId database_id, ObjectId table, std::string expr);
-      void DropNotNull(ObjectId database_id, ObjectId table,
-                       std::string column);
-      void AddNotNull(ObjectId database_id, ObjectId table, std::string column);
-      // Adds the CHECK constraint with this expression text; the store verifies
-      // it against existing rows (mirrors DropCheck).
-      void AddCheck(ObjectId database_id, ObjectId table, std::string expr);
-      // Adds a PRIMARY KEY (recreates storage, validates existing rows: no
-      // duplicates, no nulls). `columns` are store-table column names in key
-      // order; `constraint` names the index duckdb builds for it.
-      void AddPrimaryKey(ObjectId database_id, ObjectId table,
-                         std::string constraint,
-                         std::vector<std::string> columns);
-      // Adds a UNIQUE constraint over `columns` (recreate + existing-row dup
-      // validation).
-      void AddUnique(ObjectId database_id, ObjectId table,
-                     std::string constraint, std::vector<std::string> columns);
-      // Inverted defs carry the catalog objects so the executor can build the
-      // injected bound index; ART defs run as store-side SQL.
-      void CreateIndex(ObjectId database_id, StoreIndexDef def,
+      // duckdb's own ALTER against the rows of `relation`.
+      void Alter(ObjectId database_id, ObjectId relation,
+                 duckdb::unique_ptr<duckdb::AlterInfo> info);
+      // `info` is what MakeStoreIndexInfo produced. An inverted index is built
+      // from the catalog objects rather than by a plan, so those ride along.
+      void CreateIndex(ObjectId database_id,
+                       duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
                        TableInfoRef table, IndexInfoRef index);
       // `name` is what the physical index is filed under, i.e. the catalog
       // name it mirrors. Empty for a drop reopened at boot, whose record does
       // not carry one and whose removal the original frame already made.
-      void DropIndex(ObjectId database_id, ObjectId index_id,
-                     ObjectId relation_id, std::string_view name);
+      void DropIndex(ObjectId database_id, ObjectId relation_id,
+                     std::string_view name);
       // Moves the physical index a rename left behind.
       void RenameIndex(ObjectId database_id, ObjectId relation_id,
-                       ObjectId index_id, std::string_view from,
-                       std::string_view to);
+                       std::string_view from, std::string_view to);
 
       // Every op one ALTER TABLE implies, derived from the two versions of the
       // definition rather than from the statement: a rewrite states what the

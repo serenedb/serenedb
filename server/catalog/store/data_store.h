@@ -144,39 +144,37 @@ class DataStore {
   absl::Status ExecuteStoreOps(duckdb::ClientContext* context,
                                std::span<const store_op::Targeted> ops);
   absl::Status ExecuteStoreOp(duckdb::ClientContext* context,
-                              const store_op::Op& op);
-  // The arms with real bodies, so the visit in ExecuteStoreOp reads as the
-  // dispatch table it is.
-  absl::Status ExecuteAddStoreColumn(duckdb::ClientContext* context,
-                                     const store_op::AddColumn& op);
+                              const store_op::Targeted& op);
+  // The arms with real bodies, so the dispatch in ExecuteStoreOp reads as the
+  // table it is.
+  absl::Status ExecuteAddStoreColumn(
+    duckdb::ClientContext* context, ObjectId table_id,
+    duckdb::unique_ptr<duckdb::AlterInfo> info);
   absl::Status ExecuteCreateStoreIndex(duckdb::ClientContext* context,
-                                       const store_op::CreateIndex& op);
+                                       const store_op::Targeted& op);
   absl::Status ExecuteDropStoreIndex(duckdb::ClientContext* context,
-                                     const StoreIndexDef& def);
+                                     ObjectId table_id,
+                                     const duckdb::Identifier& name);
   absl::Status ExecuteRenameStoreIndex(duckdb::ClientContext* context,
-                                       const store_op::RenameIndex& op);
-  // Runs one store DDL statement, turning duckdb's error into a Status. What is
-  // left of it is the index builds -- CREATE INDEX, ADD PRIMARY KEY, ADD UNIQUE
+                                       ObjectId table_id,
+                                       const duckdb::RenameTableInfo& info);
+  // Runs one store DDL statement, turning duckdb's error into a Status. What
+  // needs one is the index builds -- CREATE INDEX, ADD PRIMARY KEY, ADD UNIQUE
   // -- because an ART over existing rows is built by a physical plan, and a
   // plan is reached by running a statement.
-  absl::Status Exec(const std::string& sql);
-  // Reshapes the rows of `table_id` and parks the result for the write.
+  absl::Status Run(duckdb::unique_ptr<duckdb::SQLStatement> statement);
+  absl::Status RunAlter(duckdb::ClientContext* context, ObjectId table_id,
+                        duckdb::unique_ptr<duckdb::AlterInfo> info);
+  // Reshapes the rows the info names and parks the result for the write.
   // `context` is the statement, or null for the paths with none, which put the
   // rows on the entry themselves.
-  absl::Status Alter(duckdb::ClientContext* context, ObjectId table_id,
-                     duckdb::AlterInfo& info);
-  absl::Status ExecuteAddKeyConstraint(duckdb::ClientContext* context,
-                                       ObjectId table_id,
-                                       const std::string& constraint,
-                                       std::span<const std::string> columns,
-                                       bool primary_key);
+  absl::Status Alter(duckdb::ClientContext* context, duckdb::AlterInfo& info);
   absl::Status ExecuteCreateStoreTable(duckdb::ClientContext* context,
                                        ObjectId table_id);
   // The relation an op names. Null when no version of it holds rows -- a drop
   // of the table rides ahead of the ops emitted for its constraints.
   duckdb::optional_ptr<duckdb::DuckTableEntry> ResolveTable(
     duckdb::ClientContext& context, ObjectId table_id);
-  static duckdb::AlterEntryData OpTarget(bool missing_ok = false);
 
   duckdb::unique_ptr<duckdb::Connection> _conn;
   // The connection the batch's index builds run on: the current target's own,

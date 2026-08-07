@@ -130,7 +130,7 @@ class TableRuntime {
 // CreateTableInfo already carries the columns, the constraints and -- through
 // CreateInfo::tags -- the engine, the search options and the auto-PK sequence,
 // so this extends it rather than replacing it: the ids ride the duckdb
-// structures (ColumnDefinition::host_id, Constraint::host_id,
+// structures (ColumnDefinition::oid, Constraint::oid,
 // UniqueConstraint::host_index_id) and only what upstream has nowhere to put
 // is added here.
 //
@@ -143,8 +143,8 @@ class TableRuntime {
 // catalog entry is built from.
 class CreateTableInfo final : public duckdb::CreateTableInfo {
  public:
-  // Keyed by the column's ObjectId, which is ColumnDefinition::HostId(), so a
-  // reader walking the column list finds the grants without a second lookup.
+  // Keyed by the column's ObjectId, which is ColumnDefinition::CatalogOid(), so
+  // a reader walking the column list finds the grants without a second lookup.
   // Only columns some GRANT has named are present.
   using ColumnAcls = containers::FlatHashMap<ObjectId, Acl>;
 

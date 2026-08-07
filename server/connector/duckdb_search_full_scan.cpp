@@ -863,20 +863,9 @@ void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
     gstate.produced_rows.load(std::memory_order_relaxed);
 }
 
-void ApplyScoreEmit(const IResearchScanGlobalState& gstate, float* scores,
-                    duckdb::idx_t n) {
-  // Map in place at the emit boundary so the output vector sees the user-facing
-  // value. Text scores are already user-facing (no vector scorer).
-  if (gstate.vector_scorer == nullptr) {
-    return;
-  }
-  const auto emit = gstate.vector_scorer->score_emit;
-  if (emit == ScoreEmit::Identity) {
-    return;
-  }
-  for (duckdb::idx_t i = 0; i < n; ++i) {
-    scores[i] = ApplyScoreEmit(emit, scores[i]);
-  }
+ScoreEmit ScoreEmitOf(const IResearchScanGlobalState& gstate) noexcept {
+  return gstate.vector_scorer == nullptr ? ScoreEmit::Identity
+                                         : gstate.vector_scorer->score_emit;
 }
 
 void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
@@ -894,13 +883,19 @@ void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
   if (!gstate.ScanScore()) {
     return;
   }
-  // The batcher stages raw "larger = nearer" scores, the space the pushed score
-  // filter was rewritten for; this is the one place they become user-facing, in
-  // place in the staged vector the output chunk then references.
   SDB_ASSERT(scores != nullptr);
-  ApplyScoreEmit(gstate, duckdb::FlatVector::GetDataMutable<float>(*scores),
-                 num_rows);
-  output.data[gstate.score_output_idx].Reference(*scores);
+  auto& score_out = output.data[gstate.score_output_idx];
+  const auto emit = ScoreEmitOf(gstate);
+  if (emit == ScoreEmit::Identity) {
+    score_out.Reference(*scores);
+    return;
+  }
+  SDB_ASSERT(score_out.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
+  const auto* raw = duckdb::FlatVector::GetData<float>(*scores);
+  auto* mapped = duckdb::FlatVector::GetDataMutable<float>(score_out);
+  for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+    mapped[i] = ApplyScoreEmit(emit, raw[i]);
+  }
 }
 
 namespace {

@@ -317,7 +317,12 @@ IvfTermReader::IvfTermReader(
     _cluster_centroids{cluster_centroids},
     _normalize{normalize},
     _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
-    _meta{postings_id, IndexFeatures::Pay} {
+    _group{std::max<size_t>(1, qw->BlockSetting().group_size)},
+    _code_size{qw->CodeSize()},
+    _meta{postings_id, IndexFeatures::Vec} {
+  SDB_ASSERT(_group <= STANDARD_VECTOR_SIZE);
+  SDB_ASSERT(_code_size != 0);
+  _block_buf.resize(STANDARD_VECTOR_SIZE / _group * _group * _code_size);
   size_t first = _count;
   size_t last = _count;
   for (size_t c = 0; c < _count; ++c) {
@@ -359,17 +364,11 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   if (n == 0) {
     return;
   }
-  const auto setting = _qw->BlockSetting();
-  const size_t group = std::max<size_t>(1, setting.group_size);
-  SDB_ASSERT(group <= STANDARD_VECTOR_SIZE);
-  const size_t step = STANDARD_VECTOR_SIZE / group * group;
-  const size_t code_size = _qw->CodeSize();
-  SDB_ASSERT(code_size != 0);
-  _carry.resize(step * code_size);
+  const size_t step = _block_buf.size() / _code_size;
   ColumnReader::VectorScratch scratch{_vectors->Type()};
   auto scan = _vectors->InitScan(*_ctx);
   for (size_t b = 0; b < n;) {
-    const auto m = std::min<size_t>(step - _carry_n, n - b);
+    const auto m = std::min<size_t>(step - _block_rows, n - b);
     auto& out_vec = scratch.Reset();
     column_internal::GatherRows(*_vectors, scan, DocRowView{docs.data() + b, m},
                                 out_vec, /*out_offset=*/0,
@@ -379,39 +378,36 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     if (_normalize) {
       NormalizeRows(vecs, m, _d);
     }
-    _qw->Encode(_carry.data() + _carry_n * code_size, vecs, m);
-    _carry_n += m;
+    _qw->Encode(_block_buf.data() + _block_rows * _code_size, vecs, m);
+    _block_rows += m;
     b += m;
-    FlushCarry(out, group, code_size, /*all=*/false);
+    FlushBlocks(out, /*all=*/false);
   }
-  if (!setting.pad_tail) {
-    FlushCarry(out, group, code_size, /*all=*/true);
+  if (!_qw->BlockSetting().pad_tail) {
+    FlushBlocks(out, /*all=*/true);
   }
 }
 
-void IvfTermReader::FlushCarry(IndexOutput& out, size_t group, size_t code_size,
-                               bool all) {
-  const size_t rows = all ? _carry_n : _carry_n / group * group;
+void IvfTermReader::FlushBlocks(IndexOutput& out, bool all) {
+  const size_t rows = all ? _block_rows : _block_rows / _group * _group;
   if (rows == 0) {
     return;
   }
-  _qw->WriteCodes(out, _carry.data(), rows);
-  const size_t rest = _carry_n - rows;
+  _qw->WriteCodes(out, _block_buf.data(), rows);
+  const size_t rest = _block_rows - rows;
   if (rest != 0) {
-    std::memmove(_carry.data(), _carry.data() + rows * code_size,
-                 rest * code_size);
+    std::memmove(_block_buf.data(), _block_buf.data() + rows * _code_size,
+                 rest * _code_size);
   }
-  _carry_n = rest;
+  _block_rows = rest;
 }
 
 void IvfTermReader::Finish(IndexOutput& out) {
   SDB_ASSERT(_qw);
-  if (_carry_n == 0) {
+  if (_block_rows == 0) {
     return;
   }
-  const auto setting = _qw->BlockSetting();
-  FlushCarry(out, std::max<size_t>(1, setting.group_size), _qw->CodeSize(),
-             /*all=*/true);
+  FlushBlocks(out, /*all=*/true);
 }
 
 void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {

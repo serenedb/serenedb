@@ -4,7 +4,7 @@ control substitution on
 # Hybrid inverted index: text column(s) + IVF vector column(s) in one index.
 #
 # A text field with the 'offset' feature sets IndexFeatures::Offs; an IVF vector
-# field quantized with sq8 (the default) sets IndexFeatures::Pay. Both share the
+# field quantized with sq8 (the default) sets IndexFeatures::Vec. Both share the
 # same segment and the same ".pay" stream, so a hybrid index makes the segment
 # aggregate carry Offs|Pay at once. This exercises that the writer/reader handle
 # the mixed stream (the per-field Offs/Pay mutual-exclusion must not be asserted

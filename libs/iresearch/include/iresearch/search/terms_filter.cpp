@@ -33,13 +33,27 @@
 namespace irs {
 namespace {
 
-class ByTermsIterator : public WrappedTermIterator {
+class ByTermsIterator : public TermIterator {
  public:
   ByTermsIterator(const TermReader& reader,
                   const ByTermsOptions::search_terms& terms)
-    : WrappedTermIterator{reader.iterator(SeekMode::Normal)},
-      _cursor{terms.begin()},
-      _end{terms.end()} {}
+    : _impl{reader.iterator()}, _cursor{terms.begin()}, _end{terms.end()} {
+    SDB_ASSERT(_impl);
+  }
+
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+
+  bytes_view value() const noexcept final { return _impl->value(); }
+
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    return _impl->GetMutable(id);
+  }
+
+  const PostingMeta& cookie() const final { return _impl->cookie(); }
+
+  DocIterator::ptr postings(IndexFeatures features) const final {
+    return _impl->postings(features);
+  }
 
   score_t Boost() const noexcept { return _boost; }
   uint32_t Index() const noexcept { return _index; }
@@ -65,6 +79,7 @@ class ByTermsIterator : public WrappedTermIterator {
   }
 
  private:
+  SeekTermIterator::ptr _impl;
   ByTermsOptions::search_terms::const_iterator _cursor;
   ByTermsOptions::search_terms::const_iterator _end;
   score_t _boost = kNoBoost;

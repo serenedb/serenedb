@@ -35,29 +35,10 @@
 namespace irs {
 namespace {
 
-class ByPrefixIterator : public WrappedTermIterator {
- public:
-  ByPrefixIterator(const TermReader& reader, bytes_view prefix)
-    : WrappedTermIterator{reader.iterator(SeekMode::Normal)}, _prefix{prefix} {}
-
-  bool next() final {
-    if (_started) {
-      if (!_impl->next()) {
-        return false;
-      }
-    } else {
-      _started = true;
-      if (SeekResult::End == _impl->seek_ge(_prefix)) {
-        return false;
-      }
-    }
-    return PrefixAcceptor{_prefix}(_impl->value());
-  }
-
- private:
-  bytes_view _prefix;
-  bool _started{false};
-};
+BoundedTermIterator PrefixIterator(const TermReader& reader,
+                                   bytes_view prefix) {
+  return BoundedTermIterator{reader.iterator(), prefix, UpperBoundOf(prefix)};
+}
 
 }  // namespace
 
@@ -89,7 +70,7 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
   }
   SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
                               query->State()};
-  ByPrefixIterator terms{*reader, term};
+  auto terms = PrefixIterator(*reader, term);
   if (terms.next()) {
     mtv.Prepare(segment, *reader, terms.GetImpl());
     VisitTerms(terms, mtv);
@@ -104,7 +85,7 @@ PrepareCollector::ptr ByPrefix::MakeCollector(const Scorer* scorer) const {
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,
                      const ByPrefixOptions& options, FilterVisitor& visitor) {
-  ByPrefixIterator terms{reader, options.term};
+  auto terms = PrefixIterator(reader, options.term);
   if (!terms.next()) {
     return;
   }
@@ -118,7 +99,9 @@ TermPredicate::ptr ByPrefix::CompileTermPredicate() const {
 
 TermIterator::ptr ByPrefix::CompileTermIterator(
   const TermReader& reader) const {
-  return memory::make_managed<ByPrefixIterator>(reader, options().term);
+  const auto prefix = options().term;
+  return memory::make_managed<BoundedTermIterator>(reader.iterator(), prefix,
+                                                   UpperBoundOf(prefix));
 }
 
 }  // namespace irs

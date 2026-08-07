@@ -191,6 +191,7 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::atomic_uint32_t prepare_segment = 0;
   std::atomic_uint32_t prepare_count = 0;
   std::atomic_uint32_t collector_slots = 0;
+  std::exception_ptr prepare_error;
 
   // --- Segment claiming: claimed slots in [0, claimable_segments) map through
   // `segment_order` -- empty = identity over all segments. Init-time

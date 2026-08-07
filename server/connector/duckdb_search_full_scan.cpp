@@ -1353,30 +1353,85 @@ const irs::QueryBuilder& EnsureSegmentQuery(IResearchScanGlobalState& g,
   return *q;
 }
 
-void PreparePhase(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
-                  IResearchScanLocalState& l) {
+class PrepareUnitScope {
+ public:
+  PrepareUnitScope(IResearchScanGlobalState& g, bool& reduced) noexcept
+    : _g{g}, _reduced{reduced} {}
+
+  ~PrepareUnitScope() {
+    if (_g.prepare_count.fetch_add(1, std::memory_order_acq_rel) + 1 !=
+        _g.total_segments) {
+      return;
+    }
+    try {
+      SDB_IF_FAILURE("SearchPrepareStatsFault") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+      const uint32_t used = _g.collector_slots.load(std::memory_order_relaxed);
+      auto& merged = *_g.collectors[0];
+      merged.MergeAll([&](irs::PrepareCollector::MergeSink sink) {
+        for (uint32_t i = 1; i < used; ++i) {
+          sink(*_g.collectors[i]);
+        }
+      });
+      _g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
+    } catch (...) {
+      _g.prepare_error = std::current_exception();
+    }
+    _g.prepare_finished.Notify();
+    _reduced = true;
+  }
+
+ private:
+  IResearchScanGlobalState& _g;
+  bool& _reduced;
+};
+
+bool RunPrepareUnits(IResearchScanGlobalState& g, IResearchScanLocalState& l) {
   for (;;) {
     const auto seg = g.prepare_segment.fetch_add(1, std::memory_order_relaxed);
     if (seg >= g.total_segments) {
-      break;
+      return g.prepare_finished.HasBeenNotified();
     }
     SDB_ASSERT((*g.reader)[seg].live_docs_count() != 0);
-    EnsureSegmentQuery(g, l, (*g.reader)[seg], seg);
-    if (g.prepare_count.fetch_add(1, std::memory_order_acq_rel) + 1 ==
-        g.total_segments) {
-      const uint32_t used = g.collector_slots.load(std::memory_order_relaxed);
-      auto& merged = *g.collectors[0];
-      merged.MergeAll([&](irs::PrepareCollector::MergeSink sink) {
-        for (uint32_t i = 1; i < used; ++i) {
-          sink(*g.collectors[i]);
-        }
-      });
-      g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
-      g.prepare_finished.Notify();
-      return;
+    bool reduced = false;
+    {
+      const PrepareUnitScope unit{g, reduced};
+      EnsureSegmentQuery(g, l, (*g.reader)[seg], seg);
+    }
+    if (reduced) {
+      return true;
     }
   }
-  g.prepare_finished.WaitForNotification();
+}
+
+class PrepareAsyncTask final : public duckdb::AsyncTask {
+ public:
+  explicit PrepareAsyncTask(IResearchScanGlobalState& g) noexcept : _g{g} {}
+
+  void Execute() final { _g.prepare_finished.WaitForNotification(); }
+
+ private:
+  IResearchScanGlobalState& _g;
+};
+
+bool PreparePhase(IResearchScanGlobalState& g, IResearchScanLocalState& l,
+                  duckdb::TableFunctionInput& data) {
+  if (!RunPrepareUnits(g, l)) {
+    if (data.results_execution_mode ==
+        duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
+      duckdb::vector<duckdb::unique_ptr<duckdb::AsyncTask>> tasks;
+      tasks.push_back(duckdb::make_uniq<PrepareAsyncTask>(g));
+      data.async_result =
+        duckdb::AsyncResult{std::move(tasks), duckdb::TaskSchedulerType::ASYNC};
+      return false;
+    }
+    g.prepare_finished.WaitForNotification();
+  }
+  if (g.prepare_error) {
+    std::rethrow_exception(g.prepare_error);
+  }
+  return true;
 }
 
 void WriteChunkOffsets(std::vector<FieldEntry>& offsets_entries,
@@ -1499,7 +1554,7 @@ class MinMaxTermsIterator : public irs::TermIterator {
 
   irs::bytes_view value() const noexcept final { return _terms[_next - 1]; }
 
-  void read() final {}
+  const irs::PostingMeta& cookie() const noexcept final { SDB_UNREACHABLE(); }
 
   irs::DocIterator::ptr postings(irs::IndexFeatures /*features*/) const final {
     return irs::DocIterator::empty();
@@ -1676,8 +1731,9 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     case ScanMode::TopK: {
       auto& l = data.local_state->Cast<TopKScanLocalState>();
       if (!l.prepared) {
-        if (gstate.total_segments != 0 && !gstate.vector_scorer) {
-          PreparePhase(context, gstate, l);
+        if (gstate.scorer_obj && gstate.total_segments != 0 &&
+            !gstate.vector_scorer && !PreparePhase(gstate, l, data)) {
+          return;
         }
         l.prepared = true;
       }
@@ -1693,8 +1749,8 @@ void IResearchScanFunction(duckdb::ClientContext& context,
       auto& l = data.local_state->Cast<StreamScanLocalState>();
       if (!l.prepared) {
         if (gstate.scorer_obj && gstate.total_segments != 0 &&
-            !gstate.vector_scorer) {
-          PreparePhase(context, gstate, l);
+            !gstate.vector_scorer && !PreparePhase(gstate, l, data)) {
+          return;
         }
         l.prepared = true;
       }
@@ -1899,7 +1955,7 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   const bool score_prune =
     ScorePruneEnabled(search.inverted_index.get(), search.text_scorer);
   irs::DocIterator::ptr it = seg.mask(seg_query.Execute(
-    {.prune = {.score_prune = score_prune},
+    {.score_prune = score_prune,
      .top_k_collect = search.vector_scorer.has_value() && cls.active.empty()},
     stats));
   // Filter the collected docs by the covered `.col` values, so top-k is
@@ -2001,9 +2057,9 @@ void StreamScanLocalState::StartSegment(duckdb::ClientContext& /*ctx*/,
   // pushed on a prune-capable text scorer, run score pruning so
   // below-threshold blocks are skipped (PushHits seeds the threshold from the
   // boundary before each emit).
-  streaming_doc = seg.mask(
-    seg_query.Execute({.prune = {.score_prune = g.score_prune_streaming}},
-                      g.stats ? *g.stats : irs::StatsBuffer::Empty()));
+  streaming_doc =
+    seg.mask(seg_query.Execute({.score_prune = g.score_prune_streaming},
+                               g.stats ? *g.stats : irs::StatsBuffer::Empty()));
   if (g.needs_lookup && !PkColumnFor(*g.reader, seg_idx).second) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -2527,7 +2583,7 @@ irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
       }
       terms[count++] = max;
     } else {
-      auto it = reader.iterator(irs::SeekMode::RandomOnly);
+      auto it = reader.iterator();
       const auto pin = [&](irs::bytes_view term) {
         if (!it->seek(term) ||
             WhereLiveDocs(*it, *_seg, *where_query, false, _cf) == 0) {
@@ -2545,7 +2601,7 @@ irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
       return irs::memory::make_managed<MinMaxTermsIterator>(terms, count);
     }
   }
-  return reader.iterator(irs::SeekMode::Normal);
+  return reader.iterator();
 }
 
 bool TsDictLocalState::NextField() {
@@ -2579,7 +2635,7 @@ struct TsDictEmitContext {
   float* score_data;
   duckdb::Vector* term_vec;
   duckdb::Vector* raw_vec;
-  const irs::TermMeta* meta;
+  bool needs_meta;
   const irs::TermBoost* boost;
   const irs::SubReader* seg;
   TsDictLocalState::CountMode count_mode;
@@ -2607,7 +2663,7 @@ struct TsDictEmitter {
       ctx.count_data[row] = static_cast<int32_t>(docs);
     }
     if (ctx.freq_data) {
-      ctx.freq_data[row] = static_cast<int64_t>(ctx.meta->freq);
+      ctx.freq_data[row] = static_cast<int64_t>(meta->freq);
     }
     if (ctx.score_data) {
       ctx.score_data[row] = ctx.boost ? ctx.boost->value : irs::kNoBoost;
@@ -2619,7 +2675,7 @@ struct TsDictEmitter {
     using Mode = TsDictLocalState::CountMode;
     switch (ctx.count_mode) {
       case Mode::Meta:
-        return ctx.meta ? ctx.meta->docs_count : 1;
+        return meta ? meta->docs_count : 1;
       case Mode::Masked:
         return MaskedLiveDocs(it, *ctx.seg, ctx.count_data, ctx.cf);
       case Mode::Where:
@@ -2630,9 +2686,7 @@ struct TsDictEmitter {
   }
 
   void OnTerm(irs::TermIterator& it) {
-    if (ctx.meta) {
-      it.read();
-    }
+    meta = ctx.needs_meta ? &it.cookie() : nullptr;
     const auto live_docs = LiveDocs(it);
     if (live_docs != 0) {
       Emit(it.value(), live_docs);
@@ -2640,6 +2694,7 @@ struct TsDictEmitter {
   }
 
   TsDictEmitContext ctx;
+  const irs::PostingMeta* meta = nullptr;
 };
 
 }  // namespace
@@ -2674,14 +2729,6 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
 
   duckdb::idx_t n = 0;
   if (_cursor && field_capacity != 0) {
-    const auto* meta = [&]() -> const irs::TermMeta* {
-      if (!count_data && !freq_data) {
-        return nullptr;
-      }
-      const auto* meta = irs::get<irs::TermMeta>(*_cursor);
-      SDB_ENSURE(meta, "ts_dict: term iterator has no term_meta");
-      return meta;
-    }();
     TsDictEmitter emitter{TsDictEmitContext{
       .term_data = term_data,
       .raw_data = raw_data,
@@ -2690,7 +2737,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
       .score_data = score_data,
       .term_vec = term_vec,
       .raw_vec = raw_vec,
-      .meta = meta,
+      .needs_meta = count_data != nullptr || freq_data != nullptr,
       .boost = score_data ? irs::get<irs::TermBoost>(*_cursor) : nullptr,
       .seg = _seg,
       .count_mode = _cursor_mode,

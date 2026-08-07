@@ -408,14 +408,15 @@ struct ClusterInputs {
 
 std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
                                                  size_t c, bool has_centroids,
-                                                 IndexInput& pay_root) {
+                                                 IndexInput& pay_root,
+                                                 uint64_t pay_base) {
   const PostingCookie cookie{.cookie = &state.cookies[c],
                              .field = state.reader->meta()};
   auto postings = state.reader->Iterator(IndexFeatures::None, cookie);
   if (!postings) {
     return std::nullopt;
   }
-  auto vr = MakeQuantizerReader(state.codebook, pay_root.Dup());
+  auto vr = MakeQuantizerReader(state.codebook, pay_root.Dup(), pay_base);
   SDB_ASSERT(vr);
   const float* centroid =
     has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
@@ -426,7 +427,8 @@ std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
 using QVectorIterators = std::vector<memory::managed_ptr<QVectorIterator>>;
 
 template<typename Out>
-bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
+bool BuildClusterIterators(const VectorState& state, score_t boost,
+                           uint64_t pay_base, Out& out) {
   auto pay_root = state.reader->ReopenPayload();
   if (!pay_root) {
     return false;
@@ -435,7 +437,7 @@ bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
   const bool has_centroids =
     state.cluster_centroids.size() == state.cookies.size() * state.d;
   for (size_t c = 0; c < state.cookies.size(); ++c) {
-    auto ci = MakeClusterIterator(state, c, has_centroids, *pay_root);
+    auto ci = MakeClusterIterator(state, c, has_centroids, *pay_root, pay_base);
     if (!ci) {
       continue;
     }
@@ -602,14 +604,14 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
 
     if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
       QVectorIterators children;
-      if (BuildClusterIterators(_state, _boost, children) &&
+      if (BuildClusterIterators(_state, _boost, _pay_base, children) &&
           !children.empty()) {
         return memory::make_managed<DisjointClusterUnion>(std::move(children),
                                                           docs_count, _boost);
       }
     } else {
       ScoreAdapters children;
-      if (BuildClusterIterators(_state, _boost, children) &&
+      if (BuildClusterIterators(_state, _boost, _pay_base, children) &&
           !children.empty()) {
         using Disjunction =
           DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;

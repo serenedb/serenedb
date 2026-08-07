@@ -132,6 +132,24 @@ void EnsureId(irs::field_id& id) {
   }
 }
 
+void EnsureBoolFieldIds(InvertedIndexEntryInfo& entry) {
+  EnsureId(entry.true_field_id);
+  EnsureId(entry.false_field_id);
+}
+
+bool KeyCanHoldBoolean(const duckdb::LogicalType& type) noexcept {
+  const auto id = type.id();
+  if (id == duckdb::LogicalTypeId::LIST) {
+    return duckdb::ListType::GetChildType(type).id() ==
+           duckdb::LogicalTypeId::BOOLEAN;
+  }
+  if (id == duckdb::LogicalTypeId::ARRAY) {
+    return duckdb::ArrayType::GetChildType(type).id() ==
+           duckdb::LogicalTypeId::BOOLEAN;
+  }
+  return id == duckdb::LogicalTypeId::BOOLEAN;
+}
+
 // Parse a user-supplied compression name into a duckdb::CompressionType.
 // "auto" is the writer default (analyze tournament). Other names map
 // 1:1 to duckdb codecs; the writer throws at flush time if the named
@@ -658,7 +676,8 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
     entry.synthetic_column = static_cast<irs::field_id>(NextId());
   }
   if (value_type.IsJSONType() && !IsGeoAnalyzer(analyzer)) {
-    EnsureId(entry.bool_field_id);
+    EnsureId(entry.json_null_field_id);
+    EnsureBoolFieldIds(entry);
     EnsureId(entry.numeric_field_id);
   }
 }
@@ -766,6 +785,9 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
       ApplyOpclassToEntry(context, c, expr_data.pretty_printed,
                           expr_data.return_type, *snapshot, database_id,
                           schema_name, expr_info);
+      if (KeyCanHoldBoolean(expr_data.return_type)) {
+        EnsureBoolFieldIds(expr_info);
+      }
       entries.emplace(field_id, std::move(expr_info));
       expression_keys.emplace_back(expr_data, field_id);
       continue;
@@ -793,6 +815,10 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
     }
     ApplyOpclassToEntry(context, c, c.name, c.GetCatalogColumn().type,
                         *snapshot, database_id, schema_name, index_col);
+    if (index_col.IsTermDict() &&
+        KeyCanHoldBoolean(c.GetCatalogColumn().type)) {
+      EnsureBoolFieldIds(index_col);
+    }
   }
   for (auto& [_, entry] : entries) {
     EnsureId(entry.null_field_id);

@@ -43,12 +43,9 @@ class QuantizerWriter {
 
   virtual void SetClusterCentroid(const float* /*centroid*/) {}
 
-  virtual void BeginCluster(size_t /*total_docs*/) {}
+  virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
 
-  virtual void EncodeCluster(IndexOutput& out, const float* vecs,
-                             size_t n) const = 0;
-
-  virtual void FinishCluster(IndexOutput& /*out*/) {}
+  virtual void Finish(IndexOutput& /*out*/) {}
 
   virtual std::span<const byte_type> StatsBytes() const = 0;
 
@@ -60,7 +57,8 @@ class QuantizerWriter {
 class QuantizerReader {
  public:
   virtual ~QuantizerReader() = default;
-  virtual void StartCluster(uint64_t pay_start, size_t num_docs,
+
+  virtual void StartCluster(uint64_t first_lane, size_t num_docs,
                             const float* centroid) = 0;
   virtual void ComputeBlock(size_t offset, size_t length, score_t* out) = 0;
 };
@@ -70,7 +68,7 @@ class QuantizerCodebook
  public:
   virtual ~QuantizerCodebook() = default;
   virtual std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const = 0;
+    std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) const = 0;
 };
 
 // Query-independent, deserialized quantizer statistics. Parsed once from the
@@ -94,6 +92,6 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   const std::shared_ptr<const QuantizerCodebook>& codebook,
-  std::unique_ptr<IndexInput> pay_in);
+  std::unique_ptr<IndexInput> pay_in, uint64_t pay_base);
 
 }  // namespace irs

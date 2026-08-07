@@ -82,9 +82,11 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   }
 
   std::shared_ptr<const QuantizerCodebook> codebook;
+  uint64_t pay_base = 0;
   if (quant != VectorQuantization::None) {
     idx_in->Seek(ivf->QuantStatsOffset());
     const size_t stats_size = static_cast<size_t>(idx_in->ReadI64());
+    pay_base = static_cast<uint64_t>(idx_in->ReadI64());
     std::span<const byte_type> stats;
     bstring owned;
     if (const byte_type* p = idx_in->ReadVolatile(stats_size)) {
@@ -166,7 +168,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
 
   return memory::make_tracked<KnnVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, ctx.boost * Boost(), std::move(inner));
+    opts.metric, ctx.boost * Boost(), pay_base, std::move(inner));
 }
 
 }  // namespace irs

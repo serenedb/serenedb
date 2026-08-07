@@ -509,10 +509,10 @@ auto MakeFieldKindResolver(const SereneDBScanBindData& bind_data,
         }
         return Kind::String;
       }
-      if (fid == entry.null_field_id) {
+      if (fid == entry.null_field_id || fid == entry.json_null_field_id) {
         return Kind::Null;
       }
-      if (fid == entry.bool_field_id) {
+      if (fid == entry.true_field_id || fid == entry.false_field_id) {
         return Kind::Bool;
       }
       if (fid == entry.numeric_field_id) {

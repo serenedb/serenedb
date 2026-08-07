@@ -393,7 +393,11 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
     const bool is_null = !fmt.validity.RowIsValid(sel_idx);
     bool wrote_string_blob = false;
 
-    if (!is_null) {
+    if (is_null) {
+      jpf.null_field.id = jpf.sql_null_id;
+      jpf.null_field.SetNullValue();
+      EmitField(&jpf.null_field);
+    } else {
       const auto& cell_string =
         duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt)[sel_idx];
       std::string_view json_str{cell_string.GetData(), cell_string.GetSize()};
@@ -445,6 +449,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
               }
             } break;
             case simdjson::ondemand::json_type::null: {
+              jpf.null_field.id = jpf.json_null_id;
               jpf.null_field.SetNullValue();
               insert_field(jpf.null_field);
             } break;
@@ -531,7 +536,13 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
         child_kind == duckdb::LogicalTypeId::BLOB) {
       _field.PrepareForStringValue(resolve_tokenizer());
     } else if (child_kind == duckdb::LogicalTypeId::BOOLEAN) {
-      _field.PrepareForBooleanValue();
+      if (!entry || !entry->HasBoolFields()) {
+        THROW_SQL_ERROR(
+          ERR_MSG("boolean list/array without the always-<X> value fields: ",
+                  field_id));
+      }
+      _field.PrepareForBooleanValue(entry->true_field_id,
+                                    entry->false_field_id);
     } else if (catalog::term_dict::IsNumeric(
                  catalog::term_dict::Classify(child_kind))) {
       _field.PrepareForNumericValue();
@@ -561,7 +572,12 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       }
     } break;
     case duckdb::LogicalTypeId::BOOLEAN:
-      _field.PrepareForBooleanValue();
+      if (!entry || !entry->HasBoolFields()) {
+        THROW_SQL_ERROR(ERR_MSG(
+          "boolean column without the always-<X> value fields: ", field_id));
+      }
+      _field.PrepareForBooleanValue(entry->true_field_id,
+                                    entry->false_field_id);
       break;
     default:
       if (catalog::term_dict::IsNumeric(catalog::term_dict::Classify(kind))) {
@@ -613,17 +629,19 @@ void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
   SDB_ASSERT(entry);
   SDB_ASSERT(irs::field_limits::valid(entry_field_id));
   SDB_ASSERT(irs::field_limits::valid(entry->numeric_field_id));
-  SDB_ASSERT(irs::field_limits::valid(entry->bool_field_id));
+  SDB_ASSERT(entry->HasBoolFields());
+  SDB_ASSERT(irs::field_limits::valid(entry->json_null_field_id));
   SDB_ASSERT(irs::field_limits::valid(entry->null_field_id));
   tokenizer_column = string_analyzer.tokenizer_column;
   string_field.PrepareForStringValue(std::move(string_analyzer));
   string_field.id = entry_field_id;
   numeric_field.PrepareForNumericValue();
   numeric_field.id = entry->numeric_field_id;
-  bool_field.PrepareForBooleanValue();
-  bool_field.id = entry->bool_field_id;
+  bool_field.PrepareForBooleanValue(entry->true_field_id,
+                                    entry->false_field_id);
   null_field.PrepareForNullValue();
-  null_field.id = entry->null_field_id;
+  json_null_id = entry->json_null_field_id;
+  sql_null_id = entry->null_field_id;
 }
 
 void SearchSinkInsertBaseImpl::FinishImpl() {
@@ -743,16 +761,20 @@ void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
   }
 }
 
-void SearchSinkInsertBaseImpl::Field::PrepareForBooleanValue() {
+void SearchSinkInsertBaseImpl::Field::PrepareForBooleanValue(
+  irs::field_id true_field, irs::field_id false_field) {
   static StreamPool gPool{kDefaultPoolSize};
   string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gPool.emplace(search::AnalyzerImpl::BoolStreamTag{});
+  true_id = true_field;
+  false_id = false_field;
 }
 
 void SearchSinkInsertBaseImpl::Field::SetBooleanValue(bool value) {
   auto& bstream = basics::downCast<irs::BooleanTokenizer>(*analyzer);
   bstream.reset(value);
+  id = value ? true_id : false_id;
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForNullValue() {

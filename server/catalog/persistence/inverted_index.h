@@ -46,6 +46,7 @@ struct IVFColumnConfig {
   uint32_t rabitq_bits = 0;
   float sample_factor = 0;
   uint32_t posting_size = 0;
+  uint32_t max_centroids = 0;
   bool compression = true;
 };
 

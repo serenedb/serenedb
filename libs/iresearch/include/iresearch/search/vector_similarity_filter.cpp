@@ -108,7 +108,8 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
   ivf->Search(query, *idx_in, opts.nprobe, fine_ids,
-              needs_centroids ? &probed_centroids : nullptr);
+              needs_centroids ? &probed_centroids : nullptr,
+              opts.max_search_fanout);
   if (fine_ids.empty()) {
     return QueryBuilder::Empty();
   }

@@ -39,12 +39,14 @@ struct ByVectorSimilarityOptions {
   VectorMetric metric = VectorMetric::L2Sqr;
   VectorQuantization quant = VectorQuantization::None;
   uint32_t nprobe = 1;
+  uint32_t max_search_fanout = 0;
   std::shared_ptr<const Filter> inner;
 
   bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept {
     return query == rhs.query && centroids_id == rhs.centroids_id &&
            postings_id == rhs.postings_id && metric == rhs.metric &&
-           quant == rhs.quant && nprobe == rhs.nprobe && inner == rhs.inner;
+           quant == rhs.quant && nprobe == rhs.nprobe &&
+           max_search_fanout == rhs.max_search_fanout && inner == rhs.inner;
   }
 };
 

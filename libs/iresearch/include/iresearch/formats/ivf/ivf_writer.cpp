@@ -23,6 +23,7 @@
 #include <absl/random/random.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
@@ -55,6 +56,14 @@ constexpr uint64_t kMinCentroidTrainSample = 256;
 constexpr size_t kPqTrainResiduals = 65536;
 constexpr uint32_t kPqTrainSeed = 0x51ED270Bu;
 
+constexpr double kOverscanSlope = 8.0;
+
+constexpr uint64_t kPostingSizeGranularity = 32;
+constexpr uint64_t kMinPostingSize = 64;
+constexpr uint64_t kMaxPostingSize = 8192;
+
+uint64_t CeilDiv(uint64_t a, uint64_t b) noexcept { return (a + b - 1) / b; }
+
 struct DocRowView {
   const doc_id_t* docs;
   size_t n;
@@ -65,6 +74,31 @@ struct DocRowView {
 };
 
 }  // namespace
+
+IvfTreeShape ResolveIvfTreeShape(uint64_t rows, uint32_t d,
+                                 uint64_t scan_cost_bytes,
+                                 uint64_t posting_size,
+                                 uint64_t max_centroids) noexcept {
+  if (posting_size == 0) {
+    const uint64_t centroid_bytes = uint64_t{4} * d;
+    const uint64_t scan_bytes =
+      scan_cost_bytes != 0 ? scan_cost_bytes : centroid_bytes;
+    const double ratio =
+      static_cast<double>(centroid_bytes) / static_cast<double>(scan_bytes);
+    posting_size = static_cast<uint64_t>(
+      std::sqrt(static_cast<double>(rows) * ratio / kOverscanSlope));
+    if (max_centroids != 0) {
+      posting_size = std::max(posting_size, CeilDiv(rows, max_centroids));
+    }
+    posting_size =
+      CeilDiv(posting_size, kPostingSizeGranularity) * kPostingSizeGranularity;
+    posting_size = std::clamp(posting_size, kMinPostingSize, kMaxPostingSize);
+  }
+  if (max_centroids == 0) {
+    max_centroids = std::max<uint64_t>(1, CeilDiv(rows, posting_size));
+  }
+  return {.posting_size = posting_size, .max_centroids = max_centroids};
+}
 
 BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                              ReadContext& ctx, QuantizerWriter* qw) const {
@@ -85,10 +119,15 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                               _info.quant.kind == VectorQuantization::RaBitQ;
   const bool normalize = qw != nullptr && _info.metric == VectorMetric::Cosine;
 
+  const auto shape =
+    ResolveIvfTreeShape(rows, d, qw != nullptr ? qw->ScanCostBytes() : 0,
+                        _info.posting_size, _info.max_centroids);
+
   auto centroids = CentroidsBuilder::Create(
     vector_column, ctx, rows, _info.metric, d,
     CentroidsBuildParams{
-      .posting_size = _info.posting_size,
+      .posting_size = shape.posting_size,
+      .max_centroids = shape.max_centroids,
       .sample_factor = _info.sample_factor,
       .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
     });

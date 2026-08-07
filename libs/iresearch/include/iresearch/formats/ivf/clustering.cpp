@@ -113,11 +113,10 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
   }
   k = static_cast<uint32_t>(std::min<size_t>(k, n));
 
-  if (VectorMetricIsAngular(metric)) {
-    const bool use_skm =
-      algo == ClusteringAlgo::FlatSuperKMeans ||
-      (algo == ClusteringAlgo::Auto && metric == VectorMetric::Cosine &&
-       SuperKMeansGate(d, k, kSuperKMeansSphericalMinK));
+  if (metric == VectorMetric::Cosine) {
+    const bool use_skm = algo == ClusteringAlgo::FlatSuperKMeans ||
+                         (algo == ClusteringAlgo::Auto &&
+                          SuperKMeansGate(d, k, kSuperKMeansSphericalMinK));
     if (use_skm) {
       auto centroids =
         RunSuperKMeans(data, n, k, d, seed, niter, nredo, rotation);
@@ -220,24 +219,49 @@ void AssignNearestGrouped(VectorMetric metric, std::span<const float> centroids,
   }
   std::exclusive_scan(cursor.begin(), cursor.end(), cursor.begin(), size_t{0});
 
-  std::vector<float> reordered(data.size());
-  std::vector<size_t> reordered_perm(perm.empty() ? 0 : n);
+  std::vector<size_t> pos(n);
+  for (size_t i = 0; i < n; ++i) {
+    pos[i] = cursor[assign[i]]++;
+  }
+
+  std::vector<size_t> old_perm;
+  if (!perm.empty()) {
+    old_perm.assign(perm.begin(), perm.end());
+  }
   for (size_t i = 0; i < n; ++i) {
     const uint32_t bucket = assign[i];
-    const size_t pos = cursor[bucket]++;
-    std::memcpy(reordered.data() + pos * d, data.data() + i * d,
-                d * sizeof(float));
-    ids[pos] = bucket;
+    const size_t p = pos[i];
+    ids[p] = bucket;
     if (!perm.empty()) {
-      reordered_perm[pos] = perm[i];
+      perm[p] = old_perm[i];
     }
     if (!gathered.empty()) {
-      gathered[pos] = centroids.subspan(static_cast<size_t>(bucket) * d, d);
+      gathered[p] = centroids.subspan(static_cast<size_t>(bucket) * d, d);
     }
   }
-  std::memcpy(data.data(), reordered.data(), data.size() * sizeof(float));
-  if (!perm.empty()) {
-    std::copy(reordered_perm.begin(), reordered_perm.end(), perm.begin());
+
+  const size_t row_bytes = d * sizeof(float);
+  std::vector<uint8_t> moved(n, 0);
+  std::vector<float> hold(d);
+  std::vector<float> spill(d);
+  for (size_t i = 0; i < n; ++i) {
+    if (moved[i] != 0) {
+      continue;
+    }
+    if (pos[i] == i) {
+      moved[i] = 1;
+      continue;
+    }
+    std::memcpy(hold.data(), data.data() + i * d, row_bytes);
+    size_t j = i;
+    do {
+      const size_t t = pos[j];
+      std::memcpy(spill.data(), data.data() + t * d, row_bytes);
+      std::memcpy(data.data() + t * d, hold.data(), row_bytes);
+      hold.swap(spill);
+      moved[t] = 1;
+      j = t;
+    } while (j != i);
   }
 }
 

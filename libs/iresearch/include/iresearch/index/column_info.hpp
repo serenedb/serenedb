@@ -104,6 +104,8 @@ struct IvfInfo {
 
   uint32_t posting_size = 0;
 
+  uint32_t max_centroids = 0;
+
   friend bool operator==(const IvfInfo&, const IvfInfo&) = default;
 };
 

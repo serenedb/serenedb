@@ -55,6 +55,8 @@ class QuantizerWriter {
   virtual VectorQuantization Kind() const noexcept = 0;
 
   virtual uint32_t CodeSize() const noexcept = 0;
+
+  virtual uint32_t ScanCostBytes() const noexcept = 0;
 };
 
 class QuantizerReader {

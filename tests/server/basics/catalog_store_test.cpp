@@ -497,15 +497,19 @@ TEST_F(CatalogStoreTest, table_info_round_trips_through_put_entry) {
   fk->oid = 204;
   fk->host_referenced_id = 99;
   info->constraints.push_back(std::move(fk));
-  info->SetColumnAcls({{ObjectId{102}, catalog::Acl{catalog::AclItem{
-                                         .grantee = ObjectId{7},
-                                         .grantor = ObjectId{1},
-                                         .privs = catalog::AclMode::Select}}}});
+  // Column grants ride the permissions beside the definition, not the
+  // definition itself.
+  catalog::Permissions perm{ObjectId{1}};
+  catalog::SetColumnAcl(
+    perm.column_acl, ObjectId{102},
+    catalog::Acl{catalog::AclItem{.grantee = ObjectId{7},
+                                  .grantor = ObjectId{1},
+                                  .privs = catalog::AclMode::Select}});
 
   auto store = Open();
   store->Write([&](CatalogStore::WriteContext& ctx) {
     ctx.catalog().PutEntry(schema, duckdb::CatalogType::TABLE_ENTRY, table_id,
-                           kCreate, info, catalog::Permissions{ObjectId{1}});
+                           kCreate, info, perm);
   });
   store->Shutdown();
   store.reset();
@@ -544,9 +548,12 @@ TEST_F(CatalogStoreTest, table_info_round_trips_through_put_entry) {
               ->Cast<duckdb::ForeignKeyConstraint>()
               .host_referenced_id,
             99);
-  ASSERT_EQ(read->GetColumnAcl(ObjectId{102}).size(), 1);
-  EXPECT_EQ(read->GetColumnAcl(ObjectId{102})[0].grantee, 7);
-  EXPECT_TRUE(read->GetColumnAcl(ObjectId{101}).empty());
+  ASSERT_EQ(catalog::ColumnAclOf(put->perm.column_acl, ObjectId{102}).size(),
+            1);
+  EXPECT_EQ(
+    catalog::ColumnAclOf(put->perm.column_acl, ObjectId{102})[0].grantee, 7);
+  EXPECT_TRUE(
+    catalog::ColumnAclOf(put->perm.column_acl, ObjectId{101}).empty());
 }
 
 // Not covered here: a record count past the frame's size. It is rejected by

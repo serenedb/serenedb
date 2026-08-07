@@ -208,15 +208,24 @@ catalog::TableInfoRef ChangeColumnAcl(const catalog::AccessContext& ax,
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                                       table.GetName());
   }
-  const auto& perm = entry->permissions;
   const auto current = entry->Definition();
+  const auto* definition = current->ColumnByName(column);
+  if (definition == nullptr) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column, "\" of relation \"",
+                            current->GetName(), "\" does not exist"));
+  }
+  const ObjectId column_id{definition->CatalogOid()};
+  // A grant is not a change to what the table is, so the definition is
+  // republished unchanged and only the permissions beside it move.
+  auto perm = entry->permissions;
   const ObjectId owner = catalog::OwnerOf(perm);
-  auto updated = catalog::NextTableVersion(
-    ax.context, table_id, schema_id,
-    current->ChangeColumnAcl(column,
-                             [&](catalog::Acl& acl) { mutate(owner, acl); }));
-  connector::PutEntry(ax.context, updated->GetName(), updated, perm);
-  return updated;
+  catalog::Acl acl{catalog::ColumnAclOf(perm.column_acl, column_id).begin(),
+                   catalog::ColumnAclOf(perm.column_acl, column_id).end()};
+  mutate(owner, acl);
+  catalog::SetColumnAcl(perm.column_acl, column_id, std::move(acl));
+  connector::PutEntry(ax.context, current->GetName(), current, std::move(perm));
+  return current;
 }
 
 int32_t ParseConnLimit(bool has_conn_limit, int64_t value) {
@@ -1042,8 +1051,8 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
       // The column list is read off one version, but each revoke has to build
       // on the previous one's result, so the returned versions chain.
       std::vector<std::string> granted;
-      for (const auto& [column_id, acl] : tbl->GetColumnAcls()) {
-        if (const auto* column = tbl->ColumnById(column_id)) {
+      for (const auto& entry : tbl_entry->permissions.column_acl) {
+        if (const auto* column = tbl->ColumnById(ObjectId{entry.catalog_oid})) {
           granted.emplace_back(column->Name().GetIdentifierName());
         }
       }

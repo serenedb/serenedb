@@ -205,21 +205,27 @@ TEST(CatalogTableInfo, comments_that_change_nothing_write_no_version) {
             "col");
 }
 
-TEST(CatalogTableInfo, a_column_grant_lives_on_the_definition) {
-  auto info = MakeTable({{"a", 1}});
-  info = info->ChangeColumnAcl("a", [](Acl& acl) {
-    acl.push_back(AclItem{.grantee = ObjectId{7},
-                          .grantor = ObjectId{1},
-                          .privs = AclMode::Select});
-  });
-  ASSERT_EQ(info->GetColumnAcl(ObjectId{1}).size(), 1);
-  EXPECT_EQ(info->GetColumnAcl(ObjectId{1})[0].grantee, 7);
-  // An empty ACL is no entry at all, which is what keeps the map empty for
+TEST(CatalogTableInfo, a_column_grant_lives_on_the_permissions) {
+  catalog::Permissions perm;
+  catalog::SetColumnAcl(perm.column_acl, ObjectId{1},
+                        Acl{AclItem{.grantee = ObjectId{7},
+                                    .grantor = ObjectId{1},
+                                    .privs = AclMode::Select}});
+  ASSERT_EQ(catalog::ColumnAclOf(perm.column_acl, ObjectId{1}).size(), 1);
+  EXPECT_EQ(catalog::ColumnAclOf(perm.column_acl, ObjectId{1})[0].grantee, 7);
+  EXPECT_TRUE(catalog::ColumnAclOf(perm.column_acl, ObjectId{2}).empty());
+  // The list stays ordered by column, so one catalog state writes one frame.
+  catalog::SetColumnAcl(perm.column_acl, ObjectId{3}, Acl{AclItem{}});
+  catalog::SetColumnAcl(perm.column_acl, ObjectId{2}, Acl{AclItem{}});
+  ASSERT_EQ(perm.column_acl.size(), 3);
+  EXPECT_EQ(perm.column_acl[0].catalog_oid, 1);
+  EXPECT_EQ(perm.column_acl[1].catalog_oid, 2);
+  EXPECT_EQ(perm.column_acl[2].catalog_oid, 3);
+  // An empty ACL is no entry at all, which is what keeps the list empty for
   // almost every table.
-  auto revoked = info->ChangeColumnAcl("a", [](Acl& acl) { acl.clear(); });
-  EXPECT_TRUE(revoked->GetColumnAcls().empty());
-  // Dropping the column takes its grants with it.
-  EXPECT_TRUE(info->DropColumn(ObjectId{1})->GetColumnAcls().empty());
+  catalog::SetColumnAcl(perm.column_acl, ObjectId{2}, Acl{});
+  ASSERT_EQ(perm.column_acl.size(), 2);
+  EXPECT_EQ(perm.column_acl[1].catalog_oid, 3);
 }
 
 TEST(CatalogTableInfo, foreign_keys_are_dropped_by_the_id_they_reference) {

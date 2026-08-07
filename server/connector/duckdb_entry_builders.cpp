@@ -339,8 +339,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexScanEntry(
   IndexedRelation relation{.id = table->GetId(),
                            .type = duckdb::CatalogType::TABLE_ENTRY,
                            .name = std::string{table->GetName()},
-                           .perm = std::move(table_perm),
-                           .column_acls = table->GetColumnAcls()};
+                           .perm = table_perm,
+                           .column_acls = table_perm.column_acl};
 
   if (index->IsInverted()) {
     return duckdb::make_uniq<TableInvertedIndexScanEntry>(

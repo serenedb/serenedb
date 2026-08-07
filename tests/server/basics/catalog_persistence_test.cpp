@@ -205,25 +205,23 @@ TEST(CatalogPersistence, table) {
   key->constraint_name = "t_pkey";
   info->constraints.push_back(std::move(key));
 
-  // Column "a" carries a per-column ACL (pg_attribute.attacl), so the golden
-  // bytes exercise column-level GRANT persistence; column "b" stays default.
-  CreateTableInfo::ColumnAcls acls;
-  acls.emplace(ObjectId{1}, Acl{AclItem{.grantee = ObjectId{7},
-                                        .grantor = ObjectId{42},
-                                        .privs = AclMode::Select}});
-  info->SetColumnAcls(std::move(acls));
+  // A non-default owner, an acl item, and a per-column ACL on column "a"
+  // (pg_attribute.attacl), so the frame exercises creator-owns and
+  // column-level GRANT persistence rather than just defaults.
+  Permissions perm{ObjectId{42},
+                   {AclItem{.grantee = ObjectId{7},
+                            .grantor = ObjectId{42},
+                            .privs = AclMode::Select}}};
+  catalog::SetColumnAcl(perm.column_acl, ObjectId{1},
+                        Acl{AclItem{.grantee = ObjectId{7},
+                                    .grantor = ObjectId{42},
+                                    .privs = AclMode::Select}});
 
-  // A non-default owner plus an acl item, so the frame exercises
-  // creator-owns persistence rather than just defaults.
-  const wal::Entry entry{
-    wal::PutTable{.schema_id = ObjectId{11},
-                  .id = ObjectId{12},
-                  .mode = wal::PutMode::Create,
-                  .info = std::move(info),
-                  .perm = Permissions{ObjectId{42},
-                                      {AclItem{.grantee = ObjectId{7},
-                                               .grantor = ObjectId{42},
-                                               .privs = AclMode::Select}}}}};
+  const wal::Entry entry{wal::PutTable{.schema_id = ObjectId{11},
+                                       .id = ObjectId{12},
+                                       .mode = wal::PutMode::Create,
+                                       .info = std::move(info),
+                                       .perm = std::move(perm)}};
   CheckFrameFixture("table.bin", entry);
 }
 

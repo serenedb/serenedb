@@ -43,7 +43,7 @@ struct IndexedRelation {
   std::string name;
   catalog::Permissions perm;
   // Empty for a view, which has no columns of its own to carry grants for.
-  catalog::CreateTableInfo::ColumnAcls column_acls;
+  catalog::ColumnAcls column_acls;
 };
 
 // Catalog entry for `SELECT * FROM idx_name WHERE ...`. Its own identity is the
@@ -73,7 +73,7 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
 
   // The relation's per-column grants, which are what a column check reads:
   // an index has no columns of its own.
-  const catalog::CreateTableInfo::ColumnAcls& GetColumnAcls() const noexcept {
+  const catalog::ColumnAcls& GetColumnAcls() const noexcept {
     return _relation_column_acls;
   }
 
@@ -88,7 +88,7 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
 
   std::vector<size_t> _indexed_col_indices;
   catalog::Permissions _relation_perm;
-  catalog::CreateTableInfo::ColumnAcls _relation_column_acls;
+  catalog::ColumnAcls _relation_column_acls;
   duckdb::CatalogType _relation_type{duckdb::CatalogType::INVALID};
   ObjectId _relation_id;
   std::string _relation_name;

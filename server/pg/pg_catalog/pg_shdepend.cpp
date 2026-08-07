@@ -47,8 +47,7 @@ bool AclNames(catalog::AclView acl, ObjectId role) {
 // A column grant makes the table name its grantee, and only the table's own
 // definition knows about it.
 using ColumnAclsByTable =
-  containers::FlatHashMap<ObjectId,
-                          const catalog::CreateTableInfo::ColumnAcls*>;
+  containers::FlatHashMap<ObjectId, const catalog::ColumnAcls*>;
 
 ColumnAclsByTable CollectColumnAcls(duckdb::ClientContext& context,
                                     ObjectId database) {
@@ -87,7 +86,7 @@ catalog::MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData() {
     const auto it = column_acls.find(id);
     return it != column_acls.end() &&
            std::ranges::any_of(*it->second, [&](const auto& entry) {
-             return AclNames(entry.second, role);
+             return AclNames(entry.acl, role);
            });
   };
 

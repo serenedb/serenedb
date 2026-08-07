@@ -214,7 +214,7 @@ catalog::Permissions MutatedAcl(const catalog::Permissions& perm,
   const auto owner = catalog::OwnerOf(perm);
   auto acl = AclForStorage(perm.acl, type, owner);
   mutate(owner, acl);
-  return catalog::Permissions{owner, std::move(acl)};
+  return catalog::Permissions{owner, std::move(acl), perm.column_acl};
 }
 
 std::optional<AclMode> TryParseAclKeyword(std::string_view keyword,

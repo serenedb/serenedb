@@ -328,7 +328,6 @@ duckdb::unique_ptr<duckdb::CreateInfo> CreateTableInfo::Copy() const {
       duckdb::unique_ptr_cast<duckdb::SQLStatement, duckdb::SelectStatement>(
         query->Copy());
   }
-  copy->_column_acls = _column_acls;
   return copy;
 }
 
@@ -735,7 +734,6 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::DropColumn(
         break;
     }
   }
-  next->_column_acls.erase(column_id);
   return next;
 }
 
@@ -744,21 +742,6 @@ std::shared_ptr<CreateTableInfo> CreateTableInfo::ChangeColumnType(
   const auto& column = RequireColumn(*this, column_name);
   auto next = Clone();
   next->columns.GetColumnMutable(column.Logical()).SetType(new_type);
-  return next;
-}
-
-std::shared_ptr<CreateTableInfo> CreateTableInfo::ChangeColumnAcl(
-  std::string_view column_name, absl::FunctionRef<void(Acl&)> mutate) const {
-  const auto& column = RequireColumn(*this, column_name);
-  const ObjectId column_id{column.CatalogOid()};
-  auto next = Clone();
-  auto acl = next->_column_acls[column_id];
-  mutate(acl);
-  if (acl.empty()) {
-    next->_column_acls.erase(column_id);
-  } else {
-    next->_column_acls[column_id] = std::move(acl);
-  }
   return next;
 }
 

@@ -96,7 +96,7 @@ namespace {
 // 22 names the relation of a store op by id. It was written as the store
 // table's name and parsed back to the id on the way out, a round trip through
 // a spelling no reader wanted.
-constexpr uint8_t kEntryVersion = 29;
+constexpr uint8_t kEntryVersion = 30;
 
 constexpr uint8_t kFrameSnapshot = 1U << 0U;
 
@@ -155,39 +155,6 @@ Acl ReadAcl(duckdb::MemoryStream& stream) {
   return acl;
 }
 
-// The per-column grants of a relation, written after its payload rather than
-// inside it: duckdb's ColumnDefinition has no room for an ACL and a column has
-// no entry of its own to keep one on. Keyed by the column's ObjectId, which is
-// ColumnDefinition::CatalogOid(), and written in id order so one catalog state
-// writes one frame.
-void WriteColumnAcls(const CreateTableInfo::ColumnAcls& acls,
-                     duckdb::MemoryStream& stream) {
-  std::vector<std::pair<ObjectId, AclView>> sorted;
-  sorted.reserve(acls.size());
-  for (const auto& [column_id, acl] : acls) {
-    sorted.emplace_back(column_id, acl);
-  }
-  absl::c_sort(sorted, [](const auto& l, const auto& r) {
-    return l.first.id() < r.first.id();
-  });
-  stream.Write<uint32_t>(static_cast<uint32_t>(sorted.size()));
-  for (const auto& [column_id, acl] : sorted) {
-    stream.Write<uint64_t>(column_id.id());
-    WriteAcl(acl, stream);
-  }
-}
-
-CreateTableInfo::ColumnAcls ReadColumnAcls(duckdb::MemoryStream& stream) {
-  CreateTableInfo::ColumnAcls acls;
-  const auto count = stream.Read<uint32_t>();
-  acls.reserve(count);
-  for (uint32_t i = 0; i < count; ++i) {
-    const ObjectId column_id{stream.Read<uint64_t>()};
-    acls.emplace(column_id, ReadAcl(stream));
-  }
-  return acls;
-}
-
 // A CreateInfo goes into the frame inline, with the reader picking the concrete
 // kind from the record's own type field.
 //
@@ -233,8 +200,6 @@ void WriteInfoInline(duckdb::CatalogType type, ObjectId parent_id, ObjectId id,
       return;
     case duckdb::CatalogType::TABLE_ENTRY:
       basics::WriteTuple(serializer, CreateInfoRef<duckdb::CreateInfo>{&info});
-      WriteColumnAcls(
-        basics::downCast<const CreateTableInfo>(info).GetColumnAcls(), stream);
       return;
     default:
       SDB_FATAL(STARTUP, "catalog wal: object type ", static_cast<int>(type),
@@ -304,9 +269,7 @@ std::shared_ptr<const duckdb::CreateInfo> ReadInfoPayload(
       // and its per-column grants have nowhere to live on duckdb's.
       CreateInfoOwned<duckdb::CreateTableInfo> data;
       basics::ReadTuple(src, data);
-      auto info = CreateTableInfo::Adopt(*data.info);
-      info->SetColumnAcls(ReadColumnAcls(stream));
-      return info;
+      return CreateTableInfo::Adopt(*data.info);
     }
     default:
       SDB_FATAL(STARTUP, "catalog wal: object type ", static_cast<int>(type),
@@ -319,12 +282,26 @@ std::shared_ptr<const duckdb::CreateInfo> ReadInfoPayload(
 void WritePermissions(const Permissions& perm, duckdb::MemoryStream& stream) {
   stream.Write<uint64_t>(perm.owner);
   WriteAcl(perm.acl, stream);
+  // The per-column grants are part of the same permissions; the list is kept
+  // in column order, so one catalog state writes one frame.
+  stream.Write<uint32_t>(static_cast<uint32_t>(perm.column_acl.size()));
+  for (const auto& column : perm.column_acl) {
+    stream.Write<uint64_t>(column.catalog_oid);
+    WriteAcl(column.acl, stream);
+  }
 }
 
 Permissions ReadPermissions(duckdb::MemoryStream& stream) {
   Permissions perm;
   perm.owner = stream.Read<uint64_t>();
   perm.acl = ReadAcl(stream);
+  const auto columns = stream.Read<uint32_t>();
+  perm.column_acl.reserve(columns);
+  for (uint32_t i = 0; i < columns; ++i) {
+    auto& column = perm.column_acl.emplace_back();
+    column.catalog_oid = stream.Read<uint64_t>();
+    column.acl = ReadAcl(stream);
+  }
   return perm;
 }
 

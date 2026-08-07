@@ -120,7 +120,7 @@ bool TableEntryColumnNotNull(const duckdb::TableCatalogEntry& table,
   return false;
 }
 
-const catalog::CreateTableInfo::ColumnAcls* RelationColumnAcls(
+const catalog::ColumnAcls* RelationColumnAcls(
   const duckdb::TableCatalogEntry& entry) noexcept {
   if (const auto* table = dynamic_cast<const SereneDBTableEntry*>(&entry)) {
     return &table->GetColumnAcls();

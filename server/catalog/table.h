@@ -143,11 +143,6 @@ class TableRuntime {
 // catalog entry is built from.
 class CreateTableInfo final : public duckdb::CreateTableInfo {
  public:
-  // Keyed by the column's ObjectId, which is ColumnDefinition::CatalogOid(), so
-  // a reader walking the column list finds the grants without a second lookup.
-  // Only columns some GRANT has named are present.
-  using ColumnAcls = containers::FlatHashMap<ObjectId, Acl>;
-
   CreateTableInfo();
 
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
@@ -182,17 +177,6 @@ class CreateTableInfo final : public duckdb::CreateTableInfo {
   std::string_view Comment() const noexcept {
     return comment.IsNull() ? std::string_view{}
                             : duckdb::StringValue::Get(comment);
-  }
-
-  const ColumnAcls& GetColumnAcls() const noexcept { return _column_acls; }
-  // A view into this version, never a copy: the pg_catalog projections build
-  // an AclView over what they get back and read it after the walk.
-  AclView GetColumnAcl(ObjectId column_id) const noexcept {
-    const auto it = _column_acls.find(column_id);
-    return it == _column_acls.end() ? AclView{} : AclView{it->second};
-  }
-  void SetColumnAcls(ColumnAcls acls) noexcept {
-    _column_acls = std::move(acls);
   }
 
   // The column `column_id` names, or null when the table lists no such column.
@@ -250,8 +234,6 @@ class CreateTableInfo final : public duckdb::CreateTableInfo {
   std::shared_ptr<CreateTableInfo> DropColumn(ObjectId column_id) const;
   std::shared_ptr<CreateTableInfo> ChangeColumnType(
     std::string_view column_name, duckdb::LogicalType new_type) const;
-  std::shared_ptr<CreateTableInfo> ChangeColumnAcl(
-    std::string_view column_name, absl::FunctionRef<void(Acl&)> mutate) const;
   std::shared_ptr<CreateTableInfo> SetComment(std::string_view comment) const;
   std::shared_ptr<CreateTableInfo> SetColumnComment(
     std::string_view column_name, std::string_view comment) const;
@@ -261,21 +243,7 @@ class CreateTableInfo final : public duckdb::CreateTableInfo {
   // A copy of this version, ready to be edited into the next one. Shares the
   // runtime -- same table, same rows.
   std::shared_ptr<CreateTableInfo> Clone() const;
-
- private:
-  ColumnAcls _column_acls;
 };
-
-// One column's grants out of a relation's map, which a reader resolves once
-// and then indexes -- almost every table has no map at all.
-inline AclView ColumnAclOf(const CreateTableInfo::ColumnAcls* acls,
-                           ObjectId column_id) noexcept {
-  if (acls == nullptr) {
-    return {};
-  }
-  const auto it = acls->find(column_id);
-  return it == acls->end() ? AclView{} : AclView{it->second};
-}
 
 // What a DROP of the referenced object does to a table that names it: the four
 // definition rewrites a surviving table can need, which is the one thing

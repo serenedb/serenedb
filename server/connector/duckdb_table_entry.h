@@ -79,7 +79,7 @@ inline constexpr duckdb::column_t kColumnIdentifierGeneratedPk =
 // The per-column grants `entry` answers a column check with, or null when it
 // carries none. An index-as-table wrapper answers with the relation's, which
 // is postgres' rule; a foreign catalog's table answers with none.
-const catalog::CreateTableInfo::ColumnAcls* RelationColumnAcls(
+const catalog::ColumnAcls* RelationColumnAcls(
   const duckdb::TableCatalogEntry& entry) noexcept;
 
 class SereneDBTableEntry : public duckdb::DuckTableEntry {
@@ -174,13 +174,13 @@ class SereneDBTableEntry : public duckdb::DuckTableEntry {
   // second lookup. Only columns some GRANT has named are present; postgres
   // gives a column no owner of its own, so the entry's own owner answers for
   // all of them.
-  const catalog::CreateTableInfo::ColumnAcls& GetColumnAcls() const noexcept {
-    return _sdb_table->GetColumnAcls();
+  const catalog::ColumnAcls& GetColumnAcls() const noexcept {
+    return permissions.column_acl;
   }
   // A view into this version, never a copy: the pg_catalog projections build an
   // AclView over what they get back and read it after the walk.
   catalog::AclView GetColumnAcl(ObjectId column_id) const noexcept {
-    return _sdb_table->GetColumnAcl(column_id);
+    return catalog::ColumnAclOf(permissions.column_acl, column_id);
   }
 
   // Which engine owns the rows, and the background-maintenance intervals that

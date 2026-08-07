@@ -33,6 +33,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/containers/node_hash_map.h"
 #include "basics/serializer.h"
 #include "basics/static_strings.h"
 #include "basics/system-compiler.h"
@@ -233,10 +234,12 @@ const VirtualTable* GetTableFromSchema(std::string_view name,
   return it == schema.end() ? nullptr : *it;
 }
 
-containers::FlatHashMap<std::string, StaticFunction> gPgCatalogFunctions;
-containers::FlatHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
-containers::FlatHashMap<std::string, StaticView> gPgCatalogViews;
-containers::FlatHashMap<std::string, StaticView> gInfoSchemaViews;
+// Node-based: the value is a definition plus a whole permission set, which is
+// past what a flat map wants to move, and these are built once at startup.
+containers::NodeHashMap<std::string, StaticFunction> gPgCatalogFunctions;
+containers::NodeHashMap<std::string, StaticFunction> gInfoSchemaFunctions;
+containers::NodeHashMap<std::string, StaticView> gPgCatalogViews;
+containers::NodeHashMap<std::string, StaticView> gInfoSchemaViews;
 
 }  // namespace
 

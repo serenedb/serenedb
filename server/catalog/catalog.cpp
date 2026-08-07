@@ -453,7 +453,7 @@ duckdb::LogicalDependencyList TableDependencies(const CreateTableInfo& info,
   CollectRoleRefs(perm, ids);
   // A column carries grants of its own, which name roles the table's ACL does
   // not.
-  for (const auto& [column_id, acl] : info.GetColumnAcls()) {
+  for (const auto& [column_id, acl] : perm.column_acl) {
     for (const auto& item : acl) {
       CollectRef(ids, GranteeOf(item));
       CollectRef(ids, GrantorOf(item));
@@ -1059,6 +1059,12 @@ void CommitDropPlan(duckdb::ClientContext* context,
     // whether the rows caught up with it.
     const auto final_table =
       NextTableVersion(context, tid, rw.schema_id, rw.Final());
+    // A dropped column's grants go with it. Ids are never reissued, so a
+    // leftover entry would name a column no reader can resolve while still
+    // holding its grantee's role dependency open.
+    std::erase_if(rw.perm.column_acl, [&](const auto& granted) {
+      return final_table->ColumnById(ObjectId{granted.catalog_oid}) == nullptr;
+    });
     ctx.catalog().PutTable(*final_table, wal::PutMode::Replace, rw.perm);
     rw.published = final_table;
     // Cascades can drop columns of surviving tables (e.g. a column whose

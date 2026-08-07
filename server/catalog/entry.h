@@ -22,6 +22,7 @@
 
 #include <absl/hash/hash.h>
 
+#include <algorithm>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -87,6 +88,10 @@ using AclItem = duckdb::AclItem;
 using Acl = duckdb::vector<AclItem>;
 using AclView = std::span<const AclItem>;
 using Permissions = duckdb::CatalogPermissions;
+// Column-level grants, keyed by ColumnDefinition::CatalogOid(). They sit on the
+// entry's permissions rather than on its definition: a grant is not a change to
+// what the table is, and a column has no entry of its own to keep an ACL on.
+using ColumnAcls = decltype(Permissions::column_acl);
 
 // PUBLIC pseudo-grantee (PG's OID 0); an AclItem with this grantee applies to
 // every role.
@@ -100,6 +105,46 @@ inline constexpr AclItem kSystemPublicSelect{.grantee = kPublicGrantee.id(),
 // typed one.
 inline ObjectId OwnerOf(const Permissions& perm) noexcept {
   return ObjectId{perm.owner};
+}
+
+// One column's grants out of an entry's permissions, which a reader resolves
+// once and then indexes -- almost every table has no column grant at all.
+inline AclView ColumnAclOf(const ColumnAcls& acls,
+                           ObjectId column_id) noexcept {
+  for (const auto& entry : acls) {
+    if (entry.catalog_oid == column_id.id()) {
+      return AclView{entry.acl};
+    }
+  }
+  return {};
+}
+
+// Sets (or, when `acl` is empty, removes) one column's grants, keeping the list
+// ordered by column so one catalog state writes one frame.
+inline void SetColumnAcl(ColumnAcls& acls, ObjectId column_id, Acl acl) {
+  const auto at = std::ranges::lower_bound(
+    acls, column_id.id(), {}, [](const auto& e) { return e.catalog_oid; });
+  if (at != acls.end() && at->catalog_oid == column_id.id()) {
+    if (acl.empty()) {
+      acls.erase(at);
+    } else {
+      at->acl = std::move(acl);
+    }
+    return;
+  }
+  if (!acl.empty()) {
+    acls.insert(at, duckdb::ColumnAclItem{column_id.id(), std::move(acl)});
+  }
+}
+
+// Drops a column's grants, for the ALTER that drops the column.
+inline void EraseColumnAcl(ColumnAcls& acls, ObjectId column_id) {
+  SetColumnAcl(acls, column_id, Acl{});
+}
+
+inline AclView ColumnAclOf(const ColumnAcls* acls,
+                           ObjectId column_id) noexcept {
+  return acls == nullptr ? AclView{} : ColumnAclOf(*acls, column_id);
 }
 
 inline ObjectId GranteeOf(const AclItem& item) noexcept {

@@ -57,6 +57,11 @@
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 
+namespace sdb::connector {
+
+struct DatabaseRef;
+
+}  // namespace sdb::connector
 namespace sdb::catalog {
 
 // Mutation callback: fill `updated` with the changed clone (leave it null for
@@ -308,6 +313,13 @@ void RequireOwnerTransfer(const AccessContext& ax, ObjectId schema_id,
                           std::string_view new_owner_name,
                           std::string_view noun, std::string_view name);
 
+// PG: creating inside a database needs the matching privilege on it. Exported
+// beside the other ownership checks because the duckdb catalog override is
+// where the create happens.
+void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
+                           const connector::DatabaseRef& database,
+                           AclMode need);
+
 class Catalog final {
  public:
   explicit Catalog();
@@ -325,9 +337,6 @@ class Catalog final {
                             ObjectId owner, bool if_not_exists);
   void CreateRole(const AccessContext& ax,
                   std::shared_ptr<CreateRoleInfo> role);
-  bool CreateSchema(const AccessContext& ax, ObjectId database_id,
-                    std::shared_ptr<duckdb::CreateSchemaInfo> schema,
-                    Permissions perm, bool if_not_exists);
   // Returns the created table, or null for the if_not_exists no-op. The
   // SERIAL columns arrive beside the info: the catalog resolves each sequence's
   // name, stamps the owning table and sets the column's nextval default,

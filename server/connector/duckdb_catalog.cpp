@@ -549,18 +549,31 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
                     ERR_MSG("schema \"", schema_name, "\" already exists"));
   }
 
-  // PG: CREATE SCHEMA requires CREATE on the current database -- enforced
-  // inside Catalog::CreateSchema, which throws "permission denied for database
-  // <name>" directly. The creator owns the schema (PG current_user).
-  auto& catalog_impl = catalog::GetCatalog();
+  // The creator owns the schema (PG current_user).
   const ObjectId owner = GetSereneDBContext(client).GetRoleId();
-  auto schema =
-    catalog::MakeSchemaInfo(ObjectId{}, GetDatabaseId(), schema_name);
-  if (!catalog_impl.CreateSchema(catalog::ActingAs(owner, client),
-                                 GetDatabaseId(), std::move(schema),
-                                 catalog::Permissions{owner}, if_not_exists)) {
-    return nullptr;
+  const auto database_id = GetDatabaseId();
+
+  // Under the catalog mutex from here: the name check and the write have to be
+  // one step, or two concurrent CREATE SCHEMAs both find the name free.
+  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
+  // PG: CREATE SCHEMA requires CREATE on the current database.
+  catalog::RequireDatabaseAccess(&client, owner,
+                                 FindDatabase(&client, database_id),
+                                 catalog::AclMode::Create);
+  if (FindSchemaId(&client, database_id, schema_name)) {
+    if (if_not_exists) {
+      return nullptr;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+                    ERR_MSG("schema \"", schema_name, "\" already exists"));
   }
+  SDB_IF_FAILURE("unable_to_create") {
+    THROW_SQL_ERROR(ERR_MSG("internal error"));
+  }
+  PutSchema(
+    &client, {},
+    catalog::MakeSchemaInfo(catalog::NextId(), database_id, schema_name),
+    catalog::Permissions{owner});
   // New snapshot will have the schema; next LookupSchema will find it
   return nullptr;
 }

@@ -324,11 +324,14 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   auto& catalog = catalog::GetCatalog();
 
   {
-    auto schema = catalog::MakeSchemaInfo(ObjectId{}, database_id, kEsSchema);
-    catalog.CreateSchema(catalog::NoAccessCheck(context), database_id,
-                         std::move(schema),
-                         catalog::Permissions{conn_ctx.GetRoleId()},
-                         /*if_not_exists=*/true);
+    // Through the database's own catalog: CREATE SCHEMA is duckdb's operation,
+    // and serenedb's is the same one.
+    auto& db_catalog = duckdb::Catalog::GetCatalog(
+      context, duckdb::Identifier{conn_ctx.GetDatabase()});
+    duckdb::CreateSchemaInfo info;
+    info.SetSchema(duckdb::Identifier{std::string{kEsSchema}});
+    info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+    db_catalog.CreateSchema(db_catalog.GetCatalogTransaction(context), info);
   }
 
   auto options = catalog::NewTableInfo();

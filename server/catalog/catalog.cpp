@@ -1504,39 +1504,10 @@ HeldSchema Catalog::CreateDatabase(const AccessContext& ax,
 
 namespace {
 
-// Defined below (with the other Create*/Drop* ownership helpers).
-void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
-                           const connector::DatabaseRef& database,
-                           AclMode need);
 void RequireDatabaseOwner(duckdb::ClientContext* context, ObjectId role,
                           const connector::DatabaseRef& database);
 
 }  // namespace
-
-bool Catalog::CreateSchema(const AccessContext& ax, ObjectId database_id,
-                           std::shared_ptr<duckdb::CreateSchemaInfo> schema,
-                           Permissions perm, bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  // CREATE SCHEMA requires CREATE on the target database.
-  RequireDatabaseAccess(ax.context, ax.role,
-                        connector::FindDatabase(ax.context, database_id),
-                        AclMode::Create);
-  if (FindSchemaId(ax.context, database_id, SchemaNameOf(*schema))) {
-    if (if_not_exists) {
-      return false;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
-      ERR_MSG("schema \"", SchemaNameOf(*schema), "\" already exists"));
-  }
-  SetIdentity(*schema, IdOf(*schema).isSet() ? IdOf(*schema) : NextId(),
-              database_id);
-  SDB_IF_FAILURE("unable_to_create") {
-    THROW_SQL_ERROR(ERR_MSG("internal error"));
-  }
-  connector::PutSchema(ax.context, {}, std::move(schema), std::move(perm));
-  return true;
-}
 
 void Catalog::CreateRole(const AccessContext& ax,
                          std::shared_ptr<CreateRoleInfo> role) {
@@ -1737,18 +1708,6 @@ void BindIndexColumns(const std::vector<IndexableColumn>& relation_columns,
   }
 }
 
-void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
-                           const connector::DatabaseRef& database,
-                           AclMode need) {
-  if (!database ||
-      auth::ClosureFor(context, role)
-        ->Can(duckdb::CatalogType::DATABASE_ENTRY, database.perm, need)) {
-    return;
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied for database ", database.Name()));
-}
-
 void RequireDatabaseOwner(duckdb::ClientContext* context, ObjectId role,
                           const connector::DatabaseRef& database) {
   if (!database ||
@@ -1760,6 +1719,18 @@ void RequireDatabaseOwner(duckdb::ClientContext* context, ObjectId role,
 }
 
 }  // namespace
+
+void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
+                           const connector::DatabaseRef& database,
+                           AclMode need) {
+  if (!database ||
+      auth::ClosureFor(context, role)
+        ->Can(duckdb::CatalogType::DATABASE_ENTRY, database.perm, need)) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied for database ", database.Name()));
+}
 
 // CREATE inside `parent_id` requires CREATE on it (a schema for relations, a
 // database for schemas). Throws 42501 "permission denied for <type> <name>"

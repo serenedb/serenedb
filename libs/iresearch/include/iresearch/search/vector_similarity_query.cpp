@@ -216,7 +216,7 @@ class QVectorIterator : public VectorDistanceIterator {
     SDB_ASSERT(_qr);
     _setting = _qr->BlockSetting();
     SDB_ASSERT(_setting.group_size <= _cache.size());
-    _lane0 = _setting.pad_tail ? lane0 : 0;
+    _lane0 = lane0;
     SDB_ASSERT(_lane0 < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane0 + static_cast<uint32_t>(_total);
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));

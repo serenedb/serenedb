@@ -38,10 +38,9 @@ class IndexOutput;
 struct PayloadBlockSetting {
   uint32_t group_size = 1;
   uint32_t record_size = 0;
-  bool pad_tail = false;
 
   size_t RecordCount(size_t docs) const noexcept {
-    return pad_tail ? (docs + group_size - 1) / group_size * group_size : docs;
+    return (docs + group_size - 1) / group_size * group_size;
   }
 };
 
@@ -59,12 +58,11 @@ class QuantizerWriter {
 
   virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
 
-  virtual uint32_t CodeSize() const noexcept = 0;
+  virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
 
-  virtual void Encode(byte_type* codes, const float* vecs, size_t n) = 0;
+  virtual void Finish(IndexOutput& out) = 0;
 
-  virtual void WriteCodes(IndexOutput& out, const byte_type* codes,
-                          size_t rows) = 0;
+  virtual uint32_t PendingLanes() const noexcept { return 0; }
 
   virtual void Serialize(DataOutput& out) const = 0;
 

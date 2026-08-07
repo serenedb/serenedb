@@ -74,10 +74,9 @@ std::vector<float> MakeSpread(uint32_t d, size_t n, uint32_t seed) {
   return out;
 }
 
-// Mirrors IvfTermReader's driving loop: rows are encoded into a carry buffer
-// against the centroid current at that moment, and only whole groups are
-// flushed -- so a group can hold lanes from two clusters, and only the stream's
-// final group is padded.
+// Mirrors IvfTermReader's driving loop: rows are encoded against the centroid
+// current at that moment, and only whole groups are flushed -- so a group can
+// hold lanes from two clusters, and only the stream's final group is padded.
 class PayloadStream {
  public:
   struct Cluster {
@@ -86,43 +85,18 @@ class PayloadStream {
     size_t count = 0;
   };
 
-  explicit PayloadStream(QuantizerWriter& writer)
-    : _writer{writer},
-      _setting{writer.BlockSetting()},
-      _group{std::max<size_t>(1, _setting.group_size)},
-      _row{writer.CodeSize()} {}
+  explicit PayloadStream(QuantizerWriter& writer) : _writer{writer} {}
 
   Cluster Add(IndexOutput& out, const float* vecs, size_t n) {
-    const Cluster c{out.Position(), static_cast<uint32_t>(_carry_n), n};
-    _carry.resize((_carry_n + n) * _row);
-    _writer.Encode(_carry.data() + _carry_n * _row, vecs, n);
-    _carry_n += n;
-    Flush(out, /*all=*/!_setting.pad_tail);
+    const Cluster c{out.Position(), _writer.PendingLanes(), n};
+    _writer.Encode(out, vecs, n);
     return c;
   }
 
-  void Finish(IndexOutput& out) { Flush(out, /*all=*/true); }
+  void Finish(IndexOutput& out) { _writer.Finish(out); }
 
  private:
-  void Flush(IndexOutput& out, bool all) {
-    const size_t rows = all ? _carry_n : _carry_n / _group * _group;
-    if (rows == 0) {
-      return;
-    }
-    _writer.WriteCodes(out, _carry.data(), rows);
-    const size_t rest = _carry_n - rows;
-    if (rest != 0) {
-      std::memmove(_carry.data(), _carry.data() + rows * _row, rest * _row);
-    }
-    _carry_n = rest;
-  }
-
   QuantizerWriter& _writer;
-  PayloadBlockSetting _setting;
-  size_t _group;
-  size_t _row;
-  bstring _carry;
-  size_t _carry_n = 0;
 };
 
 uint64_t EncodeCluster(QuantizerWriter& writer, IndexOutput& out,
@@ -181,7 +155,7 @@ class ClusterScorer {
       _setting{_qr->BlockSetting()},
       _in{std::make_unique<MemoryIndexInput>(file)},
       _base{pay_start},
-      _lane0{_setting.pad_tail ? lane0 : 0},
+      _lane0{lane0},
       _total{total},
       _end{_lane0 + total},
       _records{_setting.RecordCount(_end)} {
@@ -1257,7 +1231,6 @@ void ExpectSharedGroupsMatchSoloClusters(
   MemoryFile shared_file{memory};
   std::vector<PayloadStream::Cluster> spans;
   auto shared_w = make();
-  ASSERT_TRUE(shared_w->BlockSetting().pad_tail);
   uint64_t shared_bytes = 0;
   {
     MemoryIndexOutput out{shared_file};

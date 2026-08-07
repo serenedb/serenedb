@@ -427,6 +427,28 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_levenshtein_max_terms",
+      {
+        LogicalTypeId::INTEGER,
+        "The maximum number of dictionary terms a fuzzy predicate "
+        "(`ts_levenshtein`) expands to per index segment. Terms closest to the "
+        "query survive; the rest neither match nor contribute to scoring. "
+        "Higher values improve recall on wide expansions at the cost of "
+        "per-query work. 0 removes the cap, so every term within the edit "
+        "distance matches. Default 64.",
+        [] { return duckdb::Value::INTEGER(64); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 0) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"sdb_levenshtein_max_terms\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
       "sdb_disable_top_k_optimization",
       {
         LogicalTypeId::BOOLEAN,

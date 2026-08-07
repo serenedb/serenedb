@@ -511,7 +511,9 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         auto args = ParseLevenshteinArgs(*f);
         FillByEditDistanceOptions(
           args,
-          options->push_back<irs::ByEditDistanceOptions>(gap.min, gap.max));
+          options->push_back<irs::ByEditDistanceOptions>(gap.min, gap.max),
+          column_info.levenshtein_max_terms.value_or(
+            ctx.levenshtein_max_terms));
       } break;
       case TSQueryOp::Phrase: {
         // Nested ts_phrase('x y z') -> tokenise via column analyzer and

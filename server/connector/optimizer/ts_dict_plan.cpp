@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp>
 #include <duckdb/function/function_binder.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/column_binding_replacer.hpp>
 #include <duckdb/planner/expression/bound_aggregate_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -61,6 +62,7 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
@@ -1770,7 +1772,12 @@ class TsDictFilterClaim {
       _multi_term(filters.size(), false),
       _row_origin(filters.size(), false),
       _having_and(ss.ts_dicts.size()),
-      _where_and{std::make_unique<irs::And>()} {}
+      _where_and{std::make_unique<irs::And>()} {
+    _enum_fields.reserve(ss.ts_dicts.size());
+    for (const auto& req : ss.ts_dicts) {
+      _enum_fields.insert(req.field_id);
+    }
+  }
 
   void Claim() {
     RouteConjuncts();
@@ -1786,8 +1793,18 @@ class TsDictFilterClaim {
   size_t EnumeratedFieldCount() const { return _ss.ts_dicts.size(); }
 
   bool Enumerated(irs::field_id field) const {
-    return absl::c_any_of(
-      _ss.ts_dicts, [&](const auto& req) { return req.field_id == field; });
+    return _enum_fields.contains(field);
+  }
+
+  template<typename Getter>
+  auto Uncapping(const Getter& getter) const {
+    return [this, &getter](const auto& expr) {
+      auto info = getter(expr);
+      if (info && Enumerated(info->field_id)) {
+        info->levenshtein_max_terms = 0;
+      }
+      return info;
+    };
   }
 
   void Optimize(irs::Filter::ptr& f, bool fuse_intersections = false) const {
@@ -1875,8 +1892,8 @@ class TsDictFilterClaim {
     duckdb::unique_ptr<duckdb::Expression>& conjunct,
     const connector::ColumnGetter& col_getter,
     const connector::ExpressionGetter& e_getter) const {
-    return ClaimOptimizedConjunct(conjunct, col_getter, e_getter,
-                                  _getters.analyzed_fields,
+    return ClaimOptimizedConjunct(conjunct, Uncapping(col_getter),
+                                  Uncapping(e_getter), _getters.analyzed_fields,
                                   _getters.null_markers, _context);
   }
 
@@ -2054,6 +2071,7 @@ class TsDictFilterClaim {
   std::vector<bool> _row_origin;
   std::vector<std::unique_ptr<irs::And>> _having_and;
   std::unique_ptr<irs::And> _where_and;
+  containers::FlatHashSet<irs::field_id> _enum_fields;
 };
 
 }  // namespace

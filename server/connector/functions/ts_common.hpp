@@ -57,7 +57,8 @@ struct FilterContext {
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
-  size_t scored_terms_limit = 1024;
+  uint32_t scored_terms_limit = 1024;
+  uint32_t levenshtein_max_terms = 64;
 
   FilterContext WithTokenizer(irs::analysis::Analyzer& tokenizer) const {
     return {
@@ -71,6 +72,7 @@ struct FilterContext {
       .tokenizer = tokenizer,
       .client_context = client_context,
       .scored_terms_limit = scored_terms_limit,
+      .levenshtein_max_terms = levenshtein_max_terms,
     };
   }
 
@@ -86,6 +88,7 @@ struct FilterContext {
       .tokenizer = tokenizer,
       .client_context = client_context,
       .scored_terms_limit = scored_terms_limit,
+      .levenshtein_max_terms = levenshtein_max_terms,
     };
   }
 };
@@ -223,7 +226,8 @@ struct LevenshteinArgs {
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func);
 void FillByEditDistanceOptions(const LevenshteinArgs& args,
-                               irs::ByEditDistanceOptions& out);
+                               irs::ByEditDistanceOptions& out,
+                               size_t max_terms);
 
 // ts_any/ts_all arg unpacker: handles single TSQUERY, TSQUERY[]
 // (extracts elements), and the optional min_should_match suffix.

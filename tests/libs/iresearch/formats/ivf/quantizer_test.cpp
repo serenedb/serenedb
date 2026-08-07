@@ -45,6 +45,14 @@ namespace {
 
 constexpr score_t kNoPrune = std::numeric_limits<score_t>::lowest();
 
+// faiss enables float_control(precise, off) on x86 only, so a survivor's
+// accumulated distance depends on which of compute_level_dot_kernel's two loop
+// bodies it lands in -- and that depends on the threshold. Scores from a pruned
+// and an unpruned scan agree to a few ULP, not bit-for-bit.
+constexpr score_t kScoreTol = 1e-6f;
+
+score_t ScoreTol(score_t want) { return kScoreTol * (1.f + std::fabs(want)); }
+
 // The writer emits a u64 length prefix ahead of the blob, exactly as
 // IvfWriter::FlushTree stores it; strip it to get what MakeQuantizerStats sees.
 bstring SerializeStats(const QuantizerWriter& writer) {
@@ -267,11 +275,18 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   EXPECT_EQ(scorer.ByteSize(), n * d * sizeof(float));
   const auto scores = scorer.All();
 
+  bstring stored(n * d * sizeof(float), 0);
+  {
+    MemoryIndexInput in{file};
+    in.ReadData(pay_start, stored.data(), stored.size());
+  }
+  EXPECT_EQ(std::memcmp(stored.data(), points.data(), stored.size()), 0);
+
   ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M> {
     for (size_t i = 0; i < n; ++i) {
       const score_t want = ComputeDistance<EffectiveQuantMetric(M)>(
         query.data(), points.data() + i * d, static_cast<uint16_t>(d));
-      EXPECT_EQ(scores[i], want) << "row " << i;
+      EXPECT_NEAR(scores[i], want, ScoreTol(want)) << "row " << i;
     }
   });
 
@@ -452,11 +467,18 @@ TEST_P(panorama_quantizer_test, pruning_preserves_topk) {
     const auto want = topk(false);
     const auto got = topk(true);
     ASSERT_EQ(want.size(), got.size()) << "query " << qi;
+    std::vector<size_t> want_ids;
+    std::vector<size_t> got_ids;
     for (size_t i = 0; i < want.size(); ++i) {
-      EXPECT_EQ(want[i].second, got[i].second)
-        << "query " << qi << " rank " << i << ": " << want[i].first << " vs "
-        << got[i].first;
-      EXPECT_EQ(want[i].first, got[i].first) << "query " << qi << " rank " << i;
+      want_ids.push_back(want[i].second);
+      got_ids.push_back(got[i].second);
+    }
+    std::sort(want_ids.begin(), want_ids.end());
+    std::sort(got_ids.begin(), got_ids.end());
+    EXPECT_EQ(want_ids, got_ids) << "query " << qi;
+    for (size_t i = 0; i < want.size(); ++i) {
+      EXPECT_NEAR(want[i].first, got[i].first, ScoreTol(want[i].first))
+        << "query " << qi << " rank " << i;
     }
   }
 }
@@ -497,7 +519,9 @@ TEST_P(panorama_quantizer_test, bound_never_drops_a_live_candidate) {
                    got.data() + b);
     }
     for (size_t i = 0; i < n; ++i) {
-      if (got[i] == exact[i]) {
+      if (got[i] != kNoPrune) {
+        EXPECT_NEAR(got[i], exact[i], ScoreTol(exact[i]))
+          << "row " << i << " quantile " << q;
         continue;
       }
       ++pruned;

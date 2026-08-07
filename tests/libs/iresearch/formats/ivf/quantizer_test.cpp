@@ -54,6 +54,48 @@ bstring SerializeStats(const QuantizerWriter& writer) {
   return framed.substr(sizeof(uint64_t));
 }
 
+constexpr size_t kFastScanBbs = 32;
+
+std::vector<float> MakeSpread(uint32_t d, size_t n, uint32_t seed) {
+  std::mt19937 rng{seed};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  std::vector<float> out(n * d);
+  for (float& v : out) {
+    v = nd(rng);
+  }
+  return out;
+}
+
+bstring EncodeChunks(QuantizerWriter& writer, const std::vector<float>& points,
+                     uint32_t d, std::span<const size_t> chunks) {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t start = 0;
+  uint64_t end = 0;
+  {
+    MemoryIndexOutput out{file};
+    start = out.Position();
+    size_t off = 0;
+    for (const size_t m : chunks) {
+      writer.EncodeBlock(out, points.data() + off * d, m);
+      off += m;
+    }
+    out.Flush();
+    end = out.Position();
+  }
+  bstring payload(end - start, 0);
+  MemoryIndexInput in{file};
+  in.ReadData(start, payload.data(), payload.size());
+  return payload;
+}
+
+void ExpectBytesEq(const bstring& want, const bstring& got) {
+  ASSERT_EQ(want.size(), got.size());
+  for (size_t i = 0; i < want.size(); ++i) {
+    ASSERT_EQ(want[i], got[i]) << "byte " << i;
+  }
+}
+
 // Drives a reader the way QVectorIterator does: reads over the cluster
 // payload aligned on the reader's group size, whole groups per ComputeBlock
 // call.
@@ -154,9 +196,7 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(3);
-    writer->EncodeCluster(out, points.data(), 3);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points.data(), 3);
     out.Flush();
   }
 
@@ -196,7 +236,8 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
                                     /*pq_m=*/0, /*pq_niter=*/0, /*nb_bits=*/0);
   ASSERT_NE(writer, nullptr);
   EXPECT_EQ(writer->Kind(), VectorQuantization::None);
-  EXPECT_EQ(writer->CodeSize(), d * sizeof(float));
+  EXPECT_EQ(writer->BlockSetting().record_size, d * sizeof(float));
+  EXPECT_EQ(writer->BlockSetting().group_size, 1);
   EXPECT_TRUE(SerializeStats(*writer).empty());
 
   SimpleMemoryAccounter memory;
@@ -209,11 +250,8 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
     out.WriteByte(0xEF);
     pay_start = out.Position();
     ASSERT_NE(pay_start % alignof(float), 0);
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), kFirstBatch);
-    writer->EncodeCluster(out, points.data() + kFirstBatch * d,
-                          n - kFirstBatch);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points.data(), kFirstBatch);
+    writer->EncodeBlock(out, points.data() + kFirstBatch * d, n - kFirstBatch);
     out.Flush();
     EXPECT_EQ(out.Position() - pay_start, n * d * sizeof(float));
   }
@@ -314,13 +352,11 @@ void BuildPanorama(PanoramaIndex& index, uint32_t d, VectorMetric metric,
 
   MemoryIndexOutput out{index.file};
   index.pay_start = out.Position();
-  index.writer->BeginCluster(index.n);
-  constexpr size_t kBatch = 97;
+  constexpr size_t kBatch = kPostingBlock;
   for (size_t b = 0; b < index.n; b += kBatch) {
     const size_t m = std::min(kBatch, index.n - b);
-    index.writer->EncodeCluster(out, points.data() + b * d, m);
+    index.writer->EncodeBlock(out, points.data() + b * d, m);
   }
-  index.writer->FinishCluster(out);
   out.Flush();
 }
 
@@ -488,7 +524,8 @@ TEST(panorama_writer_test, l1_and_small_dims_decline_the_rotation) {
   ASSERT_NE(l1, nullptr);
   l1->Train(points.data(), n);
   EXPECT_TRUE(SerializeStats(*l1).empty());
-  EXPECT_EQ(l1->CodeSize(), d * sizeof(float));
+  EXPECT_EQ(l1->BlockSetting().record_size, d * sizeof(float));
+  EXPECT_EQ(l1->BlockSetting().group_size, 1);
   EXPECT_FALSE(PanoramaApplies(VectorMetric::L1, d));
 
   constexpr uint32_t small = 32;
@@ -532,9 +569,7 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points.data(), n);
     out.Flush();
   }
 
@@ -581,9 +616,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points.data(), n);
     out.Flush();
   }
 
@@ -648,9 +681,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points.data(), n);
     out.Flush();
   }
 
@@ -691,9 +722,7 @@ std::vector<score_t> RaBitQRoundtrip(uint32_t d, uint32_t nb_bits,
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points.data(), n);
     out.Flush();
   }
 
@@ -774,14 +803,10 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
     MemoryIndexOutput out{file};
     pay_start1 = out.Position();
     writer->SetClusterCentroid(c1.data());
-    writer->BeginCluster(2);
-    writer->EncodeCluster(out, points1.data(), 2);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points1.data(), 2);
     pay_start2 = out.Position();
     writer->SetClusterCentroid(c2.data());
-    writer->BeginCluster(2);
-    writer->EncodeCluster(out, points2.data(), 2);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points2.data(), 2);
     out.Flush();
   }
 
@@ -963,14 +988,10 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
     MemoryIndexOutput out{file};
     pay_start1 = out.Position();
     writer->SetClusterCentroid(c1.data());
-    writer->BeginCluster(2);
-    writer->EncodeCluster(out, points1.data(), 2);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points1.data(), 2);
     pay_start2 = out.Position();
     writer->SetClusterCentroid(c2.data());
-    writer->BeginCluster(2);
-    writer->EncodeCluster(out, points2.data(), 2);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points2.data(), 2);
     out.Flush();
   }
 
@@ -1031,9 +1052,7 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   {
     MemoryIndexOutput out{file};
     pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    writer->EncodeBlock(out, points.data(), n);
     out.Flush();
   }
 
@@ -1061,4 +1080,156 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   // flip the group ordering even though it can perturb individual scores
   // within a group.
   EXPECT_GT(min_near, max_far);
+}
+
+namespace {
+
+std::unique_ptr<QuantizerWriter> MakeTrainedPq(VectorMetric metric, uint32_t d,
+                                               uint32_t pq_m,
+                                               const std::vector<float>& pts,
+                                               const std::vector<float>& cen) {
+  auto w = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
+                               /*pq_niter=*/0, /*nb_bits=*/0);
+  w->Train(pts.data(), pts.size() / d);
+  w->SetClusterCentroid(cen.data());
+  return w;
+}
+
+std::unique_ptr<QuantizerWriter> MakeRaBitQ(uint32_t d, uint32_t nb_bits,
+                                            const std::vector<float>& cen) {
+  auto w = MakeQuantizerWriter(VectorQuantization::RaBitQ, d,
+                               VectorMetric::L2Sqr, /*pq_m=*/0,
+                               /*pq_niter=*/0, nb_bits);
+  w->SetClusterCentroid(cen.data());
+  return w;
+}
+
+// A cluster split into group-aligned blocks must produce the same bytes as the
+// same cluster written in one call: blocks are self-contained.
+void ExpectBlockSplitIsTransparent(
+  const std::function<std::unique_ptr<QuantizerWriter>()>& make, uint32_t d,
+  const std::vector<float>& points, std::span<const size_t> chunks) {
+  auto whole_w = make();
+  auto split_w = make();
+  const size_t all[] = {points.size() / d};
+  ExpectBytesEq(EncodeChunks(*whole_w, points, d, all),
+                EncodeChunks(*split_w, points, d, chunks));
+}
+
+// Stronger: each block is written by a *fresh* writer, so any state leaking
+// across a group boundary -- a stale sign bit, an unzeroed tail slot --
+// diverges from the single-writer payload.
+void ExpectGroupsAreSelfContained(
+  const std::function<std::unique_ptr<QuantizerWriter>()>& make, uint32_t d,
+  const std::vector<float>& points, size_t head) {
+  const size_t n = points.size() / d;
+  const std::vector<float> tail(points.begin() + head * d, points.end());
+  auto whole_w = make();
+  auto head_w = make();
+  auto tail_w = make();
+  const size_t all[] = {n};
+  const size_t first[] = {head};
+  const size_t rest[] = {n - head};
+  ExpectBytesEq(EncodeChunks(*whole_w, points, d, all),
+                EncodeChunks(*head_w, points, d, first) +
+                  EncodeChunks(*tail_w, tail, d, rest));
+}
+
+}  // namespace
+
+TEST(pq_quantizer_test, block_split_is_transparent_l2) {
+  constexpr uint32_t d = 8;
+  const auto pts = MakeSpread(d, 100, 11);
+  const std::vector<float> cen(d, 0.25f);
+  const auto make = [&] {
+    return MakeTrainedPq(VectorMetric::L2Sqr, d, 2, pts, cen);
+  };
+  const size_t chunks[] = {kFastScanBbs, 2 * kFastScanBbs, 4};
+  ExpectBlockSplitIsTransparent(make, d, pts, chunks);
+}
+
+TEST(pq_quantizer_test, block_split_is_transparent_inner_product) {
+  constexpr uint32_t d = 8;
+  const auto pts = MakeSpread(d, 100, 11);
+  const std::vector<float> cen(d, 0.25f);
+  const auto make = [&] {
+    return MakeTrainedPq(VectorMetric::InnerProduct, d, 2, pts, cen);
+  };
+  const size_t chunks[] = {kFastScanBbs, 2 * kFastScanBbs, 4};
+  ExpectBlockSplitIsTransparent(make, d, pts, chunks);
+}
+
+TEST(pq_quantizer_test, block_split_is_transparent_odd_m) {
+  constexpr uint32_t d = 9;
+  const auto pts = MakeSpread(d, 100, 13);
+  const std::vector<float> cen(d, 0.1f);
+  const auto make = [&] {
+    return MakeTrainedPq(VectorMetric::L2Sqr, d, 3, pts, cen);
+  };
+  const size_t chunks[] = {3 * kFastScanBbs, 4};
+  ExpectBlockSplitIsTransparent(make, d, pts, chunks);
+}
+
+TEST(pq_quantizer_test, groups_are_self_contained) {
+  constexpr uint32_t d = 8;
+  const auto pts = MakeSpread(d, 40, 11);
+  const std::vector<float> cen(d, 0.25f);
+  const auto make = [&] {
+    return MakeTrainedPq(VectorMetric::L2Sqr, d, 2, pts, cen);
+  };
+  ASSERT_EQ(SerializeStats(*make()), SerializeStats(*make()));
+  ExpectGroupsAreSelfContained(make, d, pts, kFastScanBbs);
+}
+
+TEST(pq_quantizer_test, tail_group_padding_is_zero) {
+  constexpr uint32_t d = 8;
+  constexpr size_t n = 40;
+  const auto pts = MakeSpread(d, n, 11);
+  const std::vector<float> cen(d, 0.25f);
+  auto writer = MakeTrainedPq(VectorMetric::L2Sqr, d, 2, pts, cen);
+  const size_t all[] = {n};
+  const bstring payload = EncodeChunks(*writer, pts, d, all);
+  const size_t code_bytes = kFastScanBbs * 2 / 2;
+  const size_t group_bytes = code_bytes + kFastScanBbs * sizeof(float);
+  ASSERT_EQ(payload.size(), 2 * group_bytes);
+  std::array<float, kFastScanBbs> norms{};
+  std::memcpy(norms.data(), payload.data() + group_bytes + code_bytes,
+              sizeof(norms));
+  for (size_t i = n - kFastScanBbs; i < kFastScanBbs; ++i) {
+    EXPECT_EQ(norms[i], 0.f) << "slot " << i;
+  }
+}
+
+TEST(rabitq_quantizer_test, block_split_is_transparent_one_bit) {
+  constexpr uint32_t d = 8;
+  const auto pts = MakeSpread(d, 100, 23);
+  const std::vector<float> cen(d, 0.25f);
+  const auto make = [&] { return MakeRaBitQ(d, /*nb_bits=*/1, cen); };
+  const size_t chunks[] = {kFastScanBbs, 2 * kFastScanBbs, 4};
+  ExpectBlockSplitIsTransparent(make, d, pts, chunks);
+}
+
+TEST(rabitq_quantizer_test, block_split_is_transparent_multibit) {
+  constexpr uint32_t d = 96;
+  const auto pts = MakeSpread(d, 72, 29);
+  const std::vector<float> cen(d, 0.25f);
+  const auto make = [&] { return MakeRaBitQ(d, /*nb_bits=*/8, cen); };
+  const size_t chunks[] = {2 * kFastScanBbs, 8};
+  ExpectBlockSplitIsTransparent(make, d, pts, chunks);
+}
+
+TEST(rabitq_quantizer_test, groups_are_self_contained) {
+  constexpr uint32_t d = 96;
+  const auto pts = MakeSpread(d, 40, 29);
+  const std::vector<float> cen(d, 0.25f);
+  const auto make = [&] { return MakeRaBitQ(d, /*nb_bits=*/8, cen); };
+  ExpectGroupsAreSelfContained(make, d, pts, kFastScanBbs);
+}
+
+TEST(rabitq_quantizer_test, groups_are_self_contained_one_bit) {
+  constexpr uint32_t d = 8;
+  const auto pts = MakeSpread(d, 40, 23);
+  const std::vector<float> cen(d, 0.25f);
+  const auto make = [&] { return MakeRaBitQ(d, /*nb_bits=*/1, cen); };
+  ExpectGroupsAreSelfContained(make, d, pts, kFastScanBbs);
 }

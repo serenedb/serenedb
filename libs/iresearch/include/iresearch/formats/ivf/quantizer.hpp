@@ -57,18 +57,13 @@ class QuantizerWriter {
 
   virtual void SetClusterCentroid(const float* /*centroid*/) {}
 
-  virtual void BeginCluster(size_t /*total_docs*/) {}
+  virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
 
-  virtual void EncodeCluster(IndexOutput& out, const float* vecs,
-                             size_t n) const = 0;
-
-  virtual void FinishCluster(IndexOutput& /*out*/) {}
+  virtual void EncodeBlock(IndexOutput& out, const float* vecs, size_t n) = 0;
 
   virtual void Serialize(DataOutput& out) const = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
-
-  virtual uint32_t CodeSize() const noexcept = 0;
 };
 
 class QuantizerReader {

@@ -359,11 +359,12 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   if (n == 0) {
     return;
   }
-  _qw->BeginCluster(n);
+  const size_t group = std::max<size_t>(1, _qw->BlockSetting().group_size);
+  const size_t step = std::max(group, STANDARD_VECTOR_SIZE / group * group);
   ColumnReader::VectorScratch scratch{_vectors->Type()};
   auto scan = _vectors->InitScan(*_ctx);
-  for (size_t b = 0; b < n; b += STANDARD_VECTOR_SIZE) {
-    const auto m = std::min<size_t>(STANDARD_VECTOR_SIZE, n - b);
+  for (size_t b = 0; b < n; b += step) {
+    const auto m = std::min<size_t>(step, n - b);
     auto& out_vec = scratch.Reset();
     column_internal::GatherRows(*_vectors, scan, DocRowView{docs.data() + b, m},
                                 out_vec, /*out_offset=*/0,
@@ -373,9 +374,8 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     if (_normalize) {
       NormalizeRows(vecs, m, _d);
     }
-    _qw->EncodeCluster(out, vecs, m);
+    _qw->EncodeBlock(out, vecs, m);
   }
-  _qw->FinishCluster(out);
 }
 
 void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }

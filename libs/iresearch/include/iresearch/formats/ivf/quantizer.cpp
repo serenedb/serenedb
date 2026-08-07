@@ -78,10 +78,6 @@ constexpr size_t kPqTrainResiduals = kFastScanKsub * 256;
 constexpr size_t kPcaMinRows = 1024;
 constexpr size_t kPcaTrainRows = 4096;
 
-size_t RoundUp(size_t n, size_t multiple) noexcept {
-  return (n + multiple - 1) / multiple * multiple;
-}
-
 size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
 constexpr int64_t kRaBitQRotationSeed = 0x5a17b17c5eed5eedULL;
@@ -207,10 +203,15 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     SDB_ASSERT(_pano->n_levels == PanoramaLevels(_d));
   }
 
-  void BeginCluster(size_t /*total_docs*/) final { _carry.clear(); }
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {
+      .group_size =
+        _pano ? static_cast<uint32_t>(_pano->batch_size) : uint32_t{1},
+      .record_size = PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0),
+      .pad_tail = false};
+  }
 
-  void EncodeCluster(IndexOutput& out, const float* vecs,
-                     size_t n) const final {
+  void EncodeBlock(IndexOutput& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
@@ -223,31 +224,9 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     _rotation.apply_noalloc(static_cast<faiss::idx_t>(n), vecs,
                             _rotated.data());
     const size_t full = _pano->batch_size;
-    const float* src = _rotated.data();
-    size_t left = n;
-    if (!_carry.empty()) {
-      const size_t take = std::min(full - _carry.size() / _d, left);
-      _carry.insert(_carry.end(), src, src + take * _d);
-      src += take * _d;
-      left -= take;
-      if (_carry.size() / _d < full) {
-        return;
-      }
-      WriteBatch(out, _carry.data(), full);
-      _carry.clear();
+    for (size_t off = 0; off < n; off += full) {
+      WriteBatch(out, _rotated.data() + off * _d, std::min(full, n - off));
     }
-    for (; left >= full; src += full * _d, left -= full) {
-      WriteBatch(out, src, full);
-    }
-    _carry.assign(src, src + left * _d);
-  }
-
-  void FinishCluster(IndexOutput& out) final {
-    if (_carry.empty()) {
-      return;
-    }
-    WriteBatch(out, _carry.data(), _carry.size() / _d);
-    _carry.clear();
   }
 
   void Serialize(DataOutput& out) const final {
@@ -265,13 +244,9 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     return VectorQuantization::None;
   }
 
-  uint32_t CodeSize() const noexcept final {
-    return PanoramaRecordSize(_d, _pano ? PanoramaLevels(_d) : 0);
-  }
-
  private:
-  void WriteBatch(IndexOutput& out, const float* src, size_t count) const {
-    auto& pano = count == _pano->batch_size ? *_pano : TailPanorama(count);
+  void WriteBatch(IndexOutput& out, const float* src, size_t count) {
+    auto pano = MakePanorama(_d, count);
     _cums.assign(count * (pano.n_levels + 1), 0.f);
     _codes.resize(count * size_t{_d});
     pano.compute_cumulative_sums(_cums.data(), 0, count, src);
@@ -284,22 +259,13 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
                   _codes.size() * sizeof(float));
   }
 
-  faiss::Panorama& TailPanorama(size_t count) const {
-    if (!_tail || _tail->batch_size != count) {
-      _tail = MakePanorama(_d, count);
-    }
-    return *_tail;
-  }
-
   uint32_t _d;
   VectorMetric _metric;
   faiss::PCAMatrix _rotation;
-  mutable std::optional<faiss::Panorama> _pano;
-  mutable std::optional<faiss::Panorama> _tail;
-  mutable std::vector<float> _rotated;
-  mutable std::vector<float> _carry;
-  mutable std::vector<float> _cums;
-  mutable std::vector<float> _codes;
+  std::optional<faiss::Panorama> _pano;
+  std::vector<float> _rotated;
+  std::vector<float> _cums;
+  std::vector<float> _codes;
 };
 
 template<VectorMetric M>
@@ -434,7 +400,7 @@ class PanoramaQuantizerReader final : public QuantizerReader {
 
   void ScoreBatch(const byte_type* p, size_t len, score_t score, score_t* out) {
     const auto& full = _cb->Panorama();
-    const auto& pano = len == full.batch_size ? full : TailPanorama(full, len);
+    const faiss::Panorama pano{full.code_size, full.n_levels, len};
     const auto* cums = reinterpret_cast<const float*>(p);
     const byte_type* codes = p + len * (_levels + 1) * sizeof(float);
     const float threshold = std::nextafter(
@@ -453,15 +419,12 @@ class PanoramaQuantizerReader final : public QuantizerReader {
     for (size_t i = 0; i < alive; ++i) {
       const auto idx = _active[i];
       SDB_ASSERT(idx < len);
-      out[idx] = kMetric == faiss::METRIC_L2 ? -_exact[idx] : _exact[idx];
+      if constexpr (M == VectorMetric::L2Sqr) {
+        out[idx] = -_exact[idx];
+      } else {
+        out[idx] = _exact[idx];
+      }
     }
-  }
-
-  const faiss::Panorama& TailPanorama(const faiss::Panorama& full, size_t len) {
-    if (!_tail || _tail->batch_size != len) {
-      _tail = faiss::Panorama{full.code_size, full.n_levels, len};
-    }
-    return *_tail;
   }
 
   std::shared_ptr<const PanoramaQuantizerCodebook<M>> _cb;
@@ -469,7 +432,6 @@ class PanoramaQuantizerReader final : public QuantizerReader {
   uint32_t _levels;
   uint32_t _record_size;
   uint32_t _group_size = 1;
-  std::optional<faiss::Panorama> _tail;
   std::vector<uint32_t> _active;
   std::vector<uint8_t> _byteset;
   std::vector<float> _exact;
@@ -508,8 +470,13 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void EncodeCluster(IndexOutput& out, const float* vecs,
-                     size_t n) const final {
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = 1,
+            .record_size = static_cast<uint32_t>(_sq.code_size),
+            .pad_tail = false};
+  }
+
+  void EncodeBlock(IndexOutput& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
@@ -526,17 +493,13 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final { return _quant; }
 
-  uint32_t CodeSize() const noexcept final {
-    return static_cast<uint32_t>(_sq.code_size);
-  }
-
  private:
   uint32_t _d;
   VectorQuantization _quant;
   faiss::ScalarQuantizer _sq;
   std::vector<float> _vmin;
   std::vector<float> _vmax;
-  mutable std::vector<uint8_t> _code;
+  std::vector<uint8_t> _code;
 };
 
 template<VectorMetric M>
@@ -679,6 +642,13 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
     }
+    _codes.resize(kFastScanBbs * _pq.code_size);
+    _packed.resize(kFastScanBbs * FastScanNsq(_pq.M) / 2);
+    _res.resize(_d);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      _norms.resize(kFastScanBbs);
+      _dec.resize(_d);
+    }
   }
 
   size_t TrainSamples(size_t rows) const noexcept final {
@@ -707,73 +677,26 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     _centroid.assign(centroid, centroid + _d);
   }
 
-  void BeginCluster(size_t total_docs) final {
-    _cluster_codes.assign(total_docs * _pq.code_size, 0);
-    if constexpr (M == VectorMetric::L2Sqr) {
-      _cluster_norms.assign(total_docs, 0.f);
-    }
-    _cluster_filled = 0;
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = kFastScanBbs,
+            .record_size = static_cast<uint32_t>(
+              FastScanNsq(_pq.M) / 2 +
+              (M == VectorMetric::L2Sqr ? sizeof(float) : 0)),
+            .pad_tail = true};
   }
 
-  void EncodeCluster(IndexOutput& /*out*/, const float* vecs,
-                     size_t n) const final {
+  void EncodeBlock(IndexOutput& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
     SDB_ASSERT(_trained);
     SDB_ASSERT(_centroid.size() == _d);
-    SDB_ASSERT((_cluster_filled + n) * _pq.code_size <= _cluster_codes.size());
-    _res.resize(_d);
-    if constexpr (M == VectorMetric::L2Sqr) {
-      _dec.resize(_d);
-    }
-    for (size_t i = 0; i < n; ++i) {
-      const float* v = vecs + i * _d;
-      for (uint32_t j = 0; j < _d; ++j) {
-        _res[j] = v[j] - _centroid[j];
+    for (size_t off = 0; off < n; off += kFastScanBbs) {
+      const size_t count = std::min<size_t>(kFastScanBbs, n - off);
+      for (size_t i = 0; i < count; ++i) {
+        EncodeOne(vecs + (off + i) * _d, i);
       }
-      uint8_t* code =
-        _cluster_codes.data() + (_cluster_filled + i) * _pq.code_size;
-      _pq.compute_code(_res.data(), code);
-      if constexpr (M == VectorMetric::L2Sqr) {
-        _pq.decode(code, _dec.data());
-        for (uint32_t j = 0; j < _d; ++j) {
-          _dec[j] += _centroid[j];
-        }
-        _cluster_norms[_cluster_filled + i] =
-          vector::L2Space<float, float, float>::Norm(
-            reinterpret_cast<const byte_type*>(_dec.data()),
-            static_cast<uint16_t>(_d));
-      }
-    }
-    _cluster_filled += n;
-  }
-
-  void FinishCluster(IndexOutput& out) final {
-    if (_cluster_filled != 0) {
-      const size_t m = _pq.M;
-      const size_t nsq = FastScanNsq(m);
-      _packed.resize(kFastScanBbs * nsq / 2);
-      if constexpr (M == VectorMetric::L2Sqr) {
-        _cluster_norms.resize(RoundUp(_cluster_filled, kFastScanBbs), 0.f);
-      }
-      for (size_t first = 0; first < _cluster_filled; first += kFastScanBbs) {
-        const size_t n =
-          std::min<size_t>(kFastScanBbs, _cluster_filled - first);
-        faiss::pq4_pack_codes(_cluster_codes.data() + first * _pq.code_size, n,
-                              m, kFastScanBbs, kFastScanBbs, nsq,
-                              _packed.data());
-        out.WriteData(_packed.data(), _packed.size());
-        if constexpr (M == VectorMetric::L2Sqr) {
-          out.WriteData(
-            reinterpret_cast<const byte_type*>(_cluster_norms.data() + first),
-            kFastScanBbs * sizeof(float));
-        }
-      }
-    }
-    _cluster_codes.clear();
-    if constexpr (M == VectorMetric::L2Sqr) {
-      _cluster_norms.clear();
+      WriteGroup(out, count);
     }
   }
 
@@ -793,22 +716,46 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     return VectorQuantization::PQ;
   }
 
-  uint32_t CodeSize() const noexcept final {
-    return static_cast<uint32_t>(_pq.code_size);
+ private:
+  void EncodeOne(const float* vec, size_t slot) {
+    SDB_ASSERT(slot < kFastScanBbs);
+    for (uint32_t j = 0; j < _d; ++j) {
+      _res[j] = vec[j] - _centroid[j];
+    }
+    uint8_t* code = _codes.data() + slot * _pq.code_size;
+    _pq.compute_code(_res.data(), code);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      _pq.decode(code, _dec.data());
+      for (uint32_t j = 0; j < _d; ++j) {
+        _dec[j] += _centroid[j];
+      }
+      _norms[slot] = vector::L2Space<float, float, float>::Norm(
+        reinterpret_cast<const byte_type*>(_dec.data()),
+        static_cast<uint16_t>(_d));
+    }
   }
 
- private:
+  void WriteGroup(IndexOutput& out, size_t count) {
+    faiss::pq4_pack_codes(_codes.data(), count, _pq.M, kFastScanBbs,
+                          kFastScanBbs, FastScanNsq(_pq.M), _packed.data());
+    out.WriteData(_packed.data(), _packed.size());
+    if constexpr (M == VectorMetric::L2Sqr) {
+      std::fill_n(_norms.data() + count, kFastScanBbs - count, 0.f);
+      out.WriteData(reinterpret_cast<const byte_type*>(_norms.data()),
+                    kFastScanBbs * sizeof(float));
+    }
+  }
+
   uint32_t _d;
   faiss::ProductQuantizer _pq;
   bool _trained = false;
   std::vector<float> _centroid;
-  mutable std::vector<uint8_t> _cluster_codes;
-  [[no_unique_address]] mutable utils::Need<M == VectorMetric::L2Sqr,
-                                            std::vector<float>> _cluster_norms;
-  mutable size_t _cluster_filled = 0;
-  mutable std::vector<float> _res;
-  [[no_unique_address]] mutable utils::Need<M == VectorMetric::L2Sqr,
-                                            std::vector<float>> _dec;
+  std::vector<float> _res;
+  std::vector<uint8_t> _codes;
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
+                                    std::vector<float>> _norms;
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
+                                    std::vector<float>> _dec;
   std::vector<uint8_t> _packed;
 };
 
@@ -987,8 +934,15 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
       _storage{
         faiss::rabitq_utils::compute_per_vector_storage_size(nb_bits, _rd)},
       _ex_code_size{(static_cast<size_t>(_rd) * _ex_bits + 7) / 8},
-      _sign_stride{FastScanNsq(_rd / kFastScanBits) / 2} {
+      _sign_stride{FastScanNsq(_rd / kFastScanBits) / 2},
+      _inv_rd_sqrt{1.f / std::sqrt(static_cast<float>(_rd))} {
     GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
+    _rotated.resize(_rd);
+    _residual.resize(_rd);
+    _sign_codes.resize(kFastScanBbs * _sign_stride);
+    _packed.resize(kFastScanBbs * _sign_stride);
+    _aux.resize(kFastScanBbs * _storage);
+    _cs.resize(kFastScanBbs);
   }
 
   void Train(const float* /*vecs*/, size_t /*n*/) final {}
@@ -1002,86 +956,25 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void BeginCluster(size_t total_docs) final {
-    _sign_codes.assign(total_docs * _sign_stride, 0);
-    _aux.assign(total_docs * _storage, 0);
-    _cluster_cs.assign(total_docs, 0.f);
-    _filled = 0;
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = kFastScanBbs,
+            .record_size =
+              static_cast<uint32_t>(_sign_stride + _storage + sizeof(float)),
+            .pad_tail = true};
   }
 
-  void EncodeCluster(IndexOutput& /*out*/, const float* vecs,
-                     size_t n) const final {
+  void EncodeBlock(IndexOutput& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
     SDB_ASSERT(_centroid.size() == _rd);
-    const size_t sign_stride = _sign_stride;
-    const float inv_rd_sqrt = 1.f / std::sqrt(static_cast<float>(_rd));
-    std::vector<float> rotated(_rd);
-    std::vector<float> residual(_rd);
-    for (size_t i = 0; i < n; ++i) {
-      RotateInto(_signs.data(), vecs + i * _d, rotated.data(), _d, _rd);
-      uint8_t* sign = _sign_codes.data() + (_filled + i) * sign_stride;
-      float cs_sum = 0.f;
-      for (uint32_t j = 0; j < _rd; ++j) {
-        residual[j] = rotated[j] - _centroid[j];
-        if (residual[j] > 0.f) {
-          faiss::rabitq_utils::set_bit_fastscan(sign, j);
-          cs_sum += _centroid[j];
-        }
+    for (size_t off = 0; off < n; off += kFastScanBbs) {
+      const size_t count = std::min<size_t>(kFastScanBbs, n - off);
+      for (size_t i = 0; i < count; ++i) {
+        EncodeOne(vecs + (off + i) * _d, i);
       }
-      _cluster_cs[_filled + i] = (2.f * cs_sum - _centroid_sum) * inv_rd_sqrt;
-      uint8_t* aux = _aux.data() + (_filled + i) * _storage;
-      const faiss::rabitq_utils::SignBitFactorsWithError f =
-        faiss::rabitq_utils::compute_vector_factors(
-          rotated.data(), _rd, _centroid.data(),
-          M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
-                                   : faiss::MetricType::METRIC_INNER_PRODUCT,
-          /*compute_error=*/_ex_bits > 0);
-      if (_ex_bits == 0) {
-        std::memcpy(aux, &f, sizeof(faiss::rabitq_utils::SignBitFactors));
-      } else {
-        std::memcpy(aux, &f,
-                    sizeof(faiss::rabitq_utils::SignBitFactorsWithError));
-        uint8_t* ex_code =
-          aux + sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
-        faiss::rabitq_utils::ExtraBitsFactors ex;
-        faiss::rabitq_multibit::quantize_ex_bits(
-          residual.data(), _rd, _nb_bits, ex_code, ex,
-          M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
-                                   : faiss::MetricType::METRIC_INNER_PRODUCT,
-          _centroid.data());
-        std::memcpy(ex_code + _ex_code_size, &ex,
-                    sizeof(faiss::rabitq_utils::ExtraBitsFactors));
-      }
+      WriteGroup(out, count);
     }
-    _filled += n;
-  }
-
-  void FinishCluster(IndexOutput& out) final {
-    if (_filled == 0) {
-      return;
-    }
-    const size_t m = _rd / kFastScanBits;
-    const size_t nsq = FastScanNsq(m);
-    const size_t padded = RoundUp(_filled, kFastScanBbs);
-    _packed.resize(kFastScanBbs * nsq / 2);
-    _aux.resize(padded * _storage, 0);
-    _cluster_cs.resize(padded, 0.f);
-    for (size_t first = 0; first < _filled; first += kFastScanBbs) {
-      const size_t n = std::min<size_t>(kFastScanBbs, _filled - first);
-      faiss::pq4_pack_codes(_sign_codes.data() + first * _sign_stride, n, m,
-                            kFastScanBbs, kFastScanBbs, nsq, _packed.data());
-      out.WriteData(_packed.data(), _packed.size());
-      out.WriteData(_aux.data() + first * _storage, kFastScanBbs * _storage);
-      out.WriteData(
-        reinterpret_cast<const byte_type*>(_cluster_cs.data() + first),
-        kFastScanBbs * sizeof(float));
-    }
-    _sign_codes.clear();
-    _aux.clear();
-    _cluster_cs.clear();
-    _packed.clear();
   }
 
   void Serialize(DataOutput& out) const final {
@@ -1093,11 +986,57 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     return VectorQuantization::RaBitQ;
   }
 
-  uint32_t CodeSize() const noexcept final {
-    return static_cast<uint32_t>(_storage);
+ private:
+  static constexpr faiss::MetricType kMetric =
+    M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
+                             : faiss::MetricType::METRIC_INNER_PRODUCT;
+
+  void EncodeOne(const float* vec, size_t slot) {
+    SDB_ASSERT(slot < kFastScanBbs);
+    RotateInto(_signs.data(), vec, _rotated.data(), _d, _rd);
+    uint8_t* sign = _sign_codes.data() + slot * _sign_stride;
+    std::memset(sign, 0, _sign_stride);
+    float cs_sum = 0.f;
+    for (uint32_t j = 0; j < _rd; ++j) {
+      _residual[j] = _rotated[j] - _centroid[j];
+      if (_residual[j] > 0.f) {
+        faiss::rabitq_utils::set_bit_fastscan(sign, j);
+        cs_sum += _centroid[j];
+      }
+    }
+    _cs[slot] = (2.f * cs_sum - _centroid_sum) * _inv_rd_sqrt;
+    uint8_t* aux = _aux.data() + slot * _storage;
+    const faiss::rabitq_utils::SignBitFactorsWithError f =
+      faiss::rabitq_utils::compute_vector_factors(
+        _rotated.data(), _rd, _centroid.data(), kMetric,
+        /*compute_error=*/_ex_bits > 0);
+    if (_ex_bits == 0) {
+      std::memcpy(aux, &f, sizeof(faiss::rabitq_utils::SignBitFactors));
+      return;
+    }
+    std::memcpy(aux, &f, sizeof(faiss::rabitq_utils::SignBitFactorsWithError));
+    uint8_t* ex_code =
+      aux + sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
+    faiss::rabitq_utils::ExtraBitsFactors ex;
+    faiss::rabitq_multibit::quantize_ex_bits(
+      _residual.data(), _rd, _nb_bits, ex_code, ex, kMetric, _centroid.data());
+    std::memcpy(ex_code + _ex_code_size, &ex,
+                sizeof(faiss::rabitq_utils::ExtraBitsFactors));
   }
 
- private:
+  void WriteGroup(IndexOutput& out, size_t count) {
+    const size_t m = _rd / kFastScanBits;
+    faiss::pq4_pack_codes(_sign_codes.data(), count, m, kFastScanBbs,
+                          kFastScanBbs, FastScanNsq(m), _packed.data());
+    std::memset(_aux.data() + count * _storage, 0,
+                (kFastScanBbs - count) * _storage);
+    std::fill_n(_cs.data() + count, kFastScanBbs - count, 0.f);
+    out.WriteData(_packed.data(), _packed.size());
+    out.WriteData(_aux.data(), _aux.size());
+    out.WriteData(reinterpret_cast<const byte_type*>(_cs.data()),
+                  kFastScanBbs * sizeof(float));
+  }
+
   uint32_t _d;
   uint32_t _rd;
   uint32_t _nb_bits;
@@ -1105,14 +1044,16 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   size_t _storage;
   size_t _ex_code_size;
   size_t _sign_stride;
+  float _inv_rd_sqrt;
+  float _centroid_sum = 0.f;
   std::vector<float> _signs;
   std::vector<float> _centroid;
-  float _centroid_sum = 0.f;
-  mutable std::vector<uint8_t> _sign_codes;
-  mutable std::vector<uint8_t> _aux;
-  mutable std::vector<float> _cluster_cs;
-  mutable std::vector<uint8_t> _packed;
-  mutable size_t _filled = 0;
+  std::vector<float> _rotated;
+  std::vector<float> _residual;
+  std::vector<uint8_t> _sign_codes;
+  std::vector<uint8_t> _packed;
+  std::vector<uint8_t> _aux;
+  std::vector<float> _cs;
 };
 
 template<VectorMetric M>

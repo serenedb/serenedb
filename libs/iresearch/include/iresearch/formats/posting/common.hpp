@@ -23,33 +23,17 @@
 #include <bit>
 #include <cstdint>
 #include <functional>
+#include <span>
 
+#include "basics/bit_utils.hpp"
+#include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats_attributes.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-// TODO(mbkkt) avoid logic duplication
-// I think there's two options:
-// 1. each file contains this file version
-// 2. single per segment file controls over versions
-
-enum class TermsFormat : int32_t {
-  Min = 0,
-  Max = Min,
-};
-
-// Format of postings, written in ".doc", ".pos", ".pay" files
-enum class PostingsFormat : int32_t {
-  Min = 0,
-
-  WandSimd = Min,
-
-  Max = WandSimd,
-};
 
 struct SkipState {
   // pointer to the beginning of document block
@@ -93,7 +77,7 @@ IRS_FORCE_INLINE void ReadState(SkipState& state, Input& in) {
 
 template<typename IteratorTraits>
 IRS_FORCE_INLINE void CopyState(SkipState& to,
-                                const TermMetaImpl& from) noexcept {
+                                const PostingMeta& from) noexcept {
   to.doc_ptr = from.doc_start;
   if constexpr (IteratorTraits::Position()) {
     to.pos_ptr = from.pos_start;
@@ -108,14 +92,108 @@ IRS_FORCE_INLINE void CopyState(SkipState& to,
 // Remove to many Readers implementations
 
 template<typename Input>
-void CommonSkipWandData(bool has_wand, Input& in) {
-  if (has_wand) {
+void SkipScoreBounds(bool has_score_bounds, Input& in) {
+  if (has_score_bounds) {
     in.Skip(in.ReadByte());
   }
 }
+
+inline IRS_FORCE_INLINE void SetBitRange(uint64_t* IRS_RESTRICT words,
+                                         uint64_t begin,
+                                         uint64_t end) noexcept {
+  SDB_ASSERT(begin < end);
+  constexpr auto kBits = BitsRequired<uint64_t>();
+  const auto first = begin / kBits;
+  const auto last = (end - 1) / kBits;
+  const uint64_t head = ~uint64_t{0} << (begin % kBits);
+  const uint64_t tail = ~uint64_t{0} >> (kBits - 1 - (end - 1) % kBits);
+  if (first == last) {
+    words[first] |= head & tail;
+    return;
+  }
+  words[first] |= head;
+  for (auto i = first + 1; i != last; ++i) {
+    words[i] = ~uint64_t{0};
+  }
+  words[last] |= tail;
+}
+
+inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
+                                        uint64_t begin,
+                                        const uint64_t* IRS_RESTRICT src,
+                                        uint32_t words,
+                                        uint64_t last) noexcept {
+  SDB_ASSERT(words != 0);
+  constexpr auto kBits = BitsRequired<uint64_t>();
+  const auto tail = words - 1;
+  dst += begin / kBits;
+  const auto shift = begin % kBits;
+  if (shift == 0) {
+    for (uint32_t i = 0; i != tail; ++i) {
+      dst[i] |= src[i];
+    }
+    dst[tail] |= last;
+    return;
+  }
+  uint64_t carry = 0;
+  for (uint32_t i = 0; i != tail; ++i) {
+    const auto word = src[i];
+    dst[i] |= (word << shift) | carry;
+    carry = word >> (kBits - shift);
+  }
+  dst[tail] |= (last << shift) | carry;
+  carry = last >> (kBits - shift);
+  if (carry != 0) {
+    dst[words] |= carry;
+  }
+}
+
+inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
+                                        uint64_t begin,
+                                        const uint64_t* IRS_RESTRICT src,
+                                        uint32_t words) noexcept {
+  OrBitsetAt(dst, begin, src, words, src[words - 1]);
+}
+
+template<uint32_t Chains, typename Visitor>
+IRS_FORCE_INLINE void VisitSliced(uint32_t size, Visitor&& visit) {
+  const auto slice = size / Chains;
+  uint32_t i = 0;
+  for (; i != slice; ++i) {
+    for (uint32_t chain = 0; chain != Chains; ++chain) {
+      visit(i + chain * slice);
+    }
+  }
+  for (i *= Chains; i != size; ++i) {
+    visit(i);
+  }
+}
+
+template<typename Visitor>
+IRS_FORCE_INLINE void VisitDocs(uint32_t size, Visitor&& visit) {
+  if (size >= 64) {
+    VisitSliced<8>(size, visit);
+  } else if (size >= 16) {
+    VisitSliced<4>(size, visit);
+  } else {
+    VisitSliced<1>(size, visit);
+  }
+}
+
+inline IRS_FORCE_INLINE void OrDocs(uint64_t* IRS_RESTRICT mask,
+                                    std::span<const doc_id_t> docs,
+                                    doc_id_t base) noexcept {
+  static constexpr auto kBits = BitsRequired<uint64_t>();
+  const auto* const data = docs.data();
+  VisitDocs(static_cast<uint32_t>(docs.size()), [&](uint32_t i) {
+    const size_t offset = data[i] - base;
+    SetBit(mask[offset / kBits], offset % kBits);
+  });
+}
+
 template<typename It, typename T, typename Cmp = std::less<>>
-It branchless_lower_bound(It begin, It end, const T& value,
-                          Cmp&& compare = {}) {
+IRS_FORCE_INLINE It BranchlessLowerBound(It begin, It end, const T& value,
+                                         Cmp&& compare = {}) {
   size_t len = end - begin;
   if (len == 0) {
     return end;
@@ -207,6 +285,21 @@ struct PostingAdapter {
     doc_id_t min, doc_id_t max, uint64_t* mask, FillBlockScoreContext score,
     FillBlockMatchContext match) {
     return self().FillBlock(min, max, mask, score, match);
+  }
+
+  IRS_FORCE_INLINE uint32_t count() { return self().count(); }
+
+  IRS_FORCE_INLINE uint32_t EmitDocs(doc_id_t* out, doc_id_t min,
+                                     doc_id_t max) {
+    return self().EmitDocs(out, min, max);
+  }
+
+  IRS_FORCE_INLINE uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores,
+                                           doc_id_t max,
+                                           const ScoreFunction& scorer,
+                                           ColumnArgsFetcher* fetcher,
+                                           doc_id_t min) {
+    return self().EmitScoredDocs(out, scores, max, scorer, fetcher, min);
   }
 
  protected:

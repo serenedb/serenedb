@@ -82,9 +82,11 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   }
 
   std::shared_ptr<const QuantizerCodebook> codebook;
+  uint64_t pay_base = 0;
   if (quant != VectorQuantization::None) {
     idx_in->Seek(ivf->QuantStatsOffset());
     const size_t stats_size = static_cast<size_t>(idx_in->ReadI64());
+    pay_base = static_cast<uint64_t>(idx_in->ReadI64());
     std::span<const byte_type> stats;
     bstring owned;
     if (const byte_type* p = idx_in->ReadVolatile(stats_size)) {
@@ -113,12 +115,10 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  auto terms = postings->iterator(SeekMode::NORMAL);
+  auto terms = postings->iterator();
   if (!terms) {
     return QueryBuilder::Empty();
   }
-  const auto* term_meta = irs::get<TermMeta>(*terms);
-
   VectorState state{ctx.memory};
   state.reader = postings;
   state.vector_column = vector_col;
@@ -142,20 +142,18 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
     if (!SeekClusterTerm(*terms, c, term_buf)) {
       continue;
     }
-    if (term_meta) {
-      estimation += term_meta->docs_count;
-    }
+    const auto& posting_meta = terms->cookie();
+    estimation += posting_meta.docs_count;
     if (quant != VectorQuantization::None) {
-      state.pay_starts.push_back(
-        static_cast<const TermMetaImpl*>(term_meta)->pay_start);
-      state.cluster_counts.push_back(term_meta->docs_count);
+      state.pay_starts.push_back(posting_meta.pay_start);
+      state.cluster_counts.push_back(posting_meta.docs_count);
     }
     if (needs_centroids) {
       const float* cen = probed_centroids.data() + i * d;
       state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
                                      cen + d);
     }
-    state.cookies.emplace_back(terms->cookie());
+    state.cookies.emplace_back(posting_meta);
   }
   state.estimation = estimation;
 
@@ -170,7 +168,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
 
   return memory::make_tracked<KnnVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, ctx.boost * Boost(), std::move(inner));
+    opts.metric, ctx.boost * Boost(), pay_base, std::move(inner));
 }
 
 }  // namespace irs

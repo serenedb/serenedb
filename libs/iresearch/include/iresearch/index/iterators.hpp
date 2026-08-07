@@ -27,6 +27,7 @@
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <bit>
 
 #include "basics/assert.h"
@@ -35,7 +36,7 @@
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "basics/system-compiler.h"
-#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -117,6 +118,18 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     SDB_ASSERT(score_threshold <= *_score_threshold);
     score_threshold = *_score_threshold;
     _score_threshold = &score_threshold;
+  }
+
+  // The one place the threshold moves, and it only ever rises. Two things
+  // raise it and neither knows about the other: this collector's own k-th
+  // whenever the buffer fills, and the scan seeding a segment with the best
+  // k-th any worker has published. The buffer is not cleared at that seed, so
+  // hits accepted under the older threshold stay in it and the next fill can
+  // produce a k-th below the seeded value -- routing every raise through here
+  // is what keeps that lower k-th from writing the threshold back down.
+  // SetScoreThreshold asserts on it.
+  IRS_FORCE_INLINE void RaiseScoreThreshold(score_t score_threshold) noexcept {
+    *_score_threshold = std::max(*_score_threshold, score_threshold);
   }
 
   IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
@@ -224,7 +237,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     std::nth_element(
       _hits_begin, _hits_pivot, _hits_end,
       [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
-    *_score_threshold = _hits_pivot->score;
+    RaiseScoreThreshold(_hits_pivot->score);
     return true;
   }
 
@@ -356,18 +369,11 @@ struct DocIterator : AttributeProvider {
     return count;
   }
 
-  // `self.S::advance()` is a qualified (non-virtual) call, so when `self` is
-  // the concrete iterator (from a derived override) advance() inlines instead
-  // of dispatching -- the whole point of the *Impl(*this) devirtualisation.
   template<typename S>
   IRS_FORCE_INLINE static uint32_t EmitDocsImpl(S& self, doc_id_t* out,
                                                 doc_id_t min, doc_id_t max) {
     uint32_t n = 0;
-    auto doc = self.value();
-    while (doc < min) {  // value() may be behind the window (or unpositioned)
-      doc = self.S::advance();
-    }
-    for (; doc < max; doc = self.S::advance()) {
+    for (auto doc = self.S::seek(min); doc < max; doc = self.S::advance()) {
       out[n++] = doc;
     }
     return n;
@@ -378,23 +384,29 @@ struct DocIterator : AttributeProvider {
     S& self, doc_id_t* out, score_t* scores, doc_id_t max,
     const ScoreFunction& scorer, ColumnArgsFetcher* fetcher, doc_id_t min) {
     uint32_t n = 0;
-    auto doc = self.value();
-    while (doc < min) {  // value() may be behind the window; skip up to min
-      doc = self.S::advance();
-    }
-    while (doc < max) {
+    auto doc = self.S::seek(min);
+    while (true) {
       const uint32_t start = n;
-      for (; n - start != kScoreBlock && doc < max; ++n) {
-        out[n] = doc;
-        self.S::FetchScoreArgs(n - start);
+      for (scores_size_t i = 0; i != kScoreBlock; ++i) {
+        if (doc >= max) [[unlikely]] {
+          if (i != 0) {
+            if (fetcher) {
+              fetcher->Fetch(std::span<const doc_id_t>{out + start, i});
+            }
+            scorer.Score(scores + start, i);
+          }
+          return n;
+        }
+        out[n++] = doc;
+        self.S::FetchScoreArgs(i);
         doc = self.S::advance();
       }
-      if (fetcher != nullptr) {
-        fetcher->Fetch(std::span<const doc_id_t>{out + start, n - start});
+      if (fetcher) {
+        fetcher->FetchScoreBlock(
+          std::span<const doc_id_t, kScoreBlock>{out + start, kScoreBlock});
       }
-      scorer.Score(scores + start, n - start);
+      scorer.ScoreBlock(scores + start);
     }
-    return n;
   }
 
   template<typename S>
@@ -420,7 +432,7 @@ struct DocIterator : AttributeProvider {
           docs[i] = doc;
           self.S::FetchScoreArgs(i);
         }
-        fetcher.Fetch(docs);
+        fetcher.FetchScoreBlock(docs);
         scorer.ScoreBlock(scores.data());
         collector.AddDocs(docs.data(), kScoreBlock, scores.data());
       }
@@ -513,43 +525,32 @@ struct DocIterator : AttributeProvider {
   }
 };
 
-#define IRS_DOC_ITERATOR_DEFAULTS                                              \
-  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }        \
-                                                                               \
-  void Collect(const irs::ScoreFunction& scorer,                               \
-               irs::ColumnArgsFetcher& fetcher,                                \
-               irs::ScoreCollector& collector) final {                         \
-    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector);          \
-  }                                                                            \
-                                                                               \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
-  }                                                                            \
-                                                                               \
-  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
-                          irs::doc_id_t max, const irs::ScoreFunction& scorer, \
-                          irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitScoredDocsImpl(*this, out, scores, max,       \
-                                                scorer, fetcher, min);         \
-  }                                                                            \
-                                                                               \
-  std::pair<irs::doc_id_t, bool> FillBlock(                                    \
-    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                      \
-    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)        \
-    final {                                                                    \
-    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score,       \
-                                           match);                             \
+#define IRS_DOC_ITERATOR_FILL_BLOCK                                      \
+  std::pair<irs::doc_id_t, bool> FillBlock(                              \
+    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                \
+    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)  \
+    final {                                                              \
+    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score, \
+                                           match);                       \
   }
 
-// EmitDocs/EmitScoredDocs only, for subclasses that already define bespoke
-// count/Collect/FillBlock.
-#define IRS_DOC_ITERATOR_EMIT_DEFAULTS                                         \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
-  }                                                                            \
+#define IRS_DOC_ITERATOR_COUNT \
+  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }
+
+#define IRS_DOC_ITERATOR_COLLECT                                      \
+  void Collect(const irs::ScoreFunction& scorer,                      \
+               irs::ColumnArgsFetcher& fetcher,                       \
+               irs::ScoreCollector& collector) final {                \
+    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector); \
+  }
+
+#define IRS_DOC_ITERATOR_EMIT_DOCS                                            \
+  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max) \
+    final {                                                                   \
+    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);              \
+  }
+
+#define IRS_DOC_ITERATOR_EMIT_SCORED_DOCS                                      \
   uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
                           irs::doc_id_t max, const irs::ScoreFunction& scorer, \
                           irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
@@ -558,54 +559,36 @@ struct DocIterator : AttributeProvider {
                                                 scorer, fetcher, min);         \
   }
 
-// Everything except count(), for subclasses with a bespoke count() but default
-// Collect/FillBlock/EmitDocs/EmitScoredDocs.
-#define IRS_DOC_ITERATOR_DEFAULTS_NO_COUNT                                     \
-  void Collect(const irs::ScoreFunction& scorer,                               \
-               irs::ColumnArgsFetcher& fetcher,                                \
-               irs::ScoreCollector& collector) final {                         \
-    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector);          \
-  }                                                                            \
-                                                                               \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
-  }                                                                            \
-                                                                               \
-  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
-                          irs::doc_id_t max, const irs::ScoreFunction& scorer, \
-                          irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitScoredDocsImpl(*this, out, scores, max,       \
-                                                scorer, fetcher, min);         \
-  }                                                                            \
-                                                                               \
-  std::pair<irs::doc_id_t, bool> FillBlock(                                    \
-    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                      \
-    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)        \
-    final {                                                                    \
-    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score,       \
-                                           match);                             \
-  }
+#define IRS_DOC_ITERATOR_DEFAULTS \
+  IRS_DOC_ITERATOR_FILL_BLOCK     \
+  IRS_DOC_ITERATOR_COUNT          \
+  IRS_DOC_ITERATOR_COLLECT        \
+  IRS_DOC_ITERATOR_EMIT_DOCS      \
+  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
 
-// Same as `DocIterator` but also support `reset()` operation
-struct ResettableDocIterator : DocIterator {
-  using ptr = memory::managed_ptr<ResettableDocIterator>;
-
-  // Reset iterator to initial state
-  virtual void reset() = 0;
-};
-
-struct TermIterator : Iterator<bytes_view, AttributeProvider> {
-  using ptr = memory::managed_ptr<TermIterator>;
-
-  // Read term attributes
-  virtual void read() = 0;
+// What a field writer reads: each term hands over its posting list whole,
+// which is what `PostingsWriter::Write` consumes. The write-side walk never
+// asks what a term's postings cost, so it owes no record -- a separate
+// contract rather than a mode of `TermIterator`.
+struct TermOnlyIterator : Iterator<bytes_view, AttributeProvider> {
+  using ptr = memory::managed_ptr<TermOnlyIterator>;
 
   // Return iterator over the associated posting list with the requested
   // features.
   [[nodiscard]] virtual DocIterator::ptr postings(
     IndexFeatures features) const = 0;
+};
+
+struct TermIterator : TermOnlyIterator {
+  using ptr = memory::managed_ptr<TermIterator>;
+
+  // Where the current term's postings live and how big they are. Decoding
+  // happens here, once, so statistics collection and posting-list construction
+  // share one parse of the entry. Answers the term the iterator stands on, so
+  // it is called per term -- a pointer kept across a move reports the term it
+  // was taken on. The reference is the iterator's own storage and dies with the
+  // next move; copy to keep it.
+  [[nodiscard]] virtual const PostingMeta& cookie() const = 0;
 };
 
 // Represents a result of seek operation
@@ -630,14 +613,15 @@ struct SeekTermIterator : TermIterator {
   // one. Returns seek result.
   virtual SeekResult seek_ge(bytes_view value) = 0;
 
-  // Position iterator at a value that is not less than the specified
-  // one. Returns `true` on success, `false` otherwise.
-  // Caller isn't allowed to read iterator value in case if this method
-  // returned `false`.
+  // Position iterator at `value` exactly. Returns `true` when the dictionary
+  // holds it, `false` otherwise -- and on `false` the iterator is left wherever
+  // answering took it, so its value must not be read.
+  //
+  // Not `seek_ge` plus a comparison: a miss is answered as soon as the block
+  // that would hold the key says it has no terms, where `seek_ge` still has to
+  // read the block after it to have somewhere to stand. Every exact-match
+  // filter goes through here for that reason.
   virtual bool seek(bytes_view value) = 0;
-
-  // Returns seek cookie of the current term value.
-  [[nodiscard]] virtual SeekCookie::ptr cookie() const = 0;
 };
 
 // Position iterator to the specified target and returns current value

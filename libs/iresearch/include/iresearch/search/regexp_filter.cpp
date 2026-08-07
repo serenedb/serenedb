@@ -23,7 +23,7 @@
 #include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/search/term_predicate.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -60,8 +60,7 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
       *filter->mutable_options() =
-        AutomatonOptions{FromRegexp(pattern, kDefaultMaxDfaStates, syntax),
-                         pattern, scored_terms_limit};
+        AutomatonOptions{pattern, RegexpPattern(syntax), scored_terms_limit};
       filter->boost(boost);
       return filter;
     });
@@ -80,13 +79,25 @@ Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
 }
 
 TermPredicate::ptr ByRegexp::CompileTermPredicate() const {
-  auto acceptor =
-    FromRegexp(options().pattern, kDefaultMaxDfaStates, options().syntax);
-  if (!Validate(acceptor)) {
-    return nullptr;
-  }
-  return MakeAutomatonTermPredicate(
-    std::make_shared<const CompiledAcceptor>(std::move(acceptor)));
+  bstring buf;
+  return ExecuteRegexp(
+    buf, bytes_view{options().pattern},
+    [](bytes_view term) -> TermPredicate::ptr {
+      return MakeTermPredicate(
+        [expected = bstring{term}](bytes_view t) noexcept {
+          return bytes_view{expected} == t;
+        });
+    },
+    [](bytes_view prefix) -> TermPredicate::ptr {
+      return MakeTermPredicate(
+        [expected = bstring{prefix}](bytes_view t) noexcept {
+          return t.starts_with(bytes_view{expected});
+        });
+    },
+    [this](bytes_view pattern) -> TermPredicate::ptr {
+      return MakePatternSource(pattern, RegexpPattern(options().syntax))
+        ->Predicate();
+    });
 }
 
 }  // namespace irs

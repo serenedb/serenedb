@@ -85,11 +85,11 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     bool normalize);
   ~IvfTermReader() final;
 
-  TermIterator::ptr iterator() const final;
+  TermOnlyIterator::ptr iterator() const final;
   field_id id() const final { return _meta.id; }
   FieldProperties properties() const final { return _meta; }
-  bytes_view(min)() const final { return _min; }
-  bytes_view(max)() const final { return _max; }
+  bytes_view min() const final { return _min; }
+  bytes_view max() const final { return _max; }
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
   TermPayloadWriter* PayloadWriter() const final {
@@ -98,6 +98,10 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
 
   void WriteTermPayload(IndexOutput& out, std::span<const doc_id_t> docs) final;
   void Finish(IndexOutput& out) final;
+
+  // Where the field's code stream starts in ".pay"; only meaningful once the
+  // payloads have been written.
+  uint64_t PayBase() const noexcept { return _pay_base; }
 
  private:
   std::span<const doc_id_t> _cluster_docs;
@@ -111,6 +115,7 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   bool _normalize;
   size_t _count;
   size_t _term_idx = 0;
+  uint64_t _pay_base = 0;
   FieldMeta _meta;
   std::array<byte_type, 4> _min_buf;
   std::array<byte_type, 4> _max_buf;

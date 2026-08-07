@@ -50,9 +50,8 @@ inline constexpr std::array<std::string_view, 8> kAlterableInvertedOptions = {
   kCompactionFloorSegmentBytesSetting,
 };
 
-inline constexpr std::array<std::string_view, 10> kNumericInvertedOptions = {
+inline constexpr auto kNumericInvertedOptions = std::to_array({
   kRowGroupSizeSetting,
-  kNormRowGroupSizeSetting,
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
@@ -61,7 +60,7 @@ inline constexpr std::array<std::string_view, 10> kNumericInvertedOptions = {
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
-};
+});
 
 // Everything CREATE INDEX ... WITH accepts: the numeric options plus the
 // create-time-only string options.
@@ -77,12 +76,14 @@ inline constexpr auto kCreateInvertedOptions = [] {
 }();
 
 inline bool IsUint32InvertedOption(std::string_view name) {
-  constexpr std::array<std::string_view, 7> kUint32Options = {
-    kRowGroupSizeSetting,          kNormRowGroupSizeSetting,
-    kRefreshIntervalSetting,       kCompactionIntervalSetting,
-    kCleanupIntervalStepSetting,   kSegmentDocsMaxSetting,
+  static constexpr auto kUint32Options = std::to_array({
+    kRowGroupSizeSetting,
+    kRefreshIntervalSetting,
+    kCompactionIntervalSetting,
+    kCleanupIntervalStepSetting,
+    kSegmentDocsMaxSetting,
     kCompactionMaxSegmentsSetting,
-  };
+  });
   return absl::c_contains(kUint32Options, name);
 }
 

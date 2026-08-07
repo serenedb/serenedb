@@ -20,31 +20,31 @@
 
 #include "iresearch/formats/column/norm_column_reader.hpp"
 
-#include <algorithm>
 #include <utility>
 
 #include "iresearch/store/data_input.hpp"
+#include "pg/sql_exception_macro.h"
 
 namespace irs {
 
-NormColumnReader::NormColumnReader(field_id id,
-                                   std::vector<NormRowGroupMeta> pointers,
+NormColumnReader::NormColumnReader(field_id id, NormColumnMeta meta,
                                    IndexInput& in)
-  : _id{id}, _pointers{std::move(pointers)} {
-  _row_offsets.reserve(_pointers.size() + 1);
-  _row_offsets.push_back(0);
+  : _id{id}, _pointers{std::move(meta.row_groups)} {
   _spans.resize(_pointers.size());
+  if (!_pointers.empty()) {
+    _rg_rows = meta.row_group_size;
+    _total_row_count = meta.row_count;
+  }
 
   size_t owned_total = 0;
   for (size_t rg = 0; rg < _pointers.size(); ++rg) {
     const auto& p = _pointers[rg];
-    _total_row_count += p.row_count;
     SDB_ASSERT(_total_sum + p.sum >= _total_sum,
                ".col reader norm running sum overflow on column id ", _id);
     _total_sum += p.sum;
     _total_non_zero += p.non_zero_count;
-    _row_offsets.push_back(_total_row_count);
-    const auto byte_count = p.row_count * p.byte_size;
+    _uniform_byte_size &= p.byte_size == _pointers.front().byte_size;
+    const auto byte_count = RowGroupRowCount(rg) * p.byte_size;
     if (byte_count == 0) {
       continue;
     }
@@ -74,20 +74,12 @@ NormColumnReader::NormColumnReader(field_id id,
   }
 }
 
-std::pair<size_t, uint64_t> NormColumnReader::Locate(
-  uint64_t row_pos) const noexcept {
-  SDB_ASSERT(row_pos < _total_row_count);
-  auto it = std::upper_bound(_row_offsets.begin(), _row_offsets.end(), row_pos);
-  const size_t rg = static_cast<size_t>((it - _row_offsets.begin()) - 1);
-  return {rg, row_pos - _row_offsets[rg]};
-}
-
 uint32_t NormColumnReader::Get(uint64_t row_pos) const noexcept {
-  SDB_ASSERT(row_pos < _total_row_count);
-  auto [rg, in_rg] = Locate(row_pos);
-  const auto byte_size = _pointers[rg].byte_size;
-  SDB_ASSERT(!_spans[rg].empty());
-  return ReadNormValue(_spans[rg].data() + in_rg * byte_size, byte_size);
+  const auto info = Locate(row_pos);
+  SDB_ASSERT(!info.bytes.empty());
+  return ReadNormValue(
+    info.bytes.data() + (row_pos - info.first_row) * info.byte_size,
+    info.byte_size);
 }
 
 }  // namespace irs

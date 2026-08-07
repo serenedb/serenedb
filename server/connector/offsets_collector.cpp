@@ -42,7 +42,7 @@ void PrepareFilterEntry(FilterEntry& entry, const irs::TermReader* reader,
     return;
   }
   auto docs = std::visit(
-    absl::Overload{[&](const irs::SeekCookie* cookie) {
+    absl::Overload{[&](const irs::PostingMeta* cookie) {
                      static constexpr auto kFeatures =
                        irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                        irs::IndexFeatures::Offs;
@@ -116,13 +116,13 @@ FieldState* OffsetsCollector::FindFieldState(
 namespace {
 
 void RecordCookie(FieldState& field, const irs::TermReader* reader,
-                  const irs::SeekCookie* cookie) {
-  if (!cookie) {
+                  const irs::PostingMeta& cookie) {
+  if (cookie.docs_count == 0) {
     return;
   }
-  if (field.seen_cookies.insert(cookie).second) {
+  if (field.seen_cookies.insert(&cookie).second) {
     field.reader = reader;
-    field.entries.emplace_back(cookie);
+    field.entries.emplace_back(&cookie);
   }
 }
 
@@ -131,7 +131,7 @@ void RecordCookie(FieldState& field, const irs::TermReader* reader,
 bool OffsetsCollector::Visit(const irs::TermQuery&, const irs::TermState& state,
                              irs::score_t) {
   if (auto* field = FindFieldState(state.reader)) {
-    RecordCookie(*field, state.reader, state.cookie.get());
+    RecordCookie(*field, state.reader, state.cookie);
   }
   return true;
 }
@@ -143,7 +143,7 @@ bool OffsetsCollector::Visit(const irs::MultiTermQuery&,
     return true;
   }
   for (const auto& entry : state.Terms()) {
-    RecordCookie(*field, state.Reader(), entry.cookie.get());
+    RecordCookie(*field, state.Reader(), entry.cookie);
   }
   return true;
 }

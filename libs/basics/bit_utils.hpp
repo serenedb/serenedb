@@ -22,8 +22,13 @@
 
 #pragma once
 
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <utility>
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
 
 #include "basics/assert.h"
 #include "basics/shared.hpp"
@@ -44,6 +49,55 @@ template<typename T>
 IRS_FORCE_INLINE constexpr T PopBit(T v) noexcept {
   SDB_ASSERT(v);
   return v & (v - 1);
+}
+
+#ifdef __AVX2__
+using BitsetByteEntry = std::array<uint8_t, 8>;
+
+inline constexpr std::array<BitsetByteEntry, 256> kBitsetByteTable = [] {
+  std::array<BitsetByteEntry, 256> t{};
+  for (uint32_t b = 0; b != 256; ++b) {
+    uint32_t count = 0;
+    for (uint32_t i = 0; i != 8; ++i) {
+      if (b & (1 << i)) {
+        t[b][count++] = i;
+      }
+    }
+  }
+  return t;
+}();
+#endif
+
+inline IRS_FORCE_INLINE uint32_t* MaterializeWord(uint32_t offset,
+                                                  uint64_t word,
+                                                  uint32_t* IRS_RESTRICT out) {
+  if (word == 0) {
+    return out;
+  }
+#ifdef __AVX2__
+  uint64_t counts = word - ((word >> 1) & 0x5555555555555555ULL);
+  counts =
+    (counts & 0x3333333333333333ULL) + ((counts >> 2) & 0x3333333333333333ULL);
+  counts = (counts + (counts >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
+  const uint64_t prefix = (counts * 0x0101010101010101ULL) << 8;
+  const auto* word_bytes = reinterpret_cast<const uint8_t*>(&word);
+  for (uint32_t b = 0; b != 8; ++b) {
+    const auto& positions = kBitsetByteTable[word_bytes[b]];
+    const __m256i base = _mm256_set1_epi32(offset + b * 8);
+    const __m128i pos8 =
+      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(positions.data()));
+    _mm256_storeu_si256(
+      reinterpret_cast<__m256i*>(out + ((prefix >> (b * 8)) & 0xFF)),
+      _mm256_add_epi32(base, _mm256_cvtepi8_epi32(pos8)));
+  }
+  return out + std::popcount(word);
+#else
+  do {
+    *out++ = offset + std::countr_zero(word);
+    word = PopBit(word);
+  } while (word != 0);
+  return out;
+#endif
 }
 
 template<typename T>

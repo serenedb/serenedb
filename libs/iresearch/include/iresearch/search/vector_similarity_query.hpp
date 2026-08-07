@@ -35,11 +35,13 @@ class KnnVectorQuery : public QueryBuilder {
  public:
   KnnVectorQuery(const SubReader& segment, VectorState&& state,
                  std::span<const float> query, VectorMetric metric,
-                 score_t boost, QueryBuilder::ptr&& inner = nullptr)
+                 score_t boost, uint64_t pay_base,
+                 QueryBuilder::ptr&& inner = nullptr)
     : QueryBuilder{segment},
       _state{std::move(state)},
       _query{query},
       _inner{std::move(inner)},
+      _pay_base{pay_base},
       _metric{metric},
       _boost{boost} {}
 
@@ -54,6 +56,7 @@ class KnnVectorQuery : public QueryBuilder {
   VectorState _state;
   std::span<const float> _query;
   QueryBuilder::ptr _inner;
+  uint64_t _pay_base;
   VectorMetric _metric;
   score_t _boost;
 };

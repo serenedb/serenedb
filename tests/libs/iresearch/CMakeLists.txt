@@ -23,6 +23,7 @@ set(iresearch-tests_sources
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
+    ./formats/posting_alloc_test.cpp
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
@@ -35,11 +36,11 @@ set(iresearch-tests_sources
     ./index/doc_generator.cpp
     ./index/assert_format.cpp
     ./index/buffered_column_test.cpp
+    ./index/index_acceptor_walk_tests.cpp
     ./index/index_column_tests.cpp
     ./index/index_meta_tests.cpp
     ./index/index_profile_tests.cpp
     ./index/index_tests.cpp
-    ./index/index_levenshtein_tests.cpp
     ./index/norm_test.cpp
     ./index/index_death_tests.cpp
     ./index/field_meta_test.cpp
@@ -60,8 +61,8 @@ set(iresearch-tests_sources
     ./search/bitset_doc_iterator_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
-    ./search/wand_test.cpp
-    ./search/wand_norm_merge_test.cpp
+    ./search/score_prune_test.cpp
+    ./search/score_prune_norm_merge_test.cpp
     ./search/bm25_test.cpp
     ./search/raw_tf_test.cpp
     ./search/lm_test.cpp
@@ -92,10 +93,9 @@ set(iresearch-tests_sources
     ./search/vector_similarity_query_test.cpp
     ./search/block_scoring_test.cpp
     ./search/boost_query_test.cpp
-    ./search/wand_scoring_test.cpp
+    ./search/score_prune_scoring_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/wkb_parser_test.cpp
-    ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp
     ./utils/encryption_test.cpp
     ./utils/container_utils_tests.cpp
@@ -109,8 +109,8 @@ set(iresearch-tests_sources
     ./utils/bit_utils_tests.cpp
     ./utils/block_pool_test.cpp
     ./utils/levenshtein_utils_test.cpp
-    ./utils/wildcard_utils_test.cpp
     ./utils/regexp_utils_test.cpp
+    ./utils/wildcard_utils_test.cpp
     ./utils/ref_counter_tests.cpp
     ./utils/minhash_utils_test.cpp
     ./utils/string_tests.cpp
@@ -122,7 +122,6 @@ set(iresearch-tests_sources
     ./utils/utf8_utils_test.cpp
     ./utils/utf8_path_tests.cpp
     ./utils/fst_builder_test.cpp
-    ./utils/fst_utils_test.cpp
     ./utils/fst_string_weight_test.cpp
     ./utils/ngram_match_utils_tests.cpp
     ./utils/write_helpers.cpp

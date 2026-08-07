@@ -3,7 +3,7 @@ control substitution on
 
 # Lazy-seek behaviour exercised across iterator types. All assertions hold
 # with ~200 docs (well inside BlockDisjunction's single 4096-doc window).
-# Cross-window / WAND-pruning cases live in the .test_slow companion.
+# Cross-window / score-pruning cases live in the .test_slow companion.
 #
 # Iterator coverage map:
 #   BasicDisjunction       -> 2-way ORs
@@ -13,7 +13,7 @@ control substitution on
 #   Phrase                 -> ts_phrase (adjacent + gap variants)
 #   Exclusion              -> AND NOT, NOT(OR)
 #   BitsetDocIterator      -> integer ts_lt/gt/between
-#   MaxScoreIterator(WAND) -> ORDER BY BM25() ... LIMIT k
+#   MaxScoreIterator       -> ORDER BY BM25() ... LIMIT k
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY lz_en (
@@ -324,7 +324,7 @@ id
 
 
 # ============================================================================
-# MaxScoreIterator / WAND -- ORDER BY BM25(...) ... LIMIT k.
+# MaxScoreIterator / score pruning -- ORDER BY BM25(...) ... LIMIT k.
 # Score threshold rises as top-k candidates are collected; sparse terms get
 # pruned, leaving the dense ones to drive lazy seeks.
 # ============================================================================
@@ -338,7 +338,7 @@ SELECT count(*) FROM (
 count
 10
 
-# LIMIT 1 on a disjunction: WAND picks the single best-scoring doc.
+# LIMIT 1 on a disjunction: pruning picks the single best-scoring doc.
 query
 SELECT count(*) > 0 FROM (
   SELECT id FROM lz_idx WHERE body @@ (ts_phrase('lonely') || ts_phrase('dense'))

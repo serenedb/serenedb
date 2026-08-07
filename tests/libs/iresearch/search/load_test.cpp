@@ -488,7 +488,6 @@ void BuildIndex(const std::string& corpus_path,
     .compaction_interval_ms = 5000,
     .compaction_threads = 0,
     .compact_all = true,
-    .norm_row_group_size = 10'000'000,
   };
 
   bench::IndexBuilder builder{index_dir.string(), builder_options, config};
@@ -924,12 +923,12 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
       }
     }
 
-    // 3) Compare via ExecuteTopK (WAND path)
+    // 3) Compare via ExecuteTopK (score pruning path)
     // Scores may differ at ULP level due to different FP accumulation order.
     {
       static constexpr size_t kCount = 100;
       std::vector<irs::ScoreDoc> hits(irs::BlockSize(kCount));
-      irs::ExecuteTopK(reader, *filter, scorer, kCount, {.wand_enabled = true},
+      irs::ExecuteTopK(reader, *filter, scorer, kCount, {.score_prune = true},
                        std::span{hits});
 
       absl::c_sort(hits, cmp);
@@ -938,7 +937,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 
       for (size_t i = 0; i < result_count; ++i) {
         EXPECT_FLOAT_EQ(hits[i].score, ref_top[i].score)
-          << "WAND: rank " << i << " score mismatch doc " << hits[i].doc;
+          << "Pruned: rank " << i << " score mismatch doc " << hits[i].doc;
       }
     }
   }

@@ -70,7 +70,7 @@ enum class ScanMode : uint8_t {
   // work units read `.col` directly; a segment with deletes falls back to the
   // masked streaming walk. Never scores, never touches the lookup source.
   ColScan,
-  // Streaming DocIterator -> HitBatcher (WAND-seeded when eligible). The only
+  // Streaming DocIterator -> HitBatcher (bound-seeded when eligible). The only
   // mode that materializes through the lookup source, engaged if and only if
   // a lookup column is needed -- for a filter or for the output.
   Stream,
@@ -166,17 +166,17 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   // Score-filter machinery. `score_dynamic_filter` is the shared runtime bound
   // TOP_N updates (captured from the pushed dynamic score filter; null when
   // none). `score_static_floor` is the lower bound implied by pushed static
-  // score filters (`score > c`, Lucene min_score-style): it seeds the WAND
+  // score filters (`score > c`, Lucene min_score-style): it seeds the pruning
   // threshold and the top-k collectors so below-bound blocks are skipped from
   // the first window; the pushed filter still enforces the exact bound
-  // (lowest() = no bound). When `wand_streaming` (Stream mode with a
-  // WAND-enabled text scorer and one of those bounds), the streaming
-  // DocIterator runs with WAND and its ScoreThresholdAttr is seeded from the
-  // bound before each emit -- the HitBatcher score filter still enforces the
-  // exact boundary on the docs that are produced.
+  // (lowest() = no bound). When `score_prune_streaming` (Stream mode with a
+  // prune-capable text scorer and one of those bounds), the streaming
+  // DocIterator runs with score pruning and its ScoreThresholdAttr is seeded
+  // from the bound before each emit -- the HitBatcher score filter still
+  // enforces the exact boundary on the docs that are produced.
   duckdb::shared_ptr<duckdb::DynamicFilterData> score_dynamic_filter;
   float score_static_floor = std::numeric_limits<float>::lowest();
-  bool wand_streaming = false;
+  bool score_prune_streaming = false;
 
   // --- The search predicate (`@@` / vector query) and scoring machinery.
   // `owned_filter` backs `filter` for vector/match-all queries; the prepare
@@ -191,6 +191,7 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::atomic_uint32_t prepare_segment = 0;
   std::atomic_uint32_t prepare_count = 0;
   std::atomic_uint32_t collector_slots = 0;
+  std::exception_ptr prepare_error;
 
   // --- Segment claiming: claimed slots in [0, claimable_segments) map through
   // `segment_order` -- empty = identity over all segments. Init-time
@@ -227,7 +228,7 @@ struct IResearchScanGlobalState : public duckdb::GlobalTableFunctionState {
   };
   ColScanState col_scan;
 
-  // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for WAND pruning,
+  // Top-k (ORDER BY score LIMIT k): cross-thread k-th score for score pruning,
   // and the over-fetch pool size when quantization / a lookup filter requires
   // reranking or survivor slack.
   struct TopKState {

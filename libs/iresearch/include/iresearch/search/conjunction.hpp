@@ -106,10 +106,24 @@ struct [[clang::trivial_abi]] ScoreAdapter {
     return _it->FillBlock(min, max, mask, score, match);
   }
 
+  IRS_FORCE_INLINE uint32_t count() {
+    SDB_ASSERT(_it);
+    return _it->count();
+  }
+
   IRS_FORCE_INLINE uint32_t EmitDocs(doc_id_t* out, doc_id_t min,
                                      doc_id_t max) {
     SDB_ASSERT(_it);
     return _it->EmitDocs(out, min, max);
+  }
+
+  IRS_FORCE_INLINE uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores,
+                                           doc_id_t max,
+                                           const ScoreFunction& scorer,
+                                           ColumnArgsFetcher* fetcher,
+                                           doc_id_t min) {
+    SDB_ASSERT(_it);
+    return _it->EmitScoredDocs(out, scores, max, scorer, fetcher, min);
   }
 
  private:
@@ -506,7 +520,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
 // Returns conjunction iterator created from the specified sub iterators
 template<template<typename> typename Wrapper = EmptyWrapper, typename Adapter,
          typename... Args>
-DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, WandContext ctx,
+DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, bool score_prune,
                                  doc_id_t docs_count,
                                  std::vector<Adapter>&& itrs, Args&&... args) {
   if (const auto size = itrs.size(); 0 == size) {

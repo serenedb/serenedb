@@ -22,28 +22,15 @@
 
 #pragma once
 
-#include <fst/fst-decl.h>
+#include <fst/arc.h>
+#include <fst/vector-fst.h>
 
 #include "basics/resource_manager.hpp"
+#include "iresearch/utils/fstext/fst_string_ref_weight.hpp"
+#include "iresearch/utils/fstext/fst_string_weight.hpp"
+#include "iresearch/utils/fstext/fst_utils.hpp"
+#include "iresearch/utils/fstext/immutable_fst.hpp"
 
-namespace fst {
-
-template<typename Label>
-class StringLeftWeight;
-
-namespace fstext {
-
-template<typename Label>
-class StringRefWeight;
-
-template<typename W, typename L>
-struct ILabelArc;
-
-template<typename Arc>
-class ImmutableFst;
-
-}  // namespace fstext
-}  // namespace fst
 namespace irs {
 
 using byte_weight = fst::StringLeftWeight<byte_type>;
@@ -55,8 +42,5 @@ using vector_byte_fst =
 using byte_ref_weight = fst::fstext::StringRefWeight<byte_type>;
 using byte_ref_arc = fst::fstext::ILabelArc<byte_ref_weight, int32_t>;
 using immutable_byte_fst = fst::fstext::ImmutableFst<byte_ref_arc>;
-
-template<typename Key, typename Weight, typename Stats>
-class FstBuilder;
 
 }  // namespace irs

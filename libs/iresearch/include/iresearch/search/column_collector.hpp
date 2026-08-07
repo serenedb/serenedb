@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <memory>
 #include <span>
 
 #include "basics/containers/flat_hash_map.h"
@@ -30,6 +31,17 @@ namespace irs {
 
 class ColumnArgsFetcher {
  public:
+  ColumnArgsFetcher() = default;
+  ColumnArgsFetcher(ColumnArgsFetcher&&) noexcept = default;
+  ColumnArgsFetcher& operator=(ColumnArgsFetcher&& rhs) noexcept {
+    if (this != &rhs) {
+      std::swap(_columns, rhs._columns);
+      std::swap(_index, rhs._index);
+    }
+    return *this;
+  }
+  ~ColumnArgsFetcher() { Free(); }
+
   // Caches the norm reader for `field`. The first call materialises the
   // per-doc norm scratch buffer; subsequent calls hit the cache. Returns
   // a pointer to the scratch buffer the Fetch* methods fill, or nullptr
@@ -38,47 +50,63 @@ class ColumnArgsFetcher {
     if (!reader) {
       return nullptr;
     }
-    auto [it, inserted] = _columns.try_emplace(field);
-    auto& entry = it->second;
-    if (inserted) {
-      entry.reader = std::move(reader);
-      entry.norms.resize(kPostingBlock);
+    auto [it, emplaced] = _index.try_emplace(field, nullptr);
+    if (!emplaced) {
+      return it->second;
     }
-    return entry.norms.data();
+    auto& entry = _columns.emplace_back(std::move(reader), nullptr);
+    auto* norms = std::allocator<uint32_t>{}.allocate(kPostingBlock);
+    entry.norms = norms;
+    it->second = norms;
+    return norms;
   }
 
-  void Clear() noexcept { _columns.clear(); }
+  void Clear() noexcept {
+    Free();
+    _columns.clear();
+    _index.clear();
+  }
+
+  void FetchScoreBlock(std::span<const doc_id_t, kScoreBlock> docs) {
+    for (auto& entry : _columns) {
+      entry.reader->GetScoreBlock(
+        docs, std::span<uint32_t, kScoreBlock>{entry.norms, kScoreBlock});
+    }
+  }
 
   void FetchPostingBlock(std::span<const doc_id_t, kPostingBlock> docs) {
-    for (auto& [_, entry] : _columns) {
-      auto& [reader, norms] = entry;
-      reader->GetPostingBlock(
-        docs, std::span<uint32_t, kPostingBlock>{norms.data(), kPostingBlock});
+    for (auto& entry : _columns) {
+      entry.reader->GetPostingBlock(
+        docs, std::span<uint32_t, kPostingBlock>{entry.norms, kPostingBlock});
     }
   }
 
   void Fetch(std::span<const doc_id_t> docs) {
-    for (auto& [_, entry] : _columns) {
-      auto& [reader, norms] = entry;
-      reader->Get(docs, norms);
+    for (auto& entry : _columns) {
+      entry.reader->Get(docs, std::span<uint32_t>{entry.norms, kPostingBlock});
     }
   }
 
   void Fetch(doc_id_t doc) {
-    for (auto& [_, entry] : _columns) {
-      auto& [reader, norms] = entry;
-      SDB_ASSERT(!norms.empty());
-      norms[0] = reader->Get(doc);
+    for (auto& entry : _columns) {
+      entry.norms[0] = entry.reader->Get(doc);
     }
   }
 
  private:
+  void Free() noexcept {
+    for (auto& entry : _columns) {
+      std::allocator<uint32_t>{}.deallocate(entry.norms, kPostingBlock);
+    }
+  }
+
   struct Entry {
     NormReader::ptr reader;
-    std::vector<uint32_t> norms;
+    uint32_t* norms = nullptr;
   };
 
-  mutable sdb::containers::FlatHashMap<field_id, Entry> _columns;
+  std::vector<Entry> _columns;
+  sdb::containers::FlatHashMap<field_id, uint32_t*> _index;
 };
 
 }  // namespace irs

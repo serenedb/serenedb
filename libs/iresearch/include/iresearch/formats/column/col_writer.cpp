@@ -40,18 +40,19 @@ namespace irs {
 
 void SerializeNormColumn(duckdb::Serializer& s, const NormColumnWriter& nw) {
   s.WriteProperty<uint64_t>(0, "id", static_cast<uint64_t>(nw.Id()));
+  s.WriteProperty<uint32_t>(1, "row_group_size", nw.RowGroupSize());
+  s.WriteProperty<uint64_t>(2, "row_count", nw.RowCount());
   const auto& ptrs = nw.Pointers();
-  s.WriteList(1, "row_groups", ptrs.size(),
+  s.WriteList(3, "row_groups", ptrs.size(),
               [&](duckdb::Serializer::List& rgl, duckdb::idx_t j) {
                 const auto& p = ptrs[j];
                 rgl.WriteObject([&](duckdb::Serializer& po) {
                   po.WriteProperty<uint8_t>(0, "byte_size", p.byte_size);
-                  po.WriteProperty<uint32_t>(1, "row_count", p.row_count);
-                  po.WriteProperty<uint32_t>(2, "max", p.max);
-                  po.WriteProperty<uint64_t>(3, "sum", p.sum);
-                  po.WriteProperty<uint64_t>(4, "non_zero_count",
+                  po.WriteProperty<uint32_t>(1, "max", p.max);
+                  po.WriteProperty<uint64_t>(2, "sum", p.sum);
+                  po.WriteProperty<uint64_t>(3, "non_zero_count",
                                              p.non_zero_count);
-                  po.WriteProperty<uint64_t>(5, "file_offset", p.file_offset);
+                  po.WriteProperty<uint64_t>(4, "file_offset", p.file_offset);
                 });
               });
 }
@@ -120,12 +121,14 @@ ColumnWriter& ColWriter::OpenColumnInternal(
 
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   ColumnOptions opts{};
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   if (_field_options) {
     opts = _field_options->GetColumnOptions(id);
+    row_group_size = _field_options->row_group_size;
   }
   auto& cw =
-    OpenColumnInternal(id, std::move(type), opts.skip_validity,
-                       opts.row_group_size, opts.compression, opts.hyperloglog);
+    OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
+                       opts.compression, opts.hyperloglog);
   if (opts.ivf_info) {
     AttachIVF(id, *opts.ivf_info);
   }

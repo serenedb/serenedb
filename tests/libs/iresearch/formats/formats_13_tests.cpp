@@ -102,7 +102,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
               segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -174,7 +174,7 @@ TEST_P(Format13TestCase, formats_13) {
               segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
@@ -202,7 +202,7 @@ TEST_P(Format13TestCase, formats_13) {
               segment.docs_count());  // total count of documents
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
     for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);

@@ -20,14 +20,13 @@
 
 #include "multi_delimited_tokenizer.hpp"
 
-#include <fst/union.h>
-#include <fstext/determinize-star.h>
-
+#include <array>
+#include <limits>
 #include <string_view>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "iresearch/utils/automaton_utils.hpp"
-#include "iresearch/utils/fstext/fst_draw.hpp"
+#include "basics/shared.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs::analysis {
@@ -78,7 +77,7 @@ class MultiDelimitedTokenizerSingleCharsBase
  public:
   auto FindNextDelim() {
     auto where = static_cast<Derived*>(this)->FindNextDelim();
-    return std::make_pair(where, size_t{1});
+    return std::pair{where, size_t{1}};
   }
 };
 
@@ -147,89 +146,85 @@ class MultiDelimitedTokenizerGenericSingleChars final
   }
 
   auto FindNextDelim() {
-    return absl::c_find_if(_data, [&](auto c) {
-      if (c > SCHAR_MAX) {
-        return false;
-      }
-      SDB_ASSERT(c <= SCHAR_MAX);
-      return bytes[c];
-    });
+    return absl::c_find_if(_data, [&](auto c) { return bytes[c]; });
   }
   // TODO(mbkkt) maybe use a bitset instead?
-  std::array<bool, SCHAR_MAX + 1> bytes{};
+  std::array<bool, 256> bytes{};
 };
 
 struct TrieNode {
-  explicit TrieNode(int32_t id, int32_t depth) : state_id(id), depth(depth) {}
-  int32_t state_id;
-  int32_t depth;
-  bool is_leaf{false};
+  explicit TrieNode(uint32_t depth) : depth{depth} {}
+
+  uint32_t code = 0;
+  uint32_t depth;
+  bool is_leaf = false;
+  TrieNode* fail = nullptr;
+  TrieNode* match = nullptr;
+
   absl::flat_hash_map<byte_type, TrieNode*> simple_trie;
-  absl::flat_hash_map<byte_type, TrieNode*> real_trie;
 };
 
-bytes_view FindLongestPrefixThatIsSuffix(bytes_view s, bytes_view str) {
-  // TODO(mbkkt) this algorithm is quadratic
-  for (size_t n = s.length() - 1; n > 0; n--) {
-    auto prefix = s.substr(0, n);
-    if (str.ends_with(prefix)) {
-      return prefix;
+struct StringTrieDfa {
+  static constexpr size_t kAlphabet = 256;
+
+  std::vector<uint32_t> next;
+  uint32_t final_base = 0;
+};
+
+void FillTransitions(std::vector<std::unique_ptr<TrieNode>>& nodes,
+                     StringTrieDfa& dfa) {
+  auto* const table = dfa.next.data();
+  auto* const root = nodes.front().get();
+
+  const auto row_of = [table](const TrieNode* n) {
+    return table + size_t{n->code} * StringTrieDfa::kAlphabet;
+  };
+  const auto target_of = [](const TrieNode* n) {
+    return (n->match != nullptr ? n->match : n)->code;
+  };
+
+  root->fail = root;
+  root->match = root->is_leaf ? root : nullptr;
+
+  std::vector<TrieNode*> order;
+  order.reserve(nodes.size());
+  order.push_back(root);
+
+  for (size_t head = 0; head != order.size(); ++head) {
+    auto* const node = order[head];
+    for (auto& [c, child] : node->simple_trie) {
+      auto* f = node->fail;
+      // Longest proper suffix that keeps `c` inside the trie.
+      while (f != root && !f->simple_trie.contains(c)) {
+        f = f->fail;
+      }
+      const auto it = f->simple_trie.find(c);
+      child->fail =
+        (it != f->simple_trie.end() && it->second != child) ? it->second : root;
+      child->match = child->is_leaf ? child : child->fail->match;
+      if (!child->is_leaf) {
+        order.push_back(child);
+      }
     }
   }
-  return {};
-}
 
-bytes_view FindLongestPrefixThatIsSuffix(const std::vector<bstring>& strings,
-                                         std::string_view str) {
-  bytes_view result = {};
-  for (const auto& s : strings) {
-    auto other = FindLongestPrefixThatIsSuffix(s, ViewCast<byte_type>(str));
-    if (other.length() > result.length()) {
-      result = other;
-    }
-  }
-  return result;
-}
-
-void InsertErrorTransitions(const std::vector<bstring>& strings,
-                            std::string& matched_word, TrieNode* node,
-                            TrieNode* root) {
-  if (node->is_leaf) {
-    return;
-  }
-
-  for (size_t k = 0; k <= std::numeric_limits<byte_type>::max(); k++) {
-    if (auto it = node->simple_trie.find(k); it != node->simple_trie.end()) {
-      node->real_trie.emplace(k, it->second);
-      matched_word.push_back(static_cast<char>(k));
-      InsertErrorTransitions(strings, matched_word, it->second, root);
-      matched_word.pop_back();
+  for (auto* const node : order) {
+    auto* const row = row_of(node);
+    if (node == root) {
+      std::fill_n(row, StringTrieDfa::kAlphabet, root->code);
     } else {
-      // if we find a character c that we don't expect, we have to find
-      // the longest prefix of `str` that is a suffix of the already matched
-      // text including c. then go to that state.
-      matched_word.push_back(static_cast<char>(k));
-      auto prefix = FindLongestPrefixThatIsSuffix(strings, matched_word);
-      if (prefix.empty()) {
-        matched_word.pop_back();
-        continue;  // no prefix found implies going to the initial state
-      }
-
-      auto* dest = root;
-      for (auto c : prefix) {
-        auto itt = dest->simple_trie.find(c);
-        SDB_ASSERT(itt != dest->simple_trie.end());
-        dest = itt->second;
-      }
-      node->real_trie.emplace(k, dest);
-      matched_word.pop_back();
+      const auto* const src = node->fail->is_leaf ? root : node->fail;
+      std::copy_n(row_of(src), StringTrieDfa::kAlphabet, row);
+    }
+    for (const auto& [c, child] : node->simple_trie) {
+      row[c] = target_of(child);
     }
   }
 }
 
-automaton MakeStringTrie(const std::vector<bstring>& strings) {
+StringTrieDfa MakeStringTrie(const std::vector<bstring>& strings) {
   std::vector<std::unique_ptr<TrieNode>> nodes;
-  nodes.emplace_back(std::make_unique<TrieNode>(0, 0));
+  nodes.emplace_back(std::make_unique<TrieNode>(uint32_t{0}));
 
   for (const auto& str : strings) {
     TrieNode* current = nodes.front().get();
@@ -246,8 +241,8 @@ automaton MakeStringTrie(const std::vector<bstring>& strings) {
         continue;
       }
 
-      auto& new_node =
-        nodes.emplace_back(std::make_unique<TrieNode>(nodes.size(), k));
+      auto& new_node = nodes.emplace_back(
+        std::make_unique<TrieNode>(static_cast<uint32_t>(k)));
       current->simple_trie.emplace(c, new_node.get());
       current = new_node.get();
     }
@@ -255,47 +250,23 @@ automaton MakeStringTrie(const std::vector<bstring>& strings) {
     current->is_leaf = true;
   }
 
-  std::string matched_word;
-  auto* root = nodes.front().get();
-  InsertErrorTransitions(strings, matched_word, root, root);
-
-  automaton a;
-  a.AddStates(nodes.size());
-  a.SetStart(0);
-
+  StringTrieDfa dfa;
   for (auto& n : nodes) {
-    int64_t last_state = -1;
-    size_t last_char = 0;
-
-    if (n->is_leaf) {
-      a.SetFinal(n->state_id, {true, static_cast<byte_type>(n->depth)});
-      continue;
+    if (!n->is_leaf) {
+      n->code = dfa.final_base++;
     }
-
-    for (size_t k = 0; k <= std::numeric_limits<byte_type>::max(); k++) {
-      int64_t next_state = root->state_id;
-      if (auto it = n->real_trie.find(k); it != n->real_trie.end()) {
-        next_state = it->second->state_id;
-      }
-
-      if (last_state == -1) {
-        last_state = next_state;
-        last_char = k;
-      } else if (last_state != next_state) {
-        a.EmplaceArc(n->state_id, RangeLabel::From(last_char, k - 1),
-                     last_state);
-        last_state = next_state;
-        last_char = k;
-      }
-    }
-
-    a.EmplaceArc(
-      n->state_id,
-      RangeLabel::From(last_char, std::numeric_limits<byte_type>::max()),
-      last_state);
   }
+  for (auto& n : nodes) {
+    if (n->is_leaf) {
+      n->code = dfa.final_base + n->depth;
+    }
+  }
+  dfa.next.assign(size_t{dfa.final_base} * StringTrieDfa::kAlphabet, 0);
 
-  return a;
+  SDB_ASSERT(nodes.front()->code == 0);
+  FillTransitions(nodes, dfa);
+
+  return dfa;
 }
 
 class MultiDelimitedTokenizerGeneric final
@@ -303,44 +274,37 @@ class MultiDelimitedTokenizerGeneric final
  public:
   explicit MultiDelimitedTokenizerGeneric(
     const std::vector<bstring>& delimiters)
-    : autom(MakeStringTrie(delimiters)), matcher(MakeAutomatonMatcher(autom)) {
-    // fst::drawFst(automaton_, std::cout);
-
-#ifdef SDB_DEV
-    // ensure nfa is sorted
-    static constexpr auto kExpectedNfaProperties =
-      fst::kILabelSorted | fst::kOLabelSorted | fst::kAcceptor |
-      fst::kUnweighted;
-
-    SDB_ASSERT(kExpectedNfaProperties ==
-               autom.Properties(kExpectedNfaProperties, true));
-#endif
-  }
+    : dfa(MakeStringTrie(delimiters)) {}
 
   auto FindNextDelim() {
-    auto state = matcher.GetFst().Start();
-    matcher.SetState(state);
-    for (size_t k = 0; k < _data.length(); k++) {
-      matcher.Find(_data[k]);
+    const auto* IRS_RESTRICT const table = dfa.next.data();
+    const auto* IRS_RESTRICT const data = _data.data();
+    const size_t size = _data.size();
+    const uint32_t final_base = dfa.final_base;
 
-      state = matcher.Value().nextstate;
+    size_t k = 0;
+    while (k != size) {
+      uint32_t state = table[data[k]];
+      ++k;
+      while (state != 0) {
+        if (state >= final_base) {
+          const size_t length = state - final_base;
+          SDB_ASSERT(length < k);
 
-      if (matcher.Final(state)) {
-        auto length = matcher.Final(state).Payload();
-        SDB_ASSERT(length <= k);
-
-        return std::make_pair(_data.begin() + (k - length),
-                              static_cast<size_t>(length + 1));
+          return std::pair{_data.begin() + (k - 1 - length), length + 1};
+        }
+        if (k == size) {
+          return std::pair{_data.end(), size_t{0}};
+        }
+        state = table[state * StringTrieDfa::kAlphabet + data[k]];
+        ++k;
       }
-
-      matcher.SetState(state);
     }
 
-    return std::make_pair(_data.end(), size_t{0});
+    return std::pair{_data.end(), size_t{0}};
   }
 
-  automaton autom;
-  automaton_table_matcher matcher;
+  StringTrieDfa dfa;
 };
 
 class MultiDelimitedTokenizerSingle final
@@ -351,7 +315,7 @@ class MultiDelimitedTokenizerSingle final
 
   auto FindNextDelim() {
     auto next = std::search(_data.begin(), _data.end(), searcher);
-    return std::make_pair(next, delim.size());
+    return std::pair{next, delim.size()};
   }
 
   bstring delim;

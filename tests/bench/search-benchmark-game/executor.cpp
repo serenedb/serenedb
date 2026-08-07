@@ -31,9 +31,18 @@
 #include <vector>
 
 #include "basics/duckdb_engine.h"
+#include "basics/wyhash.h"
 #include "index_builder.h"
 
 namespace bench {
+namespace {
+
+template<typename T>
+size_t HashBatch(size_t hash, const T* data, size_t size) {
+  return sdb::basics::WyHash(data, size * sizeof(T), hash);
+}
+
+}  // namespace
 
 Executor::Executor(std::string_view path, const BenchConfig& config)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
@@ -53,9 +62,8 @@ size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
     _result_count = 0;
     return 0;
   }
-  auto count = irs::ExecuteTopK(_reader, *filter, *_scorer, k,
-                                {.wand_enabled = true, .strict = true},
-                                std::span{_results});
+  auto count =
+    irs::ExecuteTopK(_reader, *filter, *_scorer, k, true, std::span{_results});
   _result_count = std::min<size_t>(k, count);
   return count;
 }
@@ -96,6 +104,85 @@ size_t Executor::ExecuteCount(std::string_view query) {
     count += docs->count();
   }
   return count;
+}
+
+EmitResult Executor::ExecuteEmitDocs(std::string_view query, bool checksum) {
+  auto filter = ParseFilter(query);
+  if (!filter) {
+    return {};
+  }
+  auto collector = filter->MakeCollector(nullptr);
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(_reader.size());
+  for (auto& segment : _reader) {
+    queries.emplace_back(
+      filter->PrepareSegment(segment, {.collector = collector.get()}));
+  }
+  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
+
+  EmitResult result;
+  for (auto& query : queries) {
+    if (!query) {
+      continue;
+    }
+    auto docs = query->Execute({}, stats);
+    auto min = irs::doc_limits::min();
+    while (!irs::doc_limits::eof(min)) {
+      const auto n = docs->EmitDocs(_emit_docs.data(), min, min + kEmitWindow);
+      result.count += n;
+      if (checksum) {
+        result.hash = HashBatch(result.hash, _emit_docs.data(), n);
+      }
+      min = docs->value();
+    }
+  }
+  return result;
+}
+
+EmitResult Executor::ExecuteEmitScoredDocs(std::string_view query,
+                                           bool checksum) {
+  auto filter = ParseFilter(query);
+  if (!filter) {
+    return {};
+  }
+  auto collector = filter->MakeCollector(_scorer_ptr);
+  std::vector<irs::QueryBuilder::ptr> queries;
+  queries.reserve(_reader.size());
+  for (auto& segment : _reader) {
+    queries.emplace_back(
+      filter->PrepareSegment(segment, {.collector = collector.get()}));
+  }
+  const auto stats = collector->Finish(irs::IResourceManager::gNoop);
+
+  irs::ColumnArgsFetcher fetcher;
+  EmitResult result;
+  uint32_t seg_idx = 0;
+  for (auto& segment : _reader) {
+    fetcher.Clear();
+    auto& query = queries[seg_idx++];
+    if (!query) {
+      continue;
+    }
+    auto docs = query->Execute({}, stats);
+    auto score_func = docs->PrepareScore({
+      .scorer = _scorer_ptr,
+      .segment = &segment,
+      .fetcher = &fetcher,
+    });
+    auto min = irs::doc_limits::min();
+    while (!irs::doc_limits::eof(min)) {
+      const auto n =
+        docs->EmitScoredDocs(_emit_docs.data(), _emit_scores.data(),
+                             min + kEmitWindow, score_func, &fetcher, min);
+      result.count += n;
+      if (checksum) {
+        result.hash = HashBatch(result.hash, _emit_docs.data(), n);
+        result.hash = HashBatch(result.hash, _emit_scores.data(), n);
+      }
+      min = docs->value();
+    }
+  }
+  return result;
 }
 
 irs::Filter::ptr Executor::ParseFilter(std::string_view str) {

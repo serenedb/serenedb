@@ -249,6 +249,35 @@ statement ok
 SET sdb_faults = '-SearchIncludeFetchFault'
 
 
+# --- prepare-phase statistics reduce ----------------------------------
+# The reduce runs in the last prepare unit's destructor. A failure there must
+# still notify, and must rethrow on every worker instead of parking one.
+
+statement ok
+SET sdb_faults = 'SearchPrepareStatsFault'
+
+
+statement error intentional debug error
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
+
+
+statement ok
+SET sdb_faults = '-SearchPrepareStatsFault'
+
+
+# Disarming restores the query: a failed reduce must not outlive its scan.
+
+query
+SELECT label, tag FROM doc_idx
+  WHERE body @@ ts_phrase('alpha')
+  ORDER BY BM25(doc_idx.tableoid) DESC LIMIT 1;
+----
+label	tag
+a	100
+
+
 # --- eventually-consistent COUNT and covered SELECT after a post-refresh
 # delete (no subsequent refresh) --------------------------------------
 # The matched set is frozen at the last refresh. Deleting matched rows in a

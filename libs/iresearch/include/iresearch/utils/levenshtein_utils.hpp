@@ -28,7 +28,6 @@
 #include <vector>
 
 #include "basics/assert.h"
-#include "iresearch/utils/automaton_decl.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -181,14 +180,6 @@ class ParametricDescription {
 /// @returns parametric description of Levenshtein automaton for supplied args
 ParametricDescription MakeParametricDescription(uint8_t max_distance,
                                                 bool with_transposition);
-
-/// @brief instantiates DFA based on provided parametric description and target
-/// @param description parametric description
-/// @param target valid UTF-8 encoded string
-/// @returns DFA
-/// @note if 'target' isn't a valid UTF-8 sequence, behaviour is undefined
-automaton MakeLevenshteinAutomaton(const ParametricDescription& description,
-                                   bytes_view prefix, bytes_view target);
 
 /// @brief evaluates edit distance between the specified words up to
 ///        specified in description.max_distance

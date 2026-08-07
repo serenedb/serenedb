@@ -66,10 +66,6 @@ constexpr uint32_t kPqNbits = 4;
 constexpr size_t kFastScanBits = 4;
 constexpr size_t kFastScanKsub = size_t{1} << kFastScanBits;
 
-size_t RoundUp(size_t n, size_t multiple) noexcept {
-  return (n + multiple - 1) / multiple * multiple;
-}
-
 size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
 constexpr int64_t kRaBitQRotationSeed = 0x5a17b17c5eed5eedULL;
@@ -170,8 +166,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void EncodeCluster(IndexOutput& out, const float* vecs,
-                     size_t n) const final {
+  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
@@ -196,7 +191,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   faiss::ScalarQuantizer _sq;
   std::vector<float> _vmin;
   std::vector<float> _vmax;
-  mutable std::vector<uint8_t> _code;
+  std::vector<uint8_t> _code;
 };
 
 template<VectorMetric M>
@@ -232,7 +227,7 @@ class ScalarQuantizerCodebook final : public QuantizerCodebook {
     : _stats{std::move(stats)}, _query(query.begin(), query.end()) {}
 
   std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const final;
+    std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) const final;
 
   const faiss::ScalarQuantizer& Sq() const noexcept { return _stats->Sq(); }
   std::span<const float> Query() const noexcept { return _query; }
@@ -246,10 +241,11 @@ template<VectorMetric M>
 class ScalarQuantizerReader final : public QuantizerReader {
  public:
   ScalarQuantizerReader(std::shared_ptr<const ScalarQuantizerCodebook<M>> cb,
-                        std::unique_ptr<IndexInput> pay_in)
+                        std::unique_ptr<IndexInput> pay_in, uint64_t pay_base)
     : _cb{std::move(cb)},
       _pay_in{std::move(pay_in)},
       _codes_reader{*_pay_in, static_cast<uint32_t>(_cb->Sq().code_size)} {
+    _codes_reader.Reset(pay_base);
     _dc.reset(_cb->Sq().get_distance_computer(
       M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
                                : faiss::MetricType::METRIC_INNER_PRODUCT));
@@ -257,19 +253,21 @@ class ScalarQuantizerReader final : public QuantizerReader {
     _dc->set_query(_cb->Query().data());
   }
 
-  void StartCluster(uint64_t pay_start, size_t num_docs,
+  // Scalar codes are one fixed-width record per lane, so a cluster needs no
+  // more than where its lanes begin.
+  void StartCluster(uint64_t first_lane, size_t num_docs,
                     const float* /*centroid*/) final {
+    _first_lane = first_lane;
     _n = num_docs;
-    if (_n == 0) {
-      return;
-    }
-    _codes_reader.Reset(pay_start);
   }
 
   void ComputeBlock(size_t offset, size_t count, score_t* out) final {
     SDB_ASSERT(_dc);
     SDB_ASSERT(offset + count <= _n);
-    const byte_type* block = _codes_reader.Read(offset, count);
+    if (count == 0) {
+      return;
+    }
+    const byte_type* block = _codes_reader.Read(_first_lane + offset, count);
     _dc->codes = block;
     const size_t cs = _cb->Sq().code_size;
     size_t i = 0;
@@ -294,15 +292,17 @@ class ScalarQuantizerReader final : public QuantizerReader {
   std::unique_ptr<IndexInput> _pay_in;
   std::unique_ptr<faiss::ScalarQuantizer::SQDistanceComputer> _dc;
   VectorBlockReader _codes_reader;
+  uint64_t _first_lane = 0;
   size_t _n = 0;
 };
 
 template<class Codebook, class Reader>
 std::unique_ptr<QuantizerReader> MakeReaderT(const Codebook* self,
-                                             std::unique_ptr<IndexInput> in) {
+                                             std::unique_ptr<IndexInput> in,
+                                             uint64_t pay_base) {
   return std::make_unique<Reader>(
     std::static_pointer_cast<const Codebook>(self->shared_from_this()),
-    std::move(in));
+    std::move(in), pay_base);
 }
 
 template<class Stats, class Codebook>
@@ -314,9 +314,9 @@ std::shared_ptr<const QuantizerCodebook> MakeCodebookT(
 
 template<VectorMetric M>
 std::unique_ptr<QuantizerReader> ScalarQuantizerCodebook<M>::MakeReader(
-  std::unique_ptr<IndexInput> pay_in) const {
+  std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) const {
   return MakeReaderT<ScalarQuantizerCodebook<M>, ScalarQuantizerReader<M>>(
-    this, std::move(pay_in));
+    this, std::move(pay_in), pay_base);
 }
 
 template<VectorMetric M>
@@ -360,22 +360,19 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     _centroid.assign(centroid, centroid + _d);
   }
 
-  void BeginCluster(size_t total_docs) final {
-    _cluster_codes.assign(total_docs * _pq.code_size, 0);
-    if constexpr (M == VectorMetric::L2Sqr) {
-      _cluster_norms.assign(total_docs, 0.f);
-    }
-    _cluster_filled = 0;
-  }
-
-  void EncodeCluster(IndexOutput& /*out*/, const float* vecs,
-                     size_t n) const final {
+  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
     SDB_ASSERT(_trained);
     SDB_ASSERT(_centroid.size() == _d);
-    SDB_ASSERT((_cluster_filled + n) * _pq.code_size <= _cluster_codes.size());
+    const size_t cs = _pq.code_size;
+    if (_lane_codes.empty()) {
+      _lane_codes.assign(kFastScanBbs * cs, 0);
+      if constexpr (M == VectorMetric::L2Sqr) {
+        _lane_norms.assign(kFastScanBbs, 0.f);
+      }
+    }
     _res.resize(_d);
     if constexpr (M == VectorMetric::L2Sqr) {
       _dec.resize(_d);
@@ -385,44 +382,27 @@ class ProductQuantizerWriter final : public QuantizerWriter {
       for (uint32_t j = 0; j < _d; ++j) {
         _res[j] = v[j] - _centroid[j];
       }
-      uint8_t* code =
-        _cluster_codes.data() + (_cluster_filled + i) * _pq.code_size;
+      uint8_t* code = _lane_codes.data() + _filled * cs;
       _pq.compute_code(_res.data(), code);
       if constexpr (M == VectorMetric::L2Sqr) {
         _pq.decode(code, _dec.data());
         for (uint32_t j = 0; j < _d; ++j) {
           _dec[j] += _centroid[j];
         }
-        _cluster_norms[_cluster_filled + i] =
-          vector::L2Space<float, float, float>::Norm(
-            reinterpret_cast<const byte_type*>(_dec.data()),
-            static_cast<uint16_t>(_d));
+        _lane_norms[_filled] = vector::L2Space<float, float, float>::Norm(
+          reinterpret_cast<const byte_type*>(_dec.data()),
+          static_cast<uint16_t>(_d));
+      }
+      if (++_filled == kFastScanBbs) {
+        FlushPack(out);
       }
     }
-    _cluster_filled += n;
   }
 
-  void FinishCluster(IndexOutput& out) final {
-    if (_cluster_filled == 0) {
-      _cluster_codes.clear();
-      if constexpr (M == VectorMetric::L2Sqr) {
-        _cluster_norms.clear();
-      }
-      return;
+  void Finish(IndexOutput& out) final {
+    if (_filled != 0) {
+      FlushPack(out);
     }
-    const size_t m = _pq.M;
-    const size_t nsq = FastScanNsq(m);
-    const size_t nb = RoundUp(_cluster_filled, kFastScanBbs);
-    _packed.assign(nb * nsq / 2, 0);
-    faiss::pq4_pack_codes(_cluster_codes.data(), _cluster_filled, m, nb,
-                          kFastScanBbs, nsq, _packed.data());
-    out.WriteData(_packed.data(), _packed.size());
-    if constexpr (M == VectorMetric::L2Sqr) {
-      out.WriteData(reinterpret_cast<const byte_type*>(_cluster_norms.data()),
-                    _cluster_filled * sizeof(float));
-      _cluster_norms.clear();
-    }
-    _cluster_codes.clear();
   }
 
   std::span<const byte_type> StatsBytes() const final {
@@ -438,6 +418,24 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   }
 
  private:
+  // A pack is the 32 lanes' packed codes followed, for L2, by their
+  // reconstructed norms. The stream's last pack pads its codes -- the scan
+  // reads all 32 lanes of them -- but not its norms: those are addressed one
+  // lane at a time and a lane that holds no document is never read.
+  void FlushPack(IndexOutput& out) {
+    const size_t m = _pq.M;
+    const size_t nsq = FastScanNsq(m);
+    _packed.resize(kFastScanBbs * nsq / 2);
+    faiss::pq4_pack_codes(_lane_codes.data(), _filled, m, kFastScanBbs,
+                          kFastScanBbs, nsq, _packed.data());
+    out.WriteData(_packed.data(), _packed.size());
+    if constexpr (M == VectorMetric::L2Sqr) {
+      out.WriteData(reinterpret_cast<const byte_type*>(_lane_norms.data()),
+                    _filled * sizeof(float));
+    }
+    _filled = 0;
+  }
+
   void BuildStats() {
     const uint32_t m = static_cast<uint32_t>(_pq.M);
     const uint32_t ksub = static_cast<uint32_t>(_pq.ksub);
@@ -452,13 +450,15 @@ class ProductQuantizerWriter final : public QuantizerWriter {
   bool _trained = false;
   std::vector<byte_type> _stats;
   std::vector<float> _centroid;
-  mutable std::vector<uint8_t> _cluster_codes;
-  [[no_unique_address]] mutable utils::Need<M == VectorMetric::L2Sqr,
-                                            std::vector<float>> _cluster_norms;
-  mutable size_t _cluster_filled = 0;
-  mutable std::vector<float> _res;
-  [[no_unique_address]] mutable utils::Need<M == VectorMetric::L2Sqr,
-                                            std::vector<float>> _dec;
+  // The stream's open pack: up to 32 unpacked codes, flushed when full and
+  // once, padded, at `Finish`.
+  std::vector<uint8_t> _lane_codes;
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
+                                    std::vector<float>> _lane_norms;
+  size_t _filled = 0;
+  std::vector<float> _res;
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
+                                    std::vector<float>> _dec;
   std::vector<uint8_t> _packed;
 };
 
@@ -528,7 +528,7 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
   }
 
   std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const final;
+    std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) const final;
 
   const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
   std::span<const float> Query() const noexcept { return _query; }
@@ -555,10 +555,10 @@ template<VectorMetric M>
 class ProductQuantizerReader final : public QuantizerReader {
  public:
   ProductQuantizerReader(std::shared_ptr<const ProductQuantizerCodebook<M>> cb,
-                         std::unique_ptr<IndexInput> pay_in)
-    : _cb{std::move(cb)}, _pay_in{std::move(pay_in)} {}
+                         std::unique_ptr<IndexInput> pay_in, uint64_t pay_base)
+    : _cb{std::move(cb)}, _pay_in{std::move(pay_in)}, _pay_base{pay_base} {}
 
-  void StartCluster(uint64_t pay_start, size_t num_docs,
+  void StartCluster(uint64_t first_lane, size_t num_docs,
                     const float* centroid) final {
     _n = num_docs;
     if (_n == 0) {
@@ -574,35 +574,53 @@ class ProductQuantizerReader final : public QuantizerReader {
     const float qc = ComputeDistance<VectorMetric::InnerProduct>(
       query.data(), centroid, static_cast<uint16_t>(query.size()));
 
-    const size_t nb = RoundUp(_n, kFastScanBbs);
-    const size_t packed_bytes = nb * nsq / 2;
-    const size_t norms_bytes =
-      M == VectorMetric::L2Sqr ? _n * sizeof(float) : 0;
-    const size_t total_bytes = packed_bytes + norms_bytes;
-    const byte_type* codes = _pay_in->ReadVolatile(pay_start, total_bytes);
-    if (!codes) {
-      _codes_buf.resize(total_bytes);
-      _pay_in->ReadData(pay_start, _codes_buf.data(), total_bytes);
-      codes = _codes_buf.data();
+    // The cluster's lanes span packs it may share with its neighbours: the
+    // whole span is one contiguous read, every lane is accumulated, and the
+    // out-of-cluster lanes at both edges are skipped by indexing -- a code's
+    // accumulation depends on nothing outside its own lane. The last pack is
+    // read only as far as the cluster's last lane, since norms past it may not
+    // have been written.
+    const size_t pack_bytes = kFastScanBbs * nsq / 2;
+    const size_t norm_size = M == VectorMetric::L2Sqr ? sizeof(float) : 0;
+    const size_t stride = pack_bytes + kFastScanBbs * norm_size;
+    const uint64_t last_lane = first_lane + _n - 1;
+    const uint64_t p0 = first_lane / kFastScanBbs;
+    const size_t packs = static_cast<size_t>(last_lane / kFastScanBbs - p0 + 1);
+    const size_t bytes = (packs - 1) * stride + pack_bytes +
+                         (last_lane % kFastScanBbs + 1) * norm_size;
+    const uint64_t at = _pay_base + p0 * stride;
+    const byte_type* base = _pay_in->ReadVolatile(at, bytes);
+    if (!base) {
+      _codes_buf.resize(bytes);
+      _pay_in->ReadData(at, _codes_buf.data(), bytes);
+      base = _codes_buf.data();
     }
-    _accu.resize(nb);
-    faiss::accumulate_to_mem(1, nb, static_cast<int>(nsq), codes,
-                             _cb->PackedIpLut(), _accu.data());
+    _accu.resize(packs * kFastScanBbs);
+    for (size_t p = 0; p != packs; ++p) {
+      faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(nsq),
+                               base + p * stride, _cb->PackedIpLut(),
+                               _accu.data() + p * kFastScanBbs);
+    }
 
+    const size_t lane0 = static_cast<size_t>(first_lane - p0 * kFastScanBbs);
     _scores.resize(_n);
     const float inv_a = 1.f / _cb->IpA();
     const float b = _cb->IpB();
     if constexpr (M == VectorMetric::L2Sqr) {
-      _norms.resize(_n);
-      std::memcpy(_norms.data(), codes + packed_bytes, norms_bytes);
       const float q2 = _cb->QueryNorm();
       for (size_t i = 0; i < _n; ++i) {
-        const float ip = static_cast<float>(_accu[i]) * inv_a + b;
-        _scores[i] = -(q2 - 2.f * qc - 2.f * ip + _norms[i]);
+        const size_t lane = lane0 + i;
+        const float ip = static_cast<float>(_accu[lane]) * inv_a + b;
+        float norm;
+        std::memcpy(&norm,
+                    base + (lane / kFastScanBbs) * stride + pack_bytes +
+                      (lane % kFastScanBbs) * sizeof(float),
+                    sizeof(float));
+        _scores[i] = -(q2 - 2.f * qc - 2.f * ip + norm);
       }
     } else {
       for (size_t i = 0; i < _n; ++i) {
-        _scores[i] = static_cast<float>(_accu[i]) * inv_a + b + qc;
+        _scores[i] = static_cast<float>(_accu[lane0 + i]) * inv_a + b + qc;
       }
     }
   }
@@ -615,8 +633,7 @@ class ProductQuantizerReader final : public QuantizerReader {
  private:
   std::shared_ptr<const ProductQuantizerCodebook<M>> _cb;
   std::unique_ptr<IndexInput> _pay_in;
-  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
-                                    std::vector<float>> _norms;
+  uint64_t _pay_base;
   std::vector<byte_type> _codes_buf;
   faiss::AlignedTable<uint16_t> _accu;
   std::vector<score_t> _scores;
@@ -625,9 +642,9 @@ class ProductQuantizerReader final : public QuantizerReader {
 
 template<VectorMetric M>
 std::unique_ptr<QuantizerReader> ProductQuantizerCodebook<M>::MakeReader(
-  std::unique_ptr<IndexInput> pay_in) const {
+  std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) const {
   return MakeReaderT<ProductQuantizerCodebook<M>, ProductQuantizerReader<M>>(
-    this, std::move(pay_in));
+    this, std::move(pay_in), pay_base);
 }
 
 template<VectorMetric M>
@@ -648,6 +665,9 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
       _storage{
         faiss::rabitq_utils::compute_per_vector_storage_size(nb_bits, _rd)},
       _ex_code_size{(static_cast<size_t>(_rd) * _ex_bits + 7) / 8},
+      _record{_storage + sizeof(float)},
+      _m{_rd / kFastScanBits},
+      _nsq{FastScanNsq(_rd / kFastScanBits)},
       _sign_stride{FastScanNsq(_rd / kFastScanBits) / 2} {
     GenerateSigns(_rd, kRaBitQRotationSeed, _signs);
     _stats.resize(sizeof(RaBitQStatsHeader));
@@ -665,39 +685,34 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void BeginCluster(size_t total_docs) final {
-    _sign_codes.assign(total_docs * _sign_stride, 0);
-    _aux.assign(total_docs * _storage, 0);
-    _cluster_cs.assign(total_docs, 0.f);
-    _filled = 0;
-  }
-
-  void EncodeCluster(IndexOutput& /*out*/, const float* vecs,
-                     size_t n) const final {
+  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
     SDB_ASSERT(_centroid.size() == _rd);
-    const size_t sign_stride = _sign_stride;
+    if (_lane_signs.empty()) {
+      _lane_signs.resize(kFastScanBbs * _sign_stride);
+      _lane_aux.resize(kFastScanBbs * _record);
+    }
     const float inv_rd_sqrt = 1.f / std::sqrt(static_cast<float>(_rd));
-    std::vector<float> rotated(_rd);
-    std::vector<float> residual(_rd);
+    _rotated.resize(_rd);
+    _residual.resize(_rd);
     for (size_t i = 0; i < n; ++i) {
-      RotateInto(_signs.data(), vecs + i * _d, rotated.data(), _d, _rd);
-      uint8_t* sign = _sign_codes.data() + (_filled + i) * sign_stride;
+      RotateInto(_signs.data(), vecs + i * _d, _rotated.data(), _d, _rd);
+      uint8_t* sign = _lane_signs.data() + _filled * _sign_stride;
+      std::memset(sign, 0, _sign_stride);
       float cs_sum = 0.f;
       for (uint32_t j = 0; j < _rd; ++j) {
-        residual[j] = rotated[j] - _centroid[j];
-        if (residual[j] > 0.f) {
+        _residual[j] = _rotated[j] - _centroid[j];
+        if (_residual[j] > 0.f) {
           faiss::rabitq_utils::set_bit_fastscan(sign, j);
           cs_sum += _centroid[j];
         }
       }
-      _cluster_cs[_filled + i] = (2.f * cs_sum - _centroid_sum) * inv_rd_sqrt;
-      uint8_t* aux = _aux.data() + (_filled + i) * _storage;
+      uint8_t* aux = _lane_aux.data() + _filled * _record;
       const faiss::rabitq_utils::SignBitFactorsWithError f =
         faiss::rabitq_utils::compute_vector_factors(
-          rotated.data(), _rd, _centroid.data(),
+          _rotated.data(), _rd, _centroid.data(),
           M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
                                    : faiss::MetricType::METRIC_INNER_PRODUCT,
           /*compute_error=*/_ex_bits > 0);
@@ -710,35 +725,25 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
           aux + sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
         faiss::rabitq_utils::ExtraBitsFactors ex;
         faiss::rabitq_multibit::quantize_ex_bits(
-          residual.data(), _rd, _nb_bits, ex_code, ex,
+          _residual.data(), _rd, _nb_bits, ex_code, ex,
           M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
                                    : faiss::MetricType::METRIC_INNER_PRODUCT,
           _centroid.data());
         std::memcpy(ex_code + _ex_code_size, &ex,
                     sizeof(faiss::rabitq_utils::ExtraBitsFactors));
       }
+      const float cs = (2.f * cs_sum - _centroid_sum) * inv_rd_sqrt;
+      std::memcpy(aux + _storage, &cs, sizeof(float));
+      if (++_filled == kFastScanBbs) {
+        FlushPack(out);
+      }
     }
-    _filled += n;
   }
 
-  void FinishCluster(IndexOutput& out) final {
-    if (_filled == 0) {
-      return;
+  void Finish(IndexOutput& out) final {
+    if (_filled != 0) {
+      FlushPack(out);
     }
-    const size_t m = _rd / kFastScanBits;
-    const size_t nsq = FastScanNsq(m);
-    const size_t nb = RoundUp(_filled, kFastScanBbs);
-    _packed.assign(nb * nsq / 2, 0);
-    faiss::pq4_pack_codes(_sign_codes.data(), _filled, m, nb, kFastScanBbs, nsq,
-                          _packed.data());
-    out.WriteData(_packed.data(), _packed.size());
-    out.WriteData(_aux.data(), _filled * _storage);
-    out.WriteData(reinterpret_cast<const byte_type*>(_cluster_cs.data()),
-                  _filled * sizeof(float));
-    _sign_codes.clear();
-    _aux.clear();
-    _cluster_cs.clear();
-    _packed.clear();
   }
 
   std::span<const byte_type> StatsBytes() const final {
@@ -754,22 +759,43 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   }
 
  private:
+  // A pack is the 32 lanes' packed sign codes followed by their per-lane
+  // records -- the faiss factors plus the centroid-sum term -- which is the
+  // block layout `get_block_aux_ptr` addresses. The stream's last pack pads
+  // its codes -- the scan reads all 32 lanes of them -- but not its records:
+  // those are addressed one lane at a time and a lane that holds no document
+  // is never read.
+  void FlushPack(IndexOutput& out) {
+    _packed.resize(kFastScanBbs * _nsq / 2);
+    faiss::pq4_pack_codes(_lane_signs.data(), _filled, _m, kFastScanBbs,
+                          kFastScanBbs, _nsq, _packed.data());
+    out.WriteData(_packed.data(), _packed.size());
+    out.WriteData(_lane_aux.data(), _filled * _record);
+    _filled = 0;
+  }
+
   uint32_t _d;
   uint32_t _rd;
   uint32_t _nb_bits;
   uint32_t _ex_bits;
   size_t _storage;
   size_t _ex_code_size;
+  size_t _record;
+  size_t _m;
+  size_t _nsq;
   size_t _sign_stride;
   std::vector<float> _signs;
   std::vector<float> _centroid;
   float _centroid_sum = 0.f;
   std::vector<byte_type> _stats;
-  mutable std::vector<uint8_t> _sign_codes;
-  mutable std::vector<uint8_t> _aux;
-  mutable std::vector<float> _cluster_cs;
-  mutable std::vector<uint8_t> _packed;
-  mutable size_t _filled = 0;
+  std::vector<float> _rotated;
+  std::vector<float> _residual;
+  // The stream's open pack: up to 32 unpacked sign codes and their records,
+  // flushed when full and once, partly padded, at `Finish`.
+  std::vector<uint8_t> _lane_signs;
+  std::vector<uint8_t> _lane_aux;
+  std::vector<uint8_t> _packed;
+  size_t _filled = 0;
 };
 
 template<VectorMetric M>
@@ -858,7 +884,7 @@ class RaBitQuantizerCodebook final : public QuantizerCodebook {
   }
 
   std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const final;
+    std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) const final;
 
   const std::vector<float>& Signs() const noexcept { return _stats->Signs(); }
   const std::vector<float>& RotatedQuery() const noexcept {
@@ -889,17 +915,19 @@ template<VectorMetric M>
 class RaBitQuantizerReader final : public QuantizerReader {
  public:
   RaBitQuantizerReader(std::shared_ptr<const RaBitQuantizerCodebook<M>> cb,
-                       std::unique_ptr<IndexInput> pay_in)
+                       std::unique_ptr<IndexInput> pay_in, uint64_t pay_base)
     : _cb{std::move(cb)},
       _pay_in{std::move(pay_in)},
+      _pay_base{pay_base},
       _rd{_cb->RotDim()},
       _nsq{FastScanNsq(_rd / kFastScanBits)},
       _ex_bits{_cb->NbBits() - 1},
       _storage{faiss::rabitq_utils::compute_per_vector_storage_size(
         _cb->NbBits(), _rd)},
-      _ex_code_size{(static_cast<size_t>(_rd) * _ex_bits + 7) / 8} {}
+      _ex_code_size{(static_cast<size_t>(_rd) * _ex_bits + 7) / 8},
+      _record{_storage + sizeof(float)} {}
 
-  void StartCluster(uint64_t pay_start, size_t num_docs,
+  void StartCluster(uint64_t first_lane, size_t num_docs,
                     const float* centroid) final {
     _n = num_docs;
     if (_n == 0) {
@@ -918,39 +946,55 @@ class RaBitQuantizerReader final : public QuantizerReader {
         ComputeDistance<VectorMetric::InnerProduct>(query.data(), centroid, d);
     }
 
-    const size_t nb = RoundUp(_n, kFastScanBbs);
-    const size_t packed_bytes = nb * _nsq / 2;
-    const size_t aux_bytes = _n * _storage;
-    const size_t cs_bytes = _n * sizeof(float);
-    const size_t total_bytes = packed_bytes + aux_bytes + cs_bytes;
-    const byte_type* buf = _pay_in->ReadVolatile(pay_start, total_bytes);
-    if (!buf) {
-      _buf.resize(total_bytes);
-      _pay_in->ReadData(pay_start, _buf.data(), total_bytes);
-      buf = _buf.data();
+    // The cluster's lanes span packs it may share with its neighbours: the
+    // whole span is one contiguous read, and the out-of-cluster lanes at both
+    // edges are skipped by indexing -- a lane's score depends on nothing
+    // outside itself. The last pack is read only as far as the cluster's last
+    // lane, since records past it may not have been written.
+    const size_t pack_bytes = kFastScanBbs * _nsq / 2;
+    const size_t stride = pack_bytes + kFastScanBbs * _record;
+    const uint64_t last_lane = first_lane + _n - 1;
+    const uint64_t p0 = first_lane / kFastScanBbs;
+    const size_t packs = static_cast<size_t>(last_lane / kFastScanBbs - p0 + 1);
+    const size_t bytes = (packs - 1) * stride + pack_bytes +
+                         (last_lane % kFastScanBbs + 1) * _record;
+    const uint64_t at = _pay_base + p0 * stride;
+    const byte_type* base = _pay_in->ReadVolatile(at, bytes);
+    if (!base) {
+      _buf.resize(bytes);
+      _pay_in->ReadData(at, _buf.data(), bytes);
+      base = _buf.data();
     }
-    const byte_type* codes = buf;
-    const byte_type* aux = buf + packed_bytes;
-    _cs.resize(_n);
-    std::memcpy(_cs.data(), buf + packed_bytes + aux_bytes, cs_bytes);
 
-    _accu.resize(nb);
-    faiss::accumulate_to_mem(1, nb, static_cast<int>(_nsq), codes,
-                             _cb->PackedLut(), _accu.data());
+    // Pass 1: the approximate score of a document depends only on its own code
+    // and record, so it is the same wherever the stream put it.
+    const size_t lane0 = static_cast<size_t>(first_lane - p0 * kFastScanBbs);
+    _accu.resize(packs * kFastScanBbs);
+    for (size_t p = 0; p != packs; ++p) {
+      faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_nsq),
+                               base + p * stride, _cb->PackedLut(),
+                               _accu.data() + p * kFastScanBbs);
+    }
 
     _scores.resize(_n);
     const float inv_a = 1.f / _cb->A();
     const float b = _cb->B();
     for (size_t i = 0; i < _n; ++i) {
-      const float normalized =
-        static_cast<float>(_accu[i]) * inv_a + b - _cs[i];
+      const size_t lane = lane0 + i;
+      const byte_type* rec = faiss::rabitq_utils::get_block_aux_ptr(
+        base, lane, kFastScanBbs, pack_bytes, stride, _record);
+      float cs;
+      std::memcpy(&cs, rec + _storage, sizeof(float));
+      const float normalized = static_cast<float>(_accu[lane]) * inv_a + b - cs;
       const auto* fac =
-        reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(
-          aux + i * _storage);
+        reinterpret_cast<const faiss::rabitq_utils::SignBitFactors*>(rec);
       _scores[i] = faiss::rabitq_utils::compute_1bit_adjusted_distance(
         normalized, *fac, qf, kRaBitQCentered, kRaBitQQueryBits, _rd);
     }
 
+    // Pass 2: the refine pool is a property of the CLUSTER -- one threshold
+    // over its whole score range, so the refined candidate set is exactly the
+    // one an uninterleaved cluster would have picked.
     if (_ex_bits > 0) {
       const size_t pool = kRaBitQRefinePool;
       float threshold;
@@ -971,10 +1015,11 @@ class RaBitQuantizerReader final : public QuantizerReader {
         threshold = *kth;
       }
       _sign_bits.resize((_rd + 7) / 8);
-      const size_t block_stride = (_nsq / 2) * kFastScanBbs;
       bool residual_ready = false;
       for (size_t i = 0; i < _n; ++i) {
-        const byte_type* rec = aux + i * _storage;
+        const size_t lane = lane0 + i;
+        const byte_type* rec = faiss::rabitq_utils::get_block_aux_ptr(
+          base, lane, kFastScanBbs, pack_bytes, stride, _record);
         const auto* fe =
           reinterpret_cast<const faiss::rabitq_utils::SignBitFactorsWithError*>(
             rec);
@@ -995,7 +1040,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
           residual_ready = true;
         }
         faiss::rabitq_utils::unpack_sign_bits_from_packed(
-          codes, kFastScanBbs, _nsq, i, block_stride, _sign_bits.data());
+          base, kFastScanBbs, _nsq, lane, stride, _sign_bits.data());
         const uint8_t* ex_code =
           rec + sizeof(faiss::rabitq_utils::SignBitFactorsWithError);
         const auto* ex_fac =
@@ -1026,12 +1071,13 @@ class RaBitQuantizerReader final : public QuantizerReader {
  private:
   std::shared_ptr<const RaBitQuantizerCodebook<M>> _cb;
   std::unique_ptr<IndexInput> _pay_in;
+  uint64_t _pay_base;
   size_t _rd;
   size_t _nsq;
   uint32_t _ex_bits;
   size_t _storage;
   size_t _ex_code_size;
-  std::vector<float> _cs;
+  size_t _record;
   std::vector<float> _rot_centroid;
   std::vector<float> _q_res;
   std::vector<uint8_t> _sign_bits;
@@ -1044,9 +1090,9 @@ class RaBitQuantizerReader final : public QuantizerReader {
 
 template<VectorMetric M>
 std::unique_ptr<QuantizerReader> RaBitQuantizerCodebook<M>::MakeReader(
-  std::unique_ptr<IndexInput> pay_in) const {
+  std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) const {
   return MakeReaderT<RaBitQuantizerCodebook<M>, RaBitQuantizerReader<M>>(
-    this, std::move(pay_in));
+    this, std::move(pay_in), pay_base);
 }
 
 template<VectorMetric M>
@@ -1134,8 +1180,8 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
   const std::shared_ptr<const QuantizerCodebook>& codebook,
-  std::unique_ptr<IndexInput> pay_in) {
-  return codebook ? codebook->MakeReader(std::move(pay_in)) : nullptr;
+  std::unique_ptr<IndexInput> pay_in, uint64_t pay_base) {
+  return codebook ? codebook->MakeReader(std::move(pay_in), pay_base) : nullptr;
 }
 
 }  // namespace irs

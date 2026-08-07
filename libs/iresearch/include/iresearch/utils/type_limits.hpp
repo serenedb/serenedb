@@ -43,7 +43,7 @@ constexpr doc_id_t eof() noexcept {
 }
 constexpr bool eof(doc_id_t id) noexcept { return eof() == id; }
 constexpr doc_id_t invalid() noexcept { return 0; }
-constexpr doc_id_t(min)() noexcept { return 1; }
+constexpr doc_id_t min() noexcept { return 1; }
 constexpr bool valid(doc_id_t id) noexcept { return invalid() != id; }
 
 inline constexpr doc_id_t kBlockSize = 128;
@@ -73,7 +73,7 @@ constexpr uint32_t eof() noexcept {
   return std::numeric_limits<uint32_t>::max();
 }
 constexpr bool eof(uint32_t pos) noexcept { return eof() == pos; }
-constexpr uint32_t(min)() noexcept { return 1; }
+constexpr uint32_t min() noexcept { return 1; }
 
 inline constexpr uint32_t kBlockSize = 128;
 

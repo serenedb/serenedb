@@ -22,7 +22,9 @@
 
 #pragma once
 
-#include "automaton.hpp"
+#include <cstdint>
+#include <cstring>
+
 #include "string.hpp"
 
 namespace irs {
@@ -42,19 +44,5 @@ enum WildcardMatch : uint8_t {
   kAnyChr = '_',   // match a single arbitrary character
   kEscape = '\\',  // escape control symbol, e.g. "\%" issues literal "%"
 };
-
-////////////////////////////////////////////////////////////////////////////////
-/// @brief instantiates minimal DFA from a specified UTF-8 encoded wildcard
-///        sequence
-/// @returns DFA accpeting a specified wildcard expression
-/// @note control symbols are WildcardMatch
-/// @note non UTF-8 bytes transition instatiated as bytes
-/// @note invalid last escape, instatiate transition as byte
-////////////////////////////////////////////////////////////////////////////////
-automaton FromWildcard(bytes_view expr);
-
-inline automaton FromWildcard(std::string_view expr) {
-  return FromWildcard(ViewCast<byte_type>(expr));
-}
 
 }  // namespace irs

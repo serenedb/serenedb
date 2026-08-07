@@ -202,7 +202,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   return result;
 }
 
-class IvfTermIterator final : public TermIterator {
+class IvfTermIterator final : public TermOnlyIterator {
  public:
   static constexpr size_t kWidth = kCentroidTermWidth;
 
@@ -228,8 +228,6 @@ class IvfTermIterator final : public TermIterator {
     _cur = _next++;
     return true;
   }
-
-  void read() noexcept final {}
 
   DocIterator::ptr postings(IndexFeatures /*features*/) const final {
     const doc_id_t* p = _cluster_docs.data() + _cluster_offsets[_cur];
@@ -337,15 +335,18 @@ IvfTermReader::IvfTermReader(
 
 IvfTermReader::~IvfTermReader() = default;
 
-TermIterator::ptr IvfTermReader::iterator() const {
+TermOnlyIterator::ptr IvfTermReader::iterator() const {
   _it = std::make_unique<IvfTermIterator>(_cluster_docs, _cluster_offsets);
-  return memory::to_managed<TermIterator>(*_it);
+  return memory::to_managed<TermOnlyIterator>(*_it);
 }
 
 void IvfTermReader::WriteTermPayload(IndexOutput& out,
                                      std::span<const doc_id_t> docs) {
   SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
   const size_t cluster = _term_idx++;
+  if (cluster == 0) {
+    _pay_base = out.Position();
+  }
   if (_cluster_centroids != nullptr) {
     const auto it = _cluster_centroids->find(static_cast<uint32_t>(cluster));
     if (it != _cluster_centroids->end()) {
@@ -357,7 +358,6 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   if (n == 0) {
     return;
   }
-  _qw->BeginCluster(n);
   ColumnReader::VectorScratch scratch{_vectors->Type()};
   auto scan = _vectors->InitScan(*_ctx);
   for (size_t b = 0; b < n; b += STANDARD_VECTOR_SIZE) {
@@ -371,12 +371,14 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
     if (_normalize) {
       NormalizeRows(vecs, m, _d);
     }
-    _qw->EncodeCluster(out, vecs, m);
+    _qw->Encode(out, vecs, m);
   }
-  _qw->FinishCluster(out);
 }
 
-void IvfTermReader::Finish(IndexOutput& /*out*/) { SDB_ASSERT(_qw); }
+void IvfTermReader::Finish(IndexOutput& out) {
+  SDB_ASSERT(_qw);
+  _qw->Finish(out);
+}
 
 void IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx) {
   SDB_ASSERT(_idx != nullptr,
@@ -407,6 +409,7 @@ void IvfWriter::FlushTree() {
                                            : std::span<const byte_type>{};
   const uint64_t stats_offset = out.Position();
   out.WriteU64(stats.size());
+  out.WriteU64(_reader != nullptr ? _reader->PayBase() : 0);
   if (!stats.empty()) {
     out.WriteData(stats.data(), stats.size());
   }

@@ -28,7 +28,7 @@ namespace {
 class SearchRemoveQuery : public irs::QueryBuilder {
  public:
   SearchRemoveQuery(const irs::SubReader& segment,
-                    const SearchRemoveFilterBase& filter)
+                    const SearchRemoveFilter& filter)
     : irs::QueryBuilder{segment}, _filter{filter} {}
 
   irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx,
@@ -41,12 +41,12 @@ class SearchRemoveQuery : public irs::QueryBuilder {
   irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
 
  private:
-  const SearchRemoveFilterBase& _filter;
+  const SearchRemoveFilter& _filter;
 };
 
 }  // namespace
 
-irs::QueryBuilder::ptr SearchRemoveFilterBase::PrepareSegment(
+irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
   const irs::SubReader& segment, const irs::PrepareContext& ctx) const {
   if (_pks.empty()) {
     return irs::QueryBuilder::Empty();
@@ -55,7 +55,7 @@ irs::QueryBuilder::ptr SearchRemoveFilterBase::PrepareSegment(
                                                       *this);
 }
 
-irs::DocIterator::ptr SearchRemoveFilterBase::MakeIterator(
+irs::DocIterator::ptr SearchRemoveFilter::MakeIterator(
   const irs::SubReader& segment, const irs::ExecutionContext& ctx) const {
   _segment = &segment;
   _segment_mask = segment.docs_mask();
@@ -65,7 +65,7 @@ irs::DocIterator::ptr SearchRemoveFilterBase::MakeIterator(
   _pos = 0;
   _doc = irs::doc_limits::invalid();
   return irs::memory::to_managed<irs::DocIterator>(
-    const_cast<SearchRemoveFilterBase&>(*this));
+    const_cast<SearchRemoveFilter&>(*this));
 }
 
 irs::doc_id_t SearchRemoveFilter::advance() {
@@ -111,7 +111,7 @@ irs::doc_id_t SearchRemoveFilter::advance() {
       return false;
     };
 
-    _pk_field->read_documents(pk, acceptor);
+    _pk_field->ReadDocs(pk, acceptor);
 
     if (irs::doc_limits::eof(doc)) {
       ++_pos;

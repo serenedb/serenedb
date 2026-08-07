@@ -47,15 +47,12 @@
 namespace irs::tests {
 
 // Production code reserves norm ids on the catalog side and the writer
-// asserts `norm_column_options` returned a valid id; iresearch gtests have
+// asserts `norm_column_id` returned a valid id; iresearch gtests have
 // no catalog, so this builds a fresh monotonic allocator per call.
-inline NormColumnOptionsProvider MakeNormColumnOptionsProvider() {
+inline NormColumnIdProvider MakeNormColumnIdProvider() {
   return [next = std::make_shared<std::atomic<field_id>>(0)](
-           field_id /*id*/) -> NormColumnOptions {
-    return {
-      .id = next->fetch_add(1, std::memory_order_relaxed),
-      .row_group_size = DEFAULT_ROW_GROUP_SIZE,
-    };
+           field_id /*id*/) -> field_id {
+    return next->fetch_add(1, std::memory_order_relaxed);
   };
 }
 
@@ -72,7 +69,7 @@ inline IndexWriterOptions DefaultWriterOptions() {
   IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
-  opts.norm_column_options = MakeNormColumnOptionsProvider();
+  opts.norm_column_id = MakeNormColumnIdProvider();
   return opts;
 }
 inline IndexReaderOptions DefaultReaderOptions() {

@@ -43,6 +43,11 @@ struct BenchConfig {
   size_t segment_mem_max = 1 << 28;
 };
 
+struct EmitResult {
+  size_t count = 0;
+  size_t hash = 0;
+};
+
 class Executor {
  public:
   explicit Executor(std::string_view path, const BenchConfig& config = {});
@@ -50,6 +55,9 @@ class Executor {
   size_t ExecuteTopK(size_t k, std::string_view query);
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
   size_t ExecuteCount(std::string_view query);
+  EmitResult ExecuteEmitDocs(std::string_view query, bool checksum = false);
+  EmitResult ExecuteEmitScoredDocs(std::string_view query,
+                                   bool checksum = false);
 
   const irs::DirectoryReader& GetReader() const { return _reader; }
   auto GetResults(this auto& self) {
@@ -65,7 +73,12 @@ class Executor {
     std::memset(static_cast<void*>(_results.data()), 0,
                 size * sizeof(_results[0]));
   }
+
+  static constexpr size_t kEmitWindow = STANDARD_VECTOR_SIZE;
+
   std::vector<irs::ScoreDoc> _results;
+  std::array<irs::doc_id_t, kEmitWindow> _emit_docs;
+  std::array<irs::score_t, kEmitWindow> _emit_scores;
   size_t _result_count{0};
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};

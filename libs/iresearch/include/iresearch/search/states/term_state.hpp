@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 
 namespace irs {
 
@@ -30,11 +30,11 @@ struct TermReader;
 
 // Cached per reader term state
 struct TermState {
-  TermState(const TermReader* reader, SeekCookie::ptr cookie) noexcept
-    : reader{reader}, cookie{std::move(cookie)} {}
+  TermState(const TermReader* reader, const PostingMeta& cookie) noexcept
+    : reader{reader}, cookie{cookie} {}
 
-  const TermReader* reader = nullptr;
-  SeekCookie::ptr cookie;
+  const TermReader* reader;
+  PostingMeta cookie;
 };
 
 }  // namespace irs

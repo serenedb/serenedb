@@ -607,8 +607,8 @@ DocIterator::ptr ByNestedQuery::Execute(const ExecutionContext& ctx,
   const auto* scorer = stats.GetScorer();
 
   ExecutionContext child_ctx{ctx};
-  // TODO(mbkkt) wand for nested?
-  child_ctx.wand = {};
+  // TODO(mbkkt) score pruning for nested?
+  child_ctx.score_prune = false;
 
   auto child = _child->Execute(
     child_ctx, stats.ChildCount() != 0 ? stats.Child(0) : StatsBuffer::Empty());

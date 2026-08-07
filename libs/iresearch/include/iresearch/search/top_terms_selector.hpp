@@ -89,10 +89,11 @@ struct TopTermState : TopTerm<T> {
 
   template<typename SelectorState>
   void emplace(const SelectorState& state) {
-    SDB_ASSERT(state.segment && state.docs_count && state.field);
+    SDB_ASSERT(state.segment && state.terms && state.field);
 
     const auto* segment = state.segment;
-    const auto docs_count = *state.docs_count;
+    const auto& meta = state.terms->cookie();
+    const auto docs_count = meta.docs_count;
 
     if (segments.empty() || segments.back().segment != segment) {
       segments.emplace_back(*segment, *state.field, docs_count);
@@ -101,7 +102,7 @@ struct TopTermState : TopTerm<T> {
       ++segment.terms_count;
       segment.docs_count += docs_count;
     }
-    terms.emplace_back(state.terms->cookie());
+    terms.emplace_back(meta);
   }
 
   template<typename Visitor>
@@ -116,7 +117,7 @@ struct TopTermState : TopTerm<T> {
   }
 
   std::vector<SegmentState> segments;
-  std::vector<SeekCookie::ptr> terms;
+  std::vector<PostingMeta> terms;
 };
 
 template<typename State,
@@ -138,7 +139,7 @@ class TopTermsSelector : private util::Noncopyable {
   // `state` state containing this scored term
   // `terms` segment term-iterator positioned at the current term
   void Prepare(const SubReader& segment, const TermReader& field,
-               SeekTermIterator& terms) noexcept {
+               TermIterator& terms) noexcept {
     _state.segment = &segment;
     _state.field = &field;
     _state.terms = &terms;
@@ -150,18 +151,10 @@ class TopTermsSelector : private util::Noncopyable {
       static constexpr bytes_view kNoTerm;
       _state.term = &kNoTerm;
     }
-
-    if (auto* meta = irs::get<TermMeta>(terms)) [[likely]] {
-      _state.docs_count = &meta->docs_count;
-    } else {
-      static constexpr doc_id_t kNoDocs = 0;
-      _state.docs_count = &kNoDocs;
-    }
   }
 
   // Collect current term
   bool Visit(const key_type& key) {
-    _state.terms->read();
     const auto term = *_state.term;
 
     if (_heap.Full() && !_comparer(_heap.Min(), key, term)) {
@@ -187,9 +180,8 @@ class TopTermsSelector : private util::Noncopyable {
   struct SelectorState {
     const SubReader* segment{};
     const TermReader* field{};
-    SeekTermIterator* terms{};
+    TermIterator* terms{};
     const bytes_view* term{};
-    const uint32_t* docs_count{};
   };
 
   [[no_unique_address]] comparer_type _comparer;

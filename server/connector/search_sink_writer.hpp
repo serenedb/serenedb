@@ -56,7 +56,7 @@ class DataChunk;
 }  // namespace duckdb
 namespace sdb::connector {
 
-class SearchRemoveFilterBase;
+class SearchRemoveFilter;
 
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
@@ -183,7 +183,7 @@ class SearchSinkInsertBaseImpl {
     template<typename T>
     void SetNumericValue(T value);
 
-    void PrepareForBooleanValue();
+    void PrepareForBooleanValue(irs::field_id true_id, irs::field_id false_id);
     void SetBooleanValue(bool value);
 
     void PrepareForNullValue();
@@ -192,6 +192,8 @@ class SearchSinkInsertBaseImpl {
     search::AnalyzerImpl::CacheType::ptr analyzer;
     catalog::Tokenizer::TokenizerWrapper string_analyzer;
     irs::field_id id{irs::field_limits::invalid()};
+    irs::field_id true_id{irs::field_limits::invalid()};
+    irs::field_id false_id{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
     irs::StoreAttr own_store;
     const irs::StoreAttr* store_attr = nullptr;
@@ -235,6 +237,8 @@ class SearchSinkInsertBaseImpl {
     Field numeric_field;
     Field bool_field;
     Field null_field;
+    irs::field_id json_null_id = irs::field_limits::invalid();
+    irs::field_id sql_null_id = irs::field_limits::invalid();
     irs::field_id tokenizer_column = irs::field_limits::invalid();
 
     void InitForExpression(irs::field_id entry_field_id,
@@ -280,7 +284,7 @@ class SearchSinkDeleteBaseImpl {
 
  protected:
   irs::IndexWriter::Transaction& _trx;
-  std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
+  std::shared_ptr<SearchRemoveFilter> _remove_filter;
 };
 
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
@@ -289,7 +293,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   DuckDBSearchSinkInsertWriter(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> indexed_columns,
-    EntryInfoProvider&& entry_info_provider = NoEntryInfoProvider(),
+    EntryInfoProvider&& entry_info_provider,
     std::vector<IndexedExpression>&& indexed_exprs = {},
     PkPolicy pk_policy = {})
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),

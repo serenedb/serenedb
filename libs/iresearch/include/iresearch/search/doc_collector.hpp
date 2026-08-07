@@ -86,7 +86,7 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
 }
 
 inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
-                            const Scorer& scorer, size_t k, WandContext wand,
+                            const Scorer& scorer, size_t k, bool score_prune,
                             std::span<ScoreDoc> hits) {
   SDB_ASSERT(BlockSize(k) == hits.size());
 
@@ -112,7 +112,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
       continue;
     }
 
-    auto it = query->Execute({.wand = wand}, stats);
+    auto it = query->Execute({.score_prune = score_prune}, stats);
 
     auto score_func = it->PrepareScore({
       .scorer = &scorer,

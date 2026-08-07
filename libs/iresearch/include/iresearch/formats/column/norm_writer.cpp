@@ -189,7 +189,6 @@ void NormColumnWriter::FlushRowGroup() {
   const uint8_t byte_size = PickByteSize(_rg_max);
   NormRowGroupMeta ptr{
     .byte_size = byte_size,
-    .row_count = _filled,
     .max = _rg_max,
     .sum = _rg_sum,
     .non_zero_count = _rg_non_zero,

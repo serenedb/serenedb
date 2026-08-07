@@ -36,7 +36,6 @@ class VariadicPhraseQuery;
 class NGramSimilarityQuery;
 struct PosAttr;
 struct OffsAttr;
-struct SeekCookie;
 struct SubReader;
 struct TermReader;
 
@@ -44,7 +43,7 @@ struct TermReader;
 namespace sdb::connector {
 
 struct FilterEntry {
-  std::variant<const irs::SeekCookie*, const irs::FixedPhraseQuery*,
+  std::variant<const irs::PostingMeta*, const irs::FixedPhraseQuery*,
                const irs::VariadicPhraseQuery*,
                const irs::NGramSimilarityQuery*>
     filter;
@@ -59,7 +58,7 @@ struct FilterEntry {
 struct FieldState {
   const irs::TermReader* reader = nullptr;
   std::vector<FilterEntry> entries;
-  containers::FlatHashSet<const irs::SeekCookie*> seen_cookies;
+  containers::FlatHashSet<const irs::PostingMeta*> seen_cookies;
 
   void Clear() noexcept {
     reader = nullptr;

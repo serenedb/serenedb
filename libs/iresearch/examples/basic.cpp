@@ -419,16 +419,9 @@ int main() {
   irs::IndexWriterOptions options;
   options.db = &Db();
   options.reader_options.db = &Db();
-  options.column_options = [](irs::field_id) -> irs::ColumnOptions {
-    return {.row_group_size = DEFAULT_ROW_GROUP_SIZE};
-  };
-  options.norm_column_options =
-    [next = std::make_shared<std::atomic<irs::field_id>>(0)](
-      irs::field_id) -> irs::NormColumnOptions {
-    return {
-      .id = next->fetch_add(1, std::memory_order_relaxed),
-      .row_group_size = DEFAULT_ROW_GROUP_SIZE,
-    };
+  options.norm_column_id = [next = std::make_shared<std::atomic<irs::field_id>>(
+                              0)](irs::field_id) -> irs::field_id {
+    return next->fetch_add(1, std::memory_order_relaxed);
   };
   auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate, options);
 

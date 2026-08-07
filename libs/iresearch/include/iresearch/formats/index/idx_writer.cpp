@@ -151,7 +151,7 @@ void IdxWriter::Commit() {
         obj.WriteProperty<uint64_t>(4, "total_doc_freq", e.meta.total_doc_freq);
         obj.WriteProperty<uint64_t>(5, "total_term_freq",
                                     e.meta.total_term_freq);
-        obj.WriteProperty<bool>(6, "has_wand", e.meta.has_wand);
+        obj.WriteProperty<bool>(6, "has_score_bounds", e.meta.has_score_bounds);
         obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
         obj.WriteProperty<uint64_t>(8, "norm", e.meta.norm);
       });

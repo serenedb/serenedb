@@ -60,13 +60,12 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start;
+  uint64_t pay_base;
   {
     MemoryIndexOutput out{file};
-    pay_start = out.Position();
-    writer->BeginCluster(3);
-    writer->EncodeCluster(out, points.data(), 3);
-    writer->FinishCluster(out);
+    pay_base = out.Position();
+    writer->Encode(out, points.data(), 3);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -76,10 +75,10 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
   auto codebook = stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_base);
   EXPECT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, 3, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, 3, centroid.data());
 
   std::array<score_t, 3> scores{};
   reader->ComputeBlock(0, 3, scores.data());
@@ -114,13 +113,12 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start;
+  uint64_t pay_base;
   {
     MemoryIndexOutput out{file};
-    pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    pay_base = out.Position();
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -132,10 +130,10 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_base);
   ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::array<score_t, n> scores{};
   reader->ComputeBlock(0, n, scores.data());
@@ -168,13 +166,12 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start;
+  uint64_t pay_base;
   {
     MemoryIndexOutput out{file};
-    pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    pay_base = out.Position();
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -186,10 +183,10 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_base);
   ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::array<score_t, n> scores{};
   reader->ComputeBlock(0, n, scores.data());
@@ -240,13 +237,12 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start;
+  uint64_t pay_base;
   {
     MemoryIndexOutput out{file};
-    pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    pay_base = out.Position();
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -257,10 +253,10 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_base);
   ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::array<score_t, n> scores{};
   reader->ComputeBlock(0, n, scores.data());
@@ -288,13 +284,12 @@ std::vector<score_t> RaBitQRoundtrip(uint32_t d, uint32_t nb_bits,
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start;
+  uint64_t pay_base;
   {
     MemoryIndexOutput out{file};
-    pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    pay_base = out.Position();
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -304,10 +299,10 @@ std::vector<score_t> RaBitQRoundtrip(uint32_t d, uint32_t nb_bits,
   auto codebook = stats->MakeCodebook(query);
   EXPECT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_base);
   EXPECT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::vector<score_t> scores(n);
   reader->ComputeBlock(0, n, scores.data());
@@ -375,20 +370,17 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start1;
-  uint64_t pay_start2;
+  uint64_t pay_base;
   {
+    // Both clusters share one fast-scan pack: the stream is continuous and
+    // only the lane a cluster starts at tells them apart.
     MemoryIndexOutput out{file};
-    pay_start1 = out.Position();
+    pay_base = out.Position();
     writer->SetClusterCentroid(c1.data());
-    writer->BeginCluster(2);
-    writer->EncodeCluster(out, points1.data(), 2);
-    writer->FinishCluster(out);
-    pay_start2 = out.Position();
+    writer->Encode(out, points1.data(), 2);
     writer->SetClusterCentroid(c2.data());
-    writer->BeginCluster(2);
-    writer->EncodeCluster(out, points2.data(), 2);
-    writer->FinishCluster(out);
+    writer->Encode(out, points2.data(), 2);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -400,14 +392,14 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_base);
   ASSERT_NE(reader, nullptr);
 
   std::array<score_t, 4> scores{};
-  reader->StartCluster(pay_start1, 2, c1.data());
+  reader->StartCluster(/*first_lane=*/0, 2, c1.data());
   reader->ComputeBlock(0, 2, scores.data());
-  reader->StartCluster(pay_start2, 2, c2.data());
+  reader->StartCluster(/*first_lane=*/2, 2, c2.data());
   reader->ComputeBlock(0, 2, scores.data() + 2);
 
   EXPECT_GT(scores[0], scores[1]);
@@ -562,20 +554,17 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start1;
-  uint64_t pay_start2;
+  uint64_t pay_base;
   {
+    // Both clusters share one fast-scan pack: the stream is continuous and
+    // only the lane a cluster starts at tells them apart.
     MemoryIndexOutput out{file};
-    pay_start1 = out.Position();
+    pay_base = out.Position();
     writer->SetClusterCentroid(c1.data());
-    writer->BeginCluster(2);
-    writer->EncodeCluster(out, points1.data(), 2);
-    writer->FinishCluster(out);
-    pay_start2 = out.Position();
+    writer->Encode(out, points1.data(), 2);
     writer->SetClusterCentroid(c2.data());
-    writer->BeginCluster(2);
-    writer->EncodeCluster(out, points2.data(), 2);
-    writer->FinishCluster(out);
+    writer->Encode(out, points2.data(), 2);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -587,14 +576,14 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_base);
   ASSERT_NE(reader, nullptr);
 
   std::array<score_t, 4> scores{};
-  reader->StartCluster(pay_start1, 2, c1.data());
+  reader->StartCluster(/*first_lane=*/0, 2, c1.data());
   reader->ComputeBlock(0, 2, scores.data());
-  reader->StartCluster(pay_start2, 2, c2.data());
+  reader->StartCluster(/*first_lane=*/2, 2, c2.data());
   reader->ComputeBlock(0, 2, scores.data() + 2);
 
   EXPECT_GT(scores[0], scores[1]);
@@ -630,13 +619,12 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
 
   SimpleMemoryAccounter memory;
   MemoryFile file{memory};
-  uint64_t pay_start;
+  uint64_t pay_base;
   {
     MemoryIndexOutput out{file};
-    pay_start = out.Position();
-    writer->BeginCluster(n);
-    writer->EncodeCluster(out, points.data(), n);
-    writer->FinishCluster(out);
+    pay_base = out.Position();
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
     out.Flush();
   }
 
@@ -647,10 +635,10 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   auto codebook = stats->MakeCodebook(query);
   ASSERT_NE(codebook, nullptr);
 
-  auto reader =
-    MakeQuantizerReader(codebook, std::make_unique<MemoryIndexInput>(file));
+  auto reader = MakeQuantizerReader(
+    codebook, std::make_unique<MemoryIndexInput>(file), pay_base);
   ASSERT_NE(reader, nullptr);
-  reader->StartCluster(pay_start, n, centroid.data());
+  reader->StartCluster(/*first_lane=*/0, n, centroid.data());
 
   std::vector<score_t> scores(n);
   reader->ComputeBlock(0, n, scores.data());

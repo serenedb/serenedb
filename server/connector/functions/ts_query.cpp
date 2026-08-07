@@ -87,6 +87,26 @@ bool HasTokenizerModifier(const duckdb::LogicalType& type) {
   return mod && mod->type().id() == duckdb::LogicalTypeId::VARCHAR;
 }
 
+bool HasSlopModifier(const duckdb::LogicalType& type) {
+  const auto* mod = TryGetTypeModifier(type);
+  return mod && mod->type().id() == duckdb::LogicalTypeId::BIGINT;
+}
+
+// DECIMAL/DOUBLE -> BIGINT rounds even under a strict cast, so
+// integrality is enforced by an exact round-trip: 2.0 passes, 1.5
+// errors instead of silently becoming 2.
+bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
+  if (v.IsNull() || !v.type().IsNumeric() ||
+      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
+                          /*error_message=*/nullptr, /*strict=*/true)) {
+    return false;
+  }
+  duckdb::Value back;
+  return out.DefaultTryCastAs(v.type(), back,
+                              /*error_message=*/nullptr, /*strict=*/false) &&
+         duckdb::Value::NotDistinctFrom(back, v);
+}
+
 TSQueryCastData ReadTargetBoost(const duckdb::LogicalType& target) {
   TSQueryCastData data;
   const auto* mod = TryGetTypeModifier(target);
@@ -102,6 +122,13 @@ bool ThrowingTokenizeCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("::tokenize(...) is only meaningful inside an `@@` match "
             "against an inverted-indexed column."));
+}
+
+bool ThrowingSlopCast(duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
+                      duckdb::CastParameters&) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                  ERR_MSG("::slop(N) is only meaningful inside an `@@` match "
+                          "against an inverted-indexed column."));
 }
 
 struct TSQueryStructWriter {
@@ -185,6 +212,9 @@ duckdb::BoundCastInfo BindTSQueryFromStringCast(
   if (HasTokenizerModifier(target)) {
     return duckdb::BoundCastInfo(ThrowingTokenizeCast);
   }
+  if (HasSlopModifier(target)) {
+    return duckdb::BoundCastInfo(ThrowingSlopCast);
+  }
   return {TSQueryFromStringCast,
           duckdb::make_uniq<TSQueryCastData>(ReadTargetBoost(target))};
 }
@@ -210,6 +240,9 @@ duckdb::BoundCastInfo BindTSQueryBoostCast(duckdb::BindCastInput&,
                                            const duckdb::LogicalType& target) {
   if (HasTokenizerModifier(source) || HasTokenizerModifier(target)) {
     return duckdb::BoundCastInfo(ThrowingTokenizeCast);
+  }
+  if (HasSlopModifier(source) || HasSlopModifier(target)) {
+    return duckdb::BoundCastInfo(ThrowingSlopCast);
   }
   return {TSQueryBoostCast,
           duckdb::make_uniq<TSQueryCastData>(ReadTargetBoost(target))};
@@ -237,6 +270,9 @@ duckdb::BoundCastInfo BindTSQueryToVarcharCast(
   const duckdb::LogicalType&) {
   if (HasTokenizerModifier(source)) {
     return duckdb::BoundCastInfo(ThrowingTokenizeCast);
+  }
+  if (HasSlopModifier(source)) {
+    return duckdb::BoundCastInfo(ThrowingSlopCast);
   }
   return duckdb::BoundCastInfo(TSQueryToVarcharCast);
 }
@@ -414,6 +450,41 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       auto type = MakeModifierTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
       info->modifiers.emplace_back(std::move(factor));
+      type.SetExtensionInfo(std::move(info));
+      return type;
+    });
+
+  // `slop(<budget>)` parameterized type: parallel to tokenize/boost,
+  // with a BIGINT modifier. The budget has no struct child to fold
+  // into, so every slop-modifier cast throws at runtime (see the
+  // HasSlopModifier guards in the cast binders); the surviving cast
+  // is dispatched by the filter builder, which consumes the budget
+  // on phrase leaves and rejects it everywhere else.
+  loader.RegisterType(
+    std::string{kSlopTypeName}, MakeTSQueryType(),
+    +[](duckdb::BindLogicalTypeInput& input) -> duckdb::LogicalType {
+      const auto& modifiers = input.modifiers;
+      if (modifiers.size() != 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("slop(<budget>) requires exactly one integer argument"));
+      }
+      const auto raw = modifiers[0].GetValue();
+      duckdb::Value budget;
+      if (!TryCastExactInt64(raw, budget)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("slop() budget must be a non-null integer, "
+                                "got ",
+                                raw.ToString()));
+      }
+      if (budget.GetValue<int64_t>() < 0) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("slop() budget must be >= 0, got ",
+                                budget.GetValue<int64_t>()));
+      }
+      auto type = MakeModifierTSQueryType();
+      auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
+      info->modifiers.emplace_back(std::move(budget));
       type.SetExtensionInfo(std::move(info));
       return type;
     });

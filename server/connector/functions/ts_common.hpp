@@ -25,6 +25,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -50,6 +51,7 @@ namespace sdb::connector {
 struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
+  irs::PosAttr::value_t slop = 0;
   const ColumnGetter& column_getter;
   const ExpressionGetter* expr_getter = nullptr;
   duckdb::column_binding_map_t<SearchColumnInfo>& column_cache;
@@ -64,6 +66,7 @@ struct FilterContext {
     return {
       .negated = negated,
       .boost = boost,
+      .slop = slop,
       .column_getter = column_getter,
       .expr_getter = expr_getter,
       .column_cache = column_cache,
@@ -80,6 +83,24 @@ struct FilterContext {
     return {
       .negated = negated,
       .boost = boost * factor,
+      .slop = slop,
+      .column_getter = column_getter,
+      .expr_getter = expr_getter,
+      .column_cache = column_cache,
+      .expr_cache = expr_cache,
+      .identity = identity,
+      .tokenizer = tokenizer,
+      .client_context = client_context,
+      .scored_terms_limit = scored_terms_limit,
+      .levenshtein_max_terms = levenshtein_max_terms,
+    };
+  }
+
+  FilterContext WithSlop(irs::PosAttr::value_t value) const {
+    return {
+      .negated = negated,
+      .boost = boost,
+      .slop = value,
       .column_getter = column_getter,
       .expr_getter = expr_getter,
       .column_cache = column_cache,
@@ -291,5 +312,6 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name);
 
 std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type);
 std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type);
+std::optional<int64_t> TryGetSlopModifier(const duckdb::LogicalType& type);
 
 }  // namespace sdb::connector

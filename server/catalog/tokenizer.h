@@ -47,11 +47,6 @@ namespace sdb::basics {
 class JsonSink;
 
 }  // namespace sdb::basics
-namespace sdb::catalog::persistence {
-
-struct TokenizerData;
-
-}  // namespace sdb::catalog::persistence
 namespace sdb::catalog {
 
 // One text-search dictionary, in the form a catalog entry is built from. duckdb
@@ -63,6 +58,8 @@ namespace sdb::catalog {
 // entry, because duckdb's CreateInfo has nowhere to put them.
 class CreateTokenizerInfo final : public duckdb::CreateInfo {
  public:
+  CreateTokenizerInfo()
+    : duckdb::CreateInfo{duckdb::CatalogType::TOKENIZER_ENTRY} {}
   // Returns a built analyzer to the pool of the definition it came from, so a
   // per-row tokenize does not rebuild one. A null owner means the analyzer was
   // not pooled (the built-in string tokenizer, which has no definition).
@@ -95,13 +92,12 @@ class CreateTokenizerInfo final : public duckdb::CreateInfo {
 
   uint32_t GetNormRowGroupSize() const noexcept { return _norm_row_group_size; }
 
-  persistence::TokenizerData ToData() const;
   void Serialize(duckdb::Serializer& sink) const final;
   void WriteJson(basics::JsonSink& sink) const;
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
 
-  static std::shared_ptr<CreateTokenizerInfo> Deserialize(
-    duckdb::Deserializer& src, ObjectId id, ObjectId schema_id);
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
 
   ObjectId GetId() const noexcept { return ObjectId{oid}; }
   void SetId(ObjectId id) noexcept { oid = id.id(); }

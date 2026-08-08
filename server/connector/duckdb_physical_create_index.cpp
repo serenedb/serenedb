@@ -55,6 +55,7 @@
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/duckdb_schema_entry.h"
 #include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
@@ -138,8 +139,8 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
       try {
         // No statement to run the store drop on: this is teardown, and the
         // statement's transaction is already unwinding.
-        catalog::GetCatalog().DropIndexById(nullptr, database_id, index_id,
-                                            true);
+        catalog::DatabaseCatalog(nullptr, database_id)
+          .DropIndexById(nullptr, database_id, index_id, true);
       } catch (...) {
       }
     }
@@ -342,7 +343,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->progress = &metrics;
   }
 
-  auto& catalog_impl = catalog::GetCatalog();
+  auto& catalog_impl = catalog::DatabaseCatalog(&context, _database_id);
 
   state->inverted_index = absl::EqualsIgnoreCase(_info->index_type, "inverted");
 
@@ -497,8 +498,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         // Resolved through the rolling-back transaction's own catalog view:
         // the create above is recorded on its overlay and nothing else can see
         // it yet.
-        catalog::GetCatalog().DropUncommittedIndex(context, database_id,
-                                                   index_id);
+        catalog::DatabaseCatalog(&context, database_id)
+          .DropUncommittedIndex(context, database_id, index_id);
       };
   }
   if (state->progress) {
@@ -991,10 +992,11 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   if (op.table.type == duckdb::CatalogType::VIEW_ENTRY) {
     const auto schema_id = catalog::FindSchemaId(
       &input.context, database_id, schema_entry.name.GetIdentifierName());
-    relation.view = schema_id.isSet()
-                      ? catalog::FindView(&input.context, schema_id,
-                                          op.table.name.GetIdentifierName())
-                      : nullptr;
+    relation.view =
+      schema_id.isSet()
+        ? catalog::Find<catalog::SereneDBViewEntry>(
+            &input.context, schema_id, op.table.name.GetIdentifierName())
+        : nullptr;
     if (relation.view != nullptr) {
       relation.perm = relation.view->permissions;
     }

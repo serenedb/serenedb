@@ -64,8 +64,8 @@ const catalog::SereneDBSequenceEntry& ResolveSequence(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  const auto* seq = catalog::FindSequence(&context, catalog::IdOf(*schema),
-                                          qname.Name().GetIdentifierName());
+  const auto* seq = catalog::Find<catalog::SereneDBSequenceEntry>(
+    &context, catalog::IdOf(*schema), qname.Name().GetIdentifierName());
   if (seq == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));

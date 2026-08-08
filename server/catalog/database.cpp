@@ -20,11 +20,12 @@
 
 #include "catalog/database.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
-
-#include "basics/serializer.h"
-#include "basics/simdjson_sink.h"
+#include <duckdb/parser/keyword_helper.hpp>
+#include <string>
 
 namespace sdb::catalog {
 
@@ -34,23 +35,23 @@ CreateDatabaseInfo::CreateDatabaseInfo(ObjectId id, std::string_view name)
   SetDatabaseName(name);
 }
 
-persistence::DatabaseOptions CreateDatabaseInfo::ToData() const {
-  return persistence::DatabaseOptions{.name = std::string{GetName()}};
+std::string CreateDatabaseInfo::ToString() const {
+  return absl::StrCat(
+    "CREATE DATABASE ",
+    duckdb::KeywordHelper::WriteOptionallyQuoted(std::string{GetName()}), ";");
 }
 
 void CreateDatabaseInfo::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, ToData());
+  duckdb::CreateInfo::Serialize(sink);
+  sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
+                                                    qualified_name.Name());
 }
 
-void CreateDatabaseInfo::WriteJson(basics::JsonSink& sink) const {
-  basics::WriteObject(sink, ToData());
-}
-
-std::shared_ptr<CreateDatabaseInfo> CreateDatabaseInfo::Deserialize(
-  duckdb::Deserializer& src, ObjectId id) {
-  persistence::DatabaseOptions data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<CreateDatabaseInfo>(id, data.name);
+duckdb::unique_ptr<duckdb::CreateInfo> CreateDatabaseInfo::Deserialize(
+  duckdb::Deserializer& src) {
+  auto result = duckdb::make_uniq<CreateDatabaseInfo>();
+  result->SetName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name"));
+  return std::move(result);
 }
 
 std::shared_ptr<CreateDatabaseInfo> CreateDatabaseInfo::CloneDatabase() const {

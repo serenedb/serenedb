@@ -76,6 +76,7 @@ struct RoleData;
 // records, and what SereneDBRoleEntry copies its state out of.
 class CreateRoleInfo final : public duckdb::CreateInfo {
  public:
+  CreateRoleInfo() : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY} {}
   CreateRoleInfo(ObjectId id, persistence::RoleData data);
 
   persistence::RoleData ToData() const;
@@ -83,12 +84,12 @@ class CreateRoleInfo final : public duckdb::CreateInfo {
   // schema, conflict mode or SQL text, and the catalog log reads it back
   // through Deserialize below rather than through CreateInfo's type switch.
   void Serialize(duckdb::Serializer& sink) const final;
-  void WriteJson(basics::JsonSink& sink) const;
+  std::string ToString() const final;
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
   std::shared_ptr<CreateRoleInfo> CloneRole() const;
 
-  static std::shared_ptr<CreateRoleInfo> Deserialize(duckdb::Deserializer& src,
-                                                     ObjectId id);
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
 
   ObjectId GetId() const noexcept { return ObjectId{oid}; }
   void SetId(ObjectId id) noexcept { oid = id.id(); }

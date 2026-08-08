@@ -27,6 +27,7 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
 #include "catalog/duckdb_table_entry.h"
 #include "catalog/index.h"
 #include "catalog/schema.h"
@@ -76,8 +77,9 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
                              });
 
   // Explicit user-created indexes
-  catalog::VisitIndexes(
-    &context, GetDatabaseId(), [&](const catalog::IndexInfoRef& index) {
+  catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
+    &context, GetDatabaseId(),
+    [&](const catalog::IndexInfoRef& index, const catalog::Permissions&) {
       const auto& column_ids = index->GetColumns();
       auto natts = static_cast<int16_t>(column_ids.size());
 

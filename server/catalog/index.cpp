@@ -833,7 +833,8 @@ IndexInfoRef FindInvertedIndex(ObjectId database_id, ObjectId id) {
   if (!database) {
     return nullptr;
   }
-  const auto* index = catalog::FindIndexIn(nullptr, database->GetCatalog(), id);
+  const auto* index =
+    catalog::FindIn<SereneDBIndexEntry>(nullptr, database->GetCatalog(), id);
   return index != nullptr && index->IsInverted() ? index->Definition()
                                                  : nullptr;
 }

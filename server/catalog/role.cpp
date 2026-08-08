@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <map>
 #include <ranges>
 #include <string_view>
@@ -46,7 +47,7 @@ CreateRoleInfo::CreateRoleInfo(ObjectId id, persistence::RoleData data)
     _valid_until{std::move(data.valid_until)},
     _config{std::move(data.config)},
     _default_acls{std::move(data.default_acls)},
-    _password_verifier{std::move(data.password_verifier.value)} {
+    _password_verifier{std::move(data.password_verifier)} {
   SetId(id);
   SetRoleName(data.name);
   if (data.name == StaticStrings::kDefaultUser) {
@@ -63,23 +64,59 @@ persistence::RoleData CreateRoleInfo::ToData() const {
     .valid_until = _valid_until,
     .config = _config,
     .default_acls = _default_acls,
-    .password_verifier = {_password_verifier},
+    .password_verifier = _password_verifier,
   };
 }
 
+std::string CreateRoleInfo::ToString() const {
+  std::string out = absl::StrCat(
+    "CREATE ROLE ",
+    duckdb::KeywordHelper::WriteOptionallyQuoted(std::string{GetName()}));
+  if ((_options & RoleOption::Login) != RoleOption{}) {
+    absl::StrAppend(&out, " LOGIN");
+  }
+  if ((_options & RoleOption::Superuser) != RoleOption{}) {
+    absl::StrAppend(&out, " SUPERUSER");
+  }
+  if (_conn_limit >= 0) {
+    absl::StrAppend(&out, " CONNECTION LIMIT ", _conn_limit);
+  }
+  return absl::StrCat(out, ";");
+}
+
 void CreateRoleInfo::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, ToData());
+  duckdb::CreateInfo::Serialize(sink);
+  sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
+                                                    qualified_name.Name());
+  sink.WritePropertyWithDefault(201, "options",
+                                static_cast<uint32_t>(_options));
+  sink.WritePropertyWithDefault(202, "conn_limit", _conn_limit);
+  sink.WritePropertyWithDefault(203, "valid_until", _valid_until);
+  sink.WritePropertyWithDefault(204, "password_verifier", _password_verifier);
+  // Session config, membership edges and default ACLs are std::vector of our
+  // own types: the basics framework is the only serializer they have, so they
+  // ride inside one property.
+  sink.OnPropertyBegin(205, "grants");
+  basics::WriteTuple(sink, std::tie(_config, _member_of, _default_acls));
+  sink.OnPropertyEnd();
 }
 
-void CreateRoleInfo::WriteJson(basics::JsonSink& sink) const {
-  basics::WriteObject(sink, ToData());
-}
-
-std::shared_ptr<CreateRoleInfo> CreateRoleInfo::Deserialize(
-  duckdb::Deserializer& src, ObjectId id) {
-  persistence::RoleData data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<CreateRoleInfo>(id, std::move(data));
+duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Deserialize(
+  duckdb::Deserializer& src) {
+  auto result = duckdb::make_uniq<CreateRoleInfo>();
+  result->SetName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name"));
+  result->_options = static_cast<RoleOption>(
+    src.ReadPropertyWithDefault<uint32_t>(201, "options"));
+  src.ReadPropertyWithDefault(202, "conn_limit", result->_conn_limit);
+  src.ReadPropertyWithDefault(203, "valid_until", result->_valid_until);
+  src.ReadPropertyWithDefault(204, "password_verifier",
+                              result->_password_verifier);
+  src.OnPropertyBegin(205, "grants");
+  auto refs =
+    std::tie(result->_config, result->_member_of, result->_default_acls);
+  basics::ReadTuple(src, refs);
+  src.OnPropertyEnd();
+  return std::move(result);
 }
 
 void CreateRoleInfo::AddMembership(const Membership& edge) {
@@ -150,17 +187,7 @@ void CreateRoleInfo::ChangeDefaultAcl(ObjectId schema, char objtype,
 }
 
 std::shared_ptr<CreateRoleInfo> CreateRoleInfo::CloneRole() const {
-  return std::make_shared<CreateRoleInfo>(
-    GetId(), persistence::RoleData{
-               .name = std::string{GetName()},
-               .options = static_cast<uint32_t>(_options),
-               .member_of = _member_of,
-               .conn_limit = _conn_limit,
-               .valid_until = _valid_until,
-               .config = _config,
-               .default_acls = _default_acls,
-               .password_verifier = {_password_verifier},
-             });
+  return std::make_shared<CreateRoleInfo>(GetId(), ToData());
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> CreateRoleInfo::Copy() const {

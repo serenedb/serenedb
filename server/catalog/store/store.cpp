@@ -69,8 +69,10 @@
 #include "catalog/deferred_writes.h"
 #include "catalog/duckdb_catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
 #include "catalog/duckdb_object_entry.h"
 #include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "catalog/role.h"
@@ -101,9 +103,11 @@ void SortById(auto& objects) {
 std::vector<IndexInfoRef> DatabaseIndexes(duckdb::ClientContext* context,
                                           ObjectId database_id) {
   std::vector<IndexInfoRef> indexes;
-  catalog::VisitIndexes(context, database_id, [&](const IndexInfoRef& index) {
-    indexes.push_back(index);
-  });
+  catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
+    context, database_id,
+    [&](const IndexInfoRef& index, const catalog::Permissions&) {
+      indexes.push_back(index);
+    });
   SortById(indexes);
   return indexes;
 }
@@ -902,7 +906,7 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
       functions, {},
       [](const duckdb::MacroCatalogEntry* function) { return function->oid; });
     std::vector<HeldTable> tables;
-    catalog::VisitTables(
+    catalog::VisitDefinitions<catalog::SereneDBTableEntry>(
       context, db_id, [&](const TableInfoRef& table, const Permissions& perm) {
         tables.emplace_back(table, perm);
       });
@@ -910,7 +914,7 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
       return catalog::IdOf(*table.first).id();
     });
     std::vector<const duckdb::ViewCatalogEntry*> views;
-    catalog::VisitViews(
+    catalog::Visit<catalog::SereneDBViewEntry>(
       context, db_id,
       [&](const duckdb::ViewCatalogEntry& view) { views.push_back(&view); });
     std::ranges::sort(views, {}, [](const duckdb::ViewCatalogEntry* view) {
@@ -1178,7 +1182,8 @@ std::string StoreOpsSubject(duckdb::ClientContext* context,
     if (context == nullptr) {
       continue;
     }
-    if (const auto* table = catalog::FindSessionTable(*context, table_id)) {
+    if (const auto* table =
+          catalog::FindSession<SereneDBTableEntry>(*context, table_id)) {
       return std::string{table->name.GetIdentifierName()};
     }
   }

@@ -40,6 +40,7 @@
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/duckdb_primary_key.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
@@ -85,7 +86,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
   });
   for (const ObjectId db_id : database_ids) {
     containers::NodeHashMap<ObjectId, ShardInfo> shards;
-    catalog::VisitTableEntriesOf(
+    catalog::Visit<catalog::SereneDBTableEntry>(
       nullptr, db_id, [&](const catalog::SereneDBTableEntry& entry) {
         if (!entry.IsSearchTable()) {
           return;  // Transactional table: no Search-engine store to recover.
@@ -210,13 +211,13 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 
 void StartSearchTableMaintenance() {
   catalog::VisitDatabases(nullptr, [&](const catalog::DatabaseRef& db) {
-    catalog::VisitTableEntriesOf(nullptr, db.Id(),
-                                 [&](const catalog::SereneDBTableEntry& table) {
-                                   if (!table.IsSearchTable()) {
-                                     return;
-                                   }
-                                   table.GetSearchData()->StartTasks();
-                                 });
+    catalog::Visit<catalog::SereneDBTableEntry>(
+      nullptr, db.Id(), [&](const catalog::SereneDBTableEntry& table) {
+        if (!table.IsSearchTable()) {
+          return;
+        }
+        table.GetSearchData()->StartTasks();
+      });
   });
 }
 

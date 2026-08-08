@@ -39,11 +39,6 @@ class ClientContext;
 class Connection;
 
 }  // namespace duckdb
-namespace sdb::catalog::persistence {
-
-struct ForeignServerData;
-
-}  // namespace sdb::catalog::persistence
 namespace sdb::catalog {
 
 // One foreign server, in the form a catalog entry is built from. duckdb has a
@@ -55,18 +50,19 @@ namespace sdb::catalog {
 // entry, because duckdb's CreateInfo has nowhere to put them.
 class CreateForeignServerInfo final : public duckdb::CreateInfo {
  public:
+  CreateForeignServerInfo()
+    : duckdb::CreateInfo{duckdb::CatalogType::FOREIGN_SERVER_ENTRY} {}
   CreateForeignServerInfo(ObjectId id, ObjectId database_id,
                           std::string_view name, std::string fdw_name,
                           std::vector<std::string> option_keys,
                           std::vector<std::string> option_values);
 
-  persistence::ForeignServerData ToData() const;
   void Serialize(duckdb::Serializer& sink) const final;
-  void WriteJson(basics::JsonSink& sink) const;
+  std::string ToString() const final;
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
 
-  static std::shared_ptr<CreateForeignServerInfo> Deserialize(
-    duckdb::Deserializer& src, ObjectId id, ObjectId database_id);
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
 
   ObjectId GetId() const noexcept { return ObjectId{oid}; }
   void SetId(ObjectId id) noexcept { oid = id.id(); }

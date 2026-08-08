@@ -27,6 +27,7 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
 #include "catalog/duckdb_table_entry.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
@@ -250,10 +251,11 @@ catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
                                  const catalog::SereneDBTableEntry& table) {
                                EmitColumnsForTable(table, values);
                              });
-  catalog::VisitTypes(&_config.GetClientContext(), GetDatabaseId(),
-                      [&](const duckdb::TypeCatalogEntry& type) {
-                        EmitColumnsForCompositeType(type, values);
-                      });
+  catalog::Visit<catalog::SereneDBTypeEntry>(
+    &_config.GetClientContext(), GetDatabaseId(),
+    [&](const duckdb::TypeCatalogEntry& type) {
+      EmitColumnsForCompositeType(type, values);
+    });
 
   VisitSystemTables(
     [&](const catalog::VirtualTable& table, Oid /*schema_oid*/) {

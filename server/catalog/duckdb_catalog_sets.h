@@ -31,11 +31,14 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "auth/acl.h"
 #include "catalog/deferred_writes.h"
 #include "catalog/duckdb_entry.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/entry.h"
 #include "catalog/fwd.h"
 #include "catalog/store/wal_entry.h"
@@ -136,6 +139,110 @@ void RequireIndexOwner(const catalog::AccessContext& ax,
 //
 // The readers here want facts that are the entry's own: its ColumnList, its
 // constraints, and the owner and ACL the entry carries. Every entry in the
+
+// Entry lookup, once, for every kind whose object is its entry. The duckdb
+// CatalogType an entry class lives under is a property of the class, so the
+// class is the only thing that varies -- there is nothing per-kind left to
+// write. `LookupSlots` is the one place a kind that spans two duckdb sets (a
+// macro) is spelled out.
+//
+// A lookup that finds an entry of another kind under the same name returns
+// null rather than the wrong type: the cast is what decides, exactly as the
+// per-kind functions did.
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInSchema(
+  duckdb::ClientContext* context, ObjectId schema_id, duckdb::CatalogType type,
+  std::string_view name);
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInSchema(
+  duckdb::ClientContext* context, ObjectId schema_id, ObjectId id);
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInSession(
+  duckdb::ClientContext& context, ObjectId id);
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInCatalog(
+  duckdb::ClientContext* context, duckdb::Catalog& catalog, ObjectId id);
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInDatabase(
+  duckdb::ClientContext* context, ObjectId database, ObjectId id);
+
+// The entry itself, for a kind whose object needs nothing beside it: the id,
+// the owner and the ACL are all on the entry.
+template<typename Entry>
+const Entry* EntryOf(duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  return dynamic_cast<const Entry*>(entry.get());
+}
+
+template<typename Entry>
+const Entry* Find(duckdb::ClientContext* context, ObjectId schema_id,
+                  std::string_view name) {
+  return EntryOf<Entry>(
+    LookupInSchema(context, schema_id, Entry::kCatalogType, name));
+}
+
+template<typename Entry>
+const Entry* Find(duckdb::ClientContext* context, ObjectId schema_id,
+                  ObjectId id) {
+  return EntryOf<Entry>(LookupInSchema(context, schema_id, id));
+}
+
+// The entry `id` names anywhere the statement can see, for the readers that
+// hold an id and no parent.
+template<typename Entry>
+const Entry* FindSession(duckdb::ClientContext& context, ObjectId id) {
+  return EntryOf<Entry>(LookupInSession(context, id));
+}
+
+template<typename Entry>
+const Entry* FindIn(duckdb::ClientContext* context, duckdb::Catalog& catalog,
+                    ObjectId id) {
+  return EntryOf<Entry>(LookupInCatalog(context, catalog, id));
+}
+
+template<typename Entry>
+const Entry* FindIn(duckdb::ClientContext* context, ObjectId database,
+                    ObjectId id) {
+  return EntryOf<Entry>(LookupInDatabase(context, database, id));
+}
+
+// Every entry of one kind in `database`, in every schema of it. The scan walks
+// whichever duckdb sets the kind lives in; entries of another kind sharing
+// those sets are skipped by the same cast Find uses.
+// The catalog of one database -- the home of everything that is not
+// cluster-wide. Null when the database is not attached here.
+duckdb::optional_ptr<SereneDBCatalog> TryDatabaseCatalog(
+  duckdb::ClientContext* context, ObjectId database);
+
+// The same, for a caller that has already established the database exists.
+SereneDBCatalog& DatabaseCatalog(duckdb::ClientContext* context,
+                                 ObjectId database);
+
+void ScanDatabase(duckdb::ClientContext* context, ObjectId database,
+                  duckdb::CatalogType type,
+                  absl::FunctionRef<void(duckdb::CatalogEntry&)> visitor);
+
+template<typename Entry>
+void Visit(duckdb::ClientContext* context, ObjectId database,
+           absl::FunctionRef<void(const Entry&)> visitor) {
+  ScanDatabase(context, database, Entry::kCatalogType,
+               [&](duckdb::CatalogEntry& entry) {
+                 if (const auto* found = EntryOf<Entry>(&entry)) {
+                   visitor(*found);
+                 }
+               });
+}
+
+template<typename Entry>
+using DefinitionRefOf =
+  std::decay_t<decltype(std::declval<const Entry&>().Definition())>;
+
+// The same walk, handing over what a caller outside the catalog wants: the
+// definition the entry publishes and the permissions beside it.
+template<typename Entry>
+void VisitDefinitions(
+  duckdb::ClientContext* context, ObjectId database,
+  absl::FunctionRef<void(const DefinitionRefOf<Entry>&, const Permissions&)>
+    visitor) {
+  Visit<Entry>(context, database, [&](const Entry& entry) {
+    visitor(entry.Definition(), entry.permissions);
+  });
+}
+
 // set is offered, including the ones with no definition of their own.
 void VisitCatalogSetEntries(
   duckdb::ClientContext& context, ObjectId database, duckdb::CatalogType set,
@@ -321,18 +428,6 @@ std::vector<catalog::HeldSchema> DatabaseSchemas(duckdb::ClientContext* context,
 // cache holds, and that only changes at the commit, not at the write.
 void BumpSchemaGeneration() noexcept;
 
-// The text-search dictionaries of one database, from the TOKENIZER_ENTRY set of
-// each of its schemas.
-//
-// Tokenizers are the fourth kind whose duckdb entry IS the object, and the
-// first schema-scoped one: the set is the schema entry's own, and the mutators
-// write it through the statement's transaction, so a transaction reads its own
-// uncommitted CREATE/DROP TEXT SEARCH DICTIONARY and two concurrent ones refuse
-// each other.
-void VisitTokenizers(duckdb::ClientContext* context, ObjectId database,
-                     absl::FunctionRef<void(const catalog::CreateTokenizerInfo&,
-                                            const catalog::Permissions&)>
-                       visitor);
 catalog::TokenizerRef FindTokenizer(duckdb::ClientContext* context,
                                     ObjectId schema_id, std::string_view name,
                                     catalog::Permissions* perm = nullptr);
@@ -372,36 +467,9 @@ std::vector<ObjectId> SchemaEntryContentIds(SereneDBSchemaEntry& schema);
 void RetireEntryEdges(duckdb::ClientContext* context, duckdb::Catalog& owner,
                       std::span<const ObjectId> ids);
 
-// The user-defined types of one database, from the TYPE_ENTRY set of each of
-// its schemas.
-//
-// Types are the fifth kind whose duckdb entry IS the object. There is no cache
-// in front of the sets: a type is only ever asked for by name inside a known
-// schema or by oid inside a known database, and the database's own object
-// index already answers the second -- so a DDL-free
-// workload pays one entry lookup and nothing has to be invalidated.
-//
-// A null `context` reads what is committed; otherwise every read goes through
-// the caller's own transaction, so it sees its own uncommitted CREATE/DROP TYPE
-// and still sees a type another session has dropped since it started.
-void VisitTypes(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const duckdb::TypeCatalogEntry&)> visitor);
 // The same, collected, for the callers that walk them more than once.
 std::vector<const duckdb::TypeCatalogEntry*> DatabaseTypes(
   duckdb::ClientContext* context, ObjectId database);
-const duckdb::TypeCatalogEntry* FindType(duckdb::ClientContext* context,
-                                         ObjectId schema_id,
-                                         std::string_view name);
-// By stable id inside the schema that holds it. Every caller has the schema: a
-// record names its parent, and a statement resolved the name before it changed
-// the object.
-const duckdb::TypeCatalogEntry* FindType(duckdb::ClientContext* context,
-                                         ObjectId schema_id, ObjectId id);
-// By oid alone, in the database this session is connected to -- what a reader
-// holding nothing but a pg_type.oid has. Null when the id names no type there.
-const duckdb::TypeCatalogEntry* FindSessionType(duckdb::ClientContext& context,
-                                                ObjectId id);
 
 // The SQL functions of one database, from the two macro sets of each of its
 // schemas. Same shape as the types above, and for the same reasons: the sixth
@@ -417,67 +485,9 @@ const duckdb::MacroCatalogEntry* FindFunction(duckdb::ClientContext* context,
 const duckdb::MacroCatalogEntry* FindSessionFunction(
   duckdb::ClientContext& context, ObjectId id);
 
-// The views of one database, from the relation-namespace TABLE_ENTRY set of
-// each of its schemas -- the seventh kind whose duckdb entry IS the object.
-void VisitViews(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const duckdb::ViewCatalogEntry&)> visitor);
-const duckdb::ViewCatalogEntry* FindView(duckdb::ClientContext* context,
-                                         ObjectId schema_id,
-                                         std::string_view name);
-const duckdb::ViewCatalogEntry* FindView(duckdb::ClientContext* context,
-                                         ObjectId schema_id, ObjectId id);
-// By oid out of one database's own catalog rather than the session's: an index
-// entry is built for the database that holds it, which during an attach is not
-// the one the session is connected to.
-const duckdb::ViewCatalogEntry* FindViewIn(duckdb::ClientContext* context,
-                                           duckdb::Catalog& catalog,
-                                           ObjectId id);
-
-// The sequences of one database, from the relation-namespace SEQUENCE_ENTRY set
-// of each of its schemas. The entry carries the bounds, the CACHE and the live
-// counter, which is shared by every version rather than versioned with it.
-void VisitSequences(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const SereneDBSequenceEntry&)> visitor);
 // The same, collected, for the callers that walk them more than once.
 std::vector<const SereneDBSequenceEntry*> DatabaseSequences(
   duckdb::ClientContext* context, ObjectId database);
-
-const SereneDBSequenceEntry* FindSequence(duckdb::ClientContext* context,
-                                          ObjectId schema_id,
-                                          std::string_view name);
-const SereneDBSequenceEntry* FindSequence(duckdb::ClientContext* context,
-                                          ObjectId schema_id, ObjectId id);
-const SereneDBSequenceEntry* FindSessionSequence(duckdb::ClientContext& context,
-                                                 ObjectId id);
-
-// The indexes of one database -- the tenth kind whose duckdb entry IS the
-// object, and the only one that occupies two catalog sets at once: an
-// INDEX_ENTRY for DROP INDEX and duckdb_indexes(), and the relation-namespace
-// TABLE_ENTRY behind `SELECT * FROM <idx>`. The first is where the definition
-// lives and where a by-id lookup lands; the second is a wrapper projecting the
-// relation's shape, which is why it is rebuilt whenever that relation moves
-// (RefreshRelationIndexEntries).
-//
-// An index has no owner and no ACL of its own -- postgres gives an index none
-// -- so there are no role edges here and no owner check: every privilege
-// decision reads the relation it is built on.
-void VisitIndexes(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const catalog::IndexInfoRef&)> visitor);
-// An index has no permissions of its own, so nothing here carries any.
-const SereneDBIndexEntry* FindIndex(duckdb::ClientContext* context,
-                                    ObjectId schema_id, std::string_view name);
-const SereneDBIndexEntry* FindIndex(duckdb::ClientContext* context,
-                                    ObjectId schema_id, ObjectId id);
-const SereneDBIndexEntry* FindSessionIndex(duckdb::ClientContext& context,
-                                           ObjectId id);
-// By oid out of one database's own catalog rather than the session's -- what an
-// attach needs, where the database being read is not the session's and is not
-// yet in the database manager.
-const SereneDBIndexEntry* FindIndexIn(duckdb::ClientContext* context,
-                                      duckdb::Catalog& catalog, ObjectId id);
 
 // The indexes built on one relation, by the relation's id. The walk is bounded
 // by the schema the relation lives in: an index shares it.
@@ -497,35 +507,6 @@ void DropIndexEntry(duckdb::ClientContext* context, ObjectId schema_id,
 // to put the wrappers back in step with what it wrote.
 void RefreshRelationIndexEntries(duckdb::ClientContext* context,
                                  ObjectId schema_id, ObjectId relation_id);
-
-// A table in the TABLE_ENTRY slot of its schema, beside the views, sequences
-// and index-name wrappers it shares postgres' relation namespace with. Owner
-// and ACL live on the entry, so every reader that wants them takes `perm`.
-void VisitTables(duckdb::ClientContext* context, ObjectId database,
-                 absl::FunctionRef<void(const catalog::TableInfoRef&,
-                                        const catalog::Permissions&)>
-                   visitor);
-// The same over one database's table entries, readable with no transaction --
-// what boot has before any session exists.
-void VisitTableEntriesOf(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const SereneDBTableEntry&)> visitor);
-
-const SereneDBTableEntry* FindTable(duckdb::ClientContext* context,
-                                    ObjectId schema_id, std::string_view name);
-const SereneDBTableEntry* FindTable(duckdb::ClientContext* context,
-                                    ObjectId schema_id, ObjectId id);
-// By oid alone, in the session's database -- what a reader holding nothing but
-// a pg_class.oid has.
-const SereneDBTableEntry* FindSessionTable(duckdb::ClientContext& context,
-                                           ObjectId id);
-// The same in a named catalog rather than the session's, for the callers whose
-// database is not the one they are connected to: an attach reads its own sets
-// before the attachment is in the database manager.
-const SereneDBTableEntry* FindTableIn(duckdb::ClientContext* context,
-                                      duckdb::Catalog& catalog, ObjectId id);
-const SereneDBTableEntry* FindTableIn(duckdb::ClientContext* context,
-                                      ObjectId database, ObjectId id);
 
 // Rebuilds every table of `database` that a foreign key points at, so it
 // carries the referenced half of that key. Run once all of them are in the set:

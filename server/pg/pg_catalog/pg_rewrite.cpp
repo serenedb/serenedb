@@ -25,6 +25,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_view_entry.h"
 
 namespace sdb::pg {
 namespace {
@@ -39,19 +40,20 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgRewrite>::GetTableData() {
   std::vector<PgRewrite> values;
-  catalog::VisitViews(&_config.GetClientContext(), GetDatabaseId(),
-                      [&](const duckdb::ViewCatalogEntry& view) {
-                        values.push_back(PgRewrite{
-                          Oid{view.oid},
-                          Name{"_RETURN"},
-                          Oid{view.oid},
-                          PgRewrite::EvType::Select,
-                          PgRewrite::EvEnabled::Origin,
-                          true,
-                          {},
-                          {},
-                        });
-                      });
+  catalog::Visit<catalog::SereneDBViewEntry>(
+    &_config.GetClientContext(), GetDatabaseId(),
+    [&](const duckdb::ViewCatalogEntry& view) {
+      values.push_back(PgRewrite{
+        Oid{view.oid},
+        Name{"_RETURN"},
+        Oid{view.oid},
+        PgRewrite::EvType::Select,
+        PgRewrite::EvEnabled::Origin,
+        true,
+        {},
+        {},
+      });
+    });
 
   auto result = CreateColumns<PgRewrite>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

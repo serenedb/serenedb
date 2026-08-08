@@ -26,13 +26,7 @@
 #include <string_view>
 
 #include "catalog/identifiers/object_id.h"
-#include "catalog/persistence/database.h"
 
-namespace sdb::basics {
-
-class JsonSink;
-
-}  // namespace sdb::basics
 namespace sdb::catalog {
 
 // One database, in the form a catalog entry is built from. duckdb's own
@@ -44,16 +38,17 @@ namespace sdb::catalog {
 // entry.
 class CreateDatabaseInfo final : public duckdb::CreateInfo {
  public:
+  CreateDatabaseInfo()
+    : duckdb::CreateInfo{duckdb::CatalogType::DATABASE_ENTRY} {}
   CreateDatabaseInfo(ObjectId id, std::string_view name);
 
-  persistence::DatabaseOptions ToData() const;
   void Serialize(duckdb::Serializer& sink) const final;
-  void WriteJson(basics::JsonSink& sink) const;
+  std::string ToString() const final;
   duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
   std::shared_ptr<CreateDatabaseInfo> CloneDatabase() const;
 
-  static std::shared_ptr<CreateDatabaseInfo> Deserialize(
-    duckdb::Deserializer& src, ObjectId id);
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
 
   ObjectId GetId() const noexcept { return ObjectId{oid}; }
   void SetId(ObjectId id) noexcept { oid = id.id(); }

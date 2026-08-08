@@ -28,6 +28,8 @@
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/duckdb_dependency.h"
 #include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/table.h"
 #include "pg/pg_catalog/pg_attrdef.h"
 #include "pg/pg_catalog/pg_authid.h"
@@ -80,13 +82,13 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   // not be inside.
   const auto indexes = catalog::CollectIndexOwners(context, db_id);
   containers::FlatHashMap<ObjectId, catalog::TableInfoRef> tables;
-  catalog::VisitTables(
+  catalog::VisitDefinitions<catalog::SereneDBTableEntry>(
     context, db_id,
     [&](const catalog::TableInfoRef& table, const Permissions&) {
       tables.emplace(catalog::IdOf(*table), table);
     });
   std::vector<const duckdb::ViewCatalogEntry*> views;
-  catalog::VisitViews(
+  catalog::Visit<catalog::SereneDBViewEntry>(
     context, db_id,
     [&](const duckdb::ViewCatalogEntry& view) { views.push_back(&view); });
   std::vector<Referenced> functions;
@@ -100,14 +102,14 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   // names a sequence and a column's declared type names a type, and neither row
   // is reachable from the dependent's side of the graph.
   std::vector<Referenced> sequences;
-  catalog::VisitSequences(
+  catalog::Visit<catalog::SereneDBSequenceEntry>(
     context, db_id, [&](const catalog::SereneDBSequenceEntry& sequence) {
       sequences.push_back({ObjectId{sequence.oid},
                            ObjectId{sequence.ParentSchema().oid},
                            sequence.GetOwnerTableId(), Oid{PgClass::kId}});
     });
   std::vector<Referenced> types;
-  catalog::VisitTypes(
+  catalog::Visit<catalog::SereneDBTypeEntry>(
     context, db_id, [&](const duckdb::TypeCatalogEntry& type) {
       types.push_back({ObjectId{type.oid}, ObjectId{type.ParentSchema().oid},
                        ObjectId{}, Oid{PgType::kId}});

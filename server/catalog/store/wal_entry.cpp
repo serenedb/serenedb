@@ -95,7 +95,7 @@ namespace {
 // it is beside the type. 22 names the relation of a store op by id. It was
 // written as the store table's name and parsed back to the id on the way out, a
 // round trip through a spelling no reader wanted.
-constexpr uint8_t kEntryVersion = 30;
+constexpr uint8_t kEntryVersion = 31;
 
 constexpr uint8_t kFrameSnapshot = 1U << 0U;
 
@@ -182,19 +182,18 @@ void WriteInfoInline(duckdb::CatalogType type, ObjectId parent_id, ObjectId id,
   duckdb::BinarySerializer serializer{stream, duckdb::VersionStorageOptions()};
   switch (type) {
     case duckdb::CatalogType::INDEX_ENTRY:
+      // An index writes a reflected tuple and opens nothing of its own.
+      info.Serialize(serializer);
+      return;
     case duckdb::CatalogType::ROLE_ENTRY:
     case duckdb::CatalogType::DATABASE_ENTRY:
     case duckdb::CatalogType::TOKENIZER_ENTRY:
     case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
-      info.Serialize(serializer);
-      return;
     case duckdb::CatalogType::SCHEMA_ENTRY:
     case duckdb::CatalogType::SEQUENCE_ENTRY:
     case duckdb::CatalogType::TYPE_ENTRY:
     case duckdb::CatalogType::MACRO_ENTRY:
     case duckdb::CatalogType::VIEW_ENTRY:
-      // duckdb's own Serialize writes properties and expects the caller to have
-      // opened the object; ours write a reflected tuple and open nothing.
       basics::WriteTuple(serializer, CreateInfoRef<duckdb::CreateInfo>{&info});
       return;
     case duckdb::CatalogType::TABLE_ENTRY:
@@ -244,21 +243,16 @@ std::shared_ptr<const duckdb::CreateInfo> ReadInfoPayload(
       return index;
     }
     case duckdb::CatalogType::ROLE_ENTRY:
-      return CreateRoleInfo::Deserialize(src, id);
     case duckdb::CatalogType::DATABASE_ENTRY:
-      return CreateDatabaseInfo::Deserialize(src, id);
     case duckdb::CatalogType::TOKENIZER_ENTRY:
-      return CreateTokenizerInfo::Deserialize(src, id, parent_id);
     case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
-      return CreateForeignServerInfo::Deserialize(src, id, parent_id);
     case duckdb::CatalogType::SCHEMA_ENTRY:
     case duckdb::CatalogType::SEQUENCE_ENTRY:
     case duckdb::CatalogType::TYPE_ENTRY:
     case duckdb::CatalogType::MACRO_ENTRY:
     case duckdb::CatalogType::VIEW_ENTRY: {
-      // duckdb's own info, read back through its own dispatch: no kind
-      // needs a subclass of ours, because the record already names the ids
-      // beside it.
+      // Read back through duckdb's own dispatch: no kind needs a reader of
+      // ours, because the record already names the ids beside it.
       CreateInfoOwned<duckdb::CreateInfo> data;
       basics::ReadTuple(src, data);
       return std::shared_ptr<const duckdb::CreateInfo>{data.info.release()};

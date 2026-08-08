@@ -59,6 +59,7 @@
 #include "catalog/duckdb_object_entry.h"
 #include "catalog/duckdb_static_schema.h"
 #include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/schema.h"
@@ -146,13 +147,13 @@ duckdb::CatalogType RelationKind(duckdb::ClientContext* context,
   if (!schema_id.isSet()) {
     return duckdb::CatalogType::TABLE_ENTRY;
   }
-  if (FindView(context, schema_id, name)) {
+  if (Find<SereneDBViewEntry>(context, schema_id, name)) {
     return duckdb::CatalogType::VIEW_ENTRY;
   }
-  if (FindSequence(context, schema_id, name)) {
+  if (Find<SereneDBSequenceEntry>(context, schema_id, name)) {
     return duckdb::CatalogType::SEQUENCE_ENTRY;
   }
-  if (FindIndex(context, schema_id, name)) {
+  if (Find<SereneDBIndexEntry>(context, schema_id, name)) {
     return duckdb::CatalogType::INDEX_ENTRY;
   }
   return duckdb::CatalogType::TABLE_ENTRY;
@@ -288,14 +289,16 @@ void RenameViewObject(const catalog::AccessContext& ax, ObjectId database_id,
                       std::string_view new_name) {
   catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = FindSchemaId(ax.context, database_id, schema);
-  const auto* view =
-    schema_id.isSet() ? FindView(ax.context, schema_id, name) : nullptr;
+  const auto* view = schema_id.isSet()
+                       ? Find<SereneDBViewEntry>(ax.context, schema_id, name)
+                       : nullptr;
   if (view == nullptr) {
     // The other halves of the relation namespace still answer for the name, and
     // PG reports the kind mismatch rather than a missing relation.
-    if (schema_id.isSet() && (FindTable(ax.context, schema_id, name) ||
-                              FindSequence(ax.context, schema_id, name) ||
-                              FindIndex(ax.context, schema_id, name))) {
+    if (schema_id.isSet() &&
+        (Find<SereneDBTableEntry>(ax.context, schema_id, name) ||
+         Find<SereneDBSequenceEntry>(ax.context, schema_id, name) ||
+         Find<SereneDBIndexEntry>(ax.context, schema_id, name))) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                       ERR_MSG("\"", name, "\" is not a view"));
     }
@@ -304,9 +307,9 @@ void RenameViewObject(const catalog::AccessContext& ax, ObjectId database_id,
   }
   catalog::RequireOwner(ax.context, ax.role, view->permissions, "view",
                         view->name.GetIdentifierName());
-  if (FindTable(ax.context, schema_id, new_name) ||
-      FindView(ax.context, schema_id, new_name) ||
-      FindSequence(ax.context, schema_id, new_name)) {
+  if (Find<SereneDBTableEntry>(ax.context, schema_id, new_name) ||
+      Find<SereneDBViewEntry>(ax.context, schema_id, new_name) ||
+      Find<SereneDBSequenceEntry>(ax.context, schema_id, new_name)) {
     catalog::ThrowDuplicateName(catalog::NameKind::Relation, new_name);
   }
   RenameEntry(ax.context, duckdb::CatalogType::VIEW_ENTRY, schema_id, name,
@@ -346,7 +349,8 @@ void RenameTableObject(const catalog::AccessContext& ax,
   catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = catalog::ParentIdOf(table);
   const auto table_id = catalog::IdOf(table);
-  const auto* current_entry = FindTable(ax.context, schema_id, table_id);
+  const auto* current_entry =
+    Find<SereneDBTableEntry>(ax.context, schema_id, table_id);
   if (current_entry == nullptr) {
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                                       catalog::TableNameOf(table));
@@ -379,10 +383,10 @@ void RenameTableObject(const catalog::AccessContext& ax,
       ERR_MSG("could not serialize access due to concurrent rename of \"",
               catalog::TableNameOf(table), "\""));
   }
-  if (FindTable(ax.context, schema_id, new_name) ||
-      FindSequence(ax.context, schema_id, new_name) ||
-      FindIndex(ax.context, schema_id, new_name) ||
-      FindView(ax.context, schema_id, new_name)) {
+  if (Find<SereneDBTableEntry>(ax.context, schema_id, new_name) ||
+      Find<SereneDBSequenceEntry>(ax.context, schema_id, new_name) ||
+      Find<SereneDBIndexEntry>(ax.context, schema_id, new_name) ||
+      Find<SereneDBViewEntry>(ax.context, schema_id, new_name)) {
     catalog::ThrowDuplicateName(catalog::NameKind::Relation, new_name);
   }
   auto info = catalog::Clone(*current);
@@ -403,7 +407,7 @@ void AlterInvertedIndexOptions(
   catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   RequireIndexOwner(ax, *index);
   const auto current =
-    FindIndex(ax.context, index->GetParentId(), index->GetId());
+    Find<SereneDBIndexEntry>(ax.context, index->GetParentId(), index->GetId());
   if (current == nullptr) {
     catalog::ThrowConcurrentlyDropped(index->GetId());
   }
@@ -429,13 +433,14 @@ void RenameIndexObject(const catalog::AccessContext& ax,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("relation \"", new_name, "\" already exists"));
   }
-  if (FindTable(ax.context, schema_id, new_name) ||
-      FindSequence(ax.context, schema_id, new_name) ||
-      FindView(ax.context, schema_id, new_name) ||
-      FindIndex(ax.context, schema_id, new_name)) {
+  if (Find<SereneDBTableEntry>(ax.context, schema_id, new_name) ||
+      Find<SereneDBSequenceEntry>(ax.context, schema_id, new_name) ||
+      Find<SereneDBViewEntry>(ax.context, schema_id, new_name) ||
+      Find<SereneDBIndexEntry>(ax.context, schema_id, new_name)) {
     catalog::ThrowDuplicateName(catalog::NameKind::Relation, new_name);
   }
-  const auto* current = FindIndex(ax.context, schema_id, index->GetId());
+  const auto* current =
+    Find<SereneDBIndexEntry>(ax.context, schema_id, index->GetId());
   if (current == nullptr) {
     catalog::ThrowConcurrentlyDropped(index->GetId());
   }
@@ -448,8 +453,9 @@ void RenameIndexObject(const catalog::AccessContext& ax,
       ERR_MSG("could not serialize access due to concurrent rename of \"",
               index->GetName(), "\""));
   }
-  catalog::GetCatalog().RenameIndex(ax.context, *current->Definition(),
-                                    new_name);
+  catalog::DatabaseCatalog(ax.context,
+                           catalog::SchemaDatabaseId(ax.context, schema_id))
+    .RenameIndex(ax.context, *current->Definition(), new_name);
 }
 
 // The comment text an ALTER carries. NULL and the empty string both mean "no
@@ -472,8 +478,8 @@ void SetObjectComment(const catalog::AccessContext& ax, ObjectId database_id,
                       std::string_view schema_name, duckdb::CatalogType kind,
                       std::string_view target, const std::string& comment,
                       bool missing_ok) {
-  auto& catalog_impl = catalog::GetCatalog();
   auto* context = ax.context;
+  auto& catalog_impl = catalog::DatabaseCatalog(context, database_id);
   const auto schema_id = FindSchemaId(context, database_id, schema_name);
   if (!schema_id.isSet()) {
     if (missing_ok) {
@@ -485,21 +491,22 @@ void SetObjectComment(const catalog::AccessContext& ax, ObjectId database_id,
   // own write only: ChangeTable takes the catalog mutex itself, and the scope
   // is that same mutex, which does not nest.
   const auto rewrite = [&](auto&& write) {
-    catalog::Catalog::MutationScope mutation{catalog_impl};
+    catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
     write();
   };
   // PostgreSQL accepts COMMENT ON TABLE naming a view, so the kind the
   // statement said only decides which set answers first.
   const bool relation = kind == duckdb::CatalogType::TABLE_ENTRY ||
                         kind == duckdb::CatalogType::VIEW_ENTRY;
-  if (relation && FindView(context, schema_id, target)) {
+  if (relation && Find<SereneDBViewEntry>(context, schema_id, target)) {
     rewrite([&] {
       SetEntryComment(ax, duckdb::CatalogType::VIEW_ENTRY, schema_id, target,
                       comment);
     });
     return;
   }
-  const auto* table_entry = FindTable(context, schema_id, target);
+  const auto* table_entry =
+    Find<SereneDBTableEntry>(context, schema_id, target);
   const auto table =
     table_entry != nullptr ? table_entry->Definition() : nullptr;
   switch (kind) {
@@ -520,19 +527,19 @@ void SetObjectComment(const catalog::AccessContext& ax, ObjectId database_id,
       }
       break;
     case duckdb::CatalogType::SEQUENCE_ENTRY:
-      if (FindSequence(context, schema_id, target)) {
+      if (Find<SereneDBSequenceEntry>(context, schema_id, target)) {
         rewrite([&] {
           SetEntryComment(ax, duckdb::CatalogType::SEQUENCE_ENTRY, schema_id,
                           target, comment);
         });
         return;
       }
-      if (table || FindView(context, schema_id, target)) {
+      if (table || Find<SereneDBViewEntry>(context, schema_id, target)) {
         ThrowNotOfKind(target, "sequence");
       }
       break;
     case duckdb::CatalogType::INDEX_ENTRY:
-      if (FindIndex(context, schema_id, target)) {
+      if (Find<SereneDBIndexEntry>(context, schema_id, target)) {
         rewrite([&] {
           SetEntryComment(ax, duckdb::CatalogType::INDEX_ENTRY, schema_id,
                           target, comment);
@@ -541,7 +548,7 @@ void SetObjectComment(const catalog::AccessContext& ax, ObjectId database_id,
       }
       break;
     case duckdb::CatalogType::TYPE_ENTRY:
-      if (FindType(context, schema_id, target)) {
+      if (Find<SereneDBTypeEntry>(context, schema_id, target)) {
         rewrite([&] {
           SetEntryComment(ax, duckdb::CatalogType::TYPE_ENTRY, schema_id,
                           target, comment);
@@ -1065,8 +1072,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
             &context, GetDatabaseId(), referenced_schema.GetIdentifierName());
           const auto* referenced_entry =
             referenced_schema_id.isSet()
-              ? FindTable(&context, referenced_schema_id,
-                          fk.info.table.GetIdentifierName())
+              ? Find<SereneDBTableEntry>(&context, referenced_schema_id,
+                                         fk.info.table.GetIdentifierName())
               : nullptr;
           const auto referenced = referenced_entry != nullptr
                                     ? referenced_entry->Definition()
@@ -1137,7 +1144,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     built->constraints.push_back(std::move(constraint));
   }
 
-  auto& catalog_impl = catalog::GetCatalog();
+  auto& catalog_impl = catalog.Cast<SereneDBCatalog>();
   auto database_id = GetDatabaseId();
 
   const bool replace =
@@ -1153,7 +1160,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   if (replace) {
     const auto schema_id =
       FindSchemaId(&context, database_id, name.GetIdentifierName());
-    if (schema_id.isSet() && FindTable(&context, schema_id, table_name)) {
+    if (schema_id.isSet() &&
+        Find<SereneDBTableEntry>(&context, schema_id, table_name)) {
       catalog_impl.DropTable(catalog::ActingAs(context),
                              catalog.GetName().GetIdentifierName(),
                              name.GetIdentifierName(), table_name,
@@ -1195,7 +1203,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto& sdb_table_entry = RequireBaseTable(table);
   auto sdb_table = sdb_table_entry.Definition();
 
-  auto& catalog_impl = catalog::GetCatalog();
+  auto& catalog_impl = catalog.Cast<SereneDBCatalog>();
   auto database_id = GetDatabaseId();
 
   connector::RejectIfSearchTable(sdb_table_entry.GetEngine(), "CREATE INDEX");
@@ -1400,7 +1408,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = RequireSchemaId(&context, role);
   const auto view_name = info.GetViewName().GetIdentifierName();
-  const auto* existing = FindView(&context, schema_id, view_name);
+  const auto* existing =
+    Find<SereneDBViewEntry>(&context, schema_id, view_name);
 
   catalog::Permissions perm{role};
   if (replace && existing) {
@@ -1415,8 +1424,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     }
     catalog::ThrowDuplicateName(catalog::NameKind::Relation, view_name);
   }
-  if (!existing && (FindTable(&context, schema_id, view_name) ||
-                    FindSequence(&context, schema_id, view_name))) {
+  if (!existing &&
+      (Find<SereneDBTableEntry>(&context, schema_id, view_name) ||
+       Find<SereneDBSequenceEntry>(&context, schema_id, view_name))) {
     if (if_not_exists && !replace) {
       return nullptr;
     }
@@ -1487,9 +1497,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   auto& context = transaction.GetContext();
   catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = RequireSchemaId(&context, role);
-  if (FindSequence(&context, schema_id, options.name) ||
-      FindTable(&context, schema_id, options.name) ||
-      FindView(&context, schema_id, options.name)) {
+  if (Find<SereneDBSequenceEntry>(&context, schema_id, options.name) ||
+      Find<SereneDBTableEntry>(&context, schema_id, options.name) ||
+      Find<SereneDBViewEntry>(&context, schema_id, options.name)) {
     if (if_not_exists) {
       return nullptr;
     }
@@ -1559,7 +1569,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto schema_id = RequireSchemaId(&context, role);
   const auto type_name = info.GetTypeName().GetIdentifierName();
-  if (FindType(&context, schema_id, type_name)) {
+  if (Find<SereneDBTypeEntry>(&context, schema_id, type_name)) {
     if (if_not_exists) {
       return nullptr;
     }
@@ -1610,7 +1620,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       connector::IsStorageStatement(transaction.GetContext())) {
     return;
   }
-  auto& catalog_impl = catalog::GetCatalog();
+  auto& catalog_impl = catalog.Cast<SereneDBCatalog>();
   auto db = GetDatabaseId();
   const auto ax = catalog::ActingAs(transaction.GetContext());
 
@@ -1669,18 +1679,18 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     // own rewrite rather than a table reshape.
     const auto schema_id =
       FindSchemaId(&transaction.GetContext(), db, name.GetIdentifierName());
-    if (schema_id.isSet() &&
-        FindView(&transaction.GetContext(), schema_id, target_name)) {
-      catalog::Catalog::MutationScope mutation{catalog_impl};
+    if (schema_id.isSet() && Find<SereneDBViewEntry>(&transaction.GetContext(),
+                                                     schema_id, target_name)) {
+      catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
       SetViewColumnComment(ax, schema_id, target_name,
                            comment_info.column_name.GetIdentifierName(),
                            comment);
       return;
     }
     const auto* table_entry =
-      schema_id.isSet()
-        ? FindTable(&transaction.GetContext(), schema_id, target_name)
-        : nullptr;
+      schema_id.isSet() ? Find<SereneDBTableEntry>(&transaction.GetContext(),
+                                                   schema_id, target_name)
+                        : nullptr;
     const auto table =
       table_entry != nullptr ? table_entry->Definition() : nullptr;
     if (!table) {
@@ -1712,14 +1722,16 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     FindSchemaId(&transaction.GetContext(), db, name.GetIdentifierName());
   const auto* relation_entry =
     alter_schema_id.isSet()
-      ? FindTable(&transaction.GetContext(), alter_schema_id, table_name)
+      ? Find<SereneDBTableEntry>(&transaction.GetContext(), alter_schema_id,
+                                 table_name)
       : nullptr;
   const auto relation =
     relation_entry != nullptr ? relation_entry->Definition() : nullptr;
   // PG lets ALTER TABLE and ALTER INDEX both name an index.
   const auto* index_entry =
     !relation && alter_schema_id.isSet()
-      ? FindIndex(&transaction.GetContext(), alter_schema_id, table_name)
+      ? Find<SereneDBIndexEntry>(&transaction.GetContext(), alter_schema_id,
+                                 table_name)
       : nullptr;
   const auto index =
     index_entry != nullptr ? index_entry->Definition() : nullptr;
@@ -1834,8 +1846,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
     // does not answer for it. PG lets ALTER TABLE name one, and RENAME is the
     // action it can take.
     const auto schema_id = alter_schema_id;
-    if (schema_id.isSet() &&
-        FindView(&transaction.GetContext(), schema_id, table_name)) {
+    if (schema_id.isSet() && Find<SereneDBViewEntry>(&transaction.GetContext(),
+                                                     schema_id, table_name)) {
       if (table_info.alter_table_type == duckdb::AlterTableType::RENAME_TABLE) {
         RenameViewObject(ax, db, name.GetIdentifierName(), table_name,
                          table_info.Cast<duckdb::RenameTableInfo>()

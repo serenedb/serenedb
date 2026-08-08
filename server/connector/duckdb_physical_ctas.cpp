@@ -26,7 +26,9 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
@@ -87,7 +89,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // The relation is created here -- at execution, once -- with the id the plan
   // pre-allocated, and the load that follows appends into the rows that entry
   // owns.
-  auto& catalog_impl = catalog::GetCatalog();
+  auto& catalog_impl = catalog::DatabaseCatalog(&context, _database_id);
   const auto table_name = std::string{catalog::TableNameOf(*_options)};
   // CREATE OR REPLACE TABLE AS: drop the pre-existing table (cascade) before
   // creating the replacement. Both halves belong to this transaction, so a
@@ -96,8 +98,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   if (_on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT) {
     const auto schema_id =
       catalog::FindSchemaId(&context, _database_id, _schema_name);
-    if (schema_id.isSet() &&
-        catalog::FindTable(&context, schema_id, table_name)) {
+    if (schema_id.isSet() && catalog::Find<catalog::SereneDBTableEntry>(
+                               &context, schema_id, table_name)) {
       catalog_impl.DropTable(catalog::ActingAs(context), _database_name,
                              _schema_name, table_name, /*cascade=*/true,
                              /*missing_ok=*/false);
@@ -127,9 +129,10 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   sdb_state->transaction_abort_cleanup =
     [database_name = _database_name, schema_name = _schema_name, table_name](
       duckdb::MetaTransaction&, duckdb::ClientContext&) {
-      catalog::GetCatalog().DropTable(catalog::NoAccessCheck(), database_name,
-                                      schema_name, table_name,
-                                      /*cascade=*/true, /*missing_ok=*/true);
+      catalog::DatabaseCatalog(
+        nullptr, catalog::FindDatabase(nullptr, database_name).Id())
+        .DropTable(catalog::NoAccessCheck(), database_name, schema_name,
+                   table_name, /*cascade=*/true, /*missing_ok=*/true);
     };
   auto& metrics = sdb_state->Progress();
   metrics.SetCommand(pg::ProgressCommand::CreateTableAs);

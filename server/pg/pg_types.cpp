@@ -37,6 +37,7 @@
 #include "catalog/duckdb_object_entry.h"
 #include "catalog/duckdb_object_index.h"
 #include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/sequence.h"
 #include "catalog/user_type.h"
 #include "catalog/virtual_table.h"
@@ -303,7 +304,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
     default: {
       // A user-defined type is not in the snapshot -- its entry is the object
       // -- so the oid resolves through this session's database.
-      if (auto type = catalog::FindSessionType(
+      if (auto type = catalog::FindSession<catalog::SereneDBTypeEntry>(
             context, ObjectId{static_cast<uint64_t>(oid)})) {
         return type->user_type;
       }
@@ -606,20 +607,20 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   if (const auto schema_id =
         catalog::FindSchemaId(client, ctx.GetDatabaseId(), object_name.schema);
       schema_id.isSet()) {
-    if (const auto* table =
-          catalog::FindTable(client, schema_id, object_name.relation)) {
+    if (const auto* table = catalog::Find<catalog::SereneDBTableEntry>(
+          client, schema_id, object_name.relation)) {
       return table->oid;
     }
-    if (auto view =
-          catalog::FindView(client, schema_id, object_name.relation)) {
+    if (auto view = catalog::Find<catalog::SereneDBViewEntry>(
+          client, schema_id, object_name.relation)) {
       return catalog::IdOf(*view).id();
     }
-    if (const auto* sequence =
-          catalog::FindSequence(client, schema_id, object_name.relation)) {
+    if (const auto* sequence = catalog::Find<catalog::SereneDBSequenceEntry>(
+          client, schema_id, object_name.relation)) {
       return sequence->oid;
     }
-    if (const auto* index =
-          catalog::FindIndex(client, schema_id, object_name.relation)) {
+    if (const auto* index = catalog::Find<catalog::SereneDBIndexEntry>(
+          client, schema_id, object_name.relation)) {
       return index->oid;
     }
   }

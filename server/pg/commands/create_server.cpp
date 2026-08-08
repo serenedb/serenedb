@@ -31,6 +31,7 @@
 
 #include "basics/duckdb_engine.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/foreign_server.h"
 #include "catalog/store/data_store.h"
@@ -108,7 +109,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // touches the network. The live ATTACH runs after; a connect failure
   // compensates by dropping the just-created row, so a failed CREATE SERVER
   // still leaves nothing behind.
-  auto& catalog = catalog::GetCatalog();
+  auto& catalog = catalog::DatabaseCatalog(&conn_ctx.GetClientContext(), db_id);
   if (!catalog.CreateForeignServer(
         catalog::ActingAs(conn_ctx.GetRoleId(), conn_ctx.GetClientContext()),
         db_id, server, catalog::Permissions{conn_ctx.GetRoleId()},

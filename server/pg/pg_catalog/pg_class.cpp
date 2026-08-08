@@ -40,6 +40,7 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
 #include "catalog/duckdb_object_entry.h"
 #include "catalog/duckdb_table_entry.h"
 #include "catalog/duckdb_view_entry.h"
@@ -181,11 +182,12 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
   // from one place.
   std::vector<catalog::IndexInfoRef> indexes;
   containers::FlatHashSet<ObjectId> indexed_relations;
-  catalog::VisitIndexes(&context, database_id,
-                        [&](const catalog::IndexInfoRef& index) {
-                          indexed_relations.insert(index->GetRelationId());
-                          indexes.push_back(index);
-                        });
+  catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
+    &context, database_id,
+    [&](const catalog::IndexInfoRef& index, const catalog::Permissions&) {
+      indexed_relations.insert(index->GetRelationId());
+      indexes.push_back(index);
+    });
   containers::FlatHashMap<ObjectId, ObjectId> relation_owners;
   // The tables in set order, for the synthetic key-index rows below, and the
   // sequences that feed a synthetic primary key -- serenedb's own machinery,
@@ -272,7 +274,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
     values.push_back(std::move(row));
   }
 
-  catalog::VisitSequences(
+  catalog::Visit<catalog::SereneDBSequenceEntry>(
     &context, database_id, [&](const catalog::SereneDBSequenceEntry& sequence) {
       // The synthetic primary-key sequence of a table declaring none is
       // serenedb's own machinery, like the column it feeds: postgres has no
@@ -290,7 +292,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       values.push_back(std::move(row));
     });
 
-  catalog::VisitTypes(
+  catalog::Visit<catalog::SereneDBTypeEntry>(
     &context, database_id, [&](const duckdb::TypeCatalogEntry& type) {
       if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
         return;

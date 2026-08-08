@@ -46,6 +46,11 @@ namespace sdb::catalog {
 // a type, and the mutators write this set directly.
 class SereneDBTypeEntry final : public duckdb::TypeCatalogEntry {
  public:
+  // The duckdb set family this kind is looked up under; Find<> reads it so
+  // there is no per-kind lookup function to write.
+  static constexpr auto kCatalogType = duckdb::CatalogType::TYPE_ENTRY;
+
+ public:
   SereneDBTypeEntry(duckdb::Catalog& catalog,
                     duckdb::SchemaCatalogEntry& schema,
                     duckdb::CreateTypeInfo& info, catalog::Permissions perm)
@@ -59,6 +64,11 @@ class SereneDBTypeEntry final : public duckdb::TypeCatalogEntry {
 // the mutators write these sets directly.
 class SereneDBScalarMacroEntry final : public duckdb::ScalarMacroCatalogEntry {
  public:
+  // The duckdb set family this kind is looked up under; Find<> reads it so
+  // there is no per-kind lookup function to write.
+  static constexpr auto kCatalogType = duckdb::CatalogType::MACRO_ENTRY;
+
+ public:
   SereneDBScalarMacroEntry(duckdb::Catalog& catalog,
                            duckdb::SchemaCatalogEntry& schema,
                            duckdb::CreateMacroInfo& info,
@@ -69,6 +79,11 @@ class SereneDBScalarMacroEntry final : public duckdb::ScalarMacroCatalogEntry {
 };
 
 class SereneDBTableMacroEntry final : public duckdb::TableMacroCatalogEntry {
+ public:
+  // The duckdb set family this kind is looked up under; Find<> reads it so
+  // there is no per-kind lookup function to write.
+  static constexpr auto kCatalogType = duckdb::CatalogType::MACRO_ENTRY;
+
  public:
   SereneDBTableMacroEntry(duckdb::Catalog& catalog,
                           duckdb::SchemaCatalogEntry& schema,
@@ -86,6 +101,11 @@ class SereneDBTableMacroEntry final : public duckdb::TableMacroCatalogEntry {
 // sequence, and the mutators write this set directly. The counter is the one
 // thing that is not the definition -- it is shared by every version of it.
 class SereneDBSequenceEntry final : public duckdb::SequenceCatalogEntry {
+ public:
+  // The duckdb set family this kind is looked up under; Find<> reads it so
+  // there is no per-kind lookup function to write.
+  static constexpr auto kCatalogType = duckdb::CatalogType::SEQUENCE_ENTRY;
+
  public:
   SereneDBSequenceEntry(duckdb::Catalog& catalog,
                         duckdb::SchemaCatalogEntry& schema,
@@ -141,6 +161,11 @@ class SereneDBSequenceEntry final : public duckdb::SequenceCatalogEntry {
 // Like a role, a database and a schema, the entry is the object: nothing else
 // holds a tokenizer, and the mutators write this set directly.
 class SereneDBTokenizerEntry final : public duckdb::StandardEntry {
+ public:
+  // The duckdb set family this kind is looked up under; Find<> reads it so
+  // there is no per-kind lookup function to write.
+  static constexpr auto kCatalogType = duckdb::CatalogType::TOKENIZER_ENTRY;
+
  public:
   SereneDBTokenizerEntry(duckdb::Catalog& catalog,
                          duckdb::SchemaCatalogEntry& schema,

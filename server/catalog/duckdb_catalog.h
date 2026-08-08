@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 
+#include "catalog/catalog.h"
 #include "catalog/duckdb_schema_entry.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
@@ -221,7 +222,125 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   bool InMemory() final { return false; }
 
+  // The per-database DDL surface. These live here rather than on
+  // catalog::Catalog because the database they act on is this catalog: only
+  // cluster-wide state (roles, databases, the log) has no such home.
+  // Returns the created table, or null for the if_not_exists no-op. The
+  // SERIAL columns arrive beside the info: the catalog resolves each sequence's
+  // name, stamps the owning table and sets the column's nextval default,
+  // none of which the statement can do for itself.
+  TableInfoRef CreateTable(const AccessContext& ax, ObjectId database_id,
+                           std::string_view schema,
+                           std::shared_ptr<duckdb::CreateTableInfo> info,
+                           std::vector<SerialSequence> sequences,
+                           CreateTableOperationOptions operation_options);
+
+  // `relation` is the already-resolved table or view the index is built on;
+  // callers that only have a name resolve it themselves. Returns the created
+  // index, or null for the if_not_exists no-op.
+  IndexInfoRef CreateSecondaryIndex(
+    const AccessContext& ax, const IndexRelation& relation, std::string name,
+    std::vector<CreateIndexColumn>&& columns, bool unique,
+    CreateIndexOperationOptions operation_options);
+
+  IndexInfoRef CreateInvertedIndex(
+    const AccessContext& ax, duckdb::ClientContext& context,
+    ObjectId database_id, std::string_view schema,
+    const IndexRelation& relation, std::string name,
+    std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
+    ExpressionData predicate, CreateIndexOperationOptions operation_options);
+
+  // ALTER INDEX ... RENAME TO, once the caller has resolved the index and
+  // checked the privilege. The physical index is filed under the catalog name,
+  // so the record and the store op that moves it go into one frame. Assumes
+  // `_mutex` is held.
+  void RenameIndex(duckdb::ClientContext* context,
+                   const CreateIndexInfoBase& index, std::string_view new_name);
+
+  // The owner is `ax.role`: a dictionary has no ACL of its own, so its
+  // permissions are the creator and nothing else.
+  bool CreateTokenizer(const AccessContext& ax, ObjectId database_id,
+                       std::string_view schema,
+                       std::shared_ptr<CreateTokenizerInfo> tokenizer,
+                       bool if_not_exists);
+
+  // Foreign servers are database children, like PG (no schema). Every check
+  // runs here, under the mutex: CREATE privilege, supported FDW, and name
+  // collisions in this or ANY database (the attach alias is instance-global).
+  // Returns false for the if_not_exists no-op. The live ATTACH happens
+  // AFTERWARDS in the command layer, compensated by a drop on failure -- so a
+  // denied or invalid CREATE never touches the network.
+  bool CreateForeignServer(const AccessContext& ax, ObjectId database_id,
+                           std::shared_ptr<CreateForeignServerInfo> info,
+                           Permissions perm, bool if_not_exists);
+
+  // One ALTER on one table: `change` produces the next version of the info from
+  // the live one, or null for a sanctioned no-op (what IF [NOT] EXISTS asks
+  // for). The caller resolves the table, so a name that turns out to hold
+  // something else is its error to phrase.
+  void ChangeTable(const AccessContext& ax,
+                   const duckdb::CreateTableInfo& table, TableChange change);
+
+  // `type` is the type the statement names the table as; it drives the error
+  // phrasing and the ACL shape, and differs from Table only for the index
+  // kinds, which a statement may name a table by.
+  void ChangeTableOwner(const AccessContext& ax,
+                        const duckdb::CreateTableInfo& table,
+                        duckdb::CatalogType type, ObjectId new_owner,
+                        std::string_view new_owner_name);
+
+  void ChangeColumnType(
+    const AccessContext& ax, const duckdb::CreateTableInfo& table,
+    std::string_view column, duckdb::LogicalType new_type,
+    duckdb::unique_ptr<duckdb::ParsedExpression> using_expr);
+
+  bool DropSchema(const AccessContext& ax, std::string_view database,
+                  std::string_view name, bool cascade, bool missing_ok);
+
+  bool DropTable(const AccessContext& ax, std::string_view database,
+                 std::string_view schema, std::string_view name, bool cascade,
+                 bool missing_ok);
+
+  bool DropIndex(const AccessContext& ax, std::string_view database,
+                 std::string_view schema, std::string_view name, bool cascade,
+                 bool missing_ok);
+
+  // Drop an index by its stable ObjectId rather than by name. Used by the
+  // CREATE INDEX failure path, where a concurrent rename could otherwise make a
+  // by-name lookup resolve to (and drop) the wrong index.
+  void DropIndexById(duckdb::ClientContext* context, ObjectId database_id,
+                     ObjectId index_id, bool cascade);
+
+  // Undoes a CREATE INDEX whose transaction is rolling back. The definition
+  // lives only on that transaction's overlay and dies with it, so nothing is
+  // published and no drop record is appended -- there is no committed
+  // definition to tombstone. What the create did outside the catalog is undone
+  // here: the store-side index stops feeding the table's commits immediately,
+  // and the artifact cleanup starts now rather than being parked on the
+  // transaction, which is about to discard everything it holds.
+  void DropUncommittedIndex(duckdb::ClientContext& context,
+                            ObjectId database_id, ObjectId index_id);
+
+  void DropTableColumn(const AccessContext& ax, ObjectId database_id,
+                       const duckdb::CreateTableInfo& table,
+                       std::string_view column, bool if_exists);
+
+  // The next version of one function, for DROP FUNCTION on a name that holds
+  // several overloads: what survives the drop is a rewrite of the whole set.
+  // A no-op when the name no longer holds a function.
+  void ReplaceFunction(duckdb::ClientContext& context, ObjectId database_id,
+                       std::string_view schema, std::string_view name,
+                       std::shared_ptr<const duckdb::CreateMacroInfo> info);
+
  private:
+  void CreateIndexImpl(duckdb::ClientContext* context,
+                       const IndexInfoRef& index,
+                       CreateIndexOperationOptions operation_options);
+
+  // Shared core of DropIndex / DropIndexById; assumes `_mutex` is held.
+  void DropIndexLocked(duckdb::ClientContext* context, ObjectId database_id,
+                       const IndexInfoRef& index, bool cascade);
+
   ObjectId _database_id;
   catalog::HeldSchema _public_schema;
   // Every schema of this database, the two static ones included. Created and

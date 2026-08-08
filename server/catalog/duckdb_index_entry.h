@@ -42,6 +42,11 @@ namespace sdb::catalog {
 // the index name during DROP INDEX and routes to our DropObject.
 class SereneDBIndexEntry final : public duckdb::IndexCatalogEntry {
  public:
+  // The duckdb set family this kind is looked up under; Find<> reads it so
+  // there is no per-kind lookup function to write.
+  static constexpr auto kCatalogType = duckdb::CatalogType::INDEX_ENTRY;
+
+ public:
   SereneDBIndexEntry(duckdb::Catalog& catalog,
                      duckdb::SchemaCatalogEntry& schema,
                      duckdb::CreateIndexInfo& info, catalog::IndexInfoRef index,

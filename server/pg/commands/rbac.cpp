@@ -38,9 +38,11 @@
 #include "auth/acl.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/duckdb_object_entry.h"
 #include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/persistence/role.h"
 #include "catalog/table.h"
 #include "network/credentials.h"
@@ -183,7 +185,7 @@ void ChangeSchemaOwner(const catalog::AccessContext& ax, ObjectId schema_id,
 void ChangeTableAcl(const catalog::AccessContext& ax,
                     const duckdb::CreateTableInfo& table,
                     duckdb::CatalogType type, auth::AclMutator mutate) {
-  const auto* current = catalog::FindTable(
+  const auto* current = catalog::Find<catalog::SereneDBTableEntry>(
     ax.context, catalog::ParentIdOf(table), catalog::IdOf(table));
   if (current == nullptr) {
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
@@ -203,7 +205,8 @@ catalog::TableInfoRef ChangeColumnAcl(const catalog::AccessContext& ax,
                                       auth::AclMutator mutate) {
   const auto schema_id = catalog::ParentIdOf(table);
   const auto table_id = catalog::IdOf(table);
-  const auto* entry = catalog::FindTable(ax.context, schema_id, table_id);
+  const auto* entry =
+    catalog::Find<catalog::SereneDBTableEntry>(ax.context, schema_id, table_id);
   if (entry == nullptr) {
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                                       catalog::TableNameOf(table));
@@ -635,13 +638,16 @@ bool EntryExists(ConnectionContext& ctx, duckdb::CatalogType type,
   auto* context = &ctx.GetClientContext();
   switch (type) {
     case duckdb::CatalogType::TYPE_ENTRY:
-      return catalog::FindType(context, schema_id, name) != nullptr;
+      return catalog::Find<catalog::SereneDBTypeEntry>(context, schema_id,
+                                                       name) != nullptr;
     case duckdb::CatalogType::MACRO_ENTRY:
       return catalog::FindFunction(context, schema_id, name) != nullptr;
     case duckdb::CatalogType::VIEW_ENTRY:
-      return catalog::FindView(context, schema_id, name) != nullptr;
+      return catalog::Find<catalog::SereneDBViewEntry>(context, schema_id,
+                                                       name) != nullptr;
     case duckdb::CatalogType::SEQUENCE_ENTRY:
-      return catalog::FindSequence(context, schema_id, name) != nullptr;
+      return catalog::Find<catalog::SereneDBSequenceEntry>(context, schema_id,
+                                                           name) != nullptr;
     default:
       return false;
   }
@@ -661,10 +667,10 @@ catalog::TableInfoRef ResolveGrantTarget(ConnectionContext& ctx,
   out_name = parsed.relation;
   const auto schema_id = catalog::FindSchemaId(
     &ctx.GetClientContext(), ctx.GetDatabaseId(), parsed.schema);
-  const auto* entry =
-    schema_id.isSet()
-      ? catalog::FindTable(&ctx.GetClientContext(), schema_id, parsed.relation)
-      : nullptr;
+  const auto* entry = schema_id.isSet()
+                        ? catalog::Find<catalog::SereneDBTableEntry>(
+                            &ctx.GetClientContext(), schema_id, parsed.relation)
+                        : nullptr;
   if (entry == nullptr) {
     return nullptr;
   }
@@ -934,8 +940,9 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
     const auto parsed = ParseObjectName(obj_name, current_schema);
     const auto schema_id = catalog::FindSchemaId(
       &ctx.GetClientContext(), ctx.GetDatabaseId(), parsed.schema);
-    if (schema_id.isSet() && catalog::FindView(&ctx.GetClientContext(),
-                                               schema_id, parsed.relation)) {
+    if (schema_id.isSet() &&
+        catalog::Find<catalog::SereneDBViewEntry>(&ctx.GetClientContext(),
+                                                  schema_id, parsed.relation)) {
       schema_name = parsed.schema;
       rel_name = parsed.relation;
       entry_schema = schema_id;
@@ -965,7 +972,8 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
       const auto schema_id = catalog::FindSchemaId(
         &ctx.GetClientContext(), ctx.GetDatabaseId(), schema_name);
       if (schema_id.isSet() &&
-          catalog::FindTable(&ctx.GetClientContext(), schema_id, rel_name)) {
+          catalog::Find<catalog::SereneDBTableEntry>(&ctx.GetClientContext(),
+                                                     schema_id, rel_name)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                         ERR_MSG("\"", rel_name, "\" is not a sequence"));
       }
@@ -1046,9 +1054,9 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
   // Only a table has column grants to follow the relation's -- a view under the
   // same relation namespace landed on its own entry instead.
   if (revoke && target && type == duckdb::CatalogType::TABLE_ENTRY) {
-    const auto* tbl_entry =
-      catalog::FindTable(&ctx.GetClientContext(), catalog::ParentIdOf(*target),
-                         catalog::IdOf(*target));
+    const auto* tbl_entry = catalog::Find<catalog::SereneDBTableEntry>(
+      &ctx.GetClientContext(), catalog::ParentIdOf(*target),
+      catalog::IdOf(*target));
     if (tbl_entry != nullptr) {
       auto tbl = tbl_entry->Definition();
       // The column list is read off one version, but each revoke has to build
@@ -1097,7 +1105,7 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
   } else if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
     // Only the free-standing ones, as PG's GRANT ON ALL SEQUENCES is: a
     // SERIAL's sequence is granted through the table that owns it.
-    catalog::VisitSequences(
+    catalog::Visit<catalog::SereneDBSequenceEntry>(
       &ctx.GetClientContext(), db,
       [&](const catalog::SereneDBSequenceEntry& seq) {
         if (ObjectId{seq.ParentSchema().oid} == schema_id &&
@@ -1106,7 +1114,7 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
         }
       });
   } else {
-    catalog::VisitTables(
+    catalog::VisitDefinitions<catalog::SereneDBTableEntry>(
       &ctx.GetClientContext(), db,
       [&](const catalog::TableInfoRef& table, const catalog::Permissions&) {
         if (catalog::ParentIdOf(*table) == schema_id) {
@@ -1157,7 +1165,8 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
                 std::string_view name, std::string_view new_owner) {
   const auto type = FromPgObjectTypeName(obj_type);
   SDB_ASSERT(type != duckdb::CatalogType::INVALID);
-  auto& catalog = GlobalCatalog();
+  auto& catalog =
+    catalog::DatabaseCatalog(&ctx.GetClientContext(), ctx.GetDatabaseId());
   const ObjectId current_id = ctx.GetRoleId();
 
   std::string_view new_owner_name = new_owner;
@@ -1182,7 +1191,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                       ERR_MSG("schema \"", name, "\" does not exist"));
     }
-    catalog::Catalog::MutationScope mutation{catalog};
+    catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
     ChangeSchemaOwner(catalog::ActingAs(current_id, ctx.GetClientContext()),
                       catalog::IdOf(*schema), new_owner_id, new_owner_name);
     return;
@@ -1205,8 +1214,8 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
     // as a type's and a function's are.
     auto kind = type;
     if (kind == duckdb::CatalogType::TABLE_ENTRY && schema_id.isSet() &&
-        catalog::FindView(&ctx.GetClientContext(), schema_id,
-                          parsed.relation)) {
+        catalog::Find<catalog::SereneDBViewEntry>(&ctx.GetClientContext(),
+                                                  schema_id, parsed.relation)) {
       kind = duckdb::CatalogType::VIEW_ENTRY;
     }
     if (kind == duckdb::CatalogType::TYPE_ENTRY ||
@@ -1218,8 +1227,8 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
         // A sequence shares the relation namespace, so the other half of it
         // still answers for the name and PG reports the kind mismatch.
         if (kind == duckdb::CatalogType::SEQUENCE_ENTRY && schema_id.isSet() &&
-            catalog::FindTable(&ctx.GetClientContext(), schema_id,
-                               parsed.relation)) {
+            catalog::Find<catalog::SereneDBTableEntry>(
+              &ctx.GetClientContext(), schema_id, parsed.relation)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
             ERR_MSG("\"", parsed.relation, "\" is not a sequence"));
@@ -1228,7 +1237,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
                         ERR_MSG(ToPgObjectTypeName(kind), " \"",
                                 parsed.relation, "\" does not exist"));
       }
-      catalog::Catalog::MutationScope mutation{catalog};
+      catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
       if (kind == duckdb::CatalogType::TYPE_ENTRY) {
         catalog::ChangeEntryOwner(ax, duckdb::CatalogType::TYPE_ENTRY,
                                   schema_id, parsed.relation, new_owner_id,
@@ -1249,8 +1258,8 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
       return;
     }
     const auto* target_entry =
-      schema_id.isSet() ? catalog::FindTable(&ctx.GetClientContext(), schema_id,
-                                             parsed.relation)
+      schema_id.isSet() ? catalog::Find<catalog::SereneDBTableEntry>(
+                            &ctx.GetClientContext(), schema_id, parsed.relation)
                         : nullptr;
     target = target_entry != nullptr ? target_entry->Definition() : nullptr;
     if (!target) {

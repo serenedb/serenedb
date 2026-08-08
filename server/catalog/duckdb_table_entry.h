@@ -84,6 +84,11 @@ const catalog::ColumnAcls* RelationColumnAcls(
 
 class SereneDBTableEntry : public duckdb::DuckTableEntry {
  public:
+  // The duckdb set family this kind is looked up under; Find<> reads it so
+  // there is no per-kind lookup function to write.
+  static constexpr auto kCatalogType = duckdb::CatalogType::TABLE_ENTRY;
+
+ public:
   // storage: the rows this version owns. A reshaping statement hands over the
   // DataTable it produced and every other version inherits the one its
   // predecessor held, so an entry and its rows are fixed together. Null for a

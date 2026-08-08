@@ -29,6 +29,7 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
 #include "catalog/duckdb_object_entry.h"
 #include "catalog/duckdb_table_entry.h"
 #include "catalog/duckdb_view_entry.h"
@@ -115,17 +116,18 @@ catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
       }
     });
 
-  catalog::VisitIndexes(
-    &context, database_id, [&](const catalog::IndexInfoRef& index) {
+  catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
+    &context, database_id,
+    [&](const catalog::IndexInfoRef& index, const catalog::Permissions&) {
       add(PgClass::kId, index->GetId(), 0, index->Comment());
     });
 
-  catalog::VisitSequences(
+  catalog::Visit<catalog::SereneDBSequenceEntry>(
     &context, database_id, [&](const catalog::SereneDBSequenceEntry& seq) {
       add(PgClass::kId, ObjectId{seq.oid}, 0, seq.Comment());
     });
 
-  catalog::VisitTypes(
+  catalog::Visit<catalog::SereneDBTypeEntry>(
     &context, database_id, [&](const duckdb::TypeCatalogEntry& type) {
       add(PgType::kId, ObjectId{type.oid}, 0, InfoComment(type.comment));
     });

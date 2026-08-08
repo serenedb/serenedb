@@ -24,6 +24,7 @@
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
 #include "catalog/tokenizer.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -40,17 +41,18 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
   std::vector<PgTsDict> values;
 
-  catalog::VisitTokenizers(&_config.GetClientContext(), GetDatabaseId(),
-                           [&](const catalog::CreateTokenizerInfo& tokenizer,
-                               const catalog::Permissions& perm) {
-                             values.push_back({
-                               .oid = tokenizer.GetId().id(),
-                               .dictname = tokenizer.GetName(),
-                               .dictnamespace = tokenizer.GetParentId().id(),
-                               .dictowner = perm.owner,
-                               .dicttemplate = 0,
-                             });
-                           });
+  catalog::VisitDefinitions<catalog::SereneDBTokenizerEntry>(
+    &_config.GetClientContext(), GetDatabaseId(),
+    [&](const catalog::TokenizerRef& tokenizer,
+        const catalog::Permissions& perm) {
+      values.push_back({
+        .oid = tokenizer->GetId().id(),
+        .dictname = tokenizer->GetName(),
+        .dictnamespace = tokenizer->GetParentId().id(),
+        .dictowner = perm.owner,
+        .dicttemplate = 0,
+      });
+    });
 
   auto result = CreateColumns<PgTsDict>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

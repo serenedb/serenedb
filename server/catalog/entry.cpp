@@ -23,8 +23,33 @@
 #include <duckdb/main/database_manager.hpp>
 
 #include "basics/duckdb_engine.h"
+#include "catalog/database.h"
+#include "catalog/foreign_server.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/role.h"
+#include "catalog/tokenizer.h"
 
+namespace duckdb {
+
+unique_ptr<CreateInfo> DeserializeForeignCreateInfo(Deserializer& deserializer,
+                                                    CatalogType type) {
+  switch (type) {
+    case CatalogType::ROLE_ENTRY:
+      return sdb::catalog::CreateRoleInfo::Deserialize(deserializer);
+    case CatalogType::DATABASE_ENTRY:
+      return sdb::catalog::CreateDatabaseInfo::Deserialize(deserializer);
+    case CatalogType::TOKENIZER_ENTRY:
+      return sdb::catalog::CreateTokenizerInfo::Deserialize(deserializer);
+    case CatalogType::FOREIGN_SERVER_ENTRY:
+      return sdb::catalog::CreateForeignServerInfo::Deserialize(deserializer);
+    default:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("Unsupported type for deserialization of CreateInfo!"));
+  }
+}
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 duckdb::DatabaseManager& IdAllocator() {

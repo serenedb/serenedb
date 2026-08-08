@@ -36,6 +36,11 @@ namespace sdb::catalog {
 // bound entry (a pointer hand-off) instead of resolving the view again by name.
 class SereneDBViewEntry final : public duckdb::ViewCatalogEntry {
  public:
+  // The duckdb set family this kind is looked up under; Find<> reads it so
+  // there is no per-kind lookup function to write.
+  static constexpr auto kCatalogType = duckdb::CatalogType::TABLE_ENTRY;
+
+ public:
   SereneDBViewEntry(duckdb::Catalog& catalog,
                     duckdb::SchemaCatalogEntry& schema,
                     duckdb::CreateViewInfo& info, catalog::Permissions perm)

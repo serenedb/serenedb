@@ -62,6 +62,7 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/tokenizer.h"
 #include "pg/connection_context.h"
@@ -955,7 +956,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
     ObjectId{}, ObjectId{}, name, features, norm_row_group_size,
     std::move(cfg));
 
-  auto& catalog = catalog::GetCatalog();
+  auto& catalog = catalog::DatabaseCatalog(&conn_ctx.GetClientContext(), db_id);
   catalog.CreateTokenizer(
     catalog::ActingAs(conn_ctx.GetRoleId(), conn_ctx.GetClientContext()), db_id,
     schema, std::move(tokenizer), if_not_exists);

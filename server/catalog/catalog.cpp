@@ -79,6 +79,7 @@
 #include "catalog/database.h"
 #include "catalog/deferred_writes.h"
 #include "catalog/drop_task.h"
+#include "catalog/duckdb_catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/duckdb_dependency.h"
 #include "catalog/duckdb_global_catalog.h"
@@ -86,6 +87,7 @@
 #include "catalog/duckdb_object_entry.h"
 #include "catalog/duckdb_object_index.h"
 #include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/function.h"
@@ -269,7 +271,7 @@ ObjectId ResolveTypeId(duckdb::ClientContext* context, ObjectId db_id,
   if (!schema_id.isSet()) {
     return {};
   }
-  const auto* type = catalog::FindType(context, schema_id, name);
+  const auto* type = catalog::Find<SereneDBTypeEntry>(context, schema_id, name);
   return type != nullptr ? ObjectId{type->oid} : ObjectId{};
 }
 
@@ -281,7 +283,8 @@ ObjectId ResolveSequenceId(duckdb::ClientContext* context, ObjectId db_id,
   if (!schema_id.isSet()) {
     return {};
   }
-  const auto* sequence = catalog::FindSequence(context, schema_id, name);
+  const auto* sequence =
+    catalog::Find<SereneDBSequenceEntry>(context, schema_id, name);
   return sequence != nullptr ? ObjectId{sequence->oid} : ObjectId{};
 }
 
@@ -307,10 +310,11 @@ ObjectId ResolveRelationId(duckdb::ClientContext* context, ObjectId db_id,
   if (!schema_id.isSet()) {
     return {};
   }
-  if (const auto* table = catalog::FindTable(context, schema_id, name)) {
+  if (const auto* table =
+        catalog::Find<SereneDBTableEntry>(context, schema_id, name)) {
     return ObjectId{table->oid};
   }
-  auto view = catalog::FindView(context, schema_id, name);
+  auto view = catalog::Find<SereneDBViewEntry>(context, schema_id, name);
   return view ? IdOf(*view) : ObjectId{};
 }
 
@@ -569,7 +573,8 @@ TableInfoRef GetTable(const AccessContext& ax, ObjectId database_id,
   if (!schema_id.isSet()) {
     return nullptr;
   }
-  const auto* table = catalog::FindTable(ax.context, schema_id, name);
+  const auto* table =
+    catalog::Find<SereneDBTableEntry>(ax.context, schema_id, name);
   if (table == nullptr) {
     return nullptr;
   }
@@ -584,7 +589,7 @@ TableInfoRef GetTable(const AccessContext& ax, ObjectId database_id,
 SequenceOwners CollectSequenceOwners(duckdb::ClientContext* context,
                                      ObjectId database_id) {
   SequenceOwners out;
-  catalog::VisitSequences(
+  catalog::Visit<SereneDBSequenceEntry>(
     context, database_id, [&](const catalog::SereneDBSequenceEntry& sequence) {
       const auto owner = sequence.GetOwnerTableId().isSet()
                            ? sequence.GetOwnerTableId()
@@ -600,9 +605,11 @@ SequenceOwners CollectSequenceOwners(duckdb::ClientContext* context,
 IndexOwners CollectIndexOwners(duckdb::ClientContext* context,
                                ObjectId database_id) {
   IndexOwners out;
-  catalog::VisitIndexes(context, database_id, [&](const IndexInfoRef& index) {
-    out.by_relation[index->GetRelationId()].push_back(index);
-  });
+  catalog::VisitDefinitions<SereneDBIndexEntry>(
+    context, database_id,
+    [&](const IndexInfoRef& index, const catalog::Permissions&) {
+      out.by_relation[index->GetRelationId()].push_back(index);
+    });
   for (auto& [relation, indexes] : out.by_relation) {
     std::ranges::sort(indexes, {},
                       [](const IndexInfoRef& index) { return index->GetId(); });
@@ -631,7 +638,7 @@ DatabaseTables CollectDatabaseTables(duckdb::ClientContext* context,
   if (!database_id.isSet()) {
     return out;
   }
-  catalog::VisitTables(
+  catalog::VisitDefinitions<SereneDBTableEntry>(
     context, database_id,
     [&](const TableInfoRef& table, const Permissions& perm) {
       const auto id = catalog::IdOf(*table);
@@ -839,9 +846,10 @@ class DropCascade {
         EmitEntryDrop(*dependent.entry);
         return;
       case INDEX_ENTRY: {
-        const auto* dropped = _context == nullptr ? nullptr
-                                                  : catalog::FindSessionIndex(
-                                                      *_context, dependent.id);
+        const auto* dropped =
+          _context == nullptr
+            ? nullptr
+            : catalog::FindSession<SereneDBIndexEntry>(*_context, dependent.id);
         EmitCascadeIndexDrop(dropped != nullptr ? dropped->Definition()
                                                 : nullptr);
       }
@@ -1016,10 +1024,10 @@ bool CheckSchemaEmptyDependency(duckdb::ClientContext* context,
   if (!database_id.isSet()) {
     return empty;
   }
-  catalog::VisitTables(context, database_id,
-                       [&](const TableInfoRef& table, const Permissions&) {
-                         empty &= catalog::ParentIdOf(*table) != schema_id;
-                       });
+  catalog::VisitDefinitions<SereneDBTableEntry>(
+    context, database_id, [&](const TableInfoRef& table, const Permissions&) {
+      empty &= catalog::ParentIdOf(*table) != schema_id;
+    });
   catalog::VisitFunctions(
     context, database_id, [&](const duckdb::MacroCatalogEntry& function) {
       empty &= ObjectId{function.ParentSchema().oid} != schema_id;
@@ -1139,7 +1147,7 @@ void CommitDropPlan(duckdb::ClientContext* context,
 
 void PublishDropPlan(duckdb::ClientContext* context, const DropPlan& plan) {
   // CommitDropPlan put every rewrite's record in the frame beside the removals.
-  Catalog::RecordedScope recorded;
+  catalog::Catalog::RecordedScope recorded;
   for (const auto& [tid, rw] : plan.table_rewrites) {
     if (!rw.published) {
       continue;
@@ -1205,11 +1213,13 @@ thread_local uint32_t gRecordedDepth = 0;
 
 }  // namespace
 
-Catalog::RecordedScope::RecordedScope() noexcept { ++gRecordedDepth; }
+catalog::Catalog::RecordedScope::RecordedScope() noexcept { ++gRecordedDepth; }
 
-Catalog::RecordedScope::~RecordedScope() { --gRecordedDepth; }
+catalog::Catalog::RecordedScope::~RecordedScope() { --gRecordedDepth; }
 
-bool Catalog::RecordedScope::Open() noexcept { return gRecordedDepth != 0; }
+bool catalog::Catalog::RecordedScope::Open() noexcept {
+  return gRecordedDepth != 0;
+}
 
 uint64_t CatalogVersion() noexcept {
   return gCatalogVersion.load(std::memory_order_relaxed);
@@ -1252,37 +1262,6 @@ void Catalog::RecordEntry(duckdb::ClientContext* context, ObjectId parent_id,
     ctx.catalog().PutEntry(parent_id, type, id, mode, std::move(info),
                            std::move(perm));
   });
-}
-
-void Catalog::ReplaceFunction(
-  duckdb::ClientContext& context, ObjectId database_id, std::string_view schema,
-  std::string_view name, std::shared_ptr<const duckdb::CreateMacroInfo> info) {
-  absl::MutexLock lock{&_mutex};
-  const auto schema_id = TryFindSchemaId(&context, database_id, schema);
-  if (!schema_id) {
-    return;
-  }
-  const auto* existing = catalog::FindFunction(&context, *schema_id, name);
-  if (existing == nullptr) {
-    return;
-  }
-  const auto& perm = existing->permissions;
-  // PG: only the owner may drop an overload, and what is left is a rewrite of
-  // the function the owner holds -- so the ACL and the owner carry over.
-  const auto fn_name = existing->name.GetIdentifierName();
-  RequireOwner(&context, ActingAs(context).role, perm, "function", fn_name);
-  // The overloads that stay are the new info's; the identity is the one the
-  // owner already holds.
-  auto next =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
-      info->Copy());
-  SetIdentity(*next, ObjectId{existing->oid},
-              ObjectId{existing->ParentSchema().oid});
-  catalog::PutEntry(
-    &context, fn_name,
-    NextFunctionVersion(
-      &context, std::shared_ptr<const duckdb::CreateMacroInfo>{next.release()}),
-    perm);
 }
 
 void Catalog::RecordSequence(
@@ -1379,12 +1358,12 @@ std::shared_ptr<SchemaDrop> Catalog::CreateSchemaDrop(
   // Collected before anything is built: a table drop reads the index set of the
   // same schema, and the walk that found these is holding one of its sets.
   std::vector<TableInfoRef> tables;
-  catalog::VisitTables(context, db_id,
-                       [&](const TableInfoRef& table, const Permissions&) {
-                         if (catalog::ParentIdOf(*table) == schema_id) {
-                           tables.push_back(table);
-                         }
-                       });
+  catalog::VisitDefinitions<SereneDBTableEntry>(
+    context, db_id, [&](const TableInfoRef& table, const Permissions&) {
+      if (catalog::ParentIdOf(*table) == schema_id) {
+        tables.push_back(table);
+      }
+    });
   std::vector<std::shared_ptr<TableDropBase>> tables_drop;
   tables_drop.reserve(tables.size());
   for (const auto& table : tables) {
@@ -1550,80 +1529,6 @@ void Catalog::CreateRole(const AccessContext& ax,
     const auto name = updated->GetName();
     catalog::PutRole(ax.context, name, std::move(updated));
   }
-}
-
-void Catalog::CreateIndexImpl(duckdb::ClientContext* context,
-                              const IndexInfoRef& index,
-                              CreateIndexOperationOptions operation_options) {
-  const auto schema_id = index->GetParentId();
-  // An index name is in the relation namespace, so every half of it answers.
-  if (catalog::FindTable(context, schema_id, index->GetName()) ||
-      catalog::FindSequence(context, schema_id, index->GetName()) ||
-      catalog::FindView(context, schema_id, index->GetName()) ||
-      catalog::FindIndex(context, schema_id, index->GetName())) {
-    ThrowDuplicateName(NameKind::Relation, index->GetName());
-  }
-  // A key constraint's index is filed under the constraint's own name and goes
-  // on the same list as this one, so the two share a namespace -- which is what
-  // postgres says too, where a constraint's index is a relation.
-  if (const auto* relation =
-        catalog::FindTable(context, schema_id, index->GetRelationId())) {
-    for (const auto& constraint : relation->GetConstraints()) {
-      if (constraint->type == duckdb::ConstraintType::UNIQUE &&
-          constraint->constraint_name == index->GetName()) {
-        ThrowDuplicateName(NameKind::Relation, index->GetName());
-      }
-    }
-  }
-
-  SDB_IF_FAILURE("unable_to_create") {
-    THROW_SQL_ERROR(ERR_MSG("internal error"));
-  }
-  const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
-  SDB_ASSERT(db_id.isSet());
-  // The inverted index's iresearch storage hangs off the definition, so the
-  // CREATE INDEX build (GetGlobalSinkState) reaches it via GetData(). Bind it
-  // here, before the build runs.
-  if (index->IsInverted()) {
-    index->SetData(search::InvertedIndexStorage::Create(
-      db_id, InvertedInfo(*index), /*is_new=*/true));
-  }
-  const auto stamped = NextIndexVersion(context, index);
-  const auto* entry =
-    catalog::FindTable(context, schema_id, index->GetRelationId());
-  const auto table = entry != nullptr ? entry->Definition() : nullptr;
-  auto store_index = table ? MakeStoreIndexInfo(*table, *stamped) : nullptr;
-  RecordedScope recorded;
-  Apply(context, [&](auto& ctx) {
-    PutIndex(ctx, stamped, wal::PutMode::Create);
-    if (store_index) {
-      ctx.store().CreateIndex(db_id, std::move(store_index), table, stamped);
-    }
-  });
-  // After the store op, so a relation another transaction has already dropped
-  // is refused by the rows rather than by the set -- the store names the
-  // relation, and the set can only say that something clashed.
-  catalog::PutEntry(context, /*old_name=*/{}, stamped);
-}
-
-void Catalog::RenameIndex(duckdb::ClientContext* context,
-                          const CreateIndexInfoBase& index,
-                          std::string_view new_name) {
-  const auto schema_id = index.GetParentId();
-  const auto renamed = NextIndexVersion(context, RenamedIndex(index, new_name));
-  const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
-  const auto* entry =
-    catalog::FindTable(context, schema_id, index.GetRelationId());
-  const auto table = entry != nullptr ? entry->Definition() : nullptr;
-  RecordedScope recorded;
-  Apply(context, [&](auto& ctx) {
-    PutIndex(ctx, renamed, wal::PutMode::Replace);
-    if (table && MakeStoreIndexInfo(*table, index)) {
-      ctx.store().RenameIndex(db_id, index.GetRelationId(), index.GetName(),
-                              new_name);
-    }
-  });
-  catalog::PutEntry(context, index.GetName(), renamed);
 }
 
 namespace {
@@ -1889,64 +1794,7 @@ void RequireAttributesGrantable(duckdb::ClientContext* context,
 
 }  // namespace
 
-IndexInfoRef Catalog::CreateSecondaryIndex(
-  const AccessContext& ax, const IndexRelation& relation, std::string name,
-  std::vector<CreateIndexColumn>&& columns, bool unique,
-  CreateIndexOperationOptions operation_options) {
-  if (columns.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Cannot create index without columns"));
-  }
-  JoinStoreTransaction(ax.context);
-  absl::MutexLock lock{&_mutex};
-  const auto& live = relation;
-  const auto schema_id = live.GetParentId();
-  RequireRelationOwner(ax.context, ax.role, live);
-  if (operation_options.if_not_exists &&
-      (catalog::FindTable(ax.context, schema_id, name) ||
-       catalog::FindSequence(ax.context, schema_id, name) ||
-       catalog::FindIndex(ax.context, schema_id, name))) {
-    return nullptr;
-  }
-  auto resolved = ResolveIndexRelation(live);
-  BindIndexColumns(resolved.columns, columns);
-  auto index = NewSecondaryIndex(schema_id, ObjectId{0}, resolved.relation_id,
-                                 std::move(name), std::move(columns), unique);
-  CreateIndexImpl(ax.context, index, operation_options);
-  return index;
-}
-
-IndexInfoRef Catalog::CreateInvertedIndex(
-  const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
-  std::string_view schema, const IndexRelation& relation, std::string name,
-  std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
-  ExpressionData predicate, CreateIndexOperationOptions operation_options) {
-  if (columns.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Cannot create index without columns"));
-  }
-  JoinStoreTransaction(&context);
-  absl::MutexLock lock{&_mutex};
-  const auto& live = relation;
-  const auto schema_id = live.GetParentId();
-  RequireRelationOwner(ax.context, ax.role, live);
-  if (operation_options.if_not_exists &&
-      (catalog::FindTable(ax.context, schema_id, name) ||
-       catalog::FindSequence(ax.context, schema_id, name) ||
-       catalog::FindIndex(ax.context, schema_id, name))) {
-    return nullptr;
-  }
-  auto resolved = ResolveIndexRelation(live);
-  BindIndexColumns(resolved.columns, columns);
-  auto index =
-    NewInvertedIndex(context, database_id, schema, schema_id, ObjectId{0},
-                     resolved.relation_id, std::move(name), std::move(columns),
-                     std::move(options), std::move(predicate));
-  CreateIndexImpl(&context, index, operation_options);
-  return index;
-}
-
-TableInfoRef Catalog::CreateTable(
+TableInfoRef SereneDBCatalog::CreateTable(
   const AccessContext& ax, ObjectId database_id, std::string_view schema,
   std::shared_ptr<duckdb::CreateTableInfo> info,
   std::vector<SerialSequence> sequence_specs,
@@ -1976,7 +1824,7 @@ TableInfoRef Catalog::CreateTable(
   }
 
   JoinStoreTransaction(ax.context);
-  absl::MutexLock lock{&_mutex};
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   auto schema_id = TryFindSchemaId(ax.context, database_id, schema);
   if (!schema_id) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
@@ -1984,10 +1832,10 @@ TableInfoRef Catalog::CreateTable(
   }
   RequireCreateOn(ax.context, ax.role, *schema_id);
   if (operation_options.if_not_exists &&
-      (catalog::FindTable(ax.context, *schema_id, name) ||
-       catalog::FindView(ax.context, *schema_id, name) ||
-       catalog::FindIndex(ax.context, *schema_id, name) ||
-       catalog::FindSequence(ax.context, *schema_id, name))) {
+      (catalog::Find<SereneDBTableEntry>(ax.context, *schema_id, name) ||
+       catalog::Find<SereneDBViewEntry>(ax.context, *schema_id, name) ||
+       catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id, name) ||
+       catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id, name))) {
     return nullptr;
   }
 
@@ -2002,8 +1850,8 @@ TableInfoRef Catalog::CreateTable(
     if (!referenced_id.isSet()) {
       continue;
     }
-    const auto* ref =
-      catalog::FindTableIn(ax.context, database_id, referenced_id);
+    const auto* ref = catalog::FindIn<SereneDBTableEntry>(
+      ax.context, database_id, referenced_id);
     if (ref == nullptr) {
       continue;
     }
@@ -2026,10 +1874,14 @@ TableInfoRef Catalog::CreateTable(
   // the relation namespace is asked, because a sequence shares it.
   const auto pick_unique_name = [&](std::string_view base) {
     const auto taken = [&](std::string_view candidate) {
-      return catalog::FindTable(ax.context, *schema_id, candidate) ||
-             catalog::FindSequence(ax.context, *schema_id, candidate) ||
-             catalog::FindIndex(ax.context, *schema_id, candidate) ||
-             catalog::FindView(ax.context, *schema_id, candidate);
+      return catalog::Find<SereneDBTableEntry>(ax.context, *schema_id,
+                                               candidate) ||
+             catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id,
+                                                  candidate) ||
+             catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id,
+                                               candidate) ||
+             catalog::Find<SereneDBViewEntry>(ax.context, *schema_id,
+                                              candidate);
     };
     std::string candidate{base};
     for (size_t i = 1; taken(candidate); ++i) {
@@ -2116,10 +1968,14 @@ TableInfoRef Catalog::CreateTable(
     std::vector<std::string_view> registering;
     registering.reserve(sequences.size() + 1);
     const auto taken = [&](std::string_view candidate) {
-      return catalog::FindTable(ax.context, *schema_id, candidate) ||
-             catalog::FindView(ax.context, *schema_id, candidate) ||
-             catalog::FindIndex(ax.context, *schema_id, candidate) ||
-             catalog::FindSequence(ax.context, *schema_id, candidate) ||
+      return catalog::Find<SereneDBTableEntry>(ax.context, *schema_id,
+                                               candidate) ||
+             catalog::Find<SereneDBViewEntry>(ax.context, *schema_id,
+                                              candidate) ||
+             catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id,
+                                               candidate) ||
+             catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id,
+                                                  candidate) ||
              absl::c_linear_search(registering, candidate);
     };
     if (taken(name)) {
@@ -2144,7 +2000,7 @@ TableInfoRef Catalog::CreateTable(
   // the entry is written -- so the entries have to be there to be resolved to,
   // or the table lands with no edge to its own sequence and DROP SEQUENCE stops
   // being refused. Their records ride the table's own, one frame below.
-  RecordedScope recorded;
+  catalog::Catalog::RecordedScope recorded;
   // The counter the auto-PK column reserves from has to be the one the entry
   // carries, not a second one over the same sequence.
   std::shared_ptr<SequenceCounter> generated_pk_counter;
@@ -2166,7 +2022,7 @@ TableInfoRef Catalog::CreateTable(
   // Re-resolved now that the owned sequences are written: the first pass
   // could not see them.
   table = NextTableVersion(ax.context, table_id, *schema_id, table);
-  Apply(ax.context, [&](auto& ctx) {
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
     std::vector<wal::OwnedSequence> owned;
     owned.reserve(sequences.size());
     for (const auto& seq : sequences) {
@@ -2196,102 +2052,6 @@ TableInfoRef Catalog::CreateTable(
     }
   }
   return table;
-}
-
-bool Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
-                              std::string_view schema,
-                              std::shared_ptr<CreateTokenizerInfo> tokenizer,
-                              bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id = TryFindSchemaId(ax.context, database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  RequireCreateOn(ax.context, ax.role, *schema_id);
-  const auto name = tokenizer->GetName();
-  if (catalog::FindTokenizer(ax.context, *schema_id, name)) {
-    if (if_not_exists) {
-      return false;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("text search dictionary \"", name, "\" already exists"));
-  }
-  if (!tokenizer->GetId().isSet()) {
-    tokenizer->SetId(NextId());
-  }
-  tokenizer->SetSchemaId(*schema_id);
-  Permissions perm{ax.role};
-  std::shared_ptr<const CreateTokenizerInfo> info = std::move(tokenizer);
-  catalog::PutEntry(ax.context, /*old_name=*/{}, std::move(info),
-                    std::move(perm));
-  return true;
-}
-
-bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
-                                  std::shared_ptr<CreateForeignServerInfo> info,
-                                  Permissions perm, bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  // Servers are database children, like PG (no schema). Gated on CREATE on
-  // the database, same as CREATE SCHEMA -- PG gates on FDW USAGE instead, but
-  // serenedb has no foreign-data-wrapper catalog object to hang an ACL on.
-  RequireDatabaseAccess(ax.context, ax.role,
-                        catalog::FindDatabase(ax.context, database_id),
-                        AclMode::Create);
-  const auto name = info->GetName();
-  if (!IsSupportedFdw(info->GetFdwName())) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("foreign-data wrapper \"", info->GetFdwName(),
-                            "\" is not supported"),
-                    ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
-  }
-  if (catalog::FindForeignServer(ax.context, database_id, name)) {
-    if (if_not_exists) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("server \"", name, "\" already exists"));
-  }
-  // Catalog names are per-database, but the live attachment alias is
-  // instance-global: a second same-named server would race the first for it
-  // (nondeterministic boot winner; DROP DATABASE detaching the other
-  // database's attachment). The attach cannot catch this -- it only collides
-  // while the first server's attachment is live, not when its remote is down.
-  std::vector<catalog::DatabaseRef> databases;
-  catalog::VisitDatabases(ax.context, [&](const catalog::DatabaseRef& db) {
-    databases.push_back(db);
-  });
-  for (const auto& db : databases) {
-    // A database shares the alias namespace with foreign servers, so a server
-    // named after one would make DROP SERVER's detach tear the database down.
-    if (db.Name() == name) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("database \"", db.Name(),
-                "\" already exists, so a server cannot take that name"),
-        ERR_HINT("Foreign server attachment names are instance-wide; "
-                 "choose a name not used by any database."));
-    }
-    if (db.Id() != database_id &&
-        catalog::FindForeignServer(ax.context, db.Id(), name)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("server \"", name, "\" already exists in database \"",
-                db.Name(), "\""),
-        ERR_HINT("Foreign server attachment names are instance-wide; "
-                 "choose a name not used by any database."));
-    }
-  }
-  info->SetDatabaseId(database_id);
-  const auto id = info->GetId().isSet() ? info->GetId() : NextId();
-  info->SetId(id);
-  // One definition, handed to the record and to the entry: nothing is derived
-  // at append time.
-  catalog::PutEntry(
-    ax.context, /*old_name=*/{},
-    std::shared_ptr<const CreateForeignServerInfo>{std::move(info)}, perm);
-  return true;
 }
 
 void Catalog::ChangeRoleImpl(
@@ -2414,14 +2174,16 @@ void Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
   catalog::PutRole(ax.context, name, std::move(new_role));
 }
 
-void Catalog::ChangeTableOwner(const AccessContext& ax,
-                               const duckdb::CreateTableInfo& table,
-                               duckdb::CatalogType type, ObjectId new_owner,
-                               std::string_view new_owner_name) {
-  absl::MutexLock lock{&_mutex};
+void SereneDBCatalog::ChangeTableOwner(const AccessContext& ax,
+                                       const duckdb::CreateTableInfo& table,
+                                       duckdb::CatalogType type,
+                                       ObjectId new_owner,
+                                       std::string_view new_owner_name) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto table_id = catalog::IdOf(table);
   const auto schema_id = catalog::ParentIdOf(table);
-  const auto* live = catalog::FindTable(ax.context, schema_id, table_id);
+  const auto* live =
+    catalog::Find<SereneDBTableEntry>(ax.context, schema_id, table_id);
   if (live == nullptr) {
     ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                              catalog::TableNameOf(table));
@@ -2455,8 +2217,8 @@ void Catalog::ChangeTableOwner(const AccessContext& ax,
   // One frame for the table and everything that follows its owner: a table and
   // the sequences its SERIAL columns own must never end up owned by different
   // roles, which one append per object allows a crash to do.
-  RecordedScope recorded;
-  Apply(ax.context, [&](auto& ctx) {
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
     ctx.catalog().PutTable(*definition, wal::PutMode::Replace, updated_perm);
     for (const auto& [sequence, sequence_perm] : rewritten) {
       ctx.catalog().PutEntry(catalog::ParentIdOf(*sequence),
@@ -2488,14 +2250,15 @@ void Catalog::ChangeDatabaseAcl(const AccessContext& ax, ObjectId database_id,
   catalog::PutDatabase(ax.context, name, std::move(updated), std::move(perm));
 }
 
-void Catalog::ChangeTable(const AccessContext& ax,
-                          const duckdb::CreateTableInfo& table,
-                          TableChange change) {
+void SereneDBCatalog::ChangeTable(const AccessContext& ax,
+                                  const duckdb::CreateTableInfo& table,
+                                  TableChange change) {
   JoinStoreTransaction(ax.context);
-  absl::MutexLock lock{&_mutex};
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto table_id = catalog::IdOf(table);
   const auto schema_id = catalog::ParentIdOf(table);
-  const auto* current = catalog::FindTable(ax.context, schema_id, table_id);
+  const auto* current =
+    catalog::Find<SereneDBTableEntry>(ax.context, schema_id, table_id);
   if (current == nullptr) {
     ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                              catalog::TableNameOf(table));
@@ -2531,8 +2294,8 @@ void Catalog::ChangeTable(const AccessContext& ax,
     catalog::TableEngineOf(*updated) == TableEngine::Transactional;
   const auto db_id = catalog::SchemaDatabaseId(ax.context, schema_id);
 
-  RecordedScope recorded;
-  Apply(ax.context, [&](auto& ctx) {
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
     ctx.catalog().PutTable(*updated, wal::PutMode::Replace, perm);
     for (const auto& new_idx : rerendered) {
       PutIndex(ctx, new_idx, wal::PutMode::Replace);
@@ -2634,10 +2397,12 @@ void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
   catalog::DropDatabaseEntry(ax.context, name);
 }
 
-bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
-                         std::string_view name, bool cascade, bool missing_ok) {
+bool SereneDBCatalog::DropSchema(const AccessContext& ax,
+                                 std::string_view database,
+                                 std::string_view name, bool cascade,
+                                 bool missing_ok) {
   JoinStoreTransaction(ax.context);
-  absl::MutexLock lock{&_mutex};
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
 
   const auto database_id = FindDatabaseId(ax.context, database);
   if (!database_id) {
@@ -2664,12 +2429,12 @@ bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
   // The containment index does not hold a tokenizer or a type -- their entry is
   // the object -- so what it contains is asked of the sets that do.
   bool has_entry_child = false;
-  catalog::VisitTokenizers(
+  catalog::VisitDefinitions<SereneDBTokenizerEntry>(
     ax.context, *database_id,
-    [&](const CreateTokenizerInfo& tokenizer, const Permissions&) {
-      has_entry_child |= tokenizer.GetParentId() == *schema_id;
+    [&](const TokenizerRef& tokenizer, const Permissions&) {
+      has_entry_child |= tokenizer->GetParentId() == *schema_id;
     });
-  catalog::VisitTypes(
+  catalog::Visit<SereneDBTypeEntry>(
     ax.context, *database_id, [&](const duckdb::TypeCatalogEntry& type) {
       has_entry_child |= ObjectId{type.ParentSchema().oid} == *schema_id;
     });
@@ -2677,11 +2442,11 @@ bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
     ax.context, *database_id, [&](const duckdb::MacroCatalogEntry& function) {
       has_entry_child |= ObjectId{function.ParentSchema().oid} == *schema_id;
     });
-  catalog::VisitViews(
+  catalog::Visit<SereneDBViewEntry>(
     ax.context, *database_id, [&](const duckdb::ViewCatalogEntry& view) {
       has_entry_child |= ObjectId{view.ParentSchema().oid} == *schema_id;
     });
-  catalog::VisitSequences(
+  catalog::Visit<SereneDBSequenceEntry>(
     ax.context, *database_id,
     [&](const catalog::SereneDBSequenceEntry& sequence) {
       has_entry_child |= ObjectId{sequence.ParentSchema().oid} == *schema_id;
@@ -2699,10 +2464,10 @@ bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
 
   const auto owned_sequences = CollectSequenceOwners(ax.context, *database_id);
   const auto owned_indexes = CollectIndexOwners(ax.context, *database_id);
-  auto task = CreateSchemaDrop(ax.context, *database_id, *schema_id,
-                               owned_sequences, owned_indexes, true);
-  ScheduleDropPlanIndexes(ax.context, *database_id, plan);
-  Apply(ax.context, [&](auto& ctx) {
+  auto task = catalog::GetCatalog().CreateSchemaDrop(
+    ax.context, *database_id, *schema_id, owned_sequences, owned_indexes, true);
+  catalog::GetCatalog().ScheduleDropPlanIndexes(ax.context, *database_id, plan);
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
     ctx.catalog().DropPrepare(
       MakeDropPrepare(*task, *database_id, duckdb::CatalogType::SCHEMA_ENTRY,
                       *schema_id, *database_id, *schema_id));
@@ -2715,16 +2480,17 @@ bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
   bool crash_on_drop = false;
   SDB_IF_FAILURE("crash_on_drop") { crash_on_drop = true; }
   if (!crash_on_drop) {
-    ScheduleDrop(ax.context, std::move(task));
+    catalog::GetCatalog().ScheduleDrop(ax.context, std::move(task));
   }
   return true;
 }
 
-bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
-                        std::string_view schema, std::string_view name,
-                        bool cascade, bool missing_ok) {
+bool SereneDBCatalog::DropTable(const AccessContext& ax,
+                                std::string_view database,
+                                std::string_view schema, std::string_view name,
+                                bool cascade, bool missing_ok) {
   JoinStoreTransaction(ax.context);
-  absl::MutexLock lock{&_mutex};
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
 
   const auto database_id = FindDatabaseId(ax.context, database);
   if (!database_id) {
@@ -2742,17 +2508,19 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("table \"", name, "\" does not exist"));
   }
-  const auto* table = catalog::FindTable(ax.context, *schema_id, name);
+  const auto* table =
+    catalog::Find<SereneDBTableEntry>(ax.context, *schema_id, name);
   if (table == nullptr) {
     // A view, a sequence and an index hold a relation name too, so the kind
     // mismatch has to be asked of the sets that hold them.
-    if (catalog::FindSequence(ax.context, *schema_id, name)) {
+    if (catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id, name)) {
       ThrowWrongObjectType(name, "table", duckdb::CatalogType::SEQUENCE_ENTRY);
     }
-    if (catalog::FindView(ax.context, *schema_id, name)) {
+    if (catalog::Find<SereneDBViewEntry>(ax.context, *schema_id, name)) {
       ThrowWrongObjectType(name, "table", duckdb::CatalogType::VIEW_ENTRY);
     }
-    if (catalog::FindIndex(ax.context, *schema_id, name) != nullptr) {
+    if (catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id, name) !=
+        nullptr) {
       ThrowWrongObjectType(name, "table", duckdb::CatalogType::INDEX_ENTRY);
     }
     if (missing_ok) {
@@ -2775,17 +2543,17 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
   const auto owned_sequences = CollectSequenceOwners(ax.context, *database_id);
   const auto owned_indexes = CollectIndexOwners(ax.context, *database_id);
   std::vector<std::string> owned_sequence_names;
-  catalog::VisitSequences(
+  catalog::Visit<SereneDBSequenceEntry>(
     ax.context, *database_id,
     [&](const catalog::SereneDBSequenceEntry& sequence) {
       if (sequence.GetOwnerTableId() == table_id) {
         owned_sequence_names.emplace_back(sequence.name.GetIdentifierName());
       }
     });
-  auto task = CreateTableDrop(*database_id, *schema_id, definition,
-                              owned_sequences, owned_indexes, true);
-  ScheduleDropPlanIndexes(ax.context, *database_id, plan);
-  Apply(ax.context, [&](auto& ctx) {
+  auto task = catalog::GetCatalog().CreateTableDrop(
+    *database_id, *schema_id, definition, owned_sequences, owned_indexes, true);
+  catalog::GetCatalog().ScheduleDropPlanIndexes(ax.context, *database_id, plan);
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
     ctx.catalog().DropPrepare(
       MakeDropPrepare(*task, *schema_id, duckdb::CatalogType::TABLE_ENTRY,
                       table_id, *database_id, *schema_id));
@@ -2808,54 +2576,21 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
   bool crash_on_drop = false;
   SDB_IF_FAILURE("crash_on_drop") { crash_on_drop = true; }
   if (!crash_on_drop) {
-    ScheduleDrop(ax.context, std::move(task));
+    catalog::GetCatalog().ScheduleDrop(ax.context, std::move(task));
   }
   return true;
 }
 
-void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
-                              const duckdb::CreateTableInfo& table,
-                              std::string_view column, bool if_exists) {
-  JoinStoreTransaction(ax.context);
-  absl::MutexLock lock{&_mutex};
-  const auto table_id = catalog::IdOf(table);
-  const auto* entry =
-    catalog::FindTable(ax.context, catalog::ParentIdOf(table), table_id);
-  if (entry == nullptr) {
-    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
-                             catalog::TableNameOf(table));
-  }
-  const auto& perm = entry->permissions;
-  const auto live = entry->Definition();
-  RequireOwner(ax.context, ax.role, perm, "table",
-               entry->name.GetIdentifierName());
-  const auto* col = catalog::ColumnByName(*live, column);
-  if (col == nullptr) {
-    if (if_exists) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column, "\" of relation \"",
-                            catalog::TableNameOf(*live), "\" does not exist"));
-  }
-  const ObjectId col_id{col->CatalogOid()};
-
-  auto plan = ComputeColumnDropPlan(ax.context, live, perm, col_id);
-
-  ScheduleDropPlanIndexes(ax.context, database_id, plan);
-  Apply(ax.context, [&](auto& ctx) { CommitDropPlan(ax.context, ctx, plan); });
-  PublishDropPlan(ax.context, plan);
-}
-
-void Catalog::ChangeColumnType(
+void SereneDBCatalog::ChangeColumnType(
   const AccessContext& ax, const duckdb::CreateTableInfo& table,
   std::string_view column, duckdb::LogicalType new_type,
   duckdb::unique_ptr<duckdb::ParsedExpression> using_expr) {
   JoinStoreTransaction(ax.context);
-  absl::MutexLock lock{&_mutex};
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
   const auto table_id = catalog::IdOf(table);
   const auto schema_id = catalog::ParentIdOf(table);
-  const auto* entry = catalog::FindTable(ax.context, schema_id, table_id);
+  const auto* entry =
+    catalog::Find<SereneDBTableEntry>(ax.context, schema_id, table_id);
   if (entry == nullptr) {
     ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                              catalog::TableNameOf(table));
@@ -2898,8 +2633,8 @@ void Catalog::ChangeColumnType(
   }
   const auto db_id = catalog::SchemaDatabaseId(ax.context, schema_id);
 
-  RecordedScope recorded;
-  Apply(ax.context, [&](auto& ctx) {
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
     ctx.catalog().PutTable(*updated, wal::PutMode::Replace, perm);
     if (!reshape) {
       return;
@@ -2926,128 +2661,6 @@ void Catalog::ChangeColumnType(
     }
   });
   catalog::PutEntry(ax.context, catalog::TableNameOf(*updated), updated, perm);
-}
-
-bool Catalog::DropIndex(const AccessContext& ax, std::string_view database,
-                        std::string_view schema, std::string_view name,
-                        bool cascade, bool missing_ok) {
-  JoinStoreTransaction(ax.context);
-  absl::MutexLock lock{&_mutex};
-
-  const auto database_id = FindDatabaseId(ax.context, database);
-  if (!database_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
-  const auto schema_id = TryFindSchemaId(ax.context, *database_id, schema);
-  if (!schema_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
-  const auto* index_entry = catalog::FindIndex(ax.context, *schema_id, name);
-  const auto index =
-    index_entry != nullptr ? index_entry->Definition() : nullptr;
-  if (!index) {
-    if (missing_ok) {
-      return false;
-    }
-    if (catalog::FindTable(ax.context, *schema_id, name) ||
-        catalog::FindView(ax.context, *schema_id, name) ||
-        catalog::FindSequence(ax.context, *schema_id, name)) {
-      ThrowWrongObjectType(name, "index", duckdb::CatalogType::TABLE_ENTRY);
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
-  // An index has no independent owner (PG: its relowner is derived from the
-  // table). Drop authority therefore belongs to the underlying relation's
-  // owner, so check that, not the index's own (unset) owner.
-  catalog::RequireIndexOwner(ax, *index);
-  DropIndexLocked(ax.context, *database_id, index, cascade);
-  return true;
-}
-
-void Catalog::DropIndexById(duckdb::ClientContext* context,
-                            ObjectId database_id, ObjectId index_id,
-                            bool cascade) {
-  JoinStoreTransaction(context);
-  absl::MutexLock lock{&_mutex};
-  const auto* session_index = context != nullptr
-                                ? catalog::FindSessionIndex(*context, index_id)
-                                : nullptr;
-  IndexInfoRef index =
-    session_index != nullptr ? session_index->Definition() : nullptr;
-  if (!index) {
-    // The compensating drop of a build that failed can arrive with no statement
-    // to read through, so the committed sets of the index's own database are
-    // all there is.
-    if (auto database = TryStoreDatabase(database_id)) {
-      if (const auto* found =
-            catalog::FindIndexIn(nullptr, database->GetCatalog(), index_id)) {
-        index = found->Definition();
-      }
-    }
-  }
-  if (!index) {
-    THROW_SQL_ERROR(
-      ERR_MSG("index with id ", index_id.id(), " does not exist"));
-  }
-  DropIndexLocked(context, database_id, index, cascade);
-}
-
-void Catalog::DropIndexLocked(duckdb::ClientContext* context,
-                              ObjectId database_id, const IndexInfoRef& index,
-                              bool cascade) {
-  const auto schema_id = index->GetParentId();
-  const auto index_id = index->GetId();
-  // Store-side index drop is synchronous: UNIQUE enforcement
-  // must stop when DROP INDEX commits, not when the async sweep
-  // runs.
-  auto task = CreateIndexDrop(database_id, schema_id, index->GetRelationId(),
-                              *index, true);
-  // Before the records: the relation's own entry advertises a virtual column
-  // per indexed column, and Apply is what rebuilds it.
-  catalog::DropIndexEntry(context, schema_id, index->GetName());
-  Apply(context, [&](auto& ctx) {
-    ctx.catalog().DropPrepare({.parent_id = index->GetRelationId(),
-                               .type = duckdb::CatalogType::INDEX_ENTRY,
-                               .inverted = index->IsInverted(),
-                               .id = index_id,
-                               .database_id = database_id,
-                               .schema_id = schema_id});
-    ctx.store().DropIndex(database_id, index->GetRelationId(),
-                          index->GetName());
-  });
-
-  // Check that SereneDB won't open this index after reboot
-  SDB_IF_FAILURE("crash_on_drop") { return; }
-
-  ScheduleDrop(context, std::move(task));
-}
-
-void Catalog::DropUncommittedIndex(duckdb::ClientContext& context,
-                                   ObjectId database_id, ObjectId index_id) {
-  absl::MutexLock lock{&_mutex};
-  const auto* index_entry = catalog::FindSessionIndex(context, index_id);
-  if (index_entry == nullptr) {
-    return;
-  }
-  const auto index = index_entry->Definition();
-  const auto relation_id = index->GetRelationId();
-  // No catalog entries: passing the transaction keeps Write off `_mutex`, and
-  // the store op runs inline either way.
-  _engine->Write(&context, [&](auto& ctx) {
-    ctx.store().DropIndex(database_id, relation_id, index->GetName());
-  });
-  auto task = CreateIndexDrop(database_id, index->GetParentId(), relation_id,
-                              *index, true);
-  DropTask::Schedule(std::move(task)).Detach();
 }
 
 void Catalog::DropResolved(duckdb::ClientContext* context, ObjectId database_id,
@@ -3161,12 +2774,12 @@ void Catalog::OpenBootStorage() {
     // The shard a search table's rows live in. Off the sets, like everything
     // else here: what survived the log is the version the entries hold.
     std::vector<const catalog::SereneDBTableEntry*> tables;
-    catalog::VisitTableEntriesOf(nullptr, database_id,
-                                 [&](const catalog::SereneDBTableEntry& table) {
-                                   if (table.IsSearchTable()) {
-                                     tables.push_back(&table);
-                                   }
-                                 });
+    catalog::Visit<SereneDBTableEntry>(
+      nullptr, database_id, [&](const catalog::SereneDBTableEntry& table) {
+        if (table.IsSearchTable()) {
+          tables.push_back(&table);
+        }
+      });
     for (const auto* table : tables) {
       table->Runtime()->SetData(search::SearchTable::Create(
         database_id, ObjectId{table->ParentSchema().oid}, ObjectId{table->oid},
@@ -3183,11 +2796,13 @@ void Catalog::OpenBootStorage() {
     // Before the databases attach: their data WAL replays into the index
     // through GetData(), so the segments have to be open by then.
     std::vector<IndexInfoRef> indexes;
-    catalog::VisitIndexes(nullptr, database_id, [&](const IndexInfoRef& index) {
-      if (index->IsInverted()) {
-        indexes.push_back(index);
-      }
-    });
+    catalog::VisitDefinitions<SereneDBIndexEntry>(
+      nullptr, database_id,
+      [&](const IndexInfoRef& index, const catalog::Permissions&) {
+        if (index->IsInverted()) {
+          indexes.push_back(index);
+        }
+      });
     for (const auto& index : indexes) {
       index->SetData(search::InvertedIndexStorage::Create(
         database_id, InvertedInfo(*index), /*is_new=*/false));
@@ -3420,12 +3035,12 @@ bool DatabaseFileUsable(const catalog::DatabaseRef& db,
     return true;
   }
   bool has_content = false;
-  catalog::VisitTables(
+  catalog::VisitDefinitions<SereneDBTableEntry>(
     nullptr, db.Id(),
     [&](const TableInfoRef&, const Permissions&) { has_content = true; });
-  catalog::VisitViews(nullptr, db.Id(), [&](const duckdb::ViewCatalogEntry&) {
-    has_content = true;
-  });
+  catalog::Visit<SereneDBViewEntry>(
+    nullptr, db.Id(),
+    [&](const duckdb::ViewCatalogEntry&) { has_content = true; });
   if (!has_content) {
     return true;
   }
@@ -3689,5 +3304,427 @@ Catalog& GetCatalog() {
 }
 
 Catalog* TryGetCatalog() { return gCatalog.get(); }
+
+IndexInfoRef SereneDBCatalog::CreateSecondaryIndex(
+  const AccessContext& ax, const IndexRelation& relation, std::string name,
+  std::vector<CreateIndexColumn>&& columns, bool unique,
+  CreateIndexOperationOptions operation_options) {
+  if (columns.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Cannot create index without columns"));
+  }
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto& live = relation;
+  const auto schema_id = live.GetParentId();
+  RequireRelationOwner(ax.context, ax.role, live);
+  if (operation_options.if_not_exists &&
+      (catalog::Find<SereneDBTableEntry>(ax.context, schema_id, name) ||
+       catalog::Find<SereneDBSequenceEntry>(ax.context, schema_id, name) ||
+       catalog::Find<SereneDBIndexEntry>(ax.context, schema_id, name))) {
+    return nullptr;
+  }
+  auto resolved = ResolveIndexRelation(live);
+  BindIndexColumns(resolved.columns, columns);
+  auto index = NewSecondaryIndex(schema_id, ObjectId{0}, resolved.relation_id,
+                                 std::move(name), std::move(columns), unique);
+  CreateIndexImpl(ax.context, index, operation_options);
+  return index;
+}
+
+IndexInfoRef SereneDBCatalog::CreateInvertedIndex(
+  const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
+  std::string_view schema, const IndexRelation& relation, std::string name,
+  std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
+  ExpressionData predicate, CreateIndexOperationOptions operation_options) {
+  if (columns.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Cannot create index without columns"));
+  }
+  JoinStoreTransaction(&context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto& live = relation;
+  const auto schema_id = live.GetParentId();
+  RequireRelationOwner(ax.context, ax.role, live);
+  if (operation_options.if_not_exists &&
+      (catalog::Find<SereneDBTableEntry>(ax.context, schema_id, name) ||
+       catalog::Find<SereneDBSequenceEntry>(ax.context, schema_id, name) ||
+       catalog::Find<SereneDBIndexEntry>(ax.context, schema_id, name))) {
+    return nullptr;
+  }
+  auto resolved = ResolveIndexRelation(live);
+  BindIndexColumns(resolved.columns, columns);
+  auto index =
+    NewInvertedIndex(context, database_id, schema, schema_id, ObjectId{0},
+                     resolved.relation_id, std::move(name), std::move(columns),
+                     std::move(options), std::move(predicate));
+  CreateIndexImpl(&context, index, operation_options);
+  return index;
+}
+
+void SereneDBCatalog::CreateIndexImpl(
+  duckdb::ClientContext* context, const IndexInfoRef& index,
+  CreateIndexOperationOptions operation_options) {
+  const auto schema_id = index->GetParentId();
+  // An index name is in the relation namespace, so every half of it answers.
+  if (catalog::Find<SereneDBTableEntry>(context, schema_id, index->GetName()) ||
+      catalog::Find<SereneDBSequenceEntry>(context, schema_id,
+                                           index->GetName()) ||
+      catalog::Find<SereneDBViewEntry>(context, schema_id, index->GetName()) ||
+      catalog::Find<SereneDBIndexEntry>(context, schema_id, index->GetName())) {
+    ThrowDuplicateName(NameKind::Relation, index->GetName());
+  }
+  // A key constraint's index is filed under the constraint's own name and goes
+  // on the same list as this one, so the two share a namespace -- which is what
+  // postgres says too, where a constraint's index is a relation.
+  if (const auto* relation = catalog::Find<SereneDBTableEntry>(
+        context, schema_id, index->GetRelationId())) {
+    for (const auto& constraint : relation->GetConstraints()) {
+      if (constraint->type == duckdb::ConstraintType::UNIQUE &&
+          constraint->constraint_name == index->GetName()) {
+        ThrowDuplicateName(NameKind::Relation, index->GetName());
+      }
+    }
+  }
+
+  SDB_IF_FAILURE("unable_to_create") {
+    THROW_SQL_ERROR(ERR_MSG("internal error"));
+  }
+  const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
+  SDB_ASSERT(db_id.isSet());
+  // The inverted index's iresearch storage hangs off the definition, so the
+  // CREATE INDEX build (GetGlobalSinkState) reaches it via GetData(). Bind it
+  // here, before the build runs.
+  if (index->IsInverted()) {
+    index->SetData(search::InvertedIndexStorage::Create(
+      db_id, InvertedInfo(*index), /*is_new=*/true));
+  }
+  const auto stamped = NextIndexVersion(context, index);
+  const auto* entry = catalog::Find<SereneDBTableEntry>(context, schema_id,
+                                                        index->GetRelationId());
+  const auto table = entry != nullptr ? entry->Definition() : nullptr;
+  auto store_index = table ? MakeStoreIndexInfo(*table, *stamped) : nullptr;
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(context, [&](auto& ctx) {
+    PutIndex(ctx, stamped, wal::PutMode::Create);
+    if (store_index) {
+      ctx.store().CreateIndex(db_id, std::move(store_index), table, stamped);
+    }
+  });
+  // After the store op, so a relation another transaction has already dropped
+  // is refused by the rows rather than by the set -- the store names the
+  // relation, and the set can only say that something clashed.
+  catalog::PutEntry(context, /*old_name=*/{}, stamped);
+}
+
+void SereneDBCatalog::RenameIndex(duckdb::ClientContext* context,
+                                  const CreateIndexInfoBase& index,
+                                  std::string_view new_name) {
+  const auto schema_id = index.GetParentId();
+  const auto renamed = NextIndexVersion(context, RenamedIndex(index, new_name));
+  const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
+  const auto* entry = catalog::Find<SereneDBTableEntry>(context, schema_id,
+                                                        index.GetRelationId());
+  const auto table = entry != nullptr ? entry->Definition() : nullptr;
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(context, [&](auto& ctx) {
+    PutIndex(ctx, renamed, wal::PutMode::Replace);
+    if (table && MakeStoreIndexInfo(*table, index)) {
+      ctx.store().RenameIndex(db_id, index.GetRelationId(), index.GetName(),
+                              new_name);
+    }
+  });
+  catalog::PutEntry(context, index.GetName(), renamed);
+}
+
+bool SereneDBCatalog::DropIndex(const AccessContext& ax,
+                                std::string_view database,
+                                std::string_view schema, std::string_view name,
+                                bool cascade, bool missing_ok) {
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+
+  const auto database_id = FindDatabaseId(ax.context, database);
+  if (!database_id) {
+    if (missing_ok) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
+  const auto schema_id = TryFindSchemaId(ax.context, *database_id, schema);
+  if (!schema_id) {
+    if (missing_ok) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
+  const auto* index_entry =
+    catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id, name);
+  const auto index =
+    index_entry != nullptr ? index_entry->Definition() : nullptr;
+  if (!index) {
+    if (missing_ok) {
+      return false;
+    }
+    if (catalog::Find<SereneDBTableEntry>(ax.context, *schema_id, name) ||
+        catalog::Find<SereneDBViewEntry>(ax.context, *schema_id, name) ||
+        catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id, name)) {
+      ThrowWrongObjectType(name, "index", duckdb::CatalogType::TABLE_ENTRY);
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
+  // An index has no independent owner (PG: its relowner is derived from the
+  // table). Drop authority therefore belongs to the underlying relation's
+  // owner, so check that, not the index's own (unset) owner.
+  catalog::RequireIndexOwner(ax, *index);
+  DropIndexLocked(ax.context, *database_id, index, cascade);
+  return true;
+}
+
+void SereneDBCatalog::DropIndexById(duckdb::ClientContext* context,
+                                    ObjectId database_id, ObjectId index_id,
+                                    bool cascade) {
+  JoinStoreTransaction(context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto* session_index =
+    context != nullptr
+      ? catalog::FindSession<SereneDBIndexEntry>(*context, index_id)
+      : nullptr;
+  IndexInfoRef index =
+    session_index != nullptr ? session_index->Definition() : nullptr;
+  if (!index) {
+    // The compensating drop of a build that failed can arrive with no statement
+    // to read through, so the committed sets of the index's own database are
+    // all there is.
+    if (auto database = TryStoreDatabase(database_id)) {
+      if (const auto* found = catalog::FindIn<SereneDBIndexEntry>(
+            nullptr, database->GetCatalog(), index_id)) {
+        index = found->Definition();
+      }
+    }
+  }
+  if (!index) {
+    THROW_SQL_ERROR(
+      ERR_MSG("index with id ", index_id.id(), " does not exist"));
+  }
+  DropIndexLocked(context, database_id, index, cascade);
+}
+
+void SereneDBCatalog::DropIndexLocked(duckdb::ClientContext* context,
+                                      ObjectId database_id,
+                                      const IndexInfoRef& index, bool cascade) {
+  const auto schema_id = index->GetParentId();
+  const auto index_id = index->GetId();
+  // Store-side index drop is synchronous: UNIQUE enforcement
+  // must stop when DROP INDEX commits, not when the async sweep
+  // runs.
+  auto task = catalog::GetCatalog().CreateIndexDrop(
+    database_id, schema_id, index->GetRelationId(), *index, true);
+  // Before the records: the relation's own entry advertises a virtual column
+  // per indexed column, and Apply is what rebuilds it.
+  catalog::DropIndexEntry(context, schema_id, index->GetName());
+  catalog::GetCatalog().Apply(context, [&](auto& ctx) {
+    ctx.catalog().DropPrepare({.parent_id = index->GetRelationId(),
+                               .type = duckdb::CatalogType::INDEX_ENTRY,
+                               .inverted = index->IsInverted(),
+                               .id = index_id,
+                               .database_id = database_id,
+                               .schema_id = schema_id});
+    ctx.store().DropIndex(database_id, index->GetRelationId(),
+                          index->GetName());
+  });
+
+  // Check that SereneDB won't open this index after reboot
+  SDB_IF_FAILURE("crash_on_drop") { return; }
+
+  catalog::GetCatalog().ScheduleDrop(context, std::move(task));
+}
+
+void SereneDBCatalog::DropUncommittedIndex(duckdb::ClientContext& context,
+                                           ObjectId database_id,
+                                           ObjectId index_id) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto* index_entry =
+    catalog::FindSession<SereneDBIndexEntry>(context, index_id);
+  if (index_entry == nullptr) {
+    return;
+  }
+  const auto index = index_entry->Definition();
+  const auto relation_id = index->GetRelationId();
+  // No catalog entries: passing the transaction keeps Write off `_mutex`, and
+  // the store op runs inline either way.
+  catalog::GetCatalog()._engine->Write(&context, [&](auto& ctx) {
+    ctx.store().DropIndex(database_id, relation_id, index->GetName());
+  });
+  auto task = catalog::GetCatalog().CreateIndexDrop(
+    database_id, index->GetParentId(), relation_id, *index, true);
+  DropTask::Schedule(std::move(task)).Detach();
+}
+
+bool SereneDBCatalog::CreateTokenizer(
+  const AccessContext& ax, ObjectId database_id, std::string_view schema,
+  std::shared_ptr<CreateTokenizerInfo> tokenizer, bool if_not_exists) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  auto schema_id = TryFindSchemaId(ax.context, database_id, schema);
+  if (!schema_id) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                    ERR_MSG("schema \"", schema, "\" does not exist"));
+  }
+  RequireCreateOn(ax.context, ax.role, *schema_id);
+  const auto name = tokenizer->GetName();
+  if (catalog::FindTokenizer(ax.context, *schema_id, name)) {
+    if (if_not_exists) {
+      return false;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+      ERR_MSG("text search dictionary \"", name, "\" already exists"));
+  }
+  if (!tokenizer->GetId().isSet()) {
+    tokenizer->SetId(NextId());
+  }
+  tokenizer->SetSchemaId(*schema_id);
+  Permissions perm{ax.role};
+  std::shared_ptr<const CreateTokenizerInfo> info = std::move(tokenizer);
+  catalog::PutEntry(ax.context, /*old_name=*/{}, std::move(info),
+                    std::move(perm));
+  return true;
+}
+
+bool SereneDBCatalog::CreateForeignServer(
+  const AccessContext& ax, ObjectId database_id,
+  std::shared_ptr<CreateForeignServerInfo> info, Permissions perm,
+  bool if_not_exists) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  // Servers are database children, like PG (no schema). Gated on CREATE on
+  // the database, same as CREATE SCHEMA -- PG gates on FDW USAGE instead, but
+  // serenedb has no foreign-data-wrapper catalog object to hang an ACL on.
+  RequireDatabaseAccess(ax.context, ax.role,
+                        catalog::FindDatabase(ax.context, database_id),
+                        AclMode::Create);
+  const auto name = info->GetName();
+  if (!IsSupportedFdw(info->GetFdwName())) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("foreign-data wrapper \"", info->GetFdwName(),
+                            "\" is not supported"),
+                    ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
+  }
+  if (catalog::FindForeignServer(ax.context, database_id, name)) {
+    if (if_not_exists) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("server \"", name, "\" already exists"));
+  }
+  // Catalog names are per-database, but the live attachment alias is
+  // instance-global: a second same-named server would race the first for it
+  // (nondeterministic boot winner; DROP DATABASE detaching the other
+  // database's attachment). The attach cannot catch this -- it only collides
+  // while the first server's attachment is live, not when its remote is down.
+  std::vector<catalog::DatabaseRef> databases;
+  catalog::VisitDatabases(ax.context, [&](const catalog::DatabaseRef& db) {
+    databases.push_back(db);
+  });
+  for (const auto& db : databases) {
+    // A database shares the alias namespace with foreign servers, so a server
+    // named after one would make DROP SERVER's detach tear the database down.
+    if (db.Name() == name) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("database \"", db.Name(),
+                "\" already exists, so a server cannot take that name"),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+    if (db.Id() != database_id &&
+        catalog::FindForeignServer(ax.context, db.Id(), name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("server \"", name, "\" already exists in database \"",
+                db.Name(), "\""),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+  }
+  info->SetDatabaseId(database_id);
+  const auto id = info->GetId().isSet() ? info->GetId() : NextId();
+  info->SetId(id);
+  // One definition, handed to the record and to the entry: nothing is derived
+  // at append time.
+  catalog::PutEntry(
+    ax.context, /*old_name=*/{},
+    std::shared_ptr<const CreateForeignServerInfo>{std::move(info)}, perm);
+  return true;
+}
+
+void SereneDBCatalog::ReplaceFunction(
+  duckdb::ClientContext& context, ObjectId database_id, std::string_view schema,
+  std::string_view name, std::shared_ptr<const duckdb::CreateMacroInfo> info) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto schema_id = TryFindSchemaId(&context, database_id, schema);
+  if (!schema_id) {
+    return;
+  }
+  const auto* existing = catalog::FindFunction(&context, *schema_id, name);
+  if (existing == nullptr) {
+    return;
+  }
+  const auto& perm = existing->permissions;
+  // PG: only the owner may drop an overload, and what is left is a rewrite of
+  // the function the owner holds -- so the ACL and the owner carry over.
+  const auto fn_name = existing->name.GetIdentifierName();
+  RequireOwner(&context, ActingAs(context).role, perm, "function", fn_name);
+  // The overloads that stay are the new info's; the identity is the one the
+  // owner already holds.
+  auto next =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      info->Copy());
+  SetIdentity(*next, ObjectId{existing->oid},
+              ObjectId{existing->ParentSchema().oid});
+  catalog::PutEntry(
+    &context, fn_name,
+    NextFunctionVersion(
+      &context, std::shared_ptr<const duckdb::CreateMacroInfo>{next.release()}),
+    perm);
+}
+
+void SereneDBCatalog::DropTableColumn(const AccessContext& ax,
+                                      ObjectId database_id,
+                                      const duckdb::CreateTableInfo& table,
+                                      std::string_view column, bool if_exists) {
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto table_id = catalog::IdOf(table);
+  const auto* entry = catalog::Find<SereneDBTableEntry>(
+    ax.context, catalog::ParentIdOf(table), table_id);
+  if (entry == nullptr) {
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
+  }
+  const auto& perm = entry->permissions;
+  const auto live = entry->Definition();
+  RequireOwner(ax.context, ax.role, perm, "table",
+               entry->name.GetIdentifierName());
+  const auto* col = catalog::ColumnByName(*live, column);
+  if (col == nullptr) {
+    if (if_exists) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column, "\" of relation \"",
+                            catalog::TableNameOf(*live), "\" does not exist"));
+  }
+  const ObjectId col_id{col->CatalogOid()};
+
+  auto plan = ComputeColumnDropPlan(ax.context, live, perm, col_id);
+
+  catalog::GetCatalog().ScheduleDropPlanIndexes(ax.context, database_id, plan);
+  catalog::GetCatalog().Apply(
+    ax.context, [&](auto& ctx) { CommitDropPlan(ax.context, ctx, plan); });
+  PublishDropPlan(ax.context, plan);
+}
 
 }  // namespace sdb::catalog

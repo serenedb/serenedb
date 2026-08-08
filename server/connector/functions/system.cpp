@@ -355,7 +355,7 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       // their real name there. Built-ins aren't catalog objects, so fall back
       // to the static oid->name map (RegtypeOut, which otherwise renders an
       // unknown oid as its bare number).
-      if (auto type = catalog::FindSessionType(
+      if (auto type = catalog::FindSession<catalog::SereneDBTypeEntry>(
             context, ObjectId{static_cast<uint64_t>(type_oid)})) {
         return duckdb::StringVector::AddString(result,
                                                type->name.GetIdentifierName());
@@ -881,8 +881,8 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
     const auto schema_id =
       catalog::FindSchemaId(&context, conn_ctx.GetDatabaseId(), name.schema);
     if (schema_id.isSet()) {
-      if (const auto* sequence =
-            catalog::FindSequence(&context, schema_id, name.relation)) {
+      if (const auto* sequence = catalog::Find<catalog::SereneDBSequenceEntry>(
+            &context, schema_id, name.relation)) {
         try {
           return HasAnyPermissionsPrivilegeText(
             context, role_id, sequence->permissions, type, priv_text);
@@ -907,10 +907,10 @@ bool HasObjectPrivilegeByName(duckdb::ClientContext& context,
     const auto schema_id =
       catalog::FindSchemaId(&context, conn_ctx.GetDatabaseId(), name.schema);
     if (schema_id.isSet()) {
-      const auto* user_type =
-        type == duckdb::CatalogType::TYPE_ENTRY
-          ? catalog::FindType(&context, schema_id, name.relation)
-          : nullptr;
+      const auto* user_type = type == duckdb::CatalogType::TYPE_ENTRY
+                                ? catalog::Find<catalog::SereneDBTypeEntry>(
+                                    &context, schema_id, name.relation)
+                                : nullptr;
       const auto* function =
         type == duckdb::CatalogType::MACRO_ENTRY
           ? catalog::FindFunction(&context, schema_id, name.relation)
@@ -1040,7 +1040,8 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
     }
   }
   if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-    const auto* sequence = catalog::FindSessionSequence(context, obj_id);
+    const auto* sequence =
+      catalog::FindSession<catalog::SereneDBSequenceEntry>(context, obj_id);
     if (sequence == nullptr) {
       is_null = true;
       return false;
@@ -1054,9 +1055,10 @@ bool HasObjectPrivilegeByOidImpl(duckdb::ClientContext& context,
   }
   if (type == duckdb::CatalogType::TYPE_ENTRY ||
       type == duckdb::CatalogType::MACRO_ENTRY) {
-    const auto* user_type = type == duckdb::CatalogType::TYPE_ENTRY
-                              ? catalog::FindSessionType(context, obj_id)
-                              : nullptr;
+    const auto* user_type =
+      type == duckdb::CatalogType::TYPE_ENTRY
+        ? catalog::FindSession<catalog::SereneDBTypeEntry>(context, obj_id)
+        : nullptr;
     const auto* function = type == duckdb::CatalogType::MACRO_ENTRY
                              ? catalog::FindSessionFunction(context, obj_id)
                              : nullptr;

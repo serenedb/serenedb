@@ -128,22 +128,15 @@ std::string RenderStoreOp(const duckdb::ParseInfo& info) {
   }
 }
 
-// The `def` column. The object renders its own tuple as named fields, so
-// nothing is encoded and decoded again to display it, and there is no
-// per-type render table to keep in step with the object set.
-// The kinds whose record is a CreateInfo render through the same JSON sink:
-// the names live in the info's own reflection, so nothing is decoded twice.
+// The `def` column. An object renders itself: as the DDL it came from where
+// that is faithful, and as JSON where the payload is a structure rather than a
+// statement -- an index's key layout, a tokenizer's analyzer config.
 std::optional<std::string> RenderCreateInfo(duckdb::CatalogType type,
                                             const duckdb::CreateInfo& info) {
   switch (type) {
-    case duckdb::CatalogType::ROLE_ENTRY:
+    case duckdb::CatalogType::INDEX_ENTRY:
       return RenderJson([&](basics::JsonSink& sink) {
-        static_cast<const catalog::CreateRoleInfo&>(info).WriteJson(sink);
-        return true;
-      });
-    case duckdb::CatalogType::DATABASE_ENTRY:
-      return RenderJson([&](basics::JsonSink& sink) {
-        static_cast<const catalog::CreateDatabaseInfo&>(info).WriteJson(sink);
+        static_cast<const catalog::CreateIndexInfoBase&>(info).WriteJson(sink);
         return true;
       });
     case duckdb::CatalogType::TOKENIZER_ENTRY:
@@ -151,18 +144,9 @@ std::optional<std::string> RenderCreateInfo(duckdb::CatalogType type,
         static_cast<const catalog::CreateTokenizerInfo&>(info).WriteJson(sink);
         return true;
       });
+    case duckdb::CatalogType::ROLE_ENTRY:
+    case duckdb::CatalogType::DATABASE_ENTRY:
     case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
-      return RenderJson([&](basics::JsonSink& sink) {
-        static_cast<const catalog::CreateForeignServerInfo&>(info).WriteJson(
-          sink);
-        return true;
-      });
-
-    case duckdb::CatalogType::INDEX_ENTRY:
-      return RenderJson([&](basics::JsonSink& sink) {
-        static_cast<const catalog::CreateIndexInfoBase&>(info).WriteJson(sink);
-        return true;
-      });
     case duckdb::CatalogType::SCHEMA_ENTRY:
     case duckdb::CatalogType::SEQUENCE_ENTRY:
     case duckdb::CatalogType::TYPE_ENTRY:

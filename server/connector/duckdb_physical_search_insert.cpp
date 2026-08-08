@@ -40,6 +40,7 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
+#include "catalog/duckdb_catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/duckdb_primary_key.h"
 #include "catalog/duckdb_schema_entry.h"
@@ -84,9 +85,11 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   ~SearchInsertGlobalState() override {
     if (ctas_mode && !ctas_finalized && !ctas_table_name.empty()) {
       try {
-        catalog::GetCatalog().DropTable(
-          catalog::NoAccessCheck(), ctas_database_name, ctas_schema_name,
-          ctas_table_name, /*cascade=*/true, /*missing_ok=*/true);
+        catalog::DatabaseCatalog(
+          nullptr, catalog::FindDatabase(nullptr, ctas_database_name).Id())
+          .DropTable(catalog::NoAccessCheck(), ctas_database_name,
+                     ctas_schema_name, ctas_table_name, /*cascade=*/true,
+                     /*missing_ok=*/true);
       } catch (const std::exception& e) {
         SDB_WARN(SEARCH, "CTAS rollback: failed to drop half-created table '",
                  ctas_table_name, "': ", e.what());
@@ -163,7 +166,7 @@ catalog::TableInfoRef CreateCtasTable(duckdb::ClientContext& context,
   SDB_ASSERT(catalog::TableEngineOf(*options) == catalog::TableEngine::Search,
              "SereneDBSearchInsert CTAS mode used for non-Search engine");
 
-  auto& catalog_impl = catalog::GetCatalog();
+  auto& catalog_impl = catalog::DatabaseCatalog(&context, database_id);
   const bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;

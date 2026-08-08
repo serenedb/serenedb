@@ -34,6 +34,7 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
 #include "catalog/duckdb_object_index.h"
 #include "catalog/duckdb_table_entry.h"
 #include "catalog/store/store.h"
@@ -360,9 +361,11 @@ void DispatchInverted(duckdb::ClientContext& context,
       auto db_id = LookupDatabaseId(target.database);
       bool found = false;
       std::vector<catalog::IndexInfoRef> indexes;
-      catalog::VisitIndexes(
+      catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
         nullptr, db_id,
-        [&](const catalog::IndexInfoRef& index) { indexes.push_back(index); });
+        [&](const catalog::IndexInfoRef& index, const catalog::Permissions&) {
+          indexes.push_back(index);
+        });
       const auto schema_id =
         catalog::FindSchemaId(nullptr, db_id, target.schema);
       for (auto& index : indexes) {

@@ -29,6 +29,7 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/user_type.h"
@@ -1530,7 +1531,8 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   auto& context = _config.GetClientContext();
   const auto visit_types =
     [&](absl::FunctionRef<void(const duckdb::TypeCatalogEntry&)> visitor) {
-      catalog::VisitTypes(&context, database_id, visitor);
+      catalog::Visit<catalog::SereneDBTypeEntry>(&context, database_id,
+                                                 visitor);
     };
 
   containers::FlatHashSet<std::string_view> taken;

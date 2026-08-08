@@ -60,7 +60,13 @@ persistence::SecondaryIndexData CreateSecondaryIndexInfo::ToData() const {
 }
 
 void CreateSecondaryIndexInfo::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, ToData());
+  // An index writes its whole definition: the WAL hands it the stream directly
+  // rather than through duckdb's CreateInfo half, so the name and comment have
+  // nowhere else to come from.
+  const auto name = std::string{GetName()};
+  const auto comment = std::string{Comment()};
+  basics::WriteTuple(
+    sink, std::tie(name, _unique, _key_columns, _expressions, comment));
 }
 
 void CreateSecondaryIndexInfo::WriteJson(basics::JsonSink& sink) const {
@@ -78,7 +84,9 @@ std::shared_ptr<CreateSecondaryIndexInfo> CreateSecondaryIndexInfo::Deserialize(
   duckdb::Deserializer& src, ObjectId schema_id, ObjectId id,
   ObjectId relation_id) {
   persistence::SecondaryIndexData data;
-  basics::ReadTuple(src, data);
+  auto refs = std::tie(data.name, data.unique, data.columns, data.expressions,
+                       data.comment);
+  basics::ReadTuple(src, refs);
   return std::make_shared<CreateSecondaryIndexInfo>(schema_id, id, relation_id,
                                                     std::move(data));
 }

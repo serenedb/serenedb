@@ -45,15 +45,15 @@
 #include <variant>
 
 #include "basics/serializer.h"
-#include "catalog/persistence/database.h"
+#include "catalog/database.h"
 #include "catalog/persistence/index.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/persistence/role.h"
 #include "catalog/persistence/scorer_options.h"
 #include "catalog/persistence/secondary_index.h"
-#include "catalog/persistence/tokenizer.h"
 #include "catalog/store/wal_entry.h"
 #include "catalog/table.h"
+#include "catalog/tokenizer.h"
 
 namespace sdb::catalog::persistence {
 namespace {
@@ -228,12 +228,17 @@ TEST(CatalogPersistence, table) {
 TEST(CatalogPersistence, tokenizer) {
   // Owner and ACL are not here: a tokenizer's entry is the object, and the
   // record that carries the definition writes the permissions beside it.
-  CheckFixture("tokenizer.bin", TokenizerData{
-                                  .name = "tok",
-                                  .config = {},
-                                  .features = search::Features{},
-                                  .norm_row_group_size = 7,
-                                });
+  auto info = std::make_shared<catalog::CreateTokenizerInfo>(
+    ObjectId{11}, ObjectId{12}, "tok", search::Features{}, 7,
+    irs::analysis::TokenizerConfig{});
+  const wal::Entry entry{
+    wal::PutEntry{.parent_id = ObjectId{12},
+                  .type = duckdb::CatalogType::TOKENIZER_ENTRY,
+                  .id = ObjectId{11},
+                  .mode = wal::PutMode::Create,
+                  .info = std::move(info),
+                  .perm = Permissions{ObjectId{42}}}};
+  CheckFrameFixture("tokenizer.bin", entry);
 }
 
 // Every TokenizerConfig variant arm must serialize and re-serialize stably,
@@ -326,7 +331,15 @@ TEST(CatalogPersistence, inverted_index) {
 TEST(CatalogPersistence, database_options) {
   // Owner and ACL are not here: a database's entry is the object, and the
   // record that carries the definition writes the permissions beside it.
-  CheckFixture("database_options.bin", DatabaseOptions{.name = "db"});
+  auto info = std::make_shared<catalog::CreateDatabaseInfo>(ObjectId{9}, "db");
+  const wal::Entry entry{
+    wal::PutEntry{.parent_id = ObjectId{},
+                  .type = duckdb::CatalogType::DATABASE_ENTRY,
+                  .id = ObjectId{9},
+                  .mode = wal::PutMode::Create,
+                  .info = std::move(info),
+                  .perm = Permissions{ObjectId{42}}}};
+  CheckFrameFixture("database_options.bin", entry);
 }
 
 TEST(CatalogPersistence, role_data) {

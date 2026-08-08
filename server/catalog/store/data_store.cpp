@@ -261,9 +261,10 @@ absl::Status DataStore::ExecuteStoreOps(
           duckdb::AlterTableType::REMOVE_COLUMN) {
       continue;
     }
-    const auto* table = context != nullptr ? catalog::FindSessionTable(
-                                               *context, targeted.relation_id)
-                                           : nullptr;
+    const auto* table = context != nullptr
+                          ? catalog::FindSession<SereneDBTableEntry>(
+                              *context, targeted.relation_id)
+                          : nullptr;
     if (table == nullptr) {
       continue;
     }
@@ -509,12 +510,12 @@ absl::Status DataStore::ExecuteCreateStoreIndex(duckdb::ClientContext* context,
   auto index = op.index;
   const ObjectId index_id{create.oid};
   if (!table || !index) {
-    if (const auto* found = catalog::FindTableIn(nullptr, _target->GetCatalog(),
-                                                 op.relation_id)) {
+    if (const auto* found = catalog::FindIn<SereneDBTableEntry>(
+          nullptr, _target->GetCatalog(), op.relation_id)) {
       table = found->Definition();
     }
-    if (const auto* found =
-          catalog::FindIndexIn(nullptr, _target->GetCatalog(), index_id);
+    if (const auto* found = catalog::FindIn<SereneDBIndexEntry>(
+          nullptr, _target->GetCatalog(), index_id);
         found != nullptr && found->IsInverted()) {
       index = found->Definition();
     }
@@ -737,19 +738,22 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
   // re-enters the very set the walk holds. One pass over the indexes rather
   // than one per table, so boot stays linear in the catalog.
   std::vector<ObjectId> table_ids;
-  catalog::VisitTables(
+  catalog::VisitDefinitions<catalog::SereneDBTableEntry>(
     nullptr, database_id, [&](const TableInfoRef& table, const Permissions&) {
       if (catalog::TableEngineOf(*table) == TableEngine::Transactional) {
         table_ids.push_back(catalog::IdOf(*table));
       }
     });
   containers::FlatHashMap<ObjectId, std::vector<ObjectId>> index_ids;
-  catalog::VisitIndexes(nullptr, database_id, [&](const IndexInfoRef& index) {
-    index_ids[index->GetRelationId()].push_back(index->GetId());
-  });
+  catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
+    nullptr, database_id,
+    [&](const IndexInfoRef& index, const catalog::Permissions&) {
+      index_ids[index->GetRelationId()].push_back(index->GetId());
+    });
   std::vector<store_op::Targeted> ops;
   for (const auto table_id : table_ids) {
-    const auto* table_entry = catalog::FindTableIn(nullptr, catalog, table_id);
+    const auto* table_entry =
+      catalog::FindIn<SereneDBTableEntry>(nullptr, catalog, table_id);
     auto entry =
       catalog.LookupTableById(catalog.CommittedRead(), table_id.id());
     if (table_entry == nullptr || !entry || !entry->TryGetStorage()) {
@@ -761,7 +765,7 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
     if (on_table != index_ids.end()) {
       for (const auto index_id : on_table->second) {
         const auto* index_entry =
-          catalog::FindIndexIn(nullptr, catalog, index_id);
+          catalog::FindIn<SereneDBIndexEntry>(nullptr, catalog, index_id);
         if (index_entry == nullptr) {
           continue;
         }

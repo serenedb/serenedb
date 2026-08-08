@@ -46,6 +46,7 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
 #include "catalog/duckdb_table_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/store/store.h"
@@ -122,12 +123,13 @@ void InitInvertedIndexes() {
   });
   for (const auto db_id : database_ids) {
     std::vector<catalog::IndexInfoRef> indexes;
-    catalog::VisitIndexes(nullptr, db_id,
-                          [&](const catalog::IndexInfoRef& index) {
-                            if (index->IsInverted()) {
-                              indexes.push_back(index);
-                            }
-                          });
+    catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
+      nullptr, db_id,
+      [&](const catalog::IndexInfoRef& index, const catalog::Permissions&) {
+        if (index->IsInverted()) {
+          indexes.push_back(index);
+        }
+      });
     for (const auto& idx : indexes) {
       auto inv_storage = idx->GetData();
       SDB_ASSERT(inv_storage);

@@ -45,6 +45,7 @@
 #include "basics/simdjson_sink.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
+#include "catalog/duckdb_catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
 #include "catalog/duckdb_table_entry.h"
 #include "catalog/index.h"
@@ -263,8 +264,6 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
                         /*if_not_exists=*/true, options);
   }
 
-  auto& catalog = catalog::GetCatalog();
-
   std::vector<catalog::CreateIndexColumn> idx_columns;
   idx_columns.reserve(text_columns.size());
   for (const auto name : text_columns) {
@@ -293,10 +292,12 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
 
   const auto index_name =
     absl::StrCat(catalog::TableNameOf(*table), kEsTextIndexSuffix);
-  auto created = catalog.CreateInvertedIndex(
-    catalog::NoAccessCheck(context), context, database_id, kEsSchema,
-    catalog::IndexRelation{table, nullptr, catalog::Permissions{}}, index_name,
-    std::move(idx_columns), std::move(options), {}, {});
+  auto created =
+    catalog::DatabaseCatalog(&context, database_id)
+      .CreateInvertedIndex(
+        catalog::NoAccessCheck(context), context, database_id, kEsSchema,
+        catalog::IndexRelation{table, nullptr, catalog::Permissions{}},
+        index_name, std::move(idx_columns), std::move(options), {}, {});
   SDB_ASSERT(created);
   const auto& storage = created->GetData();
   SDB_ASSERT(storage);
@@ -321,7 +322,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   const auto database_id = conn_ctx.GetDatabaseId();
-  auto& catalog = catalog::GetCatalog();
+  auto& catalog = catalog::DatabaseCatalog(&context, database_id);
 
   {
     // Through the database's own catalog: CREATE SCHEMA is duckdb's operation,
@@ -402,7 +403,7 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
   ValidateIndexName(data.index);
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto& catalog = catalog::GetCatalog();
+  auto& catalog = catalog::DatabaseCatalog(&context, conn_ctx.GetDatabaseId());
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
   if (catalog::FindTableEntry(&context, conn_ctx.GetDatabaseId(), kEsSchema,

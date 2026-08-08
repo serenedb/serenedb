@@ -81,7 +81,8 @@ namespace {
 catalog::IndexInfoRef FindInvertedDefinition(duckdb::ClientContext* context,
                                              duckdb::AttachedDatabase& db,
                                              ObjectId id) {
-  const auto* index = catalog::FindIndexIn(context, db.GetCatalog(), id);
+  const auto* index =
+    catalog::FindIn<catalog::SereneDBIndexEntry>(context, db.GetCatalog(), id);
   return index != nullptr && index->IsInverted() ? index->Definition()
                                                  : nullptr;
 }
@@ -1043,8 +1044,8 @@ InvertedStoreIndex::EnsureInvertedFeedSession() {
   auto* context = committing ? &committing->GetClientContext() : nullptr;
   catalog::IndexInfoRef inverted =
     FindInvertedDefinition(context, db, _index_id);
-  const auto* table_entry =
-    catalog::FindTableIn(context, db.GetCatalog(), _table_id);
+  const auto* table_entry = catalog::FindIn<catalog::SereneDBTableEntry>(
+    context, db.GetCatalog(), _table_id);
   catalog::TableInfoRef table =
     table_entry != nullptr ? table_entry->Definition() : nullptr;
   // An online CREATE INDEX attaches its stub before its transaction commits,
@@ -1721,8 +1722,8 @@ void InjectExternalIndexes(duckdb::DataTable& storage) {
   if (!table_id.isSet()) {
     return;
   }
-  const auto* table_entry =
-    catalog::FindTableIn(nullptr, storage.db.GetCatalog(), table_id);
+  const auto* table_entry = catalog::FindIn<catalog::SereneDBTableEntry>(
+    nullptr, storage.db.GetCatalog(), table_id);
   const auto table =
     table_entry != nullptr ? table_entry->Definition() : nullptr;
   if (!table) {

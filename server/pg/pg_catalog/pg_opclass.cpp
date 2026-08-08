@@ -23,6 +23,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "pg/pg_catalog/fwd.h"
@@ -58,23 +59,24 @@ catalog::MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
     .opckeytype = 0,
   });
 
-  catalog::VisitTokenizers(&_config.GetClientContext(), GetDatabaseId(),
-                           [&](const catalog::CreateTokenizerInfo& tokenizer,
-                               const catalog::Permissions& perm) {
-                             values.push_back({
-                               .oid = tokenizer.GetId().id(),
-                               .opcmethod = id::kPgAmInverted.id(),
-                               // A view into the entry's definition, which
-                               // outlives the walk: Name is a string_view.
-                               .opcname = tokenizer.GetName(),
-                               .opcnamespace = tokenizer.GetParentId().id(),
-                               .opcowner = perm.owner,
-                               .opcfamily = 0,
-                               .opcintype = PgTypeOID::kText,
-                               .opcdefault = false,
-                               .opckeytype = 0,
-                             });
-                           });
+  catalog::VisitDefinitions<catalog::SereneDBTokenizerEntry>(
+    &_config.GetClientContext(), GetDatabaseId(),
+    [&](const catalog::TokenizerRef& tokenizer,
+        const catalog::Permissions& perm) {
+      values.push_back({
+        .oid = tokenizer->GetId().id(),
+        .opcmethod = id::kPgAmInverted.id(),
+        // A view into the entry's definition, which
+        // outlives the walk: Name is a string_view.
+        .opcname = tokenizer->GetName(),
+        .opcnamespace = tokenizer->GetParentId().id(),
+        .opcowner = perm.owner,
+        .opcfamily = 0,
+        .opcintype = PgTypeOID::kText,
+        .opcdefault = false,
+        .opckeytype = 0,
+      });
+    });
 
   static constexpr uint64_t kNullMask = 0;
   auto result = CreateColumns<PgOpclass>(values.size());

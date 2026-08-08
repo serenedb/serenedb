@@ -296,14 +296,6 @@ auto DefinitionOf(duckdb::optional_ptr<duckdb::CatalogEntry> entry,
   return typed->Definition();
 }
 
-// The entry itself, for a kind whose object needs nothing beside it: the id,
-// the owner and the ACL are all on the entry, so a reader takes it rather than
-// a definition handle and a Permissions copy.
-template<typename Entry>
-const Entry* EntryOf(duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
-  return dynamic_cast<const Entry*>(entry.get());
-}
-
 // A function is in whichever of duckdb's two macro sets its own declaration
 // puts it, so either entry class answers for one.
 const duckdb::MacroCatalogEntry* FunctionOf(
@@ -1436,19 +1428,6 @@ catalog::TokenizerRef FindSessionTokenizer(duckdb::ClientContext& context,
   return found;
 }
 
-void VisitTokenizers(duckdb::ClientContext* context, ObjectId database,
-                     absl::FunctionRef<void(const catalog::CreateTokenizerInfo&,
-                                            const catalog::Permissions&)>
-                       visitor) {
-  ScanDatabaseSlots(
-    context, database, LookupSlots(duckdb::CatalogType::TOKENIZER_ENTRY),
-    [&](duckdb::CatalogEntry& entry) {
-      if (auto found = DefinitionOf<SereneDBTokenizerEntry>(&entry)) {
-        visitor(*found, entry.permissions);
-      }
-    });
-}
-
 std::vector<catalog::HeldTokenizer> DatabaseTokenizers(
   duckdb::ClientContext* context, ObjectId database) {
   std::vector<catalog::HeldTokenizer> found;
@@ -1478,18 +1457,6 @@ catalog::TokenizerRef FindTokenizer(duckdb::ClientContext* context,
     LookupSchemaEntryById(context, schema_id, id), perm);
 }
 
-void VisitTypes(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const duckdb::TypeCatalogEntry&)> visitor) {
-  ScanDatabaseSlots(
-    context, database, LookupSlots(duckdb::CatalogType::TYPE_ENTRY),
-    [&](duckdb::CatalogEntry& entry) {
-      if (const auto* type = EntryOf<SereneDBTypeEntry>(&entry)) {
-        visitor(*type);
-      }
-    });
-}
-
 std::vector<const duckdb::TypeCatalogEntry*> DatabaseTypes(
   duckdb::ClientContext* context, ObjectId database) {
   std::vector<const duckdb::TypeCatalogEntry*> found;
@@ -1503,22 +1470,49 @@ std::vector<const duckdb::TypeCatalogEntry*> DatabaseTypes(
   return found;
 }
 
-const duckdb::TypeCatalogEntry* FindType(duckdb::ClientContext* context,
-                                         ObjectId schema_id,
-                                         std::string_view name) {
-  return EntryOf<SereneDBTypeEntry>(LookupSchemaEntry(
-    context, schema_id, LookupSlots(duckdb::CatalogType::TYPE_ENTRY), name));
+duckdb::optional_ptr<SereneDBCatalog> TryDatabaseCatalog(
+  duckdb::ClientContext* context, ObjectId database) {
+  return DatabaseCatalogOf(context, database);
 }
 
-const duckdb::TypeCatalogEntry* FindType(duckdb::ClientContext* context,
-                                         ObjectId schema_id, ObjectId id) {
-  return EntryOf<SereneDBTypeEntry>(
-    LookupSchemaEntryById(context, schema_id, id));
+SereneDBCatalog& DatabaseCatalog(duckdb::ClientContext* context,
+                                 ObjectId database) {
+  auto found = DatabaseCatalogOf(context, database);
+  SDB_ENSURE(found != nullptr, "database ", database.id(), " is not attached");
+  return *found;
 }
 
-const duckdb::TypeCatalogEntry* FindSessionType(duckdb::ClientContext& context,
-                                                ObjectId id) {
-  return EntryOf<SereneDBTypeEntry>(LookupEntryById(context, id));
+void ScanDatabase(duckdb::ClientContext* context, ObjectId database,
+                  duckdb::CatalogType type,
+                  absl::FunctionRef<void(duckdb::CatalogEntry&)> visitor) {
+  ScanDatabaseSlots(context, database, LookupSlots(type), visitor);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInSchema(
+  duckdb::ClientContext* context, ObjectId schema_id, duckdb::CatalogType type,
+  std::string_view name) {
+  return LookupSchemaEntry(context, schema_id, LookupSlots(type), name);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInSchema(
+  duckdb::ClientContext* context, ObjectId schema_id, ObjectId id) {
+  return LookupSchemaEntryById(context, schema_id, id);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInSession(
+  duckdb::ClientContext& context, ObjectId id) {
+  return LookupEntryById(context, id);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInCatalog(
+  duckdb::ClientContext* context, duckdb::Catalog& catalog, ObjectId id) {
+  return LookupEntryIn(context, catalog, id);
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> LookupInDatabase(
+  duckdb::ClientContext* context, ObjectId database, ObjectId id) {
+  auto sdb_catalog = DatabaseCatalogOf(context, database);
+  return sdb_catalog ? LookupEntryIn(context, *sdb_catalog, id) : nullptr;
 }
 
 void VisitFunctions(
@@ -1550,49 +1544,6 @@ const duckdb::MacroCatalogEntry* FindSessionFunction(
   return FunctionOf(LookupEntryById(context, id));
 }
 
-void VisitViews(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const duckdb::ViewCatalogEntry&)> visitor) {
-  ScanDatabaseSlots(
-    context, database, LookupSlots(duckdb::CatalogType::TABLE_ENTRY),
-    [&](duckdb::CatalogEntry& entry) {
-      if (const auto* view = EntryOf<SereneDBViewEntry>(&entry)) {
-        visitor(*view);
-      }
-    });
-}
-
-const duckdb::ViewCatalogEntry* FindView(duckdb::ClientContext* context,
-                                         ObjectId schema_id,
-                                         std::string_view name) {
-  return EntryOf<SereneDBViewEntry>(LookupSchemaEntry(
-    context, schema_id, LookupSlots(duckdb::CatalogType::TABLE_ENTRY), name));
-}
-
-const duckdb::ViewCatalogEntry* FindView(duckdb::ClientContext* context,
-                                         ObjectId schema_id, ObjectId id) {
-  return EntryOf<SereneDBViewEntry>(
-    LookupSchemaEntryById(context, schema_id, id));
-}
-
-const duckdb::ViewCatalogEntry* FindViewIn(duckdb::ClientContext* context,
-                                           duckdb::Catalog& catalog,
-                                           ObjectId id) {
-  return EntryOf<SereneDBViewEntry>(LookupEntryIn(context, catalog, id));
-}
-
-void VisitSequences(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const SereneDBSequenceEntry&)> visitor) {
-  ScanDatabaseSlots(
-    context, database, LookupSlots(duckdb::CatalogType::SEQUENCE_ENTRY),
-    [&](duckdb::CatalogEntry& entry) {
-      if (const auto* seq = EntryOf<SereneDBSequenceEntry>(&entry)) {
-        visitor(*seq);
-      }
-    });
-}
-
 std::vector<const SereneDBSequenceEntry*> DatabaseSequences(
   duckdb::ClientContext* context, ObjectId database) {
   std::vector<const SereneDBSequenceEntry*> found;
@@ -1604,59 +1555,6 @@ std::vector<const SereneDBSequenceEntry*> DatabaseSequences(
       }
     });
   return found;
-}
-
-const SereneDBSequenceEntry* FindSequence(duckdb::ClientContext* context,
-                                          ObjectId schema_id,
-                                          std::string_view name) {
-  return EntryOf<SereneDBSequenceEntry>(
-    LookupSchemaEntry(context, schema_id,
-                      LookupSlots(duckdb::CatalogType::SEQUENCE_ENTRY), name));
-}
-
-const SereneDBSequenceEntry* FindSequence(duckdb::ClientContext* context,
-                                          ObjectId schema_id, ObjectId id) {
-  return EntryOf<SereneDBSequenceEntry>(
-    LookupSchemaEntryById(context, schema_id, id));
-}
-
-const SereneDBSequenceEntry* FindSessionSequence(duckdb::ClientContext& context,
-                                                 ObjectId id) {
-  return EntryOf<SereneDBSequenceEntry>(LookupEntryById(context, id));
-}
-
-void VisitIndexes(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const catalog::IndexInfoRef&)> visitor) {
-  ScanDatabaseSlots(
-    context, database, LookupSlots(duckdb::CatalogType::INDEX_ENTRY),
-    [&](duckdb::CatalogEntry& entry) {
-      if (auto found = DefinitionOf<SereneDBIndexEntry>(&entry)) {
-        visitor(found);
-      }
-    });
-}
-
-const SereneDBIndexEntry* FindIndex(duckdb::ClientContext* context,
-                                    ObjectId schema_id, std::string_view name) {
-  return EntryOf<SereneDBIndexEntry>(LookupSchemaEntry(
-    context, schema_id, LookupSlots(duckdb::CatalogType::INDEX_ENTRY), name));
-}
-
-const SereneDBIndexEntry* FindIndex(duckdb::ClientContext* context,
-                                    ObjectId schema_id, ObjectId id) {
-  return EntryOf<SereneDBIndexEntry>(
-    LookupSchemaEntryById(context, schema_id, id));
-}
-
-const SereneDBIndexEntry* FindSessionIndex(duckdb::ClientContext& context,
-                                           ObjectId id) {
-  return EntryOf<SereneDBIndexEntry>(LookupEntryById(context, id));
-}
-
-const SereneDBIndexEntry* FindIndexIn(duckdb::ClientContext* context,
-                                      duckdb::Catalog& catalog, ObjectId id) {
-  return EntryOf<SereneDBIndexEntry>(LookupEntryIn(context, catalog, id));
 }
 
 std::vector<catalog::IndexInfoRef> RelationIndexes(
@@ -1693,7 +1591,7 @@ std::vector<catalog::IndexInfoRef> RelationIndexesIn(
 
 void DropTableEntry(duckdb::ClientContext* context, ObjectId schema_id,
                     std::string_view name) {
-  const auto* entry = FindTable(context, schema_id, name);
+  const auto* entry = Find<SereneDBTableEntry>(context, schema_id, name);
   const auto previous = entry != nullptr ? entry->Definition() : nullptr;
   DropSchemaObject(context, duckdb::CatalogType::TABLE_ENTRY, schema_id, name);
   if (previous) {
@@ -1704,7 +1602,7 @@ void DropTableEntry(duckdb::ClientContext* context, ObjectId schema_id,
 void DropIndexEntry(duckdb::ClientContext* context, ObjectId schema_id,
                     std::string_view name) {
   ObjectId relation_id;
-  if (auto previous = FindIndex(context, schema_id, name)) {
+  if (auto previous = Find<SereneDBIndexEntry>(context, schema_id, name)) {
     relation_id = previous->GetRelationId();
   }
   DropSchemaObject(context, duckdb::CatalogType::INDEX_ENTRY, schema_id, name);
@@ -1727,59 +1625,6 @@ void RefreshRelationIndexEntries(duckdb::ClientContext* context,
   }
 }
 
-void VisitTables(duckdb::ClientContext* context, ObjectId database,
-                 absl::FunctionRef<void(const catalog::TableInfoRef&,
-                                        const catalog::Permissions&)>
-                   visitor) {
-  ScanDatabaseSlots(
-    context, database, LookupSlots(duckdb::CatalogType::TABLE_ENTRY),
-    [&](duckdb::CatalogEntry& entry) {
-      if (auto found = DefinitionOf<SereneDBTableEntry>(&entry)) {
-        visitor(found, entry.permissions);
-      }
-    });
-}
-
-void VisitTableEntriesOf(
-  duckdb::ClientContext* context, ObjectId database,
-  absl::FunctionRef<void(const SereneDBTableEntry&)> visitor) {
-  ScanDatabaseSlots(
-    context, database, LookupSlots(duckdb::CatalogType::TABLE_ENTRY),
-    [&](duckdb::CatalogEntry& entry) {
-      if (const auto* table = EntryOf<SereneDBTableEntry>(&entry)) {
-        visitor(*table);
-      }
-    });
-}
-
-const SereneDBTableEntry* FindTable(duckdb::ClientContext* context,
-                                    ObjectId schema_id, std::string_view name) {
-  return EntryOf<SereneDBTableEntry>(LookupSchemaEntry(
-    context, schema_id, LookupSlots(duckdb::CatalogType::TABLE_ENTRY), name));
-}
-
-const SereneDBTableEntry* FindTable(duckdb::ClientContext* context,
-                                    ObjectId schema_id, ObjectId id) {
-  return EntryOf<SereneDBTableEntry>(
-    LookupSchemaEntryById(context, schema_id, id));
-}
-
-const SereneDBTableEntry* FindSessionTable(duckdb::ClientContext& context,
-                                           ObjectId id) {
-  return EntryOf<SereneDBTableEntry>(LookupEntryById(context, id));
-}
-
-const SereneDBTableEntry* FindTableIn(duckdb::ClientContext* context,
-                                      duckdb::Catalog& catalog, ObjectId id) {
-  return EntryOf<SereneDBTableEntry>(LookupEntryIn(context, catalog, id));
-}
-
-const SereneDBTableEntry* FindTableIn(duckdb::ClientContext* context,
-                                      ObjectId database, ObjectId id) {
-  auto sdb_catalog = DatabaseCatalogOf(context, database);
-  return sdb_catalog ? FindTableIn(context, *sdb_catalog, id) : nullptr;
-}
-
 bool TableVanished(duckdb::ClientContext* context, ObjectId schema_id,
                    std::string_view name) {
   if (context == nullptr) {
@@ -1798,7 +1643,7 @@ bool TableVanished(duckdb::ClientContext* context, ObjectId schema_id,
   // The version this statement resolved is committed, and a committed read no
   // longer finds it: another transaction dropped it and committed while this
   // one was open.
-  return !FindTable(nullptr, schema_id, name);
+  return !Find<SereneDBTableEntry>(nullptr, schema_id, name);
 }
 
 void RefreshRelationEntry(duckdb::ClientContext* context, ObjectId schema_id,
@@ -1809,7 +1654,8 @@ void RefreshRelationEntry(duckdb::ClientContext* context, ObjectId schema_id,
   //
   // A projection, not a mutation: the table says what it already said.
   catalog::Catalog::RecordedScope recorded;
-  if (const auto* table = FindTable(context, schema_id, relation_id)) {
+  if (const auto* table =
+        Find<SereneDBTableEntry>(context, schema_id, relation_id)) {
     PlaceEntry(context, table->name.GetIdentifierName(), table->Definition(),
                table->permissions);
   }
@@ -1908,9 +1754,11 @@ void RequireIndexOwner(const catalog::AccessContext& ax,
   catalog::Permissions perm;
   const auto relation_id = index.GetRelationId();
   const auto schema_id = index.GetParentId();
-  if (const auto* table = FindTable(ax.context, schema_id, relation_id)) {
+  if (const auto* table =
+        Find<SereneDBTableEntry>(ax.context, schema_id, relation_id)) {
     perm = table->permissions;
-  } else if (const auto* view = FindView(ax.context, schema_id, relation_id)) {
+  } else if (const auto* view =
+               Find<SereneDBViewEntry>(ax.context, schema_id, relation_id)) {
     perm = view->permissions;
   }
   if (perm.owner == 0) {
@@ -1997,8 +1845,8 @@ bool DropEntryObject(const catalog::AccessContext& ax, duckdb::CatalogType type,
     // The other half of the relation namespace still answers for the name, and
     // PG reports the kind mismatch rather than a missing relation.
     if (type == duckdb::CatalogType::SEQUENCE_ENTRY && parent_id.isSet() &&
-        (FindTable(ax.context, parent_id, name) ||
-         FindView(ax.context, parent_id, name))) {
+        (Find<SereneDBTableEntry>(ax.context, parent_id, name) ||
+         Find<SereneDBViewEntry>(ax.context, parent_id, name))) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                       ERR_MSG("\"", name, "\" is not a sequence"));
     }
@@ -2199,7 +2047,8 @@ void RefreshForeignKeyTargets(duckdb::ClientContext* context,
     if (!target.isSet() || target == catalog::IdOf(table)) {
       continue;
     }
-    if (const auto* held = FindTableIn(context, database_id, target)) {
+    if (const auto* held =
+          FindIn<SereneDBTableEntry>(context, database_id, target)) {
       RefreshRelationEntry(context, ObjectId{held->ParentSchema().oid}, target);
     }
   }
@@ -2213,7 +2062,7 @@ void RefreshForeignKeyReferents(duckdb::ClientContext* context,
   // parent is built before the child that points at it and cannot see the edge
   // yet -- every parent has to be rebuilt once all of them are in the set.
   std::vector<std::pair<ObjectId, ObjectId>> referenced;
-  VisitTables(
+  VisitDefinitions<SereneDBTableEntry>(
     context, database,
     [&](const catalog::TableInfoRef& table, const catalog::Permissions&) {
       for (const auto& constraint : table->constraints) {
@@ -2230,7 +2079,8 @@ void RefreshForeignKeyReferents(duckdb::ClientContext* context,
   // Resolved after the walk: opening a relation's set from inside a scan of the
   // schema's own re-enters a lock that does not nest.
   for (auto& [target, schema_id] : referenced) {
-    if (const auto* held = FindTableIn(context, database, target)) {
+    if (const auto* held =
+          FindIn<SereneDBTableEntry>(context, database, target)) {
       schema_id = ObjectId{held->ParentSchema().oid};
     }
   }

@@ -43,7 +43,7 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
   auto& context = _config.GetClientContext();
   std::vector<PgSequence> values;
-  catalog::VisitSequences(
+  catalog::Visit<catalog::SereneDBSequenceEntry>(
     &context, GetDatabaseId(),
     [&](const catalog::SereneDBSequenceEntry& sequence) {
       const auto& options = sequence.Options();

@@ -20,10 +20,13 @@
 
 #include "catalog/tokenizer.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <cstdint>
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/serializer/deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <utility>
@@ -31,14 +34,10 @@
 #include "basics/assert.h"
 #include "basics/serializer.h"
 #include "basics/simdjson_sink.h"
-#include "catalog/persistence/tokenizer.h"
 
 namespace sdb::catalog {
-namespace {
 
-using persistence::TokenizerData;
-
-}  // namespace
+namespace {}  // namespace
 
 CreateTokenizerInfo::CreateTokenizerInfo(ObjectId id, ObjectId schema_id,
                                          std::string_view name,
@@ -78,30 +77,41 @@ irs::analysis::Analyzer::ptr CreateTokenizerInfo::CreateAnalyzer() const {
   return irs::analysis::CreateAnalyzer(irs::analysis::Clone(_config));
 }
 
-std::shared_ptr<CreateTokenizerInfo> CreateTokenizerInfo::Deserialize(
-  duckdb::Deserializer& src, ObjectId id, ObjectId schema_id) {
-  TokenizerData data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<CreateTokenizerInfo>(
-    id, schema_id, data.name, data.features, data.norm_row_group_size,
-    std::move(data.config));
-}
-
-persistence::TokenizerData CreateTokenizerInfo::ToData() const {
-  return TokenizerData{
-    .name = std::string{GetName()},
-    .config = irs::analysis::Clone(_config),
-    .features = _features,
-    .norm_row_group_size = _norm_row_group_size,
-  };
-}
-
-void CreateTokenizerInfo::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, ToData());
+duckdb::unique_ptr<duckdb::CreateInfo> CreateTokenizerInfo::Deserialize(
+  duckdb::Deserializer& src) {
+  auto result = duckdb::make_uniq<CreateTokenizerInfo>();
+  result->SetName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name"));
+  src.ReadPropertyWithDefault(201, "norm_row_group_size",
+                              result->_norm_row_group_size);
+  // Analyzer config and feature set are iresearch types: the basics framework
+  // is the only serializer they have, so they ride inside one property.
+  src.OnPropertyBegin(202, "analyzer");
+  auto refs = std::tie(result->_config, result->_features);
+  basics::ReadTuple(src, refs);
+  src.OnPropertyEnd();
+  return std::move(result);
 }
 
 void CreateTokenizerInfo::WriteJson(basics::JsonSink& sink) const {
-  basics::WriteObject(sink, ToData());
+  sink.OnObjectBegin();
+  sink.OnPropertyBegin("config");
+  basics::WriteObject(sink, _config);
+  sink.OnPropertyBegin("features");
+  basics::WriteObject(sink, _features);
+  sink.OnPropertyBegin("norm_row_group_size");
+  basics::WriteObject(sink, _norm_row_group_size);
+  sink.OnObjectEnd();
+}
+
+void CreateTokenizerInfo::Serialize(duckdb::Serializer& sink) const {
+  duckdb::CreateInfo::Serialize(sink);
+  sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
+                                                    qualified_name.Name());
+  sink.WritePropertyWithDefault(201, "norm_row_group_size",
+                                _norm_row_group_size);
+  sink.OnPropertyBegin(202, "analyzer");
+  basics::WriteTuple(sink, std::tie(_config, _features));
+  sink.OnPropertyEnd();
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> CreateTokenizerInfo::Copy() const {

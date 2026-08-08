@@ -45,12 +45,9 @@
 #include "basics/duckdb_engine.h"
 #include "basics/serializer.h"
 #include "basics/simdjson_sink.h"
-#include "catalog/persistence/foreign_server.h"
 
 namespace sdb::catalog {
 namespace {
-
-using persistence::ForeignServerData;
 
 constexpr std::string_view kClickHouseStorage = "clickhouse";
 constexpr std::string_view kPostgresStorage = "postgres";
@@ -171,30 +168,46 @@ std::vector<std::string> CreateForeignServerInfo::GetStringOptions() const {
   return out;
 }
 
-std::shared_ptr<CreateForeignServerInfo> CreateForeignServerInfo::Deserialize(
-  duckdb::Deserializer& src, ObjectId id, ObjectId database_id) {
-  ForeignServerData data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<CreateForeignServerInfo>(
-    id, database_id, data.name, std::move(data.fdw_name),
-    std::move(data.option_keys), std::move(data.option_values));
+duckdb::unique_ptr<duckdb::CreateInfo> CreateForeignServerInfo::Deserialize(
+  duckdb::Deserializer& src) {
+  auto result = duckdb::make_uniq<CreateForeignServerInfo>();
+  result->SetName(src.ReadPropertyWithDefault<duckdb::Identifier>(200, "name"));
+  src.ReadPropertyWithDefault(201, "fdw_name", result->_fdw_name);
+  src.OnPropertyBegin(202, "options");
+  auto refs = std::tie(result->_option_keys, result->_option_values);
+  basics::ReadTuple(src, refs);
+  src.OnPropertyEnd();
+  return std::move(result);
 }
 
-ForeignServerData CreateForeignServerInfo::ToData() const {
-  return {
-    .name = std::string{GetName()},
-    .fdw_name = _fdw_name,
-    .option_keys = _option_keys,
-    .option_values = _option_values,
-  };
+std::string CreateForeignServerInfo::ToString() const {
+  std::string out = absl::StrCat(
+    "CREATE SERVER ",
+    duckdb::KeywordHelper::WriteOptionallyQuoted(std::string{GetName()}),
+    " FOREIGN DATA WRAPPER ",
+    duckdb::KeywordHelper::WriteOptionallyQuoted(_fdw_name));
+  if (!_option_keys.empty()) {
+    absl::StrAppend(&out, " OPTIONS (");
+    for (size_t i = 0; i < _option_keys.size(); ++i) {
+      absl::StrAppend(
+        &out, i != 0 ? ", " : "", _option_keys[i], " ",
+        duckdb::KeywordHelper::WriteQuoted(_option_values[i], '\''));
+    }
+    absl::StrAppend(&out, ")");
+  }
+  return absl::StrCat(out, ";");
 }
 
 void CreateForeignServerInfo::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, ToData());
-}
-
-void CreateForeignServerInfo::WriteJson(basics::JsonSink& sink) const {
-  basics::WriteObject(sink, ToData());
+  duckdb::CreateInfo::Serialize(sink);
+  sink.WritePropertyWithDefault<duckdb::Identifier>(200, "name",
+                                                    qualified_name.Name());
+  sink.WritePropertyWithDefault(201, "fdw_name", _fdw_name);
+  // Option lists are std::vector, not duckdb's; the basics framework is what
+  // writes them, so they ride inside one property.
+  sink.OnPropertyBegin(202, "options");
+  basics::WriteTuple(sink, std::tie(_option_keys, _option_values));
+  sink.OnPropertyEnd();
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> CreateForeignServerInfo::Copy() const {

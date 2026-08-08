@@ -29,32 +29,6 @@
 
 namespace sdb::catalog::persistence {
 
-// A secret on the wire, never in human-facing output: the binary tuple
-// format round-trips the raw verifier unchanged, the object (JSON) format
-// renders a mask.
-struct PasswordVerifier {
-  std::string value;
-
-  bool operator==(const PasswordVerifier&) const = default;
-};
-
-template<typename Context>
-void SerdeWrite(Context ctx, const PasswordVerifier& verifier) {
-  if constexpr (std::is_same_v<typename Context::Format,
-                               basics::ObjectFormat>) {
-    basics::detail::WriteString(ctx.io(), verifier.value.empty()
-                                            ? std::string_view{}
-                                            : std::string_view{"<masked>"});
-  } else {
-    basics::detail::WriteString(ctx.io(), std::string_view{verifier.value});
-  }
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, PasswordVerifier& verifier) {
-  basics::detail::ReadString(ctx.io(), verifier.value);
-}
-
 struct RoleData {
   std::string name;
   uint32_t options;
@@ -64,7 +38,8 @@ struct RoleData {
   // SET VAR=... params that set for every session of this role
   std::vector<std::string> config;
   std::vector<DefaultAcl> default_acls;
-  PasswordVerifier password_verifier;
+  // Raw verifier; CreateRoleInfo::WriteJson renders a mask in its place.
+  std::string password_verifier;
 };
 
 }  // namespace sdb::catalog::persistence

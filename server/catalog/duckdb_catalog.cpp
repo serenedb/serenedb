@@ -89,6 +89,7 @@
 #include "catalog/duckdb_schema_entry.h"
 #include "catalog/duckdb_static_schema.h"
 #include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/inverted_index.h"
 #include "catalog/pk_spec.h"
@@ -159,7 +160,7 @@ void AlignMacroCatalogType(duckdb::CreateMacroInfo& new_info) {
 // Fetches the existing definition, finds the matching overload by
 // parameter signature, and either removes just that overload (updating the
 // stored function) or drops the whole function if it was the last one.
-bool DropFunctionOverload(catalog::Catalog& catalog,
+bool DropFunctionOverload(SereneDBCatalog& catalog,
                           duckdb::ClientContext& context,
                           duckdb::DropInfo& info) {
   const auto& info_catalog =
@@ -240,7 +241,7 @@ bool DropFunctionOverload(catalog::Catalog& catalog,
 // PG: DROP FUNCTION drops only function overloads, DROP PROCEDURE drops only
 // procedure overloads. If mixed (func + proc under same name), keep the other.
 bool DropFunctionByKind(duckdb::ClientContext& context,
-                        catalog::Catalog& catalog,
+                        SereneDBCatalog& catalog,
                         const duckdb::DropInfo& info) {
   const auto& info_catalog =
     info.GetQualifiedName().Catalog().GetIdentifierName();
@@ -297,9 +298,11 @@ bool DropFunctionByKind(duckdb::ClientContext& context,
 }  // namespace
 
 void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
-  auto& catalog = catalog::GetCatalog();
   const auto& info_catalog =
     info.GetQualifiedName().Catalog().GetIdentifierName();
+  auto& catalog =
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier{info_catalog})
+      .Cast<SereneDBCatalog>();
   const auto& info_schema =
     info.GetQualifiedName().Schema().GetIdentifierName();
   const auto& info_name = info.GetQualifiedName().Name().GetIdentifierName();
@@ -1159,8 +1162,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                    target.ParentSchema().name.GetIdentifierName());
     std::optional<connector::ViewFastPath> fp;
     if (schema_id.isSet()) {
-      if (const auto* view = FindView(&binder.context, schema_id,
-                                      target.name.GetIdentifierName())) {
+      if (const auto* view = Find<SereneDBViewEntry>(
+            &binder.context, schema_id, target.name.GetIdentifierName())) {
         auto key_cols = connector::KeyColumnsFromOptions(
           stmt.info->Cast<duckdb::CreateIndexInfo>().options);
         auto info = view->GetInfo();

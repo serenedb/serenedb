@@ -28,6 +28,7 @@
 #include "basics/metrics.h"
 #include "catalog/catalog.h"
 #include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
 #include "catalog/inverted_index.h"
 #include "search/inverted_index_storage.h"
 
@@ -104,12 +105,13 @@ catalog::MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
   std::vector<catalog::IndexInfoRef> indexes;
-  catalog::VisitIndexes(nullptr, GetDatabaseId(),
-                        [&](const catalog::IndexInfoRef& index) {
-                          if (index->IsInverted()) {
-                            indexes.push_back(index);
-                          }
-                        });
+  catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
+    nullptr, GetDatabaseId(),
+    [&](const catalog::IndexInfoRef& index, const catalog::Permissions&) {
+      if (index->IsInverted()) {
+        indexes.push_back(index);
+      }
+    });
   for (const auto& index : indexes) {
     auto storage = index->GetData();
     SDB_ASSERT(storage);

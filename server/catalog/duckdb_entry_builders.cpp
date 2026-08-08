@@ -88,7 +88,8 @@ void RetargetForeignKeys(duckdb::CreateTableInfo& info,
     duckdb::Identifier referenced_schema = info.GetQualifiedName().Schema();
     duckdb::Identifier referenced_name = info.GetTableName();
     if (referenced_id.isSet() && referenced_id != catalog::IdOf(table)) {
-      const auto* found = FindTableIn(context, catalog, referenced_id);
+      const auto* found =
+        FindIn<SereneDBTableEntry>(context, catalog, referenced_id);
       if (found == nullptr) {
         continue;
       }
@@ -130,7 +131,8 @@ void AddReferencedForeignKeys(duckdb::CreateTableInfo& info,
     if (dependent.type != duckdb::CatalogType::TABLE_ENTRY) {
       continue;
     }
-    const auto* referencing_entry = FindTableIn(context, catalog, dependent.id);
+    const auto* referencing_entry =
+      FindIn<SereneDBTableEntry>(context, catalog, dependent.id);
     if (referencing_entry == nullptr) {
       continue;
     }
@@ -222,10 +224,11 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexEntry(
   // the catalog this one is being built for -- placed ahead of the indexes that
   // project them.
   std::string_view relation_name;
-  if (const auto* view = FindViewIn(context, catalog, index->GetRelationId())) {
+  if (const auto* view =
+        FindIn<SereneDBViewEntry>(context, catalog, index->GetRelationId())) {
     relation_name = view->name.GetIdentifierName();
-  } else if (const auto* relation =
-               FindTableIn(context, catalog, index->GetRelationId())) {
+  } else if (const auto* relation = FindIn<SereneDBTableEntry>(
+               context, catalog, index->GetRelationId())) {
     relation_name = relation->name.GetIdentifierName();
   }
   // The definition's own info, which already carries the name, the index type,
@@ -299,7 +302,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexScanEntry(
   duckdb::ClientContext* context) {
   // In the catalog the entry is being built for rather than the session's: an
   // attach reads these before the attachment is in the database manager.
-  if (const auto* view = FindViewIn(context, catalog, index->GetRelationId())) {
+  if (const auto* view =
+        FindIn<SereneDBViewEntry>(context, catalog, index->GetRelationId())) {
     const auto& view_perm = view->permissions;
     const auto view_columns = view->GetColumnInfo();
     if (!view_columns) {
@@ -332,7 +336,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeIndexScanEntry(
   }
 
   const auto* table_entry =
-    FindTableIn(context, catalog, index->GetRelationId());
+    FindIn<SereneDBTableEntry>(context, catalog, index->GetRelationId());
   if (table_entry == nullptr) {
     return nullptr;
   }

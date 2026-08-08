@@ -37,6 +37,7 @@ struct TasksSettings {
   size_t cleanup_interval_step{};
   size_t refresh_interval_msec{};
   size_t compaction_interval_msec{};
+  size_t source_refresh_interval_msec{};
   size_t compaction_max_segments{};
   size_t compaction_max_segments_bytes{};
   size_t compaction_floor_segment_bytes{};

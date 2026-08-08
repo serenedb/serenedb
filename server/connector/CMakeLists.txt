@@ -39,6 +39,8 @@ add_library(
     duckdb_foreign_server_function.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp
+    duckdb_reindex_function.cpp
+    file_manifest.cpp
     duckdb_vacuum_function.cpp
     duckdb_physical_search_truncate.cpp
     duckdb_physical_search_delete.cpp

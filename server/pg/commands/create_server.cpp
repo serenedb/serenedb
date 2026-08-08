@@ -62,7 +62,7 @@ uint64_t RunAttach(const catalog::ForeignServer& server) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("foreign-data wrapper \"", server.GetFdwName(),
                             "\" is not supported"),
-                    ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
+                    ERR_HINT("Use one of: ", catalog::SupportedFdwList(), "."));
   }
   if (res.status == Status::Failed) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONNECTION_EXCEPTION),

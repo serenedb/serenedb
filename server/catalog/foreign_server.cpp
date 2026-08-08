@@ -20,8 +20,10 @@
 
 #include "catalog/foreign_server.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -53,21 +55,24 @@ using persistence::ForeignServerData;
 
 constexpr std::string_view kClickHouseStorage = "clickhouse";
 constexpr std::string_view kPostgresStorage = "postgres";
+constexpr std::string_view kIcebergStorage = "iceberg";
+
+constexpr std::pair<std::string_view, std::string_view> kFdwStorage[] = {
+  {"clickhouse_fdw", kClickHouseStorage},
+  {"postgres_fdw", kPostgresStorage},
+  {"iceberg_fdw", kIcebergStorage},
+};
 
 std::string_view StorageTypeForFdw(std::string_view fdw) {
-  if (fdw == "clickhouse_fdw") {
-    return kClickHouseStorage;
-  }
-  if (fdw == "postgres_fdw") {
-    return kPostgresStorage;
-  }
-  return {};
+  const auto* it = absl::c_find_if(
+    kFdwStorage, [&](const auto& entry) { return entry.first == fdw; });
+  return it == std::end(kFdwStorage) ? std::string_view{} : it->second;
 }
 
-// The attached catalog types a foreign server can own -- each connector's
-// Catalog::GetCatalogType() returns exactly the storage type above.
 bool IsForeignServerStorage(std::string_view catalog_type) {
-  return catalog_type == kClickHouseStorage || catalog_type == kPostgresStorage;
+  return absl::c_any_of(kFdwStorage, [&](const auto& entry) {
+    return entry.second == catalog_type;
+  });
 }
 
 // The attachment holding `name`, but only when a foreign server owns it. The
@@ -142,6 +147,13 @@ uint64_t ForeignServerAttachmentId(std::string_view server_name) {
 
 bool IsSupportedFdw(std::string_view fdw_name) {
   return !StorageTypeForFdw(fdw_name).empty();
+}
+
+std::string SupportedFdwList() {
+  return absl::StrJoin(kFdwStorage, ", ",
+                       [](std::string* out, const auto& entry) {
+                         absl::StrAppend(out, entry.first);
+                       });
 }
 
 std::string QuoteSqlIdentifier(std::string_view name) {

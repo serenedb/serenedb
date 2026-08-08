@@ -607,12 +607,21 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     auto resolve_uint = [&](std::string_view key) -> uint32_t {
       return ResolveUintWithOption(context, key, find_with(key));
     };
+
+    if (find_with(kSourceRefreshIntervalSetting)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("option \"", kSourceRefreshIntervalSetting,
+                "\" only applies to view-backed inverted indexes"));
+    }
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint(kRowGroupSizeSetting),
       .norm_row_group_size = resolve_uint(kNormRowGroupSizeSetting),
       .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
       .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
-      .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),
+      .cleanup_interval_step =
+        ResolveUbigintWithOption(context, kCleanupIntervalStepSetting,
+                                 find_with(kCleanupIntervalStepSetting)),
     };
     if (auto* v = find_with("optimize_top_k")) {
       auto value =
@@ -1069,10 +1078,12 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         for (const auto& [option, value] : changes) {
           if (option == kRefreshIntervalSetting) {
             options.refresh_interval_ms = static_cast<uint32_t>(value);
+          } else if (option == kSourceRefreshIntervalSetting) {
+            options.source_refresh_interval_ms = static_cast<uint32_t>(value);
           } else if (option == kCompactionIntervalSetting) {
             options.compaction_interval_ms = static_cast<uint32_t>(value);
           } else if (option == kCleanupIntervalStepSetting) {
-            options.cleanup_interval_step = static_cast<uint32_t>(value);
+            options.cleanup_interval_step = value;
           } else if (option == kSegmentMemoryMaxSetting) {
             options.segment_memory_max = value;
           } else if (option == kSegmentDocsMaxSetting) {

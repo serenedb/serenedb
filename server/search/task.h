@@ -21,8 +21,13 @@
 
 #pragma once
 
+#include <absl/status/status.h>
+
+#include <functional>
 #include <memory>
 #include <yaclib/async/future.hpp>
+
+#include "catalog/identifiers/object_id.h"
 
 namespace sdb::search {
 
@@ -48,5 +53,9 @@ extern template yaclib::Future<> CompactionCoordinator(
 extern template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
 extern template yaclib::Future<> CompactionCoordinator(
   std::weak_ptr<SearchTable>);
+yaclib::Future<> SourceRefreshLoop(std::weak_ptr<InvertedIndexStorage> weak);
+
+using SourceRefreshRunner = std::function<absl::Status(ObjectId index_id)>;
+void SetSourceRefreshRunner(SourceRefreshRunner runner);
 
 }  // namespace sdb::search

@@ -286,8 +286,8 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
     .refresh_interval_ms = ResolveUintSetting(context, kRefreshIntervalSetting),
     .compaction_interval_ms =
       ResolveUintSetting(context, kCompactionIntervalSetting),
-    .cleanup_interval_step =
-      ResolveUintSetting(context, kCleanupIntervalStepSetting),
+    .cleanup_interval_step = ResolveUbigintWithOption(
+      context, kCleanupIntervalStepSetting, /*with_value=*/nullptr),
   };
 
   const auto index_name = absl::StrCat(index, kEsTextIndexSuffix);

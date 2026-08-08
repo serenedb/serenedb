@@ -137,9 +137,11 @@ ViewFileGlobIndexSource::ViewFileGlobIndexSource(
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
-  duckdb::TableFilterSet* pushed_filters)
+  duckdb::TableFilterSet* pushed_filters,
+  std::shared_ptr<const search::FileManifest> file_manifest)
   : ViewFileIndexSourceBase(context, std::move(fast_path), projected_columns,
-                            projected_types, bind_column_ids, pushed_filters) {}
+                            projected_types, bind_column_ids, pushed_filters),
+    _file_manifest(std::move(file_manifest)) {}
 
 duckdb::idx_t ViewFileGlobIndexSource::Materialize(
   duckdb::ClientContext& context, duckdb::Vector& pk, duckdb::idx_t count,
@@ -150,13 +152,7 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
 
   SortFilesRows(pk, count);
 
-  auto& multi_bd = _bind_data->Cast<duckdb::MultiFileBindData>();
-  SDB_ASSERT(multi_bd.file_list);
-  std::ignore = multi_bd.file_list->GetTotalFileCount();
-  auto files = multi_bd.file_list->GetAllFiles();
-  if (_file_cache.size() < files.size()) {
-    _file_cache.resize(files.size());
-  }
+  SDB_ASSERT(_file_manifest);
 
   AliasOutput(output);
   if (_file_target.ColumnCount() == 0) {
@@ -176,13 +172,15 @@ duckdb::idx_t ViewFileGlobIndexSource::Materialize(
     while (j < count && _sorted_files[j] == _sorted_files[i]) {
       ++j;
     }
-    const auto fi = static_cast<size_t>(_sorted_files[i]);
-    SDB_ASSERT(fi < files.size());
+    const uint64_t fi = _sorted_files[i];
+    const auto* entry = _file_manifest->FindById(fi);
+    SDB_ASSERT(entry);
+    const std::string& file_path = entry->path;
     auto& cached = _file_cache[fi];
     if (!cached.bind_data) {
       ViewFastPath single_fp = _fast_path;
       single_fp.args.clear();
-      single_fp.args.push_back(duckdb::Value{files[fi].path});
+      single_fp.args.push_back(duckdb::Value{file_path});
       single_fp.is_glob = false;
       if (single_fp.function_name == "iceberg_scan") {
         single_fp.function_name = "read_parquet";

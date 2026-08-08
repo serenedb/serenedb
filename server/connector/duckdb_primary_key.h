@@ -27,6 +27,7 @@
 #include <cstring>
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <ranges>
 #include <span>
@@ -46,7 +47,36 @@ namespace sdb::connector::duckdb_primary_key {
 struct PKColumn {
   size_t input_col_idx;
   duckdb::LogicalType type;
+  size_t struct_child = duckdb::DConstants::INVALID_INDEX;
 };
+
+inline std::vector<PKColumn> PkTermColumns(size_t first_col_idx, size_t count) {
+  std::vector<PKColumn> columns;
+  columns.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    columns.push_back({.input_col_idx = first_col_idx + i,
+                       .type = duckdb::LogicalType::BIGINT});
+  }
+  return columns;
+}
+
+// Over ONE pk column of the given type (the scan's layout): a STRUCT's
+// children, or the scalar column itself.
+inline std::vector<PKColumn> PkTermColumns(size_t col_idx,
+                                           const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return {{.input_col_idx = col_idx, .type = duckdb::LogicalType::BIGINT}};
+  }
+  const auto count = duckdb::StructType::GetChildCount(type);
+  std::vector<PKColumn> columns;
+  columns.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    columns.push_back({.input_col_idx = col_idx,
+                       .type = duckdb::LogicalType::BIGINT,
+                       .struct_child = i});
+  }
+  return columns;
+}
 
 // Big-endian sorted PK encoding. Appends the row's value (selected by
 // `fmt`/`row_idx`) to `key` so that lexicographic byte order matches the
@@ -200,13 +230,20 @@ inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
 }
 
 inline void PreparePKFormats(
-  const duckdb::DataChunk& chunk, std::span<const PKColumn> pk_columns,
+  duckdb::DataChunk& chunk, std::span<const PKColumn> pk_columns,
   std::vector<duckdb::UnifiedVectorFormat>& pk_formats) {
   const auto num_rows = chunk.size();
   pk_formats.resize(pk_columns.size());
   for (size_t c = 0; c < pk_columns.size(); ++c) {
-    chunk.data[pk_columns[c].input_col_idx].ToUnifiedFormat(num_rows,
-                                                            pk_formats[c]);
+    auto& vec = chunk.data[pk_columns[c].input_col_idx];
+    const auto child = pk_columns[c].struct_child;
+    if (child != duckdb::DConstants::INVALID_INDEX) {
+      vec.Flatten(num_rows);
+      duckdb::StructVector::GetEntries(vec)[child].ToUnifiedFormat(
+        num_rows, pk_formats[c]);
+    } else {
+      vec.ToUnifiedFormat(num_rows, pk_formats[c]);
+    }
   }
 }
 

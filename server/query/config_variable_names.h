@@ -28,6 +28,8 @@ inline constexpr std::string_view kRowGroupSizeSetting = "row_group_size";
 inline constexpr std::string_view kNormRowGroupSizeSetting =
   "norm_row_group_size";
 inline constexpr std::string_view kRefreshIntervalSetting = "refresh_interval";
+inline constexpr std::string_view kSourceRefreshIntervalSetting =
+  "source_refresh_interval";
 inline constexpr std::string_view kCompactionIntervalSetting =
   "compaction_interval";
 inline constexpr std::string_view kCleanupIntervalStepSetting =

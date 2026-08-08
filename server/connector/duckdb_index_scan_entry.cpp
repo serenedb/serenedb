@@ -243,12 +243,9 @@ duckdb::vector<duckdb::column_t> ViewInvertedIndexScanEntry::GetRowIdColumns()
 duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
   const {
   duckdb::virtual_column_map_t result;
-  result.reserve(3);
+  result.reserve(2);
   result.emplace(kColumnIdentifierTableOid,
                  duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
-  result.emplace(
-    kColumnIdentifierGeneratedPk,
-    duckdb::TableColumn{"generated_pk", duckdb::LogicalType::ROW_TYPE});
   result.emplace(duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn{"", duckdb::LogicalType::BOOLEAN});
   return result;

@@ -28,6 +28,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/operator/persistent/physical_batch_insert.hpp>
@@ -37,6 +38,7 @@
 #include <duckdb/execution/operator/persistent/physical_update.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/function/function_binder.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -47,6 +49,7 @@
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -86,6 +89,7 @@
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
+#include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_search_delete.h"
@@ -95,6 +99,8 @@
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/file_manifest.h"
+#include "connector/index_expression.hpp"
 #include "connector/inverted_index_options_util.h"
 #include "connector/pg_logical_types.h"
 #include "connector/search_table_dispatch.h"
@@ -103,6 +109,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "planning/iceberg_multi_file_list.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
@@ -1229,23 +1236,25 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         [](const std::string& n) { return duckdb::Identifier{n}; }));
     create_index_info->SetSchema(target.ParentSchema().name);
     create_index_info->SetCatalog(target.ParentCatalog().GetName());
+
+    SDB_ASSERT(sdb_state);
+    if (!sdb_state->create_index_planning) {
+      sdb_state->create_index_planning.emplace();
+    }
+    auto& planning = *sdb_state->create_index_planning;
     if (view_fast_path) {
       switch (view_fast_path->pk_spec) {
         case catalog::PkSpec::ExternalPostgresCtid:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("external_postgres_ctid");
+          planning.fast_path_pk_kind = "external_postgres_ctid";
           break;
         case catalog::PkSpec::ExternalColumnKey:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("external_struct_key");
+          planning.fast_path_pk_kind = "external_struct_key";
           break;
         case catalog::PkSpec::DuckDBRowId:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("duckdb_rowid");
+          planning.fast_path_pk_kind = "duckdb_rowid";
           break;
         case catalog::PkSpec::FileIndexPlusDuckDBRowId:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("file_index_plus_duckdb_rowid");
+          planning.fast_path_pk_kind = "file_index_plus_duckdb_rowid";
           break;
         default: {
           SDB_ASSERT(vcols_opt,
@@ -1253,33 +1262,21 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                      "two are produced together in the leaf-rewrite block");
           const auto& vcols = *vcols_opt;
           if (vcols.size() == 1) {
-            create_index_info->options["_sdb_view_fast_path_pk"] =
-              duckdb::Value("file_row_number");
+            planning.fast_path_pk_kind = "file_row_number";
           } else if (vcols.size() == 2) {
-            create_index_info->options["_sdb_view_fast_path_pk"] =
-              duckdb::Value("file_index_plus_row_number");
+            planning.fast_path_pk_kind = "file_index_plus_row_number";
           }
           break;
         }
       }
-      if (pinned_iceberg_snapshot_id != 0) {
-        create_index_info->options["_sdb_iceberg_snapshot_id"] =
-          duckdb::Value::BIGINT(pinned_iceberg_snapshot_id);
+      if (captured_manifest) {
+        planning.manifest =
+          std::make_shared<search::FileManifest>(std::move(*captured_manifest));
       }
     }
     if (kept_view_positions) {
-      duckdb::vector<duckdb::Value> kept_values;
-      kept_values.reserve(kept_view_positions->size());
-      for (auto p : *kept_view_positions) {
-        kept_values.emplace_back(duckdb::Value::UBIGINT(p));
-      }
-      create_index_info->options["_sdb_view_kept_positions"] =
-        duckdb::Value::LIST(duckdb::LogicalType::UBIGINT,
-                            std::move(kept_values));
+      planning.kept_positions = *kept_view_positions;
     }
-    // Remap col-ref bindings to (TableIndex(0), narrowed_position): the
-    // resolver matches LOGICAL_CREATE_INDEX exprs against TableIndex(0), and
-    // chunk positions follow kept_view_positions' (sorted) order.
     duckdb::IndexBinder index_binder(binder, binder.context, nullptr,
                                      create_index_info.get());
     // Remap col-ref bindings to (TableIndex(0), narrowed_position): the

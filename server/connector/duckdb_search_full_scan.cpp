@@ -65,6 +65,7 @@
 #include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/string.hpp>
 #include <mutex>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <type_traits>
@@ -357,16 +358,18 @@ void InitScanState(IResearchScanGlobalState& state,
   for (auto col_id : input.column_ids) {
     const auto proj = state.projected_columns.size();
     if (col_id == kColumnIdentifierGeneratedPk) {
-      if (!bind_data.IsSearchTableEntry()) {
+      // The generated PK materializes from the stored pk column like any
+      // stored column, typed by the same authority that declared it.
+      auto pk_type = GeneratedPkTypeOf(bind_data);
+      if (!pk_type) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
           ERR_MSG("projecting the rowid through an inverted-index scan is not "
                   "supported"));
       }
-      // Search table: the rowid IS the generated PK, materialized from `.col`.
       state.generated_pk_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
-      state.projected_types.push_back(duckdb::LogicalType::ROW_TYPE);
+      state.projected_types.push_back(std::move(*pk_type));
     } else if (col_id == kColumnIdentifierTableOid) {
       state.tableoid_output_idx = proj;
       state.tableoid_value = bind_data.RelationId().id();
@@ -768,6 +771,14 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
 // needed for the output or for a pushed filter.
 void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
                                     const SereneDBScanBindData& bind_data) {
+  if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
+    // The rowid materializes from the pk column like any stored column, on
+    // search tables and view-backed indexes alike (term_dict::kPKFieldId
+    // IS Column::kGeneratedPKId by definition).
+    state.cs_projections.emplace_back(
+      ColumnstoreProjection{.output_slot = state.generated_pk_output_idx,
+                            .column_id = catalog::term_dict::kPKFieldId});
+  }
   const auto in_output = [&](duckdb::idx_t proj) {
     return state.output_projection_ids.empty() ||
            absl::c_find(state.output_projection_ids, proj) !=
@@ -802,11 +813,6 @@ void ClassifyColumnstoreProjections(IResearchScanGlobalState& state,
         }
       }
       state.cs_projections.emplace_back(std::move(cp));
-    }
-    if (state.generated_pk_output_idx != duckdb::DConstants::INVALID_INDEX) {
-      state.cs_projections.emplace_back(ColumnstoreProjection{
-        .output_slot = state.generated_pk_output_idx,
-        .column_id = catalog::Column::kGeneratedPKId.id()});
     }
     return;
   }

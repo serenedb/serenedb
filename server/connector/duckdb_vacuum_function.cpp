@@ -283,14 +283,14 @@ void CollectInvertedSteps(const catalog::Snapshot& snapshot,
 }
 
 bool MayMaintain(ConnectionContext& conn_ctx, const catalog::Snapshot& snapshot,
-                 const catalog::Table& table, std::string_view verb) {
+                 const catalog::Object& relation, std::string_view verb) {
   if (snapshot.ClosureFor(conn_ctx.GetRoleId())
-        .Can(table, catalog::AclMode::Maintain)) {
+        .Can(relation, catalog::AclMode::Maintain)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(
     ERR_CODE(ERRCODE_WARNING), ERR_MSG("permission denied to ", verb, " \"",
-                                       table.GetName(), "\", skipping it")));
+                                       relation.GetName(), "\", skipping it")));
   return false;
 }
 
@@ -330,9 +330,10 @@ void DispatchInverted(duckdb::ClientContext& context,
             index->GetName() != target.object) {
           continue;
         }
-        // An index has no owner of its own; maintenance rides on its table.
-        auto table = snapshot.GetObject<catalog::Table>(index->GetRelationId());
-        if (table && !MayMaintain(conn_ctx, snapshot, *table, verb)) {
+        // An index has no owner of its own; maintenance rides on its
+        // relation (a table, or a view for view-backed indexes).
+        auto relation = snapshot.GetObject(index->GetRelationId());
+        if (relation && !MayMaintain(conn_ctx, snapshot, *relation, verb)) {
           return;
         }
         const auto& inverted =

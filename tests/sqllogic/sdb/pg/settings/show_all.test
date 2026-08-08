@@ -163,7 +163,7 @@ http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
-httpfs_connection_caching	off	Enable connection caching for HTTP requests
+httpfs_connection_caching	on	Enable connection caching for HTTP requests
 iceberg_logging_post_body_truncate_limit	10000	Maximum number of characters of a REST catalog POST body to include in Iceberg log messages. Bodies longer than this are truncated with a trailing '... (truncated)' marker. Set to 0 to omit the body.
 iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
 iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
@@ -485,7 +485,7 @@ http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
-httpfs_connection_caching	off	Enable connection caching for HTTP requests
+httpfs_connection_caching	on	Enable connection caching for HTTP requests
 iceberg_logging_post_body_truncate_limit	10000	Maximum number of characters of a REST catalog POST body to include in Iceberg log messages. Bodies longer than this are truncated with a trailing '... (truncated)' marker. Set to 0 to omit the body.
 iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
 iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances

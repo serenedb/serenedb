@@ -1,7 +1,9 @@
 # See https://pre-commit.com for more information
 
-# General excludes, files can also be excluded on a hook level
-exclude: resources/.*|third_party/.*/.*|LICENSE
+# General excludes, files can also be excluded on a hook level.
+# tests/sqllogic/fixtures is generator output (scripts/gen_iceberg_fixture.py):
+# rewriting fixers must not drift it from what a regeneration produces.
+exclude: resources/.*|third_party/.*/.*|LICENSE|tests/sqllogic/fixtures/.*|libs/iresearch/include/iresearch/parser/lucene_(parser|lexer)\.(hpp|cpp)
 default_install_hook_types: [pre-commit, pre-push]
 repos:
   - repo: meta

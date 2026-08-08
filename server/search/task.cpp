@@ -22,6 +22,7 @@
 #include "task.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
@@ -413,5 +414,84 @@ template yaclib::Future<> CompactionCoordinator(
   std::weak_ptr<InvertedIndexStorage>);
 template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
 template yaclib::Future<> CompactionCoordinator(std::weak_ptr<SearchTable>);
+
+namespace {
+
+// Installed once at startup by the connector. Guarded anyway: nothing
+// structurally forbids a later (re)install racing a ticking loop.
+ABSL_CONST_INIT absl::Mutex g_source_refresh_runner_mutex{absl::kConstInit};
+SourceRefreshRunner g_source_refresh_runner
+  ABSL_GUARDED_BY(g_source_refresh_runner_mutex);
+
+SourceRefreshRunner GetSourceRefreshRunner() {
+  absl::MutexLock lock{&g_source_refresh_runner_mutex};
+  return g_source_refresh_runner;
+}
+
+}  // namespace
+
+void SetSourceRefreshRunner(SourceRefreshRunner runner) {
+  absl::MutexLock lock{&g_source_refresh_runner_mutex};
+  g_source_refresh_runner = std::move(runner);
+}
+
+yaclib::Future<> SourceRefreshLoop(std::weak_ptr<InvertedIndexStorage> weak) {
+  auto& s = BackgroundScheduler::instance();
+  int stretch = 0;
+  try {
+    for (;;) {
+      auto idx = weak.lock();
+      if (!idx) {
+        SDB_TRACE(SEARCH,
+                  "maintenance target is deleted, ending source refresh loop");
+        break;
+      }
+      const auto interval =
+        ToDuration(idx->GetTasksSettings().source_refresh_interval_msec);
+      const auto id = idx->GetId();
+      const bool enabled = interval > Clock::duration::zero();
+      idx.reset();
+
+      // A failed tick stretches the next delay like the refresh loop's idle
+      // stretch; any successful tick resets it.
+      const auto delay =
+        enabled ? interval + interval * stretch : kDisabledPoll;
+      co_await s.Delay(delay);
+      if (ShouldStop()) {
+        break;
+      }
+      if (!enabled) {
+        stretch = 0;
+        continue;
+      }
+      const auto runner = GetSourceRefreshRunner();
+      if (!runner || weak.expired()) {
+        continue;
+      }
+
+      co_await yaclib::On(s.executor());
+      if (ShouldStop()) {
+        break;
+      }
+      SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+      if (const auto status = runner(id); status.ok()) {
+        stretch = 0;
+      } else {
+        SDB_WARN(SEARCH, "periodic source refresh of Search index '", id.id(),
+                 "' failed: ", status.message());
+        stretch = std::min(kMaxRefreshStretch,
+                           stretch == 0 ? 1 : stretch + stretch / 2 + 1);
+      }
+    }
+  } catch (const yaclib::ResultError<yaclib::StopError>&) {
+    // The executor was stopped (serened shutting down) while the loop awaited
+    // a timer -- a clean termination signal, not an error.
+    SDB_TRACE(SEARCH, "source refresh loop stopped");
+  } catch (const std::exception& ex) {
+    SDB_ERROR(SEARCH,
+              "source refresh loop terminated by exception: ", ex.what());
+  }
+  co_return {};
+}
 
 }  // namespace sdb::search

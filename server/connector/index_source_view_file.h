@@ -25,6 +25,8 @@
 #include <duckdb/planner/table_filter_set.hpp>
 #include <span>
 
+#include "basics/containers/flat_hash_map.h"
+#include "connector/file_manifest.h"
 #include "connector/index_source_view.h"
 
 namespace sdb::connector {
@@ -71,12 +73,13 @@ class ViewFileSingleFileIndexSource final : public ViewFileIndexSourceBase {
 
 class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
  public:
-  ViewFileGlobIndexSource(duckdb::ClientContext& context,
-                          ViewFastPath fast_path,
-                          std::span<const duckdb::idx_t> projected_columns,
-                          std::span<const duckdb::LogicalType> projected_types,
-                          std::span<const catalog::Column::Id> bind_column_ids,
-                          duckdb::TableFilterSet* pushed_filters = nullptr);
+  ViewFileGlobIndexSource(
+    duckdb::ClientContext& context, ViewFastPath fast_path,
+    std::span<const duckdb::idx_t> projected_columns,
+    std::span<const duckdb::LogicalType> projected_types,
+    std::span<const catalog::Column::Id> bind_column_ids,
+    duckdb::TableFilterSet* pushed_filters = nullptr,
+    std::shared_ptr<const search::FileManifest> file_manifest = nullptr);
 
   duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
                             duckdb::idx_t count,
@@ -88,7 +91,10 @@ class ViewFileGlobIndexSource final : public ViewFileIndexSourceBase {
     duckdb::unique_ptr<duckdb::FunctionData> bind_data;
     duckdb::unique_ptr<duckdb::GlobalTableFunctionState> gstate;
   };
-  std::vector<CachedFileLookup> _file_cache;
+  containers::FlatHashMap<uint64_t, CachedFileLookup> _file_cache;
+  // The pinned snapshot's source manifest: docs store manifest file_ids, so
+  // paths resolve through it (never through the live glob expansion).
+  std::shared_ptr<const search::FileManifest> _file_manifest;
 
   // Each per-file lookup writes its survivors compactly from row 0 (the lookup
   // TF's per-call contract). We run each file into `_file_target` and append

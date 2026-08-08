@@ -1,0 +1,129 @@
+control substitution on
+
+# The catalog-backed view-index road across a crash: a CREATE SERVER
+# (iceberg_fdw) is persisted catalog DDL, so after a crash the boot replay
+# re-attaches the REST catalog and the resumed periodic refresh loop keeps
+# indexing new snapshots with no manual step -- including a commit that
+# landed BEFORE the crash but was never indexed. The `_iceberg.` filename
+# makes run.sh start the minio + iceberg-rest containers, which stay up
+# across serened's crash + restart.
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET rcvi_s3 (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/rcvi/'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+CREATE SERVER rcvi FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+  warehouse '${ICEBERG_WAREHOUSE}',
+  endpoint '${ICEBERG_REST_URL}',
+  authorization_type 'none',
+  max_table_staleness '10 minutes'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rcvi_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA rcvi.rcvi;
+
+statement ok
+CREATE TABLE rcvi.rcvi.t (id INTEGER, body TEXT);
+
+statement count 1
+INSERT INTO rcvi.rcvi.t VALUES (1, 'pudge goes mid');
+
+statement ok
+CREATE VIEW rcvi_v AS SELECT * FROM rcvi.rcvi.t;
+
+statement ok
+CREATE INDEX rcvi_idx ON rcvi_v USING inverted(id, body rcvi_en) WITH (source_refresh_interval=200);
+
+query
+SELECT count(*) FROM rcvi_idx;
+----
+count
+1
+
+# A commit that lands right before the crash: whether or not a tick indexed
+# it, the post-restart loop must converge on it.
+statement count 1
+INSERT INTO rcvi.rcvi.t VALUES (2, 'arrives before the crash');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rcvi_idx;
+----
+count
+2
+
+# Boot replay re-attached the server: writes through it work again, and the
+# resumed loop (interval is persisted index state) indexes them by itself.
+connection after_crash
+statement count 1
+INSERT INTO rcvi.rcvi.t VALUES (3, 'lands after the restart');
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rcvi_idx;
+----
+count
+3
+
+connection after_crash
+query
+SELECT id FROM rcvi_idx WHERE body @@ ts_phrase('restart');
+----
+id
+3
+
+connection after_crash
+statement ok
+ALTER INDEX rcvi_idx SET (source_refresh_interval=0);
+
+connection after_crash
+statement ok
+DROP INDEX rcvi_idx;
+
+connection after_crash
+statement ok
+DROP VIEW rcvi_v;
+
+connection after_crash
+statement ok
+DROP TABLE rcvi.rcvi.t;
+
+connection after_crash
+statement ok
+DROP SCHEMA rcvi.rcvi;
+
+connection after_crash
+statement ok
+DROP SERVER rcvi;
+
+connection after_crash
+statement ok
+DROP PERSISTENT SECRET rcvi_s3;

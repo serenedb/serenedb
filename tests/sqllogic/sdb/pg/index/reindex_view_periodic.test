@@ -1,0 +1,514 @@
+control substitution on
+
+# Periodic source refresh (WITH source_refresh_interval): a background loop
+# runs the ordinary REINDEX road per tick. The matrix below crosses source
+# regimes (glob parquet / local iceberg) with change kinds (nothing, add,
+# remove, change, masks, equality roads, broken source), index shapes
+# (pk_term, store_pk=none rebuild road, partial, LIMIT view) and lifecycle
+# (WITH at create, ALTER SET start/retune/stop, drops, races, two loops).
+# Waits follow the sibling background-test shape: retry + backoff for
+# "eventually converges", a plain sleep window for "provably no tick".
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# ---------------------------------------------------------------- A1: glob
+# D1: interval set at CREATE.
+
+system ok
+mkdir -p $__TEST_DIR__/rvp_glob
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga')
+TO '${__TEST_DIR__}/rvp_glob/f1.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvp_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvp_glob/f*.parquet');
+
+statement ok
+CREATE INDEX rvp_idx ON rvp_v USING inverted(id, body rvp_en) WITH (source_refresh_interval=100);
+
+query
+SELECT count(*) FROM rvp_idx;
+----
+count
+2
+
+# B1: nothing changes -- ticks run and stay up_to_date; content is stable
+# across a multi-tick window.
+system ok
+sleep 0.6
+
+query
+SELECT count(*) FROM rvp_idx;
+----
+count
+2
+
+# B2: file added -> the loop picks it up without a manual REINDEX.
+statement count 1
+COPY (SELECT 3 AS id, 'vedernikoff ships cron' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f2.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx;
+----
+count
+3
+
+query
+SELECT id FROM rvp_idx WHERE body @@ ts_phrase('cron');
+----
+id
+3
+
+# B4: file changed (stat identity moves) -> rescan converges.
+statement count 2
+COPY (SELECT 1 AS id, 'pudge farms jungle' AS body
+      UNION ALL SELECT 2, 'anchin binges manga')
+TO '${__TEST_DIR__}/rvp_glob/f1.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx WHERE body @@ ts_phrase('farms');
+----
+count
+1
+
+query
+SELECT count(*) FROM rvp_idx WHERE body @@ ts_phrase('goes');
+----
+count
+0
+
+# B3: file removed -> docs die.
+system ok
+rm $__TEST_DIR__/rvp_glob/f2.parquet
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx;
+----
+count
+2
+
+# D8 (light): reads during background activity stay row-consistent.
+statement count 1
+COPY (SELECT 4 AS id, 'techies plants mines' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f3.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx;
+----
+count
+3
+
+query
+SELECT id, body FROM rvp_idx ORDER BY id;
+----
+id	body
+1	pudge farms jungle
+2	anchin binges manga
+4	techies plants mines
+
+# D5: manual REINDEX racing live ticks -- a lost claim on either side must
+# not error out the server or double-apply. The loop side skips quietly; a
+# manual statement colliding with a tick reports "in progress" and the
+# retry runs it again between ticks -- content must converge regardless.
+statement count 1
+COPY (SELECT 5 AS id, 'pudge races the cron' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f4.parquet' (FORMAT PARQUET);
+
+statement ok retry 20 backoff 100ms
+CALL serenedb_reindex('rvp_idx');
+
+statement ok retry 20 backoff 100ms
+CALL serenedb_reindex('rvp_idx');
+
+statement ok retry 20 backoff 100ms
+CALL serenedb_reindex('rvp_idx');
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx;
+----
+count
+4
+
+query
+SELECT id FROM rvp_idx WHERE body @@ ts_phrase('races');
+----
+id
+5
+
+# D3: ALTER SET retunes the live loop (still ticking on the new cadence).
+statement ok
+ALTER INDEX rvp_idx SET (source_refresh_interval=200);
+
+statement count 1
+COPY (SELECT 6 AS id, 'retuned interval works' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f5.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx;
+----
+count
+5
+
+# D4: zeroing the option stops the loop -- a new file stays invisible over
+# a generous multi-interval window; a manual REINDEX still applies it.
+statement ok
+ALTER INDEX rvp_idx SET (source_refresh_interval=0);
+
+# The window must outlast any tick already IN FLIGHT when the ALTER landed:
+# such a tick lists the glob after the copy below and would legitimately
+# index it (seen under loaded Debug full-suite runs).
+system ok
+sleep 2
+
+statement count 1
+COPY (SELECT 7 AS id, 'silent after stop' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f6.parquet' (FORMAT PARQUET);
+
+system ok
+sleep 1.2
+
+query
+SELECT count(*) FROM rvp_idx;
+----
+count
+5
+
+statement ok
+CALL serenedb_reindex('rvp_idx');
+
+query
+SELECT count(*) FROM rvp_idx;
+----
+count
+6
+
+# D9 setup: re-arm the first index on a DIFFERENT cadence -- two live
+# loops on the same source below.
+statement ok
+ALTER INDEX rvp_idx SET (source_refresh_interval=150);
+
+# D2: the option added AFTER create starts a previously idle loop.
+statement ok
+CREATE VIEW rvp_v2 AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvp_glob/f*.parquet');
+
+statement ok
+CREATE INDEX rvp_idx2 ON rvp_v2 USING inverted(id, body rvp_en);
+
+statement ok
+ALTER INDEX rvp_idx2 SET (source_refresh_interval=100);
+
+statement count 1
+COPY (SELECT 8 AS id, 'late loop catches up' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f7.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx2;
+----
+count
+7
+
+# D9: two indexes with different intervals on the SAME view -- independent
+# loops, claims don't cross; both converge.
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx;
+----
+count
+7
+
+# D6: DROP INDEX with the loop live exits cleanly (the next statements and
+# background ticks of the sibling index keep working).
+statement ok
+DROP INDEX rvp_idx2;
+
+statement count 1
+COPY (SELECT 9 AS id, 'sibling still ticks' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f8.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx;
+----
+count
+8
+
+# B9: source temporarily BROKEN -- the glob matches nothing, ticks fail,
+# the loop survives (the index keeps serving its last state).
+system ok
+mkdir -p $__TEST_DIR__/rvp_hold && mv $__TEST_DIR__/rvp_glob/f*.parquet $__TEST_DIR__/rvp_hold/
+
+system ok
+sleep 0.8
+
+query
+SELECT count(*) FROM rvp_idx;
+----
+count
+8
+
+# B10: source restored -> the next tick recovers by itself.
+system ok
+mv $__TEST_DIR__/rvp_hold/f*.parquet $__TEST_DIR__/rvp_glob/
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_idx WHERE body @@ ts_phrase('sibling');
+----
+count
+1
+
+# D7: DROP of the underlying VIEW (cascade) with the loop live.
+statement ok
+DROP VIEW rvp_v CASCADE;
+
+query
+SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'rvp_idx';
+----
+count
+0
+
+# ------------------------------------------------- C: index-shape variants
+# C2: store_pk='none' -> no pk term, every change takes the rebuild road.
+
+statement ok
+CREATE VIEW rvp_c2_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvp_glob/f*.parquet');
+
+statement ok
+CREATE INDEX rvp_c2_idx ON rvp_c2_v USING inverted(id, body rvp_en) WITH (store_pk='none', source_refresh_interval=100);
+
+statement count 1
+COPY (SELECT 20 AS id, 'rebuild road every tick' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f20.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_c2_idx WHERE body @@ ts_phrase('rebuild');
+----
+count
+1
+
+statement ok
+DROP VIEW rvp_c2_v CASCADE;
+
+system ok
+rm $__TEST_DIR__/rvp_glob/f20.parquet
+
+# C3: partial index (predicate) -- the loop maintains only matching rows.
+statement ok
+CREATE VIEW rvp_c3_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvp_glob/f*.parquet');
+
+statement ok
+CREATE INDEX rvp_c3_idx ON rvp_c3_v USING inverted(id, body rvp_en) WITH (source_refresh_interval=100) WHERE id >= 5;
+
+query
+SELECT count(*) FROM rvp_c3_idx;
+----
+count
+5
+
+statement count 2
+COPY (SELECT 30 AS id, 'partial in' AS body
+      UNION ALL SELECT 2, 'partial out' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f21.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_c3_idx WHERE body @@ ts_phrase('partial');
+----
+count
+1
+
+statement ok
+DROP VIEW rvp_c3_v CASCADE;
+
+system ok
+rm $__TEST_DIR__/rvp_glob/f21.parquet
+
+# C4: a LIMIT view keeps a fast path but supports_delta=false -- every
+# change refreshes via the rebuild road.
+statement ok
+CREATE VIEW rvp_c4_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvp_glob/f*.parquet') LIMIT 1000;
+
+statement ok
+CREATE INDEX rvp_c4_idx ON rvp_c4_v USING inverted(id, body rvp_en) WITH (source_refresh_interval=100);
+
+statement count 1
+COPY (SELECT 40 AS id, 'limit view rebuilds' AS body)
+TO '${__TEST_DIR__}/rvp_glob/f22.parquet' (FORMAT PARQUET);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_c4_idx WHERE body @@ ts_phrase('rebuilds');
+----
+count
+1
+
+statement ok
+DROP VIEW rvp_c4_v CASCADE;
+
+# ------------------------------------------------------------- A2: iceberg
+# The committed fixture chain (see scripts/gen_iceberg_fixture.py): plain/
+# v2 = global positional delete (rescan road), v3 = global equality delete
+# + same-snapshot re-insert (query road, upsert survival), v4 = NULL-value
+# equality (IS NULL road), v5 = multicolumn refusal (fallback rescan);
+# part/ v3 = pinned positional delete (mask road).
+
+system ok
+cp -r tests/sqllogic/fixtures/iceberg/plain $__TEST_DIR__/rvp_plain && cp -r tests/sqllogic/fixtures/iceberg/part $__TEST_DIR__/rvp_part && echo -n 1 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text && echo -n 1 > $__TEST_DIR__/rvp_part/metadata/version-hint.text
+
+statement ok
+CREATE VIEW rvp_ice_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/rvp_plain', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvp_ice_idx ON rvp_ice_v USING inverted(id, body rvp_en) WITH (source_refresh_interval=100);
+
+query
+SELECT count(*) FROM rvp_ice_idx;
+----
+count
+3
+
+# B1 (iceberg): unmoved snapshot pin -> ticks take the early exit; stable.
+system ok
+sleep 0.6
+
+query
+SELECT count(*) FROM rvp_ice_idx;
+----
+count
+3
+
+# Positional delete snapshot (rescan road).
+system ok
+echo -n 2 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+# B6: equality delete -> query road; the same-snapshot re-insert survives.
+system ok
+echo -n 3 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('reborn');
+----
+count
+1
+
+query
+SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('goes');
+----
+count
+0
+
+# NULL-value equality delete (IS NULL through the null marker).
+system ok
+echo -n 4 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('invisible');
+----
+count
+0
+
+# B7: multicolumn equality (analyzed body) -> translation refusal -> the
+# tick's scan road evaluates the rows over the source values and still
+# converges.
+system ok
+echo -n 5 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('pins');
+----
+count
+0
+
+# Retried: the refusal tick runs the RESCAN road, whose removes publish
+# before the rescan lands -- a reader between the two sees the dead files'
+# rows gone; only the full content proves the tick completed.
+query ok retry 40 backoff 250ms
+SELECT id, body FROM rvp_ice_idx ORDER BY id;
+----
+id	body
+1	pudge reborn
+
+# B8: a no-op snapshot (new id, identical files) restamps through the tick;
+# content stays put and the loop keeps running.
+system ok
+python3 -c "import json; p='$__TEST_DIR__/rvp_plain/metadata'; m=json.load(open(p+'/v5.metadata.json')); c=[s for s in m['snapshots'] if s['snapshot-id']==m['current-snapshot-id']][0]; n=dict(c); n['snapshot-id']=c['snapshot-id']+1; n['sequence-number']=m['last-sequence-number']+1; n['parent-snapshot-id']=c['snapshot-id']; m['snapshots'].append(n); m['current-snapshot-id']=n['snapshot-id']; m['last-sequence-number']=n['sequence-number']; m.setdefault('snapshot-log',[]).append({'snapshot-id': n['snapshot-id'], 'timestamp-ms': c.get('timestamp-ms',0)+1}); json.dump(m, open(p+'/v6.metadata.json','w'))" && echo -n 6 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+
+system ok
+sleep 0.8
+
+query
+SELECT id FROM rvp_ice_idx ORDER BY id;
+----
+id
+1
+
+# B5: the part/ fixture's pinned positional delete rides the mask road.
+statement ok
+CREATE VIEW rvp_part_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/rvp_part', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvp_part_idx ON rvp_part_v USING inverted(id, body rvp_en) WITH (source_refresh_interval=100);
+
+system ok
+echo -n 2 > $__TEST_DIR__/rvp_part/metadata/version-hint.text
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_part_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+system ok
+echo -n 3 > $__TEST_DIR__/rvp_part/metadata/version-hint.text
+
+query ok retry 40 backoff 250ms
+SELECT count(*) FROM rvp_part_idx;
+----
+count
+2
+
+query
+SELECT id, body FROM rvp_part_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	vedernikoff reviews part b
+
+statement ok
+DROP VIEW rvp_part_v CASCADE;
+
+statement ok
+DROP VIEW rvp_ice_v CASCADE;
+
+# ----------------------------------------------------- negative: option DDL
+# The option is view-only on every road.
+
+statement ok
+CREATE TABLE rvp_t(id INT, body TEXT);
+
+statement error only applies to view-backed
+CREATE INDEX rvp_t_idx ON rvp_t USING inverted(body rvp_en) WITH (source_refresh_interval=100);
+
+statement ok
+CREATE INDEX rvp_t_idx ON rvp_t USING inverted(body rvp_en);
+
+statement error only applies to view-backed
+ALTER INDEX rvp_t_idx SET (source_refresh_interval=100);
+
+statement ok
+DROP TABLE rvp_t CASCADE;

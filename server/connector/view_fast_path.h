@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/open_file_info.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <memory>
@@ -57,6 +58,47 @@ struct ExternalKeyColumn {
   duckdb::LogicalType type;       // projected + stored type
 };
 
+// The stored pk column's type for an ExternalColumnKey index: the key
+// columns packed in resolution order, each field under its own column name.
+inline duckdb::LogicalType ExternalKeyStructType(
+  std::span<const ExternalKeyColumn> keys) {
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  fields.reserve(keys.size());
+  for (const auto& key : keys) {
+    fields.emplace_back(key.name, key.type);
+  }
+  return duckdb::LogicalType::STRUCT(std::move(fields));
+}
+
+// The file-shaped pk specs: row identity comes from (file, row-ish) -- the
+// shapes whose builds capture a file manifest. NOTE: the stored pk COLUMN
+// is the two-component struct below only for the glob variants (pk_term
+// indexes); single-file sources store a scalar row pk.
+constexpr bool IsFilePkSpec(catalog::PkSpec spec) noexcept {
+  switch (spec) {
+    case catalog::PkSpec::FileRowNumber:
+    case catalog::PkSpec::FileIndexPlusRowNumber:
+    case catalog::PkSpec::FileOffset:
+    case catalog::PkSpec::FileIndexPlusOffset:
+    case catalog::PkSpec::FileIndexPlusDuckDBRowId:
+      return true;
+    case catalog::PkSpec::DuckDBRowId:
+    case catalog::PkSpec::ExternalPostgresCtid:
+    case catalog::PkSpec::ExternalColumnKey:
+      return false;
+  }
+}
+
+inline const duckdb::LogicalType& FileIndexRowNumberStructType() {
+  static const auto kType = [] {
+    duckdb::child_list_t<duckdb::LogicalType> fields;
+    fields.emplace_back("file_index", duckdb::LogicalType::UBIGINT);
+    fields.emplace_back("row_number", duckdb::LogicalType::BIGINT);
+    return duckdb::LogicalType::STRUCT(std::move(fields));
+  }();
+  return kType;
+}
+
 struct ViewFastPath {
   duckdb::vector<duckdb::Value> args;
   duckdb::named_parameter_map_t named_params;
@@ -75,6 +117,18 @@ struct ViewFastPath {
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see
   // IResearchSupportsPushdownFilter.
   bool supports_filters = false;
+  // The view supports per-file DELTA refresh -- it decomposes exactly per
+  // source file: glob pk shape, no union_by_name, no LIMIT. LIMIT is the
+  // only admitted construct that couples rows ACROSS files (GROUP BY /
+  // HAVING / QUALIFY / SAMPLE / CTEs / DISTINCT never get a fast path at
+  // all; WHERE re-applies when a pass binds the view narrowed to one file;
+  // ORDER BY drops no rows). Everything else refreshes by rebuild.
+  bool supports_delta = false;
+
+  // The stored pk column's type -- what the create sink stages and
+  // generated_pk declares/projects: one case per pk spec. A new spec must
+  // decide its exposure here.
+  duckdb::LogicalType GeneratedPkType() const;
 };
 
 // key_columns: user lookup key columns; empty = auto (pg ctid / CH PK).

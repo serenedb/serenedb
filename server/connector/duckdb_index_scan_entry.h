@@ -52,6 +52,11 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
 
 class InvertedIndexScanEntry : public SereneDBIndexScanEntry {
  public:
+  const std::shared_ptr<const catalog::InvertedIndex>& GetInvertedIndex()
+    const noexcept {
+    return _inverted_index;
+  }
+
   duckdb::vector<duckdb::ColumnSegmentInfo> GetColumnSegmentInfo(
     const duckdb::QueryContext& context,
     const duckdb::ColumnSegmentInfoScanOptions& options) final;

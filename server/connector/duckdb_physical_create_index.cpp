@@ -188,7 +188,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
   state->schema_name = _schema_entry.name.GetIdentifierName();
-  state->table_name = std::string{_relation->GetName()};
   state->index_name = _info->GetIndexName().GetIdentifierName();
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
@@ -328,12 +327,23 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       return ResolveUbigintWithOption(context, name, nullptr);
     };
 
+    // The periodic source refresh is a view-only concept: on a table-backed
+    // index an explicit WITH is an error, and an inherited session default
+    // is dropped (never persisted, never ticks).
+    if (IsDuckDBTable() && find_with(kSourceRefreshIntervalSetting)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("option \"", kSourceRefreshIntervalSetting,
+                "\" only applies to view-backed inverted indexes"));
+    }
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint(kRowGroupSizeSetting),
       .norm_row_group_size = resolve_uint(kNormRowGroupSizeSetting),
       .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
       .compaction_interval_ms = resolve_uint(kCompactionIntervalSetting),
-      .cleanup_interval_step = resolve_uint(kCleanupIntervalStepSetting),
+      .cleanup_interval_step = resolve_ubigint(kCleanupIntervalStepSetting),
+      .source_refresh_interval_ms =
+        IsDuckDBTable() ? 0 : resolve_uint(kSourceRefreshIntervalSetting),
       .segment_memory_max = resolve_ubigint(kSegmentMemoryMaxSetting),
       .segment_docs_max = resolve_uint(kSegmentDocsMaxSetting),
       .compaction_max_segments = resolve_uint(kCompactionMaxSegmentsSetting),
@@ -348,6 +358,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       options.topk_scorer = catalog::ParseScorerExpression(context, value);
     }
     options.key_columns = KeyColumnsFromOptions(_info->options);
+    auto file_manifest = Info().manifest;
     std::string store_pk = "auto";
     if (auto* v = find_with("store_pk")) {
       store_pk = duckdb::StringUtil::Lower(
@@ -362,21 +373,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     bool has_pk = table_backed;
     bool file_row = false;
     auto pk_shape = PkShape::Single;
-    if (!table_backed) {
-      if (auto it = _info->options.find("_sdb_view_fast_path_pk");
-          it != _info->options.end()) {
-        const auto kind = it->second.GetValue<std::string>();
+    if (!table_backed && Info().fast_path_pk_spec) {
+      const auto spec = *Info().fast_path_pk_spec;
         has_pk = true;
-        if (kind == "external_struct_key") {
+      file_row = catalog::IsGlobPK(spec);
+      if (file_row || spec == catalog::PkSpec::ExternalColumnKey) {
           pk_shape = PkShape::Struct;
-        } else if (kind == "file_index_plus_row_number" ||
-                   kind == "file_index_plus_duckdb_rowid") {
-          pk_shape = PkShape::Struct;
-          file_row = true;
         }
       }
-    }
-    options.pk_term = table_backed;
+    // Glob view indexes carry the (file, row) pk as an indexed term too:
+    // REFRESH's removes are classic unique-pk term lookups.
+    options.pk_term = table_backed || file_row;
     if (store_pk == "none") {
       options.pk_term = false;
       options.pk_column = catalog::PkColumnKind::None;
@@ -866,11 +873,9 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     auto& view = basics::downCast<catalog::PgSqlView>(*relation);
     const auto& vinfo = view.GetInfo();
     std::vector<size_t> view_positions;
-    if (auto it = op.info->options.find("_sdb_view_kept_positions");
-        it != op.info->options.end()) {
-      for (const auto& v : duckdb::ListValue::GetChildren(it->second)) {
-        view_positions.push_back(v.GetValue<uint64_t>());
-      }
+    if (!reindex_info.kept_positions.empty()) {
+      view_positions.assign(reindex_info.kept_positions.begin(),
+                            reindex_info.kept_positions.end());
     } else {
       view_positions.reserve(vinfo.names.size());
       for (size_t i = 0; i < vinfo.names.size(); ++i) {

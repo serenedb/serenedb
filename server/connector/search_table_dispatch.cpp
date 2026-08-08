@@ -132,11 +132,20 @@ void ApplyStorageKind(
     }
     return ResolveUintWithOption(context, key, /*with_value=*/nullptr);
   };
+  auto resolve_ubigint = [&](std::string_view key) -> uint64_t {
+    auto it = with_options.find(std::string{key});
+    if (it != with_options.end() && it->second) {
+      auto value = ExtractUint(key, *it->second);
+      with_options.erase(std::string{key});
+      return ResolveUbigintWithOption(context, key, &value);
+    }
+    return ResolveUbigintWithOption(context, key, /*with_value=*/nullptr);
+  };
   options.search_options.refresh_interval_ms = resolve(kRefreshIntervalSetting);
   options.search_options.compaction_interval_ms =
     resolve(kCompactionIntervalSetting);
   options.search_options.cleanup_interval_step =
-    resolve(kCleanupIntervalStepSetting);
+    resolve_ubigint(kCleanupIntervalStepSetting);
 }
 
 }  // namespace sdb::connector

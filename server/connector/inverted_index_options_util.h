@@ -39,8 +39,9 @@ namespace sdb::connector {
 // option or a RESET stores it), so an explicit 0 from the user is rejected
 // everywhere by ValidateInvertedIndexOptionValue.
 
-inline constexpr std::array<std::string_view, 8> kAlterableInvertedOptions = {
+inline constexpr std::array<std::string_view, 9> kAlterableInvertedOptions = {
   kRefreshIntervalSetting,
+  kSourceRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
   kSegmentMemoryMaxSetting,
@@ -50,10 +51,11 @@ inline constexpr std::array<std::string_view, 8> kAlterableInvertedOptions = {
   kCompactionFloorSegmentBytesSetting,
 };
 
-inline constexpr std::array<std::string_view, 10> kNumericInvertedOptions = {
+inline constexpr std::array<std::string_view, 11> kNumericInvertedOptions = {
   kRowGroupSizeSetting,
   kNormRowGroupSizeSetting,
   kRefreshIntervalSetting,
+  kSourceRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
   kSegmentMemoryMaxSetting,
@@ -79,8 +81,8 @@ inline constexpr auto kCreateInvertedOptions = [] {
 inline bool IsUint32InvertedOption(std::string_view name) {
   constexpr std::array<std::string_view, 7> kUint32Options = {
     kRowGroupSizeSetting,          kNormRowGroupSizeSetting,
-    kRefreshIntervalSetting,       kCompactionIntervalSetting,
-    kCleanupIntervalStepSetting,   kSegmentDocsMaxSetting,
+    kRefreshIntervalSetting,       kSourceRefreshIntervalSetting,
+    kCompactionIntervalSetting,    kSegmentDocsMaxSetting,
     kCompactionMaxSegmentsSetting,
   };
   return absl::c_contains(kUint32Options, name);
@@ -91,10 +93,9 @@ inline bool IsUint32InvertedOption(std::string_view name) {
 // cleanup step) of 0 disables that background task -- the established idiom
 // deterministic tests rely on.
 inline bool IsZeroAllowedInvertedOption(std::string_view name) {
-  constexpr std::array<std::string_view, 4> kZeroAllowed = {
-    kSegmentDocsMaxSetting,
-    kRefreshIntervalSetting,
-    kCompactionIntervalSetting,
+  constexpr std::array<std::string_view, 5> kZeroAllowed = {
+    kSegmentDocsMaxSetting,        kRefreshIntervalSetting,
+    kSourceRefreshIntervalSetting, kCompactionIntervalSetting,
     kCleanupIntervalStepSetting,
   };
   return absl::c_contains(kZeroAllowed, name);

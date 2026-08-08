@@ -318,6 +318,21 @@ static duckdb::unique_ptr<duckdb::NodeStatistics> SereneDBScanCardinality(
   return bind_data->Cast<SereneDBScanBindData>().Cardinality(context);
 }
 
+std::optional<duckdb::LogicalType> GeneratedPkTypeOf(
+  const SereneDBScanBindData& bind) {
+  if (bind.IsSearchTableEntry()) {
+    return duckdb::LogicalType::ROW_TYPE;
+  }
+  if (bind.IsViewBacked() && bind.inverted_index &&
+      bind.inverted_index->GetOptions().pk_column ==
+        catalog::PkColumnKind::Has) {
+    if (const auto& fp = bind.As<ViewScanBindData>().fast_path) {
+      return fp->GeneratedPkType();
+    }
+  }
+  return std::nullopt;
+}
+
 static duckdb::virtual_column_map_t SereneDBScanGetVirtualColumns(
   duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> bind_p) {
   duckdb::virtual_column_map_t result;
@@ -327,6 +342,13 @@ static duckdb::virtual_column_map_t SereneDBScanGetVirtualColumns(
   auto& bind = bind_p->Cast<SereneDBScanBindData>();
   if (bind.table_entry) {
     result = bind.table_entry->GetVirtualColumns();
+  }
+  if (bind.IsViewBacked()) {
+    if (auto pk_type = GeneratedPkTypeOf(bind)) {
+      result.insert_or_assign(
+        kColumnIdentifierGeneratedPk,
+        duckdb::TableColumn{"generated_pk", std::move(*pk_type)});
+    }
   }
   return result;
 }

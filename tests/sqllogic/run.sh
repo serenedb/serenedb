@@ -432,6 +432,28 @@ launch_iceberg_rest() {
 		sleep 1
 	done
 
+	# The TCP probe above is not enough on host-published ports: docker's
+	# userland proxy accepts the connection before the Java fixture's listener
+	# is up, so the first test's ATTACH/CREATE SERVER races it and fails with
+	# "Server returned nothing" (same trap as the ClickHouse native-protocol
+	# wait below). Require an actual catalog reply.
+	# Skipped in COMPOSE_NETWORK mode, where tests reach the container by name.
+	if [[ "$ICEBERG_REST_HOST" == "localhost" ]]; then
+		echo "Waiting for iceberg-rest to answer /v1/config on host port ${ICEBERG_REST_PORT}..."
+		for i in $(seq 1 60); do
+			if curl -sf "${ICEBERG_REST_URL}/v1/config?warehouse=${ICEBERG_WAREHOUSE}" \
+				>/dev/null 2>&1; then
+				echo "iceberg-rest catalog is answering."
+				break
+			fi
+			if [[ $i -eq 60 ]]; then
+				echo "ERROR: iceberg-rest did not answer /v1/config within 60 seconds"
+				exit 1
+			fi
+			sleep 1
+		done
+	fi
+
 	echo "iceberg-rest running (url=$ICEBERG_REST_URL)."
 	echo
 }

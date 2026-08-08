@@ -30,7 +30,7 @@ namespace sdb::catalog::persistence {
 struct SearchTableOptions {
   uint32_t refresh_interval_ms = 0;
   uint32_t compaction_interval_ms = 0;
-  uint32_t cleanup_interval_step = 0;
+  uint64_t cleanup_interval_step = 0;
 };
 
 }  // namespace sdb::catalog::persistence

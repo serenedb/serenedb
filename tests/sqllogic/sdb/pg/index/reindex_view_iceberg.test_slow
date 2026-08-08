@@ -1,0 +1,342 @@
+control substitution on
+
+# REFRESH over iceberg: an append-only snapshot advance runs as a delta (new
+# data files only -- vedernikoff approves); delete files attributed to a
+# single data file (referenced_data_file, or equal file_path bounds) just
+# invalidate that file -- the delta rescans it through the iceberg reader,
+# which applies the deletes; delete entries that pin to no single data file
+# (equality deletes) invalidate every file and degrade to a rebuild; an
+# unchanged snapshot is up_to_date.
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET iceberg_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+SET unsafe_enable_version_guessing=true;
+
+statement ok
+DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY reice_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+SET search_path TO public, iceberg_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.reice_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO reice_t VALUES
+  (1, 'pudge goes mid'),
+  (2, 'anchin reads manga'),
+  (3, 'vedernikoff pins snapshots');
+
+statement ok
+CREATE VIEW reice_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/reice_t',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX reice_idx ON reice_v USING inverted(id, body reice_en) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+query
+SELECT * FROM serenedb_reindex('reice_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+# Append-only snapshot advance -> delta over the new data file(s) only.
+statement count 2
+INSERT INTO reice_t VALUES
+  (4, 'pudge farms jungle'),
+  (5, 'vedernikoff appends rows');
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+query
+SELECT action, files_changed, files_removed FROM serenedb_reindex('reice_idx');
+----
+action	files_changed	files_removed
+delta	0	0
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# A DELETE lands positional delete files: the targeted data file counts as
+# CHANGED -- the delta drops its docs and rescans just that file through the
+# iceberg reader, which applies the deletes.
+statement ok
+DELETE FROM reice_t WHERE id = 2;
+
+query
+SELECT action, files_added, files_removed FROM serenedb_reindex('reice_idx');
+----
+action	files_added	files_removed
+delta	0	0
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT action FROM serenedb_reindex('reice_idx');
+----
+action
+up_to_date
+
+# The applied-deletes fingerprint is remembered: a later unrelated append
+# must NOT rescan the delete-targeted file again.
+statement count 1
+INSERT INTO reice_t VALUES (6, 'vedernikoff appends after deletes');
+
+query
+SELECT action, files_changed, files_removed FROM serenedb_reindex('reice_idx');
+----
+action	files_changed	files_removed
+delta	0	0
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+3
+
+
+# Deletes accumulate: a second DELETE on the SAME file adds another delete
+# file -- the fingerprint moves again and the prune re-masks the full current
+# dead set (the already-dead row is a no-op).
+statement ok
+DELETE FROM reice_t WHERE id = 1;
+
+query
+SELECT action, files_added, files_removed FROM serenedb_reindex('reice_idx');
+----
+action	files_added	files_removed
+delta	0	0
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+# One DELETE hitting rows in TWO files: both files count as changed, both
+# pruned in a single refresh.
+statement ok
+DELETE FROM reice_t WHERE id IN (3, 4);
+
+query
+SELECT action, files_changed FROM serenedb_reindex('reice_idx');
+----
+action	files_changed
+delta	2
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+0
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# UPDATE = a delete file AND a new data file in ONE snapshot: the delta
+# prunes the old row and scans the added file in the same pass.
+statement ok
+UPDATE reice_t SET body = 'pudge returns mid' WHERE id = 6;
+
+query
+SELECT * FROM serenedb_reindex('reice_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	1	0	0
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+query
+SELECT count(*) FROM reice_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+1
+
+# Single-file iceberg table: the manifest has ONE entry and the delete
+# runs as a prune-only delta (docs and file_id survive; only the dead row
+# is masked).
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.reice1_t (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO reice1_t VALUES
+  (1, 'pudge solo file'),
+  (2, 'anchin solo file');
+
+statement ok
+CREATE VIEW reice1_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/reice1_t',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX reice1_idx ON reice1_v USING inverted(id, body reice_en);
+
+statement ok
+DELETE FROM reice1_t WHERE id = 2;
+
+query
+SELECT * FROM serenedb_reindex('reice1_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM reice1_idx ORDER BY id;
+----
+id
+1
+
+statement ok
+DROP VIEW reice1_v;
+
+# Format v3: a DELETE lands a deletion vector whose manifest entry carries
+# referenced_data_file itself -- exact attribution without the bounds
+# fallback, same delta shape.
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.reice3_t (id INTEGER, body TEXT) WITH ('format-version' = 3);
+
+statement count 2
+INSERT INTO reice3_t VALUES
+  (1, 'pudge stacks camps'),
+  (2, 'anchin skips episode');
+
+statement count 1
+INSERT INTO reice3_t VALUES (3, 'vedernikoff vectors deletes');
+
+statement ok
+CREATE VIEW reice3_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/reice3_t',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX reice3_idx ON reice3_v USING inverted(id, body reice_en) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM reice3_idx;
+----
+count
+3
+
+statement ok
+DELETE FROM reice3_t WHERE id = 2;
+
+query
+SELECT action, files_added, files_removed FROM serenedb_reindex('reice3_idx');
+----
+action	files_added	files_removed
+delta	0	0
+
+query
+SELECT count(*) FROM reice3_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+query
+SELECT id FROM reice3_idx ORDER BY id;
+----
+id
+1
+3
+
+# A second DELETE on the same file writes a NEW deletion vector absorbing the
+# previous one (v3 contract); the prune re-masks the full dead set.
+statement ok
+DELETE FROM reice3_t WHERE id = 1;
+
+query
+SELECT action, files_added, files_removed FROM serenedb_reindex('reice3_idx');
+----
+action	files_added	files_removed
+delta	0	0
+
+query
+SELECT id FROM reice3_idx ORDER BY id;
+----
+id
+3
+
+statement ok
+DROP VIEW reice3_v;
+
+# Server-global residue (the ATTACH and the persistent secret) must not leak
+# into later tests on the same instance.
+statement ok
+DROP VIEW reice_v;
+
+statement ok
+DETACH DATABASE iceberg_${__DATABASE__};
+
+statement ok
+DROP PERSISTENT SECRET iceberg_${__DATABASE__};

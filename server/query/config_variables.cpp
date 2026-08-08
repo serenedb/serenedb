@@ -513,6 +513,21 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      kSourceRefreshIntervalSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "Periodic source refresh interval (ms) for newly created VIEW-backed "
+        "inverted indexes: every tick runs the ordinary REINDEX road "
+        "(up_to_date / delta / rebuild) as the index owner. Per-index "
+        "WITH (source_refresh_interval = ...) overrides; ALTER INDEX SET "
+        "retunes a live loop. 0 disables the task. Hint-less iceberg "
+        "sources refresh from the background only when the GLOBAL "
+        "unsafe_enable_version_guessing is set. Default: 0.",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       kCompactionIntervalSetting,
       {
         LogicalTypeId::UINTEGER,
@@ -526,12 +541,12 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       kCleanupIntervalStepSetting,
       {
-        LogicalTypeId::UINTEGER,
+        LogicalTypeId::UBIGINT,
         "Number of commit ticks between background unreferenced-file cleanup "
         "passes for newly created inverted indexes. Per-index WITH "
         "(cleanup_interval_step = ...) overrides. 0 disables cleanup. "
         "Default: 1.",
-        [] { return duckdb::Value::UINTEGER(1); },
+        [] { return duckdb::Value::UBIGINT(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },

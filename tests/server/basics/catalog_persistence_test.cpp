@@ -53,6 +53,7 @@
 #include "catalog/persistence/sequence.h"
 #include "catalog/persistence/table.h"
 #include "catalog/persistence/tokenizer.h"
+#include "connector/file_manifest.h"
 
 namespace sdb::catalog::persistence {
 namespace {
@@ -107,6 +108,33 @@ void CheckFixture(std::string_view name, const T& sample) {
   // (2) The recorded bytes still deserialize, and re-serialize identically.
   EXPECT_EQ(Serialize(Deserialize<T>(golden)), golden)
     << "deserialization of " << name << " is not byte-stable";
+}
+
+// The order-insensitive variant for types whose serialization is not byte
+// canonical (hash-map members): the recorded bytes must parse to the sample
+// (old files stay readable) and a round trip must preserve it.
+template<typename T>
+void CheckFixtureParsed(std::string_view name, const T& sample) {
+  const fs::path path = FixturePath(name);
+
+  if (std::getenv("SDB_REGEN_FIXTURES") != nullptr) {
+    const std::string bytes = Serialize(sample);
+    fs::create_directories(path.parent_path());
+    std::ofstream out{path, std::ios::binary | std::ios::trunc};
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    GTEST_SKIP() << "regenerated fixture " << path;
+  }
+
+  std::ifstream in{path, std::ios::binary};
+  ASSERT_TRUE(in.good()) << "missing fixture " << path
+                         << " (run with SDB_REGEN_FIXTURES=1)";
+  const std::string golden{std::istreambuf_iterator<char>{in},
+                           std::istreambuf_iterator<char>{}};
+
+  EXPECT_EQ(Deserialize<T>(golden), sample)
+    << "on-disk format for " << name << " changed";
+  EXPECT_EQ(Deserialize<T>(Serialize(sample)), sample)
+    << "round trip of " << name << " lost data";
 }
 
 TEST(CatalogPersistence, secondary_index) {
@@ -337,14 +365,16 @@ TEST(CatalogPersistence, role_data) {
 }
 
 TEST(CatalogPersistence, inverted_index_options) {
-  CheckFixture("inverted_index_options.bin", InvertedIndexOptions{
-                                               .row_group_size = 1024,
-                                               .norm_row_group_size = 512,
-                                               .refresh_interval_ms = 100,
-                                               .compaction_interval_ms = 200,
-                                               .cleanup_interval_step = 3,
-                                               .topk_scorer = std::nullopt,
-                                             });
+  CheckFixture("inverted_index_options.bin",
+               InvertedIndexOptions{
+                 .row_group_size = 1024,
+                 .norm_row_group_size = 512,
+                 .refresh_interval_ms = 100,
+                 .compaction_interval_ms = 200,
+                 .cleanup_interval_step = 3,
+                 .source_refresh_interval_ms = 400,
+                 .topk_scorer = std::nullopt,
+               });
 }
 
 TEST(CatalogPersistence, expression_data) {
@@ -360,6 +390,37 @@ TEST(CatalogPersistence, expression_data) {
 TEST(CatalogPersistence, scorer_options) {
   CheckFixture("scorer_options.bin",
                ScorerOptions{.params = ScorerOptions::Bm25{}});
+}
+
+// Not a catalog struct, but the same WriteTuple format: the view-index source
+// manifest embedded in the iresearch segment-meta payload (FileManifest
+// AppendTo/Parse go through the identical serializer). Its `entries` is a
+// hash map, so the serialized byte ORDER is not canonical (absl salts
+// iteration per container instance) -- the golden is checked SEMANTICALLY:
+// the recorded bytes must keep parsing to the expected values and a round
+// trip must preserve them; bytes are never compared.
+TEST(CatalogPersistence, file_manifest) {
+  CheckFixtureParsed(
+    "file_manifest.bin",
+    search::FileManifest{
+      .entries = {{0,
+                   {.file_id = 0,
+                    .path = "s3://bucket/data/a.parquet",
+                    .size = 1234,
+                    .mtime_micros = 1721900000000000,
+                    .version = "\"abc123\"",
+                    .delete_seq = 0}},
+                  {3,
+                   {.file_id = 3,
+                    .path = "/local/b.parquet",
+                    .size = 42,
+                    .mtime_micros = 0,
+                    .version = "",
+                    .delete_seq = 0xDEADBEEF,
+                    .v3_delete_masks = {{.high = 0, .bitmap = "roar0"},
+                                        {.high = 2, .bitmap = "roar2"}}}}},
+      .version = 7011998,
+    });
 }
 
 }  // namespace

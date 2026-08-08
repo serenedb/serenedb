@@ -24,14 +24,68 @@
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <optional>
 
+#include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
+#include "catalog/pk_spec.h"
 #include "catalog/table.h"
+#include "connector/file_manifest.h"
 
 namespace sdb::connector {
 
 class SereneDBSchemaEntry;
+
+struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
+  SereneDBCreateIndexInfo() = default;
+  explicit SereneDBCreateIndexInfo(duckdb::CreateIndexInfo&& base)
+    : duckdb::CreateIndexInfo(base) {
+    base.CopyProperties(*this);
+    expressions = std::move(base.expressions);
+    parsed_expressions = std::move(base.parsed_expressions);
+    where_clause = std::move(base.where_clause);
+  }
+
+  ObjectId source_index;
+
+  std::vector<std::string> delta_files;
+  uint64_t delta_file_base = 0;
+
+  std::shared_ptr<const search::FileManifest> manifest;
+
+  std::optional<catalog::PkSpec> fast_path_pk_spec;
+  duckdb::LogicalType generated_pk_type;
+  std::vector<duckdb::idx_t> kept_positions;
+
+  // What this statement is, derived from the driver-written fields: a plain
+  // CREATE INDEX, or one of the two REINDEX passes.
+  enum class ReindexPass : uint8_t {
+    None,
+    Delta,
+    Rebuild,
+  };
+  ReindexPass Pass() const noexcept {
+    if (!source_index.isSet()) {
+      return ReindexPass::None;
+    }
+    return delta_files.empty() ? ReindexPass::Rebuild : ReindexPass::Delta;
+  }
+
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const override {
+    auto base = duckdb::CreateIndexInfo::Copy();
+    auto result = duckdb::make_uniq<SereneDBCreateIndexInfo>(
+      std::move(base->Cast<duckdb::CreateIndexInfo>()));
+    result->source_index = source_index;
+    result->delta_files = delta_files;
+    result->delta_file_base = delta_file_base;
+    result->manifest = manifest;
+    result->fast_path_pk_spec = fast_path_pk_spec;
+    result->generated_pk_type = generated_pk_type;
+    result->kept_positions = kept_positions;
+    return result;
+  }
+};
 
 // Physical operator for CREATE INDEX on SereneDB tables.
 // Replaces DuckDB's native PhysicalCreateIndex which requires DuckTableEntry.
@@ -43,6 +97,16 @@ class SereneDBSchemaEntry;
 //   GetGlobalSinkState: create index in catalog with tombstone
 //   Finalize:           Refresh (inverted) + RemoveTombstone
 //   On error:           destructor drops the index (rollback)
+//
+// REINDEX passes (`SereneDBCreateIndexInfo::Pass()`) fill the EXISTING
+// index instead; no catalog object is touched, and the batches commit at
+// Combine exactly like a plain create (TickDomain-stamped: the live
+// writer's watermark scale). Rebuild first empties the index at init with
+// an EMPTY manifest riding the remove-all, so ANY interrupted rebuild is
+// observed as "every file added" and heals by full rescan on the next
+// refresh tick; delta's removes were committed by the driver before the
+// pass. The refresh gate is held from init until Finalize pairs the
+// batches with the real manifest and publishes.
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:
   // `relation` is the SereneDB-catalog object the index is built on: either
@@ -108,6 +172,25 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   std::vector<duckdb::unique_ptr<duckdb::Expression>> _bound_expressions;
   // Bound partial-index predicate (info->where_clause); null for full indexes.
   duckdb::unique_ptr<duckdb::Expression> _bound_where;
+  // The statement's SereneDBCreateIndexInfo view of _info: the bind
+  // captures (manifest, pk spec/type) plus the optional REINDEX pass
+  // identity ride the statement info itself, so prepared re-executions
+  // carry them by construction. The bind hook upgrades every create to the
+  // subclass, so this never fails.
+  const SereneDBCreateIndexInfo& Info() const noexcept {
+    return basics::downCast<const SereneDBCreateIndexInfo>(*_info);
+  }
+  using ReindexPass = SereneDBCreateIndexInfo::ReindexPass;
+  bool IsReindexPass() const noexcept {
+    return Info().Pass() != ReindexPass::None;
+  }
+  bool IsDeltaPass() const noexcept {
+    return Info().Pass() == ReindexPass::Delta;
+  }
+  bool IsRebuildPass() const noexcept {
+    return Info().Pass() == ReindexPass::Rebuild;
+  }
+
   SereneDBSchemaEntry& _schema_entry;
 };
 

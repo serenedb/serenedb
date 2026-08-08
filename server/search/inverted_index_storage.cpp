@@ -60,22 +60,37 @@
 namespace sdb::search {
 namespace {
 
-bool ReadSegmentMeta(irs::bytes_view payload, Tick& tick,
-                     int64_t& iceberg_snapshot_id,
-                     WalCursor& wal_cursor) noexcept {
-  // [tick:8][iceberg_snapshot_id:8][wal_generation:8][wal_offset:8].
-  constexpr size_t kSize = 4 * sizeof(uint64_t);
-  if (payload.size() != kSize) {
-    return false;
+// [tick:8][wal_generation:8][wal_offset:8][tail marker:1][tail bytes...];
+// the marker declares what the tail is.
+constexpr size_t kSegmentMetaHeaderSize = 3 * sizeof(uint64_t);
+constexpr irs::byte_type kTailNone = 0;
+constexpr irs::byte_type kTailManifest = 1;
+
+void ReadSegmentMeta(irs::bytes_view payload, Tick& tick, WalCursor& wal_cursor,
+                     std::shared_ptr<const FileManifest>& file_manifest) {
+  if (payload.size() <= kSegmentMetaHeaderSize) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("truncated inverted index segment meta (",
+                            payload.size(), " bytes)"));
   }
   tick = absl::big_endian::Load64(payload.data());
-  iceberg_snapshot_id = static_cast<int64_t>(
-    absl::big_endian::Load64(payload.data() + sizeof(uint64_t)));
   wal_cursor.generation =
-    absl::big_endian::Load64(payload.data() + 2 * sizeof(uint64_t));
+    absl::big_endian::Load64(payload.data() + sizeof(uint64_t));
   wal_cursor.offset =
-    absl::big_endian::Load64(payload.data() + 3 * sizeof(uint64_t));
-  return true;
+    absl::big_endian::Load64(payload.data() + 2 * sizeof(uint64_t));
+  const auto tail = payload[kSegmentMetaHeaderSize];
+  if (tail == kTailNone) {
+    return;
+  }
+  if (tail == kTailManifest) {
+    file_manifest =
+      FileManifest::Parse(payload.substr(kSegmentMetaHeaderSize + 1));
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INTERNAL_ERROR),
+    ERR_MSG("inverted index segment meta carries unknown tail format ", tail,
+            " -- written by a newer server version?"));
 }
 
 }  // namespace
@@ -133,6 +148,8 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   const auto& options = index.GetOptions();
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
+  _tasks_settings.source_refresh_interval_msec =
+    options.source_refresh_interval_ms;
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
   _tasks_settings.compaction_max_segments = options.compaction_max_segments;
   _tasks_settings.compaction_max_segments_bytes =
@@ -216,10 +233,7 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
     uint64_t tick_be = absl::big_endian::FromHost(_last_durable_tick);
     out.append(reinterpret_cast<const irs::byte_type*>(&tick_be),
                sizeof(tick_be));
-    uint64_t iceberg_be =
-      absl::big_endian::FromHost(static_cast<uint64_t>(_iceberg_snapshot_id));
-    out.append(reinterpret_cast<const irs::byte_type*>(&iceberg_be),
-               sizeof(iceberg_be));
+
     // Durable WAL cursor, stamped consistently with the durable tick we just
     // persisted above. `tick` here is the exact tick this flush made durable
     // (FlushContext::FlushPending's flushed_tick in the Recovering/Creating
@@ -244,6 +258,12 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
     uint64_t offset_be = absl::big_endian::FromHost(_pending_wal_cursor.offset);
     out.append(reinterpret_cast<const irs::byte_type*>(&offset_be),
                sizeof(offset_be));
+    if (auto manifest = GetFileManifest()) {
+      out += kTailManifest;
+      manifest->Serialize(out);
+    } else {
+      out += kTailNone;
+    }
     return true;
   };
 
@@ -264,16 +284,15 @@ InvertedIndexStorage::InvertedIndexStorage(ObjectId id,
   if (path_exists) {
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
-      if (!ReadSegmentMeta(payload, _recovery_tick, _iceberg_snapshot_id,
-                           _recovery_wal_cursor)) {
-        SDB_WARN(SEARCH, "Failed to read segment meta from inverted index '",
-                 GetId().id(), "'");
-      }
+      std::shared_ptr<const FileManifest> file_manifest;
+      ReadSegmentMeta(payload, _recovery_tick, _recovery_wal_cursor,
+                      file_manifest);
       _last_durable_tick = _recovery_tick;
+      SetFileManifest(std::move(file_manifest));
     }
   }
-  std::atomic_store(&_snapshot,
-                    std::make_shared<InvertedIndexSnapshot>(std::move(reader)));
+  StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+    std::move(reader), GetFileManifest()));
 }
 
 void InvertedIndexStorage::StartTasks() {
@@ -284,6 +303,8 @@ void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexOptions& options) {
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
+  _tasks_settings.source_refresh_interval_msec =
+    options.source_refresh_interval_ms;
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
   _tasks_settings.compaction_max_segments = options.compaction_max_segments;
   _tasks_settings.compaction_max_segments_bytes =
@@ -539,8 +560,8 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
       if (_phase != Phase::Recovering) {
         _last_durable_tick = before_refresh;
       }
-      StoreInvertedIndexSnapshot(
-        std::make_shared<InvertedIndexSnapshot>(std::move(reader)));
+      StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+        std::move(reader), GetFileManifest()));
       return absl::OkStatus();
     }
     SDB_ASSERT(_phase != Phase::Active || _last_durable_tick == before_refresh);
@@ -553,7 +574,8 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     const auto docs_count = reader->docs_count();
     const auto live_docs_count = reader->live_docs_count();
 
-    auto data = std::make_shared<InvertedIndexSnapshot>(std::move(reader));
+    auto data = std::make_shared<InvertedIndexSnapshot>(std::move(reader),
+                                                        GetFileManifest());
     StoreInvertedIndexSnapshot(data);
 
     UpdateStatsUnsafe(std::move(data));

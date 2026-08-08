@@ -35,8 +35,13 @@ class ConnectionContext;
 namespace sdb::network::pg {
 
 class WireSinkContext;
-}
 
+}  // namespace sdb::network::pg
+namespace sdb::search {
+
+struct FileManifest;
+
+}  // namespace sdb::search
 namespace sdb::connector {
 
 inline constexpr const char* kSereneDBClientStateKey = "serenedb";
@@ -94,6 +99,8 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // encode-in-Sink wire collector. Shared so the executor's sink state keeps
   // it alive on every error/teardown path.
   std::shared_ptr<network::pg::WireSinkContext> wire_sink;
+
+  bool reindex_delete_pass = false;
 
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) final;

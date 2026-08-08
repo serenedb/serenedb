@@ -350,11 +350,14 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
 
   // The ".pay" stream holds position-level offsets (IndexFeatures::Offs) and/or
   // fixed-width per-document payloads (IndexFeatures::Vec, e.g. IVF codes).
-  if (IndexFeatures::None !=
-      (state.index_features & (IndexFeatures::Offs | IndexFeatures::Vec))) {
-    if (IndexFeatures::None != (state.index_features & IndexFeatures::Offs)) {
-      _pay.Reset();
-    }
+  const bool has_offs =
+    IndexFeatures::None != (state.index_features & IndexFeatures::Offs);
+  const bool has_vec =
+    IndexFeatures::None != (state.index_features & IndexFeatures::Vec);
+  if (has_offs) {
+    _pay.Reset();
+  }
+  if (has_offs || has_vec) {
     format_utils::PrepareOutput(name, _pay_out, state, kPayExt, kPayFormatName,
                                 static_cast<int32_t>(_postings_format_version));
   }

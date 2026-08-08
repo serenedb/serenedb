@@ -38,11 +38,11 @@
 #include "auth/acl.h"
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/persistence/role.h"
 #include "catalog/table.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_table_entry.h"
 #include "network/credentials.h"
 #include "pg/errcodes.h"
 #include "pg/pg_types.h"
@@ -143,7 +143,7 @@ catalog::Catalog& GlobalCatalog() { return catalog::GetCatalog(); }
 catalog::SchemaRef RequireSchema(duckdb::ClientContext* context,
                                  ObjectId schema_id,
                                  catalog::Permissions* perm) {
-  auto schema = connector::FindSchema(context, schema_id, perm);
+  auto schema = catalog::FindSchema(context, schema_id, perm);
   if (!schema) [[unlikely]] {
     catalog::ThrowConcurrentlyDropped(schema_id);
   }
@@ -160,7 +160,7 @@ void ChangeSchemaAcl(const catalog::AccessContext& ax, ObjectId schema_id,
   auto perm =
     auth::MutatedAcl(schema_perm, duckdb::CatalogType::SCHEMA_ENTRY, mutate);
   const auto name = std::string{catalog::SchemaNameOf(*schema)};
-  connector::PutSchema(ax.context, name, std::move(schema), std::move(perm));
+  catalog::PutSchema(ax.context, name, std::move(schema), std::move(perm));
 }
 
 void ChangeSchemaOwner(const catalog::AccessContext& ax, ObjectId schema_id,
@@ -174,7 +174,7 @@ void ChangeSchemaOwner(const catalog::AccessContext& ax, ObjectId schema_id,
                                 catalog::SchemaNameOf(*schema));
   auto perm = auth::TransferredOwner(schema_perm, new_owner);
   const auto name = std::string{catalog::SchemaNameOf(*schema)};
-  connector::PutSchema(ax.context, name, std::move(schema), std::move(perm));
+  catalog::PutSchema(ax.context, name, std::move(schema), std::move(perm));
 }
 
 // GRANT / REVOKE on one table. A table's entry is the object, so this is a
@@ -183,15 +183,15 @@ void ChangeSchemaOwner(const catalog::AccessContext& ax, ObjectId schema_id,
 void ChangeTableAcl(const catalog::AccessContext& ax,
                     const duckdb::CreateTableInfo& table,
                     duckdb::CatalogType type, auth::AclMutator mutate) {
-  const auto* current = connector::FindTable(
+  const auto* current = catalog::FindTable(
     ax.context, catalog::ParentIdOf(table), catalog::IdOf(table));
   if (current == nullptr) {
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                                       catalog::TableNameOf(table));
   }
-  connector::PutEntry(ax.context, current->name.GetIdentifierName(),
-                      current->Definition(),
-                      auth::MutatedAcl(current->permissions, type, mutate));
+  catalog::PutEntry(ax.context, current->name.GetIdentifierName(),
+                    current->Definition(),
+                    auth::MutatedAcl(current->permissions, type, mutate));
 }
 
 // The same for one column's grants, which ride the table's definition.
@@ -203,7 +203,7 @@ catalog::TableInfoRef ChangeColumnAcl(const catalog::AccessContext& ax,
                                       auth::AclMutator mutate) {
   const auto schema_id = catalog::ParentIdOf(table);
   const auto table_id = catalog::IdOf(table);
-  const auto* entry = connector::FindTable(ax.context, schema_id, table_id);
+  const auto* entry = catalog::FindTable(ax.context, schema_id, table_id);
   if (entry == nullptr) {
     catalog::ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
                                       catalog::TableNameOf(table));
@@ -225,8 +225,8 @@ catalog::TableInfoRef ChangeColumnAcl(const catalog::AccessContext& ax,
                    catalog::ColumnAclOf(perm.column_acl, column_id).end()};
   mutate(owner, acl);
   catalog::SetColumnAcl(perm.column_acl, column_id, std::move(acl));
-  connector::PutEntry(ax.context, catalog::TableNameOf(*current), current,
-                      std::move(perm));
+  catalog::PutEntry(ax.context, catalog::TableNameOf(*current), current,
+                    std::move(perm));
   return current;
 }
 
@@ -415,7 +415,7 @@ std::string SetRole(ConnectionContext& conn, std::string_view name) {
     return "none";
   }
   auto* client = &conn.GetClientContext();
-  auto target = connector::FindRole(client, name);
+  auto target = catalog::FindRole(client, name);
   if (!target) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -442,7 +442,7 @@ void ResetRole(ConnectionContext& conn) {
 std::string SetSessionAuthorization(ConnectionContext& conn,
                                     std::string_view name) {
   auto* client = &conn.GetClientContext();
-  auto target = connector::FindRole(client, name);
+  auto target = catalog::FindRole(client, name);
   if (!target) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("role \"", name, "\" does not exist"));
@@ -537,7 +537,7 @@ ObjectId ResolveGranteeId(duckdb::ClientContext& context,
   if (grantee == "PUBLIC" || grantee == "public") {
     return catalog::kPublicGrantee;
   }
-  auto grantee_role = connector::FindRole(&context, grantee);
+  auto grantee_role = catalog::FindRole(&context, grantee);
   if (!grantee_role) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", grantee, "\" does not exist"));
@@ -550,7 +550,7 @@ ObjectId ResolveGrantedBy(duckdb::ClientContext& context,
   if (granted_by.empty()) {
     return id::kInvalid;
   }
-  auto gb = connector::FindRole(&context, granted_by);
+  auto gb = catalog::FindRole(&context, granted_by);
   if (!gb) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", granted_by, "\" does not exist"));
@@ -589,7 +589,7 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
   const std::string_view defacl_role_name =
     opts.for_role.empty() ? current_role : opts.for_role;
   auto defacl_role =
-    connector::FindRole(&ctx.GetClientContext(), defacl_role_name);
+    catalog::FindRole(&ctx.GetClientContext(), defacl_role_name);
   if (!defacl_role) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", defacl_role_name, "\" does not exist"));
@@ -600,8 +600,8 @@ void AlterDefaultPrivileges(ConnectionContext& ctx,
 
   ObjectId schema_id = id::kInvalid;
   if (!opts.in_schema.empty()) {
-    auto schema = connector::FindSchema(&ctx.GetClientContext(),
-                                        ctx.GetDatabaseId(), opts.in_schema);
+    auto schema = catalog::FindSchema(&ctx.GetClientContext(),
+                                      ctx.GetDatabaseId(), opts.in_schema);
     if (!schema) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
@@ -635,13 +635,13 @@ bool EntryExists(ConnectionContext& ctx, duckdb::CatalogType type,
   auto* context = &ctx.GetClientContext();
   switch (type) {
     case duckdb::CatalogType::TYPE_ENTRY:
-      return connector::FindType(context, schema_id, name) != nullptr;
+      return catalog::FindType(context, schema_id, name) != nullptr;
     case duckdb::CatalogType::MACRO_ENTRY:
-      return connector::FindFunction(context, schema_id, name) != nullptr;
+      return catalog::FindFunction(context, schema_id, name) != nullptr;
     case duckdb::CatalogType::VIEW_ENTRY:
-      return connector::FindView(context, schema_id, name) != nullptr;
+      return catalog::FindView(context, schema_id, name) != nullptr;
     case duckdb::CatalogType::SEQUENCE_ENTRY:
-      return connector::FindSequence(context, schema_id, name) != nullptr;
+      return catalog::FindSequence(context, schema_id, name) != nullptr;
     default:
       return false;
   }
@@ -659,12 +659,12 @@ catalog::TableInfoRef ResolveGrantTarget(ConnectionContext& ctx,
   const auto parsed = ParseObjectName(raw_name, current_schema);
   out_schema = parsed.schema;
   out_name = parsed.relation;
-  const auto schema_id = connector::FindSchemaId(
+  const auto schema_id = catalog::FindSchemaId(
     &ctx.GetClientContext(), ctx.GetDatabaseId(), parsed.schema);
-  const auto* entry = schema_id.isSet()
-                        ? connector::FindTable(&ctx.GetClientContext(),
-                                               schema_id, parsed.relation)
-                        : nullptr;
+  const auto* entry =
+    schema_id.isSet()
+      ? catalog::FindTable(&ctx.GetClientContext(), schema_id, parsed.relation)
+      : nullptr;
   if (entry == nullptr) {
     return nullptr;
   }
@@ -819,7 +819,7 @@ void GrantDatabase(ConnectionContext& ctx,
                    std::string_view db_name, std::string_view grantee,
                    bool revoke, const GrantObjectOptions& opts) {
   auto& catalog = GlobalCatalog();
-  auto database = connector::FindDatabase(&ctx.GetClientContext(), db_name);
+  auto database = catalog::FindDatabase(&ctx.GetClientContext(), db_name);
   if (!database) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("database \"", db_name, "\" does not exist"));
@@ -891,14 +891,14 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
   ObjectId server_database;
   if (type == duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     rel_name = obj_name;
-    if (connector::FindForeignServer(&ctx.GetClientContext(),
-                                     ctx.GetDatabaseId(), obj_name)) {
+    if (catalog::FindForeignServer(&ctx.GetClientContext(), ctx.GetDatabaseId(),
+                                   obj_name)) {
       server_database = ctx.GetDatabaseId();
     }
   } else if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
     rel_name = obj_name;
-    auto schema = connector::FindSchema(&ctx.GetClientContext(),
-                                        ctx.GetDatabaseId(), obj_name);
+    auto schema = catalog::FindSchema(&ctx.GetClientContext(),
+                                      ctx.GetDatabaseId(), obj_name);
     if (!schema) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                       ERR_MSG("schema \"", obj_name, "\" does not exist"));
@@ -918,7 +918,7 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
       ParseObjectName(absl::StripAsciiWhitespace(bare), current_schema);
     schema_name = parsed.schema;
     rel_name = parsed.relation;
-    const auto schema_id = connector::FindSchemaId(
+    const auto schema_id = catalog::FindSchemaId(
       &ctx.GetClientContext(), ctx.GetDatabaseId(), parsed.schema);
     if (schema_id.isSet() &&
         EntryExists(ctx, type, schema_id, parsed.relation)) {
@@ -932,10 +932,10 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
   if (type == duckdb::CatalogType::TABLE_ENTRY && !entry_schema.isSet()) {
     const std::string current_schema = ctx.GetCurrentSchema();
     const auto parsed = ParseObjectName(obj_name, current_schema);
-    const auto schema_id = connector::FindSchemaId(
+    const auto schema_id = catalog::FindSchemaId(
       &ctx.GetClientContext(), ctx.GetDatabaseId(), parsed.schema);
-    if (schema_id.isSet() && connector::FindView(&ctx.GetClientContext(),
-                                                 schema_id, parsed.relation)) {
+    if (schema_id.isSet() && catalog::FindView(&ctx.GetClientContext(),
+                                               schema_id, parsed.relation)) {
       schema_name = parsed.schema;
       rel_name = parsed.relation;
       entry_schema = schema_id;
@@ -962,10 +962,10 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
     // The other half of the relation namespace still holds the name, and PG
     // reports the kind mismatch rather than a missing relation.
     if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-      const auto schema_id = connector::FindSchemaId(
+      const auto schema_id = catalog::FindSchemaId(
         &ctx.GetClientContext(), ctx.GetDatabaseId(), schema_name);
       if (schema_id.isSet() &&
-          connector::FindTable(&ctx.GetClientContext(), schema_id, rel_name)) {
+          catalog::FindTable(&ctx.GetClientContext(), schema_id, rel_name)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
                         ERR_MSG("\"", rel_name, "\" is not a sequence"));
       }
@@ -1000,24 +1000,24 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
     const auto ax = catalog::ActingAs(current_id, ctx.GetClientContext());
     catalog::Catalog::MutationScope mutation{catalog};
     if (server_database.isSet()) {
-      connector::ChangeEntryAcl(ax, duckdb::CatalogType::FOREIGN_SERVER_ENTRY,
-                                server_database, rel_name, std::move(mutate));
+      catalog::ChangeEntryAcl(ax, duckdb::CatalogType::FOREIGN_SERVER_ENTRY,
+                              server_database, rel_name, std::move(mutate));
     } else if (schema_target.isSet()) {
       ChangeSchemaAcl(ax, schema_target, std::move(mutate));
     } else if (entry_is_view || type == duckdb::CatalogType::VIEW_ENTRY) {
-      connector::ChangeEntryAcl(ax, duckdb::CatalogType::VIEW_ENTRY,
-                                entry_schema, rel_name, std::move(mutate));
+      catalog::ChangeEntryAcl(ax, duckdb::CatalogType::VIEW_ENTRY, entry_schema,
+                              rel_name, std::move(mutate));
     } else if (!entry_schema.isSet()) {
       ChangeTableAcl(ax, *target, type, std::move(mutate));
     } else if (type == duckdb::CatalogType::TYPE_ENTRY) {
-      connector::ChangeEntryAcl(ax, duckdb::CatalogType::TYPE_ENTRY,
-                                entry_schema, rel_name, std::move(mutate));
+      catalog::ChangeEntryAcl(ax, duckdb::CatalogType::TYPE_ENTRY, entry_schema,
+                              rel_name, std::move(mutate));
     } else if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
-      connector::ChangeEntryAcl(ax, duckdb::CatalogType::SEQUENCE_ENTRY,
-                                entry_schema, rel_name, std::move(mutate));
+      catalog::ChangeEntryAcl(ax, duckdb::CatalogType::SEQUENCE_ENTRY,
+                              entry_schema, rel_name, std::move(mutate));
     } else {
-      connector::ChangeEntryAcl(ax, duckdb::CatalogType::MACRO_ENTRY,
-                                entry_schema, rel_name, std::move(mutate));
+      catalog::ChangeEntryAcl(ax, duckdb::CatalogType::MACRO_ENTRY,
+                              entry_schema, rel_name, std::move(mutate));
     }
   }
   if (outcome->not_member) {
@@ -1046,9 +1046,9 @@ void GrantObject(ConnectionContext& ctx, duckdb::CatalogType type,
   // Only a table has column grants to follow the relation's -- a view under the
   // same relation namespace landed on its own entry instead.
   if (revoke && target && type == duckdb::CatalogType::TABLE_ENTRY) {
-    const auto* tbl_entry = connector::FindTable(&ctx.GetClientContext(),
-                                                 catalog::ParentIdOf(*target),
-                                                 catalog::IdOf(*target));
+    const auto* tbl_entry =
+      catalog::FindTable(&ctx.GetClientContext(), catalog::ParentIdOf(*target),
+                         catalog::IdOf(*target));
     if (tbl_entry != nullptr) {
       auto tbl = tbl_entry->Definition();
       // The column list is read off one version, but each revoke has to build
@@ -1078,7 +1078,7 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
                             std::string_view grantee, bool revoke,
                             const GrantObjectOptions& opts) {
   const ObjectId db = ctx.GetDatabaseId();
-  auto schema = connector::FindSchema(&ctx.GetClientContext(), db, schema_name);
+  auto schema = catalog::FindSchema(&ctx.GetClientContext(), db, schema_name);
   if (!schema) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
@@ -1087,7 +1087,7 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
 
   std::vector<std::string> names;
   if (type == duckdb::CatalogType::MACRO_ENTRY) {
-    connector::VisitFunctions(
+    catalog::VisitFunctions(
       &ctx.GetClientContext(), db,
       [&](const duckdb::MacroCatalogEntry& function) {
         if (ObjectId{function.ParentSchema().oid} == schema_id) {
@@ -1097,16 +1097,16 @@ void GrantObjectAllInSchema(ConnectionContext& ctx, duckdb::CatalogType type,
   } else if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
     // Only the free-standing ones, as PG's GRANT ON ALL SEQUENCES is: a
     // SERIAL's sequence is granted through the table that owns it.
-    connector::VisitSequences(
+    catalog::VisitSequences(
       &ctx.GetClientContext(), db,
-      [&](const connector::SereneDBSequenceEntry& seq) {
+      [&](const catalog::SereneDBSequenceEntry& seq) {
         if (ObjectId{seq.ParentSchema().oid} == schema_id &&
             !seq.GetOwnerTableId().isSet()) {
           names.emplace_back(seq.name.GetIdentifierName());
         }
       });
   } else {
-    connector::VisitTables(
+    catalog::VisitTables(
       &ctx.GetClientContext(), db,
       [&](const catalog::TableInfoRef& table, const catalog::Permissions&) {
         if (catalog::ParentIdOf(*table) == schema_id) {
@@ -1125,8 +1125,8 @@ void GrantRole(ConnectionContext& ctx, std::string_view role,
                std::string_view member, bool revoke,
                const MemberOptions& opts) {
   auto& catalog = GlobalCatalog();
-  auto role_obj = connector::FindRole(&ctx.GetClientContext(), role);
-  auto member_obj = connector::FindRole(&ctx.GetClientContext(), member);
+  auto role_obj = catalog::FindRole(&ctx.GetClientContext(), role);
+  auto member_obj = catalog::FindRole(&ctx.GetClientContext(), member);
   if (!role_obj) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", role, "\" does not exist"));
@@ -1166,7 +1166,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
     new_owner_name = ctx.user();
   }
   auto new_owner_role =
-    connector::FindRole(&ctx.GetClientContext(), new_owner_name);
+    catalog::FindRole(&ctx.GetClientContext(), new_owner_name);
   if (!new_owner_role) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", new_owner_name, "\" does not exist"));
@@ -1177,7 +1177,7 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
   catalog::TableInfoRef target;
   if (type == duckdb::CatalogType::SCHEMA_ENTRY) {
     auto schema =
-      connector::FindSchema(&ctx.GetClientContext(), database_id, name);
+      catalog::FindSchema(&ctx.GetClientContext(), database_id, name);
     if (!schema) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                       ERR_MSG("schema \"", name, "\" does not exist"));
@@ -1190,23 +1190,23 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
   {
     const std::string current_schema = ctx.GetCurrentSchema();
     const auto parsed = ParseObjectName(name, current_schema);
-    if (!connector::FindSchema(&ctx.GetClientContext(), database_id,
-                               parsed.schema)) {
+    if (!catalog::FindSchema(&ctx.GetClientContext(), database_id,
+                             parsed.schema)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                       ERR_MSG("schema \"", parsed.schema, "\" does not exist"));
     }
     // Types and functions live in their own per-schema namespaces, separate
     // from relations -- and their entry is the object, so the rewrite is
     // theirs.
-    const auto schema_id = connector::FindSchemaId(&ctx.GetClientContext(),
-                                                   database_id, parsed.schema);
+    const auto schema_id = catalog::FindSchemaId(&ctx.GetClientContext(),
+                                                 database_id, parsed.schema);
     const auto ax = catalog::ActingAs(current_id, ctx.GetClientContext());
     // A relation name that turns out to be a view is the view's own rewrite,
     // as a type's and a function's are.
     auto kind = type;
     if (kind == duckdb::CatalogType::TABLE_ENTRY && schema_id.isSet() &&
-        connector::FindView(&ctx.GetClientContext(), schema_id,
-                            parsed.relation)) {
+        catalog::FindView(&ctx.GetClientContext(), schema_id,
+                          parsed.relation)) {
       kind = duckdb::CatalogType::VIEW_ENTRY;
     }
     if (kind == duckdb::CatalogType::TYPE_ENTRY ||
@@ -1218,8 +1218,8 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
         // A sequence shares the relation namespace, so the other half of it
         // still answers for the name and PG reports the kind mismatch.
         if (kind == duckdb::CatalogType::SEQUENCE_ENTRY && schema_id.isSet() &&
-            connector::FindTable(&ctx.GetClientContext(), schema_id,
-                                 parsed.relation)) {
+            catalog::FindTable(&ctx.GetClientContext(), schema_id,
+                               parsed.relation)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
             ERR_MSG("\"", parsed.relation, "\" is not a sequence"));
@@ -1230,27 +1230,27 @@ void AlterOwner(ConnectionContext& ctx, std::string_view obj_type,
       }
       catalog::Catalog::MutationScope mutation{catalog};
       if (kind == duckdb::CatalogType::TYPE_ENTRY) {
-        connector::ChangeEntryOwner(ax, duckdb::CatalogType::TYPE_ENTRY,
-                                    schema_id, parsed.relation, new_owner_id,
-                                    new_owner_name);
+        catalog::ChangeEntryOwner(ax, duckdb::CatalogType::TYPE_ENTRY,
+                                  schema_id, parsed.relation, new_owner_id,
+                                  new_owner_name);
       } else if (kind == duckdb::CatalogType::VIEW_ENTRY) {
-        connector::ChangeEntryOwner(ax, duckdb::CatalogType::VIEW_ENTRY,
-                                    schema_id, parsed.relation, new_owner_id,
-                                    new_owner_name);
+        catalog::ChangeEntryOwner(ax, duckdb::CatalogType::VIEW_ENTRY,
+                                  schema_id, parsed.relation, new_owner_id,
+                                  new_owner_name);
       } else if (kind == duckdb::CatalogType::SEQUENCE_ENTRY) {
-        connector::ChangeEntryOwner(ax, duckdb::CatalogType::SEQUENCE_ENTRY,
-                                    schema_id, parsed.relation, new_owner_id,
-                                    new_owner_name);
+        catalog::ChangeEntryOwner(ax, duckdb::CatalogType::SEQUENCE_ENTRY,
+                                  schema_id, parsed.relation, new_owner_id,
+                                  new_owner_name);
       } else {
-        connector::ChangeEntryOwner(ax, duckdb::CatalogType::MACRO_ENTRY,
-                                    schema_id, parsed.relation, new_owner_id,
-                                    new_owner_name);
+        catalog::ChangeEntryOwner(ax, duckdb::CatalogType::MACRO_ENTRY,
+                                  schema_id, parsed.relation, new_owner_id,
+                                  new_owner_name);
       }
       return;
     }
     const auto* target_entry =
-      schema_id.isSet() ? connector::FindTable(&ctx.GetClientContext(),
-                                               schema_id, parsed.relation)
+      schema_id.isSet() ? catalog::FindTable(&ctx.GetClientContext(), schema_id,
+                                             parsed.relation)
                         : nullptr;
     target = target_entry != nullptr ? target_entry->Definition() : nullptr;
     if (!target) {

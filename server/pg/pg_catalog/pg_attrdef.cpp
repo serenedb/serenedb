@@ -26,8 +26,8 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_table_entry.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 
 namespace sdb::pg {
 
@@ -37,10 +37,10 @@ catalog::MaterializedData SystemTableSnapshot<PgAttrdef>::GetTableData() {
   // The rendered expressions the rows point at. A deque, because a row holds a
   // view into one and a vector would move them as it grows.
   std::deque<std::string> adbin_storage;
-  connector::VisitTableEntries(
+  catalog::VisitTableEntries(
     _config.GetClientContext(), GetDatabaseId(),
     [&](const duckdb::CreateSchemaInfo&,
-        const connector::SereneDBTableEntry& table) {
+        const catalog::SereneDBTableEntry& table) {
       for (const auto& col : table.GetColumns().Logical()) {
         // A generation expression lives here too, as postgres records it.
         if (!col.HasDefaultValue() && !col.Generated()) {

@@ -27,9 +27,9 @@
 #include <vector>
 
 #include "auth/role_closure.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/schema.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 
@@ -89,9 +89,8 @@ int16_t TriggerType(const duckdb::TriggerCatalogEntry& trigger) {
 // The attnums UPDATE OF names, in the order the trigger declared them. Zero for
 // a name the relation does not list, which is what postgres writes for a key
 // that is not a plain column.
-std::vector<int16_t> UpdateOfAttnums(
-  const duckdb::TriggerCatalogEntry& trigger,
-  const connector::SereneDBTableEntry& table) {
+std::vector<int16_t> UpdateOfAttnums(const duckdb::TriggerCatalogEntry& trigger,
+                                     const catalog::SereneDBTableEntry& table) {
   std::vector<int16_t> attrs;
   attrs.reserve(trigger.columns.size());
   const auto& columns = table.GetColumns();
@@ -116,13 +115,13 @@ catalog::MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData() {
 
   // The entry itself, not the info: a trigger set hangs off the entry, and
   // reading it needs a transaction against the catalog holding it.
-  connector::VisitCatalogSetEntries(
+  catalog::VisitCatalogSetEntries(
     context, GetDatabaseId(), duckdb::CatalogType::TABLE_ENTRY,
     [&](const duckdb::CreateSchemaInfo&, duckdb::CatalogEntry& object_entry) {
       // Views and the index-name-as-table wrappers share this set; neither is a
       // SereneDBTableEntry, so the cast is the filter.
       auto* table_ptr =
-        dynamic_cast<connector::SereneDBTableEntry*>(&object_entry);
+        dynamic_cast<catalog::SereneDBTableEntry*>(&object_entry);
       if (table_ptr == nullptr) {
         return;
       }

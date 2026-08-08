@@ -29,8 +29,8 @@
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -55,9 +55,9 @@ catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData() {
   // built per entry. The rows are written after the walk, so each ref has to be
   // kept until then. A deque, not a vector: the rows hold spans into these, so
   // their addresses have to survive the next push.
-  std::deque<connector::DatabaseRef> kept;
-  connector::VisitDatabases(
-    &_config.GetClientContext(), [&](const connector::DatabaseRef& ref) {
+  std::deque<catalog::DatabaseRef> kept;
+  catalog::VisitDatabases(
+    &_config.GetClientContext(), [&](const catalog::DatabaseRef& ref) {
       const auto& db = kept.emplace_back(ref);
       values.push_back(PgDatabase{
         .oid = db.Id().id(),

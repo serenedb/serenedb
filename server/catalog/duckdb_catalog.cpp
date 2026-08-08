@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_catalog.h"
+#include "catalog/duckdb_catalog.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
@@ -78,7 +78,17 @@
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/databases.h"
 #include "catalog/deferred_writes.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_global_catalog.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_object_index.h"
+#include "catalog/duckdb_schema_entry.h"
+#include "catalog/duckdb_static_schema.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/inverted_index.h"
 #include "catalog/pk_spec.h"
@@ -88,22 +98,13 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/view.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_dependency.h"
-#include "connector/duckdb_global_catalog.h"
-#include "connector/duckdb_index_entry.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_object_index.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
 #include "connector/duckdb_physical_search_truncate.h"
 #include "connector/duckdb_physical_search_update.h"
-#include "connector/duckdb_schema_entry.h"
-#include "connector/duckdb_static_schema.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/inverted_index_options_util.h"
 #include "connector/pg_logical_types.h"
@@ -117,7 +118,7 @@
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 // DROP of a schema child whose entry is the object: resolve the schema the
@@ -359,7 +360,7 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
                               duckdb::CatalogTypeToString(info.type)));
   }
   if (!dropped) {
-    auto& ctx = GetSereneDBContext(context);
+    auto& ctx = connector::GetSereneDBContext(context);
     if (info.type == duckdb::CatalogType::MACRO_ENTRY ||
         info.type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
       ctx.AddNotice(SQL_ERROR_DATA(
@@ -477,7 +478,7 @@ void SereneDBCatalog::Initialize(bool /*load_builtin*/) {
 // duckdb asserts that two reads inside one statement agree.
 duckdb::optional_idx SereneDBCatalog::GetCatalogVersion(
   duckdb::ClientContext& context) {
-  auto* ctx = GetSereneDBContextPtr(context);
+  auto* ctx = connector::GetSereneDBContextPtr(context);
   return ctx == nullptr ? duckdb::optional_idx{}
                         : duckdb::optional_idx{ctx->CatalogEpoch()};
 }
@@ -550,7 +551,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   }
 
   // The creator owns the schema (PG current_user).
-  const ObjectId owner = GetSereneDBContext(client).GetRoleId();
+  const ObjectId owner = connector::GetSereneDBContext(client).GetRoleId();
   const auto database_id = GetDatabaseId();
 
   // Under the catalog mutex from here: the name check and the write have to be
@@ -602,7 +603,7 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
 void SereneDBCatalog::ScanSchemas(
   duckdb::ClientContext& context,
   std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
-  auto* ctx = GetSereneDBContextPtr(context);
+  auto* ctx = connector::GetSereneDBContextPtr(context);
   if (!ctx) {
     return;
   }
@@ -764,8 +765,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   // Search CTAS routes to the iresearch insert operator, which consumes the
   // storage option in CreateCtasTable -- so this is a read-only probe of the
   // WITH options.
-  if (ReadStorageEngine(table_info.options) == catalog::TableEngine::Search) {
-    auto& search_ctas = planner.Make<SereneDBSearchInsert>(
+  if (connector::ReadStorageEngine(table_info.options) ==
+      catalog::TableEngine::Search) {
+    auto& search_ctas = planner.Make<connector::SereneDBSearchInsert>(
       std::move(op.info), op.schema, op.estimated_cardinality);
     search_ctas.children.push_back(plan);
     return search_ctas;
@@ -783,7 +785,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   options->SetSchema(op.schema.name);
   // Consume the storage WITH-option (Transactional on this path) so the
   // unrecognized-parameter check does not reject it.
-  ApplyStorageKind(context, *options, table_info.options);
+  connector::ApplyStorageKind(context, *options, table_info.options);
 
   if (!table_info.options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -847,7 +849,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
       parallel);
   }();
 
-  auto& ctas = planner.Make<SereneDBPhysicalCTAS>(
+  auto& ctas = planner.Make<connector::SereneDBPhysicalCTAS>(
     insert, database_id, GetName().GetIdentifierName(),
     op.schema.name.GetIdentifierName(), std::move(options), table_id,
     on_conflict, op.estimated_cardinality);
@@ -944,8 +946,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
       plan = &planner.ResolveDefaultsProjection(op, *plan);
       op.column_index_map.clear();
     }
-    auto& insert = planner.Make<SereneDBSearchInsert>(
-      ResolveSearchWriteTarget(table_entry), std::move(op.types),
+    auto& insert = planner.Make<connector::SereneDBSearchInsert>(
+      connector::ResolveSearchWriteTarget(table_entry), std::move(op.types),
       op.estimated_cardinality, op.return_chunk);
     if (plan) {
       insert.children.push_back(*plan);
@@ -973,8 +975,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
     // TRUNCATE has is_truncate but is not autocommit, so it falls through to
     // the row-wise SereneDBSearchDelete below.
     if (op.is_truncate && context.transaction.IsAutoCommit()) {
-      return planner.Make<SereneDBSearchTruncate>(table_entry.GetSearchData(),
-                                                  op.estimated_cardinality);
+      return planner.Make<connector::SereneDBSearchTruncate>(
+        table_entry.GetSearchData(), op.estimated_cardinality);
     }
 
     // A Search table has no separate inverted indexes, so its scan appends only
@@ -996,8 +998,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
     if (op.return_chunk) {
       column_map.assign(op.return_columns.begin(), op.return_columns.end());
     }
-    auto& search_del = planner.Make<SereneDBSearchDelete>(
-      ResolveSearchWriteTarget(table_entry), std::move(pk_indices),
+    auto& search_del = planner.Make<connector::SereneDBSearchDelete>(
+      connector::ResolveSearchWriteTarget(table_entry), std::move(pk_indices),
       std::move(op.types), std::move(column_map), op.estimated_cardinality);
     search_del.children.push_back(plan);
     return search_del;
@@ -1065,8 +1067,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
       }
     }
 
-    auto& search_upd = planner.Make<SereneDBSearchUpdate>(
-      ResolveSearchWriteTarget(table_entry), std::move(pk_indices),
+    auto& search_upd = planner.Make<connector::SereneDBSearchUpdate>(
+      connector::ResolveSearchWriteTarget(table_entry), std::move(pk_indices),
       std::move(op.columns), std::move(op.types), op.estimated_cardinality,
       op.return_chunk);
     search_upd.children.push_back(proj);
@@ -1101,7 +1103,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
   // ADD PRIMARY KEY / ADD UNIQUE as the data store issues it: the constraint is
   // already in the definition, and what this statement is for is the ART over
   // the rows that are already there.
-  if (IsStorageStatement(binder.context)) {
+  if (connector::IsStorageStatement(binder.context)) {
     return duckdb::DuckCatalog::BindAlterAddIndex(
       binder, table_entry, std::move(plan), std::move(create_info),
       std::move(alter_info));
@@ -1121,17 +1123,18 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     auto& table = target.Cast<duckdb::TableCatalogEntry>();
     // The ART mirror of an index as the data store issues it: a plain duckdb
     // index build, so nothing here applies to it.
-    if (IsStorageStatement(binder.context)) {
+    if (connector::IsStorageStatement(binder.context)) {
       return duckdb::DuckCatalog::BindCreateIndex(binder, stmt, target,
                                                   std::move(plan));
     }
-    RejectIfSearchTable(RequireBaseTable(table).GetEngine(), "CREATE INDEX");
+    connector::RejectIfSearchTable(RequireBaseTable(table).GetEngine(),
+                                   "CREATE INDEX");
   }
 
   // View-backed indexes are STATIC -- captured at CREATE INDEX, no DML refresh.
   duckdb::optional_ptr<duckdb::TableCatalogEntry> resolved_table;
   bool view_backed = false;
-  std::optional<ViewFastPath> view_fast_path;
+  std::optional<connector::ViewFastPath> view_fast_path;
   int64_t pinned_iceberg_snapshot_id = 0;
   std::optional<std::vector<duckdb::idx_t>> kept_view_positions;
   const auto partial_view_index =
@@ -1154,14 +1157,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     const auto schema_id =
       FindSchemaId(&binder.context, GetDatabaseId(),
                    target.ParentSchema().name.GetIdentifierName());
-    std::optional<ViewFastPath> fp;
+    std::optional<connector::ViewFastPath> fp;
     if (schema_id.isSet()) {
       if (const auto* view = FindView(&binder.context, schema_id,
                                       target.name.GetIdentifierName())) {
-        auto key_cols = KeyColumnsFromOptions(
+        auto key_cols = connector::KeyColumnsFromOptions(
           stmt.info->Cast<duckdb::CreateIndexInfo>().options);
         auto info = view->GetInfo();
-        fp = ResolveViewFastPath(
+        fp = connector::ResolveViewFastPath(
           binder.context, info->Cast<duckdb::CreateViewInfo>(), key_cols);
       }
     }
@@ -1259,8 +1262,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       thread_pk_through(thread_pk_through, *leaf_parent_chain_root);
       if (leaf_get->bind_data) {
         pinned_iceberg_snapshot_id =
-          ExtractIcebergSnapshotId(*leaf_get->bind_data);
-        EnableIcebergSort(leaf_get->bind_data.get());
+          connector::ExtractIcebergSnapshotId(*leaf_get->bind_data);
+        connector::EnableIcebergSort(leaf_get->bind_data.get());
       }
 
       auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
@@ -1318,7 +1321,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
 
   if (create_index_info->index_type == "inverted") {
     for (const auto& [option, value] : create_index_info->options) {
-      if (!absl::c_contains(kCreateInvertedOptions,
+      if (!absl::c_contains(connector::kCreateInvertedOptions,
                             absl::AsciiStrToLower(option))) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("unrecognized parameter \"", option, "\""));
@@ -1445,7 +1448,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     // columns (or ROW_ID for generated PK). Replaces the previous
     // "every non-PK column" default which made every CREATE INDEX scan
     // redundantly read the whole table.
-    auto projection = BuildCreateIndexProjection(
+    auto projection = connector::BuildCreateIndexProjection(
       sdb_entry->GetPKColumnIndexes(), create_index_info->column_ids);
     auto& get = leaf_get_from_plan(*plan);
     if (get.GetColumnIds().empty()) {
@@ -1756,4 +1759,46 @@ duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
   return DatabaseStorageSize(context, _database_id);
 }
 
-}  // namespace sdb::connector
+void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
+  auto state = context.registered_state->Get<connector::SereneDBClientState>(
+    connector::kSereneDBClientStateKey);
+
+  auto ax = catalog::NoAccessCheck(context);
+  if (state) {
+    ax.role = state->GetConnectionContext().GetRoleId();
+  }
+
+  // The bind context outlives nothing: its connection holds this attachment
+  // and its ConnectionContext holds the catalog Database going away here.
+  catalog::DataStore::ForgetDatabase(GetDatabaseId());
+
+  // Nothing of this catalog's own dependency graph has to be retired: an edge
+  // is kept by its dependent's catalog, so every edge any object here emitted
+  // dies with this attachment's dependency manager. Only the database entry's
+  // own edges live elsewhere -- in the cluster-global catalog -- and
+  // DropDatabase below is what retires those.
+  //
+  // The foreign servers still have to be read off this catalog's own set, which
+  // is the last point anything can: each one holds an instance-global DuckDB
+  // attachment that the cascade does not touch. The attachment identity is
+  // captured with the name, so the detach below can only remove what this drop
+  // actually saw -- never an attachment a concurrent same-named CREATE SERVER
+  // put there in between.
+  const auto servers = CatalogForeignServers(*this);
+  std::vector<catalog::ForeignServerAttachment> detach_servers;
+  detach_servers.reserve(servers.size());
+  for (const auto& [server, perm] : servers) {
+    auto name = std::string{server->GetName()};
+    detach_servers.emplace_back(catalog::ForeignServerAttachment{
+      name, catalog::ForeignServerAttachmentId(name)});
+  }
+
+  duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
+  catalog::DropDatabase(ax, GetName().GetIdentifierName(),
+                        std::move(keep_alive));
+  for (const auto& server : detach_servers) {
+    catalog::DetachForeignServerAttachment(server.name, server.attachment_id);
+  }
+}
+
+}  // namespace sdb::catalog

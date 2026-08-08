@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_object_index.h"
+#include "catalog/duckdb_object_index.h"
 
 #include <cstdint>
 #include <duckdb/catalog/catalog_set.hpp>
@@ -27,13 +27,13 @@
 #include <duckdb/main/client_context.hpp>
 #include <string>
 
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_schema_entry.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_schema_entry.h"
 #include "pg/connection_context.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kHexDigits = "0123456789abcdef";
@@ -133,8 +133,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> LookupEntryById(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> LookupEntryById(
   duckdb::ClientContext& context, ObjectId id) {
-  return LookupEntryById(context, GetSereneDBContext(context).GetDatabaseId(),
-                         id);
+  return LookupEntryById(
+    context, connector::GetSereneDBContext(context).GetDatabaseId(), id);
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

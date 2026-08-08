@@ -30,6 +30,7 @@
 #include <utility>
 
 #include "catalog/database.h"
+#include "catalog/duckdb_entry.h"
 #include "catalog/entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/function.h"
@@ -37,9 +38,8 @@
 #include "catalog/sequence.h"
 #include "catalog/tokenizer.h"
 #include "catalog/user_type.h"
-#include "connector/duckdb_entry.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // A user-defined type. duckdb owns the entry shape; the stable id, the owner
 // and the ACL are serenedb's, and the entry is the object -- nothing else holds
@@ -251,4 +251,4 @@ class SereneDBDatabaseEntry final : public duckdb::InCatalogEntry {
   std::shared_ptr<const catalog::CreateDatabaseInfo> _database;
 };
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

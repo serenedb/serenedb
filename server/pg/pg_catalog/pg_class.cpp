@@ -39,6 +39,10 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/role.h"
@@ -47,10 +51,6 @@
 #include "catalog/store/store.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_table_entry.h"
-#include "connector/duckdb_view_entry.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 #include "query/config_variable_names.h"
@@ -170,7 +170,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
   // (DataTable::GetTotalRows), never a count(*) query: pg_catalog must not scan
   // data. Off the entry this walk already holds, and nothing else: resolving a
   // second entry here would re-enter the catalog sets this walk is inside.
-  auto count_store_rows = [](connector::SereneDBTableEntry& table) -> float {
+  auto count_store_rows = [](catalog::SereneDBTableEntry& table) -> float {
     auto storage = table.TryGetStorage();
     return storage ? static_cast<float>(storage->GetTotalRows()) : 0.0F;
   };
@@ -181,26 +181,26 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
   // from one place.
   std::vector<catalog::IndexInfoRef> indexes;
   containers::FlatHashSet<ObjectId> indexed_relations;
-  connector::VisitIndexes(&context, database_id,
-                          [&](const catalog::IndexInfoRef& index) {
-                            indexed_relations.insert(index->GetRelationId());
-                            indexes.push_back(index);
-                          });
+  catalog::VisitIndexes(&context, database_id,
+                        [&](const catalog::IndexInfoRef& index) {
+                          indexed_relations.insert(index->GetRelationId());
+                          indexes.push_back(index);
+                        });
   containers::FlatHashMap<ObjectId, ObjectId> relation_owners;
   // The tables in set order, for the synthetic key-index rows below, and the
   // sequences that feed a synthetic primary key -- serenedb's own machinery,
   // which postgres has no relation for.
-  std::vector<std::pair<ObjectId, const connector::SereneDBTableEntry*>> tables;
+  std::vector<std::pair<ObjectId, const catalog::SereneDBTableEntry*>> tables;
   containers::FlatHashSet<ObjectId> generated_pk_sequences;
 
-  connector::VisitCatalogSetEntries(
+  catalog::VisitCatalogSetEntries(
     context, database_id, duckdb::CatalogType::TABLE_ENTRY,
     [&](const duckdb::CreateSchemaInfo& schema, duckdb::CatalogEntry& entry) {
       // The index-name-as-table wrappers share this set: their shape is the
       // relation's and pg_class already has that relation's row, so only a
       // table and a view are rows of their own here.
       const auto schema_id = catalog::IdOf(schema);
-      auto* table = dynamic_cast<connector::SereneDBTableEntry*>(&entry);
+      auto* table = dynamic_cast<catalog::SereneDBTableEntry*>(&entry);
       if (table != nullptr) {
         relation_owners.emplace(catalog::IdOf(*table),
                                 catalog::OwnerOf(table->permissions));
@@ -227,7 +227,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
         return;
       }
       const auto* view_entry =
-        dynamic_cast<const connector::SereneDBViewEntry*>(&entry);
+        dynamic_cast<const catalog::SereneDBViewEntry*>(&entry);
       if (view_entry == nullptr) {
         return;
       }
@@ -272,9 +272,8 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
     values.push_back(std::move(row));
   }
 
-  connector::VisitSequences(
-    &context, database_id,
-    [&](const connector::SereneDBSequenceEntry& sequence) {
+  catalog::VisitSequences(
+    &context, database_id, [&](const catalog::SereneDBSequenceEntry& sequence) {
       // The synthetic primary-key sequence of a table declaring none is
       // serenedb's own machinery, like the column it feeds: postgres has no
       // such relation and neither does pg_class. A SERIAL's sequence is a real
@@ -291,7 +290,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
       values.push_back(std::move(row));
     });
 
-  connector::VisitTypes(
+  catalog::VisitTypes(
     &context, database_id, [&](const duckdb::TypeCatalogEntry& type) {
       if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
         return;
@@ -326,7 +325,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                       catalog::OwnerOf(table->permissions));
         row.relkind = PgClass::Relkind::Index;
         row.relnatts = static_cast<int16_t>(
-          connector::KeyConstraintAttnums(*table, unique).size());
+          catalog::KeyConstraintAttnums(*table, unique).size());
         values.push_back(std::move(row));
       }
     }

@@ -37,8 +37,8 @@
 #include "catalog/index.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/scorer_options.h"
-#include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
+#include "search/search_analyzer_impl.h"
 
 namespace sdb::search {
 

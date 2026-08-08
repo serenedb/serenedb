@@ -24,11 +24,11 @@
 #include <memory>
 #include <optional>
 
+#include "catalog/duckdb_entry.h"
 #include "catalog/entry.h"
 #include "catalog/view.h"
-#include "connector/duckdb_entry.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // The bound entry for a SereneDB view, holding the SereneDB view object it was
 // resolved from. Mirrors SereneDBTableEntry for tables: it lets the plan-level
@@ -44,4 +44,4 @@ class SereneDBViewEntry final : public duckdb::ViewCatalogEntry {
   }
 };
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

@@ -22,7 +22,7 @@
 
 #include <duckdb/common/enums/catalog_type.hpp>
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // The one CatalogType a kind is recorded, keyed and granted by: a function's
 // two macro slots are one kind, and every other slot is its own.
@@ -32,4 +32,4 @@ constexpr duckdb::CatalogType KindOf(duckdb::CatalogType type) noexcept {
            : type;
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

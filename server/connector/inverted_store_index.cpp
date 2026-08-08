@@ -56,15 +56,15 @@
 #include "basics/log.h"
 #include "basics/primary_key.hpp"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "catalog/store/data_store.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_index_entry.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/index_expression.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
@@ -81,7 +81,7 @@ namespace {
 catalog::IndexInfoRef FindInvertedDefinition(duckdb::ClientContext* context,
                                              duckdb::AttachedDatabase& db,
                                              ObjectId id) {
-  const auto* index = connector::FindIndexIn(context, db.GetCatalog(), id);
+  const auto* index = catalog::FindIndexIn(context, db.GetCatalog(), id);
   return index != nullptr && index->IsInverted() ? index->Definition()
                                                  : nullptr;
 }
@@ -1044,7 +1044,7 @@ InvertedStoreIndex::EnsureInvertedFeedSession() {
   catalog::IndexInfoRef inverted =
     FindInvertedDefinition(context, db, _index_id);
   const auto* table_entry =
-    connector::FindTableIn(context, db.GetCatalog(), _table_id);
+    catalog::FindTableIn(context, db.GetCatalog(), _table_id);
   catalog::TableInfoRef table =
     table_entry != nullptr ? table_entry->Definition() : nullptr;
   // An online CREATE INDEX attaches its stub before its transaction commits,
@@ -1722,7 +1722,7 @@ void InjectExternalIndexes(duckdb::DataTable& storage) {
     return;
   }
   const auto* table_entry =
-    connector::FindTableIn(nullptr, storage.db.GetCatalog(), table_id);
+    catalog::FindTableIn(nullptr, storage.db.GetCatalog(), table_id);
   const auto table =
     table_entry != nullptr ? table_entry->Definition() : nullptr;
   if (!table) {
@@ -1733,8 +1733,8 @@ void InjectExternalIndexes(duckdb::DataTable& storage) {
   auto& list = storage.GetDataTableInfo()->GetIndexes();
   // Off this database's own INDEX_ENTRY sets: an attach reads them before the
   // attachment is in the database manager, so nothing can resolve it by id yet.
-  for (const auto& index : connector::RelationIndexesIn(
-         nullptr, storage.db.GetCatalog(), table_id)) {
+  for (const auto& index :
+       catalog::RelationIndexesIn(nullptr, storage.db.GetCatalog(), table_id)) {
     if (!index->IsInverted()) {
       continue;
     }

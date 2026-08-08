@@ -35,6 +35,7 @@
 #include "basics/log.h"
 #include "catalog/create_info_serde.h"
 #include "catalog/database.h"
+#include "catalog/duckdb_dependency.h"
 #include "catalog/foreign_server.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
@@ -46,7 +47,6 @@
 #include "catalog/table.h"
 #include "catalog/tokenizer.h"
 #include "catalog/view.h"
-#include "connector/duckdb_dependency.h"
 
 namespace sdb::catalog::wal {
 namespace {
@@ -111,7 +111,7 @@ void WriteDependencies(const duckdb::LogicalDependencyList& deps,
   std::vector<ObjectId> ids;
   ids.reserve(deps.Set().size());
   for (const auto& dep : deps.Set()) {
-    ids.push_back(connector::DependencyInfoId(dep.entry));
+    ids.push_back(catalog::DependencyInfoId(dep.entry));
   }
   // The set is unordered, so a frame is only byte-stable once they are sorted.
   std::ranges::sort(ids);
@@ -127,7 +127,7 @@ duckdb::LogicalDependencyList ReadDependencies(duckdb::MemoryStream& stream) {
   for (uint32_t i = 0; i < count; ++i) {
     ids.push_back(ReadId(stream));
   }
-  return connector::DependencyList(ids);
+  return catalog::DependencyList(ids);
 }
 
 void WriteAcl(AclView acl, duckdb::MemoryStream& stream) {

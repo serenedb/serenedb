@@ -24,9 +24,9 @@
 #include <vector>
 
 #include "auth/role_closure.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
 #include "catalog/sequence.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_object_entry.h"
 #include "pg/pg_types.h"
 
 namespace sdb::pg {
@@ -43,9 +43,9 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgSequence>::GetTableData() {
   auto& context = _config.GetClientContext();
   std::vector<PgSequence> values;
-  connector::VisitSequences(
+  catalog::VisitSequences(
     &context, GetDatabaseId(),
-    [&](const connector::SereneDBSequenceEntry& sequence) {
+    [&](const catalog::SereneDBSequenceEntry& sequence) {
       const auto& options = sequence.Options();
       values.push_back(PgSequence{
         .seqrelid = Oid{sequence.oid},

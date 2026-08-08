@@ -38,6 +38,10 @@
 #include "basics/simdjson_sink.h"
 #include "catalog/database.h"
 #include "catalog/deferred_writes.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_global_catalog.h"
+#include "catalog/duckdb_schema_entry.h"
 #include "catalog/entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/index.h"
@@ -47,11 +51,7 @@
 #include "catalog/store/store.h"
 #include "catalog/store/wal.h"
 #include "catalog/tokenizer.h"
-#include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_dependency.h"
-#include "connector/duckdb_global_catalog.h"
-#include "connector/duckdb_schema_entry.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -471,10 +471,10 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
     state.loaded = true;
     auto& duck_catalog = duckdb::Catalog::GetCatalog(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context));
-    if (duck_catalog.GetCatalogType() == kSereneDBCatalogType) {
-      auto& catalog = duck_catalog.Cast<SereneDBCatalog>();
+    if (duck_catalog.GetCatalogType() == catalog::kSereneDBCatalogType) {
+      auto& catalog = duck_catalog.Cast<catalog::SereneDBCatalog>();
       const auto transaction = catalog.GetCatalogTransaction(context);
-      catalog.VisitSchemaEntries([&](SereneDBSchemaEntry& schema) {
+      catalog.VisitSchemaEntries([&](catalog::SereneDBSchemaEntry& schema) {
         // The schema entry itself, which is what owns the sets below. The two
         // static schemas have no definition of their own and are reported by
         // name alone.
@@ -519,7 +519,7 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
     }
     // The two cluster-global sets belong to no database at all, so they are
     // reported whichever one the session is in, with no schema name.
-    if (auto global = TryGlobalCatalog(context)) {
+    if (auto global = catalog::TryGlobalCatalog(context)) {
       const auto transaction = global->GetCatalogTransaction(context);
       for (const auto type : {duckdb::CatalogType::ROLE_ENTRY,
                               duckdb::CatalogType::DATABASE_ENTRY}) {
@@ -537,14 +537,15 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
     // One row per recorded edge, from every attached manager: an edge is kept
     // by the dependent's own catalog, so no one of them holds the whole graph.
     // entry_oid is the referenced object and the name is the dependent.
-    VisitAllEdges(context, [&](ObjectId referenced, ObjectId dependent) {
-      state.rows.push_back({.schema = {},
-                            .entry_type = duckdb::CatalogTypeToString(
-                              duckdb::CatalogType::DEPENDENCY_ENTRY),
-                            .name = std::to_string(dependent.id()),
-                            .entry_oid = referenced.id(),
-                            .visible = true});
-    });
+    catalog::VisitAllEdges(
+      context, [&](ObjectId referenced, ObjectId dependent) {
+        state.rows.push_back({.schema = {},
+                              .entry_type = duckdb::CatalogTypeToString(
+                                duckdb::CatalogType::DEPENDENCY_ENTRY),
+                              .name = std::to_string(dependent.id()),
+                              .entry_oid = referenced.id(),
+                              .visible = true});
+      });
   }
   const auto n =
     std::min<size_t>(STANDARD_VECTOR_SIZE, state.rows.size() - state.offset);

@@ -29,9 +29,9 @@
 #include "auth/role_closure.h"
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/schema.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -74,19 +74,19 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   // id the constraint carries and not by the qualified name it also carries:
   // the name is only what it was when the definition was written, and a rename
   // since has moved it.
-  containers::FlatHashMap<ObjectId, const connector::SereneDBTableEntry*>
+  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*>
     tables_by_id;
-  connector::VisitTableEntries(context, GetDatabaseId(),
-                               [&](const duckdb::CreateSchemaInfo&,
-                                   const connector::SereneDBTableEntry& table) {
-                                 tables_by_id.emplace(catalog::IdOf(table),
-                                                      &table);
-                               });
+  catalog::VisitTableEntries(context, GetDatabaseId(),
+                             [&](const duckdb::CreateSchemaInfo&,
+                                 const catalog::SereneDBTableEntry& table) {
+                               tables_by_id.emplace(catalog::IdOf(table),
+                                                    &table);
+                             });
 
   // The index enforcing the key a foreign key points at: its primary key,
   // which is the only key a foreign key may reference.
   const auto referenced_index =
-    [](const connector::SereneDBTableEntry& referenced) -> Oid {
+    [](const catalog::SereneDBTableEntry& referenced) -> Oid {
     for (const auto& constraint : referenced.GetConstraints()) {
       if (constraint->type != duckdb::ConstraintType::UNIQUE) {
         continue;
@@ -110,10 +110,10 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
     return out;
   };
 
-  connector::VisitTableEntries(
+  catalog::VisitTableEntries(
     context, GetDatabaseId(),
     [&](const duckdb::CreateSchemaInfo& schema,
-        const connector::SereneDBTableEntry& table) {
+        const catalog::SereneDBTableEntry& table) {
       const auto relid = catalog::IdOf(table).id();
       const auto namespace_id = catalog::IdOf(schema).id();
       const auto base = [&](PgConstraint::Contype contype, Oid oid,
@@ -162,7 +162,7 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
                             : PgConstraint::Contype::Unique;
             row.conindid = unique.host_index_id;
             conkey_storage.push_back(
-              connector::KeyConstraintAttnums(table, unique));
+              catalog::KeyConstraintAttnums(table, unique));
             break;
           }
           case duckdb::ConstraintType::NOT_NULL: {

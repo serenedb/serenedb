@@ -36,8 +36,8 @@
 #include "basics/metrics.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_table_entry.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
@@ -170,13 +170,13 @@ inline ObjectId ResolveCopyTableId(ConnectionContext& conn,
   const auto db_id = conn.GetDatabaseId();
   auto& context = conn.GetClientContext();
   const auto relation = qname.Name().GetIdentifierName();
-  const connector::SereneDBTableEntry* table = nullptr;
+  const catalog::SereneDBTableEntry* table = nullptr;
   if (!qname.Schema().empty()) {
-    table = connector::FindTableEntry(
+    table = catalog::FindTableEntry(
       &context, db_id, qname.Schema().GetIdentifierName(), relation);
   } else {
     for (const auto& schema : conn.GetSearchPath()) {
-      table = connector::FindTableEntry(&context, db_id, schema, relation);
+      table = catalog::FindTableEntry(&context, db_id, schema, relation);
       if (table) {
         break;
       }
@@ -390,7 +390,7 @@ std::string_view PgWireSession<Kind>::UserName() const {
 
 template<SocketKind Kind>
 bool PgWireSession<Kind>::SetupConnection() {
-  auto database = connector::FindDatabase(nullptr, DatabaseName());
+  auto database = catalog::FindDatabase(nullptr, DatabaseName());
   if (!database) {
     WriteFatalResponse(this->_send,
                        SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
@@ -894,8 +894,8 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   // for every connection, regardless of whether a stored credential exists.
   const hba::MembershipFn is_member = [](std::string_view user,
                                          std::string_view group) {
-    auto user_role = connector::FindRole(nullptr, user);
-    auto group_role = connector::FindRole(nullptr, group);
+    auto user_role = catalog::FindRole(nullptr, user);
+    auto group_role = catalog::FindRole(nullptr, group);
     if (!user_role || !group_role) {
       return false;  // missing_ok: unknown login role or target group
     }
@@ -1012,7 +1012,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  const auto login_role = connector::FindRole(nullptr, UserName());
+  const auto login_role = catalog::FindRole(nullptr, UserName());
   if (login_role && login_role->HasValidUntil() &&
       duckdb::Timestamp::GetCurrentTimestamp().value >=
         login_role->ValidUntil()) {
@@ -1563,16 +1563,16 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
     auto& context = _connection_ctx->GetClientContext();
     const auto& copy_name = copy_info.GetQualifiedName();
     const auto relation = copy_name.Name().GetIdentifierName();
-    const connector::SereneDBTableEntry* table = nullptr;
+    const catalog::SereneDBTableEntry* table = nullptr;
     if (!copy_name.Schema().empty()) {
-      table = connector::FindTableEntry(
+      table = catalog::FindTableEntry(
         &context, db_id, copy_name.Schema().GetIdentifierName(), relation);
     } else {
       // Unqualified target: resolve across the search path by presence (the
       // schema that CONTAINS the table, as the binder does) -- the current
       // schema alone would miss a table in a later search-path schema.
       for (const auto& schema : _connection_ctx->GetSearchPath()) {
-        table = connector::FindTableEntry(&context, db_id, schema, relation);
+        table = catalog::FindTableEntry(&context, db_id, schema, relation);
         if (table) {
           break;
         }

@@ -24,8 +24,8 @@
 #include "auth/role_closure.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -34,20 +34,20 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgAuthMembers>::GetTableData() {
   std::vector<PgAuthMembers> values;
   uint64_t oid = 1;
-  connector::VisitRoles(&_config.GetClientContext(),
-                        [&](const catalog::CreateRoleInfo& role) {
-                          for (const auto& edge : role.MemberOf()) {
-                            values.push_back(PgAuthMembers{
-                              .oid = oid++,
-                              .roleid = edge.role.id(),
-                              .member = role.GetId().id(),
-                              .grantor = id::kRootUser.id(),
-                              .admin_option = edge.admin_option,
-                              .inherit_option = edge.inherit_option,
-                              .set_option = edge.set_option,
-                            });
-                          }
-                        });
+  catalog::VisitRoles(&_config.GetClientContext(),
+                      [&](const catalog::CreateRoleInfo& role) {
+                        for (const auto& edge : role.MemberOf()) {
+                          values.push_back(PgAuthMembers{
+                            .oid = oid++,
+                            .roleid = edge.role.id(),
+                            .member = role.GetId().id(),
+                            .grantor = id::kRootUser.id(),
+                            .admin_option = edge.admin_option,
+                            .inherit_option = edge.inherit_option,
+                            .set_option = edge.set_option,
+                          });
+                        }
+                      });
 
   auto result = CreateColumns<PgAuthMembers>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

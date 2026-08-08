@@ -43,10 +43,10 @@
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
+#include "catalog/duckdb_object_entry.h"
 #include "catalog/scorer_options.h"
 #include "catalog/tokenizer.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_object_entry.h"
 #include "connector/functions/split_by_non_alpha.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_highlight.h"
@@ -325,7 +325,7 @@ catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
   if (!entry) {
     return nullptr;
   }
-  return entry->Cast<SereneDBTokenizerEntry>().Definition();
+  return entry->Cast<catalog::SereneDBTokenizerEntry>().Definition();
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

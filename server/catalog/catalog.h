@@ -57,12 +57,9 @@
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 struct DatabaseRef;
-
-}  // namespace sdb::connector
-namespace sdb::catalog {
 
 // Mutation callback: fill `updated` with the changed clone (leave it null for
 // a no-op). Signal errors by throwing (pg::SqlException for user-facing ones).
@@ -317,8 +314,7 @@ void RequireOwnerTransfer(const AccessContext& ax, ObjectId schema_id,
 // beside the other ownership checks because the duckdb catalog override is
 // where the create happens.
 void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
-                           const connector::DatabaseRef& database,
-                           AclMode need);
+                           const catalog::DatabaseRef& database, AclMode need);
 
 class Catalog final {
  public:

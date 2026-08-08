@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_index_scan_entry.h"
+#include "catalog/duckdb_index_scan_entry.h"
 
 #include <absl/algorithm/container.h>
 
@@ -30,15 +30,15 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_storage.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 SereneDBIndexScanEntry::SereneDBIndexScanEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
@@ -95,21 +95,21 @@ TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
 duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(*_inverted_index);
-  auto data = duckdb::make_uniq<TableScanBindData>();
+  auto snapshot = connector::GetSereneDBContext(context).EnsureSearchSnapshot(
+    *_inverted_index);
+  auto data = duckdb::make_uniq<connector::TableScanBindData>();
   for (const auto& col : GetColumns().Logical()) {
     data->column_ids.emplace_back(col.CatalogOid());
     data->column_types.push_back(col.Type());
   }
   data->table_entry = this;
-  data->entry_kind = ScanEntryKind::InvertedIndex;
+  data->entry_kind = connector::ScanEntryKind::InvertedIndex;
   data->inverted_index = catalog::InvertedInfoRef(_inverted_index);
   data->inverted_storage = _inverted_index->GetData();
   data->lookup_label = "table";
   data->snapshot = std::move(snapshot);
   bind_data = std::move(data);
-  return CreateIResearchScanFunction();
+  return connector::CreateIResearchScanFunction();
 }
 
 duckdb::TableStorageInfo TableInvertedIndexScanEntry::GetStorageInfo(
@@ -132,8 +132,8 @@ InvertedIndexScanEntry::GetColumnSegmentInfo(
   if (!client) {
     return {};
   }
-  auto snapshot =
-    GetSereneDBContext(*client).EnsureSearchSnapshot(*_inverted_index);
+  auto snapshot = connector::GetSereneDBContext(*client).EnsureSearchSnapshot(
+    *_inverted_index);
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
   BuildIResearchColumnSegmentInfo(snapshot->reader, IndexSegmentInfoBindings(),
                                   GetVirtualColumns(), result);
@@ -148,8 +148,8 @@ bool InvertedIndexScanEntry::ScanColumnSegmentInfo(
   if (!client) {
     return false;
   }
-  auto snapshot =
-    GetSereneDBContext(*client).EnsureSearchSnapshot(*_inverted_index);
+  auto snapshot = connector::GetSereneDBContext(*client).EnsureSearchSnapshot(
+    *_inverted_index);
   return ScanIResearchColumnSegmentInfo(snapshot->reader,
                                         IndexSegmentInfoBindings(),
                                         GetVirtualColumns(), state, result);
@@ -165,17 +165,17 @@ TableInvertedIndexScanEntry::SegmentInfoBindings() const {
 }
 
 duckdb::column_t TableInvertedIndexScanEntry::RowIdentityColumnId() const {
-  return connector::RowIdentityColumnId(*this);
+  return catalog::RowIdentityColumnId(*this);
 }
 
 duckdb::vector<duckdb::column_t> TableInvertedIndexScanEntry::GetRowIdColumns()
   const {
-  return connector::BuildRowIdColumns(*this, _indexed_col_indices);
+  return catalog::BuildRowIdColumns(*this, _indexed_col_indices);
 }
 
 duckdb::virtual_column_map_t TableInvertedIndexScanEntry::GetVirtualColumns()
   const {
-  return connector::BuildVirtualColumns(*this, _indexed_col_indices);
+  return catalog::BuildVirtualColumns(*this, _indexed_col_indices);
 }
 
 ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
@@ -197,11 +197,11 @@ ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
 duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(*_inverted_index);
+  auto snapshot = connector::GetSereneDBContext(context).EnsureSearchSnapshot(
+    *_inverted_index);
   // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
   // stream the reader directly.
-  auto data = duckdb::make_uniq<ViewScanBindData>();
+  auto data = duckdb::make_uniq<connector::ViewScanBindData>();
   data->view = _sdb_view;
   const auto& vinfo = *_sdb_view;
   for (size_t i = 0; i < vinfo.names.size(); ++i) {
@@ -209,12 +209,13 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
     data->column_types.push_back(vinfo.types[i]);
   }
   data->table_entry = this;
-  data->entry_kind = ScanEntryKind::InvertedIndex;
+  data->entry_kind = connector::ScanEntryKind::InvertedIndex;
   data->inverted_index = catalog::InvertedInfoRef(_inverted_index);
   data->inverted_storage = _inverted_index->GetData();
   std::span<const std::string> key_cols =
     data->inverted_index->GetOptions().key_columns;
-  data->fast_path = ResolveViewFastPath(context, *_sdb_view, key_cols);
+  data->fast_path =
+    connector::ResolveViewFastPath(context, *_sdb_view, key_cols);
   if (data->fast_path) {
     data->lookup_label = FormatLookupLabel(*data->fast_path);
     data->lookup_supports_filters = data->fast_path->supports_filters;
@@ -223,7 +224,7 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   }
   data->snapshot = std::move(snapshot);
   bind_data = std::move(data);
-  return CreateIResearchScanFunction();
+  return connector::CreateIResearchScanFunction();
 }
 
 duckdb::TableStorageInfo ViewInvertedIndexScanEntry::GetStorageInfo(
@@ -313,4 +314,4 @@ duckdb::TableStorageInfo TableSecondaryIndexScanEntry::GetStorageInfo(
   return BuildStorageInfo(*this);
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

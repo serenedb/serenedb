@@ -32,14 +32,14 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_object_index.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/sequence.h"
 #include "catalog/user_type.h"
 #include "catalog/virtual_table.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_index_entry.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_object_index.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
@@ -303,7 +303,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
     default: {
       // A user-defined type is not in the snapshot -- its entry is the object
       // -- so the oid resolves through this session's database.
-      if (auto type = connector::FindSessionType(
+      if (auto type = catalog::FindSessionType(
             context, ObjectId{static_cast<uint64_t>(oid)})) {
         return type->user_type;
       }
@@ -581,7 +581,7 @@ std::string RegclassOut(duckdb::ClientContext* context, ObjectId database,
   // Every relation is an entry, so one by-oid lookup answers for a table, a
   // view, a sequence and an index alike.
   if (context != nullptr) {
-    if (auto entry = connector::LookupEntryById(*context, ObjectId{oid})) {
+    if (auto entry = catalog::LookupEntryById(*context, ObjectId{oid})) {
       return std::string{entry->name.GetIdentifierName()};
     }
   }
@@ -603,23 +603,23 @@ uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name) {
   auto object_name = ParseObjectName(name, current_schema);
   // Every half of the relation namespace, in the order postgres resolves them.
   auto* client = &ctx.GetClientContext();
-  if (const auto schema_id = connector::FindSchemaId(
-        client, ctx.GetDatabaseId(), object_name.schema);
+  if (const auto schema_id =
+        catalog::FindSchemaId(client, ctx.GetDatabaseId(), object_name.schema);
       schema_id.isSet()) {
     if (const auto* table =
-          connector::FindTable(client, schema_id, object_name.relation)) {
+          catalog::FindTable(client, schema_id, object_name.relation)) {
       return table->oid;
     }
     if (auto view =
-          connector::FindView(client, schema_id, object_name.relation)) {
+          catalog::FindView(client, schema_id, object_name.relation)) {
       return catalog::IdOf(*view).id();
     }
     if (const auto* sequence =
-          connector::FindSequence(client, schema_id, object_name.relation)) {
+          catalog::FindSequence(client, schema_id, object_name.relation)) {
       return sequence->oid;
     }
     if (const auto* index =
-          connector::FindIndex(client, schema_id, object_name.relation)) {
+          catalog::FindIndex(client, schema_id, object_name.relation)) {
       return index->oid;
     }
   }
@@ -637,7 +637,7 @@ std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid) {
   if (oid == id::kPgInformationSchema.id()) {
     return "information_schema";
   }
-  if (auto schema = connector::FindSchema(context, ObjectId{oid})) {
+  if (auto schema = catalog::FindSchema(context, ObjectId{oid})) {
     return std::string{catalog::SchemaNameOf(*schema)};
   }
   return absl::StrCat(oid);
@@ -650,7 +650,7 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name) {
   if (name == "information_schema") {
     return id::kPgInformationSchema.id();
   }
-  if (auto schema = connector::FindSchema(nullptr, ctx.GetDatabaseId(), name)) {
+  if (auto schema = catalog::FindSchema(nullptr, ctx.GetDatabaseId(), name)) {
     return catalog::IdOf(*schema).id();
   }
   return kInvalidOid;

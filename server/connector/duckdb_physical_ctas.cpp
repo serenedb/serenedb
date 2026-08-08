@@ -26,7 +26,7 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "catalog/catalog.h"
-#include "connector/duckdb_catalog_sets.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
@@ -95,9 +95,9 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // fresh CTAS. Done at execution (once), not plan time.
   if (_on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT) {
     const auto schema_id =
-      connector::FindSchemaId(&context, _database_id, _schema_name);
+      catalog::FindSchemaId(&context, _database_id, _schema_name);
     if (schema_id.isSet() &&
-        connector::FindTable(&context, schema_id, table_name)) {
+        catalog::FindTable(&context, schema_id, table_name)) {
       catalog_impl.DropTable(catalog::ActingAs(context), _database_name,
                              _schema_name, table_name, /*cascade=*/true,
                              /*missing_ok=*/false);
@@ -113,8 +113,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CTASGlobalSinkState>();
   // Handed to the load rather than looked up by it: the nested insert asks the
   // schema for the table it is filling, and the answer is this entry.
-  auto target = connector::FindRelationEntry(&context, _database_id,
-                                             _schema_name, table_name);
+  auto target = catalog::FindRelationEntry(&context, _database_id, _schema_name,
+                                           table_name);
 
   auto sdb_state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);

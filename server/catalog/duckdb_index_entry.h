@@ -27,15 +27,15 @@
 #include <string>
 #include <utility>
 
+#include "catalog/duckdb_entry.h"
 #include "catalog/index.h"
-#include "connector/duckdb_entry.h"
 
 namespace sdb::search {
 
 class InvertedIndexStorage;
 
 }  // namespace sdb::search
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // Index entry for SereneDB indexes (secondary indexes
 // and inverted iresearch indexes).  Exists primarily so DuckDB recognises
@@ -82,4 +82,4 @@ class SereneDBIndexEntry final : public duckdb::IndexCatalogEntry {
   ObjectId _relation_id;
 };
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

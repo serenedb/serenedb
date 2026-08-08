@@ -28,16 +28,16 @@
 #include "auth/role_closure.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/schema.h"
 #include "catalog/sequence.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_table_entry.h"
-#include "connector/duckdb_view_entry.h"
 #include "pg/pg_catalog/pg_class.h"
 #include "pg/pg_catalog/pg_proc.h"
 #include "pg/pg_catalog/pg_type.h"
@@ -81,11 +81,11 @@ catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
     });
   };
 
-  connector::VisitCatalogSetEntries(
+  catalog::VisitCatalogSetEntries(
     context, database_id, duckdb::CatalogType::TABLE_ENTRY,
     [&](const duckdb::CreateSchemaInfo&, duckdb::CatalogEntry& entry) {
       if (const auto* table =
-            dynamic_cast<const connector::SereneDBTableEntry*>(&entry)) {
+            dynamic_cast<const catalog::SereneDBTableEntry*>(&entry)) {
         const auto id = catalog::IdOf(*table);
         add(PgClass::kId, id, 0, InfoComment(table->comment));
         for (const auto& column : table->GetColumns().Logical()) {
@@ -96,7 +96,7 @@ catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
         return;
       }
       const auto* view_entry =
-        dynamic_cast<const connector::SereneDBViewEntry*>(&entry);
+        dynamic_cast<const catalog::SereneDBViewEntry*>(&entry);
       if (view_entry == nullptr) {
         return;
       }
@@ -115,26 +115,26 @@ catalog::MaterializedData SystemTableSnapshot<PgDescription>::GetTableData() {
       }
     });
 
-  connector::VisitIndexes(
+  catalog::VisitIndexes(
     &context, database_id, [&](const catalog::IndexInfoRef& index) {
       add(PgClass::kId, index->GetId(), 0, index->Comment());
     });
 
-  connector::VisitSequences(
-    &context, database_id, [&](const connector::SereneDBSequenceEntry& seq) {
+  catalog::VisitSequences(
+    &context, database_id, [&](const catalog::SereneDBSequenceEntry& seq) {
       add(PgClass::kId, ObjectId{seq.oid}, 0, seq.Comment());
     });
 
-  connector::VisitTypes(
+  catalog::VisitTypes(
     &context, database_id, [&](const duckdb::TypeCatalogEntry& type) {
       add(PgType::kId, ObjectId{type.oid}, 0, InfoComment(type.comment));
     });
 
-  connector::VisitFunctions(&context, database_id,
-                            [&](const duckdb::MacroCatalogEntry& function) {
-                              add(PgProc::kId, ObjectId{function.oid}, 0,
-                                  InfoComment(function.comment));
-                            });
+  catalog::VisitFunctions(&context, database_id,
+                          [&](const duckdb::MacroCatalogEntry& function) {
+                            add(PgProc::kId, ObjectId{function.oid}, 0,
+                                InfoComment(function.comment));
+                          });
 
   auto result = CreateColumns<PgDescription>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

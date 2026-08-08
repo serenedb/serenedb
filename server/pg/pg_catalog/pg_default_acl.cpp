@@ -24,8 +24,8 @@
 #include "auth/role_closure.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -34,7 +34,7 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   std::vector<PgDefaultAcl> values;
   uint64_t oid = 1;
-  connector::VisitRoles(
+  catalog::VisitRoles(
     &_config.GetClientContext(), [&](const catalog::CreateRoleInfo& role) {
       for (const auto& entry : role.DefaultAcls()) {
         // defaclnamespace 0 == all schemas (the schema-less form).

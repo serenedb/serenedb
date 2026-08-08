@@ -34,7 +34,7 @@
 #include "catalog/entry.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/search_analyzer_impl.h"
+#include "search/search_analyzer_impl.h"
 
 namespace duckdb {
 

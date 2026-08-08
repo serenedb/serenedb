@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_table_entry.h"
+#include "catalog/duckdb_table_entry.h"
 
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -53,11 +53,11 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_index_scan_entry.h"
+#include "catalog/duckdb_schema_entry.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_index_scan_entry.h"
-#include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
@@ -70,7 +70,7 @@
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 duckdb::virtual_column_map_t StoreScanVirtualColumns(
@@ -305,22 +305,22 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   // carries the user columns (the generated PK is not stored as a value) plus
   // the rowid (PK bytes) virtual that DELETE/UPDATE consume.
   if (IsSearchTable()) {
-    auto& conn_ctx = GetSereneDBContext(context);
+    auto& conn_ctx = connector::GetSereneDBContext(context);
     auto reader = conn_ctx.SearchTxn().EnsureSearchTableReader(
       catalog::IdOf(*this),
       [&] { return GetSearchData()->GetDirectoryReader(); });
-    auto data = duckdb::make_uniq<TableScanBindData>();
+    auto data = duckdb::make_uniq<connector::TableScanBindData>();
     for (const auto& col : GetColumns().Logical()) {
       data->column_ids.emplace_back(col.CatalogOid());
       data->column_types.push_back(col.Type());
     }
     data->table_entry = this;
-    data->entry_kind = ScanEntryKind::SearchTable;
+    data->entry_kind = connector::ScanEntryKind::SearchTable;
     data->lookup_label = "search";
     data->snapshot = std::make_shared<search::InvertedIndexSnapshot>(
       irs::DirectoryReader{*reader});
     bind_data = std::move(data);
-    return CreateIResearchScanFunction();
+    return connector::CreateIResearchScanFunction();
   }
 
   auto function = duckdb::DuckTableEntry::GetScanFunction(context, bind_data);
@@ -669,7 +669,7 @@ duckdb::column_t RowIdentityColumnId(const duckdb::TableCatalogEntry& table) {
 
 std::shared_ptr<irs::DirectoryReader>
 SereneDBTableEntry::SearchSegmentInfoReader(duckdb::ClientContext& context) {
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = connector::GetSereneDBContext(context);
   return conn_ctx.SearchTxn().EnsureSearchTableReader(
     catalog::IdOf(*this),
     [&] { return GetSearchData()->GetDirectoryReader(); });
@@ -721,4 +721,4 @@ bool SereneDBTableEntry::ScanColumnSegmentInfo(
   return duckdb::DuckTableEntry::ScanColumnSegmentInfo(context, state, result);
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

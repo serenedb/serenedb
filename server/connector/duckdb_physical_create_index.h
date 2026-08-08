@@ -30,9 +30,12 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 class SereneDBSchemaEntry;
+
+}  // namespace sdb::catalog
+namespace sdb::connector {
 
 // One column of the relation a CREATE INDEX reads. A base table's list comes
 // off its entry and a view's off the view body, so the operator carries the
@@ -81,7 +84,8 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
     duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
     std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
     duckdb::unique_ptr<duckdb::Expression> bound_where,
-    SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality);
+    catalog::SereneDBSchemaEntry& schema_entry,
+    duckdb::idx_t estimated_cardinality);
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final;
@@ -132,7 +136,7 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   // same fact as a base of 0.
   duckdb::optional_idx _expression_slot_base;
   bool _feeds_inverted = false;
-  SereneDBSchemaEntry& _schema_entry;
+  catalog::SereneDBSchemaEntry& _schema_entry;
 };
 
 // create_plan callback registered with DuckDB's index type system.

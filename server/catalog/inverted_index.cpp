@@ -34,9 +34,9 @@
 #include "basics/serializer.h"
 #include "basics/simdjson_sink.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/entry.h"
 #include "catalog/persistence/inverted_index.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
@@ -431,7 +431,7 @@ bool CreateInvertedIndexInfo::IsKeywordField(
   if (!info->HasTextDictionary()) {
     return info->indexed_term_dict;
   }
-  auto dict = connector::FindSessionTokenizer(context, info->text_dictionary);
+  auto dict = catalog::FindSessionTokenizer(context, info->text_dictionary);
   if (!dict) {
     return false;
   }
@@ -513,7 +513,7 @@ TokenizerMap ResolveTokenizers(duckdb::ClientContext& context,
   if (wanted.empty()) {
     return dicts;
   }
-  connector::VisitSessionTokenizers(context, [&](TokenizerRef tokenizer) {
+  catalog::VisitSessionTokenizers(context, [&](TokenizerRef tokenizer) {
     const auto id = tokenizer->GetId();
     if (wanted.contains(id)) {
       dicts.emplace(id, std::move(tokenizer));
@@ -527,7 +527,7 @@ TokenizerMap ResolveTokenizers(duckdb::ClientContext* context,
                                const CreateIndexInfoBase& index) {
   TokenizerMap dicts;
   for (const auto id : index.GetTokenizers()) {
-    dicts.emplace(id, connector::FindTokenizerIn(context, db.GetCatalog(), id));
+    dicts.emplace(id, catalog::FindTokenizerIn(context, db.GetCatalog(), id));
   }
   return dicts;
 }

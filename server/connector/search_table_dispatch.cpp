@@ -110,7 +110,8 @@ void RejectIfSearchTable(catalog::TableEngine engine,
   }
 }
 
-SearchWriteTarget ResolveSearchWriteTarget(const SereneDBTableEntry& entry) {
+SearchWriteTarget ResolveSearchWriteTarget(
+  const catalog::SereneDBTableEntry& entry) {
   SearchWriteTarget target;
   target.table_id = catalog::IdOf(entry);
   target.data = entry.GetSearchData();
@@ -137,10 +138,10 @@ SearchWriteTarget ResolveSearchWriteTarget(const SereneDBTableEntry& entry) {
   return target;
 }
 
-std::vector<duckdb_primary_key::PKColumn> RowIdentityPKColumns(
+std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
   const SearchWriteTarget& target,
   std::span<const duckdb::idx_t> chunk_positions) {
-  std::vector<duckdb_primary_key::PKColumn> out;
+  std::vector<catalog::duckdb_primary_key::PKColumn> out;
   out.reserve(chunk_positions.size());
   for (size_t i = 0; i != chunk_positions.size(); ++i) {
     out.push_back({.input_col_idx = chunk_positions[i],

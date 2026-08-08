@@ -33,11 +33,11 @@
 #include "auth/role_closure.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
 #include "catalog/entry.h"
 #include "catalog/sequence.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_object_entry.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -49,9 +49,9 @@ namespace {
 // Through the caller's own transaction: a nextval inside the transaction that
 // created the sequence has to find it, and one whose sequence another session
 // dropped since must not.
-const SereneDBSequenceEntry& ResolveSequence(duckdb::ClientContext& context,
-                                             std::string_view qualified,
-                                             catalog::AclMode need) {
+const catalog::SereneDBSequenceEntry& ResolveSequence(
+  duckdb::ClientContext& context, std::string_view qualified,
+  catalog::AclMode need) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
   std::string_view schema_name = qname.Schema().empty()
                                    ? StaticStrings::kPublic
@@ -59,13 +59,13 @@ const SereneDBSequenceEntry& ResolveSequence(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto database_id = conn_ctx.GetDatabaseId();
-  auto schema = connector::FindSchema(&context, database_id, schema_name);
+  auto schema = catalog::FindSchema(&context, database_id, schema_name);
   if (!schema) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
-  const auto* seq = connector::FindSequence(&context, catalog::IdOf(*schema),
-                                            qname.Name().GetIdentifierName());
+  const auto* seq = catalog::FindSequence(&context, catalog::IdOf(*schema),
+                                          qname.Name().GetIdentifierName());
   if (seq == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("relation \"", qualified, "\" does not exist"));
@@ -104,7 +104,8 @@ uint64_t GetValue(const catalog::SequenceOptions& opts, uint64_t raw) {
     ERR_MSG("setval: value out of bounds for sequence \"", qualified, "\""));
 }
 
-uint64_t Nextval(const SereneDBSequenceEntry& seq, std::string_view qualified) {
+uint64_t Nextval(const catalog::SereneDBSequenceEntry& seq,
+                 std::string_view qualified) {
   const auto& opts = seq.Options();
   uint64_t raw = seq.Reserve(opts.increment) + opts.increment - 1;
   if (!opts.cycle && raw > opts.max_value) [[unlikely]] {

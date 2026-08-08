@@ -18,20 +18,20 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_static_schema.h"
+#include "catalog/duckdb_static_schema.h"
 
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 
 #include "basics/static_strings.h"
+#include "catalog/duckdb_entry_builders.h"
+#include "catalog/duckdb_system_table_entry.h"
 #include "catalog/function.h"
 #include "catalog/view.h"
 #include "catalog/virtual_table.h"
-#include "connector/duckdb_entry_builders.h"
-#include "connector/duckdb_system_table_entry.h"
 #include "pg/system_catalog.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeSystemTableEntry(
@@ -179,4 +179,4 @@ duckdb::unique_ptr<duckdb::DefaultGenerator> MakeStaticFunctionGenerator(
                                                          table_functions);
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

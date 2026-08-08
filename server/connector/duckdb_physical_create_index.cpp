@@ -51,6 +51,10 @@
 #include "basics/primary_key.hpp"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_schema_entry.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
@@ -58,12 +62,8 @@
 #include "catalog/secondary_index.h"
 #include "catalog/store/store.h"
 #include "catalog/view.h"
-#include "connector/duckdb_catalog.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/duckdb_schema_entry.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/index_expression.hpp"
 #include "connector/inverted_index_options_util.h"
 #include "connector/inverted_store_index.h"
@@ -290,7 +290,8 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
   duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
   duckdb::unique_ptr<duckdb::Expression> bound_where,
-  SereneDBSchemaEntry& schema_entry, duckdb::idx_t estimated_cardinality)
+  catalog::SereneDBSchemaEntry& schema_entry,
+  duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
@@ -966,7 +967,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
                     ERR_MSG("CreateIndexInfo is null in create_plan"));
   }
 
-  auto* sdb_catalog = dynamic_cast<SereneDBCatalog*>(&op.table.ParentCatalog());
+  auto* sdb_catalog =
+    dynamic_cast<catalog::SereneDBCatalog*>(&op.table.ParentCatalog());
   if (!sdb_catalog) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -978,7 +980,8 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
                 .GetIdentifierName(),
               ")"));
   }
-  auto& schema_entry = op.table.ParentSchema().Cast<SereneDBSchemaEntry>();
+  auto& schema_entry =
+    op.table.ParentSchema().Cast<catalog::SereneDBSchemaEntry>();
   auto database_id = sdb_catalog->GetDatabaseId();
 
   catalog::IndexRelation relation;
@@ -986,12 +989,12 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   std::vector<duckdb::LogicalIndex> pk_positions;
 
   if (op.table.type == duckdb::CatalogType::VIEW_ENTRY) {
-    const auto schema_id = FindSchemaId(&input.context, database_id,
-                                        schema_entry.name.GetIdentifierName());
-    relation.view =
-      schema_id.isSet()
-        ? FindView(&input.context, schema_id, op.table.name.GetIdentifierName())
-        : nullptr;
+    const auto schema_id = catalog::FindSchemaId(
+      &input.context, database_id, schema_entry.name.GetIdentifierName());
+    relation.view = schema_id.isSet()
+                      ? catalog::FindView(&input.context, schema_id,
+                                          op.table.name.GetIdentifierName())
+                      : nullptr;
     if (relation.view != nullptr) {
       relation.perm = relation.view->permissions;
     }
@@ -1028,7 +1031,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     }
   } else {
     auto& table_catalog = op.table.Cast<duckdb::TableCatalogEntry>();
-    auto& table_entry = RequireBaseTable(table_catalog);
+    auto& table_entry = catalog::RequireBaseTable(table_catalog);
     relation.table = table_entry.Definition();
     relation.perm = table_entry.permissions;
     const auto& entry_columns = table_entry.GetColumns();

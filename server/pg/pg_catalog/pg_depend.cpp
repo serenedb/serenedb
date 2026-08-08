@@ -25,10 +25,10 @@
 #include "auth/role_closure.h"
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_object_entry.h"
 #include "catalog/table.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_dependency.h"
-#include "connector/duckdb_object_entry.h"
 #include "pg/pg_catalog/pg_attrdef.h"
 #include "pg/pg_catalog/pg_authid.h"
 #include "pg/pg_catalog/pg_class.h"
@@ -80,17 +80,17 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   // not be inside.
   const auto indexes = catalog::CollectIndexOwners(context, db_id);
   containers::FlatHashMap<ObjectId, catalog::TableInfoRef> tables;
-  connector::VisitTables(
+  catalog::VisitTables(
     context, db_id,
     [&](const catalog::TableInfoRef& table, const Permissions&) {
       tables.emplace(catalog::IdOf(*table), table);
     });
   std::vector<const duckdb::ViewCatalogEntry*> views;
-  connector::VisitViews(
+  catalog::VisitViews(
     context, db_id,
     [&](const duckdb::ViewCatalogEntry& view) { views.push_back(&view); });
   std::vector<Referenced> functions;
-  connector::VisitFunctions(
+  catalog::VisitFunctions(
     context, db_id, [&](const duckdb::MacroCatalogEntry& function) {
       functions.push_back({ObjectId{function.oid},
                            ObjectId{function.ParentSchema().oid}, ObjectId{},
@@ -100,19 +100,19 @@ std::vector<PgDepend> CollectEdges(duckdb::ClientContext* context,
   // names a sequence and a column's declared type names a type, and neither row
   // is reachable from the dependent's side of the graph.
   std::vector<Referenced> sequences;
-  connector::VisitSequences(
-    context, db_id, [&](const connector::SereneDBSequenceEntry& sequence) {
+  catalog::VisitSequences(
+    context, db_id, [&](const catalog::SereneDBSequenceEntry& sequence) {
       sequences.push_back({ObjectId{sequence.oid},
                            ObjectId{sequence.ParentSchema().oid},
                            sequence.GetOwnerTableId(), Oid{PgClass::kId}});
     });
   std::vector<Referenced> types;
-  connector::VisitTypes(
+  catalog::VisitTypes(
     context, db_id, [&](const duckdb::TypeCatalogEntry& type) {
       types.push_back({ObjectId{type.oid}, ObjectId{type.ParentSchema().oid},
                        ObjectId{}, Oid{PgType::kId}});
     });
-  const connector::DependencyView dependents{context};
+  const catalog::DependencyView dependents{context};
   const auto attnum = [](const duckdb::CreateTableInfo& info,
                          ObjectId col) -> int32_t {
     const auto* column = catalog::ColumnById(info, col);

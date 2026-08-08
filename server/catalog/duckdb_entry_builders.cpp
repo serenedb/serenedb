@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_entry_builders.h"
+#include "catalog/duckdb_entry_builders.h"
 
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
@@ -36,6 +36,15 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_index_scan_entry.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_schema_entry.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
@@ -46,18 +55,9 @@
 #include "catalog/table.h"
 #include "catalog/tokenizer.h"
 #include "catalog/view.h"
-#include "connector/duckdb_catalog.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_dependency.h"
-#include "connector/duckdb_index_entry.h"
-#include "connector/duckdb_index_scan_entry.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_schema_entry.h"
-#include "connector/duckdb_table_entry.h"
-#include "connector/duckdb_view_entry.h"
 #include "pg/sql_utils.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 // The column definitions and constraints of a table entry, plus the positions
@@ -681,4 +681,4 @@ void RefreshEntrySiblings(duckdb::ClientContext* context,
   }
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

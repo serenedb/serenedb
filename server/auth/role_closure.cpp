@@ -27,8 +27,8 @@
 #include <vector>
 
 #include "auth/acl.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/role.h"
-#include "connector/duckdb_catalog_sets.h"
 
 namespace sdb::auth {
 namespace {
@@ -103,7 +103,7 @@ std::shared_ptr<const RoleCache> gRoleCache =
 
 std::shared_ptr<const RoleGraph> LoadRoleGraph(duckdb::ClientContext* context) {
   auto graph = std::make_shared<RoleGraph>();
-  connector::VisitRoles(context, [&](const catalog::CreateRoleInfo& role) {
+  catalog::VisitRoles(context, [&](const catalog::CreateRoleInfo& role) {
     auto& node = graph->nodes[role.GetId()];
     node.name = role.GetName();
     node.member_of.assign(role.MemberOf().begin(), role.MemberOf().end());
@@ -115,7 +115,7 @@ std::shared_ptr<const RoleGraph> LoadRoleGraph(duckdb::ClientContext* context) {
 // A transaction reads its own uncommitted roles, so it can neither use the
 // shared cache nor publish into it.
 bool ReadsOwnRoles(duckdb::ClientContext* context) {
-  return context != nullptr && connector::HasUncommittedRoles(*context);
+  return context != nullptr && catalog::HasUncommittedRoles(*context);
 }
 
 }  // namespace

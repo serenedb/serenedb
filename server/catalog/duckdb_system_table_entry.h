@@ -25,7 +25,7 @@
 
 #include "catalog/virtual_table.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // DuckDB table entry for SereneDB system tables (pg_catalog,
 // information_schema). Wraps a VirtualTable and provides a scan function that
@@ -54,4 +54,4 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
   const catalog::VirtualTable& _virtual_table;
 };
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

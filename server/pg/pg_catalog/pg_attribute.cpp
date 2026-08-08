@@ -26,12 +26,12 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/schema.h"
 #include "catalog/user_type.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
@@ -102,7 +102,7 @@ Oid GetCollationForType(int32_t type_oid) {
   }
 }
 
-void EmitColumnsForTable(const connector::SereneDBTableEntry& table,
+void EmitColumnsForTable(const catalog::SereneDBTableEntry& table,
                          std::vector<PgAttribute>& values) {
   const auto& columns = table.GetColumns();
 
@@ -245,15 +245,15 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   std::vector<PgAttribute> values;
 
-  connector::VisitTableEntries(_config.GetClientContext(), GetDatabaseId(),
-                               [&](const duckdb::CreateSchemaInfo&,
-                                   const connector::SereneDBTableEntry& table) {
-                                 EmitColumnsForTable(table, values);
-                               });
-  connector::VisitTypes(&_config.GetClientContext(), GetDatabaseId(),
-                        [&](const duckdb::TypeCatalogEntry& type) {
-                          EmitColumnsForCompositeType(type, values);
-                        });
+  catalog::VisitTableEntries(_config.GetClientContext(), GetDatabaseId(),
+                             [&](const duckdb::CreateSchemaInfo&,
+                                 const catalog::SereneDBTableEntry& table) {
+                               EmitColumnsForTable(table, values);
+                             });
+  catalog::VisitTypes(&_config.GetClientContext(), GetDatabaseId(),
+                      [&](const duckdb::TypeCatalogEntry& type) {
+                        EmitColumnsForCompositeType(type, values);
+                      });
 
   VisitSystemTables(
     [&](const catalog::VirtualTable& table, Oid /*schema_oid*/) {

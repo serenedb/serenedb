@@ -47,11 +47,11 @@
 #include <iresearch/search/vector_similarity_filter.hpp>
 
 #include "catalog/catalog.h"
+#include "catalog/duckdb_index_scan_entry.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_table_entry.h"
 #include "connector/functions/vector.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_printer.hpp"
@@ -176,18 +176,18 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
 }
 
 ObjectId TableScanBindData::RelationId() const {
-  return ScanRelationId(*table_entry);
+  return catalog::ScanRelationId(*table_entry);
 }
 
 bool SereneDBScanBindData::IsColumnNotNull(catalog::ColumnId col_id) const {
   if (GetKind() != Kind::Table) {
     return false;
   }
-  return TableEntryColumnNotNull(*table_entry, col_id);
+  return catalog::TableEntryColumnNotNull(*table_entry, col_id);
 }
 
 std::string_view TableScanBindData::RelationName() const {
-  return ScanRelationName(*table_entry);
+  return catalog::ScanRelationName(*table_entry);
 }
 
 catalog::ColumnId TableScanBindData::ColumnIdByName(
@@ -201,13 +201,13 @@ catalog::ColumnId TableScanBindData::ColumnIdByName(
 
 std::string_view TableScanBindData::ColumnNameById(
   catalog::ColumnId col_id) const {
-  const auto* column = TableEntryColumn(*table_entry, col_id);
+  const auto* column = catalog::TableEntryColumn(*table_entry, col_id);
   return column ? column->Name().GetIdentifierName() : std::string_view{};
 }
 
 duckdb::LogicalType TableScanBindData::ColumnTypeById(
   catalog::ColumnId col_id) const {
-  const auto* column = TableEntryColumn(*table_entry, col_id);
+  const auto* column = catalog::TableEntryColumn(*table_entry, col_id);
   return column ? column->Type() : duckdb::LogicalType::INVALID;
 }
 
@@ -639,7 +639,8 @@ std::string ProjectionDisplayName(const SereneDBScanBindData& bind,
     }
     return names[col_id];
   }
-  if (const auto pk_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
+  if (const auto pk_idx =
+        catalog::SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
       pk_idx != duckdb::DConstants::INVALID_INDEX) {
     if (const auto* tbd = dynamic_cast<const TableScanBindData*>(&bind)) {
       const auto& cols = tbd->table_entry->GetColumns();
@@ -662,10 +663,10 @@ std::string ProjectionDisplayName(const SereneDBScanBindData& bind,
   if (col_id == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
     return "file_row_number";
   }
-  if (col_id == kColumnIdentifierTableOid) {
+  if (col_id == catalog::kColumnIdentifierTableOid) {
     return "tableoid";
   }
-  if (col_id == kColumnIdentifierGeneratedPk) {
+  if (col_id == catalog::kColumnIdentifierGeneratedPk) {
     return "generated_pk";
   }
   return absl::StrCat("column_", col_id);

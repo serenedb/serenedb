@@ -31,14 +31,14 @@
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/databases.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_schema_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/schema.h"
 #include "catalog/store/data_store.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_catalog.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_transaction.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/rbac.h"
@@ -67,8 +67,8 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     // Every serenedb on-disk format sits behind our storage version, so a
     // duckdb-version database is unaffected by anything we change.
     options.options.emplace("storage_version", duckdb::Value{"serenedb_v1"});
-    return duckdb::make_uniq<SereneDBCatalog>(db, database_id,
-                                              std::move(public_schema));
+    return duckdb::make_uniq<catalog::SereneDBCatalog>(
+      db, database_id, std::move(public_schema));
   };
 
   if (info.path.empty()) {
@@ -85,7 +85,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     // belongs to the catalog this call is about to build, and
     // SereneDBCatalog::Initialize is where it lands.
     auto public_schema = catalog::CreateDatabase(ax, name, if_not_exists);
-    const auto database_id = FindDatabase(&context, name).Id();
+    const auto database_id = catalog::FindDatabase(&context, name).Id();
     if (!database_id.isSet()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -100,7 +100,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("database \"", name, "\" not found"));
   }
-  auto database = FindDatabase(nullptr, ObjectId{id});
+  auto database = catalog::FindDatabase(nullptr, ObjectId{id});
   if (!database) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("database \"", name, "\" not found"));
@@ -116,48 +116,6 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 
 }  // namespace
 
-void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
-  auto state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-
-  auto ax = catalog::NoAccessCheck(context);
-  if (state) {
-    ax.role = state->GetConnectionContext().GetRoleId();
-  }
-
-  // The bind context outlives nothing: its connection holds this attachment
-  // and its ConnectionContext holds the catalog Database going away here.
-  catalog::DataStore::ForgetDatabase(GetDatabaseId());
-
-  // Nothing of this catalog's own dependency graph has to be retired: an edge
-  // is kept by its dependent's catalog, so every edge any object here emitted
-  // dies with this attachment's dependency manager. Only the database entry's
-  // own edges live elsewhere -- in the cluster-global catalog -- and
-  // DropDatabase below is what retires those.
-  //
-  // The foreign servers still have to be read off this catalog's own set, which
-  // is the last point anything can: each one holds an instance-global DuckDB
-  // attachment that the cascade does not touch. The attachment identity is
-  // captured with the name, so the detach below can only remove what this drop
-  // actually saw -- never an attachment a concurrent same-named CREATE SERVER
-  // put there in between.
-  const auto servers = CatalogForeignServers(*this);
-  std::vector<catalog::ForeignServerAttachment> detach_servers;
-  detach_servers.reserve(servers.size());
-  for (const auto& [server, perm] : servers) {
-    auto name = std::string{server->GetName()};
-    detach_servers.emplace_back(catalog::ForeignServerAttachment{
-      name, catalog::ForeignServerAttachmentId(name)});
-  }
-
-  duckdb::shared_ptr<void> keep_alive = GetAttached().shared_from_this();
-  catalog::DropDatabase(ax, GetName().GetIdentifierName(),
-                        std::move(keep_alive));
-  for (const auto& server : detach_servers) {
-    catalog::DetachForeignServerAttachment(server.name, server.attachment_id);
-  }
-}
-
 void AttachDatabaseCatalog(ObjectId id, std::string_view name) {
   auto& manager =
     duckdb::DatabaseManager::Get(DuckDBEngine::Instance().instance());
@@ -170,8 +128,8 @@ void AttachDatabaseCatalog(ObjectId id, std::string_view name) {
   duckdb::AttachInfo info;
   info.name = duckdb::Identifier{name};
   info.path = std::to_string(id.id());
-  info.options.emplace("type",
-                       duckdb::Value{std::string{kSereneDBCatalogType}});
+  info.options.emplace(
+    "type", duckdb::Value{std::string{catalog::kSereneDBCatalogType}});
   duckdb::AttachOptions options{info.options, duckdb::AccessMode::READ_WRITE};
   options.defer_storage_load = true;
   conn->BeginTransaction();
@@ -193,7 +151,7 @@ void DiscardDatabaseAttachment(std::string_view name) {
     return;
   }
   catalog::DataStore::ForgetDatabase(
-    attached->GetCatalog().Cast<SereneDBCatalog>().GetDatabaseId());
+    attached->GetCatalog().Cast<catalog::SereneDBCatalog>().GetDatabaseId());
   // Nothing to write back: either the storage was never opened, or the
   // database it belonged to is gone.
   attached->Close(duckdb::DatabaseCloseAction::SKIP_CHECKPOINT);

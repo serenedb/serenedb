@@ -31,9 +31,9 @@
 
 #include "basics/duckdb_engine.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/foreign_server.h"
 #include "catalog/store/data_store.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -48,8 +48,8 @@ bool DropForeignServerRow(ConnectionContext& conn_ctx, std::string_view name,
   catalog::JoinStoreTransaction(&context);
   catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
   const auto database_id =
-    connector::FindDatabase(&context, conn_ctx.GetDatabase()).Id();
-  return connector::DropEntryObject(
+    catalog::FindDatabase(&context, conn_ctx.GetDatabase()).Id();
+  return catalog::DropEntryObject(
     catalog::ActingAs(conn_ctx.GetRoleId(), context),
     duckdb::CatalogType::FOREIGN_SERVER_ENTRY, database_id, database_id, name,
     cascade, missing_ok);
@@ -133,8 +133,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // our row while it ran -- that DROP saw no attachment yet, so it detached
   // nothing. Own what we attached: take it back down rather than leaving an
   // attachment holding the alias with no row to drop it by.
-  if (!connector::FindForeignServer(&conn_ctx.GetClientContext(), db_id,
-                                    name)) {
+  if (!catalog::FindForeignServer(&conn_ctx.GetClientContext(), db_id, name)) {
     catalog::DetachForeignServerAttachment(name, attachment);
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("server \"", name,

@@ -30,11 +30,11 @@
 #include <string>
 #include <string_view>
 
+#include "catalog/duckdb_schema_entry.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/object_id.h"
-#include "connector/duckdb_schema_entry.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info);
 
@@ -260,4 +260,4 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
                                          ObjectId database_id,
                                          std::string_view only_schema = {});
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

@@ -24,7 +24,7 @@
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <string>
 
-#include "catalog/search_analyzer_impl.h"
+#include "search/search_analyzer_impl.h"
 
 namespace sdb::catalog::persistence {
 

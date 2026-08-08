@@ -40,14 +40,14 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_primary_key.h"
+#include "catalog/duckdb_schema_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_primary_key.h"
-#include "connector/duckdb_schema_entry.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
@@ -64,7 +64,7 @@ struct SearchInsertGlobalState : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
   std::vector<catalog::ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
-  std::vector<duckdb_primary_key::PKColumn> pk_columns;
+  std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
   std::shared_ptr<catalog::SequenceCounter> generated_pk_seq;
   std::shared_lock<std::shared_mutex> table_lock;
 
@@ -116,7 +116,7 @@ struct SearchInsertLocalState : duckdb::LocalSinkState {
 };
 
 SearchWriteTarget CtasWriteTarget(const duckdb::CreateTableInfo& table,
-                                  const SereneDBTableEntry& entry) {
+                                  const catalog::SereneDBTableEntry& entry) {
   SearchWriteTarget target;
   target.table_id = catalog::IdOf(table);
   target.data = entry.GetSearchData();
@@ -127,7 +127,7 @@ SearchWriteTarget CtasWriteTarget(const duckdb::CreateTableInfo& table,
     target.column_ids.emplace_back(col.CatalogOid());
     target.chunk_types.push_back(col.Type());
   }
-  target.pk_columns = duckdb_primary_key::BuildPKColumns(table);
+  target.pk_columns = catalog::duckdb_primary_key::BuildPKColumns(table);
   if (target.pk_columns.empty()) {
     target.generated_pk_seq = entry.GetGeneratedPkSequence();
     SDB_ASSERT(target.generated_pk_seq);
@@ -139,7 +139,7 @@ catalog::TableInfoRef CreateCtasTable(duckdb::ClientContext& context,
                                       SearchInsertGlobalState& state,
                                       duckdb::BoundCreateTableInfo& info,
                                       duckdb::SchemaCatalogEntry& schema) {
-  auto& schema_entry = schema.Cast<SereneDBSchemaEntry>();
+  auto& schema_entry = schema.Cast<catalog::SereneDBSchemaEntry>();
   auto database_id = schema_entry.GetDatabaseId();
   auto& create_info = info.Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
@@ -179,7 +179,7 @@ catalog::TableInfoRef CreateCtasTable(duckdb::ClientContext& context,
     return nullptr;
   }
 
-  auto database = FindDatabase(&context, database_id);
+  auto database = catalog::FindDatabase(&context, database_id);
   SDB_ASSERT(database);
 
   state.ctas_mode = true;
@@ -235,8 +235,9 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
     if (!table) {
       return nullptr;
     }
-    const auto* entry = FindTableEntryIn(
-      &context, SchemaDatabaseId(&context, catalog::ParentIdOf(*table)),
+    const auto* entry = catalog::FindTableEntryIn(
+      &context,
+      catalog::SchemaDatabaseId(&context, catalog::ParentIdOf(*table)),
       catalog::IdOf(*table));
     if (entry == nullptr) {
       return nullptr;

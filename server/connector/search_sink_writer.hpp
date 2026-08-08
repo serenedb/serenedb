@@ -41,12 +41,12 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/containers/node_hash_map.h"
 #include "basics/primary_key.hpp"
+#include "catalog/duckdb_primary_key.h"
 #include "catalog/inverted_index.h"
-#include "catalog/search_analyzer_impl.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
 #include "search/inverted_index_storage.h"
+#include "search/search_analyzer_impl.h"
 #include "search_remove_filter.hpp"
 
 namespace duckdb {
@@ -329,7 +329,7 @@ inline std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
 void WriteChunkToSearchSink(
   SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   std::span<const catalog::ColumnId> column_ids,
-  std::span<const duckdb_primary_key::PKColumn> pk_columns,
+  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
   bool uses_generated_pk, uint64_t pk_base);
 
 }  // namespace sdb::connector

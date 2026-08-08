@@ -47,10 +47,10 @@
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
 #include <ranges>
 
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
-#include "connector/duckdb_table_entry.h"
 #include "core/metadata/snapshot/iceberg_snapshot.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -376,7 +376,8 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       return out;
     }
     if (cat_type == "serenedb") {
-      const auto* sdb_entry = dynamic_cast<const SereneDBTableEntry*>(&entry);
+      const auto* sdb_entry =
+        dynamic_cast<const catalog::SereneDBTableEntry*>(&entry);
       if (!sdb_entry) {
         return std::nullopt;
       }

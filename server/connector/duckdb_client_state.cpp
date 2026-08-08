@@ -34,8 +34,8 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/log.h"
 #include "basics/system-compiler.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
 #include "pg/errcodes.h"
@@ -244,10 +244,10 @@ void SereneDBClientState::TransactionCommit(
     auth::BumpRoleGeneration();
   }
   if (std::exchange(_connection_ctx->wrote_databases, false)) {
-    BumpDatabaseGeneration();
+    catalog::BumpDatabaseGeneration();
   }
   if (std::exchange(_connection_ctx->wrote_schemas, false)) {
-    BumpSchemaGeneration();
+    catalog::BumpSchemaGeneration();
   }
   _connection_ctx->Commit();
 }
@@ -259,10 +259,10 @@ void SereneDBClientState::TransactionRollback(
     auth::BumpRoleGeneration();
   }
   if (std::exchange(_connection_ctx->wrote_databases, false)) {
-    BumpDatabaseGeneration();
+    catalog::BumpDatabaseGeneration();
   }
   if (std::exchange(_connection_ctx->wrote_schemas, false)) {
-    BumpSchemaGeneration();
+    catalog::BumpSchemaGeneration();
   }
   _connection_ctx->Rollback();
 }

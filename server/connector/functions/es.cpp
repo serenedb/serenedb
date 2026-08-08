@@ -45,14 +45,14 @@
 #include "basics/simdjson_sink.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/with_option_resolver.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
@@ -405,8 +405,8 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
   auto& catalog = catalog::GetCatalog();
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
-  if (connector::FindTableEntry(&context, conn_ctx.GetDatabaseId(), kEsSchema,
-                                data.index) == nullptr) {
+  if (catalog::FindTableEntry(&context, conn_ctx.GetDatabaseId(), kEsSchema,
+                              data.index) == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
@@ -446,14 +446,14 @@ void EsMappingExecute(duckdb::ClientContext& context,
   auto& conn_ctx = GetSereneDBContext(context);
   const auto database_id = conn_ctx.GetDatabaseId();
   const auto* table =
-    connector::FindTableEntry(&context, database_id, kEsSchema, data.index);
+    catalog::FindTableEntry(&context, database_id, kEsSchema, data.index);
   if (table == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
 
   containers::FlatHashSet<catalog::ColumnId> inverted_columns;
-  for (const auto& index : connector::RelationIndexes(
+  for (const auto& index : catalog::RelationIndexes(
          &context, catalog::ParentIdOf(*table), catalog::IdOf(*table))) {
     if (!index->IsInverted()) {
       continue;
@@ -526,10 +526,10 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     // index set from inside the relation set's own walk.
     std::vector<std::pair<ObjectId, ObjectId>> tables;
     std::vector<std::string> names;
-    connector::VisitTableEntries(
+    catalog::VisitTableEntries(
       context, database_id,
       [&](const duckdb::CreateSchemaInfo& schema,
-          const connector::SereneDBTableEntry& table) {
+          const catalog::SereneDBTableEntry& table) {
         if (catalog::SchemaNameOf(schema) != kEsSchema) {
           return;
         }
@@ -538,7 +538,7 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
       });
     for (size_t i = 0; i != tables.size(); ++i) {
       uint64_t docs_count = 0;
-      for (const auto& index : connector::RelationIndexes(
+      for (const auto& index : catalog::RelationIndexes(
              &context, tables[i].first, tables[i].second)) {
         if (!index->IsInverted()) {
           continue;
@@ -620,7 +620,7 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   data->index = index_arg.GetValue<std::string>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  const auto* table = connector::FindTableEntry(
+  const auto* table = catalog::FindTableEntry(
     &context, conn_ctx.GetDatabaseId(), kEsSchema, data->index);
   if (table == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
@@ -1075,7 +1075,7 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   const auto database_id = conn_ctx.GetDatabaseId();
   auto refresh_table = [&](ObjectId schema_id, ObjectId table_id) {
     for (const auto& index :
-         connector::RelationIndexes(&context, schema_id, table_id)) {
+         catalog::RelationIndexes(&context, schema_id, table_id)) {
       if (!index->IsInverted()) {
         continue;
       }
@@ -1089,10 +1089,10 @@ void EsRefreshExecute(duckdb::ClientContext& context,
     // Collect-then-resolve: reading a table's indexes opens the schema's
     // index set from inside the relation set's own walk.
     std::vector<std::pair<ObjectId, ObjectId>> tables;
-    connector::VisitTableEntries(
+    catalog::VisitTableEntries(
       context, database_id,
       [&](const duckdb::CreateSchemaInfo& schema,
-          const connector::SereneDBTableEntry& table) {
+          const catalog::SereneDBTableEntry& table) {
         if (catalog::SchemaNameOf(schema) == kEsSchema) {
           tables.emplace_back(catalog::ParentIdOf(table), catalog::IdOf(table));
         }
@@ -1102,7 +1102,7 @@ void EsRefreshExecute(duckdb::ClientContext& context,
     }
   } else {
     const auto* table =
-      connector::FindTableEntry(&context, database_id, kEsSchema, data.index);
+      catalog::FindTableEntry(&context, database_id, kEsSchema, data.index);
     if (table == nullptr) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                       ERR_MSG("no such index [", data.index, "]"));

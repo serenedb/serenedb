@@ -31,10 +31,10 @@
 #include "basics/file_utils.h"
 #include "basics/lifecycle.h"
 #include "basics/number_of_cores.h"
+#include "catalog/duckdb_global_catalog.h"
 #include "catalog/store/store.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_foreign_server_function.h"
-#include "connector/duckdb_global_catalog.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -237,7 +237,7 @@ namespace sdb::server::query {
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config);
-  connector::RegisterSereneDBGlobalStorage(config);
+  catalog::RegisterSereneDBGlobalStorage(config);
   connector::RegisterConfigVariables(config);
   // Server-mode DuckDB state lives under the datadir, never in cwd-relative
   // temp files or ~/.duckdb fallbacks (shell/psql subcommands return before

@@ -29,7 +29,7 @@ class Catalog;
 class SchemaCatalogEntry;
 
 }  // namespace duckdb
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // pg_catalog and information_schema. Their content -- the system tables, the
 // system views and the builtin macros -- is fixed when the process starts and
@@ -48,4 +48,4 @@ duckdb::unique_ptr<duckdb::DefaultGenerator> MakeStaticFunctionGenerator(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   bool table_functions);
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

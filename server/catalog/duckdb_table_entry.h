@@ -29,8 +29,8 @@
 #include <optional>
 #include <span>
 
+#include "catalog/duckdb_entry.h"
 #include "catalog/table.h"
-#include "connector/duckdb_entry.h"
 
 namespace irs {
 
@@ -38,7 +38,7 @@ class DirectoryReader;
 class IndexReader;
 
 }  // namespace irs
-namespace sdb::connector {
+namespace sdb::catalog {
 
 struct IResearchColumnBinding {
   duckdb::idx_t column_id;
@@ -307,4 +307,4 @@ std::vector<int16_t> KeyConstraintAttnums(
 // reinterpret_cast assertion.
 SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table);
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

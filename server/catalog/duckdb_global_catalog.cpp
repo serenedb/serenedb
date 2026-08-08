@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_global_catalog.h"
+#include "catalog/duckdb_global_catalog.h"
 
 #include <absl/strings/str_cat.h>
 
@@ -31,10 +31,10 @@
 
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
-#include "connector/duckdb_dependency.h"
-#include "connector/duckdb_schema_entry.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_schema_entry.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 duckdb::unique_ptr<duckdb::Catalog> AttachGlobal(
@@ -180,4 +180,4 @@ void ModifyGlobalDatabase(duckdb::ClientContext& context,
   duckdb::MetaTransaction::Get(context).ModifyDatabase(*db, modification);
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

@@ -23,8 +23,8 @@
 #include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/tokenizer.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -40,17 +40,17 @@ template<>
 catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
   std::vector<PgTsDict> values;
 
-  connector::VisitTokenizers(&_config.GetClientContext(), GetDatabaseId(),
-                             [&](const catalog::CreateTokenizerInfo& tokenizer,
-                                 const catalog::Permissions& perm) {
-                               values.push_back({
-                                 .oid = tokenizer.GetId().id(),
-                                 .dictname = tokenizer.GetName(),
-                                 .dictnamespace = tokenizer.GetParentId().id(),
-                                 .dictowner = perm.owner,
-                                 .dicttemplate = 0,
-                               });
+  catalog::VisitTokenizers(&_config.GetClientContext(), GetDatabaseId(),
+                           [&](const catalog::CreateTokenizerInfo& tokenizer,
+                               const catalog::Permissions& perm) {
+                             values.push_back({
+                               .oid = tokenizer.GetId().id(),
+                               .dictname = tokenizer.GetName(),
+                               .dictnamespace = tokenizer.GetParentId().id(),
+                               .dictowner = perm.owner,
+                               .dicttemplate = 0,
                              });
+                           });
 
   auto result = CreateColumns<PgTsDict>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

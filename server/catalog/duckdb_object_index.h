@@ -35,7 +35,7 @@ class CatalogSet;
 class ClientContext;
 
 }  // namespace duckdb
-namespace sdb::connector {
+namespace sdb::catalog {
 
 class SereneDBCatalog;
 
@@ -108,4 +108,4 @@ duckdb::optional_ptr<duckdb::CatalogEntry> LookupEntryById(
 duckdb::optional_ptr<duckdb::CatalogEntry> LookupEntryById(
   duckdb::ClientContext& context, ObjectId database_id, ObjectId id);
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

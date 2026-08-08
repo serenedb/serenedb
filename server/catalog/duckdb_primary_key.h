@@ -37,12 +37,12 @@
 #include "basics/assert.h"
 #include "basics/primary_key.hpp"  // for AppendSigned, ReadSigned
 #include "basics/string_utils.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/sql_exception_macro.h"
 
-namespace sdb::connector::duckdb_primary_key {
+namespace sdb::catalog::duckdb_primary_key {
 
 struct PKColumn {
   size_t input_col_idx;
@@ -229,7 +229,8 @@ inline void Create(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
 
 // Sortable signed encoding -- caller must have reserved the id.
 inline void AppendGenerated(std::string& key, uint64_t generated_id) {
-  primary_key::AppendSigned(key, std::bit_cast<int64_t>(generated_id));
+  connector::primary_key::AppendSigned(key,
+                                       std::bit_cast<int64_t>(generated_id));
 }
 
-}  // namespace sdb::connector::duckdb_primary_key
+}  // namespace sdb::catalog::duckdb_primary_key

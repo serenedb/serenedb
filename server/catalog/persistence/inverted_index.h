@@ -33,8 +33,8 @@
 
 #include "basics/containers/node_hash_map.h"
 #include "catalog/persistence/index.h"
-#include "catalog/search_analyzer_impl.h"
 #include "catalog/table_options.h"
+#include "search/search_analyzer_impl.h"
 
 namespace sdb::catalog::persistence {
 

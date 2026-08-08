@@ -36,15 +36,15 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_scan_entry.h"
+#include "catalog/duckdb_system_table_entry.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_index_scan_entry.h"
-#include "connector/duckdb_system_table_entry.h"
-#include "connector/duckdb_table_entry.h"
-#include "connector/duckdb_view_entry.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -105,18 +105,18 @@ struct Governed {
 
 Governed SereneDBRelation(const duckdb::CatalogEntry* entry) {
   if (const auto* facade =
-        dynamic_cast<const connector::SereneDBTableEntry*>(entry)) {
+        dynamic_cast<const catalog::SereneDBTableEntry*>(entry)) {
     const auto& table = facade->Table();
     return {duckdb::CatalogType::TABLE_ENTRY, catalog::IdOf(table),
             catalog::TableNameOf(table), &facade->permissions, facade};
   }
   if (const auto* view =
-        dynamic_cast<const connector::SereneDBViewEntry*>(entry)) {
+        dynamic_cast<const catalog::SereneDBViewEntry*>(entry)) {
     return {duckdb::CatalogType::VIEW_ENTRY, ObjectId{view->oid},
             view->name.GetIdentifierName(), &view->permissions, nullptr};
   }
   if (const auto* index =
-        dynamic_cast<const connector::SereneDBIndexScanEntry*>(entry)) {
+        dynamic_cast<const catalog::SereneDBIndexScanEntry*>(entry)) {
     // Reading an index is gated on the relation it is built on, so that is what
     // a denial names -- the entry carries its identity either way.
     return {index->GetIndexedRelationType(), index->GetIndexedRelationId(),
@@ -124,7 +124,7 @@ Governed SereneDBRelation(const duckdb::CatalogEntry* entry) {
             &index->GetIndexedRelationPermissions(), index};
   }
   if (const auto* system =
-        dynamic_cast<const connector::SystemTableEntry*>(entry)) {
+        dynamic_cast<const catalog::SystemTableEntry*>(entry)) {
     return {duckdb::CatalogType::TABLE_ENTRY, catalog::IdOf(*system),
             system->name.GetIdentifierName(), &system->permissions, system};
   }
@@ -141,7 +141,7 @@ std::vector<catalog::AclView> SelectedColumnAcls(
   const duckdb::unordered_set<uint64_t>& logical) {
   // Resolved once, not per column: the grants hang off whichever entry the
   // requirement was matched to, and almost every table has none at all.
-  const auto* acls_by_column = connector::RelationColumnAcls(entry);
+  const auto* acls_by_column = catalog::RelationColumnAcls(entry);
   const auto& columns = entry.GetColumns();
   std::vector<catalog::AclView> acls;
   acls.reserve(logical.empty() ? columns.LogicalColumnCount() : logical.size());
@@ -200,7 +200,7 @@ void RequireForeignServerUsage(duckdb::ClientContext& context, ObjectId caller,
     }
     catalog::Permissions perm;
     const auto server =
-      connector::FindForeignServerAnywhere(&context, catalog, &perm);
+      catalog::FindForeignServerAnywhere(&context, catalog, &perm);
     if (!server) {
       continue;
     }

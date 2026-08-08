@@ -62,15 +62,15 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
-#include "catalog/search_analyzer_impl.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/tokenizer.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
+#include "search/search_analyzer_impl.h"
 
 namespace magic_enum {
 
@@ -884,8 +884,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
     auto name = ParseObjectName(from, _current_schema);
     const auto schema_id =
-      connector::FindSchemaId(&_context, _db_id, name.schema);
-    auto tokenizer = schema_id.isSet() ? connector::FindTokenizer(
+      catalog::FindSchemaId(&_context, _db_id, name.schema);
+    auto tokenizer = schema_id.isSet() ? catalog::FindTokenizer(
                                            &_context, schema_id, name.relation)
                                        : nullptr;
     if (!tokenizer) {

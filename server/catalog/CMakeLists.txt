@@ -8,9 +8,20 @@ target_sources(
         schema.cpp
         databases.cpp
         catalog.cpp
+        duckdb_catalog.cpp
+        duckdb_catalog_sets.cpp
+        duckdb_dependency.cpp
+        duckdb_entry_builders.cpp
+        duckdb_global_catalog.cpp
+        duckdb_index_entry.cpp
+        duckdb_index_scan_entry.cpp
+        duckdb_object_index.cpp
+        duckdb_schema_entry.cpp
+        duckdb_static_schema.cpp
+        duckdb_system_table_entry.cpp
+        duckdb_table_entry.cpp
         deferred_writes.cpp
         entry.cpp
-        search_analyzer_impl.cpp
         table.cpp
         index.cpp
         view.cpp

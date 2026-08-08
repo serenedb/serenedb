@@ -33,7 +33,7 @@
 #include "catalog/schema.h"
 #include "catalog/table_options.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 class SereneDBSchemaEntry final : public duckdb::DuckSchemaEntry {
  public:
@@ -138,4 +138,4 @@ std::span<const duckdb::CatalogType> LookupSlots(duckdb::CatalogType type);
 // outright: only a serenedb entry carries a stable id, an owner and an ACL.
 bool IsHostedEntry(const duckdb::CatalogEntry& entry) noexcept;
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

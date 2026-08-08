@@ -29,8 +29,8 @@
 #include <utility>
 
 #include "basics/log.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_catalog_sets.h"
 
 namespace sdb::catalog {
 namespace {
@@ -69,7 +69,7 @@ class DeferredCatalogWrites final : public duckdb::ClientContextState {
     if (_deltas == 0) {
       // The cluster-global sets are a separate attachment, so they are pinned
       // at the first write: this is the view the transaction plans against.
-      connector::PinClusterGlobalReadView(context);
+      catalog::PinClusterGlobalReadView(context);
     }
     ++_deltas;
   }

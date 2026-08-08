@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_schema_entry.h"
+#include "catalog/duckdb_schema_entry.h"
 
 #include <absl/algorithm/container.h>
 
@@ -52,6 +52,13 @@
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/deferred_writes.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_static_schema.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/schema.h"
@@ -62,14 +69,7 @@
 #include "catalog/table_options.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
-#include "connector/duckdb_catalog.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_dependency.h"
-#include "connector/duckdb_index_entry.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_static_schema.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/inverted_index_options_util.h"
 #include "connector/pg_logical_types.h"
 #include "connector/search_table_dispatch.h"
@@ -83,7 +83,7 @@
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 [[noreturn]] void ThrowCreateUnsupported(std::string_view what) {
@@ -732,9 +732,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   // reader, which carry no session at all, and the data store, which carries
   // one only so that its index builds resolve names the way a session does.
   // Neither is a role, so neither is access-checked.
-  auto* conn_ctx = transaction.HasContext()
-                     ? GetSereneDBContextPtr(transaction.GetContext())
-                     : nullptr;
+  auto* conn_ctx =
+    transaction.HasContext()
+      ? connector::GetSereneDBContextPtr(transaction.GetContext())
+      : nullptr;
   if (conn_ctx != nullptr && conn_ctx->IsStorageConnection()) {
     conn_ctx = nullptr;
   }
@@ -801,8 +802,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // The load half of CREATE TABLE AS: the operator in front of it created the
   // relation on the statement's transaction and handed it over, because the
   // side transaction this load runs on cannot see that create.
-  if (auto state = context.registered_state->Get<SereneDBClientState>(
-        kSereneDBClientStateKey)) {
+  if (auto state =
+        context.registered_state->Get<connector::SereneDBClientState>(
+          connector::kSereneDBClientStateKey)) {
     if (state->ctas_target) {
       return state->ctas_target;
     }
@@ -818,7 +820,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // Consume the SereneDB-specific `storage` WITH option (selects the table
   // engine) + any Search maintenance-interval options before validating that no
   // unknown options remain.
-  ApplyStorageKind(context, *built, built->options);
+  connector::ApplyStorageKind(context, *built, built->options);
 
   if (!built->options.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1187,7 +1189,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   // ART is, is data on the table's index list -- checkpointed with the rows it
   // covers, and taken off that list again when the index is dropped.
   if (transaction.HasContext() &&
-      IsStorageStatement(transaction.GetContext())) {
+      connector::IsStorageStatement(transaction.GetContext())) {
     return nullptr;
   }
   auto& sdb_table_entry = RequireBaseTable(table);
@@ -1196,7 +1198,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   auto& catalog_impl = catalog::GetCatalog();
   auto database_id = GetDatabaseId();
 
-  RejectIfSearchTable(sdb_table_entry.GetEngine(), "CREATE INDEX");
+  connector::RejectIfSearchTable(sdb_table_entry.GetEngine(), "CREATE INDEX");
 
   // Map DuckDB index type to SereneDB IndexType
   // DuckDB default is empty or "ART"; PG default is "btree"
@@ -1255,7 +1257,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       return it != info.options.end() ? &it->second : nullptr;
     };
     auto resolve_uint = [&](std::string_view key) -> uint32_t {
-      return ResolveUintWithOption(context, key, find_with(key));
+      return connector::ResolveUintWithOption(context, key, find_with(key));
     };
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint(kRowGroupSizeSetting),
@@ -1307,7 +1309,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
   auto& context = transaction.GetContext();
-  const ObjectId role{GetSereneDBContext(context).GetRoleId()};
+  const ObjectId role{connector::GetSereneDBContext(context).GetRoleId()};
   const bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   const bool if_not_exists =
@@ -1389,7 +1391,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   duckdb::CatalogTransaction transaction, duckdb::CreateViewInfo& info) {
   auto& context = transaction.GetContext();
-  const ObjectId role{GetSereneDBContext(context).GetRoleId()};
+  const ObjectId role{connector::GetSereneDBContext(context).GetRoleId()};
   const bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   const bool if_not_exists =
@@ -1465,7 +1467,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
                     ERR_MSG("sequence START is out of range [MIN, MAX]"));
   }
 
-  const ObjectId role{GetSereneDBContext(transaction.GetContext()).GetRoleId()};
+  const ObjectId role{
+    connector::GetSereneDBContext(transaction.GetContext()).GetRoleId()};
   catalog::SequenceOptions options;
   options.name = info.GetSequenceName().GetIdentifierName();
   options.start_value = static_cast<uint64_t>(info.start_value);
@@ -1549,7 +1552,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateCollation(
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   duckdb::CatalogTransaction transaction, duckdb::CreateTypeInfo& info) {
   auto& context = transaction.GetContext();
-  const ObjectId role{GetSereneDBContext(context).GetRoleId()};
+  const ObjectId role{connector::GetSereneDBContext(context).GetRoleId()};
   const bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
@@ -1604,7 +1607,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
   // is what brought us here -- and going round again would re-enter the catalog
   // mutex this call is already inside.
   if (transaction.HasContext() &&
-      IsStorageStatement(transaction.GetContext())) {
+      connector::IsStorageStatement(transaction.GetContext())) {
     return;
   }
   auto& catalog_impl = catalog::GetCatalog();
@@ -1743,7 +1746,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                       ERR_MSG("\"", table_name, "\" is not an inverted index"));
     }
     const auto require_alterable = [](std::string_view option) {
-      if (!absl::c_contains(kAlterableInvertedOptions, option)) {
+      if (!absl::c_contains(connector::kAlterableInvertedOptions, option)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("option \"", option,
                                 "\" cannot be changed with ALTER INDEX"));
@@ -1763,7 +1766,7 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         require_alterable(option);
         changes.emplace_back(
           option,
-          ValidateInvertedIndexOptionValue(
+          connector::ValidateInvertedIndexOptionValue(
             option, expr->Cast<duckdb::ConstantExpression>().GetValue()));
       }
     } else {
@@ -1774,10 +1777,10 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         const auto& option_name = option.GetIdentifierName();
         require_alterable(option_name);
         changes.emplace_back(
-          option_name,
-          ValidateInvertedIndexOptionValue(
-            option_name, duckdb::Value::UBIGINT(ResolveUbigintWithOption(
-                           context, option_name, nullptr))));
+          option_name, connector::ValidateInvertedIndexOptionValue(
+                         option_name, duckdb::Value::UBIGINT(
+                                        connector::ResolveUbigintWithOption(
+                                          context, option_name, nullptr))));
       }
     }
     if (!index) {
@@ -1884,8 +1887,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       break;
   }
   if (!unsupported_search_op.empty() && relation) {
-    RejectIfSearchTable(catalog::TableEngineOf(*relation),
-                        unsupported_search_op);
+    connector::RejectIfSearchTable(catalog::TableEngineOf(*relation),
+                                   unsupported_search_op);
   }
 
   switch (table_info.alter_table_type) {
@@ -2261,4 +2264,4 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
   }
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

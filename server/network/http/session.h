@@ -48,7 +48,7 @@
 #include "basics/metrics.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
-#include "connector/duckdb_catalog_sets.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
@@ -160,7 +160,7 @@ class HttpSession final
   duckdb::Connection& Connection() override {
     if (!_conn) {
       const auto dbname = StaticStrings::kDefaultDatabase;
-      auto database = connector::FindDatabase(nullptr, dbname);
+      auto database = catalog::FindDatabase(nullptr, dbname);
       SDB_ENSURE(database);
       const auto database_id = database.Id();
       const std::string_view user =

@@ -27,9 +27,9 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/foreign_server.h"
 #include "catalog/identifiers/object_id.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -57,7 +57,7 @@ catalog::MaterializedData SystemTableSnapshot<PgForeignServer>::GetTableData() {
   std::deque<std::vector<Text>> opt_views;
   std::vector<PgForeignServer> values;
 
-  connector::VisitForeignServers(
+  catalog::VisitForeignServers(
     &_config.GetClientContext(), database_id,
     [&](const catalog::CreateForeignServerInfo& server,
         const catalog::Permissions& perm) {

@@ -24,9 +24,9 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "query/transaction.h"
@@ -37,7 +37,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
                             const catalog::Permissions& perm) {
   // No ClientContext yet -- the connection is still being established -- so
   // this reads the committed cluster state.
-  auto role = connector::FindRole(nullptr, user);
+  auto role = catalog::FindRole(nullptr, user);
   if (!role) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
@@ -102,7 +102,7 @@ std::string ConnectionContext::GetCurrentSchema() const {
   auto database_id = GetDatabaseId();
   auto search_path = GetSearchPath();
   auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
-    return connector::FindSchema(nullptr, database_id, schema_name) != nullptr;
+    return catalog::FindSchema(nullptr, database_id, schema_name) != nullptr;
   });
 
   return it != search_path.end() ? *it : "";

@@ -29,11 +29,11 @@
 #include "auth/role_closure.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 
@@ -115,7 +115,7 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   };
   // A scalar macro and a table macro are one SereneDB kind and two duckdb
   // namespaces; VisitFunctions reads both sets.
-  connector::VisitFunctions(&_config.GetClientContext(), GetDatabaseId(), emit);
+  catalog::VisitFunctions(&_config.GetClientContext(), GetDatabaseId(), emit);
 
   auto result = CreateColumns<PgProc>(values.size());
 

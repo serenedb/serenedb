@@ -23,14 +23,14 @@
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
-#include "connector/duckdb_table_entry.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // The relation an index wrapper stands in front of, as the facts the wrapper
 // answers with. An index has no owner, no ACL and no columns of its own --
@@ -212,4 +212,4 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
     duckdb::ClientContext& context) const;
 };
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

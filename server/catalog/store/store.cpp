@@ -67,6 +67,10 @@
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/deferred_writes.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "catalog/role.h"
@@ -75,10 +79,6 @@
 #include "catalog/store/data_store.h"
 #include "catalog/table.h"
 #include "catalog/tokenizer.h"
-#include "connector/duckdb_catalog.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
@@ -101,7 +101,7 @@ void SortById(auto& objects) {
 std::vector<IndexInfoRef> DatabaseIndexes(duckdb::ClientContext* context,
                                           ObjectId database_id) {
   std::vector<IndexInfoRef> indexes;
-  connector::VisitIndexes(context, database_id, [&](const IndexInfoRef& index) {
+  catalog::VisitIndexes(context, database_id, [&](const IndexInfoRef& index) {
     indexes.push_back(index);
   });
   SortById(indexes);
@@ -117,16 +117,16 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> HostTableEntry(
   }
   // Off this catalog's own sets, not through the database manager: an attach
   // reads its own tables back before the attachment is in it.
-  auto& catalog = db.GetCatalog().Cast<connector::SereneDBCatalog>();
+  auto& catalog = db.GetCatalog().Cast<catalog::SereneDBCatalog>();
   return catalog.LookupTableById(catalog.CommittedRead(), catalog_id);
 }
 
 ObjectId StoreDatabaseId(duckdb::AttachedDatabase& db) {
   auto& catalog = db.GetCatalog();
-  if (catalog.GetCatalogType() != connector::kSereneDBCatalogType) {
+  if (catalog.GetCatalogType() != catalog::kSereneDBCatalogType) {
     return {};
   }
-  return catalog.Cast<connector::SereneDBCatalog>().GetDatabaseId();
+  return catalog.Cast<catalog::SereneDBCatalog>().GetDatabaseId();
 }
 
 bool IsStoreDatabase(duckdb::AttachedDatabase& db) {
@@ -139,7 +139,7 @@ duckdb::optional_ptr<duckdb::AttachedDatabase> TryStoreDatabase(
   // attachment alias is the database name, and every read path that resolves a
   // store table goes through here.
   auto& manager = duckdb::DatabaseManager::Get(context);
-  auto database = connector::FindDatabase(&context, database_id);
+  auto database = catalog::FindDatabase(&context, database_id);
   if (!database) {
     return nullptr;
   }
@@ -148,7 +148,7 @@ duckdb::optional_ptr<duckdb::AttachedDatabase> TryStoreDatabase(
 
 duckdb::shared_ptr<duckdb::AttachedDatabase> TryStoreDatabase(
   ObjectId database_id) {
-  auto database = connector::FindDatabase(nullptr, database_id);
+  auto database = catalog::FindDatabase(nullptr, database_id);
   if (!database) {
     return nullptr;
   }
@@ -247,7 +247,7 @@ duckdb::AlterEntryData StoreTarget(duckdb::OnEntryNotFound if_not_found) {
 duckdb::optional_ptr<duckdb::TableCatalogEntry> GetStoreTableEntry(
   duckdb::ClientContext& context, duckdb::Catalog& catalog, ObjectId table_id,
   duckdb::OnEntryNotFound if_not_found) {
-  auto& sdb_catalog = catalog.Cast<connector::SereneDBCatalog>();
+  auto& sdb_catalog = catalog.Cast<catalog::SereneDBCatalog>();
   auto entry = sdb_catalog.LookupTableById(
     sdb_catalog.GetCatalogTransaction(context), table_id.id());
   if (!entry) {
@@ -842,10 +842,10 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
   // so.
   {
     auto* role_reader =
-      context != nullptr && connector::HasUncommittedRoles(*context) ? context
-                                                                     : nullptr;
+      context != nullptr && catalog::HasUncommittedRoles(*context) ? context
+                                                                   : nullptr;
     std::vector<std::shared_ptr<const CreateRoleInfo>> roles;
-    connector::VisitRoles(role_reader, [&](const CreateRoleInfo& role) {
+    catalog::VisitRoles(role_reader, [&](const CreateRoleInfo& role) {
       roles.push_back(role.CloneRole());
     });
     std::ranges::sort(roles, {},
@@ -858,12 +858,11 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
   }
   // VisitDatabases already routes a transaction that wrote none to the shared
   // cache, so the context can go straight in.
-  std::vector<connector::DatabaseRef> databases;
-  connector::VisitDatabases(context, [&](const connector::DatabaseRef& db) {
-    databases.push_back(db);
-  });
+  std::vector<catalog::DatabaseRef> databases;
+  catalog::VisitDatabases(
+    context, [&](const catalog::DatabaseRef& db) { databases.push_back(db); });
   std::ranges::sort(databases, {},
-                    [](const connector::DatabaseRef& db) { return db.Id(); });
+                    [](const catalog::DatabaseRef& db) { return db.Id(); });
   for (auto& database : databases) {
     const auto db_id = database.Id();
     indexes = DatabaseIndexes(context, db_id);
@@ -871,7 +870,7 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
                  wal::PutMode::Create, database.info, database.perm);
     // Foreign servers are database children, so they come out of the catalog's
     // own set rather than a schema's.
-    auto servers = connector::DatabaseForeignServers(context, db_id);
+    auto servers = catalog::DatabaseForeignServers(context, db_id);
     std::ranges::sort(servers, {}, [](const HeldForeignServer& server) {
       return server.first->GetId();
     });
@@ -879,31 +878,31 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
       out.PutEntry(db_id, duckdb::CatalogType::FOREIGN_SERVER_ENTRY,
                    server->GetId(), wal::PutMode::Create, server, perm);
     }
-    auto schemas = connector::DatabaseSchemas(context, db_id);
+    auto schemas = catalog::DatabaseSchemas(context, db_id);
     std::ranges::sort(schemas, {}, [](const HeldSchema& schema) {
       return IdOf(*schema.first).id();
     });
     // Once for the whole database, because the walk is per database and not
     // per schema.
-    auto tokenizers = connector::DatabaseTokenizers(context, db_id);
+    auto tokenizers = catalog::DatabaseTokenizers(context, db_id);
     std::ranges::sort(tokenizers, {}, [](const HeldTokenizer& tokenizer) {
       return tokenizer.first->GetId();
     });
     // And the types and functions, for the same reason.
-    auto types = connector::DatabaseTypes(context, db_id);
+    auto types = catalog::DatabaseTypes(context, db_id);
     std::ranges::sort(types, {}, [](const duckdb::TypeCatalogEntry* type) {
       return type->oid;
     });
     std::vector<const duckdb::MacroCatalogEntry*> functions;
-    connector::VisitFunctions(context, db_id,
-                              [&](const duckdb::MacroCatalogEntry& function) {
-                                functions.push_back(&function);
-                              });
+    catalog::VisitFunctions(context, db_id,
+                            [&](const duckdb::MacroCatalogEntry& function) {
+                              functions.push_back(&function);
+                            });
     std::ranges::sort(
       functions, {},
       [](const duckdb::MacroCatalogEntry* function) { return function->oid; });
     std::vector<HeldTable> tables;
-    connector::VisitTables(
+    catalog::VisitTables(
       context, db_id, [&](const TableInfoRef& table, const Permissions& perm) {
         tables.emplace_back(table, perm);
       });
@@ -911,7 +910,7 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
       return catalog::IdOf(*table.first).id();
     });
     std::vector<const duckdb::ViewCatalogEntry*> views;
-    connector::VisitViews(
+    catalog::VisitViews(
       context, db_id,
       [&](const duckdb::ViewCatalogEntry& view) { views.push_back(&view); });
     std::ranges::sort(views, {}, [](const duckdb::ViewCatalogEntry* view) {
@@ -920,10 +919,10 @@ std::vector<wal::Entry> CatalogStore::CheckpointDefinitions(
     // And the sequences, whose entry is the object too. A sequence a table owns
     // is filed under that table rather than the schema, so the walk below picks
     // them apart by the owning-table id the definition carries.
-    auto sequences = connector::DatabaseSequences(context, db_id);
+    auto sequences = catalog::DatabaseSequences(context, db_id);
     std::ranges::sort(
       sequences, {},
-      [](const connector::SereneDBSequenceEntry* seq) { return seq->oid; });
+      [](const catalog::SereneDBSequenceEntry* seq) { return seq->oid; });
     // `owner` is the table a sequence is owned by, unset for the free-standing
     // ones. A sequence's name is always in its schema's relation namespace, so
     // the record's parent is the schema either way -- what the owning table
@@ -1179,7 +1178,7 @@ std::string StoreOpsSubject(duckdb::ClientContext* context,
     if (context == nullptr) {
       continue;
     }
-    if (const auto* table = connector::FindSessionTable(*context, table_id)) {
+    if (const auto* table = catalog::FindSessionTable(*context, table_id)) {
       return std::string{table->name.GetIdentifierName()};
     }
   }

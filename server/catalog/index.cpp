@@ -46,14 +46,14 @@
 #include "basics/log.h"
 #include "basics/serializer.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
 #include "catalog/entry.h"
 #include "catalog/geo_validate.h"
 #include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
 #include "catalog/store/store.h"
 #include "catalog/tokenizer.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_index_entry.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -602,9 +602,9 @@ TokenizerRef LookupTokenizer(duckdb::ClientContext& context,
     return nullptr;
   }
   const auto schema_id =
-    connector::FindSchemaId(&context, database_id, object_name.schema);
+    catalog::FindSchemaId(&context, database_id, object_name.schema);
   return schema_id.isSet()
-           ? connector::FindTokenizer(&context, schema_id, object_name.relation)
+           ? catalog::FindTokenizer(&context, schema_id, object_name.relation)
            : nullptr;
 }
 
@@ -833,8 +833,7 @@ IndexInfoRef FindInvertedIndex(ObjectId database_id, ObjectId id) {
   if (!database) {
     return nullptr;
   }
-  const auto* index =
-    connector::FindIndexIn(nullptr, database->GetCatalog(), id);
+  const auto* index = catalog::FindIndexIn(nullptr, database->GetCatalog(), id);
   return index != nullptr && index->IsInverted() ? index->Definition()
                                                  : nullptr;
 }

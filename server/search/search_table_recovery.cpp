@@ -38,11 +38,11 @@
 #include "basics/containers/node_hash_map.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_primary_key.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -63,7 +63,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     std::shared_ptr<SearchTable> shard;  // keeps the table store alive
     SearchTable* search = nullptr;
     std::vector<catalog::ColumnId> column_ids;
-    std::vector<connector::duckdb_primary_key::PKColumn> pk_columns;
+    std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
     bool uses_generated_pk = false;
   };
   // Per-shard replay context: one open iresearch trx accumulated across all of
@@ -80,13 +80,13 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 
   size_t recovered_shards = 0;
   std::vector<ObjectId> database_ids;
-  connector::VisitDatabases(nullptr, [&](const connector::DatabaseRef& db) {
+  catalog::VisitDatabases(nullptr, [&](const catalog::DatabaseRef& db) {
     database_ids.push_back(db.Id());
   });
   for (const ObjectId db_id : database_ids) {
     containers::NodeHashMap<ObjectId, ShardInfo> shards;
-    connector::VisitTableEntriesOf(
-      nullptr, db_id, [&](const connector::SereneDBTableEntry& entry) {
+    catalog::VisitTableEntriesOf(
+      nullptr, db_id, [&](const catalog::SereneDBTableEntry& entry) {
         if (!entry.IsSearchTable()) {
           return;  // Transactional table: no Search-engine store to recover.
         }
@@ -98,7 +98,7 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
           info.column_ids.emplace_back(col.CatalogOid());
         }
         info.pk_columns =
-          connector::duckdb_primary_key::BuildPKColumns(*entry.Definition());
+          catalog::duckdb_primary_key::BuildPKColumns(*entry.Definition());
         info.uses_generated_pk = info.pk_columns.empty();
         shards.emplace(ObjectId{entry.oid}, std::move(info));
       });
@@ -209,14 +209,14 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 }
 
 void StartSearchTableMaintenance() {
-  connector::VisitDatabases(nullptr, [&](const connector::DatabaseRef& db) {
-    connector::VisitTableEntriesOf(
-      nullptr, db.Id(), [&](const connector::SereneDBTableEntry& table) {
-        if (!table.IsSearchTable()) {
-          return;
-        }
-        table.GetSearchData()->StartTasks();
-      });
+  catalog::VisitDatabases(nullptr, [&](const catalog::DatabaseRef& db) {
+    catalog::VisitTableEntriesOf(nullptr, db.Id(),
+                                 [&](const catalog::SereneDBTableEntry& table) {
+                                   if (!table.IsSearchTable()) {
+                                     return;
+                                   }
+                                   table.GetSearchData()->StartTasks();
+                                 });
   });
 }
 

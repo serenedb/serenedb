@@ -27,9 +27,9 @@
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/role.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -51,23 +51,23 @@ Timestamptz ValidUntilOf(const catalog::CreateRoleInfo& role) {
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
   std::vector<PgAuthid> values;
-  connector::VisitRoles(&_config.GetClientContext(),
-                        [&](const catalog::CreateRoleInfo& role) {
-                          using catalog::RoleOption;
-                          values.push_back(PgAuthid{
-                            .oid = role.GetId().id(),
-                            .rolname = role.GetName(),
-                            .rolsuper = role.Has(RoleOption::Superuser),
-                            .rolinherit = role.Has(RoleOption::Inherit),
-                            .rolcreaterole = role.Has(RoleOption::CreateRole),
-                            .rolcreatedb = role.Has(RoleOption::CreateDb),
-                            .rolcanlogin = role.CanLogin(),
-                            .rolreplication = role.Has(RoleOption::Replication),
-                            .rolbypassrls = role.Has(RoleOption::BypassRls),
-                            .rolconnlimit = role.ConnLimit(),
-                            .rolvaliduntil = ValidUntilOf(role),
-                          });
+  catalog::VisitRoles(&_config.GetClientContext(),
+                      [&](const catalog::CreateRoleInfo& role) {
+                        using catalog::RoleOption;
+                        values.push_back(PgAuthid{
+                          .oid = role.GetId().id(),
+                          .rolname = role.GetName(),
+                          .rolsuper = role.Has(RoleOption::Superuser),
+                          .rolinherit = role.Has(RoleOption::Inherit),
+                          .rolcreaterole = role.Has(RoleOption::CreateRole),
+                          .rolcreatedb = role.Has(RoleOption::CreateDb),
+                          .rolcanlogin = role.CanLogin(),
+                          .rolreplication = role.Has(RoleOption::Replication),
+                          .rolbypassrls = role.Has(RoleOption::BypassRls),
+                          .rolconnlimit = role.ConnLimit(),
+                          .rolvaliduntil = ValidUntilOf(role),
                         });
+                      });
 
   auto result = CreateColumns<PgAuthid>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {

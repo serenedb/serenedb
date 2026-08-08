@@ -43,7 +43,7 @@ class ClientContext;
 class DependencyManager;
 
 }  // namespace duckdb
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // How duckdb's dependency graph addresses one SereneDB object: the stable id,
 // and nothing else. An id is unique across the cluster, so neither the schema
@@ -140,4 +140,4 @@ void VisitAllEdges(
   duckdb::ClientContext& context,
   absl::FunctionRef<void(ObjectId referenced, ObjectId dependent)> visitor);
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

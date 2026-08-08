@@ -45,11 +45,11 @@
 #include "basics/duckdb_engine.h"
 #include "basics/log.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"
@@ -117,17 +117,17 @@ void InitInvertedIndexes() {
   std::vector<std::shared_ptr<InvertedIndexStorage>> static_storages;
 
   std::vector<ObjectId> database_ids;
-  connector::VisitDatabases(nullptr, [&](const connector::DatabaseRef& db) {
+  catalog::VisitDatabases(nullptr, [&](const catalog::DatabaseRef& db) {
     database_ids.push_back(db.Id());
   });
   for (const auto db_id : database_ids) {
     std::vector<catalog::IndexInfoRef> indexes;
-    connector::VisitIndexes(nullptr, db_id,
-                            [&](const catalog::IndexInfoRef& index) {
-                              if (index->IsInverted()) {
-                                indexes.push_back(index);
-                              }
-                            });
+    catalog::VisitIndexes(nullptr, db_id,
+                          [&](const catalog::IndexInfoRef& index) {
+                            if (index->IsInverted()) {
+                              indexes.push_back(index);
+                            }
+                          });
     for (const auto& idx : indexes) {
       auto inv_storage = idx->GetData();
       SDB_ASSERT(inv_storage);
@@ -141,7 +141,7 @@ void InitInvertedIndexes() {
       // in one, so a snapshot lookup can only ever answer for a table, and a
       // miss would silently demote a live index to static.
       auto* relation =
-        connector::FindTableEntryIn(nullptr, db_id, idx->GetRelationId());
+        catalog::FindTableEntryIn(nullptr, db_id, idx->GetRelationId());
       if (relation == nullptr) {
         static_storages.push_back(std::move(inv_storage));
         continue;

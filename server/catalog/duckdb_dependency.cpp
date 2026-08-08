@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_dependency.h"
+#include "catalog/duckdb_dependency.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -37,16 +37,16 @@
 
 #include "basics/duckdb_engine.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_global_catalog.h"
+#include "catalog/duckdb_object_index.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/object_dependency.h"
 #include "catalog/store/store.h"
-#include "connector/duckdb_catalog.h"
-#include "connector/duckdb_global_catalog.h"
-#include "connector/duckdb_object_index.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kHexDigits = "0123456789abcdef";
@@ -269,4 +269,4 @@ void VisitAllEdges(
   }
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

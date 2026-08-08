@@ -54,14 +54,14 @@
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/deferred_writes.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
-#include "connector/duckdb_catalog.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_index_entry.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
 
@@ -261,7 +261,7 @@ absl::Status DataStore::ExecuteStoreOps(
           duckdb::AlterTableType::REMOVE_COLUMN) {
       continue;
     }
-    const auto* table = context != nullptr ? connector::FindSessionTable(
+    const auto* table = context != nullptr ? catalog::FindSessionTable(
                                                *context, targeted.relation_id)
                                            : nullptr;
     if (table == nullptr) {
@@ -356,7 +356,7 @@ absl::Status DataStore::Run(
 // the entry version that carries them is not built until the write.
 absl::Status DataStore::Alter(duckdb::ClientContext* context,
                               duckdb::AlterInfo& info) try {
-  auto& catalog = _target->GetCatalog().Cast<connector::SereneDBCatalog>();
+  auto& catalog = _target->GetCatalog().Cast<catalog::SereneDBCatalog>();
   auto reshaped = absl::Status{};
   auto apply = [&](duckdb::ClientContext& reshape_context) {
     try {
@@ -509,12 +509,12 @@ absl::Status DataStore::ExecuteCreateStoreIndex(duckdb::ClientContext* context,
   auto index = op.index;
   const ObjectId index_id{create.oid};
   if (!table || !index) {
-    if (const auto* found = connector::FindTableIn(
-          nullptr, _target->GetCatalog(), op.relation_id)) {
+    if (const auto* found = catalog::FindTableIn(nullptr, _target->GetCatalog(),
+                                                 op.relation_id)) {
       table = found->Definition();
     }
     if (const auto* found =
-          connector::FindIndexIn(nullptr, _target->GetCatalog(), index_id);
+          catalog::FindIndexIn(nullptr, _target->GetCatalog(), index_id);
         found != nullptr && found->IsInverted()) {
       index = found->Definition();
     }
@@ -596,7 +596,7 @@ absl::Status DataStore::ExecuteCreateStoreTable(duckdb::ClientContext* context,
   if (context != nullptr) {
     return absl::OkStatus();
   }
-  auto& catalog = _target->GetCatalog().Cast<connector::SereneDBCatalog>();
+  auto& catalog = _target->GetCatalog().Cast<catalog::SereneDBCatalog>();
   auto entry = catalog.LookupTableById(catalog.CommittedRead(), table_id.id());
   if (!entry) {
     return absl::InternalError(
@@ -627,7 +627,7 @@ duckdb::Connection* DataStore::BindConnection(duckdb::AttachedDatabase& db) {
   absl::MutexLock lock{&_bind_mutex};
   auto it = _bind_contexts.find(database_id);
   if (it == _bind_contexts.end()) {
-    auto database = connector::FindDatabase(nullptr, database_id);
+    auto database = catalog::FindDatabase(nullptr, database_id);
     if (!database) {
       // Without it every indexed expression stays unbound, which shows up much
       // later as a replay that indexes nothing. The catalog is loaded before
@@ -732,25 +732,24 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
   if (!attachment || !attachment->HasStorageManager()) {
     return;
   }
-  auto& catalog = attachment->GetCatalog().Cast<connector::SereneDBCatalog>();
+  auto& catalog = attachment->GetCatalog().Cast<catalog::SereneDBCatalog>();
   // Ids first, definitions after: resolving a relation from inside a walk
   // re-enters the very set the walk holds. One pass over the indexes rather
   // than one per table, so boot stays linear in the catalog.
   std::vector<ObjectId> table_ids;
-  connector::VisitTables(
+  catalog::VisitTables(
     nullptr, database_id, [&](const TableInfoRef& table, const Permissions&) {
       if (catalog::TableEngineOf(*table) == TableEngine::Transactional) {
         table_ids.push_back(catalog::IdOf(*table));
       }
     });
   containers::FlatHashMap<ObjectId, std::vector<ObjectId>> index_ids;
-  connector::VisitIndexes(nullptr, database_id, [&](const IndexInfoRef& index) {
+  catalog::VisitIndexes(nullptr, database_id, [&](const IndexInfoRef& index) {
     index_ids[index->GetRelationId()].push_back(index->GetId());
   });
   std::vector<store_op::Targeted> ops;
   for (const auto table_id : table_ids) {
-    const auto* table_entry =
-      connector::FindTableIn(nullptr, catalog, table_id);
+    const auto* table_entry = catalog::FindTableIn(nullptr, catalog, table_id);
     auto entry =
       catalog.LookupTableById(catalog.CommittedRead(), table_id.id());
     if (table_entry == nullptr || !entry || !entry->TryGetStorage()) {
@@ -762,7 +761,7 @@ void DataStore::RebuildMissingIndexes(ObjectId database_id) {
     if (on_table != index_ids.end()) {
       for (const auto index_id : on_table->second) {
         const auto* index_entry =
-          connector::FindIndexIn(nullptr, catalog, index_id);
+          catalog::FindIndexIn(nullptr, catalog, index_id);
         if (index_entry == nullptr) {
           continue;
         }

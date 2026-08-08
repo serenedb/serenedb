@@ -26,11 +26,11 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/index.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 
@@ -68,16 +68,15 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   // Every base table of the database, by id: an index row needs the attnums of
   // the relation it hangs off, and the synthetic rows below are that relation's
   // own key constraints.
-  containers::FlatHashMap<ObjectId, const connector::SereneDBTableEntry*>
-    tables;
-  connector::VisitTableEntries(context, GetDatabaseId(),
-                               [&](const duckdb::CreateSchemaInfo&,
-                                   const connector::SereneDBTableEntry& table) {
-                                 tables.emplace(catalog::IdOf(table), &table);
-                               });
+  containers::FlatHashMap<ObjectId, const catalog::SereneDBTableEntry*> tables;
+  catalog::VisitTableEntries(context, GetDatabaseId(),
+                             [&](const duckdb::CreateSchemaInfo&,
+                                 const catalog::SereneDBTableEntry& table) {
+                               tables.emplace(catalog::IdOf(table), &table);
+                             });
 
   // Explicit user-created indexes
-  connector::VisitIndexes(
+  catalog::VisitIndexes(
     &context, GetDatabaseId(), [&](const catalog::IndexInfoRef& index) {
       const auto& column_ids = index->GetColumns();
       auto natts = static_cast<int16_t>(column_ids.size());
@@ -90,7 +89,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
       const auto table = tables.find(index->GetRelationId());
       if (table != tables.end()) {
         for (auto col_id : column_ids) {
-          indkey.push_back(connector::TableEntryAttnum(*table->second, col_id));
+          indkey.push_back(catalog::TableEntryAttnum(*table->second, col_id));
         }
       }
       const bool is_unique_index =
@@ -128,10 +127,10 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
   // name. Primary keys first, then the uniques, so the rows stay grouped the
   // way the tables that read them expect.
   const auto emit_keys = [&](bool primary) {
-    connector::VisitTableEntries(
+    catalog::VisitTableEntries(
       context, GetDatabaseId(),
       [&](const duckdb::CreateSchemaInfo&,
-          const connector::SereneDBTableEntry& table) {
+          const catalog::SereneDBTableEntry& table) {
         for (const auto& constraint : table.GetConstraints()) {
           if (constraint->type != duckdb::ConstraintType::UNIQUE) {
             continue;
@@ -140,7 +139,7 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
           if (unique.IsPrimaryKey() != primary) {
             continue;
           }
-          auto indkey = connector::KeyConstraintAttnums(table, unique);
+          auto indkey = catalog::KeyConstraintAttnums(table, unique);
           auto natts = static_cast<int16_t>(indkey.size());
           indkey_storage.push_back(std::move(indkey));
           values.push_back({

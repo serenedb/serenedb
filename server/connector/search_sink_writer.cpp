@@ -792,7 +792,7 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
 void WriteChunkToSearchSink(
   SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   std::span<const catalog::ColumnId> column_ids,
-  std::span<const duckdb_primary_key::PKColumn> pk_columns,
+  std::span<const catalog::duckdb_primary_key::PKColumn> pk_columns,
   bool uses_generated_pk, uint64_t pk_base) {
   const auto num_rows = chunk.size();
 
@@ -800,7 +800,7 @@ void WriteChunkToSearchSink(
   auto& pk_formats = scratch.pk_formats;
   auto& row_keys = scratch.row_keys;
   auto& key_views = scratch.key_views;
-  duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
+  catalog::duckdb_primary_key::PreparePKFormats(chunk, pk_columns, pk_formats);
   row_keys.resize(num_rows);
   key_views.clear();
   key_views.reserve(num_rows);
@@ -808,9 +808,9 @@ void WriteChunkToSearchSink(
     auto& key = row_keys[row];
     key.clear();
     if (uses_generated_pk) {
-      duckdb_primary_key::AppendGenerated(key, pk_base + row);
+      catalog::duckdb_primary_key::AppendGenerated(key, pk_base + row);
     } else {
-      duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
+      catalog::duckdb_primary_key::Create(pk_formats, pk_columns, row, key);
     }
     key_views.emplace_back(key);
   }

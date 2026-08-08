@@ -28,12 +28,12 @@
 #include <optional>
 #include <string_view>
 
+#include "catalog/duckdb_entry.h"
 #include "catalog/entry.h"
 #include "catalog/fwd.h"
 #include "catalog/table.h"
-#include "connector/duckdb_entry.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 class SereneDBSchemaEntry;
 
@@ -125,4 +125,4 @@ void RefreshEntrySiblings(duckdb::ClientContext* context,
 // The cluster-global kinds have no builder: a role, a database and a foreign
 // server are built where their entry is put (PutRole, PlaceEntry).
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

@@ -35,10 +35,10 @@
 
 #include "auth/acl.h"
 #include "catalog/deferred_writes.h"
+#include "catalog/duckdb_entry.h"
 #include "catalog/entry.h"
 #include "catalog/fwd.h"
 #include "catalog/store/wal_entry.h"
-#include "connector/duckdb_entry.h"
 
 namespace duckdb {
 
@@ -57,7 +57,7 @@ struct AccessContext;
 class CreateIndexInfoBase;
 
 }  // namespace sdb::catalog
-namespace sdb::connector {
+namespace sdb::catalog {
 
 class SereneDBCatalog;
 class SereneDBIndexEntry;
@@ -622,4 +622,4 @@ void DropTableEntry(duckdb::ClientContext* context, ObjectId schema_id,
 void ReplayEntryRecord(const catalog::wal::PutEntry& entry);
 void ReplayTableRecord(const catalog::wal::PutTable& table);
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

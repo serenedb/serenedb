@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_catalog_sets.h"
+#include "catalog/duckdb_catalog_sets.h"
 
 #include <array>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -37,6 +37,17 @@
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "catalog/deferred_writes.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_entry_builders.h"
+#include "catalog/duckdb_global_catalog.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_index_scan_entry.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_object_index.h"
+#include "catalog/duckdb_schema_entry.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
@@ -48,24 +59,13 @@
 #include "catalog/tokenizer.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
-#include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_dependency.h"
-#include "connector/duckdb_entry_builders.h"
-#include "connector/duckdb_global_catalog.h"
-#include "connector/duckdb_index_entry.h"
-#include "connector/duckdb_index_scan_entry.h"
-#include "connector/duckdb_object_entry.h"
-#include "connector/duckdb_object_index.h"
-#include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_storage_extension.h"
-#include "connector/duckdb_table_entry.h"
-#include "connector/duckdb_view_entry.h"
 #include "pg/connection_context.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 // The catalog of `database`, or null when it is not (or no longer) a serenedb
@@ -698,7 +698,7 @@ RoleSet OpenRoleSet(duckdb::ClientContext* context, bool for_write) {
     // to it rather than to whichever database the statement runs in.
     ModifyGlobalDatabase(*context,
                          duckdb::DatabaseModificationType::ALTER_TABLE);
-    GetSereneDBContext(*context).wrote_roles = true;
+    connector::GetSereneDBContext(*context).wrote_roles = true;
   }
   return {global, &global->GetRoleSet(),
           global->GetCatalogTransaction(*context)};
@@ -760,7 +760,7 @@ std::shared_ptr<const catalog::CreateRoleInfo> FindRole(
 }
 
 bool HasUncommittedRoles(duckdb::ClientContext& context) {
-  auto* state = GetSereneDBContextPtr(context);
+  auto* state = connector::GetSereneDBContextPtr(context);
   return state != nullptr && state->wrote_roles;
 }
 
@@ -899,7 +899,7 @@ DatabaseSet OpenDatabaseSet(duckdb::ClientContext* context, bool for_write) {
   if (for_write) {
     ModifyGlobalDatabase(*context,
                          duckdb::DatabaseModificationType::ALTER_TABLE);
-    GetSereneDBContext(*context).wrote_databases = true;
+    connector::GetSereneDBContext(*context).wrote_databases = true;
   }
   return {global, &global->GetDatabaseSet(),
           global->GetCatalogTransaction(*context)};
@@ -940,7 +940,7 @@ bool ReadsOwnDatabases(duckdb::ClientContext* context) {
   if (context == nullptr) {
     return false;
   }
-  auto* state = GetSereneDBContextPtr(*context);
+  auto* state = connector::GetSereneDBContextPtr(*context);
   return state != nullptr && state->wrote_databases;
 }
 
@@ -1085,7 +1085,7 @@ bool ReadsOwnSchemas(duckdb::ClientContext* context) {
   if (context == nullptr) {
     return false;
   }
-  auto* state = GetSereneDBContextPtr(*context);
+  auto* state = connector::GetSereneDBContextPtr(*context);
   return state != nullptr && state->wrote_schemas;
 }
 
@@ -1293,7 +1293,7 @@ void PutSchema(duckdb::ClientContext* context, std::string_view old_name,
   if (context != nullptr) {
     duckdb::MetaTransaction::Get(*context).ModifyDatabase(
       catalog->GetAttached(), duckdb::DatabaseModificationType::ALTER_TABLE);
-    GetSereneDBContext(*context).wrote_schemas = true;
+    connector::GetSereneDBContext(*context).wrote_schemas = true;
   }
   const auto name = catalog::SchemaNameOf(*schema);
   const auto entry_id = catalog::IdOf(*schema);
@@ -1334,7 +1334,7 @@ void DropSchemaEntry(duckdb::ClientContext* context, ObjectId database,
   if (context != nullptr) {
     duckdb::MetaTransaction::Get(*context).ModifyDatabase(
       catalog->GetAttached(), duckdb::DatabaseModificationType::ALTER_TABLE);
-    GetSereneDBContext(*context).wrote_schemas = true;
+    connector::GetSereneDBContext(*context).wrote_schemas = true;
   }
   const auto previous = FindSchema(context, database, name);
   // Taken while the entry that owns their sets is still there: the contents go
@@ -1420,7 +1420,7 @@ void VisitSessionTokenizers(
   duckdb::ClientContext& context,
   absl::FunctionRef<void(catalog::TokenizerRef)> visitor) {
   if (auto catalog = DatabaseCatalogOf(
-        &context, GetSereneDBContext(context).GetDatabaseId())) {
+        &context, connector::GetSereneDBContext(context).GetDatabaseId())) {
     VisitTokenizersIn(&context, *catalog, visitor);
   }
 }
@@ -2138,7 +2138,7 @@ void ReplayEntryRecord(const catalog::wal::PutEntry& e) {
       // data WAL replays against a catalog that is already whole. A database
       // never changes name -- the only Replace it takes is a GRANT -- so the
       // attachment this reaches is always the one already under `name`.
-      AttachDatabaseCatalog(database->GetId(), name);
+      connector::AttachDatabaseCatalog(database->GetId(), name);
       return;
     }
     case SCHEMA_ENTRY:
@@ -2348,4 +2348,4 @@ SereneDBTableEntry* FindTableEntryIn(duckdb::ClientContext* context,
   return entry ? dynamic_cast<SereneDBTableEntry*>(entry.get()) : nullptr;
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

@@ -28,10 +28,10 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/user_type.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -1530,7 +1530,7 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   auto& context = _config.GetClientContext();
   const auto visit_types =
     [&](absl::FunctionRef<void(const duckdb::TypeCatalogEntry&)> visitor) {
-      connector::VisitTypes(&context, database_id, visitor);
+      catalog::VisitTypes(&context, database_id, visitor);
     };
 
   containers::FlatHashSet<std::string_view> taken;

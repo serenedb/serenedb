@@ -18,12 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_index_entry.h"
+#include "catalog/duckdb_index_entry.h"
 
 #include "basics/down_cast.h"
 #include "catalog/inverted_index.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 SereneDBIndexEntry::SereneDBIndexEntry(duckdb::Catalog& catalog,
                                        duckdb::SchemaCatalogEntry& schema,
@@ -41,4 +41,4 @@ SereneDBIndexEntry::SereneDBIndexEntry(duckdb::Catalog& catalog,
   catalog::AdoptEntryIdentity(*this, _sdb_index->GetId());
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

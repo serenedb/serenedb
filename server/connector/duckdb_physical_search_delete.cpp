@@ -28,9 +28,9 @@
 #include <string>
 #include <vector>
 
+#include "catalog/duckdb_primary_key.h"
 #include "catalog/identifiers/object_id.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/search_table_dispatch.h"
 #include "pg/connection_context.h"
@@ -44,7 +44,7 @@ struct SearchDeleteGlobalState : duckdb::GlobalSinkState {
   ObjectId table_id;
   std::shared_ptr<search::SearchTable> search_table;
   query::Transaction* sdb_txn = nullptr;
-  std::vector<duckdb_primary_key::PKColumn> pk_columns;
+  std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
   std::shared_lock<std::shared_mutex> table_lock;
   duckdb::idx_t delete_count = 0;
   // RETURNING only: the rows this statement removed.
@@ -106,14 +106,15 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   remover.InitImpl(num_rows);
 
   std::vector<duckdb::UnifiedVectorFormat> pk_formats;
-  duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+  catalog::duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns,
+                                                pk_formats);
 
   std::vector<std::string> wal_pks;
   wal_pks.reserve(num_rows);
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     pk.clear();
-    duckdb_primary_key::Create(pk_formats, gstate.pk_columns, row, pk);
+    catalog::duckdb_primary_key::Create(pk_formats, gstate.pk_columns, row, pk);
     remover.DeleteRowImpl(pk);  // live iresearch removal
     wal_pks.emplace_back(pk);   // WAL delete payload
   }

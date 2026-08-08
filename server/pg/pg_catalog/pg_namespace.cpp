@@ -26,9 +26,9 @@
 #include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/schema.h"
-#include "connector/duckdb_catalog_sets.h"
 
 namespace sdb::pg {
 namespace {
@@ -60,7 +60,7 @@ void RetrieveObjects(duckdb::ClientContext& context, ObjectId database_id,
     .nspname = "information_schema",
     .nspowner = id::kRootUser.id(),
   });
-  connector::VisitSchemas(
+  catalog::VisitSchemas(
     &context, database_id,
     [&](const duckdb::CreateSchemaInfo& schema,
         const catalog::Permissions& perm) {

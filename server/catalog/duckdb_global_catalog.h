@@ -28,7 +28,7 @@
 #include <string>
 #include <string_view>
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
 // Roles and the database list belong to no single database, so they get an
 // attachment of their own instead of riding whichever database the statement
@@ -110,4 +110,4 @@ void AttachGlobalDatabase();
 void ModifyGlobalDatabase(duckdb::ClientContext& context,
                           duckdb::DatabaseModificationType modification);
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

@@ -25,8 +25,8 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/user_type.h"
-#include "connector/duckdb_catalog_sets.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -51,7 +51,7 @@ catalog::MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
   // into it reads whatever the next label reused the bytes for. A deque because
   // the rows point at these and must not move.
   std::deque<std::string> labels;
-  connector::VisitTypes(
+  catalog::VisitTypes(
     &_config.GetClientContext(), database_id,
     [&](const duckdb::TypeCatalogEntry& type) {
       if (type.user_type.id() != duckdb::LogicalTypeId::ENUM) {

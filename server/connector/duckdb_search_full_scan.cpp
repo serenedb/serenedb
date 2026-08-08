@@ -72,11 +72,11 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/down_cast.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
 #include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/full_scanner.h"
 #include "connector/index_source_factory.h"
@@ -356,7 +356,7 @@ void InitScanState(IResearchScanGlobalState& state,
   const auto num_bind_columns = bind_data.column_ids.size();
   for (auto col_id : input.column_ids) {
     const auto proj = state.projected_columns.size();
-    if (col_id == kColumnIdentifierGeneratedPk) {
+    if (col_id == catalog::kColumnIdentifierGeneratedPk) {
       if (!bind_data.IsSearchTableEntry()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -367,7 +367,7 @@ void InitScanState(IResearchScanGlobalState& state,
       state.generated_pk_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::ROW_TYPE);
-    } else if (col_id == kColumnIdentifierTableOid) {
+    } else if (col_id == catalog::kColumnIdentifierTableOid) {
       state.tableoid_output_idx = proj;
       state.tableoid_value = bind_data.RelationId().id();
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
@@ -381,7 +381,8 @@ void InitScanState(IResearchScanGlobalState& state,
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
       SDB_ASSERT(!bind_data.IsViewBacked(),
                  "virtual PK columns are not used for view-backed scans");
-      auto cat_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
+      auto cat_idx =
+        catalog::SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
       SDB_ASSERT(cat_idx != duckdb::DConstants::INVALID_INDEX);
       const auto& catalog_cols = bind_data.table_entry->GetColumns();
       SDB_ASSERT(cat_idx < catalog_cols.LogicalColumnCount());

@@ -25,11 +25,11 @@
 #include "auth/role_closure.h"
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_object_index.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/role.h"
-#include "connector/duckdb_catalog_sets.h"
-#include "connector/duckdb_dependency.h"
-#include "connector/duckdb_object_index.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_catalog/pg_authid.h"
 #include "pg/pg_catalog/pg_depend.h"
@@ -52,14 +52,14 @@ using ColumnAclsByTable =
 ColumnAclsByTable CollectColumnAcls(duckdb::ClientContext& context,
                                     ObjectId database) {
   ColumnAclsByTable out;
-  connector::VisitTableEntries(context, database,
-                               [&](const duckdb::CreateSchemaInfo&,
-                                   const connector::SereneDBTableEntry& table) {
-                                 if (!table.GetColumnAcls().empty()) {
-                                   out.emplace(catalog::IdOf(table),
-                                               &table.GetColumnAcls());
-                                 }
-                               });
+  catalog::VisitTableEntries(context, database,
+                             [&](const duckdb::CreateSchemaInfo&,
+                                 const catalog::SereneDBTableEntry& table) {
+                               if (!table.GetColumnAcls().empty()) {
+                                 out.emplace(catalog::IdOf(table),
+                                             &table.GetColumnAcls());
+                               }
+                             });
   return out;
 }
 
@@ -72,7 +72,7 @@ catalog::MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData() {
   // The same reverse index DROP ROLE consults: an object that names a role is
   // exactly an edge with the Block verb, which is the verb pg_depend leaves to
   // this table.
-  const connector::DependencyView dependents{&context};
+  const catalog::DependencyView dependents{&context};
   const auto column_acls = CollectColumnAcls(context, database_id);
 
   // Whether the dependent's grants name the role anywhere. Postgres records
@@ -93,7 +93,7 @@ catalog::MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData() {
   // Collected before anything is resolved: reading an edge's dependent opens
   // the role set this walk is holding, and the lock behind it is not recursive.
   std::vector<ObjectId> roles;
-  connector::VisitRoles(&context, [&](const catalog::CreateRoleInfo& info) {
+  catalog::VisitRoles(&context, [&](const catalog::CreateRoleInfo& info) {
     roles.push_back(info.GetId());
   });
 
@@ -108,8 +108,8 @@ catalog::MaterializedData SystemTableSnapshot<PgShdepend>::GetTableData() {
       // lookup that finds it is also the database check.
       const catalog::Permissions* perm = nullptr;
       bool shared = false;
-      auto database = connector::FindDatabase(&context, dependent.id);
-      auto entry = connector::LookupEntryById(context, dependent.id);
+      auto database = catalog::FindDatabase(&context, dependent.id);
+      auto entry = catalog::LookupEntryById(context, dependent.id);
       if (database) {
         shared = true;
         perm = &database.perm;

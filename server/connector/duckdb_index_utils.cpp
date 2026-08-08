@@ -23,8 +23,8 @@
 #include <absl/algorithm/container.h>
 
 #include "basics/assert.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/inverted_index.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/search_sink_writer.hpp"
 
 namespace sdb::connector {

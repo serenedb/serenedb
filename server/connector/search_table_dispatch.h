@@ -27,8 +27,8 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog/duckdb_primary_key.h"
 #include "catalog/table_options.h"
-#include "connector/duckdb_primary_key.h"
 
 namespace duckdb {
 
@@ -73,15 +73,16 @@ struct SearchWriteTarget {
   std::vector<ObjectId> column_ids;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   // The declared key over those columns, empty on a generated-PK table.
-  std::vector<duckdb_primary_key::PKColumn> pk_columns;
+  std::vector<catalog::duckdb_primary_key::PKColumn> pk_columns;
 };
 
-SearchWriteTarget ResolveSearchWriteTarget(const SereneDBTableEntry& entry);
+SearchWriteTarget ResolveSearchWriteTarget(
+  const catalog::SereneDBTableEntry& entry);
 
 // The row-identity slots a search DELETE/UPDATE plan projects, paired with the
 // type each key was encoded from: the declared key columns in key order, or the
 // single generated-PK rowid, which is a BIGINT.
-std::vector<duckdb_primary_key::PKColumn> RowIdentityPKColumns(
+std::vector<catalog::duckdb_primary_key::PKColumn> RowIdentityPKColumns(
   const SearchWriteTarget& target,
   std::span<const duckdb::idx_t> chunk_positions);
 

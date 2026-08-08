@@ -18,17 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_system_table_entry.h"
+#include "catalog/duckdb_system_table_entry.h"
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 
+#include "catalog/duckdb_table_entry.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_table_entry.h"
 #include "pg/connection_context.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 namespace {
 
 struct SystemTableBindData : public duckdb::FunctionData {
@@ -156,7 +156,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableEntry::GetStatistics(
 // access between connections
 std::shared_ptr<catalog::VirtualTableSnapshot> SystemTableEntry::CreateSnapshot(
   duckdb::ClientContext& context) {
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = connector::GetSereneDBContext(context);
   return _virtual_table.CreateSnapshot(conn_ctx.GetDatabaseId(), conn_ctx);
 }
 
@@ -195,4 +195,4 @@ duckdb::TableStorageInfo SystemTableEntry::GetStorageInfo(
   return {};
 }
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

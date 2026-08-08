@@ -37,6 +37,7 @@ struct VectorState {
   explicit VectorState(IResourceManager& memory) noexcept
     : cookies{{memory}},
       pay_starts{{memory}},
+      pay_lanes{{memory}},
       cluster_counts{{memory}},
       cluster_centroids{{memory}} {}
 
@@ -48,6 +49,7 @@ struct VectorState {
   VectorQuantization quant = VectorQuantization::None;
   uint32_t d = 0;
   ManagedVector<uint64_t> pay_starts;
+  ManagedVector<uint32_t> pay_lanes;
   ManagedVector<uint32_t> cluster_counts;
 
   std::shared_ptr<const QuantizerCodebook> codebook;

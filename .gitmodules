@@ -211,13 +211,13 @@
 	shallow = true
 [submodule "third_party/duckdb_azure"]
 	path = third_party/duckdb_azure
-	url = git@github.com:serenedb/duckdb-azure.git
+	url = https://github.com/serenedb/duckdb-azure.git
 	shallow = true
 [submodule "third_party/azure-sdk-for-cpp"]
 	path = third_party/azure-sdk-for-cpp
-	url = git@github.com:serenedb/azure-sdk-for-cpp.git
+	url = https://github.com/serenedb/azure-sdk-for-cpp.git
 	shallow = true
 [submodule "third_party/libxml2"]
 	path = third_party/libxml2
-	url = git@github.com:serenedb/libxml2.git
+	url = https://github.com/serenedb/libxml2.git
 	shallow = true

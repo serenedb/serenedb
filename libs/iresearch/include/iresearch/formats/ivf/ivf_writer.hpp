@@ -32,6 +32,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -93,11 +94,17 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
   TermPayloadWriter* PayloadWriter() const final {
-    return _qw != nullptr ? const_cast<IvfTermReader*>(this) : nullptr;
+    SDB_ASSERT(_qw);
+    return const_cast<IvfTermReader*>(this);
   }
 
   void WriteTermPayload(IndexOutput& out, std::span<const doc_id_t> docs) final;
   void Finish(IndexOutput& out) final;
+
+  uint32_t PendingLanes() const noexcept final {
+    SDB_ASSERT(_qw);
+    return _qw->PendingLanes();
+  }
 
  private:
   std::span<const doc_id_t> _cluster_docs;

@@ -22,11 +22,11 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
 #include <tuple>
-#include <type_traits>
 #include <vector>
 
 #include "basics/assert.h"
@@ -50,6 +50,33 @@
 
 namespace irs {
 namespace {
+
+class VectorBlockReader {
+ public:
+  VectorBlockReader(IndexInput::ptr&& in, uint32_t record_size) noexcept
+    : _in{std::move(in)}, _record_size{record_size} {
+    SDB_ASSERT(_in);
+  }
+
+  void Reset(uint64_t base_offset) noexcept { _base = base_offset; }
+
+  std::span<const byte_type> Read(size_t index, size_t count) {
+    const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
+    const size_t bytes = count * size_t{_record_size};
+    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
+      return {p, bytes};
+    }
+    _buf.resize(bytes);
+    _in->ReadData(offset, _buf.data(), bytes);
+    return _buf;
+  }
+
+ private:
+  IndexInput::ptr _in;
+  std::vector<byte_type> _buf;
+  uint64_t _base = 0;
+  uint32_t _record_size;
+};
 
 class RawVectorReader {
  public:
@@ -180,12 +207,31 @@ using QVectorPosting =
 class QVectorIterator : public VectorDistanceIterator {
  public:
   QVectorIterator(DocIterator::ptr&& src, std::unique_ptr<QuantizerReader> qr,
-                  score_t boost, CostAttr::Type estimation)
+                  VectorBlockReader&& pay, uint32_t lane0, score_t boost,
+                  CostAttr::Type estimation)
     : VectorDistanceIterator{std::move(src), boost, estimation},
       _qr{std::move(qr)},
+      _pay{std::move(pay)},
       _total{estimation} {
     SDB_ASSERT(_qr);
+    _setting = _qr->BlockSetting();
+    SDB_ASSERT(_setting.group_size <= _cache.size());
+    _lane0 = lane0;
+    SDB_ASSERT(_lane0 < std::max<uint32_t>(1, _setting.group_size));
+    _end = _lane0 + static_cast<uint32_t>(_total);
+    _records = static_cast<uint32_t>(_setting.RecordCount(_end));
     _posting = sdb::basics::downCast<QVectorPosting>(_src.get());
+  }
+
+  void BindThreshold(const score_t* src) noexcept {
+    if (_boost <= 0.f) {
+      return;
+    }
+    _threshold_src = src;
+  }
+
+  void BindConstantThreshold(score_t threshold) noexcept {
+    _prune_threshold = threshold;
   }
 
   doc_id_t advance() final {
@@ -226,7 +272,7 @@ class QVectorIterator : public VectorDistanceIterator {
     const uint32_t remaining = _posting->RemainingDocs();
     SDB_ASSERT(remaining < _total);
     _base = static_cast<uint32_t>(_total - 1 - remaining);
-    _qr->ComputeBlock(_base, 1, &_cur_dist);
+    ComputeRange(_base, 1, &_cur_dist);
     ++_base;
     return _doc = doc;
   }
@@ -283,10 +329,63 @@ class QVectorIterator : public VectorDistanceIterator {
   }
 
  private:
+  score_t CurrentThreshold() noexcept {
+    if (_threshold_src != nullptr) {
+      _prune_threshold = *_threshold_src / _boost;
+    }
+    return _prune_threshold;
+  }
+
+  uint32_t GroupRecords(uint32_t first) const noexcept {
+    return std::min(first + _setting.group_size, _records) - first;
+  }
+
+  uint32_t ServeGroup(uint32_t lane, uint32_t len, score_t threshold,
+                      score_t* out) {
+    if (lane < _cached_first || lane >= _cached_end) {
+      const uint32_t gs = _setting.group_size;
+      const uint32_t first = lane / gs * gs;
+      const uint32_t records = GroupRecords(first);
+      _qr->ComputeBlock(_pay.Read(first, records), threshold, _cache.data());
+      _cached_first = first;
+      _cached_end = first + std::min<uint32_t>(records, _end - first);
+    }
+    const uint32_t take = std::min(len, _cached_end - lane);
+    std::copy_n(_cache.begin() + (lane - _cached_first), take, out);
+    return take;
+  }
+
+  void ComputeRange(uint32_t base, uint32_t len, score_t* out) {
+    SDB_ASSERT(base + len <= _total);
+    uint32_t lane = _lane0 + base;
+    const uint32_t gs = _setting.group_size;
+    const score_t threshold = CurrentThreshold();
+    if (lane % gs != 0) {
+      const uint32_t take = ServeGroup(lane, len, threshold, out);
+      lane += take;
+      out += take;
+      len -= take;
+    }
+    if (const uint32_t full = len / gs * gs; full != 0) {
+      _qr->ComputeBlock(_pay.Read(lane, full), threshold, out);
+      lane += full;
+      out += full;
+      len -= full;
+    }
+    if (len == 0) {
+      return;
+    }
+    if (const uint32_t records = GroupRecords(lane); records == len) {
+      _qr->ComputeBlock(_pay.Read(lane, records), threshold, out);
+      return;
+    }
+    ServeGroup(lane, len, threshold, out);
+  }
+
   void FillDistancesBlock() {
     SDB_ASSERT(_len > 0);
     SDB_ASSERT(_len <= _dist.size());
-    _qr->ComputeBlock(_base, _len, _dist.data());
+    ComputeRange(_base, _len, _dist.data());
     _base += _len;
   }
 
@@ -296,10 +395,20 @@ class QVectorIterator : public VectorDistanceIterator {
   }
 
   std::unique_ptr<QuantizerReader> _qr;
+  VectorBlockReader _pay;
   QVectorPosting* _posting = nullptr;
   CostAttr::Type _total;
   std::span<const doc_id_t> _docs;
   std::array<score_t, kPostingBlock> _dist;
+  std::array<score_t, kPostingBlock> _cache;
+  PayloadBlockSetting _setting;
+  const score_t* _threshold_src = nullptr;
+  score_t _prune_threshold = std::numeric_limits<score_t>::lowest();
+  uint32_t _lane0 = 0;
+  uint32_t _end = 0;
+  uint32_t _records = 0;
+  uint32_t _cached_first = 0;
+  uint32_t _cached_end = 0;
   uint32_t _base = 0;
   uint16_t _len = 0;
   uint16_t _pos = 0;
@@ -412,6 +521,7 @@ DocIterator::ptr MergeWithInner(Primary&& primary, Inner&& inner,
 struct ClusterInputs {
   DocIterator::ptr postings;
   std::unique_ptr<QuantizerReader> vr;
+  VectorBlockReader pay;
 };
 
 std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
@@ -423,18 +533,20 @@ std::optional<ClusterInputs> MakeClusterIterator(const VectorState& state,
   if (!postings) {
     return std::nullopt;
   }
-  auto vr = MakeQuantizerReader(state.codebook, pay_root.Dup());
+  auto vr = MakeQuantizerReader(state.codebook);
   SDB_ASSERT(vr);
   const float* centroid =
     has_centroids ? state.cluster_centroids.data() + c * state.d : nullptr;
-  vr->StartCluster(state.pay_starts[c], state.cluster_counts[c], centroid);
-  return ClusterInputs{std::move(postings), std::move(vr)};
+  vr->StartCluster(centroid);
+  VectorBlockReader pay{pay_root.Dup(), vr->BlockSetting().record_size};
+  pay.Reset(state.pay_starts[c]);
+  return ClusterInputs{std::move(postings), std::move(vr), std::move(pay)};
 }
 
 using QVectorIterators = std::vector<memory::managed_ptr<QVectorIterator>>;
 
-template<typename Out>
-bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
+bool BuildClusterIterators(const VectorState& state, score_t boost,
+                           QVectorIterators& out) {
   auto pay_root = state.reader->ReopenPayload();
   if (!pay_root) {
     return false;
@@ -447,14 +559,9 @@ bool BuildClusterIterators(const VectorState& state, score_t boost, Out& out) {
     if (!ci) {
       continue;
     }
-    auto qit = memory::make_managed<QVectorIterator>(std::move(ci->postings),
-                                                     std::move(ci->vr), boost,
-                                                     state.cluster_counts[c]);
-    if constexpr (std::is_same_v<Out, ScoreAdapters>) {
-      out.emplace_back(DocIterator::ptr{std::move(qit)});
-    } else {
-      out.emplace_back(std::move(qit));
-    }
+    out.emplace_back(memory::make_managed<QVectorIterator>(
+      std::move(ci->postings), std::move(ci->vr), std::move(ci->pay),
+      state.pay_lanes[c], boost, state.cluster_counts[c]));
   }
   return true;
 }
@@ -465,7 +572,7 @@ memory::managed_ptr<VectorDistanceIterator> MakeRawReranker(
   const QueryBuilder* inner, const ExecutionContext& ctx,
   const StatsBuffer& stats) {
   const auto* col_reader = segment.GetColReader();
-  if (!col_reader) {
+  if (!col_reader || state.vector_column == nullptr) {
     return nullptr;
   }
 
@@ -501,7 +608,7 @@ DocIterator::ptr WrapRawScorer(DocIterator::ptr src, const SubReader& segment,
                                std::span<const float> query,
                                VectorMetric metric, score_t boost) {
   const auto* col_reader = segment.GetColReader();
-  if (!col_reader || !src) {
+  if (!col_reader || !src || state.vector_column == nullptr) {
     return src;
   }
   const auto d = static_cast<uint32_t>(state.vector_column->ArraySize());
@@ -514,7 +621,11 @@ class DisjointClusterUnion : public DocIterator {
  public:
   DisjointClusterUnion(QVectorIterators&& itrs, doc_id_t docs_count,
                        score_t /*boost*/)
-    : _itrs{std::move(itrs)}, _attrs{docs_count} {}
+    : _itrs{std::move(itrs)}, _attrs{docs_count} {
+    for (auto& it : _itrs) {
+      it->BindThreshold(&_threshold.value);
+    }
+  }
 
   doc_id_t advance() final { SDB_UNREACHABLE(); }
   doc_id_t seek(doc_id_t) final { SDB_UNREACHABLE(); }
@@ -536,6 +647,9 @@ class DisjointClusterUnion : public DocIterator {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (type == Type<CostAttr>::id()) {
       return &_attrs;
+    }
+    if (type == Type<ScoreThresholdAttr>::id()) {
+      return &_threshold;
     }
     return nullptr;
   }
@@ -561,6 +675,7 @@ class DisjointClusterUnion : public DocIterator {
   QVectorIterators _itrs;
   std::vector<ScoreFunction> _scorers;
   CostAttr _attrs;
+  ScoreThresholdAttr _threshold;
 };
 
 }  // namespace
@@ -598,45 +713,45 @@ DocIterator::ptr KnnVectorQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
   SDB_ASSERT(_state.reader);
-  SDB_ASSERT(_state.vector_column);
+  SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.codebook);
 
   const std::span<const float> query{_query};
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
 
-  if (_state.quant != VectorQuantization::None) {
-    SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
-    SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
-    SDB_ASSERT(_state.codebook);
-
-    if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
-      QVectorIterators children;
-      if (BuildClusterIterators(_state, _boost, children) &&
-          !children.empty()) {
-        return memory::make_managed<DisjointClusterUnion>(std::move(children),
-                                                          docs_count, _boost);
+  if (ctx.top_k_collect && !_inner && _segment.docs_mask() == nullptr) {
+    QVectorIterators children;
+    if (BuildClusterIterators(_state, _boost, children) && !children.empty()) {
+      return memory::make_managed<DisjointClusterUnion>(std::move(children),
+                                                        docs_count, _boost);
+    }
+  } else {
+    QVectorIterators children;
+    if (BuildClusterIterators(_state, _boost, children) && !children.empty()) {
+      ScoreAdapters adapters;
+      adapters.reserve(children.size());
+      for (auto& qit : children) {
+        adapters.emplace_back(DocIterator::ptr{std::move(qit)});
       }
-    } else {
-      ScoreAdapters children;
-      if (BuildClusterIterators(_state, _boost, children) &&
-          !children.empty()) {
-        using Disjunction =
-          DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
-        DocIterator::ptr v = MakeDisjunction<Disjunction>(
-          WandContext{}, docs_count, std::move(children));
-        if (_inner) {
-          auto inner_it = _inner->Execute(ctx, stats);
-          if (!inner_it) {
-            return DocIterator::empty();
-          }
-          v = MergeWithInner(
-            std::move(v),
-            memory::make_managed<FilterIterator>(std::move(inner_it)),
-            docs_count, ScoreMergeType::Sum);
+      using Disjunction =
+        DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
+      DocIterator::ptr v = MakeDisjunction<Disjunction>(
+        WandContext{}, docs_count, std::move(adapters));
+      if (_inner) {
+        auto inner_it = _inner->Execute(ctx, stats);
+        if (!inner_it) {
+          return DocIterator::empty();
         }
-        return ctx.top_k_collect ? std::move(v)
-                                 : WrapRawScorer(std::move(v), _segment, _state,
-                                                 query, _metric, _boost);
+        v = MergeWithInner(
+          std::move(v),
+          memory::make_managed<FilterIterator>(std::move(inner_it)), docs_count,
+          ScoreMergeType::Sum);
       }
+      return ctx.top_k_collect || _state.quant == VectorQuantization::None
+               ? std::move(v)
+               : WrapRawScorer(std::move(v), _segment, _state, query, _metric,
+                               _boost);
     }
   }
 
@@ -651,23 +766,50 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
   SDB_ASSERT(_state.reader);
-  SDB_ASSERT(_state.vector_column);
+  SDB_ASSERT(_state.pay_starts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.cluster_counts.size() == _state.cookies.size());
+  SDB_ASSERT(_state.codebook);
 
-  auto it = MakeRawReranker(_segment, _state, std::span<const float>{_query},
-                            _metric, _boost, _inner.get(), ctx, stats);
-  if (!it) {
+  const float threshold = VectorMetricIsAngular(_metric) ? _radius : -_radius;
+  const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
+
+  QVectorIterators children;
+  if (!BuildClusterIterators(_state, _boost, children) || children.empty()) {
     return DocIterator::empty();
   }
-  DocIterator::ptr res;
-  // RawVectorReader now yields "larger = nearer" scores, so map the radius into
-  // that scoring space: distance metrics (nearest = smallest) get negated.
-  const float threshold = VectorMetricIsAngular(_metric) ? _radius : -_radius;
+
+  ScoreAdapters adapters;
+  adapters.reserve(children.size());
   irs::ResolveBool(_inclusive, [&]<bool Inclusive>() {
-    auto v_it = memory::make_managed<VectorRangeIterator<Inclusive>>(
-      std::move(it), threshold);
-    res = std::move(v_it);
+    for (auto& qit : children) {
+      qit->BindConstantThreshold(threshold);
+      adapters.emplace_back(
+        DocIterator::ptr{memory::make_managed<VectorRangeIterator<Inclusive>>(
+          memory::managed_ptr<VectorDistanceIterator>{std::move(qit)},
+          threshold)});
+    }
   });
-  return res;
+
+  using Disjunction = DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
+  DocIterator::ptr res = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
+                                                      std::move(adapters));
+  if (_inner) {
+    auto inner_it = _inner->Execute(ctx, stats);
+    if (!inner_it) {
+      return DocIterator::empty();
+    }
+    res = MergeWithInner(
+      std::move(res), memory::make_managed<FilterIterator>(std::move(inner_it)),
+      docs_count, ScoreMergeType::Sum);
+  }
+  // Membership stays on the lossy payload gate, but a survivor reports its
+  // exact distance -- rescored from the index's own vectors, like the top-k
+  // pool.
+  if (_state.quant == VectorQuantization::None) {
+    return res;
+  }
+  return WrapRawScorer(std::move(res), _segment, _state, _query, _metric,
+                       _boost);
 }
 
 }  // namespace irs

@@ -200,3 +200,38 @@ count
 
 statement ok
 RESET sdb_nprobe
+
+# ===========================================================================
+# 5. Unlimited range query: PQ decodes against its cluster centroid, so this
+#    is the path that needs a centroid per probed cluster even though a radius
+#    probes every one of them. Radius 500 sits in the gap between the landmark
+#    (distance 0) and everything else (>= ~900).
+# ===========================================================================
+
+statement ok
+SET sdb_nprobe = 1000
+
+query
+SELECT pk FROM pq_l2_idx
+WHERE emb <-> [1000, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 500 ORDER BY pk;
+----
+pk
+1001
+
+query
+SELECT count(*) FROM pq_l2_idx
+WHERE emb <-> [1000, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 500;
+----
+count
+1
+
+# every filler row and both other landmarks, none of the query's own axis mates.
+query
+SELECT count(*) FROM pq_l2_idx
+WHERE emb <-> [1000, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] >= 500;
+----
+count
+302
+
+statement ok
+RESET sdb_nprobe

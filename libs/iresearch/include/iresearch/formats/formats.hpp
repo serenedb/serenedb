@@ -102,6 +102,8 @@ struct TermPayloadWriter {
                                 std::span<const doc_id_t> docs) = 0;
 
   virtual void Finish(IndexOutput& out) = 0;
+
+  virtual uint32_t PendingLanes() const noexcept { return 0; }
 };
 
 struct PostingsWriter {

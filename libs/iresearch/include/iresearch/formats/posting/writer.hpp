@@ -172,7 +172,7 @@ class PostingsWriterBase : public PostingsWriter {
 
  public:
   FieldStats EndField() final {
-    if (_features.HasPayload() && _term_pay != nullptr) {
+    if (_features.HasVector() && _term_pay != nullptr) {
       SDB_ASSERT(_pay_out);
       _term_pay->Finish(*_pay_out);
     }
@@ -203,19 +203,19 @@ class PostingsWriterBase : public PostingsWriter {
       _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
       _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
       _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
-      _has_pay = (IndexFeatures::None != (features & IndexFeatures::Pay));
+      _has_vec = (IndexFeatures::None != (features & IndexFeatures::Vec));
     }
 
     bool HasFrequency() const noexcept { return _has_freq; }
     bool HasPosition() const noexcept { return _has_pos; }
     bool HasOffset() const noexcept { return _has_offs; }
-    bool HasPayload() const noexcept { return _has_pay; }
+    bool HasVector() const noexcept { return _has_vec; }
 
    private:
     bool _has_freq{};
     bool _has_pos{};
     bool _has_offs{};
-    bool _has_pay{};
+    bool _has_vec{};
   };
 
   struct Attributes final : AttributeProvider {
@@ -278,10 +278,10 @@ class PostingsWriterBase : public PostingsWriter {
   WandWriter::ptr _writer;    // Wand writers
   WandWriter* _valid_writer;  // Valid wand writer
   Features _features;         // Features supported by current field
-  // Per-term payload writer for IndexFeatures::Pay fields (e.g. IVF codes).
+  // Per-term payload writer for IndexFeatures::Vec fields (e.g. IVF codes).
   TermPayloadWriter* _term_pay{};
   // Scratch list of the current term's document ids (collected when
-  // HasPayload).
+  // HasVector).
   std::vector<doc_id_t> _term_docs;
   const PostingsFormat _postings_format_version;
   const TermsFormat _terms_format_version;
@@ -349,12 +349,15 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
   }
 
   // The ".pay" stream holds position-level offsets (IndexFeatures::Offs) and/or
-  // fixed-width per-document payloads (IndexFeatures::Pay, e.g. IVF codes).
-  if (IndexFeatures::None !=
-      (state.index_features & (IndexFeatures::Offs | IndexFeatures::Pay))) {
-    if (IndexFeatures::None != (state.index_features & IndexFeatures::Offs)) {
-      _pay.Reset();
-    }
+  // fixed-width per-document payloads (IndexFeatures::Vec, e.g. IVF codes).
+  const bool has_offs =
+    IndexFeatures::None != (state.index_features & IndexFeatures::Offs);
+  const bool has_vec =
+    IndexFeatures::None != (state.index_features & IndexFeatures::Vec);
+  if (has_offs) {
+    _pay.Reset();
+  }
+  if (has_offs || has_vec) {
     format_utils::PrepareOutput(name, _pay_out, state, kPayExt, kPayFormatName,
                                 static_cast<int32_t>(_postings_format_version));
   }
@@ -377,6 +380,9 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
                                        const TermMeta& state) {
   const auto& meta = static_cast<const TermMetaImpl&>(state);
 
+  SDB_ASSERT(!_features.HasVector() ||
+             (!_features.HasPosition() && !_features.HasOffset()));
+
   out.WriteV32(meta.docs_count);
   if (_features.HasFrequency()) {
     SDB_ASSERT(meta.freq >= meta.docs_count);
@@ -391,9 +397,10 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
     }
     SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
     out.WriteByte(meta.pos_offset);
-  }
-  if (_features.HasPayload()) {
+  } else if (_features.HasVector()) {
     out.WriteV64(meta.pay_start - _last_state.pay_start);
+    SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
+    out.WriteByte(meta.pos_offset);
   }
 
   if (meta.docs_count == 1) {
@@ -676,7 +683,7 @@ void PostingsWriterImpl<FormatTraits>::End() {
   }
 
   // ".pay" may be open for offsets (with positions) and/or for fixed-width
-  // per-document payloads (IndexFeatures::Pay, no positions).
+  // per-document payloads (IndexFeatures::Vec, no positions).
   if (_pay_out) {
     if (_pay.size != 0) {
       FlushTailPay();
@@ -706,8 +713,8 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
-  const bool has_payload = _features.HasPayload();
-  if (has_payload) {
+  const bool has_vec = _features.HasVector();
+  if (has_vec) {
     _term_docs.clear();
   }
 
@@ -722,7 +729,7 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
     }
     _attrs.doc.value = doc;
     _attrs.freq.value = docs.GetFreq();
-    if (has_payload) {
+    if (has_vec) {
       _term_docs.push_back(doc);
     }
 
@@ -761,9 +768,10 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
 
   // Stream this term's fixed-width per-document payload (e.g. IVF quantized
   // codes) into ".pay", contiguous per term.
-  if (has_payload) {
+  if (has_vec) {
     SDB_ASSERT(_pay_out && _term_pay);
     meta.pay_start = _pay_out->Position();
+    meta.pos_offset = _term_pay->PendingLanes();
     _term_pay->WriteTermPayload(*_pay_out, _term_docs);
   }
 }

@@ -1040,7 +1040,7 @@ void FieldsData::flush(burst_trie::FieldWriter& fw, FlushState& state,
   }
 
   // Extra term readers (e.g. IVF cluster postings) contribute their features
-  // too -- in particular IndexFeatures::Pay, which gates the ".pay" stream.
+  // too -- in particular IndexFeatures::Vec, which gates the ".pay" stream.
   for (const auto* reader : extra) {
     index_features |= reader->properties().index_features;
   }

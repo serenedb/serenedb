@@ -111,3 +111,34 @@ ORDER BY emb <-> [0.0, 0, 0]::FLOAT[3] LIMIT 5;
 id
 1
 2
+
+
+# --- the same residual score filters without a top-k -----------------------
+# Without ORDER BY ... LIMIT there is no collector and no TableFilterDocIterator:
+# the scan streams and the pushed score filter is evaluated inside the HitBatcher,
+# on the staged scores. That is the one path where the staged space is observable,
+# so it only agrees with the emit-wrapped predicate while the batcher stages raw.
+
+# ids 3, 4 are farther than 5. Returned every row when the staged scores were
+# pre-mapped to the user-facing value.
+query
+SELECT id FROM l2t_idx
+WHERE l2_distance(emb, [0.0, 0, 0]::FLOAT[3]) > 5.0
+ORDER BY id;
+----
+id
+3
+4
+
+
+# IP <= 0.95 drops r0 (IP 1) only. Returned r0 too when the staged scores were
+# pre-mapped: the wrapped predicate then negated an already-negated score.
+query
+SELECT id FROM t_idx
+WHERE -(v <#> ARRAY[1.0, 0, 0, 0]::FLOAT[4]) <= 0.95
+ORDER BY id;
+----
+id
+r1
+r2
+r3

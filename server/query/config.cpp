@@ -37,6 +37,10 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/deferred_writes.h"
+#include "catalog/store/store.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb {
@@ -100,13 +104,6 @@ IsolationLevel Config::GetIsolationLevel() const {
   return _client_ctx.transaction.GetIsolationLevel();
 }
 
-bool Config::GetStrictDDL() const {
-  duckdb::Value value;
-  auto ok = _client_ctx.TryGetCurrentSetting("sdb_strict_ddl", value);
-  SDB_ASSERT(ok && !value.IsNull());
-  return duckdb::BooleanValue::Get(value);
-}
-
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
   if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {
@@ -115,13 +112,8 @@ std::optional<std::string> Config::Get(std::string_view key) const {
   return std::nullopt;
 }
 
-std::shared_ptr<const catalog::Snapshot> Config::AcquireCatalogSnapshot() {
-  if (_snapshot) {
-    return _snapshot;
-  }
-  _snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  SDB_ASSERT(_snapshot);
-  return _snapshot;
+void Config::RefreshCatalogEpoch() noexcept {
+  _catalog_epoch = catalog::CatalogVersion();
 }
 
 void Config::OnSet(std::string_view name, bool is_local,

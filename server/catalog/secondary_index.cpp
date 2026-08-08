@@ -25,50 +25,70 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/serializer.h"
+#include "basics/simdjson_sink.h"
 #include "catalog/persistence/secondary_index.h"
 
 namespace sdb::catalog {
 
-SecondaryIndex::SecondaryIndex(ObjectId database_id, ObjectId schema_id,
-                               ObjectId id, ObjectId relation_id,
-                               std::string name,
-                               std::vector<Column::Id> columns,
-                               std::vector<ExpressionData> expressions,
-                               bool unique)
-  : Index(database_id, schema_id, id, relation_id, std::move(name),
-          DeriveIds(columns, expressions, {}), ObjectType::SecondaryIndex),
-    _columns{std::move(columns)},
-    _expressions{std::move(expressions)},
-    _unique{unique} {}
+CreateSecondaryIndexInfo::CreateSecondaryIndexInfo(
+  ObjectId schema_id, ObjectId id, ObjectId relation_id,
+  persistence::SecondaryIndexData data)
+  : CreateIndexInfoBase{schema_id,
+                        id,
+                        relation_id,
+                        data.name,
+                        std::move(data.comment),
+                        DeriveIds(data.columns, data.expressions, {}),
+                        /*inverted=*/false},
+    _key_columns{std::move(data.columns)},
+    _expressions{std::move(data.expressions)},
+    _unique{data.unique} {
+  // duckdb's own half, so upstream machinery (duckdb_indexes, ToString) reads
+  // the same facts our payload carries.
+  constraint_type = _unique ? duckdb::IndexConstraintType::UNIQUE
+                            : duckdb::IndexConstraintType::NONE;
+}
 
-std::shared_ptr<SecondaryIndex> SecondaryIndex::Deserialize(
-  duckdb::Deserializer& src, ReadContext ctx) {
+persistence::SecondaryIndexData CreateSecondaryIndexInfo::ToData() const {
+  return persistence::SecondaryIndexData{
+    .name = std::string{GetName()},
+    .unique = _unique,
+    .columns = _key_columns,
+    .expressions = _expressions,
+    .comment = std::string{Comment()},
+  };
+}
+
+void CreateSecondaryIndexInfo::Serialize(duckdb::Serializer& sink) const {
+  // An index writes its whole definition: the WAL hands it the stream directly
+  // rather than through duckdb's CreateInfo half, so the name and comment have
+  // nowhere else to come from.
+  const auto name = std::string{GetName()};
+  const auto comment = std::string{Comment()};
+  basics::WriteTuple(
+    sink, std::tie(name, _unique, _key_columns, _expressions, comment));
+}
+
+void CreateSecondaryIndexInfo::WriteJson(basics::JsonSink& sink) const {
+  basics::WriteObject(sink, ToData());
+}
+
+duckdb::unique_ptr<duckdb::CreateInfo> CreateSecondaryIndexInfo::Copy() const {
+  auto copy = duckdb::make_uniq<CreateSecondaryIndexInfo>(
+    GetSchemaId(), GetId(), GetRelationId(), ToData());
+  CopyProperties(*copy);
+  return copy;
+}
+
+std::shared_ptr<CreateSecondaryIndexInfo> CreateSecondaryIndexInfo::Deserialize(
+  duckdb::Deserializer& src, ObjectId schema_id, ObjectId id,
+  ObjectId relation_id) {
   persistence::SecondaryIndexData data;
-  basics::ReadTuple(src, data);
-  auto index = std::make_shared<SecondaryIndex>(
-    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
-    std::move(data.name), std::move(data.columns), std::move(data.expressions),
-    data.unique);
-  index->SetComment(data.comment);
-  return index;
-}
-
-void SecondaryIndex::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, persistence::SecondaryIndexData{
-                             .name = GetName(),
-                             .unique = _unique,
-                             .columns = Columns(),
-                             .expressions = Expressions(),
-                             .comment = std::string{Comment()},
-                           });
-}
-
-std::shared_ptr<Object> SecondaryIndex::Clone() const {
-  auto index = std::make_shared<SecondaryIndex>(
-    GetDatabaseId(), GetParentId(), GetId(), GetRelationId(), GetName(),
-    Columns(), Expressions(), _unique);
-  index->SetComment(Comment());
-  return index;
+  auto refs = std::tie(data.name, data.unique, data.columns, data.expressions,
+                       data.comment);
+  basics::ReadTuple(src, refs);
+  return std::make_shared<CreateSecondaryIndexInfo>(schema_id, id, relation_id,
+                                                    std::move(data));
 }
 
 }  // namespace sdb::catalog

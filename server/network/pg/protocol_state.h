@@ -23,9 +23,11 @@
 #include <absl/container/node_hash_map.h>
 
 #include <cstdint>
+#include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <duckdb/main/valid_checker.hpp>
 #include <duckdb/parser/sql_statement.hpp>
@@ -44,17 +46,20 @@
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 
-namespace sdb::catalog {
-
-struct Snapshot;
-}
-
 namespace sdb::network::pg {
 
 // Per-execution wire-collector contract (wire_collector.h); a paged portal
 // retains it across Execute messages. shared_ptr over a forward declaration is
 // safe -- the deleter is captured at construction.
 class WireSinkContext;
+
+// A plan is shared because a portal keeps the one it was bound to even after
+// the statement re-plans, and the old plan has to outlive the last execution
+// still driving it.
+using PlanPtr = std::shared_ptr<duckdb::PreparedStatement>;
+// The catalog identity a bound plan stands on: a plan is revalidated when the
+// session's view has moved since it was bound (see Config::CatalogEpoch).
+using CatalogEpoch = uint64_t;
 
 // What a successful Parse produced -- a closed sum, classified once. A bound
 // portal co-owns it (StatementPtr) so it outlives a Close / re-Parse of the
@@ -88,18 +93,81 @@ class Statement {
     _kind = Kind::Copy;
   }
   void SetPrepared(duckdb::unique_ptr<duckdb::PreparedStatement> prepared,
-                   std::shared_ptr<const catalog::Snapshot> snapshot) {
+                   CatalogEpoch epoch) {
     _prepared = std::move(prepared);
-    _snapshot = std::move(snapshot);
+    _epoch = epoch;
     _kind = Kind::Prepared;
   }
 
-  // The catalog snapshot the plan was bound against. Installed for every
-  // execution of this plan: the bound catalog entries live in materialized
-  // system tables owned by this snapshot, so plan validity == snapshot
-  // validity (plan-cache semantics).
-  const std::shared_ptr<const catalog::Snapshot>& BindSnapshot() const {
-    return _snapshot;
+  // The plan is current for this view even though nothing was re-bound (a
+  // statement with no unbound text to re-plan from).
+  void RebaseEpoch(CatalogEpoch epoch) noexcept { _epoch = epoch; }
+
+  // The catalog identity the plan was bound against, and the one a re-plan is
+  // decided on -- a different view means the plan is stale.
+  CatalogEpoch BindEpoch() const noexcept { return _epoch; }
+
+  // Null only between a failed re-plan and the next attempt at one.
+  const PlanPtr& Plan() const { return _prepared; }
+
+  // The statement behind the plan, for classifying it (transaction control)
+  // without paying for a copy. Null when the plan does not carry one.
+  const duckdb::SQLStatement* Unbound() const {
+    if (_prepared && _prepared->data && _prepared->data->unbound_statement) {
+      return _prepared->data->unbound_statement.get();
+    }
+    return _source.get();
+  }
+
+  // The statement a re-plan re-binds. Cached on first use because from then on
+  // the plan is released before its replacement is bound, so the plan cannot
+  // stay the only place the statement text lives. Null when there is nothing
+  // to re-bind from.
+  const duckdb::unique_ptr<duckdb::SQLStatement>& Source() {
+    if (!_source) {
+      if (const auto* unbound = Unbound()) {
+        _source = unbound->Copy();
+      }
+    }
+    return _source;
+  }
+
+  // Drop the plan a re-plan is about to replace, unless a portal is still
+  // driving it. A plan can pin process-wide resources that its replacement
+  // re-acquires -- a view over read_duckdb keeps its source file attached for
+  // the life of the plan -- and duckdb's attach path waits on the first
+  // attachment rather than sharing it.
+  void ReleaseUnusedPlan() {
+    if (_prepared.use_count() == 1) {
+      _prepared.reset();
+    }
+  }
+
+  // The Parse-time parameter type hints (the client's Parse OIDs), replayed on
+  // every re-plan so a re-planned statement keeps the parameter types the
+  // client was told at Describe.
+  void SetTypeHints(duckdb::case_insensitive_map_t<duckdb::LogicalType> hints) {
+    _type_hints = std::move(hints);
+  }
+  const duckdb::case_insensitive_map_t<duckdb::LogicalType>& TypeHints() const {
+    return _type_hints;
+  }
+
+  // The result descriptor the client was last told (PG's
+  // plansource->resultDesc). The extended protocol sends RowDescription only
+  // in reply to a Describe, so this is what it will decode rows against.
+  void MarkDescribed(duckdb::PreparedStatement& plan) {
+    _described = true;
+    _described_types = plan.GetTypes();
+    _described_names = plan.GetNames();
+  }
+
+  // Would this plan's rows still fit the descriptor the client holds? PG's
+  // fixed_result check, which a protocol-level prepared statement fails with
+  // "cached plan must not change result type".
+  bool DescribedShapeMatches(duckdb::PreparedStatement& plan) const {
+    return !_described || (plan.GetTypes() == _described_types &&
+                           plan.GetNames() == _described_names);
   }
   // One user command the parser expanded into several statements (ALTER TABLE
   // ADD COLUMN ... DEFAULT <volatile> -> [ADD; UPDATE; SET DEFAULT]). The body
@@ -127,9 +195,9 @@ class Statement {
   // Install the prepared last sub-statement once the leading ones have run, so
   // ExecutePrepared drives it (command tag, paging, re-Execute) like any plan.
   void SetCompoundResult(duckdb::unique_ptr<duckdb::PreparedStatement> last,
-                         std::shared_ptr<const catalog::Snapshot> snapshot) {
+                         CatalogEpoch epoch) {
     _prepared = std::move(last);
-    _snapshot = std::move(snapshot);
+    _epoch = epoch;
   }
 
   // The plan that owns the param/result metadata (for a Compound, the last
@@ -149,8 +217,13 @@ class Statement {
 
  private:
   Kind _kind = Kind::Unbound;
-  duckdb::unique_ptr<duckdb::PreparedStatement> _prepared;
-  std::shared_ptr<const catalog::Snapshot> _snapshot;
+  bool _described = false;
+  PlanPtr _prepared;
+  CatalogEpoch _epoch = 0;
+  duckdb::unique_ptr<duckdb::SQLStatement> _source;
+  duckdb::case_insensitive_map_t<duckdb::LogicalType> _type_hints;
+  duckdb::vector<duckdb::LogicalType> _described_types;
+  duckdb::vector<duckdb::Identifier> _described_names;
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _statements;
 };
 
@@ -223,11 +296,18 @@ struct PortalExecution {
   PortalState state = PortalState::Unstarted;
 };
 
-// A bound portal: a co-owned reference to the plan (so Close / re-Parse of the
-// statement cannot pull it out from under the portal), the parameters bound at
-// Bind, and its execution progress. stmt is null until the portal is bound.
+// A bound portal: a co-owned reference to the statement (so Close / re-Parse
+// cannot pull it out from under the portal) plus the plan and the catalog
+// identity it was bound to, the parameters bound at Bind, and its execution
+// progress.
+// Holding the plan rather than reaching through stmt is what lets the
+// statement re-plan while this portal is still driving the old one -- PG's
+// portal likewise pins the CachedPlan it got at Bind. stmt is null until the
+// portal is bound; plan stays null for a Copy / empty statement.
 struct Portal {
   StatementPtr stmt;
+  PlanPtr plan;
+  CatalogEpoch epoch = 0;
   BindInfo bind_info;
   PortalExecution exec;
 };

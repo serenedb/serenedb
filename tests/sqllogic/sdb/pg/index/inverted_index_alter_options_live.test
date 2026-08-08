@@ -1,0 +1,92 @@
+# ALTER INDEX ... SET has to reach the write path without a restart.
+#
+# The per-index feed pool builds its writers from a catalog definition --
+# tokenizers, field options, pk policy -- and it used to cache that definition
+# for the life of the bound index, so an ALTER only took effect after a restart.
+# On main every append resolved the definition afresh from the committing
+# transaction's snapshot; the pool now keeps that rule and rebuilds when the
+# definition it was built from is replaced (copy-on-write makes an unchanged one
+# the same object, so pointer identity is the whole check).
+#
+# The observable is segments: segment_docs_max caps how many documents a segment
+# takes, so the same insert produces more of them once it applies. The assertion
+# is relative -- the same row count is inserted before and after the ALTER -- so
+# it does not depend on the machine's thread count.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY aol_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE aol(id INTEGER, txt TEXT);
+
+# Background refresh and compaction off: they would rewrite the segment set
+# underneath the comparison.
+statement ok
+CREATE INDEX aol_idx ON aol USING inverted(id, txt aol_dict)
+  WITH (compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO aol SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 20000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) aol;
+
+# Segments produced by 20000 rows under the default cap.
+statement ok
+CREATE TABLE aol_before AS
+SELECT value AS v FROM sdb_metrics
+WHERE metric = 'num_segments'
+  AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'aol_idx');
+
+
+statement ok
+ALTER INDEX aol_idx SET (segment_docs_max = 200);
+
+statement ok
+INSERT INTO aol SELECT g, 'row ' || g || ' bravo' FROM generate_series(20001, 40000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) aol;
+
+# The same number of rows, now under a 200-document cap, must add strictly more
+# segments than the first insert produced in total. Without the fix the second
+# insert still used the cached definition and added about as many as the first.
+query
+SELECT (SELECT value FROM sdb_metrics
+        WHERE metric = 'num_segments'
+          AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'aol_idx'))
+       > (SELECT v * 2 FROM aol_before) AS applied;
+----
+applied
+t
+
+# The rows are all indexed either way -- the ALTER changes segmentation, not
+# content.
+query
+SELECT count(*) FROM aol_idx WHERE txt @@ ts_like('bravo');
+----
+count
+40000
+
+query
+SELECT count(*) FROM aol;
+----
+count
+40000
+
+statement ok
+DROP TABLE aol;
+
+statement ok
+DROP TABLE aol_before;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY aol_dict;

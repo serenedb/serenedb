@@ -8,9 +8,20 @@ target_sources(
         schema.cpp
         databases.cpp
         catalog.cpp
-        object.cpp
-        table_options.cpp
-        search_analyzer_impl.cpp
+        duckdb_catalog.cpp
+        duckdb_catalog_sets.cpp
+        duckdb_dependency.cpp
+        duckdb_entry_builders.cpp
+        duckdb_global_catalog.cpp
+        duckdb_index_entry.cpp
+        duckdb_index_scan_entry.cpp
+        duckdb_object_index.cpp
+        duckdb_schema_entry.cpp
+        duckdb_static_schema.cpp
+        duckdb_system_table_entry.cpp
+        duckdb_table_entry.cpp
+        deferred_writes.cpp
+        entry.cpp
         table.cpp
         index.cpp
         view.cpp
@@ -20,7 +31,11 @@ target_sources(
         secondary_index.cpp
         inverted_index.cpp
         scorer_options.cpp
+        store/data_store.cpp
         store/store.cpp
+        store/store_op.cpp
+        store/wal.cpp
+        store/wal_entry.cpp
         tokenizer.cpp
         foreign_server.cpp
 )

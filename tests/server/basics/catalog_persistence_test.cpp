@@ -34,6 +34,8 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -43,16 +45,15 @@
 #include <variant>
 
 #include "basics/serializer.h"
-#include "catalog/persistence/database.h"
+#include "catalog/database.h"
 #include "catalog/persistence/index.h"
 #include "catalog/persistence/inverted_index.h"
 #include "catalog/persistence/role.h"
-#include "catalog/persistence/schema.h"
 #include "catalog/persistence/scorer_options.h"
 #include "catalog/persistence/secondary_index.h"
-#include "catalog/persistence/sequence.h"
-#include "catalog/persistence/table.h"
-#include "catalog/persistence/tokenizer.h"
+#include "catalog/store/wal_entry.h"
+#include "catalog/table.h"
+#include "catalog/tokenizer.h"
 
 namespace sdb::catalog::persistence {
 namespace {
@@ -84,6 +85,41 @@ T Deserialize(std::string_view bytes) {
   return out;
 }
 
+// The same two checks for a whole wal frame, which is how a definition that is
+// a CreateInfo is written: the reflected tuple plus what travels beside it.
+void CheckFrameFixture(std::string_view name, const wal::Entry& entry) {
+  const fs::path path = FixturePath(name);
+  duckdb::MemoryStream stream;
+  wal::SerializeEntries({}, {&entry, 1}, stream);
+  const std::string bytes{reinterpret_cast<const char*>(stream.GetData()),
+                          stream.GetPosition()};
+
+  if (std::getenv("SDB_REGEN_FIXTURES") != nullptr) {
+    fs::create_directories(path.parent_path());
+    std::ofstream out{path, std::ios::binary | std::ios::trunc};
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    GTEST_SKIP() << "regenerated fixture " << path;
+  }
+
+  std::ifstream in{path, std::ios::binary};
+  ASSERT_TRUE(in.good()) << "missing fixture " << path
+                         << " (run with SDB_REGEN_FIXTURES=1)";
+  const std::string golden{std::istreambuf_iterator<char>{in},
+                           std::istreambuf_iterator<char>{}};
+
+  EXPECT_EQ(bytes, golden) << "on-disk format for " << name << " changed";
+
+  auto parsed = wal::ParseEntries(
+    {reinterpret_cast<const uint8_t*>(golden.data()), golden.size()});
+  ASSERT_EQ(parsed.entries.size(), 1);
+  duckdb::MemoryStream again;
+  wal::SerializeEntries({}, {&parsed.entries.front().entry, 1}, again);
+  EXPECT_EQ(std::string(reinterpret_cast<const char*>(again.GetData()),
+                        again.GetPosition()),
+            golden)
+    << "deserialization of " << name << " is not byte-stable";
+}
+
 template<typename T>
 void CheckFixture(std::string_view name, const T& sample) {
   const fs::path path = FixturePath(name);
@@ -110,14 +146,14 @@ void CheckFixture(std::string_view name, const T& sample) {
 }
 
 TEST(CatalogPersistence, secondary_index) {
-  // columns slot 2 is an expression sentinel (Column::kInvalidId); the
+  // columns slot 2 is an expression sentinel (kInvalidColumnId); the
   // interleaving (column, expr, column) is the ART key order and must
   // round-trip.
   CheckFixture("secondary_index.bin",
                SecondaryIndexData{
                  .name = "idx_demo",
                  .unique = true,
-                 .columns = {ObjectId{1}, Column::kInvalidId, ObjectId{3}},
+                 .columns = {ObjectId{1}, kInvalidColumnId, ObjectId{3}},
                  .expressions =
                    {
                      ExpressionData{
@@ -131,48 +167,78 @@ TEST(CatalogPersistence, secondary_index) {
                });
 }
 
+// A table's durable form is duckdb's own duckdb::CreateTableInfo, so the
+// fixture is the frame the catalog log writes: the reflected info tuple
+// followed by the per-column grants a ColumnDefinition has nowhere to keep. The
+// whole record goes through the writer and reader the log uses, because that
+// pairing is what a restart depends on.
 TEST(CatalogPersistence, table) {
-  // Column "a" carries a per-column ACL (pg_attribute.attacl), so the golden
-  // bytes exercise column-level GRANT persistence; column "b" stays default.
-  Column col_a{ObjectId{}, ObjectId{1}, "a", duckdb::LogicalType::INTEGER};
-  col_a.SetPermissions(Permissions{ObjectId{},
-                                   {AclItem{.grantee = ObjectId{7},
-                                            .grantor = ObjectId{42},
-                                            .privs = AclMode::Select}}});
-  col_a.compression = duckdb::CompressionType::COMPRESSION_ZSTD;
-  CheckFixture(
-    "table.bin",
-    TableData{
-      .name = "t",
-      .columns = {std::move(col_a), Column{ObjectId{}, ObjectId{2}, "b",
-                                           duckdb::LogicalType::VARCHAR}},
-      .pk_columns = {ObjectId{1}},
-      .check_constraints = {},
-      .generated_pk_seq_id = ObjectId{9},
-      // RBAC: a non-default owner + an acl item, so the golden bytes
-      // actually exercise creator-owns persistence (not just defaults).
-      .perm = Permissions{ObjectId{42},
-                          {AclItem{.grantee = ObjectId{7},
-                                   .grantor = ObjectId{42},
-                                   .privs = AclMode::Select}}},
-      .search_options = {.refresh_interval_ms = 500,
+  auto info = catalog::NewTableInfo();
+  info->SetTableName(duckdb::Identifier{"t"});
+  info->SetSchema(duckdb::Identifier{"public"});
+  catalog::SetTableTags(*info, TableEngine::Search,
+                        {.refresh_interval_ms = 500,
                          .compaction_interval_ms = 7000,
                          .cleanup_interval_step = 3},
-    });
+                        ObjectId{9});
+
+  duckdb::ColumnDefinition col_a{duckdb::Identifier{"a"},
+                                 duckdb::LogicalType::INTEGER};
+  col_a.SetCatalogOid(1);
+  col_a.SetCompressionType(duckdb::CompressionType::COMPRESSION_ZSTD);
+  info->columns.AddColumn(std::move(col_a));
+  duckdb::ColumnDefinition col_b{duckdb::Identifier{"b"},
+                                 duckdb::LogicalType::VARCHAR};
+  col_b.SetCatalogOid(2);
+  info->columns.AddColumn(std::move(col_b));
+
+  auto not_null =
+    duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{0});
+  not_null->oid = 3;
+  not_null->constraint_name = "t_a_not_null";
+  info->constraints.push_back(std::move(not_null));
+  auto key = duckdb::make_uniq<duckdb::UniqueConstraint>(
+    duckdb::vector<duckdb::Identifier>{duckdb::Identifier{"a"}},
+    /*is_primary_key=*/true);
+  key->oid = 4;
+  key->host_index_id = 5;
+  key->constraint_name = "t_pkey";
+  info->constraints.push_back(std::move(key));
+
+  // A non-default owner, an acl item, and a per-column ACL on column "a"
+  // (pg_attribute.attacl), so the frame exercises creator-owns and
+  // column-level GRANT persistence rather than just defaults.
+  Permissions perm{ObjectId{42},
+                   {AclItem{.grantee = ObjectId{7},
+                            .grantor = ObjectId{42},
+                            .privs = AclMode::Select}}};
+  catalog::SetColumnAcl(perm.column_acl, ObjectId{1},
+                        Acl{AclItem{.grantee = ObjectId{7},
+                                    .grantor = ObjectId{42},
+                                    .privs = AclMode::Select}});
+
+  const wal::Entry entry{wal::PutTable{.schema_id = ObjectId{11},
+                                       .id = ObjectId{12},
+                                       .mode = wal::PutMode::Create,
+                                       .info = std::move(info),
+                                       .perm = std::move(perm)}};
+  CheckFrameFixture("table.bin", entry);
 }
 
 TEST(CatalogPersistence, tokenizer) {
-  CheckFixture("tokenizer.bin",
-               TokenizerData{
-                 .name = "tok",
-                 .config = {},
-                 .features = search::Features{},
-                 .norm_row_group_size = 7,
-                 .perm = Permissions{ObjectId{42},
-                                     {AclItem{.grantee = ObjectId{7},
-                                              .grantor = ObjectId{42},
-                                              .privs = AclMode::Usage}}},
-               });
+  // Owner and ACL are not here: a tokenizer's entry is the object, and the
+  // record that carries the definition writes the permissions beside it.
+  auto info = std::make_shared<catalog::CreateTokenizerInfo>(
+    ObjectId{11}, ObjectId{12}, "tok", search::Features{}, 7,
+    irs::analysis::TokenizerConfig{});
+  const wal::Entry entry{
+    wal::PutEntry{.parent_id = ObjectId{12},
+                  .type = duckdb::CatalogType::TOKENIZER_ENTRY,
+                  .id = ObjectId{11},
+                  .mode = wal::PutMode::Create,
+                  .info = std::move(info),
+                  .perm = Permissions{ObjectId{42}}}};
+  CheckFrameFixture("tokenizer.bin", entry);
 }
 
 // Every TokenizerConfig variant arm must serialize and re-serialize stably,
@@ -263,44 +329,17 @@ TEST(CatalogPersistence, inverted_index) {
 }
 
 TEST(CatalogPersistence, database_options) {
-  CheckFixture("database_options.bin",
-               DatabaseOptions{
-                 .name = "db",
-                 .perm = Permissions{ObjectId{42},
-                                     {AclItem{.grantee = ObjectId{7},
-                                              .grantor = ObjectId{42},
-                                              .privs = AclMode::Connect}}},
-               });
-}
-
-TEST(CatalogPersistence, schema_options) {
-  CheckFixture("schema_options.bin",
-               SchemaOptions{
-                 .name = "public",
-                 .perm = Permissions{ObjectId{42},
-                                     {AclItem{.grantee = ObjectId{7},
-                                              .grantor = ObjectId{42},
-                                              .privs = AclMode::Usage}}},
-               });
-}
-
-TEST(CatalogPersistence, sequence_options) {
-  CheckFixture("sequence_options.bin",
-               SequenceOptions{
-                 .name = "seq",
-                 .start_value = 10,
-                 .increment = 2,
-                 .min_value = 1,
-                 .max_value = 1000,
-                 .cache = 5,
-                 .owner_table_id = 3,
-                 .cycle = true,
-                 .perm = Permissions{ObjectId{42},
-                                     {AclItem{.grantee = ObjectId{7},
-                                              .grantor = ObjectId{42},
-                                              .privs = AclMode::Usage}}},
-                 .comment = "seq note",
-               });
+  // Owner and ACL are not here: a database's entry is the object, and the
+  // record that carries the definition writes the permissions beside it.
+  auto info = std::make_shared<catalog::CreateDatabaseInfo>(ObjectId{9}, "db");
+  const wal::Entry entry{
+    wal::PutEntry{.parent_id = ObjectId{},
+                  .type = duckdb::CatalogType::DATABASE_ENTRY,
+                  .id = ObjectId{9},
+                  .mode = wal::PutMode::Create,
+                  .info = std::move(info),
+                  .perm = Permissions{ObjectId{42}}}};
+  CheckFrameFixture("database_options.bin", entry);
 }
 
 TEST(CatalogPersistence, role_data) {
@@ -309,7 +348,6 @@ TEST(CatalogPersistence, role_data) {
   CheckFixture(
     "role_data.bin",
     RoleData{
-      .id = ObjectId{2},
       .name = "alice",
       // RBAC: attribute bitmask + a membership edge with non-default per-edge
       // options, so the golden bytes exercise Membership round-trip.
@@ -330,9 +368,9 @@ TEST(CatalogPersistence, role_data) {
                                                   .privs = AclMode::Select}}}},
       // rolpassword: a stored SCRAM verifier, so the golden bytes exercise the
       // password round-trip.
-      .password_verifier = "SCRAM-SHA-256$4096:c2FsdHNhbHQ=$"
-                           "c3RvcmVka2V5c3RvcmVka2V5c3RvcmVka2V5c3Q=:"
-                           "c2VydmVya2V5c2VydmVya2V5c2VydmVya2V5c2U=",
+      .password_verifier = {"SCRAM-SHA-256$4096:c2FsdHNhbHQ=$"
+                            "c3RvcmVka2V5c3RvcmVka2V5c3RvcmVka2V5c3Q=:"
+                            "c2VydmVya2V5c2VydmVya2V5c2VydmVya2V5c2U="},
     });
 }
 

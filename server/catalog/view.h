@@ -21,32 +21,25 @@
 #pragma once
 
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
-#include <string>
+#include <memory>
+#include <string_view>
+#include <utility>
 
 #include "catalog/column_expr.h"
-#include "catalog/object.h"
+#include "catalog/entry.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace sdb::catalog {
 
-class PgSqlView final : public Object {
- public:
-  PgSqlView(Permissions perm, ObjectId schema_id, ObjectId id,
-            std::string_view name,
-            duckdb::unique_ptr<duckdb::CreateViewInfo> info);
+// A view is duckdb's own CreateViewInfo: the ids ride CreateInfo::oid and
+// parent_oid, and what its query resolved to rides
+// CreateInfo::dependencies. Owner and ACL are not in it -- they live on the
 
-  static std::shared_ptr<PgSqlView> Deserialize(duckdb::Deserializer& src,
-                                                ReadContext ctx);
+inline std::string_view ViewName(const duckdb::CreateViewInfo& info) noexcept {
+  return info.GetViewName().GetIdentifierName();
+}
 
-  void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
-
-  const duckdb::CreateViewInfo& GetInfo() const noexcept { return *_info; }
-  duckdb::CreateViewInfo& GetInfo() noexcept { return *_info; }
-
-  Refs GetRefs(RefKinds kinds) const;
-
- private:
-  duckdb::unique_ptr<duckdb::CreateViewInfo> _info;
-};
+// The names a view's query references, to be resolved into dependency edges.
+Refs ViewRefs(const duckdb::CreateViewInfo& info, RefKinds kinds);
 
 }  // namespace sdb::catalog

@@ -34,7 +34,7 @@
 namespace sdb::connector {
 
 struct ColumnDescriptor {
-  catalog::Column::Id id;
+  catalog::ColumnId id;
   duckdb::LogicalType type;
 };
 
@@ -55,7 +55,8 @@ class DuckDBSinkIndexWriter {
   DuckDBSinkIndexWriter() = default;
   virtual ~DuckDBSinkIndexWriter() = default;
 
-  virtual void Init(duckdb::idx_t batch_size, const PkChunk& pk) {}
+  virtual void Init(duckdb::idx_t batch_size, const PkChunk& pk,
+                    uint64_t* commit_on_flush = nullptr) {}
 
   virtual void Finish() = 0;
   virtual void Abort() = 0;
@@ -69,10 +70,6 @@ class DuckDBSinkIndexWriter {
                                 const duckdb::Vector& /*vec*/,
                                 duckdb::idx_t /*count*/) {
     return false;
-  }
-
-  virtual std::span<const IndexedExpression> IndexedExpressions() const {
-    return {};
   }
 
   virtual void DeleteRow(std::string_view row_key) {

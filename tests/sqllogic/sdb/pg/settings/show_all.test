@@ -148,7 +148,7 @@ experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata
 explain_output	PHYSICAL_ONLY	Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)
 explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
 extension_directories	[]	Set the directories to store extensions in
-extension_directory	(empty)	Set the directory to store extensions in
+extension_directory	<slt:ignore>	Set the directory to store extensions in
 external_file_cache_local_block_size	16384	Block size in bytes for the external file cache when reading local (non-remote) files.
 external_file_cache_remote_block_size	2097152	Block size in bytes for the external file cache when reading remote files (e.g. HTTP/S3).
 external_threads	0	The number of external threads that work on DuckDB tasks.
@@ -260,6 +260,7 @@ profiling_mode	NULL	DEPRECATED: Sets the profiling mode
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
 role	none	Sets the current role.
@@ -290,7 +291,6 @@ sdb_levenshtein_max_terms	64	The maximum number of dictionary terms a fuzzy pred
 sdb_nprobe	8	Number of IVF cluster lists scanned per vector-similarity query. Higher values improve recall at the cost of latency. Default 8.
 sdb_rerank_factor	4	Multiplier applied to LIMIT k to size the candidate pool re-scored with exact distances for a quantized IVF vector-similarity query (pool = sdb_rerank_factor * k). Higher values improve recall at the cost of latency; 0 disables reranking (top-k picked by the approximate quantized distance). Default 4. Unquantized (quant = 'none') indexes never rerank, regardless of this setting.
 sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
-sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
@@ -306,7 +306,7 @@ storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefe
 storage_compatibility_version	latest	Serialize on checkpoint with compatibility for a given duckdb version
 streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
-temp_directory	.tmp	Set the directory to which to write temp files
+temp_directory	<slt:ignore>	Set the directory to which to write temp files
 temp_file_encryption	off	Encrypt all temporary files if database is encrypted
 threads	<slt:ignore>	The number of total threads used by the system.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])
@@ -484,7 +484,7 @@ experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata
 explain_output	PHYSICAL_ONLY	Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)
 explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
 extension_directories	[]	Set the directories to store extensions in
-extension_directory	(empty)	Set the directory to store extensions in
+extension_directory	<slt:ignore>	Set the directory to store extensions in
 external_file_cache_local_block_size	16384	Block size in bytes for the external file cache when reading local (non-remote) files.
 external_file_cache_remote_block_size	2097152	Block size in bytes for the external file cache when reading remote files (e.g. HTTP/S3).
 external_threads	0	The number of external threads that work on DuckDB tasks.
@@ -596,6 +596,7 @@ profiling_mode	NULL	DEPRECATED: Sets the profiling mode
 profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
 role	none	Sets the current role.
@@ -626,7 +627,6 @@ sdb_levenshtein_max_terms	64	The maximum number of dictionary terms a fuzzy pred
 sdb_nprobe	8	Number of IVF cluster lists scanned per vector-similarity query. Higher values improve recall at the cost of latency. Default 8.
 sdb_rerank_factor	4	Multiplier applied to LIMIT k to size the candidate pool re-scored with exact distances for a quantized IVF vector-similarity query (pool = sdb_rerank_factor * k). Higher values improve recall at the cost of latency; 0 disables reranking (top-k picked by the approximate quantized distance). Default 4. Unquantized (quant = 'none') indexes never rerank, regardless of this setting.
 sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
-sdb_strict_ddl	off	When enabled, DDL inside a transaction block fails instead of committing immediately (DDL is not transactional).
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
@@ -642,7 +642,7 @@ storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefe
 storage_compatibility_version	latest	Serialize on checkpoint with compatibility for a given duckdb version
 streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
-temp_directory	.tmp	Set the directory to which to write temp files
+temp_directory	<slt:ignore>	Set the directory to which to write temp files
 temp_file_encryption	off	Encrypt all temporary files if database is encrypted
 threads	<slt:ignore>	The number of total threads used by the system.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])

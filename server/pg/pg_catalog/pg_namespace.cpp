@@ -20,9 +20,15 @@
 
 #include "pg/pg_catalog/pg_namespace.h"
 
+#include <deque>
+#include <memory>
+
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/schema.h"
 
 namespace sdb::pg {
 namespace {
@@ -34,8 +40,16 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgNamespace::nspacl),
 });
 
-void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
-                     const catalog::Snapshot& snapshot) {
+// A schema entry replaces its definition-and-permissions cell whole on an owner
+// or ACL change, and the visitor is handed a version it does not own -- while
+// the name and the ACL of every row here are views into one. The rows are
+// written after the walk, so each version this projection read has to be kept
+// until then; another session's GRANT ON SCHEMA otherwise drops the last holder
+// mid-walk and the row renders freed memory (an ACL item whose privilege bits
+// come out empty).
+void RetrieveObjects(duckdb::ClientContext& context, ObjectId database_id,
+                     std::vector<PgNamespace>& values,
+                     std::deque<catalog::HeldSchema>& kept) {
   values.push_back({
     .oid = id::kPgCatalogSchema.id(),
     .nspname = "pg_catalog",
@@ -46,14 +60,21 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
     .nspname = "information_schema",
     .nspowner = id::kRootUser.id(),
   });
-  for (const auto& schema : snapshot.GetSchemas(database_id)) {
-    values.push_back(PgNamespace{
-      .oid = schema->GetId().id(),
-      .nspname = schema->GetName(),
-      .nspowner = schema->GetOwner().id(),
-      .nspacl = {schema->GetAcl()},
+  catalog::VisitSchemas(
+    &context, database_id,
+    [&](const duckdb::CreateSchemaInfo& schema,
+        const catalog::Permissions& perm) {
+      const auto& held = kept.emplace_back(catalog::HeldSchema{
+        std::static_pointer_cast<const duckdb::CreateSchemaInfo>(
+          std::shared_ptr<duckdb::CreateInfo>{schema.Copy()}),
+        perm});
+      values.push_back(PgNamespace{
+        .oid = catalog::IdOf(*held.first).id(),
+        .nspname = catalog::SchemaNameOf(*held.first),
+        .nspowner = held.second.owner,
+        .nspacl = {catalog::AclView{held.second.acl}},
+      });
     });
-  }
 }
 
 }  // namespace
@@ -61,12 +82,15 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData() {
   std::vector<PgNamespace> values;
-  auto snapshot = _config.CatalogSnapshot();
-  RetrieveObjects(GetDatabaseId(), values, *snapshot);
+  // A deque, not a vector: the rows hold spans into these, so their addresses
+  // have to survive the next push.
+  std::deque<catalog::HeldSchema> kept;
+  RetrieveObjects(_config.GetClientContext(), GetDatabaseId(), values, kept);
 
   auto result = CreateColumns<PgNamespace>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), values.size()};
 }

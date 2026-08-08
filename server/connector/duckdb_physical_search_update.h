@@ -26,17 +26,19 @@
 #include <memory>
 #include <vector>
 
-#include "catalog/table.h"
+#include "connector/search_table_dispatch.h"
 
 namespace sdb::connector {
 
 class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
  public:
-  SereneDBSearchUpdate(duckdb::PhysicalPlan& plan,
-                       std::shared_ptr<catalog::Table> table,
+  // `return_chunk` is RETURNING: the operator then hands back the rows as it
+  // left them rather than their count, and `types` is the whole row.
+  SereneDBSearchUpdate(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
                        std::vector<duckdb::idx_t> pk_col_indices,
                        std::vector<duckdb::PhysicalIndex> update_columns,
-                       duckdb::idx_t estimated_cardinality);
+                       duckdb::vector<duckdb::LogicalType> types,
+                       duckdb::idx_t estimated_cardinality, bool return_chunk);
 
   bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -57,9 +59,10 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const final;
 
  private:
-  std::shared_ptr<catalog::Table> _table;
+  SearchWriteTarget _target;
   std::vector<duckdb::idx_t> _pk_col_indices;
   std::vector<duckdb::PhysicalIndex> _update_columns;
+  bool _return_chunk = false;
 };
 
 }  // namespace sdb::connector

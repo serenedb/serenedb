@@ -20,18 +20,21 @@
 
 #pragma once
 
-#include <iresearch/index/index_writer.hpp>
+#include <functional>
 #include <optional>
-#include <vector>
 #include <yaclib/async/future.hpp>
 
 #include "basics/containers/flat_hash_map.h"
-#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"
 
+namespace sdb::connector {
+
+struct InvertedFeedSession;
+
+}  // namespace sdb::connector
 namespace sdb::query {
 
 class Transaction : public Config {
@@ -43,7 +46,7 @@ class Transaction : public Config {
     // Search transactions have implicit commit in destructor (historical
     // reasons) So if we get here explicit Commit/Rollback should be already
     // called. Otherwise we might have some unexpected data
-    SDB_ASSERT(_search_transactions.empty());
+    SDB_ASSERT(_search_feeds.empty());
     SDB_ASSERT(!_search_txn || _search_txn->Empty());
   }
 #endif
@@ -100,26 +103,12 @@ class Transaction : public Config {
   // held), making the change visible to the next statement.
   void MarkStatementDdl() noexcept { _statement_is_ddl = true; }
 
-  search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(ObjectId index_id);
-
-  void EraseSearchTransaction(ObjectId index_id) noexcept {
-    _search_transactions.erase(index_id);
-  }
-
-  // Pin every staged search transaction into the iresearch flush context so a
-  // concurrent refresh waits for it to settle before committing on tick. Call
-  // at feed time (after staging this batch, BEFORE the store WAL bytes are
-  // written) so the refresh's WAL-offset durable cursor never claims a
-  // transaction whose iresearch leg has not been flushed. RegisterFlush is a
-  // no-op until an active segment exists (docs staged) and idempotent after,
-  // so registering all transactions each feed is safe and cheap.
-  void RegisterSearchFlush() noexcept {
-    for (auto& [index_id, entry] : _search_transactions) {
-      if (entry.transaction) {
-        entry.transaction->RegisterFlush();
-      }
-    }
-  }
+  // One search snapshot per index per statement, keyed by the index's id. The
+  // definition is handed in rather than looked up: the caller is the scan
+  // entry, which IS the index, and the storage hangs off the definition it
+  // holds.
+  search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(
+    const catalog::CreateIndexInfoBase& index);
 
   // Lazily-created search-table (TableEngine::Search) transaction state +
   // commit logic. Engaged on the first search-table write/scan; query::
@@ -134,47 +123,18 @@ class Transaction : public Config {
 
   void Destroy() noexcept;
 
-  template<typename Visit, typename Filter = std::nullptr_t>
-  void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
-                                 Filter&& filter = nullptr) {
-    auto snapshot = CatalogSnapshot();
-    SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
-               catalog::ObjectType::Table);
-
-    for (auto& index : snapshot->GetIndexesByRelation(table_id)) {
-      SDB_ASSERT(index);
-
-      if constexpr (!std::is_same_v<std::decay_t<Filter>, std::nullptr_t>) {
-        const auto& referenced = index->GetReferencedColumns();
-        if (!filter(referenced)) {
-          continue;
-        }
-      }
-
-      if (index->GetType() != catalog::ObjectType::InvertedIndex) {
-        // Secondary indexes are native ART on the store table; nothing to
-        // feed here.
-        continue;
-      }
-      auto inverted = basics::downCast<const catalog::InvertedIndex>(index);
-      auto storage = inverted->GetData();
-      SDB_ASSERT(storage);
-      auto& entry =
-        _search_transactions.try_emplace(index->GetId()).first->second;
-      if (!entry.transaction) {
-        entry.transaction = std::make_unique<irs::IndexWriter::Transaction>(
-          storage->GetTransaction());
-        // Keep the storage alive and reachable for Commit() without a catalog
-        // re-lookup.
-        entry.storage = storage;
-        // Encode this transaction's rows against the InvertedIndex from its own
-        // DDL snapshot (the index IS the per-column options); co-owned via the
-        // catalog snapshot this transaction holds, so the segment writer can
-        // pin it until flush without a live-catalog lookup.
-        entry.transaction->SetFieldOptions(std::move(inverted));
-      }
-      visit(*entry.transaction, *index);
-    }
+  // Register the per-index feed the first time it engages this commit
+  // (idempotent). `feed` is the connector-side session, non-owning (it
+  // outlives the commit).
+  void EngageInvertedFeed(
+    ObjectId index_id, std::shared_ptr<connector::InvertedFeedSession> feed) {
+    auto& slot = _search_feeds[index_id];
+    // One session per index per commit. A second, different session for the
+    // same id would displace the first with its segments already registered
+    // for flush and never committed or aborted -- the index's flush context
+    // then never drains and every later refresh blocks on it.
+    SDB_ASSERT(!slot || slot == feed);
+    slot = std::move(feed);
   }
 
  private:
@@ -183,17 +143,22 @@ class Transaction : public Config {
   // uncommitted DML. Everything else refreshes per statement.
   bool IsStableSnapshot() const;
 
-  struct SearchTransaction {
-    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
-    std::shared_ptr<search::InvertedIndexStorage> storage;
-  };
+  // Out of line: the session is only forward-declared here.
+  void AbortInvertedFeeds() noexcept;
 
-  containers::FlatHashMap<ObjectId, SearchTransaction> _search_transactions;
+  // The inverted-index feeds this transaction wrote through. Every staged
+  // segment -- the workers' and the committing thread's -- lives in there, so
+  // the transaction only has to drive prepare/commit/abort. Shared with the
+  // bound index rather than borrowed: DROP INDEX destroys the index without
+  // waiting for a commit that has already engaged its feed.
+  containers::FlatHashMap<ObjectId,
+                          std::shared_ptr<connector::InvertedFeedSession>>
+    _search_feeds;
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
-  // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
-  // stay here -- they commit on the store-table tick, not the engine WAL tick.
+  // lazily via SearchTxn(); reset in Destroy. Separate from the feeds above:
+  // those commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;

@@ -1,0 +1,236 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <absl/base/internal/endian.h>
+
+#include <cmath>
+#include <concepts>
+#include <cstring>
+#include <duckdb.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
+#include <ranges>
+#include <span>
+#include <string>
+#include <type_traits>
+#include <vector>
+
+#include "basics/assert.h"
+#include "basics/primary_key.hpp"  // for AppendSigned, ReadSigned
+#include "basics/string_utils.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/table.h"
+#include "catalog/table_options.h"
+#include "pg/sql_exception_macro.h"
+
+namespace sdb::catalog::duckdb_primary_key {
+
+struct PKColumn {
+  size_t input_col_idx;
+  duckdb::LogicalType type;
+};
+
+// Big-endian sorted PK encoding. Appends the row's value (selected by
+// `fmt`/`row_idx`) to `key` so that lexicographic byte order matches the
+// type's natural order.
+inline void AppendPKValue(std::string& key,
+                          const duckdb::UnifiedVectorFormat& fmt,
+                          duckdb::idx_t row_idx,
+                          const duckdb::LogicalType& type) {
+  const auto idx = fmt.sel->get_index(row_idx);
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN: {
+      auto val = duckdb::UnifiedVectorFormat::GetData<bool>(fmt)[idx];
+      key.push_back(val ? '\x01' : '\x00');
+    } break;
+    case duckdb::LogicalTypeId::TINYINT: {
+      auto val = duckdb::UnifiedVectorFormat::GetData<int8_t>(fmt)[idx];
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(int8_t));
+      key[base] = static_cast<char>(val);
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+    } break;
+    case duckdb::LogicalTypeId::SMALLINT: {
+      auto val = duckdb::UnifiedVectorFormat::GetData<int16_t>(fmt)[idx];
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(int16_t));
+      absl::big_endian::Store16(key.data() + base, val);
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+    } break;
+    case duckdb::LogicalTypeId::INTEGER: {
+      auto val = duckdb::UnifiedVectorFormat::GetData<int32_t>(fmt)[idx];
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(int32_t));
+      absl::big_endian::Store32(key.data() + base, val);
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+    } break;
+    case duckdb::LogicalTypeId::BIGINT: {
+      auto val = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt)[idx];
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(int64_t));
+      absl::big_endian::Store64(key.data() + base, val);
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+    } break;
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
+      auto val =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::timestamp_t>(fmt)[idx]
+          .value;
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(int64_t));
+      absl::big_endian::Store64(key.data() + base, val);
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+    } break;
+    case duckdb::LogicalTypeId::DATE: {
+      auto val =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::date_t>(fmt)[idx].days;
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(int32_t));
+      absl::big_endian::Store32(key.data() + base, val);
+      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+    } break;
+    case duckdb::LogicalTypeId::VARCHAR:
+    case duckdb::LogicalTypeId::BLOB: {
+      // String PK: escape null bytes (\0 -> \0\1) and terminate with \0\0
+      static constexpr std::string_view kNullEsc{"\0\1", 2};
+      static constexpr std::string_view kStringEnd{"\0\0", 2};
+      const auto& str =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt)[idx];
+      auto* data = str.GetData();
+      auto size = str.GetSize();
+      for (duckdb::idx_t i = 0; i < size; ++i) {
+        if (data[i]) {
+          key.push_back(data[i]);
+        } else {
+          key.append(kNullEsc);
+        }
+      }
+      key.append(kStringEnd);
+    } break;
+    case duckdb::LogicalTypeId::FLOAT: {
+      auto val = duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx];
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(float));
+      if (val != 0 && !std::isnan(val)) {
+        absl::big_endian::Store32(key.data() + base,
+                                  irs::numeric_utils::Ftoi32(val));
+        key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+      } else if (val == 0) {
+        static constexpr char kZero[] = "\x80\0\0\0";
+        std::memcpy(key.data() + base, kZero, sizeof(float));
+      } else {
+        static constexpr char kPosNaN[] = "\xFF\xC0\x00\x00";
+        std::memcpy(key.data() + base, kPosNaN, sizeof(float));
+      }
+    } break;
+    case duckdb::LogicalTypeId::DOUBLE: {
+      auto val = duckdb::UnifiedVectorFormat::GetData<double>(fmt)[idx];
+      auto base = key.size();
+      basics::StrAppend(key, sizeof(double));
+      if (val != 0 && !std::isnan(val)) {
+        absl::big_endian::Store64(key.data() + base,
+                                  irs::numeric_utils::Dtoi64(val));
+        key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+      } else if (val == 0) {
+        static constexpr char kZero[] = "\x80\0\0\0\0\0\0\0";
+        std::memcpy(key.data() + base, kZero, sizeof(double));
+      } else {
+        static constexpr char kPosNaN[] = "\xFF\xF8\x00\x00\x00\x00\x00\x00";
+        std::memcpy(key.data() + base, kPosNaN, sizeof(double));
+      }
+      break;
+    }
+    default:
+      THROW_SQL_ERROR(ERR_MSG("Unsupported PK type: ", type.ToString()));
+  }
+}
+
+// Build PK column mappings from a chunk-ordered list of column ids and the
+// types beside them. Maps each key column to its position in that list.
+//
+// `columns` describes the chunk the writer produces, which may be a projection
+// of the table rather than its whole width.
+inline std::vector<PKColumn> BuildPKColumns(
+  std::span<const ObjectId> columns, std::span<const duckdb::LogicalType> types,
+  std::span<const ObjectId> pk_col_ids) {
+  std::vector<PKColumn> result;
+  result.reserve(pk_col_ids.size());
+  for (auto pk_id : pk_col_ids) {
+    for (size_t i = 0; i != columns.size(); ++i) {
+      if (columns[i] == pk_id) {
+        result.push_back(PKColumn{.input_col_idx = i, .type = types[i]});
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+// The declared primary key of `info`, in key order, as positions in its own
+// column list. Empty when it declares none -- there the row identity is the
+// generated PK instead.
+inline std::vector<PKColumn> BuildPKColumns(
+  const duckdb::CreateTableInfo& info) {
+  const auto* key = catalog::TablePrimaryKey(info);
+  if (key == nullptr) {
+    return {};
+  }
+  std::vector<PKColumn> result;
+  result.reserve(key->GetColumnNames().size());
+  for (const auto& name : key->GetColumnNames()) {
+    const auto* column = catalog::ColumnByName(info, name.GetIdentifierName());
+    if (column == nullptr) {
+      continue;
+    }
+    result.push_back(PKColumn{.input_col_idx = column->Logical().index,
+                              .type = column->Type()});
+  }
+  return result;
+}
+
+inline void PreparePKFormats(
+  const duckdb::DataChunk& chunk, std::span<const PKColumn> pk_columns,
+  std::vector<duckdb::UnifiedVectorFormat>& pk_formats) {
+  const auto num_rows = chunk.size();
+  pk_formats.resize(pk_columns.size());
+  for (size_t c = 0; c < pk_columns.size(); ++c) {
+    chunk.data[pk_columns[c].input_col_idx].ToUnifiedFormat(num_rows,
+                                                            pk_formats[c]);
+  }
+}
+
+inline void Create(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
+                   std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,
+                   std::string& key) {
+  SDB_ASSERT(pk_formats.size() == pk_columns.size());
+  for (size_t c = 0; c < pk_columns.size(); ++c) {
+    AppendPKValue(key, pk_formats[c], row_idx, pk_columns[c].type);
+  }
+}
+
+// Sortable signed encoding -- caller must have reserved the id.
+inline void AppendGenerated(std::string& key, uint64_t generated_id) {
+  connector::primary_key::AppendSigned(key,
+                                       std::bit_cast<int64_t>(generated_id));
+}
+
+}  // namespace sdb::catalog::duckdb_primary_key

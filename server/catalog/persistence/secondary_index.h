@@ -32,11 +32,11 @@ namespace sdb::catalog::persistence {
 struct SecondaryIndexData {
   std::string name;
   bool unique = false;
-  // Positional key list, in source order. A Column::kInvalidId slot is an
+  // Positional key list, in source order. A kInvalidColumnId slot is an
   // expression key whose payload is the next unconsumed entry in `expressions`.
   // Key order (and column/expression interleaving) is load-bearing: it is the
   // duckdb ART key list, an ordered prefix index.
-  std::vector<Column::Id> columns;
+  std::vector<ColumnId> columns;
   std::vector<ExpressionData> expressions;
   std::string comment;
 };

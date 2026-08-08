@@ -1,7 +1,6 @@
-# ALTER TABLE ADD PRIMARY KEY / ADD UNIQUE on a table, matching native duckdb.
-# PRIMARY KEY is fully enforced: existing rows are validated on ADD, and future
-# duplicate / NULL keys are rejected. ADD UNIQUE is accepted (a non-PK UNIQUE
-# add that native duckdb also accepts).
+# ALTER TABLE ADD PRIMARY KEY / ADD UNIQUE on a table. Both are backed by an
+# index built over the existing rows, so both validate what is already there and
+# reject duplicates afterwards; a primary key additionally implies NOT NULL.
 
 statement ok
 CREATE TABLE apk (a INTEGER, b INTEGER);
@@ -30,9 +29,18 @@ statement error
 ALTER TABLE apk ADD PRIMARY KEY (b);
 
 
-# ADD [CONSTRAINT] UNIQUE is accepted
+# ADD [CONSTRAINT] UNIQUE is accepted and enforced from that point on.
 statement ok
 ALTER TABLE apk ADD CONSTRAINT u_b UNIQUE (b);
+
+
+statement error
+INSERT INTO apk VALUES (3, 10);
+
+
+# a non-PK UNIQUE still admits NULL
+statement count 1
+INSERT INTO apk VALUES (3, NULL);
 
 
 query
@@ -41,6 +49,7 @@ SELECT a, b FROM apk ORDER BY a;
 a	b
 1	10
 2	20
+3	NULL
 
 
 statement ok
@@ -58,6 +67,11 @@ INSERT INTO adup VALUES (1), (1);
 
 statement error
 ALTER TABLE adup ADD PRIMARY KEY (a);
+
+
+# and so is ADD UNIQUE over the same data
+statement error
+ALTER TABLE adup ADD UNIQUE (a);
 
 
 statement ok

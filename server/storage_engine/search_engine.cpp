@@ -41,6 +41,7 @@
 #include "basics/lifecycle.h"
 #include "basics/log.h"
 #include "basics/number_of_cores.h"
+#include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
@@ -56,11 +57,6 @@
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
 
 namespace sdb::search {
-namespace {
-
-constexpr std::string_view kEngineDirRoot = "engine_search";
-
-}  // namespace
 
 SearchEngine::SearchEngine() : _dir_feature{DatabasePathFeature::instance()} {
   ::irs::analysis::ClassificationTokenizer::set_model_provider(
@@ -124,7 +120,7 @@ template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
 std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
   std::filesystem::path path = _dir_feature.directory();
-  path /= kEngineDirRoot;
+  path /= sdb::StaticStrings::kSearchRoot;
   path /= absl::StrCat(database_id);
   return path;
 }

@@ -37,9 +37,10 @@
 #include <type_traits>
 
 #include "auth/acl.h"
+#include "auth/role_closure.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
-#include "catalog/object.h"
+#include "catalog/entry.h"
 #include "catalog/role.h"
 #include "catalog/virtual_table.h"
 #include "connector/pg_logical_types.h"
@@ -87,7 +88,7 @@ inline std::string AclToPgString(
   absl::FunctionRef<std::string_view(ObjectId)> name_of) {
   std::string out;
   if (item.grantee != catalog::kPublicGrantee) {
-    PutId(out, name_of(item.grantee));
+    PutId(out, name_of(catalog::GranteeOf(item)));
   }
   out.push_back('=');
   for (const auto& p : kPrivChars) {
@@ -99,7 +100,7 @@ inline std::string AclToPgString(
     }
   }
   out.push_back('/');
-  PutId(out, name_of(item.grantor));
+  PutId(out, name_of(catalog::GrantorOf(item)));
   return out;
 }
 
@@ -109,9 +110,9 @@ duckdb::LogicalType GetFieldType();
 // Write a single field value into a DuckDB Vector at the given row.
 template<typename Field>
 void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
-                const catalog::Snapshot& snapshot) {
+                const auth::RoleGraph& roles) {
   if constexpr (std::is_enum_v<Field>) {
-    WriteField(vec, row, std::to_underlying(field), snapshot);
+    WriteField(vec, row, std::to_underlying(field), roles);
   } else if constexpr (std::is_same_v<Field, Name>) {
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddString(vec, field.v.data(), field.v.size());
@@ -122,6 +123,9 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddString(vec, field);
   } else if constexpr (std::is_same_v<Field, char>) {
+    // Postgres prints "char" 0 as the empty string, and its own catalog views
+    // compare against '' to mean "unset" (attgenerated, attidentity). A
+    // one-byte string holding NUL is not that string.
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddString(vec, &field, field ? 1 : 0);
   } else if constexpr (std::is_same_v<Field, bool>) {
@@ -155,8 +159,8 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
     duckdb::FlatVector::GetDataMutable<double>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, Bytea>) {
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
-      duckdb::StringVector::AddStringOrBlob(vec, field.data.data(),
-                                            field.data.size());
+      duckdb::StringVector::AddStringOrBlob(
+        vec, reinterpret_cast<const char*>(field.data()), field.size());
   } else if constexpr (IsArray<Field>::value) {
     auto list_size = field.size();
     auto current_size = duckdb::ListVector::GetListSize(vec);
@@ -166,7 +170,7 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
     entry.length = list_size;
     auto& child = duckdb::ListVector::GetEntry(vec);
     for (duckdb::idx_t i = 0; i < list_size; i++) {
-      WriteField(child, current_size + i, field[i], snapshot);
+      WriteField(child, current_size + i, field[i], roles);
     }
     duckdb::ListVector::SetListSize(vec, current_size + list_size);
   } else if constexpr (IsAclColumn<Field>::value) {
@@ -187,8 +191,8 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field,
             if (id == catalog::kPublicGrantee) {
               return {};
             }
-            if (auto role = snapshot.GetObject<catalog::Role>(id)) {
-              return role->GetName();
+            if (auto name = roles.NameOf(id); !name.empty()) {
+              return name;
             }
             oid_fallback = std::to_string(id.id());
             return oid_fallback;
@@ -281,13 +285,13 @@ std::vector<duckdb::Vector> CreateColumns(duckdb::idx_t capacity) {
 template<typename T>
 void WriteData(std::vector<duckdb::Vector>& columns, const T& value,
                uint64_t null_mask, duckdb::idx_t row,
-               const catalog::Snapshot& snapshot) {
+               const auth::RoleGraph& roles) {
   uint32_t column = 0;
   boost::pfr::for_each_field(value, [&]<typename Field>(const Field& field) {
     if (null_mask & (uint64_t{1} << column)) {
       duckdb::FlatVector::ValidityMutable(columns[column]).SetInvalid(row);
     } else {
-      WriteField(columns[column], row, field, snapshot);
+      WriteField(columns[column], row, field, roles);
     }
     ++column;
   });
@@ -301,20 +305,12 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
  public:
   explicit SystemTableSnapshot(const catalog::VirtualTable& table,
                                ObjectId database_id, const Config& config)
-    : VirtualTableSnapshot{{},
-                           database_id,
-                           table.Id(),
-                           std::string{table.GetName()},
-                           catalog::ObjectType::Virtual},
-      _config{config} {
-    _table = &table;
-  }
+    : VirtualTableSnapshot{table, database_id, table.Id(), table.GetName()},
+      _config{config} {}
 
   duckdb::LogicalType RowType() const noexcept final {
     return _table->RowType();
   }
-
-  ObjectId GetDatabaseId() const noexcept { return GetParentId(); }
 
   const catalog::MaterializedData& GetData(
     std::vector<std::string> names) final {
@@ -329,8 +325,6 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
  private:
   const Config& _config;
   std::optional<catalog::MaterializedData> _data;
-
-  void Serialize(duckdb::Serializer&) const final {}
 };
 
 template<typename T>

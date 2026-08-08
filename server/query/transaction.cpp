@@ -37,6 +37,7 @@
 #include "basics/log.h"
 #include "catalog/catalog.h"
 #include "catalog/store/store.h"
+#include "connector/inverted_store_index.h"
 #include "pg/sql_exception_macro.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -67,9 +68,12 @@ namespace sdb::query {
 // The catalog is the exception: it is NOT under MVCC isolation, because
 // serenedb DDL is atomic and non-transactional (it commits immediately, the
 // analog of postgres' CommandCounterIncrement). So the catalog refreshes per
-// statement under READ COMMITTED, AND after our own DDL even under REPEATABLE
-// READ -- it only stays pinned while uncommitted DML is held (reacquiring it
-// then would be unsafe: our pending rows are tied to it). DuckDB's
+// statement under READ COMMITTED, AND after our own DDL -- under REPEATABLE
+// READ and while uncommitted DML is held alike, in the latter case by
+// re-pinning to the post-DDL catalog rather than dropping the pin, so the
+// transaction is never without a snapshot the commit can read. What the pin
+// excludes is another session's DDL, which would drift our pending rows.
+// DuckDB's
 // ModifiedDatabase() cannot drive this -- it is set for DDL too
 // (CheckIfPreparedStatementIsExecutable records every statement's
 // modified_databases, and ALTER/CREATE/DROP declare the catalog database) -- so
@@ -77,9 +81,7 @@ namespace sdb::query {
 // MarkStatementDdl). The motivating case is ALTER TABLE ADD COLUMN ... DEFAULT
 // <volatile>: it expands to [ADD COLUMN; UPDATE backfill; SET DEFAULT] and runs
 // as an implicit block under the default REPEATABLE READ, so the backfill
-// UPDATE must bind the catalog the ADD COLUMN just produced. (Once DML has
-// frozen the views, same-session DDL is no longer observed mid-transaction --
-// an accepted edge case.)
+// UPDATE must bind the catalog the ADD COLUMN just produced.
 //
 // Views release eagerly -- per-statement views at statement end, the
 // transaction-held ones at commit/rollback -- so they never pin MVCC versions
@@ -104,9 +106,10 @@ bool Transaction::IsStableSnapshot() const {
 }
 
 void Transaction::OnStatementBegin() {
-  // Statement-scoped views are acquired here, on the connection thread,
-  // before binding starts and before any executor task can read them.
-  AcquireCatalogSnapshot();
+  // Fixed for the statement: duckdb asserts that every read of a catalog's
+  // identity inside one statement agrees, and this statement's own DDL moves
+  // the live counter.
+  RefreshCatalogEpoch();
   if (IsStableSnapshot()) {
     return;
   }
@@ -122,7 +125,9 @@ void Transaction::OnStatementBegin() {
 }
 
 void Transaction::OnStatementEnd() {
-  const bool was_ddl = _statement_is_ddl;
+  // Resampled here so the next Bind -- which runs between statements -- sees
+  // the DDL this one performed and re-plans against it.
+  RefreshCatalogEpoch();
   if (_statement_is_dml) {
     _had_dml = true;
   }
@@ -130,10 +135,11 @@ void Transaction::OnStatementEnd() {
   _statement_is_dml = false;
 
   if (_had_dml) {
-    // Uncommitted DML pins all three views for the rest of the transaction:
-    // read-your-writes, plus the safety freeze -- our pending rows are tied to
-    // this catalog + read view, and another session's lock-free atomic DDL
-    // would otherwise drift them. Commit/Rollback -> Destroy releases all.
+    // Uncommitted DML pins the read view and the search readers for the rest
+    // of the transaction: read-your-writes, plus the safety freeze -- our
+    // pending rows are tied to this read view, and another session's lock-free
+    // atomic DDL would otherwise drift them. Commit/Rollback -> Destroy
+    // releases both.
     return;
   }
   if (!IsStableSnapshot()) {
@@ -142,7 +148,6 @@ void Transaction::OnStatementEnd() {
     // search readers so background compaction is not pinned. All re-acquire
     // lazily; the native read view advances at the next statement's
     // OnStatementBegin.
-    DropCatalogSnapshot();
     _search_snapshots.clear();
     // Search-table reads go through SearchTxn()'s reader cache, not the
     // _search_snapshots above; reset on the same (non-pinned) boundary.
@@ -152,15 +157,10 @@ void Transaction::OnStatementEnd() {
     return;
   }
   // Explicit REPEATABLE READ, no DML: the native read view and search readers
-  // stay frozen for the transaction's life. The catalog is NOT under MVCC
-  // isolation -- serenedb DDL is atomic and non-transactional -- so our own DDL
-  // must still drop it, or a later statement could not observe the column/table
-  // it changed: ALTER ADD COLUMN ... DEFAULT <volatile> expands to [ADD COLUMN;
-  // UPDATE backfill; SET DEFAULT] and, under the default REPEATABLE READ, runs
-  // as an implicit block whose backfill must bind the new column.
-  if (was_ddl) {
-    DropCatalogSnapshot();
-  }
+  // stay frozen for the transaction's life. The catalog is not: serenedb DDL is
+  // atomic and its entries are read through the transaction's own CatalogSet
+  // view, so a later statement observes what this transaction changed without
+  // anything being dropped here.
 }
 
 void Transaction::PreCommit() noexcept {
@@ -175,29 +175,24 @@ void Transaction::PreRollback() noexcept { RollbackVariables(); }
 
 void Transaction::CommitSearch(
   std::optional<search::WalCursor> cursor) noexcept {
-  if (_search_transactions.empty()) {
+  if (_search_feeds.empty()) {
     return;
   }
-  for (auto& search_transaction : _search_transactions) {
-    // Tie the iresearch transaction's active segment to the current flush
-    // context so a background index commit that starts now waits for this
-    // transaction to settle before committing "on tick".
-    search_transaction.second.transaction->RegisterFlush();
-  }
   absl::Cleanup rollback = [&] {
-    for (auto& search_transaction : _search_transactions) {
-      search_transaction.second.transaction->Abort();
-    }
-    _search_transactions.clear();
+    AbortInvertedFeeds();
+    _search_feeds.clear();
   };
 
-  // Reserve a tick range covering every writer's query (Remove/Replace)
-  // count, so that per writer first_tick = last_tick - queries stays
-  // strictly above its previously committed tick.
+  // Phase 1, before the tick exists: drain the workers and pin every staged
+  // segment onto the flush context. Pinning must precede Advance -- otherwise a
+  // refresh whose tick snapshot lands in between could advance its committed
+  // tick past an unpinned segment (lost insert / FlushPending assert). Returns
+  // each feed's widest query count, so the reserved band leaves every writer's
+  // first_tick strictly above the tick it last committed at.
   uint64_t max_queries = 0;
-  for (const auto& [id, entry] : _search_transactions) {
+  for (auto& [index_id, feed] : _search_feeds) {
     max_queries =
-      std::max<uint64_t>(max_queries, entry.transaction->GetQueries());
+      std::max<uint64_t>(max_queries, connector::PrepareInvertedFeed(*feed));
   }
   SDB_IF_FAILURE("long_waited_advance") {
     static std::atomic<uint32_t> gSeedCounter{0};
@@ -212,35 +207,23 @@ void Transaction::CommitSearch(
 
   std::move(rollback).Cancel();
 
-  for (auto& [index_id, entry] : _search_transactions) {
-    // Record this commit's WAL cursor into the index's own table BEFORE its
-    // segment becomes flushable (Commit below emplaces it into the flush
-    // context). A concurrent refresh can only flush this batch after Commit, by
-    // which point the offset is already in the table, so the refresh's
-    // CursorAtOrBelow(flushed_tick) can never under-claim and re-stream an
-    // already-durable insert after a crash. The cursor is this commit's exact
-    // WAL position, captured under the WAL lock by the engine: commits overlap,
-    // so reading the WAL size here would include later transactions' bytes and
-    // over-claim (skipping their re-stream after a crash).
-    if (entry.storage && cursor) {
-      entry.storage->RecordFlushCursor(last_tick, *cursor);
-    }
-    if (entry.transaction->Commit(last_tick)) {
-      continue;
-    }
-    // The store transaction is already durable; losing the index leg
-    // silently would diverge the index forever. Mark the storage so the
-    // clean-shutdown checkpoint is suppressed and the next boot rebuilds
-    // it from the store table.
-    SDB_ERROR(SEARCH, "search index commit failed for index '", index_id.id(),
-              "' at tick ", last_tick,
-              "; the index will be rebuilt from the store on next boot");
-    if (entry.storage) {
-      entry.storage->MarkOutOfSync();
-    }
+  // Phase 2: each feed records this commit's WAL cursor into its own table
+  // before its segments become flushable, then commits them all at the tick.
+  // The cursor is this commit's exact WAL position, captured under the WAL lock
+  // by the engine: commits overlap, so reading the WAL size here would include
+  // later transactions' bytes and over-claim (skipping their re-stream after a
+  // crash).
+  for (auto& [index_id, feed] : _search_feeds) {
+    connector::FinishInvertedFeed(*feed, last_tick, cursor);
   }
 
-  _search_transactions.clear();
+  _search_feeds.clear();
+}
+
+void Transaction::AbortInvertedFeeds() noexcept {
+  for (auto& [index_id, feed] : _search_feeds) {
+    connector::AbortInvertedFeed(*feed);
+  }
 }
 
 void Transaction::Commit() {
@@ -273,9 +256,6 @@ void Transaction::Commit() {
 }
 
 void Transaction::Rollback() {
-  for (auto& search_transaction : _search_transactions) {
-    search_transaction.second.transaction->Abort();
-  }
   if (_search_txn) {
     _search_txn->Abort();
   }
@@ -284,12 +264,12 @@ void Transaction::Rollback() {
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
-  ObjectId index_id) {
+  const catalog::CreateIndexInfoBase& index) {
+  const auto index_id = index.GetId();
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
-    auto index = CatalogSnapshot()->GetObject<catalog::InvertedIndex>(index_id);
-    SDB_ASSERT(index);
-    auto storage = index->GetData();
+    SDB_ASSERT(index.IsInverted());
+    const auto& storage = index.GetData();
     SDB_ASSERT(storage);
     it =
       _search_snapshots.emplace(index_id, storage->GetInvertedIndexSnapshot())
@@ -299,8 +279,10 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
 }
 
 void Transaction::Destroy() noexcept {
-  DropCatalogSnapshot();
-  _search_transactions.clear();
+  // Commit clears these in CommitSearch; on the rollback/teardown path the
+  // sessions still hold uncommitted staged segments -- drain and drop them.
+  AbortInvertedFeeds();
+  _search_feeds.clear();
   _search_snapshots.clear();
   _search_txn.reset();
   _num_log_data_markers = 0;

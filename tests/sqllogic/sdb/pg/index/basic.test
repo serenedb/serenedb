@@ -157,7 +157,7 @@ CREATE INDEX test_index ON test USING inverted (i);
 statement error
 CREATE INDEX test_index ON test USING inverted (i);
 ----
-db error: ERROR: Index with name "test_index" already exists!
+db error: ERROR: relation "test_index" already exists
 
 
 statement ok

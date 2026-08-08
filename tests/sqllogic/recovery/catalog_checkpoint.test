@@ -1,0 +1,761 @@
+control substitution on
+
+# Compaction is a checkpoint written from the catalog: the definitions come out
+# of the committed snapshot, not out of a copy the store kept beside it. Three
+# things have to hold for that to be safe.
+#
+# 1. Every kind of definition makes the round trip -- the checkpoint files each
+#    one under the key the boot walk looks for it under, and an index has to
+#    come back with the ancestry its rebuild reads.
+# 2. A checkpoint taken at the very instant a transaction commits its catalog
+#    work must not lose it. The records go out and the catalog takes their
+#    effect in as one step, under the mutex a checkpoint has to hold too, so a
+#    checkpoint never reads a catalog that is behind the log.
+# 3. A drop still open at a checkpoint is rescheduled at boot from the record
+#    that opened it. The checkpoint no longer holds the definitions the drop
+#    removed, so the boot walk cannot find them to notice the tombstone -- the
+#    record carries its own subtree and is the only thing driving the sweep.
+
+
+# --- 1. every kind through a checkpoint ---
+
+statement ok
+CREATE SCHEMA ckp;
+
+
+statement ok
+CREATE TABLE ckp.t(id SERIAL PRIMARY KEY, a TEXT, b INTEGER CHECK (b > 0));
+
+
+statement ok
+INSERT INTO ckp.t(a, b) SELECT 'row ' || g, g FROM generate_series(1, 50) g;
+
+
+statement ok
+CREATE INDEX ckp_b ON ckp.t(b);
+
+
+statement ok
+CREATE VIEW ckp.v AS SELECT id, a FROM ckp.t WHERE b > 25;
+
+
+statement ok
+CREATE SEQUENCE ckp.sq START 7;
+
+
+statement ok
+SELECT nextval('ckp.sq');
+
+
+statement ok
+CREATE TYPE ckp.mood AS ENUM ('ok', 'meh');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ckp.dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE INDEX ckp_inv ON ckp.t USING inverted(id, a ckp.dict);
+
+
+statement ok
+CREATE ROLE ckp_role;
+
+
+statement ok
+GRANT SELECT ON ckp.t TO ckp_role;
+
+
+statement ok
+COMMENT ON TABLE ckp.t IS 'checkpointed';
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE TABLE ckp.trigger_compaction(x INTEGER);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart, on the checkpointed file ---
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM ckp.t;
+----
+count
+50
+
+
+connection after_checkpoint
+query
+SELECT count(*) FROM ckp.v;
+----
+count
+25
+
+
+connection after_checkpoint
+query
+SELECT nextval('ckp.sq') > 1 AS advanced;
+----
+advanced
+t
+
+
+connection after_checkpoint
+query
+SELECT count(*) FROM pg_type WHERE typname = 'mood';
+----
+count
+1
+
+
+connection after_checkpoint
+query
+SELECT count(*) FROM pg_roles WHERE rolname = 'ckp_role';
+----
+count
+1
+
+
+connection after_checkpoint
+query
+SELECT obj_description('ckp.t'::regclass) AS comment;
+----
+comment
+checkpointed
+
+
+connection after_checkpoint
+query
+SELECT relacl::text LIKE '%ckp_role=r/%' AS granted FROM pg_class WHERE relname = 't';
+----
+granted
+t
+
+
+connection after_checkpoint
+query
+SELECT indexname FROM pg_indexes WHERE schemaname = 'ckp' ORDER BY indexname;
+----
+indexname
+ckp_b
+ckp_inv
+t_pkey
+
+
+connection after_checkpoint
+statement ok
+VACUUM (REFRESH_TABLE) ckp.t;
+
+
+connection after_checkpoint
+query
+SELECT count(*) FROM ckp.ckp_inv WHERE a @@ ts_like('row');
+----
+count
+50
+
+
+# The edges came back with the definitions, so RESTRICT still refuses.
+connection after_checkpoint
+statement error
+DROP TABLE ckp.t;
+----
+db error: ERROR: cannot drop table t because other objects depend on it
+DETAIL: view v depends on table t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_checkpoint
+query
+SELECT count(*) FROM ckp.trigger_compaction;
+----
+count
+0
+
+
+# --- 2. a checkpoint at the commit itself ---
+
+# The records have just landed and the catalog has just taken them in, both
+# under the same lock hold. Catalog-only DDL is what reaches this: a batch with
+# a store half leaves the log holding work a database has still to catch up on,
+# and a checkpoint waits for that.
+connection after_checkpoint
+statement ok
+SET sdb_faults = 'compact_at_catalog_commit';
+
+
+connection after_checkpoint
+statement ok
+CREATE ROLE ckp_window_role;
+
+
+connection after_checkpoint
+statement ok
+CREATE SCHEMA ckp_window;
+
+
+connection after_checkpoint
+statement ok
+CREATE VIEW ckp_window.v AS SELECT 1 AS x;
+
+
+connection after_checkpoint
+statement ok
+GRANT ckp_window_role TO ckp_role;
+
+
+connection after_checkpoint
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_checkpoint
+statement error connection closed
+SELECT 1;
+
+
+connection after_window
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_roles WHERE rolname = 'ckp_window_role';
+----
+count
+1
+
+
+connection after_window
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'ckp_window';
+----
+count
+1
+
+
+connection after_window
+query
+SELECT count(*) FROM ckp_window.v;
+----
+count
+1
+
+
+connection after_window
+query
+SELECT count(*) FROM pg_auth_members m
+  JOIN pg_roles r ON r.oid = m.roleid
+  JOIN pg_roles g ON g.oid = m.member
+ WHERE r.rolname = 'ckp_window_role' AND g.rolname = 'ckp_role';
+----
+count
+1
+
+
+# Everything section 1 wrote is still there: the checkpoint that ran at the
+# commit was a full one, written entirely out of the catalog.
+connection after_window
+query
+SELECT count(*) FROM ckp.t;
+----
+count
+50
+
+
+# --- 3. the same window, for a database ---
+#
+# A database's entry is the object, exactly as a role's is, so its half of a
+# checkpoint has the same failure to guard against: the rewrite fires inside
+# the commit, before duckdb has published that transaction's entries, and a
+# read of what is committed would file the log without the record the very
+# commit it interrupted had just appended. The create survives such a rewrite
+# by accident -- the next commit's checkpoint picks it up -- so the grant is
+# what the assertion is on: it is the last thing written before the crash.
+
+connection after_window
+statement ok
+CREATE ROLE ckp_db_role;
+
+
+connection after_window
+statement ok
+SET sdb_faults = 'compact_at_catalog_commit';
+
+
+connection after_window
+statement ok
+CREATE DATABASE ckp_window_db;
+
+
+connection after_window
+statement ok
+GRANT CONNECT, TEMP ON DATABASE ckp_window_db TO ckp_db_role;
+
+
+# The rewrite really did happen inside those commits: a checkpoint leaves the
+# log holding one snapshot frame and nothing else.
+connection after_window
+query
+SELECT count(DISTINCT frame) AS frames FROM sdb_catalog_wal();
+----
+frames
+1
+
+
+connection after_window
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_window
+statement error connection closed
+SELECT 1;
+
+
+connection after_db_window
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_database WHERE datname = 'ckp_window_db';
+----
+count
+1
+
+
+connection after_db_window
+query
+SELECT datacl::text LIKE '%ckp_db_role=Tc/%' AS has_grant
+FROM pg_database WHERE datname = 'ckp_window_db';
+----
+has_grant
+t
+
+
+connection after_db_window
+statement ok
+DROP DATABASE ckp_window_db;
+
+
+connection after_db_window
+statement ok
+DROP ROLE ckp_db_role;
+
+
+# --- 4. the same window, for a schema ---
+#
+# A schema's entry is the object too, and its owner and ACL travel beside the
+# definition rather than inside it, so a checkpoint has to read both through the
+# committing transaction. Same shape as the database above: the create survives
+# such a rewrite by accident, so the assertions are on the owner change and the
+# grant, which are the last things written before the crash.
+
+connection after_db_window
+statement ok
+CREATE ROLE ckp_schema_role;
+
+
+connection after_db_window
+statement ok
+SET sdb_faults = 'compact_at_catalog_commit';
+
+
+connection after_db_window
+statement ok
+CREATE SCHEMA ckp_schema_window;
+
+
+connection after_db_window
+statement ok
+CREATE TABLE ckp_schema_window.t(x INTEGER);
+
+
+connection after_db_window
+statement ok
+ALTER SCHEMA ckp_schema_window OWNER TO ckp_schema_role;
+
+
+connection after_db_window
+statement ok
+GRANT USAGE ON SCHEMA ckp_schema_window TO ckp_role;
+
+
+connection after_db_window
+query
+SELECT count(DISTINCT frame) AS frames FROM sdb_catalog_wal();
+----
+frames
+1
+
+
+connection after_db_window
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_db_window
+statement error connection closed
+SELECT 1;
+
+
+connection after_schema_window
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_namespace WHERE nspname = 'ckp_schema_window';
+----
+count
+1
+
+
+connection after_schema_window
+query
+SELECT r.rolname AS owner
+FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
+WHERE n.nspname = 'ckp_schema_window';
+----
+owner
+ckp_schema_role
+
+
+connection after_schema_window
+query
+SELECT nspacl::text LIKE '%ckp_role=U/%' AS has_grant
+FROM pg_namespace WHERE nspname = 'ckp_schema_window';
+----
+has_grant
+t
+
+
+# The entry came back owning its contents: a schema rebuilt without the
+# CatalogSets underneath it would leave the table unreachable.
+connection after_schema_window
+query
+SELECT count(*) FROM ckp_schema_window.t;
+----
+count
+0
+
+
+connection after_schema_window
+statement ok
+DROP SCHEMA ckp_schema_window CASCADE;
+
+
+connection after_schema_window
+statement ok
+DROP ROLE ckp_schema_role;
+
+
+# --- 5. the same window, for a sequence ---
+#
+# A sequence's entry is the object, and it is the one kind with state outside its
+# definition: the counter's durable horizon is its own record, appended off the
+# DDL path. So the checkpoint has to write the definition through the committing
+# transaction like every other entry-backed kind, and the counter it rewrites
+# beside it must not rewind -- a value already handed out can never be reissued.
+
+connection after_schema_window
+statement ok
+CREATE SCHEMA ckp_seq_window;
+
+
+connection after_schema_window
+statement ok
+CREATE ROLE ckp_seq_role;
+
+
+connection after_schema_window
+statement ok
+CREATE SEQUENCE ckp_seq_window.s START 5 INCREMENT 3 MAXVALUE 900;
+
+
+connection after_schema_window
+query
+SELECT nextval('ckp_seq_window.s') AS first;
+----
+first
+5
+
+
+connection after_schema_window
+statement ok
+SET sdb_faults = 'compact_at_catalog_commit';
+
+
+# The last catalog write before the crash: a comment and a grant, both of which
+# rewrite the definition beside the same counter.
+connection after_schema_window
+statement ok
+COMMENT ON SEQUENCE ckp_seq_window.s IS 'checkpointed sequence';
+
+
+connection after_schema_window
+statement ok
+GRANT USAGE ON SEQUENCE ckp_seq_window.s TO ckp_seq_role;
+
+
+connection after_schema_window
+query
+SELECT count(DISTINCT frame) AS frames FROM sdb_catalog_wal();
+----
+frames
+1
+
+
+connection after_schema_window
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_schema_window
+statement error connection closed
+SELECT 1;
+
+
+connection after_seq_window
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT c.relname AS relname
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'ckp_seq_window' AND c.relkind = 'S';
+----
+relname
+s
+
+
+connection after_seq_window
+query
+SELECT obj_description('ckp_seq_window.s'::regclass) AS comment;
+----
+comment
+checkpointed sequence
+
+
+connection after_seq_window
+query
+SELECT relacl::text LIKE '%ckp_seq_role=U/%' AS granted
+FROM pg_class WHERE relname = 's';
+----
+granted
+t
+
+
+# The definition came back whole, not just its name: START, INCREMENT and
+# MAXVALUE all decide what the next value is and where it stops.
+connection after_seq_window
+query
+SELECT nextval('ckp_seq_window.s') > 5 AS advanced;
+----
+advanced
+t
+
+
+connection after_seq_window
+query
+SELECT (nextval('ckp_seq_window.s') - nextval('ckp_seq_window.s')) = -3 AS steps_by_three;
+----
+steps_by_three
+t
+
+
+connection after_seq_window
+statement ok
+SELECT setval('ckp_seq_window.s', 899);
+
+
+connection after_seq_window
+statement error
+SELECT nextval('ckp_seq_window.s');
+----
+db error: ERROR: nextval: reached maximum value of sequence "ckp_seq_window.s" (900)
+
+
+# --- 6. the same window, for a text search dictionary ---
+#
+# A dictionary's entry is the object too, and it is the first schema-scoped kind
+# of which that is true: its set belongs to the schema entry above it, not to the
+# cluster-global attachment. So the checkpoint has two things to get right at
+# once -- read the dictionary through the committing transaction, and file it
+# under the schema whose set will hold it again after a restart. There is no
+# ALTER for a dictionary, so the create is the last catalog write before the
+# crash and is what the assertion is on.
+
+connection after_seq_window
+statement ok
+CREATE SCHEMA ckp_dict_window;
+
+
+connection after_seq_window
+statement ok
+SET sdb_faults = 'compact_at_catalog_commit';
+
+
+connection after_seq_window
+statement ok
+CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+connection after_seq_window
+query
+SELECT count(DISTINCT frame) AS frames FROM sdb_catalog_wal();
+----
+frames
+1
+
+
+connection after_seq_window
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_seq_window
+statement error connection closed
+SELECT 1;
+
+
+connection after_dict_window
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT d.dictname AS dictname
+FROM pg_ts_dict d JOIN pg_namespace n ON n.oid = d.dictnamespace
+WHERE n.nspname = 'ckp_dict_window';
+----
+dictname
+d
+
+
+# The definition came back whole, not just its name: an index built on it has to
+# tokenize with the config the checkpoint wrote.
+connection after_dict_window
+statement ok
+CREATE TABLE ckp_dict_window.t(id INTEGER, txt TEXT);
+
+
+connection after_dict_window
+statement ok
+CREATE INDEX ckp_dict_inv ON ckp_dict_window.t
+  USING inverted(id, txt ckp_dict_window.d);
+
+
+connection after_dict_window
+statement ok
+INSERT INTO ckp_dict_window.t
+SELECT g, 'row ' || g || ' bravo' FROM generate_series(1, 100) g;
+
+
+connection after_dict_window
+statement ok
+VACUUM (REFRESH_TABLE) ckp_dict_window.t;
+
+
+connection after_dict_window
+query
+SELECT count(*) FROM ckp_dict_window.ckp_dict_inv WHERE txt @@ ts_like('bravo');
+----
+count
+100
+
+
+# RESTRICT still refuses: the index-to-dictionary edge came back with them.
+connection after_dict_window
+statement error
+DROP TEXT SEARCH DICTIONARY ckp_dict_window.d;
+----
+db error: ERROR: cannot drop text search dictionary d because other objects depend on it
+DETAIL: index ckp_dict_inv depends on text search dictionary d
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+connection after_dict_window
+statement ok
+DROP SCHEMA ckp_dict_window CASCADE;
+
+
+# --- 7. a drop open across a checkpoint ---
+
+connection after_dict_window
+statement ok
+CREATE TABLE ckp.gone(a INTEGER);
+
+
+connection after_dict_window
+statement ok
+CREATE INDEX ckp_gone_inv ON ckp.gone USING inverted(a);
+
+
+connection after_dict_window
+statement ok
+SET sdb_faults = 'compact_inside_drop';
+
+
+connection after_dict_window
+statement ok
+DROP TABLE ckp.gone;
+
+
+connection after_dict_window
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_dict_window
+statement error connection closed
+SELECT 1;
+
+
+connection after_open_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname IN ('gone', 'ckp_gone_inv');
+----
+count
+0
+
+
+connection after_open_drop
+statement ok
+CREATE TABLE ckp.gone(a INTEGER);
+
+
+connection after_open_drop
+statement ok
+DROP TABLE ckp.gone;
+
+
+connection after_open_drop
+statement ok
+DROP SCHEMA ckp_window CASCADE;
+
+
+connection after_open_drop
+statement ok
+DROP SCHEMA ckp CASCADE;
+
+
+connection after_open_drop
+statement ok
+DROP ROLE ckp_window_role;
+
+
+connection after_open_drop
+statement ok
+DROP ROLE ckp_role;

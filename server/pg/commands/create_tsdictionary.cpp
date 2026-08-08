@@ -62,7 +62,8 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
-#include "catalog/search_analyzer_impl.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/tokenizer.h"
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
@@ -70,6 +71,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
+#include "search/search_analyzer_impl.h"
 
 namespace magic_enum {
 
@@ -138,14 +140,14 @@ std::string_view TypeNameOf(const irs::analysis::TokenizerConfig& cfg) {
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
-  CreateTSDictionaryOptions(std::shared_ptr<const catalog::Snapshot> snapshot,
-                            ObjectId db_id, std::string_view current_schema,
+  CreateTSDictionaryOptions(duckdb::ClientContext& context, ObjectId db_id,
+                            std::string_view current_schema,
                             const duckdb::named_parameter_map_t& named_params)
     : OptionsParser{named_params,
                     kTSDictionaryGroup,
                     {.operation = "CREATE TEXT SEARCH DICTIONARY",
                      .help_hint = "Use WITH (HELP) to see available options"}},
-      _snapshot{std::move(snapshot)},
+      _context{context},
       _db_id{db_id},
       _current_schema{current_schema} {
     ParseOptions([&] {
@@ -882,8 +884,11 @@ class CreateTSDictionaryOptions : public OptionsParser {
     std::string from =
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
     auto name = ParseObjectName(from, _current_schema);
-    auto tokenizer = _snapshot->GetTokenizer(catalog::NoAccessCheck(), _db_id,
-                                             name.schema, name.relation);
+    const auto schema_id =
+      catalog::FindSchemaId(&_context, _db_id, name.schema);
+    auto tokenizer = schema_id.isSet() ? catalog::FindTokenizer(
+                                           &_context, schema_id, name.relation)
+                                       : nullptr;
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -920,7 +925,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
   irs::analysis::TokenizerConfig _config;
   search::Features _features;
   uint32_t _norm_row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  std::shared_ptr<const catalog::Snapshot> _snapshot;
+  duckdb::ClientContext& _context;
   ObjectId _db_id;
   std::string_view _current_schema;
 };
@@ -930,13 +935,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
 void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                      std::string_view schema, bool if_not_exists,
                      const duckdb::named_parameter_map_t& options) {
-  auto snapshot = conn_ctx.CatalogSnapshot();
   auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
 
   auto [cfg, features, norm_row_group_size] =
-    std::move(
-      CreateTSDictionaryOptions{snapshot, db_id, current_schema, options})
+    std::move(CreateTSDictionaryOptions{conn_ctx.GetClientContext(), db_id,
+                                        current_schema, options})
       .Result();
 
   auto test_analyzer = irs::analysis::CreateAnalyzer(irs::analysis::Clone(cfg));
@@ -948,13 +952,14 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                     ERR_MSG("Unsupported index features are specified"));
   }
 
-  auto tokenizer = std::make_shared<catalog::Tokenizer>(
-    conn_ctx.GetRoleId(), ObjectId{}, ObjectId{}, name, features,
-    norm_row_group_size, std::move(cfg));
+  auto tokenizer = std::make_shared<catalog::CreateTokenizerInfo>(
+    ObjectId{}, ObjectId{}, name, features, norm_row_group_size,
+    std::move(cfg));
 
-  auto& catalog = catalog::GetCatalog();
-  catalog.CreateTokenizer(catalog::AccessContext{conn_ctx.GetRoleId()}, db_id,
-                          schema, std::move(tokenizer), if_not_exists);
+  auto& catalog = catalog::DatabaseCatalog(&conn_ctx.GetClientContext(), db_id);
+  catalog.CreateTokenizer(
+    catalog::ActingAs(conn_ctx.GetRoleId(), conn_ctx.GetClientContext()), db_id,
+    schema, std::move(tokenizer), if_not_exists);
 }
 
 }  // namespace sdb::pg

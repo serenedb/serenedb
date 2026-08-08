@@ -30,6 +30,9 @@
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
+#include <duckdb/parser/parser.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/types.hpp>
@@ -37,14 +40,19 @@
 #include <limits>
 #include <string>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
+#include "basics/log.h"
 #include "basics/serializer.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/entry.h"
 #include "catalog/geo_validate.h"
 #include "catalog/inverted_index.h"
-#include "catalog/object.h"
 #include "catalog/secondary_index.h"
+#include "catalog/store/store.h"
 #include "catalog/tokenizer.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
@@ -424,7 +432,7 @@ void ValidateInvertedIndexColumns(
   for (const auto& c : indexed_columns) {
     const auto& type = c.IsIndexedExpression()
                          ? c.GetIndexedExpression().return_type
-                         : c.GetCatalogColumn().type;
+                         : c.GetColumn().type;
     const auto label = c.name;
 
     if (c.IsBuiltin(kIVFKind)) {
@@ -583,10 +591,9 @@ void ApplyIVFOpclass(
   entry.store_values = true;
 }
 
-std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
-                                           ObjectId database_id,
-                                           std::string_view schema_name,
-                                           std::string_view opclass) {
+TokenizerRef LookupTokenizer(duckdb::ClientContext& context,
+                             ObjectId database_id, std::string_view schema_name,
+                             std::string_view opclass) {
   if (opclass.empty()) {
     return nullptr;
   }
@@ -594,8 +601,11 @@ std::shared_ptr<Tokenizer> LookupTokenizer(const Snapshot& snapshot,
   if (object_name.schema != schema_name) {
     return nullptr;
   }
-  return snapshot.GetTokenizer(NoAccessCheck(), database_id, object_name.schema,
-                               object_name.relation);
+  const auto schema_id =
+    catalog::FindSchemaId(&context, database_id, object_name.schema);
+  return schema_id.isSet()
+           ? catalog::FindTokenizer(&context, schema_id, object_name.relation)
+           : nullptr;
 }
 
 [[noreturn]] void ThrowUnknownBuiltinOpclass(std::string_view opclass,
@@ -644,7 +654,7 @@ bool IsGeoAnalyzer(const irs::analysis::Analyzer& analyzer) {
          type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
 }
 
-void FillEntryFromTokenizer(const Tokenizer& dict,
+void FillEntryFromTokenizer(const CreateTokenizerInfo& dict,
                             const irs::analysis::Analyzer& analyzer,
                             const duckdb::LogicalType& value_type,
                             InvertedIndexEntryInfo& entry) {
@@ -671,8 +681,7 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
                          const CreateIndexColumn& c,
                          std::string_view owner_label,
                          const duckdb::LogicalType& value_type,
-                         const Snapshot& snapshot, ObjectId database_id,
-                         std::string_view schema_name,
+                         ObjectId database_id, std::string_view schema_name,
                          InvertedIndexEntryInfo& entry) {
   if (c.opclass.empty()) {
     return;
@@ -688,7 +697,7 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
     return;
   }
 
-  auto dict = LookupTokenizer(snapshot, database_id, schema_name, c.opclass);
+  auto dict = LookupTokenizer(context, database_id, schema_name, c.opclass);
   if (!dict) {
     if (c.opclass == kIVFKind || c.opclass == kIncludedKind) {
       ThrowUnknownBuiltinOpclass(c.opclass, owner_label, schema_name);
@@ -707,39 +716,45 @@ void ApplyOpclassToEntry(duckdb::ClientContext& context,
 
 }  // namespace
 
-std::shared_ptr<SecondaryIndex> CreateSecondaryIndex(
-  ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  std::string name, std::vector<catalog::CreateIndexColumn> columns,
-  bool unique) {
-  std::vector<Column::Id> key_columns;
+IndexInfoRef NewSecondaryIndex(ObjectId schema_id, ObjectId id,
+                               ObjectId relation_id, std::string name,
+                               std::vector<catalog::CreateIndexColumn> columns,
+                               bool unique) {
+  std::vector<ColumnId> key_columns;
   std::vector<ExpressionData> key_expressions;
   key_columns.reserve(columns.size());
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
-      key_columns.push_back(Column::kInvalidId);  // expression-key slot
+      key_columns.push_back(kInvalidColumnId);  // expression-key slot
       key_expressions.push_back(c.GetIndexedExpression());
     } else {
-      key_columns.push_back(c.GetCatalogColumn().GetId());
+      key_columns.push_back(c.GetColumn().id);
     }
   }
-  return std::make_shared<SecondaryIndex>(
-    database_id, schema_id, id, relation_id, std::move(name),
-    std::move(key_columns), std::move(key_expressions), unique);
+  return std::make_shared<const CreateSecondaryIndexInfo>(
+    schema_id, id, relation_id,
+    persistence::SecondaryIndexData{
+      .name = std::move(name),
+      .unique = unique,
+      .columns = std::move(key_columns),
+      .expressions = std::move(key_expressions),
+    });
 }
 
-std::shared_ptr<InvertedIndex> CreateInvertedIndex(
-  duckdb::ClientContext& context, ObjectId database_id,
-  std::string_view schema_name, ObjectId schema_id, ObjectId id,
-  ObjectId relation_id, std::string name,
-  std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot, InvertedIndexOptions options,
-  ExpressionData predicate) {
+IndexInfoRef NewInvertedIndex(duckdb::ClientContext& context,
+                              ObjectId database_id,
+                              std::string_view schema_name, ObjectId schema_id,
+                              ObjectId id, ObjectId relation_id,
+                              std::string name,
+                              std::vector<catalog::CreateIndexColumn> columns,
+                              InvertedIndexOptions options,
+                              ExpressionData predicate) {
   SDB_ASSERT(options.row_group_size != 0);
   SDB_ASSERT(options.norm_row_group_size != 0);
   ValidateInvertedIndexColumns(columns);
 
-  InvertedIndex::Entries entries;
-  std::vector<Column::Id> key_columns;
+  CreateInvertedIndexInfo::Entries entries;
+  std::vector<ColumnId> key_columns;
   std::vector<ExpressionKey> expression_keys;
   key_columns.reserve(columns.size());
   const uint64_t expressions_cnt = std::ranges::count_if(
@@ -751,7 +766,7 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   if (expressions_cnt > 1) {
     tokenized_exprs.reserve(expressions_cnt);
   }
-  containers::FlatHashSet<Column::Id> tokenized_cols;
+  containers::FlatHashSet<ColumnId> tokenized_cols;
   for (const auto& c : columns) {
     if (c.IsIndexedExpression()) {
       const auto& expr_data = c.GetIndexedExpression();
@@ -769,25 +784,24 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
       const auto field_id = next_expr_field_id++;
       InvertedIndexEntryInfo expr_info;
       ApplyOpclassToEntry(context, c, expr_data.pretty_printed,
-                          expr_data.return_type, *snapshot, database_id,
-                          schema_name, expr_info);
+                          expr_data.return_type, database_id, schema_name,
+                          expr_info);
       entries.emplace(field_id, std::move(expr_info));
       expression_keys.emplace_back(expr_data, field_id);
       continue;
     }
-    const auto col_field_id =
-      static_cast<irs::field_id>(c.GetCatalogColumn().GetId());
+    const auto col_field_id = static_cast<irs::field_id>(c.GetColumn().id);
     auto [col_it, col_inserted] =
       entries.try_emplace(col_field_id, InvertedIndexEntryInfo{});
     auto& index_col = col_it->second;
     if (col_inserted) {
-      key_columns.push_back(c.GetCatalogColumn().GetId());
+      key_columns.push_back(c.GetColumn().id);
     }
     if (!c.IsBuiltin(kIncludedKind) && !c.IsBuiltin(kIVFKind)) {
       index_col.indexed_term_dict = true;
     }
     if (IsTokenizerOpclass(c) &&
-        !tokenized_cols.insert(c.GetCatalogColumn().GetId()).second) {
+        !tokenized_cols.insert(c.GetColumn().id).second) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG(
@@ -796,8 +810,8 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
           "stores a single tokenizer per indexed column. Stack `included(...)` "
           "on the same column instead, or remove the duplicate."));
     }
-    ApplyOpclassToEntry(context, c, c.name, c.GetCatalogColumn().type,
-                        *snapshot, database_id, schema_name, index_col);
+    ApplyOpclassToEntry(context, c, c.name, c.GetColumn().type, database_id,
+                        schema_name, index_col);
   }
   for (auto& [_, entry] : entries) {
     if (entry.row_group_size == 0) {
@@ -808,32 +822,197 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
     }
     EnsureId(entry.null_field_id);
   }
-  return std::make_shared<InvertedIndex>(
-    database_id, schema_id, id, relation_id, std::move(name),
-    std::move(key_columns), std::move(expression_keys), std::move(entries),
-    std::move(options), std::move(predicate));
+  return std::make_shared<const CreateInvertedIndexInfo>(
+    schema_id, id, relation_id, name, std::string{}, std::move(key_columns),
+    std::move(expression_keys), std::move(entries), std::move(options),
+    std::move(predicate));
 }
 
-Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
-             ObjectId relation_id, std::string name, DerivedColumnIds derived,
-             ObjectType type)
-  : Object{Permissions{}, schema_id, id, std::move(name), type},
-    _database_id{database_id},
-    _relation_id{relation_id},
-    _columns{std::move(derived.columns)},
+IndexInfoRef FindInvertedIndex(ObjectId database_id, ObjectId id) {
+  auto database = TryStoreDatabase(database_id);
+  if (!database) {
+    return nullptr;
+  }
+  const auto* index =
+    catalog::FindIn<SereneDBIndexEntry>(nullptr, database->GetCatalog(), id);
+  return index != nullptr && index->IsInverted() ? index->Definition()
+                                                 : nullptr;
+}
+
+namespace {
+
+// A secondary index's payload, with the one field the statement names changed.
+SecondaryIndexInfoRef RebuiltSecondary(
+  const CreateIndexInfoBase& index, std::string_view name,
+  std::optional<std::string_view> comment) {
+  auto data = basics::downCast<const CreateSecondaryIndexInfo>(index).ToData();
+  data.name = std::string{name};
+  if (comment) {
+    data.comment = std::string{*comment};
+  }
+  return std::make_shared<const CreateSecondaryIndexInfo>(
+    index.GetSchemaId(), index.GetId(), index.GetRelationId(), std::move(data));
+}
+
+InvertedIndexInfoRef RebuiltInverted(
+  const CreateIndexInfoBase& index, std::string_view name,
+  std::optional<std::string_view> comment,
+  std::optional<InvertedIndexOptions> options) {
+  auto data = basics::downCast<const CreateInvertedIndexInfo>(index).ToData();
+  data.name = std::string{name};
+  if (comment) {
+    data.comment = std::string{*comment};
+  }
+  if (options) {
+    data.options = std::move(*options);
+  }
+  auto rebuilt = CreateInvertedIndexInfo::FromData(
+    index.GetSchemaId(), index.GetId(), index.GetRelationId(), std::move(data));
+  // The same index behind the same directory: the rewrite is metadata only.
+  rebuilt->AdoptRuntime(index.Runtime());
+  return rebuilt;
+}
+
+}  // namespace
+namespace {
+
+// Re-parse a stored expression-index `pretty` (valid SQL baked with the column
+// names at CREATE INDEX time) and remap only the ColumnRefExpression leaves
+// whose trailing name changed. Unset on a parse failure -- the caller keeps
+// the old text.
+std::optional<std::string> RerenderPrettyAfterRename(
+  std::string_view pretty,
+  const containers::FlatHashMap<std::string, std::string>& renames) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> parsed;
+  try {
+    parsed = duckdb::Parser::ParseExpressionList(std::string{pretty});
+  } catch (const duckdb::ParserException&) {
+    return std::nullopt;
+  }
+  if (parsed.size() != 1 || !parsed[0]) {
+    return std::nullopt;
+  }
+  auto rewrite = [&](this auto& self, duckdb::ParsedExpression& e) -> void {
+    if (e.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+      auto& cref = e.Cast<duckdb::ColumnRefExpression>();
+      if (!cref.ColumnNames().empty()) {
+        auto it = renames.find(cref.ColumnNames().back().GetIdentifierName());
+        if (it != renames.end()) {
+          cref.ColumnNamesMutable().back() = duckdb::Identifier{it->second};
+        }
+      }
+    }
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      e, [&](duckdb::ParsedExpression& child) { self(child); });
+  };
+  rewrite(*parsed[0]);
+  return parsed[0]->ToString();
+}
+
+}  // namespace
+
+std::vector<IndexInfoRef> RerenderedIndexes(
+  std::span<const IndexInfoRef> indexes, const duckdb::CreateTableInfo& before,
+  const duckdb::CreateTableInfo& after) {
+  containers::FlatHashMap<std::string, std::string> renames;
+  for (const auto& column : before.columns.Logical()) {
+    const auto* now = catalog::ColumnById(after, ObjectId{column.CatalogOid()});
+    if (now != nullptr &&
+        now->Name().GetIdentifierName() != column.Name().GetIdentifierName()) {
+      renames.emplace(column.Name().GetIdentifierName(),
+                      now->Name().GetIdentifierName());
+    }
+  }
+  std::vector<IndexInfoRef> rerendered;
+  if (renames.empty()) {
+    return rerendered;
+  }
+  for (const auto& index : indexes) {
+    if (index->IsInverted()) {
+      continue;
+    }
+    const auto& secondary =
+      basics::downCast<const CreateSecondaryIndexInfo>(*index);
+    if (secondary.Expressions().empty()) {
+      continue;
+    }
+    auto data = secondary.ToData();
+    bool changed = false;
+    for (auto& expression : data.expressions) {
+      auto pretty =
+        RerenderPrettyAfterRename(expression.pretty_printed, renames);
+      if (pretty && *pretty != expression.pretty_printed) {
+        expression.pretty_printed = std::move(*pretty);
+        changed = true;
+      }
+    }
+    if (changed) {
+      auto next = std::make_shared<CreateSecondaryIndexInfo>(
+        secondary.GetSchemaId(), secondary.GetId(), secondary.GetRelationId(),
+        std::move(data));
+      next->dependencies = secondary.dependencies;
+      rerendered.push_back(std::move(next));
+    }
+  }
+  return rerendered;
+}
+
+IndexInfoRef RenamedIndex(const CreateIndexInfoBase& index,
+                          std::string_view name) {
+  if (index.IsInverted()) {
+    return RebuiltInverted(index, name, std::nullopt, std::nullopt);
+  }
+  return RebuiltSecondary(index, name, std::nullopt);
+}
+
+IndexInfoRef CommentedIndex(const CreateIndexInfoBase& index,
+                            std::string_view comment) {
+  const auto name = index.GetName();
+  if (index.IsInverted()) {
+    return RebuiltInverted(index, name, comment, std::nullopt);
+  }
+  return RebuiltSecondary(index, name, comment);
+}
+
+IndexInfoRef ReoptionedIndex(const CreateIndexInfoBase& index,
+                             InvertedIndexOptions options) {
+  SDB_ASSERT(index.IsInverted());
+  return RebuiltInverted(index, index.GetName(), std::nullopt,
+                         std::move(options));
+}
+
+CreateIndexInfoBase::CreateIndexInfoBase(
+  ObjectId schema_id, ObjectId id, ObjectId relation_id, std::string_view name,
+  std::string comment, DerivedColumnIds derived, bool inverted)
+  : _columns{std::move(derived.columns)},
     _referenced_columns{std::move(derived.referenced_columns)},
-    _referenced_columns_set{std::move(derived.referenced_columns_set)} {
-  SDB_ASSERT(GetId().isSet());
+    _referenced_columns_set{std::move(derived.referenced_columns_set)},
+    _relation_id{relation_id},
+    _runtime{inverted ? std::make_shared<InvertedIndexRuntime>() : nullptr} {
+  // An unset id means "allocate one": CREATE INDEX names the index before it
+  // has an id to give it.
+  oid = (id != id::kInvalid ? id : NextId()).id();
+  parent_oid = schema_id.id();
+  RestoreId(oid);
+  SetIndexName(duckdb::Identifier{name});
+  // duckdb's own half, so upstream machinery -- duckdb_indexes(), the entry's
+  // ToSQL, pg_class.reloptions -- reads the same facts our payload carries and
+  // nothing builds them a second time.
+  index_type = std::string{inverted ? kInvertedIndexType : kSecondaryIndexType};
+  if (!comment.empty()) {
+    // Qualified: the constructor parameter of the same name shadows the field.
+    this->comment = duckdb::Value(comment);
+  }
 }
 
-std::pair<std::vector<Column::Id>, containers::FlatHashSet<Column::Id>>
-Index::DedupColumns(std::span<const Column::Id> columns) {
-  std::vector<Column::Id> ids;
+std::pair<std::vector<ColumnId>, containers::FlatHashSet<ColumnId>>
+CreateIndexInfoBase::DedupColumns(std::span<const ColumnId> columns) {
+  std::vector<ColumnId> ids;
   ids.reserve(columns.size());
-  containers::FlatHashSet<Column::Id> seen;
+  containers::FlatHashSet<ColumnId> seen;
   seen.reserve(columns.size());
   for (auto column : columns) {
-    if (column == Column::kInvalidId) {
+    if (column == kInvalidColumnId) {
       continue;  // expression-slot sentinel
     }
     if (seen.insert(column).second) {

@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/pg_language.h"
 
+#include "auth/role_closure.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -63,7 +64,7 @@ catalog::MaterializedData SystemTableSnapshot<PgLanguage>::GetTableData() {
   auto result = CreateColumns<PgLanguage>(kSampleData.size());
   for (size_t row = 0; row < kSampleData.size(); ++row) {
     WriteData(result, kSampleData[row], kNullMask, row,
-              *_config.CatalogSnapshot());
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), kSampleData.size()};
 }

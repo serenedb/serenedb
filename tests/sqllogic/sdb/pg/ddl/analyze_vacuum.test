@@ -31,7 +31,8 @@ VACUUM pudge_analyze;
 statement error
 ANALYZE pudge_analyze (nope);
 ----
-db error: ERROR: Column with name "nope" does not exist
+db error: ERROR: Table "pudge_analyze" does not have a column named "nope"
+Candidate bindings: "a", "b", "s"
 
 
 query

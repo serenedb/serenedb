@@ -1,0 +1,150 @@
+control substitution on
+
+# A trigger hangs off a relation and is recorded in that relation's own data
+# WAL. Both the record and the checkpoint name the relation the way the user
+# does, so replay resolves it against the relation the catalog log has already
+# put back -- and the trigger comes through the restart naming the same table,
+# firing on the same event, and droppable by the same statement.
+#
+# This used to be asserted as a loss. The record resolved its relation before
+# the relation existed, so one CREATE TRIGGER cost the whole database --
+#   Catalog Error: Table with name "public.trec_t" does not exist because
+#   schema "public" does not exist.
+# -- and the trigger was left process-local. What made a durable record
+# unaddressable was the store facade underneath the relation; with the relation
+# owning its own rows there is no second name for the record to resolve to.
+
+
+statement ok
+CREATE TABLE trec_t (a INT, b TEXT);
+
+
+statement ok
+CREATE TABLE trec_audit (a INT);
+
+
+statement ok
+CREATE TRIGGER trec_del AFTER DELETE ON trec_t FOR EACH ROW
+  INSERT INTO trec_audit VALUES (OLD.a);
+
+
+statement count 3
+INSERT INTO trec_t VALUES (1, 'x'), (2, 'y'), (3, 'z');
+
+
+statement count 1
+DELETE FROM trec_t WHERE a = 1;
+
+
+query
+SELECT a FROM trec_audit ORDER BY a;
+----
+a
+1
+
+
+# Before the crash the projection sees it: 1 << 0 | 1 << 3 is ROW | DELETE.
+query
+SELECT tgname, tgtype, tgenabled FROM pg_trigger
+  WHERE tgrelid = 'trec_t'::regclass;
+----
+tgname	tgtype	tgenabled
+trec_del	9	O
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# The database opened, and both relations came back with their rows.
+connection after_crash
+query
+SELECT a, b FROM trec_t ORDER BY a;
+----
+a	b
+2	y
+3	z
+
+
+connection after_crash
+query
+SELECT a FROM trec_audit ORDER BY a;
+----
+a
+1
+
+
+# And so did the trigger, under the name the user gave it -- not the one an
+# internal relation would have carried.
+connection after_crash
+query
+SELECT schema_name, table_name, trigger_name
+FROM duckdb_triggers() WHERE table_name = 'trec_t';
+----
+schema_name	table_name	trigger_name
+public	trec_t	trec_del
+
+
+connection after_crash
+query
+SELECT tgname, tgtype, tgenabled FROM pg_trigger
+  WHERE tgrelid = 'trec_t'::regclass;
+----
+tgname	tgtype	tgenabled
+trec_del	9	O
+
+
+# It fires on the same event it was created for.
+connection after_crash
+statement count 1
+DELETE FROM trec_t WHERE a = 2;
+
+
+connection after_crash
+query
+SELECT a FROM trec_audit ORDER BY a;
+----
+a
+1
+2
+
+
+# And the name it came back under is the one DROP TRIGGER takes.
+connection after_crash
+statement ok
+DROP TRIGGER trec_del ON trec_t;
+
+
+connection after_crash
+statement count 1
+DELETE FROM trec_t WHERE a = 3;
+
+
+connection after_crash
+query
+SELECT a FROM trec_audit ORDER BY a;
+----
+a
+1
+2
+
+
+connection after_crash
+statement ok
+DROP TABLE trec_t;
+
+
+connection after_crash
+statement ok
+DROP TABLE trec_audit;

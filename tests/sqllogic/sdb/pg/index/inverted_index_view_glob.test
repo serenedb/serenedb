@@ -735,9 +735,106 @@ count
 
 
 # ============================================================================
+# Computed index keys over a glob view. The build pipeline appends the
+# projected expression columns AFTER the scanned ones, so the (file_index,
+# row) pair PK is not the tail of the sink's chunk -- a key taken to the end
+# of the chunk picks up the expression column and materialisation, which
+# requires exactly two parts, aborts.
+# ============================================================================
+
+
+statement count 2
+COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
+      UNION ALL SELECT 2, 'manga beta')
+TO '${__TEST_DIR__}/obj_a.jsonl' (FORMAT json);
+
+statement count 2
+COPY (SELECT 3::int4 AS id, 'sql gamma' AS body
+      UNION ALL SELECT 4, 'pudge delta')
+TO '${__TEST_DIR__}/obj_b.jsonl' (FORMAT json);
+
+
+# read_json_objects yields one JSON column, so the only possible index key is
+# an expression over it (FileIndexPlusOffset pair PK).
+statement ok
+CREATE VIEW json_obj_glob_v AS
+  SELECT json FROM read_json_objects('${__TEST_DIR__}/obj_*.jsonl');
+
+
+statement ok
+CREATE INDEX json_obj_glob_idx ON json_obj_glob_v
+  USING inverted((json::VARCHAR) view_glob_en);
+
+
+query
+SELECT count(*) FROM json_obj_glob_idx;
+----
+count
+4
+
+
+query
+SELECT json FROM json_obj_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('manga');
+----
+json
+{"id":2,"body":"manga beta"}
+
+
+# A hit in the second file: the per-file dispatch has to see file_index 1.
+query
+SELECT json FROM json_obj_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('sql');
+----
+json
+{"id":3,"body":"sql gamma"}
+
+
+# Both files in one batch.
+query
+SELECT json FROM json_obj_glob_idx
+WHERE (json::VARCHAR) @@ ts_phrase('pudge')
+ORDER BY json;
+----
+json
+{"id":1,"body":"pudge alpha"}
+{"id":4,"body":"pudge delta"}
+
+
+# Same shape over a parquet glob (FileIndexPlusRowNumber pair PK), where the
+# expression sits alongside real columns the lookup also materialises.
+statement ok
+CREATE INDEX pq_glob_expr_idx ON pq_glob_v
+  USING inverted((upper(body)) view_glob_en);
+
+
+query
+SELECT id, body FROM pq_glob_expr_idx
+WHERE upper(body) @@ ts_phrase('PUDGE')
+ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+5	pudge epsilon
+8	pudge theta
+
+
+query
+SELECT id, body FROM pq_glob_expr_idx
+WHERE upper(body) @@ ts_phrase('MASS EFFECT');
+----
+id	body
+7	mass effect eta
+
+
+# ============================================================================
 # Cleanup
 # ============================================================================
 
+
+statement ok
+DROP VIEW json_obj_glob_v;
 
 statement ok
 DROP VIEW pq_glob_v;

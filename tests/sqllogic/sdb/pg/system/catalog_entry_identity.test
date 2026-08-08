@@ -1,0 +1,179 @@
+# A duckdb CatalogEntry for a serenedb object carries the object's stable id and
+# its owner + ACL. The id is duckdb's `oid` as well, so pg_class.oid and
+# duckdb's own introspection are one number rather than two that happen to
+# describe the same thing -- duckdb's counter starts at 20'000 and is only ever
+# handed to the store entries behind the facade.
+#
+# A GRANT, a REVOKE and an OWNER TO go through CatalogSet::AlterEntry, which
+# chains one entry version and keeps the oid: the altered entry is the same
+# logical object.
+
+
+statement ok
+CREATE SCHEMA cei
+
+
+statement ok
+CREATE TABLE cei.t(id INTEGER PRIMARY KEY, txt TEXT)
+
+
+statement ok
+CREATE INDEX cei_i ON cei.t(txt)
+
+
+statement ok
+CREATE VIEW cei.v AS SELECT txt FROM cei.t
+
+
+statement ok
+CREATE SEQUENCE cei.sq
+
+
+# Every entry in the schema's sets answers with the id pg_class renders.
+query
+SELECT s.entry_type, s.name
+FROM sdb_catalog_sets() s
+JOIN pg_class c ON c.oid = s.entry_oid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE s.schema_name = 'cei' AND n.nspname = 'cei' AND c.relname = s.name
+ORDER BY 1, 2
+----
+entry_type	name
+Index	cei_i
+Sequence	sq
+Table	cei_i
+Table	t
+View	v
+
+
+# The same number on duckdb's own side.
+query
+SELECT t.table_name, (t.table_oid = c.oid) AS same
+FROM duckdb_tables() t
+JOIN pg_namespace n ON n.nspname = t.schema_name
+JOIN pg_class c ON c.relname = t.table_name AND c.relnamespace = n.oid
+WHERE t.schema_name = 'cei'
+ORDER BY 1
+----
+table_name	same
+cei_i	t
+t	t
+
+
+query
+SELECT i.index_name, (i.index_oid = c.oid) AS same
+FROM duckdb_indexes() i
+JOIN pg_namespace n ON n.nspname = i.schema_name
+JOIN pg_class c ON c.relname = i.index_name AND c.relnamespace = n.oid
+WHERE i.schema_name = 'cei'
+----
+index_name	same
+cei_i	t
+
+
+statement ok
+CREATE ROLE cei_grantee
+
+
+statement ok
+CREATE ROLE cei_owner
+
+
+# GRANT: one alter, so the oid is unchanged and the entry carries the grant.
+statement ok
+CREATE TABLE cei.oid_before AS
+SELECT entry_oid AS v FROM sdb_catalog_sets()
+WHERE schema_name = 'cei' AND entry_type = 'Table' AND name = 't'
+
+
+statement ok
+GRANT SELECT ON cei.t TO cei_grantee
+
+
+query
+SELECT (s.entry_oid = c.oid) AS oid_kept,
+       array_to_string(c.relacl, '|') AS acl
+FROM sdb_catalog_sets() s
+JOIN pg_class c ON c.relname = s.name
+JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'cei'
+WHERE s.schema_name = 'cei' AND s.entry_type = 'Table' AND s.name = 't'
+----
+oid_kept	acl
+t	postgres=arwdDxtm/postgres|cei_grantee=r/postgres
+
+
+statement ok
+ALTER TABLE cei.t OWNER TO cei_owner
+
+
+query
+SELECT (s.entry_oid = c.oid) AS oid_kept,
+       pg_get_userbyid(c.relowner) AS owner,
+       array_to_string(c.relacl, '|') AS acl
+FROM sdb_catalog_sets() s
+JOIN pg_class c ON c.relname = s.name
+JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'cei'
+WHERE s.schema_name = 'cei' AND s.entry_type = 'Table' AND s.name = 't'
+----
+oid_kept	owner	acl
+t	cei_owner	cei_grantee=r/cei_owner
+
+
+statement ok
+REVOKE SELECT ON cei.t FROM cei_grantee
+
+
+query
+SELECT (s.entry_oid = c.oid) AS oid_kept, c.relacl IS NULL AS no_acl
+FROM sdb_catalog_sets() s
+JOIN pg_class c ON c.relname = s.name
+JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'cei'
+WHERE s.schema_name = 'cei' AND s.entry_type = 'Table' AND s.name = 't'
+----
+oid_kept	no_acl
+t	t
+
+
+# Three alters later the entry is still the same logical object.
+query
+SELECT (s.entry_oid = b.v) AS oid_unchanged
+FROM sdb_catalog_sets() s, cei.oid_before b
+WHERE s.schema_name = 'cei' AND s.entry_type = 'Table' AND s.name = 't'
+----
+oid_unchanged
+t
+
+
+# A permission change is an ordinary entry version, so it rolls back with its
+# transaction and nothing of it reaches the set.
+statement ok
+BEGIN
+
+
+statement ok
+GRANT INSERT ON cei.t TO cei_grantee
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT relacl IS NULL AS no_acl FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'cei'
+WHERE c.relname = 't'
+----
+no_acl
+t
+
+
+statement ok
+DROP SCHEMA cei CASCADE
+
+
+statement ok
+DROP ROLE cei_grantee
+
+
+statement ok
+DROP ROLE cei_owner

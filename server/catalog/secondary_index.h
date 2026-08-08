@@ -20,45 +20,47 @@
 
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <vector>
 
-#include "basics/down_cast.h"
 #include "catalog/index.h"
+#include "catalog/persistence/secondary_index.h"
 
-namespace duckdb {
-
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
-class SecondaryIndex : public Index {
+// One secondary (ART) index, in the form a catalog entry is built from.
+class CreateSecondaryIndexInfo final : public CreateIndexInfoBase {
  public:
-  SecondaryIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                 ObjectId relation_id, std::string name,
-                 std::vector<Column::Id> columns,
-                 std::vector<ExpressionData> expressions, bool unique);
+  CreateSecondaryIndexInfo(ObjectId schema_id, ObjectId id,
+                           ObjectId relation_id,
+                           persistence::SecondaryIndexData data);
 
-  static std::shared_ptr<SecondaryIndex> Deserialize(duckdb::Deserializer& src,
-                                                     ReadContext ctx);
+  persistence::SecondaryIndexData ToData() const;
   void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
+  void WriteJson(basics::JsonSink& sink) const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
+
+  static std::shared_ptr<CreateSecondaryIndexInfo> Deserialize(
+    duckdb::Deserializer& src, ObjectId schema_id, ObjectId id,
+    ObjectId relation_id);
+
   bool IsUnique() const noexcept { return _unique; }
 
-  // Positional ART key list, in source order. A Column::kInvalidId slot is an
+  // Positional ART key list, in source order. A kInvalidColumnId slot is an
   // expression key whose payload is the next unconsumed entry of Expressions().
   // Order (and column/expression interleaving) is the ART prefix order.
-  const std::vector<Column::Id>& Columns() const noexcept { return _columns; }
+  const std::vector<ColumnId>& Columns() const noexcept { return _key_columns; }
   const std::vector<ExpressionData>& Expressions() const noexcept {
     return _expressions;
   }
 
  private:
-  std::vector<Column::Id> _columns;
+  std::vector<ColumnId> _key_columns;
   std::vector<ExpressionData> _expressions;
   bool _unique;
 };
+
+using SecondaryIndexInfoRef = std::shared_ptr<const CreateSecondaryIndexInfo>;
 
 }  // namespace sdb::catalog

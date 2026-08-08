@@ -37,7 +37,7 @@ namespace {
 
 using catalog::AclItem;
 using catalog::AclMode;
-using catalog::ObjectType;
+using duckdb::CatalogType;
 
 // Lowercase keyword -> AclMode; callers lowercase the input before lookup.
 const containers::FlatHashMap<std::string_view, AclMode> kPrivNames{
@@ -50,72 +50,47 @@ const containers::FlatHashMap<std::string_view, AclMode> kPrivNames{
   {"temp", AclMode::CreateTemp},   {"connect", AclMode::Connect},
 };
 
-AclMode ClassPrivs(ObjectType type) noexcept {
+AclMode ClassPrivs(CatalogType type) noexcept {
   switch (type) {
-    case ObjectType::Table:
+    case CatalogType::TABLE_ENTRY:
       return AclMode::Select | AclMode::Insert | AclMode::Update |
              AclMode::Delete | AclMode::Truncate | AclMode::References |
              AclMode::Trigger | AclMode::Maintain;
-    case ObjectType::Sequence:
+    case CatalogType::SEQUENCE_ENTRY:
       return AclMode::Select | AclMode::Update | AclMode::Usage;
-    case ObjectType::Database:
+    case CatalogType::DATABASE_ENTRY:
       return AclMode::Create | AclMode::CreateTemp | AclMode::Connect;
-    case ObjectType::Schema:
+    case CatalogType::SCHEMA_ENTRY:
       return AclMode::Usage | AclMode::Create;
-    case ObjectType::Function:
+    case CatalogType::MACRO_ENTRY:
+    case CatalogType::TABLE_MACRO_ENTRY:
       return AclMode::Execute;
-    case ObjectType::Type:
+    case CatalogType::TYPE_ENTRY:
       return AclMode::Usage;
-    // A FOREIGN SERVER carries USAGE (PG-style); a USER MAPPING has no ACL of
-    // its own -- access is governed through its server and owner.
-    case ObjectType::ForeignServer:
+    // A FOREIGN SERVER carries USAGE, as in postgres.
+    case CatalogType::FOREIGN_SERVER_ENTRY:
       return AclMode::Usage;
-    case ObjectType::UserMapping:
-    case ObjectType::Invalid:
-    case ObjectType::Tombstone:
-    case ObjectType::Role:
-    case ObjectType::Tokenizer:
-    case ObjectType::View:
-    case ObjectType::SecondaryIndex:
-    case ObjectType::InvertedIndex:
-    case ObjectType::Column:
-    case ObjectType::CheckConstraint:
-    case ObjectType::Virtual:
+    default:
       return AclMode::NoRights;
   }
-  SDB_UNREACHABLE();
 }
 
 bool Has(AclMode have, AclMode need) noexcept {
   return (have & need) == need && need != AclMode::NoRights;
 }
 
-AclMode PublicDefaultPrivs(ObjectType type) noexcept {
+AclMode PublicDefaultPrivs(CatalogType type) noexcept {
   switch (type) {
-    case ObjectType::Database:
+    case CatalogType::DATABASE_ENTRY:
       return AclMode::Connect | AclMode::CreateTemp;
-    case ObjectType::Function:
+    case CatalogType::MACRO_ENTRY:
+    case CatalogType::TABLE_MACRO_ENTRY:
       return AclMode::Execute;
-    case ObjectType::Type:
+    case CatalogType::TYPE_ENTRY:
       return AclMode::Usage;
-    case ObjectType::Table:
-    case ObjectType::Sequence:
-    case ObjectType::Schema:
-    case ObjectType::ForeignServer:
-    case ObjectType::UserMapping:
-    case ObjectType::Invalid:
-    case ObjectType::Tombstone:
-    case ObjectType::Role:
-    case ObjectType::Tokenizer:
-    case ObjectType::View:
-    case ObjectType::SecondaryIndex:
-    case ObjectType::InvertedIndex:
-    case ObjectType::Column:
-    case ObjectType::CheckConstraint:
-    case ObjectType::Virtual:
+    default:
       return AclMode::NoRights;
   }
-  SDB_UNREACHABLE();
 }
 
 bool RolesContain(RoleIdSpan roles, ObjectId id) noexcept {
@@ -126,11 +101,15 @@ bool IsGranteeInRoles(ObjectId grantee, RoleIdSpan roles) {
   return grantee == catalog::kPublicGrantee || RolesContain(roles, grantee);
 }
 
+bool IsGranteeInRoles(const AclItem& item, RoleIdSpan roles) {
+  return IsGranteeInRoles(ObjectId{item.grantee}, roles);
+}
+
 AclMode AclModeHeld(catalog::AclView acl, RoleIdSpan roles,
                     AclMode AclItem::* field) {
   AclMode held = AclMode::NoRights;
   for (const auto& item : acl) {
-    if (IsGranteeInRoles(item.grantee, roles)) {
+    if (IsGranteeInRoles(item, roles)) {
       held |= item.*field;
     }
   }
@@ -139,7 +118,7 @@ AclMode AclModeHeld(catalog::AclView acl, RoleIdSpan roles,
 
 }  // namespace
 
-catalog::Acl AclDefault(ObjectType type, ObjectId owner) {
+catalog::Acl AclDefault(CatalogType type, ObjectId owner) {
   catalog::Acl acl;
   const AclMode owner_privs = ClassPrivs(type);
   if (owner_privs == AclMode::NoRights) {
@@ -162,7 +141,7 @@ catalog::Acl AclDefault(ObjectType type, ObjectId owner) {
   return acl;
 }
 
-catalog::Acl AclForStorage(catalog::AclView stored, ObjectType type,
+catalog::Acl AclForStorage(catalog::AclView stored, CatalogType type,
                            ObjectId owner) {
   if (stored.empty()) {
     return AclDefault(type, owner);
@@ -170,7 +149,7 @@ catalog::Acl AclForStorage(catalog::AclView stored, ObjectType type,
   return catalog::Acl{stored.begin(), stored.end()};
 }
 
-bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
+bool AclCheckSorted(catalog::AclView stored, CatalogType type, ObjectId owner,
                     RoleIdSpan roles, AclMode need, PrivMatch match) {
   SDB_ASSERT(std::ranges::is_sorted(roles),
              "AclCheckSorted requires an ascending-sorted roles span");
@@ -196,7 +175,7 @@ bool AclCheckSorted(catalog::AclView stored, ObjectType type, ObjectId owner,
   }
 
   for (const auto& item : stored) {
-    if (!IsGranteeInRoles(item.grantee, roles)) {
+    if (!IsGranteeInRoles(item, roles)) {
       continue;
     }
     have |= item.privs;
@@ -215,8 +194,31 @@ AclMode AclPrivsHeld(catalog::AclView acl, RoleIdSpan roles) {
   return AclModeHeld(acl, roles, &AclItem::privs);
 }
 
+catalog::Permissions TransferredOwner(catalog::Permissions perm,
+                                      ObjectId new_owner) {
+  const ObjectId old_owner = catalog::OwnerOf(perm);
+  std::erase_if(perm.acl, [&](const AclItem& item) {
+    return item.grantee == old_owner && item.grantor == old_owner;
+  });
+  for (auto& item : perm.acl) {
+    if (item.grantor == old_owner) {
+      item.grantor = new_owner;
+    }
+  }
+  perm.owner = new_owner;
+  return perm;
+}
+
+catalog::Permissions MutatedAcl(const catalog::Permissions& perm,
+                                CatalogType type, AclMutator& mutate) {
+  const auto owner = catalog::OwnerOf(perm);
+  auto acl = AclForStorage(perm.acl, type, owner);
+  mutate(owner, acl);
+  return catalog::Permissions{owner, std::move(acl), perm.column_acl};
+}
+
 std::optional<AclMode> TryParseAclKeyword(std::string_view keyword,
-                                          ObjectType type) {
+                                          CatalogType type) {
   const AclMode allowed = ClassPrivs(type);
   if (absl::EqualsIgnoreCase(keyword, "ALL")) {
     return allowed;

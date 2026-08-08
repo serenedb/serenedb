@@ -23,6 +23,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/parser/parsed_data/create_info.hpp>
 #include <limits>
 #include <set>
 #include <span>
@@ -30,8 +31,8 @@
 #include <vector>
 
 #include "basics/bit_utils.hpp"
+#include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/object.h"
 
 namespace sdb::catalog {
 
@@ -69,15 +70,36 @@ namespace persistence {
 struct RoleData;
 }
 
-class Role final : public catalog::Object {
+// One role, in the form a catalog entry is built from. Roles are cluster-wide
+// and duckdb has no counterpart, so this is a CreateInfo of our own under
+// CatalogType::ROLE_ENTRY: what a mutator fills in, what the catalog log
+// records, and what SereneDBRoleEntry copies its state out of.
+class CreateRoleInfo final : public duckdb::CreateInfo {
  public:
-  explicit Role(persistence::RoleData data);
+  CreateRoleInfo() : duckdb::CreateInfo{duckdb::CatalogType::ROLE_ENTRY} {}
+  CreateRoleInfo(ObjectId id, persistence::RoleData data);
 
+  persistence::RoleData ToData() const;
+  // Writes the role's own fields and none of CreateInfo's: a role carries no
+  // schema, conflict mode or SQL text, and the catalog log reads it back
+  // through Deserialize below rather than through CreateInfo's type switch.
   void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
+  std::string ToString() const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
+  std::shared_ptr<CreateRoleInfo> CloneRole() const;
 
-  static std::shared_ptr<Role> Deserialize(duckdb::Deserializer& src,
-                                           ReadContext ctx);
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
+
+  ObjectId GetId() const noexcept { return ObjectId{oid}; }
+  void SetId(ObjectId id) noexcept { oid = id.id(); }
+
+  std::string_view GetName() const noexcept {
+    return GetQualifiedName().Name().GetIdentifierName();
+  }
+  void SetRoleName(std::string_view name) {
+    SetName(duckdb::Identifier{std::string{name}});
+  }
 
   RoleOption Options() const noexcept { return _options; }
   bool Has(RoleOption o) const noexcept {
@@ -89,7 +111,6 @@ class Role final : public catalog::Object {
 
   static constexpr int32_t kNoConnLimit = -1;
   int32_t ConnLimit() const noexcept { return _conn_limit; }
-  bool HasConnLimit() const noexcept { return _conn_limit != kNoConnLimit; }
   void SetConnLimit(int32_t limit) noexcept { _conn_limit = limit; }
 
   static constexpr int64_t kNoValidUntil = std::numeric_limits<int64_t>::min();
@@ -105,7 +126,7 @@ class Role final : public catalog::Object {
   std::span<const DefaultAcl> DefaultAcls() const noexcept {
     return _default_acls;
   }
-  void ChangeDefaultAcl(ObjectId schema, char objtype, ObjectType type,
+  void ChangeDefaultAcl(ObjectId schema, char objtype, duckdb::CatalogType type,
                         absl::FunctionRef<void(Acl&)> mutate);
 
   std::span<const Membership> MemberOf() const noexcept { return _member_of; }

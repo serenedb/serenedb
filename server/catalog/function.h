@@ -21,34 +21,29 @@
 #pragma once
 
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <memory>
+#include <string_view>
+#include <utility>
 
 #include "catalog/column_expr.h"
-#include "catalog/object.h"
+#include "catalog/entry.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace sdb::catalog {
 
-// A SQL function stored in the catalog. CreateMacroInfo is carried inside
-// the reflection-serialized PgSqlFunctionData wrapper as a duckdb-binary
-// blob -- same shape as PgSqlView.
-class PgSqlFunction final : public Object {
- public:
-  PgSqlFunction(Permissions perm, ObjectId schema_id, ObjectId id,
-                std::string_view name,
-                duckdb::unique_ptr<duckdb::CreateMacroInfo> info);
+// A SQL function is duckdb's own CreateMacroInfo -- all the overloads of one
+// name share one, as duckdb's macro entry does. The ids ride
+// CreateInfo::oid and parent_oid, and what the bodies resolved to rides
+// CreateInfo::dependencies. Owner and ACL are not in it -- they live on the
+// entry, which is their one home, and a reader wanting both takes a
 
-  static std::shared_ptr<PgSqlFunction> Deserialize(duckdb::Deserializer& src,
-                                                    ReadContext ctx);
+inline std::string_view FunctionName(
+  const duckdb::CreateMacroInfo& info) noexcept {
+  return info.GetFunctionName().GetIdentifierName();
+}
 
-  void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
-
-  const duckdb::CreateMacroInfo& GetInfo() const noexcept { return *_info; }
-  duckdb::CreateMacroInfo& GetInfo() noexcept { return *_info; }
-
-  Refs GetRefs(RefKinds kinds) const;
-
- private:
-  duckdb::unique_ptr<duckdb::CreateMacroInfo> _info;
-};
+// The names every overload's body references, to be resolved into dependency
+// edges.
+Refs MacroRefs(const duckdb::CreateMacroInfo& info, RefKinds kinds);
 
 }  // namespace sdb::catalog

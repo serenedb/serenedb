@@ -122,13 +122,14 @@ count
 2
 
 
-# Standalone sequence kept its counter (continues at 105, not 100, not 1).
+# Standalone sequence kept its counter: it resumes past the burnt log-ahead
+# (32 values of INCREMENT 5 beyond the last one handed out), not at 100 or 1.
 connection after_orphan_seq_1
 query
 SELECT nextval('clickclack.kostya_iceberg_review_id');
 ----
 nextval
-105
+265
 
 
 # Re-create the dropped table under the same name. If the orphan owned

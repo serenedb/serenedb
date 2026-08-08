@@ -20,6 +20,8 @@
 
 #include "pg/information_schema/sql_sizing.h"
 
+#include "auth/role_closure.h"
+
 namespace sdb::pg {
 namespace {
 
@@ -75,7 +77,7 @@ catalog::MaterializedData SystemTableSnapshot<SqlSizing>::GetTableData() {
   auto result = CreateColumns<SqlSizing>(kNumRows);
   for (size_t row = 0; row < kNumRows; ++row) {
     WriteData(result, kRows[row].data, kRows[row].nulls, row,
-              *_config.CatalogSnapshot());
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), kNumRows};
 }

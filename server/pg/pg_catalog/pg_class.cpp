@@ -22,21 +22,32 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <deque>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "app/app_server.h"
+#include "auth/role_closure.h"
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
 #include "catalog/role.h"
+#include "catalog/schema.h"
 #include "catalog/sequence.h"
 #include "catalog/store/store.h"
 #include "catalog/user_type.h"
@@ -88,11 +99,11 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 
 // Indexes have no owner of their own, so the caller passes the underlying
 // table's owner (PG semantics).
-PgClass MakeBaseRow(ObjectId schema_id, const catalog::Object& object,
+PgClass MakeBaseRow(ObjectId schema_id, ObjectId oid, std::string_view name,
                     ObjectId owner) {
   return {
-    .oid = object.GetId().id(),
-    .relname = object.GetName(),
+    .oid = oid.id(),
+    .relname = name,
     .relnamespace = schema_id.id(),
     .reltype = 0,
     .reloftype = 0,
@@ -155,195 +166,168 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
                      std::deque<std::string>& uq_index_names,
                      std::vector<std::vector<std::string>>& reloptions_storage,
                      std::vector<std::vector<Text>>& reloptions_views,
-                     const catalog::Snapshot& catalog,
                      duckdb::ClientContext& context) {
-  // reltuples is read from the store table's row-group metadata
+  // reltuples is read from the relation's own row-group metadata
   // (DataTable::GetTotalRows), never a count(*) query: pg_catalog must not scan
-  // data.
-  auto count_store_rows = [&](const catalog::Table& table,
-                              std::string_view db_name,
-                              std::string_view schema_name) -> float {
-    if (table.GetEngine() != catalog::TableEngine::Transactional ||
-        table.Tombstoned()) {
-      return 0.0F;
-    }
-    auto entry = catalog::GetStoreTableEntry(
-      context, db_name, schema_name, table.GetName(),
-      duckdb::OnEntryNotFound::RETURN_NULL);
-    if (!entry) {
-      return 0.0F;
-    }
-    return static_cast<float>(entry->GetStorage().GetTotalRows());
+  // data. Off the entry this walk already holds, and nothing else: resolving a
+  // second entry here would re-enter the catalog sets this walk is inside.
+  auto count_store_rows = [](catalog::SereneDBTableEntry& table) -> float {
+    auto storage = table.TryGetStorage();
+    return storage ? static_cast<float>(storage->GetTotalRows()) : 0.0F;
   };
-  auto database = catalog.GetDatabase(database_id);
-  SDB_ASSERT(database);
-  for (const auto& schema : catalog.GetSchemas(database_id)) {
-    const auto schema_id = schema->GetId();
+  // The two facts a relation's row needs from outside its own definition:
+  // whether anything indexes it, and -- for the index rows below -- who owns
+  // the relation the index hangs off, since an index has no owner of its own.
+  // Both come off the same sets the rows do, so the whole projection answers
+  // from one place.
+  std::vector<catalog::IndexInfoRef> indexes;
+  containers::FlatHashSet<ObjectId> indexed_relations;
+  catalog::VisitDefinitions<catalog::SereneDBIndexEntry>(
+    &context, database_id,
+    [&](const catalog::IndexInfoRef& index, const catalog::Permissions&) {
+      indexed_relations.insert(index->GetRelationId());
+      indexes.push_back(index);
+    });
+  containers::FlatHashMap<ObjectId, ObjectId> relation_owners;
+  // The tables in set order, for the synthetic key-index rows below, and the
+  // sequences that feed a synthetic primary key -- serenedb's own machinery,
+  // which postgres has no relation for.
+  std::vector<std::pair<ObjectId, const catalog::SereneDBTableEntry*>> tables;
+  containers::FlatHashSet<ObjectId> generated_pk_sequences;
 
-    for (const auto& table :
-         catalog.GetTables(database_id, schema->GetName())) {
-      auto row = MakeBaseRow(schema_id, *table, table->GetOwner());
-      row.relkind = PgClass::Relkind::OrdinaryTable;
-      row.relnatts = static_cast<int16_t>(table->Columns().size());
-      row.relchecks = static_cast<int16_t>(table->CheckConstraints().size());
-      row.relhasindex = catalog.HasIndexes(table->GetId());
-      row.reltuples =
-        count_store_rows(*table, database->GetName(), schema->GetName());
-      row.relacl = {table->GetAcl()};
-      values.push_back(std::move(row));
-    }
-
-    for (const auto& view : catalog.GetViews(database_id, schema->GetName())) {
-      auto row = MakeBaseRow(schema_id, *view, view->GetOwner());
-      row.relkind = PgClass::Relkind::View;
-      row.relacl = {view->GetAcl()};
-      values.push_back(std::move(row));
-    }
-
-    for (const auto& index :
-         catalog.GetIndexes(database_id, schema->GetName())) {
-      // An index has no owner of its own; PG gives it the underlying table's.
-      auto rel = catalog.GetObject(index->GetRelationId());
-      SDB_ASSERT(rel);
-      auto row = MakeBaseRow(schema_id, *index, rel->GetOwner());
-      row.relkind = PgClass::Relkind::Index;
-      row.relnatts = static_cast<int16_t>(index->GetColumns().size());
-      if (index->GetType() == catalog::ObjectType::InvertedIndex) {
-        row.relam = id::kPgAmInverted.id();
-        auto rendered = RenderInvertedIndexOptions(
-          basics::downCast<const catalog::InvertedIndex>(*index).GetOptions());
-        if (!rendered.empty()) {
-          const auto& strings =
-            reloptions_storage.emplace_back(std::move(rendered));
-          auto& views = reloptions_views.emplace_back();
-          views.reserve(strings.size());
-          for (const auto& option : strings) {
-            views.emplace_back(option);
-          }
-          row.reloptions = views;
+  catalog::VisitCatalogSetEntries(
+    context, database_id, duckdb::CatalogType::TABLE_ENTRY,
+    [&](const duckdb::CreateSchemaInfo& schema, duckdb::CatalogEntry& entry) {
+      // The index-name-as-table wrappers share this set: their shape is the
+      // relation's and pg_class already has that relation's row, so only a
+      // table and a view are rows of their own here.
+      const auto schema_id = catalog::IdOf(schema);
+      auto* table = dynamic_cast<catalog::SereneDBTableEntry*>(&entry);
+      if (table != nullptr) {
+        relation_owners.emplace(catalog::IdOf(*table),
+                                catalog::OwnerOf(table->permissions));
+        tables.emplace_back(schema_id, table);
+        if (table->GetGeneratedPkSeqId().isSet()) {
+          generated_pk_sequences.insert(table->GetGeneratedPkSeqId());
         }
-      } else if (index->GetType() == catalog::ObjectType::SecondaryIndex) {
-        row.relam = id::kPgAmSecondary.id();
+        auto row = MakeBaseRow(schema_id, catalog::IdOf(*table),
+                               table->name.GetIdentifierName(),
+                               catalog::OwnerOf(table->permissions));
+        row.relkind = PgClass::Relkind::OrdinaryTable;
+        row.relnatts =
+          static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
+        // Postgres counts CHECK constraints here and nothing else: NOT NULL is
+        // a pg_constraint row of its own but not one of these.
+        row.relchecks = static_cast<int16_t>(std::ranges::count_if(
+          table->GetConstraints(), [](const auto& constraint) {
+            return constraint->type == duckdb::ConstraintType::CHECK;
+          }));
+        row.relhasindex = indexed_relations.contains(catalog::IdOf(*table));
+        row.reltuples = count_store_rows(*table);
+        row.relacl = {table->permissions.acl};
+        values.push_back(std::move(row));
+        return;
       }
+      const auto* view_entry =
+        dynamic_cast<const catalog::SereneDBViewEntry*>(&entry);
+      if (view_entry == nullptr) {
+        return;
+      }
+      const auto view_id = ObjectId{view_entry->oid};
+      relation_owners.emplace(view_id,
+                              catalog::OwnerOf(view_entry->permissions));
+      auto row =
+        MakeBaseRow(schema_id, view_id, view_entry->name.GetIdentifierName(),
+                    catalog::OwnerOf(view_entry->permissions));
+      row.relkind = PgClass::Relkind::View;
+      row.relacl = {view_entry->permissions.acl};
       values.push_back(std::move(row));
-    }
+    });
 
-    for (const auto& sequence :
-         catalog.GetSequences(database_id, schema->GetName())) {
-      auto row = MakeBaseRow(schema_id, *sequence, sequence->GetOwner());
+  for (const auto& index_ref : indexes) {
+    const auto& index = *index_ref;
+    const auto owner = relation_owners.find(index.GetRelationId());
+    if (owner == relation_owners.end()) {
+      continue;
+    }
+    auto row = MakeBaseRow(index.GetParentId(), index.GetId(), index.GetName(),
+                           owner->second);
+    row.relkind = PgClass::Relkind::Index;
+    row.relnatts = static_cast<int16_t>(index.GetColumns().size());
+    if (index.IsInverted()) {
+      row.relam = id::kPgAmInverted.id();
+      auto rendered =
+        RenderInvertedIndexOptions(catalog::InvertedInfo(index).GetOptions());
+      if (!rendered.empty()) {
+        const auto& strings =
+          reloptions_storage.emplace_back(std::move(rendered));
+        auto& views = reloptions_views.emplace_back();
+        views.reserve(strings.size());
+        for (const auto& option : strings) {
+          views.emplace_back(option);
+        }
+        row.reloptions = views;
+      }
+    } else {
+      row.relam = id::kPgAmSecondary.id();
+    }
+    values.push_back(std::move(row));
+  }
+
+  catalog::Visit<catalog::SereneDBSequenceEntry>(
+    &context, database_id, [&](const catalog::SereneDBSequenceEntry& sequence) {
+      // The synthetic primary-key sequence of a table declaring none is
+      // serenedb's own machinery, like the column it feeds: postgres has no
+      // such relation and neither does pg_class. A SERIAL's sequence is a real
+      // one and is listed, as PG lists it.
+      const auto& perm = sequence.permissions;
+      if (generated_pk_sequences.contains(ObjectId{sequence.oid})) {
+        return;
+      }
+      auto row = MakeBaseRow(
+        ObjectId{sequence.ParentSchema().oid}, ObjectId{sequence.oid},
+        sequence.name.GetIdentifierName(), catalog::OwnerOf(perm));
       row.relkind = PgClass::Relkind::Sequence;
-      row.relacl = {sequence->GetAcl()};
+      row.relacl = {catalog::AclView{perm.acl}};
       values.push_back(std::move(row));
-    }
+    });
 
-    for (const auto& type : catalog.GetTypes(database_id, schema->GetName())) {
-      const auto& info = type->GetInfo();
-      if (info.type.id() != duckdb::LogicalTypeId::STRUCT) {
-        continue;
+  catalog::Visit<catalog::SereneDBTypeEntry>(
+    &context, database_id, [&](const duckdb::TypeCatalogEntry& type) {
+      if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
+        return;
       }
-      auto row = MakeBaseRow(schema_id, *type, type->GetOwner());
+      auto row = MakeBaseRow(ObjectId{type.ParentSchema().oid},
+                             ObjectId{type.oid}, type.name.GetIdentifierName(),
+                             catalog::OwnerOf(type.permissions));
       row.relkind = PgClass::Relkind::CompositeType;
       row.relnatts = static_cast<int16_t>(
-        duckdb::StructType::GetChildTypes(info.type).size());
+        duckdb::StructType::GetChildTypes(type.user_type).size());
       values.push_back(std::move(row));
-    }
-  }
+    });
 
-  // Synthetic pg_class entries for primary key indexes (PG semantics).
-  // Name is '<table>_pkey', OID is the PK's backing-index id. Kept in separate
-  // storage to survive the value push_backs above.
-  for (const auto& schema : catalog.GetSchemas(database_id)) {
-    const auto schema_id = schema->GetId();
-    for (const auto& table :
-         catalog.GetTables(database_id, schema->GetName())) {
-      if (table->PKColumns().empty()) {
-        continue;
-      }
-      pk_index_names.push_back(table->PKName().empty()
-                                 ? std::string{table->GetName()} + "_pkey"
-                                 : std::string{table->PKName()});
-      PgClass row{
-        .oid = table->PKIndexId().id(),
-        .relname = pk_index_names.back(),
-        .relnamespace = schema_id.id(),
-        .reltype = 0,
-        .reloftype = 0,
-        // PK index follows the table's owner, like any index.
-        .relowner = table->GetOwner().id(),
-        .relam = 0,
-        .relfilenode = 0,
-        .reltablespace = 0,
-        .relpages = 0,
-        .reltuples = -1,
-        .relallvisible = 0,
-        .relallfrozen = 0,
-        .reltoastrelid = 0,
-        .relhasindex = false,
-        .relisshared = false,
-        .relpersistence = PgClass::Relpersistence::Permanent,
-        .relkind = PgClass::Relkind::Index,
-        .relnatts = static_cast<int16_t>(table->PKColumns().size()),
-        .relchecks = 0,
-        .relhasrules = false,
-        .relhastriggers = false,
-        .relhassubclass = false,
-        .relrowsecurity = false,
-        .relforcerowsecurity = false,
-        .relispopulated = true,
-        .relreplident = PgClass::Relreplident::Default,
-        .relispartition = false,
-        .relrewrite = 0,
-        .relfrozenxid = 0,
-        .relminmxid = 0,
-      };
-      values.push_back(std::move(row));
-    }
-  }
-
-  // Synthetic pg_class entries for UNIQUE constraint indexes (PG semantics).
-  // Name is the constraint name, OID is the constraint's backing-index id.
-  for (const auto& schema : catalog.GetSchemas(database_id)) {
-    const auto schema_id = schema->GetId();
-    for (const auto& table :
-         catalog.GetTables(database_id, schema->GetName())) {
-      const auto& uniques = table->UniqueConstraints();
-      for (size_t uq_idx = 0; uq_idx < uniques.size(); ++uq_idx) {
-        uq_index_names.push_back(uniques[uq_idx].name.empty()
-                                   ? std::string{table->GetName()} + "_key"
-                                   : uniques[uq_idx].name);
-        PgClass row{
-          .oid = uniques[uq_idx].index_id.id(),
-          .relname = uq_index_names.back(),
-          .relnamespace = schema_id.id(),
-          .reltype = 0,
-          .reloftype = 0,
-          .relowner = id::kRootUser.id(),
-          .relam = 0,
-          .relfilenode = 0,
-          .reltablespace = 0,
-          .relpages = 0,
-          .reltuples = -1,
-          .relallvisible = 0,
-          .relallfrozen = 0,
-          .reltoastrelid = 0,
-          .relhasindex = false,
-          .relisshared = false,
-          .relpersistence = PgClass::Relpersistence::Permanent,
-          .relkind = PgClass::Relkind::Index,
-          .relnatts = static_cast<int16_t>(uniques[uq_idx].columns.size()),
-          .relchecks = 0,
-          .relhasrules = false,
-          .relhastriggers = false,
-          .relhassubclass = false,
-          .relrowsecurity = false,
-          .relforcerowsecurity = false,
-          .relispopulated = true,
-          .relreplident = PgClass::Relreplident::Default,
-          .relispartition = false,
-          .relrewrite = 0,
-          .relfrozenxid = 0,
-          .relminmxid = 0,
-        };
+  // Synthetic pg_class entries for the indexes backing key constraints (PG
+  // semantics): one per PRIMARY KEY, then one per UNIQUE. The relation is the
+  // constraint's own name and backing-index id, and the owner is the table's,
+  // as for any index. Primary keys first so the rows stay grouped.
+  for (const auto primary : {true, false}) {
+    for (const auto& [schema_id, table] : tables) {
+      for (const auto& constraint : table->GetConstraints()) {
+        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+          continue;
+        }
+        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+        if (unique.IsPrimaryKey() != primary) {
+          continue;
+        }
+        auto& names = primary ? pk_index_names : uq_index_names;
+        names.push_back(unique.constraint_name);
+        auto row =
+          MakeBaseRow(schema_id, ObjectId{unique.host_index_id}, names.back(),
+                      catalog::OwnerOf(table->permissions));
+        row.relkind = PgClass::Relkind::Index;
+        row.relnatts = static_cast<int16_t>(
+          catalog::KeyConstraintAttnums(*table, unique).size());
         values.push_back(std::move(row));
       }
     }
@@ -357,9 +341,8 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   std::deque<std::string> uq_index_names;
   std::vector<std::vector<std::string>> reloptions_storage;
   std::vector<std::vector<Text>> reloptions_views;
-  auto catalog = _config.CatalogSnapshot();
   RetrieveObjects(GetDatabaseId(), values, pk_index_names, uq_index_names,
-                  reloptions_storage, reloptions_views, *catalog,
+                  reloptions_storage, reloptions_views,
                   _config.GetClientContext());
 
   {
@@ -412,10 +395,10 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   }
 
   {
-    VisitSystemViews([&](const catalog::PgSqlView& view, Oid schema_oid) {
+    VisitSystemViews([&](const StaticView& view, Oid schema_oid) {
       PgClass row{
-        .oid = view.GetId().id(),
-        .relname = view.GetName(),
+        .oid = catalog::IdOf(*view.first).id(),
+        .relname = catalog::ViewName(*view.first),
         .relnamespace = schema_oid,
         .reltype = 0,
         .reloftype = 0,
@@ -453,7 +436,8 @@ catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   auto result = CreateColumns<PgClass>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
 
   return {std::move(result), values.size()};

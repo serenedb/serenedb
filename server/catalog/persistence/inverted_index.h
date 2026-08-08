@@ -33,8 +33,8 @@
 
 #include "basics/containers/node_hash_map.h"
 #include "catalog/persistence/index.h"
-#include "catalog/search_analyzer_impl.h"
 #include "catalog/table_options.h"
+#include "search/search_analyzer_impl.h"
 
 namespace sdb::catalog::persistence {
 
@@ -81,7 +81,7 @@ struct InvertedIndexData {
   std::string name;
   // Plain-column keys (de-duped). Each column key's field_id is its column id,
   // so no separate field_id is stored. Order is not load-bearing for inverted.
-  std::vector<Column::Id> columns;
+  std::vector<ColumnId> columns;
   std::vector<ExpressionKey> expression_keys;
   // Per-field iresearch config keyed by field_id.
   containers::NodeHashMap<irs::field_id, EntryConfigSerialized> entries;

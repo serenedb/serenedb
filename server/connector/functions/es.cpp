@@ -31,6 +31,8 @@
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <map>
@@ -43,6 +45,9 @@
 #include "basics/simdjson_sink.h"
 #include "catalog/catalog.h"
 #include "catalog/column_expr.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_table_entry.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/schema.h"
@@ -243,7 +248,7 @@ uint32_t ResolveUintSetting(duckdb::ClientContext& context,
 // created in the same call and is empty, so after StartTasks the first
 // commit only seals the meta payload.
 void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
-                     std::string_view index,
+                     const catalog::TableInfoRef& table,
                      std::span<const std::string_view> text_columns) {
   {
     duckdb::named_parameter_map_t options;
@@ -259,22 +264,17 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
                         /*if_not_exists=*/true, options);
   }
 
-  auto& catalog = catalog::GetCatalog();
-  auto snapshot = catalog.GetCatalogSnapshot();
-  auto table =
-    snapshot->GetTable(catalog::NoAccessCheck(), database_id, kEsSchema, index);
-  SDB_ASSERT(table);
-
   std::vector<catalog::CreateIndexColumn> idx_columns;
   idx_columns.reserve(text_columns.size());
   for (const auto name : text_columns) {
-    const auto& columns = table->Columns();
-    auto it = absl::c_find_if(
-      columns, [&](const auto& col) { return col.GetName() == name; });
-    SDB_ASSERT(it != columns.end());
+    const auto* column = catalog::ColumnByName(*table, name);
+    SDB_ASSERT(column != nullptr);
     idx_columns.push_back(catalog::CreateIndexColumn{
-      .name = it->GetName(),
-      .catalog_column = &*it,
+      // A view into the definition, which outlives the create: the field is a
+      // string_view.
+      .name = column->Name().GetIdentifierName(),
+      .column = catalog::IndexedColumnRef{ObjectId{column->CatalogOid()},
+                                          column->Type()},
       .opclass = std::string{kTextTokenizer},
     });
   }
@@ -290,23 +290,20 @@ void CreateTextIndex(duckdb::ClientContext& context, ObjectId database_id,
       ResolveUintSetting(context, kCleanupIntervalStepSetting),
   };
 
-  const auto index_name = absl::StrCat(index, kEsTextIndexSuffix);
-  catalog.CreateInvertedIndex(catalog::NoAccessCheck(), context, database_id,
-                              kEsSchema, index, index_name,
-                              std::move(idx_columns), std::move(options), {},
-                              {.create_with_tombstone = true});
-
-  auto fresh = catalog.GetCatalogSnapshot();
-  auto relation = fresh->GetRelation(catalog::NoAccessCheck(), database_id,
-                                     kEsSchema, index_name);
-  SDB_ASSERT(relation);
-  auto storage =
-    basics::downCast<const catalog::InvertedIndex>(*relation).GetData();
+  const auto index_name =
+    absl::StrCat(catalog::TableNameOf(*table), kEsTextIndexSuffix);
+  auto created =
+    catalog::DatabaseCatalog(&context, database_id)
+      .CreateInvertedIndex(
+        catalog::NoAccessCheck(context), context, database_id, kEsSchema,
+        catalog::IndexRelation{table, nullptr, catalog::Permissions{}},
+        index_name, std::move(idx_columns), std::move(options), {}, {});
+  SDB_ASSERT(created);
+  const auto& storage = created->GetData();
   SDB_ASSERT(storage);
   storage->StartTasks();
   storage->Refresh();
   storage->FinishCreation();
-  catalog.RemoveTombstone(database_id, kEsSchema, index_name);
 }
 
 void EsCreateIndexExecute(duckdb::ClientContext& context,
@@ -325,37 +322,47 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   const auto database_id = conn_ctx.GetDatabaseId();
-  auto& catalog = catalog::GetCatalog();
+  auto& catalog = catalog::DatabaseCatalog(&context, database_id);
 
   {
-    auto schema = std::make_shared<catalog::Schema>(
-      conn_ctx.GetRoleId(), database_id, ObjectId{}, kEsSchema);
-    catalog.CreateSchema(catalog::NoAccessCheck(), database_id,
-                         std::move(schema), /*if_not_exists=*/true);
+    // Through the database's own catalog: CREATE SCHEMA is duckdb's operation,
+    // and serenedb's is the same one.
+    auto& db_catalog = duckdb::Catalog::GetCatalog(
+      context, duckdb::Identifier{conn_ctx.GetDatabase()});
+    duckdb::CreateSchemaInfo info;
+    info.SetSchema(duckdb::Identifier{std::string{kEsSchema}});
+    info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+    db_catalog.CreateSchema(db_catalog.GetCatalogTransaction(context), info);
   }
 
-  catalog::CreateTableOptions options;
-  options.name = data.index;
+  auto options = catalog::NewTableInfo();
+  options->SetTableName(duckdb::Identifier{data.index});
+  options->SetSchema(duckdb::Identifier{kEsSchema});
   std::vector<std::string_view> text_columns;
 
-  auto add_column = [&](std::string_view name,
-                        duckdb::LogicalType type) -> catalog::Column& {
-    return options.columns.emplace_back(ObjectId{}, catalog::NextId(), name,
-                                        std::move(type));
+  auto add_column = [&](std::string_view name, duckdb::LogicalType type) {
+    duckdb::ColumnDefinition column{duckdb::Identifier{name}, std::move(type)};
+    column.SetCatalogOid(catalog::NextId().id());
+    options->columns.AddColumn(std::move(column));
   };
 
-  auto& id_column = add_column(kIdColumn, duckdb::LogicalType::VARCHAR);
-  options.pk_columns.push_back(id_column.GetId());
+  add_column(kIdColumn, duckdb::LogicalType::VARCHAR);
   {
-    // PK implies NOT NULL, mirroring CREATE TABLE's constraint expansion.
-    auto col_ref = duckdb::make_uniq<duckdb::ColumnRefExpression>(
-      duckdb::Identifier{kIdColumn});
-    auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
-      duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
-    options.check_constraints.push_back(catalog::CheckConstraint{
-      ObjectId{}, catalog::NextId(),
-      absl::StrCat(data.index, "_", kIdColumn, "_not_null"),
-      std::make_shared<ColumnExpr>(std::move(is_not_null))});
+    // The primary key and the NOT NULL it implies, in the order and under the
+    // names CREATE TABLE's own constraint expansion produces.
+    auto not_null =
+      duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{0});
+    not_null->oid = catalog::NextId().id();
+    not_null->constraint_name =
+      absl::StrCat(data.index, "_", kIdColumn, "_not_null");
+    options->constraints.push_back(std::move(not_null));
+    auto key = duckdb::make_uniq<duckdb::UniqueConstraint>(
+      duckdb::vector<duckdb::Identifier>{duckdb::Identifier{kIdColumn}},
+      /*is_primary_key=*/true);
+    key->oid = catalog::NextId().id();
+    key->host_index_id = catalog::NextId().id();
+    key->constraint_name = absl::StrCat(data.index, "_pkey");
+    options->constraints.push_back(std::move(key));
   }
   for (const auto& [field, mapping] : request.mappings.properties) {
     ValidateFieldName(data.index, field);
@@ -366,14 +373,16 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   }
   add_column(kSourceColumn, duckdb::LogicalType::VARCHAR);
 
-  if (!catalog.CreateTable(catalog::NoAccessCheck(), database_id, kEsSchema,
-                           std::move(options), {.if_not_exists = true})) {
+  auto table =
+    catalog.CreateTable(catalog::NoAccessCheck(context), database_id, kEsSchema,
+                        std::move(options), {}, {.if_not_exists = true});
+  if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("index [", data.index, "] already exists"));
   }
 
   if (!text_columns.empty()) {
-    CreateTextIndex(context, database_id, data.index, text_columns);
+    CreateTextIndex(context, database_id, table, text_columns);
   }
 
   output.SetChildCardinality(1);
@@ -394,17 +403,17 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
   ValidateIndexName(data.index);
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto& catalog = catalog::GetCatalog();
+  auto& catalog = catalog::DatabaseCatalog(&context, conn_ctx.GetDatabaseId());
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
-  auto snapshot = catalog.GetCatalogSnapshot();
-  if (!snapshot->GetTable(catalog::NoAccessCheck(), conn_ctx.GetDatabaseId(),
-                          kEsSchema, data.index)) {
+  if (catalog::FindTableEntry(&context, conn_ctx.GetDatabaseId(), kEsSchema,
+                              data.index) == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
-  if (!catalog.DropTable(catalog::NoAccessCheck(), conn_ctx.GetDatabase(),
-                         kEsSchema, data.index, /*cascade=*/true,
+  if (!catalog.DropTable(catalog::NoAccessCheck(context),
+                         conn_ctx.GetDatabase(), kEsSchema, data.index,
+                         /*cascade=*/true,
                          /*missing_ok=*/true)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
@@ -437,18 +446,17 @@ void EsMappingExecute(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   const auto database_id = conn_ctx.GetDatabaseId();
-  auto snapshot = conn_ctx.CatalogSnapshot();
-
-  auto table = snapshot->GetTable(catalog::NoAccessCheck(), database_id,
-                                  kEsSchema, data.index);
-  if (!table) {
+  const auto* table =
+    catalog::FindTableEntry(&context, database_id, kEsSchema, data.index);
+  if (table == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
 
-  containers::FlatHashSet<catalog::Column::Id> inverted_columns;
-  for (const auto& index : snapshot->GetIndexesByRelation(table->GetId())) {
-    if (index->GetType() != catalog::ObjectType::InvertedIndex) {
+  containers::FlatHashSet<catalog::ColumnId> inverted_columns;
+  for (const auto& index : catalog::RelationIndexes(
+         &context, catalog::ParentIdOf(*table), catalog::IdOf(*table))) {
+    if (!index->IsInverted()) {
       continue;
     }
     for (const auto id : index->GetColumns()) {
@@ -459,13 +467,14 @@ void EsMappingExecute(duckdb::ClientContext& context,
   simdjson::builder::string_builder sb;
   sb.append_raw(R"({"properties":{)");
   bool first = true;
-  for (const auto& column : table->Columns()) {
-    const auto name = column.GetName();
+  for (const auto& column : table->GetColumns().Logical()) {
+    const auto name = column.Name().GetIdentifierName();
     if (name == kIdColumn || name == kSourceColumn) {
       continue;
     }
-    const auto es_type =
-      LogicalToEsType(column.type, inverted_columns.contains(column.GetId()));
+    const auto es_type = LogicalToEsType(
+      column.Type(),
+      inverted_columns.contains(catalog::ColumnId{column.CatalogOid()}));
     if (es_type.empty()) {
       continue;
     }
@@ -514,28 +523,37 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     state.loaded = true;
     auto& conn_ctx = GetSereneDBContext(context);
     const auto database_id = conn_ctx.GetDatabaseId();
-    auto snapshot = conn_ctx.CatalogSnapshot();
-    if (snapshot->GetSchema(database_id, kEsSchema)) {
-      for (const auto& table : snapshot->GetTables(database_id, kEsSchema)) {
-        uint64_t docs_count = 0;
-        for (const auto& index :
-             snapshot->GetIndexesByRelation(table->GetId())) {
-          if (!index ||
-              index->GetType() != catalog::ObjectType::InvertedIndex) {
-            continue;
-          }
-          auto storage =
-            basics::downCast<const catalog::InvertedIndex>(*index).GetData();
-          if (auto index_snapshot =
-                storage ? storage->GetInvertedIndexSnapshot() : nullptr) {
-            docs_count = index_snapshot->reader.live_docs_count();
-          }
-          break;
+    // Collect-then-resolve: reading a table's indexes opens the schema's
+    // index set from inside the relation set's own walk.
+    std::vector<std::pair<ObjectId, ObjectId>> tables;
+    std::vector<std::string> names;
+    catalog::VisitTableEntries(
+      context, database_id,
+      [&](const duckdb::CreateSchemaInfo& schema,
+          const catalog::SereneDBTableEntry& table) {
+        if (catalog::SchemaNameOf(schema) != kEsSchema) {
+          return;
         }
-        state.rows.emplace_back(table->GetName(), docs_count);
+        tables.emplace_back(catalog::ParentIdOf(table), catalog::IdOf(table));
+        names.emplace_back(table.name.GetIdentifierName());
+      });
+    for (size_t i = 0; i != tables.size(); ++i) {
+      uint64_t docs_count = 0;
+      for (const auto& index : catalog::RelationIndexes(
+             &context, tables[i].first, tables[i].second)) {
+        if (!index->IsInverted()) {
+          continue;
+        }
+        auto storage = index->GetData();
+        if (auto index_snapshot =
+              storage ? storage->GetInvertedIndexSnapshot() : nullptr) {
+          docs_count = index_snapshot->reader.live_docs_count();
+        }
+        break;
       }
-      absl::c_sort(state.rows);
+      state.rows.emplace_back(std::move(names[i]), docs_count);
     }
+    absl::c_sort(state.rows);
   }
 
   const auto n =
@@ -584,9 +602,7 @@ struct EsWriteBindData final : duckdb::TableFunctionData {
   std::string index;
   std::string id;
   std::string body;
-  // Keeps the column-name string_views in field_columns alive.
-  std::shared_ptr<catalog::Table> table;
-  containers::FlatHashMap<std::string_view, size_t> field_columns;
+  containers::FlatHashMap<std::string, size_t> field_columns;
   size_t id_column = 0;
   size_t source_column = 0;
 };
@@ -605,25 +621,25 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   data->index = index_arg.GetValue<std::string>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.CatalogSnapshot();
-  data->table = snapshot->GetTable(
-    catalog::NoAccessCheck(), conn_ctx.GetDatabaseId(), kEsSchema, data->index);
-  if (!data->table) {
+  const auto* table = catalog::FindTableEntry(
+    &context, conn_ctx.GetDatabaseId(), kEsSchema, data->index);
+  if (table == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data->index, "]"));
   }
-  const auto& columns = data->table->Columns();
-  for (size_t i = 0; i < columns.size(); ++i) {
-    const auto& column = columns[i];
-    return_types.push_back(column.type);
-    names.push_back(std::string{column.GetName()});
-    if (column.GetName() == kIdColumn) {
+  size_t i = 0;
+  for (const auto& column : table->GetColumns().Logical()) {
+    const auto name = column.Name().GetIdentifierName();
+    return_types.push_back(column.Type());
+    names.emplace_back(name);
+    if (name == kIdColumn) {
       data->id_column = i;
-    } else if (column.GetName() == kSourceColumn) {
+    } else if (name == kSourceColumn) {
       data->source_column = i;
     } else {
-      data->field_columns.emplace(column.GetName(), i);
+      data->field_columns.emplace(name, i);
     }
+    ++i;
   }
   return data;
 }
@@ -1058,34 +1074,41 @@ void EsRefreshExecute(duckdb::ClientContext& context,
 
   auto& conn_ctx = GetSereneDBContext(context);
   const auto database_id = conn_ctx.GetDatabaseId();
-  auto snapshot = conn_ctx.CatalogSnapshot();
-
-  auto refresh_table = [&](const catalog::Table& table) {
-    for (const auto& index : snapshot->GetIndexesByRelation(table.GetId())) {
-      if (!index || index->GetType() != catalog::ObjectType::InvertedIndex) {
+  auto refresh_table = [&](ObjectId schema_id, ObjectId table_id) {
+    for (const auto& index :
+         catalog::RelationIndexes(&context, schema_id, table_id)) {
+      if (!index->IsInverted()) {
         continue;
       }
-      if (auto storage =
-            basics::downCast<const catalog::InvertedIndex>(*index).GetData()) {
+      if (auto storage = index->GetData()) {
         storage->Refresh();
       }
     }
   };
 
   if (data.index.empty()) {
-    if (snapshot->GetSchema(database_id, kEsSchema)) {
-      for (const auto& table : snapshot->GetTables(database_id, kEsSchema)) {
-        refresh_table(*table);
-      }
+    // Collect-then-resolve: reading a table's indexes opens the schema's
+    // index set from inside the relation set's own walk.
+    std::vector<std::pair<ObjectId, ObjectId>> tables;
+    catalog::VisitTableEntries(
+      context, database_id,
+      [&](const duckdb::CreateSchemaInfo& schema,
+          const catalog::SereneDBTableEntry& table) {
+        if (catalog::SchemaNameOf(schema) == kEsSchema) {
+          tables.emplace_back(catalog::ParentIdOf(table), catalog::IdOf(table));
+        }
+      });
+    for (const auto& [schema_id, table_id] : tables) {
+      refresh_table(schema_id, table_id);
     }
   } else {
-    auto table = snapshot->GetTable(catalog::NoAccessCheck(), database_id,
-                                    kEsSchema, data.index);
-    if (!table) {
+    const auto* table =
+      catalog::FindTableEntry(&context, database_id, kEsSchema, data.index);
+    if (table == nullptr) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                       ERR_MSG("no such index [", data.index, "]"));
     }
-    refresh_table(*table);
+    refresh_table(catalog::ParentIdOf(*table), catalog::IdOf(*table));
   }
 
   output.SetChildCardinality(1);

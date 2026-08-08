@@ -100,22 +100,24 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
 // type (see the PinCompactionOptions overloads below).
 struct CompactionOptions {
   bool alive = false;
-  // Pins the catalog object that owns `field_options` for the whole merge.
-  std::shared_ptr<const void> keepalive;
+  // Pins the definition that owns `field_options` for the whole merge.
+  catalog::InvertedIndexInfoRef keepalive;
   const irs::IndexFieldOptions* field_options = nullptr;
 };
 
 CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
-  // A fresh catalog snapshot keeps THIS DDL view alive for the merge, so a
-  // concurrent DROP cannot dangle the index it encodes the new segment against.
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto index = snapshot->GetObject<catalog::InvertedIndex>(idx.GetId());
+  // The committed definition, off the entry that holds it: a concurrent DROP
+  // must not dangle the index this merge encodes the new segment against.
+  auto index = catalog::FindInvertedIndex(idx.GetDatabaseId(), idx.GetId());
   if (!index) {
     return {};
   }
-  const irs::IndexFieldOptions* options = index.get();
+  // The info is what encodes: it carries the per-field options, and it outlives
+  // the version of the definition this lookup happened to find.
+  auto info = catalog::InvertedInfoRef(index);
+  const irs::IndexFieldOptions* options = info.get();
   return {
-    .alive = true, .keepalive = std::move(index), .field_options = options};
+    .alive = true, .keepalive = std::move(info), .field_options = options};
 }
 
 CompactionOptions PinCompactionOptions(SearchTable& /*table*/) {

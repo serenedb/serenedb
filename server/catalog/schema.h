@@ -20,28 +20,40 @@
 
 #pragma once
 
-#include "catalog/object.h"
-#include "catalog/persistence/schema.h"
+#include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <memory>
+#include <string_view>
+#include <utility>
 
-namespace duckdb {
+#include "catalog/entry.h"
+#include "catalog/identifiers/object_id.h"
 
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
-using persistence::SchemaOptions;
+// A schema is duckdb's own CreateSchemaInfo: the name is its qualified name and
+// the identities are the CreateInfo's, so there is nothing left for a subclass
+// to hold.
+//
+// Owner and ACL are not on the info: they live on the entry, because a schema
+// entry owns the CatalogSets of its whole contents and is therefore never
+// replaced by a newer version.
+std::shared_ptr<duckdb::CreateSchemaInfo> MakeSchemaInfo(ObjectId id,
+                                                         ObjectId database_id,
+                                                         std::string_view name);
 
-class Schema : public Object {
- public:
-  Schema(Permissions perm, ObjectId database_id, ObjectId id,
-         std::string_view name);
+inline std::string_view SchemaNameOf(
+  const duckdb::CreateSchemaInfo& info) noexcept {
+  return info.GetQualifiedName().Schema().GetIdentifierName();
+}
 
-  static std::shared_ptr<Schema> Deserialize(duckdb::Deserializer& src,
-                                             ReadContext ctx);
-  void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
-};
+// The info is published whole, copy-on-write, because a schema entry owns the
+// CatalogSets of its contents and so is never replaced by a newer version -- an
+// owner or ACL change becomes visible when it commits rather than when the
+// reader's snapshot advances.
+//
+// The owner and the ACL are on the entry, their one home; a reader wanting
+// both takes a HeldSchema.
+using SchemaRef = std::shared_ptr<const duckdb::CreateSchemaInfo>;
+using HeldSchema = std::pair<SchemaRef, Permissions>;
 
 }  // namespace sdb::catalog

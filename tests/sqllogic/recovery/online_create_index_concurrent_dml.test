@@ -35,10 +35,13 @@ CREATE INDEX oci_race_idx ON oci_race USING inverted(label);
 # Wait for the index stub to attach before the DML: a statement executing
 # between the CREATE INDEX snapshot and the stub attach has no index hook at
 # all -- its changes are invisible to the index while the scan still sees the
-# pre-DML rows (known window, tracked separately).
+# pre-DML rows (known window, tracked separately). The wait is on the live
+# progress view, not on pg_class: an uncommitted CREATE INDEX belongs to the
+# building transaction and PG 18 shows it to nobody else.
 connection default
 query ok retry 40 backoff 250ms
-SELECT count(*) FROM pg_class WHERE relname = 'oci_race_idx';
+SELECT count(*) FROM pg_stat_progress_create_index
+WHERE relid = 'oci_race'::regclass;
 ----
 count
 1
@@ -166,7 +169,8 @@ CREATE INDEX oci_trunc_idx ON oci_trunc USING inverted(label);
 
 connection default
 query ok retry 40 backoff 250ms
-SELECT count(*) FROM pg_class WHERE relname = 'oci_trunc_idx';
+SELECT count(*) FROM pg_stat_progress_create_index
+WHERE relid = 'oci_trunc'::regclass;
 ----
 count
 1

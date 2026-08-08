@@ -1,0 +1,141 @@
+# Dropping an unrelated column from a table that carries an inverted index over
+# an EXPRESSION must work, and must leave the index whole.
+#
+# ALTER TABLE ... DROP COLUMN rebuilds the store table, so the batch is
+# DropIndex + DropColumn + CreateIndex, and the CreateIndex re-injects the
+# inverted index. That injection binds the index's expressions, which resolves
+# their functions through the catalog (BoundFunctionExpression::Deserialize ->
+# Catalog::GetEntry) and therefore needs an active transaction on the binding
+# context. ExecuteCreateStoreIndex handed over the bare context instead of going
+# through WithBindContext, so the whole store op died with an INTERNAL
+# "TransactionContext::ActiveTransaction called without active transaction":
+# the column stayed, and the index stopped receiving later inserts.
+#
+# Only expression keys hit it -- a plain column key deserializes nothing -- so
+# the plain case below is the control that was always passing.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dce_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE dce(id INTEGER, a TEXT, spare INTEGER);
+
+statement ok
+CREATE INDEX dce_idx ON dce USING inverted(id, (lower(a)) dce_dict);
+
+statement ok
+INSERT INTO dce SELECT g, 'AA ' || g || ' BRAVO', g FROM generate_series(1, 2000) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) dce;
+
+query
+SELECT count(*) FROM dce_idx WHERE lower(a) @@ ts_like('bravo');
+----
+count
+2000
+
+
+statement ok
+ALTER TABLE dce DROP COLUMN spare;
+
+query
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'dce' AND column_name = 'spare';
+----
+count
+0
+
+# The re-injected index still answers for the rows written before the drop.
+query
+SELECT count(*) FROM dce_idx WHERE lower(a) @@ ts_like('bravo');
+----
+count
+2000
+
+# ... and still receives writes. This is what silently stopped working: the
+# failed store op left an index that no later insert reached.
+statement ok
+INSERT INTO dce SELECT g, 'AA ' || g || ' BRAVO' FROM generate_series(2001, 2300) g;
+
+statement ok
+VACUUM (REFRESH_TABLE) dce;
+
+query
+SELECT count(*) FROM dce_idx WHERE lower(a) @@ ts_like('bravo');
+----
+count
+2300
+
+
+# The same shape with a partial index, an added-then-dropped column, and a
+# sibling ART index -- the combination the store op rebuilds most of.
+statement ok
+CREATE TABLE dce2(id INTEGER PRIMARY KEY, a TEXT, b INTEGER, keep BOOLEAN);
+
+statement ok
+CREATE INDEX dce2_art ON dce2(b);
+
+statement ok
+CREATE INDEX dce2_idx ON dce2 USING inverted(id, (lower(a)) dce_dict) WHERE keep;
+
+statement ok
+INSERT INTO dce2 SELECT g, 'AA ' || g || ' BRAVO', g, (g % 3 = 0) FROM generate_series(1, 3000) g;
+
+statement ok
+ALTER TABLE dce2 ADD COLUMN tmp INTEGER;
+
+statement ok
+ALTER TABLE dce2 DROP COLUMN tmp;
+
+statement ok
+VACUUM (REFRESH_TABLE) dce2;
+
+query
+SELECT count(*) FROM dce2_idx WHERE lower(a) @@ ts_like('bravo');
+----
+count
+1000
+
+
+# Control: a plain column key was never affected, and must stay that way.
+statement ok
+CREATE TABLE dce3(id INTEGER, a TEXT, spare INTEGER);
+
+statement ok
+CREATE INDEX dce3_idx ON dce3 USING inverted(id, a dce_dict);
+
+statement ok
+INSERT INTO dce3 SELECT g, 'row ' || g || ' bravo', g FROM generate_series(1, 500) g;
+
+statement ok
+ALTER TABLE dce3 DROP COLUMN spare;
+
+statement ok
+VACUUM (REFRESH_TABLE) dce3;
+
+query
+SELECT count(*) FROM dce3_idx WHERE a @@ ts_like('bravo');
+----
+count
+500
+
+statement ok
+DROP TABLE dce;
+
+statement ok
+DROP TABLE dce2;
+
+statement ok
+DROP TABLE dce3;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dce_dict;

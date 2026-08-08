@@ -20,8 +20,12 @@
 
 #include "pg/pg_catalog/pg_ts_dict.h"
 
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/tokenizer.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -35,26 +39,25 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
-  auto catalog = _config.CatalogSnapshot();
-
   std::vector<PgTsDict> values;
 
-  for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
-    for (const auto& tokenizer :
-         catalog->GetTokenizers(GetDatabaseId(), schema->GetName())) {
+  catalog::VisitDefinitions<catalog::SereneDBTokenizerEntry>(
+    &_config.GetClientContext(), GetDatabaseId(),
+    [&](const catalog::TokenizerRef& tokenizer,
+        const catalog::Permissions& perm) {
       values.push_back({
         .oid = tokenizer->GetId().id(),
         .dictname = tokenizer->GetName(),
         .dictnamespace = tokenizer->GetParentId().id(),
-        .dictowner = tokenizer->GetOwner().id(),
+        .dictowner = perm.owner,
         .dicttemplate = 0,
       });
-    }
-  }
+    });
 
   auto result = CreateColumns<PgTsDict>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, *_config.CatalogSnapshot());
+    WriteData(result, values[row], kNullMask, row,
+              *sdb::auth::RolesOf(&_config.GetClientContext()));
   }
   return {std::move(result), values.size()};
 }

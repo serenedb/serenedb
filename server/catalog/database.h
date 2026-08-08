@@ -20,27 +20,45 @@
 
 #pragma once
 
-#include "catalog/object.h"
-#include "catalog/persistence/database.h"
+#include <duckdb/parser/parsed_data/create_info.hpp>
+#include <memory>
+#include <string>
+#include <string_view>
 
-namespace duckdb {
+#include "catalog/identifiers/object_id.h"
 
-class Serializer;
-class Deserializer;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
-using persistence::DatabaseOptions;
-
-class Database final : public Object {
+// One database, in the form a catalog entry is built from. duckdb's own
+// DATABASE_ENTRY names an attachment rather than a SereneDB database, so this
+// is a CreateInfo of ours under the same CatalogType: what a mutator fills in,
+// what the catalog log records, and what SereneDBDatabaseEntry holds.
+//
+// Owner and ACL are not here: they travel beside the info and live on the
+// entry.
+class CreateDatabaseInfo final : public duckdb::CreateInfo {
  public:
-  Database(Permissions perm, ObjectId id, std::string_view name);
+  CreateDatabaseInfo()
+    : duckdb::CreateInfo{duckdb::CatalogType::DATABASE_ENTRY} {}
+  CreateDatabaseInfo(ObjectId id, std::string_view name);
 
-  static std::shared_ptr<Database> Deserialize(duckdb::Deserializer& src,
-                                               ReadContext ctx);
   void Serialize(duckdb::Serializer& sink) const final;
-  std::shared_ptr<Object> Clone() const final;
+  std::string ToString() const final;
+  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final;
+  std::shared_ptr<CreateDatabaseInfo> CloneDatabase() const;
+
+  static duckdb::unique_ptr<duckdb::CreateInfo> Deserialize(
+    duckdb::Deserializer& src);
+
+  ObjectId GetId() const noexcept { return ObjectId{oid}; }
+  void SetId(ObjectId id) noexcept { oid = id.id(); }
+
+  std::string_view GetName() const noexcept {
+    return GetQualifiedName().Name().GetIdentifierName();
+  }
+  void SetDatabaseName(std::string_view name) {
+    SetName(duckdb::Identifier{std::string{name}});
+  }
 };
 
 }  // namespace sdb::catalog

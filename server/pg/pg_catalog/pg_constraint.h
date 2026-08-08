@@ -79,7 +79,10 @@ struct PgConstraint {
   Array<Oid> conffeqop;
   Array<int16_t> confdelsetcols;
   Array<Oid> conexclop;
-  PgNodeTree conbin;
+  // PG's pg_node_tree, carried as the deparsed CHECK body: nothing here reads
+  // a node tree, and pg_get_expr / pg_get_constraintdef want exactly this text.
+  // Null for every other constraint kind, as in postgres.
+  Text conbin;
 };
 // NOLINTEND
 

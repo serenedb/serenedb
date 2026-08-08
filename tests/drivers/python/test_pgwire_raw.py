@@ -1648,3 +1648,407 @@ def test_pivot_extended_protocol(conn):
     conn.execute("")
     conn.sync()
     _assert_pivot_result(conn.drain_to_ready())
+
+
+# ---------------------------------------------------------------------------
+# DDL under the extended protocol.
+#
+# The catalog is transactional: uncommitted DDL is visible only to its own
+# transaction and rolls back with it. The extended protocol's statement
+# boundaries are not the simple protocol's -- every command sent before a Sync
+# shares one implicit transaction, a portal can outlive the Execute that
+# suspended it, and a prepared statement can be re-bound after DDL has changed
+# what it was planned against. sqllogictest sends one statement per query and
+# cannot reach any of those, so they are pinned here.
+
+
+def _exists(conn, relname):
+    m = conn.run(f"SELECT count(*) FROM pg_class WHERE relname = '{relname}'")
+    assert not errors(m), errors(m)
+    return int(first_field(m))
+
+
+def _drop(conn, *relnames):
+    for r in relnames:
+        conn.send("Q", _cstr(f"DROP TABLE IF EXISTS {r}"))
+        conn.drain_to_ready()
+
+
+def test_ddl_implicit_block_commits(conn):
+    # CREATE + INSERT + SELECT in one pre-Sync group: the Parse of each later
+    # command has to bind against the transaction's own uncommitted catalog,
+    # and the whole group commits at Sync.
+    _drop(conn, "ddl_ib")
+    conn.parse("", "CREATE TABLE ddl_ib(id int4)")
+    conn.bind("", "")
+    conn.execute("")
+    conn.parse("ins", "INSERT INTO ddl_ib VALUES ($1)", oids=(23,))
+    conn.bind("", "ins", params=(b"7",))
+    conn.execute("")
+    conn.parse("sel", "SELECT id FROM ddl_ib")
+    conn.bind("selp", "sel")
+    conn.execute("selp")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert statuses(m) == ["I"], statuses(m)
+    assert [first_field([r]) for r in [("D", rows(m)[0])]] == [b"7"]
+    assert _exists(conn, "ddl_ib") == 1
+    _drop(conn, "ddl_ib")
+
+
+def test_ddl_implicit_block_rolls_back_on_error(conn):
+    # An error anywhere in the pre-Sync group rolls the whole group back --
+    # including its DDL. The table must not survive, in the catalog or as a
+    # phantom pg_class row.
+    _drop(conn, "ddl_ibr")
+    conn.parse("", "CREATE TABLE ddl_ibr(id int4)")
+    conn.bind("", "")
+    conn.execute("")
+    conn.parse("ins", "INSERT INTO ddl_ibr VALUES ($1)", oids=(23,))
+    conn.bind("", "ins", params=(b"x",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22P02"], sqlstates(m)
+    assert statuses(m) == ["I"], statuses(m)
+    assert _exists(conn, "ddl_ibr") == 0
+    m = conn.run("SELECT count(*) FROM ddl_ibr")
+    assert sqlstates(m) == ["42P01"], sqlstates(m)
+
+
+def test_dml_then_ddl_one_implicit_block(conn):
+    # DML followed by unrelated DDL in one implicit transaction. The DDL is the
+    # last statement, so no later statement re-acquires the catalog snapshot the
+    # commit-time flush reads -- the shape that aborted the server before the
+    # pin was replaced rather than released at statement end.
+    _drop(conn, "ddl_dd", "ddl_dd_unrelated")
+    assert not errors(conn.run("CREATE TABLE ddl_dd(id int4)"))
+    conn.parse("ins", "INSERT INTO ddl_dd VALUES ($1)", oids=(23,))
+    conn.bind("", "ins", params=(b"1",))
+    conn.execute("")
+    conn.parse("ddl", "CREATE TABLE ddl_dd_unrelated(q int4)")
+    conn.bind("", "ddl")
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert statuses(m) == ["I"], statuses(m)
+    assert int(first_field(conn.run("SELECT count(*) FROM ddl_dd"))) == 1
+    assert _exists(conn, "ddl_dd_unrelated") == 1
+    _drop(conn, "ddl_dd", "ddl_dd_unrelated")
+
+
+def test_dml_then_ddl_one_implicit_block_inverted_index(conn):
+    # The same shape on a table carrying an inverted index, which is what
+    # actually reached the abort: the commit-time index flush
+    # (LocalStorage::Flush -> AppendToIndexes ->
+    # InvertedStoreIndex::EnsureInvertedFeedSession) reads the catalog snapshot
+    # the trailing DDL had already replaced.
+    #
+    # sdb/pg/index/inverted_index_dml_then_ddl.test asserts this too, but its
+    # multi-statement blocks only run over the simple protocol -- the extended
+    # engine splits them into separate transactions and never forms the
+    # implicit group. Parse/Bind/Execute x2 before one Sync does.
+    conn.send("Q", _cstr("DROP TABLE IF EXISTS iidw"))
+    conn.drain_to_ready()
+    conn.send("Q", _cstr("DROP TABLE IF EXISTS iidw_unrelated"))
+    conn.drain_to_ready()
+    conn.send("Q", _cstr("DROP TEXT SEARCH DICTIONARY IF EXISTS iidw_en"))
+    conn.drain_to_ready()
+    for sql in (
+        "CREATE TEXT SEARCH DICTIONARY iidw_en("
+        " template = 'text', locale = 'en_US.UTF-8', case = 'none',"
+        " stemming = false, accent = false, frequency = true, position = true)",
+        "CREATE TABLE iidw (id INTEGER, body VARCHAR)",
+        "CREATE INDEX iidw_idx ON iidw USING inverted(id, body iidw_en)",
+    ):
+        m = conn.run(sql)
+        assert not errors(m), (sql, errors(m))
+
+    conn.parse("ins", "INSERT INTO iidw VALUES ($1, $2)", oids=(23, 25))
+    conn.bind("", "ins", params=(b"1", b"alpha bravo"))
+    conn.execute("")
+    conn.parse("ddl", "CREATE TABLE iidw_unrelated(q INTEGER)")
+    conn.bind("", "ddl")
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert statuses(m) == ["I"], statuses(m)
+
+    assert not errors(conn.run("VACUUM (REFRESH_TABLE) iidw"))
+    m = conn.run(
+        "SELECT id FROM iidw_idx WHERE body @@ ts_phrase('alpha bravo')"
+    )
+    assert not errors(m), errors(m)
+    assert first_field(m) == b"1"
+    assert _exists(conn, "iidw_unrelated") == 1
+
+    conn.send("Q", _cstr("DROP TABLE iidw"))
+    conn.drain_to_ready()
+    conn.send("Q", _cstr("DROP TABLE iidw_unrelated"))
+    conn.drain_to_ready()
+    conn.send("Q", _cstr("DROP TEXT SEARCH DICTIONARY iidw_en"))
+    conn.drain_to_ready()
+
+
+def test_ddl_explicit_transaction_rollback(conn):
+    # DDL inside an explicit BEGIN is readable by its own transaction and gone
+    # after ROLLBACK.
+    _drop(conn, "ddl_xr")
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    assert not errors(conn.run("CREATE TABLE ddl_xr(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_xr VALUES (1)"))
+    assert int(first_field(conn.run("SELECT count(*) FROM ddl_xr"))) == 1
+    assert statuses(conn.run("ROLLBACK")) == ["I"]
+    assert _exists(conn, "ddl_xr") == 0
+    assert sqlstates(conn.run("SELECT count(*) FROM ddl_xr")) == ["42P01"]
+
+
+def test_ddl_explicit_transaction_commit(conn):
+    _drop(conn, "ddl_xc")
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    assert not errors(conn.run("CREATE TABLE ddl_xc(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_xc VALUES (1)"))
+    assert statuses(conn.run("COMMIT")) == ["I"]
+    assert _exists(conn, "ddl_xc") == 1
+    assert int(first_field(conn.run("SELECT count(*) FROM ddl_xc"))) == 1
+    _drop(conn, "ddl_xc")
+
+
+def test_uncommitted_ddl_invisible_to_other_session(conn):
+    # A second session must see neither the pg_class row nor the relation while
+    # the creating transaction is open, and must see both after it commits.
+    other = WireConn()
+    try:
+        _drop(conn, "ddl_vis")
+        assert statuses(conn.run("BEGIN")) == ["T"]
+        assert not errors(conn.run("CREATE TABLE ddl_vis(id int4)"))
+        assert _exists(other, "ddl_vis") == 0
+        assert sqlstates(other.run("SELECT count(*) FROM ddl_vis")) == ["42P01"]
+        assert statuses(conn.run("COMMIT")) == ["I"]
+        assert _exists(other, "ddl_vis") == 1
+        assert not errors(other.run("SELECT count(*) FROM ddl_vis"))
+    finally:
+        other.close()
+    _drop(conn, "ddl_vis")
+
+
+def test_uncommitted_drop_invisible_to_other_session(conn):
+    # The mirror case: an uncommitted DROP must not remove the relation for
+    # anyone else, and ROLLBACK must put it back for the dropping session.
+    other = WireConn()
+    try:
+        _drop(conn, "ddl_dvis")
+        assert not errors(conn.run("CREATE TABLE ddl_dvis(id int4)"))
+        assert statuses(conn.run("BEGIN")) == ["T"]
+        assert not errors(conn.run("DROP TABLE ddl_dvis"))
+        assert _exists(other, "ddl_dvis") == 1
+        assert not errors(other.run("SELECT count(*) FROM ddl_dvis"))
+        assert statuses(conn.run("ROLLBACK")) == ["I"]
+        assert _exists(conn, "ddl_dvis") == 1
+        assert not errors(conn.run("SELECT count(*) FROM ddl_dvis"))
+    finally:
+        other.close()
+    _drop(conn, "ddl_dvis")
+
+
+# A named prepared statement is revalidated at Bind (and at Describe, and at
+# the first Execute of a portal), the way PG's plancache revalidates a cached
+# plan: if the session's catalog view has moved -- another session's commit or
+# this transaction's own uncommitted DDL -- the plan is re-bound against the
+# current view, and whatever a fresh Parse of the same text would throw is
+# thrown here instead of the stale plan being served.
+def test_prepared_statement_replanned_after_same_txn_ddl(conn):
+    # A prepared SELECT * planned before an ALTER in the same transaction: the
+    # second Bind/Execute must re-plan against the transaction's own new
+    # catalog version, so the added column appears. Stale reuse returns the
+    # pre-ALTER RowDescription.
+    _drop(conn, "ddl_pp")
+    assert not errors(conn.run("CREATE TABLE ddl_pp(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_pp VALUES (1)"))
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    conn.parse("pp", "SELECT * FROM ddl_pp")
+    conn.bind("ppp", "pp")
+    conn.describe("P", "ppp")
+    conn.execute("ppp")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [c[0] for c in row_description(m)] == ["id"]
+    assert not errors(conn.run("ALTER TABLE ddl_pp ADD COLUMN extra int4"))
+    conn.bind("ppp2", "pp")
+    conn.describe("P", "ppp2")
+    conn.execute("ppp2")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [c[0] for c in row_description(m)] == ["id", "extra"]
+    assert all_fields(m) == [b"1", None]
+    assert statuses(conn.run("COMMIT")) == ["I"]
+    _drop(conn, "ddl_pp")
+
+
+def test_prepared_statement_over_table_dropped_in_same_txn(conn):
+    # The sharp edge: the transaction has dropped the relation, so re-binding
+    # the prepared statement fails with 42P01 the way a fresh Parse of the same
+    # text does, rather than serving the pinned plan and reading from a
+    # relation this transaction has already dropped.
+    _drop(conn, "ddl_pd")
+    assert not errors(conn.run("CREATE TABLE ddl_pd(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_pd VALUES (11)"))
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    conn.parse("pd", "SELECT id FROM ddl_pd")
+    conn.bind("", "pd")
+    conn.execute("")
+    conn.sync()
+    assert not errors(conn.drain_to_ready())
+    assert not errors(conn.run("DROP TABLE ddl_pd"))
+    conn.bind("", "pd")
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert rows(m) == [], all_fields(m)
+    assert sqlstates(m) == ["42P01"], sqlstates(m)
+
+
+def test_prepared_statement_replanned_after_autocommit_ddl(conn):
+    # The same revalidation with no transaction in sight: the DROP commits, and
+    # the next Bind of the statement planned before it gets the 42P01 a fresh
+    # Parse would give.
+    _drop(conn, "ddl_ac")
+    assert not errors(conn.run("CREATE TABLE ddl_ac(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_ac VALUES (7)"))
+    conn.parse("ac", "SELECT id FROM ddl_ac")
+    conn.bind("acp", "ac")
+    conn.execute("acp")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert all_fields(m) == [b"7"]
+    assert not errors(conn.run("DROP TABLE ddl_ac"))
+    conn.bind("acp2", "ac")
+    conn.execute("acp2")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert rows(m) == [], all_fields(m)
+    assert sqlstates(m) == ["42P01"], sqlstates(m)
+
+
+def test_prepared_statement_usable_after_rolled_back_drop(conn):
+    # A re-plan that failed (the transaction had dropped the relation) leaves
+    # the statement without a plan. The ROLLBACK puts the catalog back to the
+    # view the original plan was bound against, so the statement has to re-plan
+    # once more rather than be served -- or dropped.
+    _drop(conn, "ddl_rp")
+    assert not errors(conn.run("CREATE TABLE ddl_rp(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_rp VALUES (5)"))
+    conn.parse("rp", "SELECT id FROM ddl_rp")
+    conn.bind("rpp", "rp")
+    conn.execute("rpp")
+    conn.sync()
+    assert not errors(conn.drain_to_ready())
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    assert not errors(conn.run("DROP TABLE ddl_rp"))
+    conn.bind("rpp2", "rp")
+    conn.execute("rpp2")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["42P01"]
+    assert statuses(conn.run("ROLLBACK")) == ["I"]
+    conn.bind("rpp3", "rp")
+    conn.execute("rpp3")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert all_fields(m) == [b"5"]
+    _drop(conn, "ddl_rp")
+
+
+def test_prepared_statement_reshaped_without_redescribe(conn):
+    # A client that described the statement once and then only Binds/Executes
+    # has no way to learn the new shape: RowDescription is only ever sent in
+    # reply to a Describe. Serving the re-planned rows against the descriptor
+    # it still holds would corrupt them, so this is PG's plancache guard --
+    # 0A000 "cached plan must not change result type".
+    _drop(conn, "ddl_fx")
+    assert not errors(conn.run("CREATE TABLE ddl_fx(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_fx VALUES (3)"))
+    conn.parse("fx", "SELECT * FROM ddl_fx")
+    conn.describe("S", "fx")
+    conn.bind("fxp", "fx")
+    conn.execute("fxp")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [c[0] for c in row_description(m)] == ["id"]
+    assert not errors(conn.run("ALTER TABLE ddl_fx ADD COLUMN extra int4"))
+    conn.bind("fxp2", "fx")
+    conn.execute("fxp2")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert rows(m) == [], all_fields(m)
+    assert sqlstates(m) == ["0A000"], sqlstates(m)
+    # Asking again clears it: the client now knows the shape it will get.
+    conn.bind("fxp3", "fx")
+    conn.describe("P", "fxp3")
+    conn.execute("fxp3")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert [c[0] for c in row_description(m)] == ["id", "extra"]
+    assert all_fields(m) == [b"3", None]
+    _drop(conn, "ddl_fx")
+
+
+def test_rolled_back_drop_leaves_the_table(conn):
+    # The end state the previous test's transaction is rolled back to, asserted
+    # on its own so it holds whether or not the plan cache is fixed.
+    _drop(conn, "ddl_rd")
+    assert not errors(conn.run("CREATE TABLE ddl_rd(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_rd VALUES (11)"))
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    assert not errors(conn.run("DROP TABLE ddl_rd"))
+    assert statuses(conn.run("ROLLBACK")) == ["I"]
+    assert _exists(conn, "ddl_rd") == 1
+    assert int(first_field(conn.run("SELECT count(*) FROM ddl_rd"))) == 1
+    _drop(conn, "ddl_rd")
+
+
+# A suspended portal does not survive any intervening statement on the same
+# connection -- not just DDL. DuckDB's ClientContext holds one active query at
+# a time, so the next Execute closes the pending result and resuming reports
+# 22023 "Attempting to execute an unsuccessful or closed pending query result".
+# PG lets several portals stay open inside one transaction. Pre-existing and
+# unrelated to the catalog migration; the DDL framing is kept because that is
+# the boundary this suite is here to pin.
+@pytest.mark.xfail(
+    strict=True,
+    reason="a suspended portal is closed by the next statement on the "
+    "connection (one active query per ClientContext)",
+)
+def test_suspended_portal_survives_ddl_in_same_transaction(conn):
+    # A portal suspended mid-scan while DDL runs in the same transaction: the
+    # DDL replaces the transaction's catalog view under an already-open scan.
+    # Resuming must return the remaining rows rather than fail.
+    _drop(conn, "ddl_sp", "ddl_sp_unrelated")
+    assert not errors(conn.run("CREATE TABLE ddl_sp(id int4)"))
+    assert not errors(conn.run("INSERT INTO ddl_sp VALUES (1), (2), (3)"))
+    assert statuses(conn.run("BEGIN")) == ["T"]
+    conn.parse("sp", "SELECT id FROM ddl_sp ORDER BY id")
+    conn.bind("spp", "sp")
+    conn.execute("spp", max_rows=1)
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert "s" in types(m), types(m)
+    assert len(rows(m)) == 1
+    assert not errors(conn.run("CREATE TABLE ddl_sp_unrelated(q int4)"))
+    conn.execute("spp")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    assert len(rows(m)) == 2
+    assert statuses(conn.run("COMMIT")) == ["I"]
+    assert _exists(conn, "ddl_sp_unrelated") == 1
+    _drop(conn, "ddl_sp", "ddl_sp_unrelated")

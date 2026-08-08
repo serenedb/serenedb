@@ -29,10 +29,12 @@
 #include <duckdb/main/client_context.hpp>
 #include <utility>
 
+#include "auth/role_closure.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/log.h"
 #include "basics/system-compiler.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/store/store.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
@@ -50,9 +52,8 @@ SereneDBClientState& SereneDBClientState::Register(
 
   auto source = std::make_shared<pg::ProgressSource>();
   source->pid = registered._connection_ctx->GetBackendPid();
-  if (const auto& db = registered._connection_ctx->GetDatabasePtr()) {
-    source->datid = static_cast<int64_t>(db->GetId().id());
-  }
+  source->datid =
+    static_cast<int64_t>(registered._connection_ctx->GetDatabaseId().id());
   source->user = registered._connection_ctx->user();
   source->database = registered._connection_ctx->GetDatabase();
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
@@ -194,8 +195,8 @@ void SereneDBClientState::TransactionPreCheckpoint(
   // durable cursor on the WAL becoming durable, so the index never persists a
   // batch whose store bytes a crash could still lose. It precedes any in-commit
   // checkpoint, whose force-refresh therefore never waits on an un-committed
-  // in-flight batch. Only the store database carries indexed tables.
-  if (db.GetName().GetIdentifierName() != catalog::kStoreDatabaseName) {
+  // in-flight batch. Only a serenedb database carries indexed tables.
+  if (!catalog::IsStoreDatabase(db)) {
     return;
   }
   // This commit's exact WAL position, captured under the WAL lock by the
@@ -213,9 +214,10 @@ void SereneDBClientState::TransactionPreCheckpoint(
 void SereneDBClientState::TransactionPreRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
   duckdb::optional_ptr<duckdb::ErrorData> error) {
+  ctas_target = nullptr;
   if (auto cleanup = std::exchange(transaction_abort_cleanup, nullptr)) {
     try {
-      cleanup(transaction);
+      cleanup(transaction, context);
     } catch (const std::exception& e) {
       SDB_WARN(GENERAL, "transaction abort cleanup failed: ", e.what());
     }
@@ -234,12 +236,34 @@ void SereneDBClientState::TransactionCommit(
     }
   }
   tls_committing_ctx = nullptr;
+  // What these cluster-wide caches hold is the committed set, and that is what
+  // has just changed -- the write itself only made it visible here. Bumping any
+  // of them earlier lets a concurrent reader publish the pre-write set under
+  // the new generation, where nothing replaces it.
+  if (std::exchange(_connection_ctx->wrote_roles, false)) {
+    auth::BumpRoleGeneration();
+  }
+  if (std::exchange(_connection_ctx->wrote_databases, false)) {
+    catalog::BumpDatabaseGeneration();
+  }
+  if (std::exchange(_connection_ctx->wrote_schemas, false)) {
+    catalog::BumpSchemaGeneration();
+  }
   _connection_ctx->Commit();
 }
 
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
   tls_committing_ctx = nullptr;
+  if (std::exchange(_connection_ctx->wrote_roles, false)) {
+    auth::BumpRoleGeneration();
+  }
+  if (std::exchange(_connection_ctx->wrote_databases, false)) {
+    catalog::BumpDatabaseGeneration();
+  }
+  if (std::exchange(_connection_ctx->wrote_schemas, false)) {
+    catalog::BumpSchemaGeneration();
+  }
   _connection_ctx->Rollback();
 }
 
@@ -275,6 +299,11 @@ ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
     return nullptr;
   }
   return &state->GetConnectionContext();
+}
+
+bool IsStorageStatement(duckdb::ClientContext& context) {
+  auto* ctx = GetSereneDBContextPtr(context);
+  return ctx != nullptr && ctx->IsStorageConnection();
 }
 
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {

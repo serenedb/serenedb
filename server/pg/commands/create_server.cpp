@@ -31,12 +31,30 @@
 
 #include "basics/duckdb_engine.h"
 #include "catalog/catalog.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
 #include "catalog/foreign_server.h"
+#include "catalog/store/data_store.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {
 namespace {
+
+// DROP SERVER's catalog half. A foreign server is a database child, as in
+// postgres, so the drop is named by the database rather than by a schema.
+bool DropForeignServerRow(ConnectionContext& conn_ctx, std::string_view name,
+                          bool cascade, bool missing_ok) {
+  auto& context = conn_ctx.GetClientContext();
+  catalog::JoinStoreTransaction(&context);
+  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
+  const auto database_id =
+    catalog::FindDatabase(&context, conn_ctx.GetDatabase()).Id();
+  return catalog::DropEntryObject(
+    catalog::ActingAs(conn_ctx.GetRoleId(), context),
+    duckdb::CatalogType::FOREIGN_SERVER_ENTRY, database_id, database_id, name,
+    cascade, missing_ok);
+}
 
 // Lower-case the option keys and stringify the values into the parallel
 // key/value vectors ForeignServer stores.
@@ -54,7 +72,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> MakeServerOptions(
 }
 
 // Establish the live attachment for a server (validates connectivity too).
-uint64_t RunAttach(const catalog::ForeignServer& server) {
+uint64_t RunAttach(const catalog::CreateForeignServerInfo& server) {
   auto conn = DuckDBEngine::Instance().CreateConnection();
   const auto res = catalog::RunForeignServerAttach(*conn, server);
   using Status = catalog::ForeignServerAttachResult::Status;
@@ -82,18 +100,20 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // Owner = the creating role; the default ACL then gives the owner USAGE and
   // the public nothing (auth::ClassPrivs/PublicDefaultPrivs).
   auto [option_keys, option_values] = MakeServerOptions(options);
-  auto server = std::make_shared<catalog::ForeignServer>(
-    catalog::Permissions{conn_ctx.GetRoleId()}, ObjectId{}, ObjectId{}, name,
-    std::string{fdw_name}, std::move(option_keys), std::move(option_values));
+  auto server = std::make_shared<catalog::CreateForeignServerInfo>(
+    ObjectId{}, db_id, name, std::string{fdw_name}, std::move(option_keys),
+    std::move(option_values));
 
   // The catalog validates everything under its mutex (privilege, supported
   // FDW, name collisions) and persists -- a denied or invalid CREATE never
   // touches the network. The live ATTACH runs after; a connect failure
   // compensates by dropping the just-created row, so a failed CREATE SERVER
   // still leaves nothing behind.
-  auto& catalog = catalog::GetCatalog();
-  if (!catalog.CreateForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                   db_id, server, if_not_exists)) {
+  auto& catalog = catalog::DatabaseCatalog(&conn_ctx.GetClientContext(), db_id);
+  if (!catalog.CreateForeignServer(
+        catalog::ActingAs(conn_ctx.GetRoleId(), conn_ctx.GetClientContext()),
+        db_id, server, catalog::Permissions{conn_ctx.GetRoleId()},
+        if_not_exists)) {
     return;
   }
   uint64_t attachment = 0;
@@ -101,9 +121,8 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
     attachment = RunAttach(*server);
   } catch (...) {
     try {
-      catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                conn_ctx.GetDatabase(), name, /*cascade=*/true,
-                                /*missing_ok=*/true);
+      DropForeignServerRow(conn_ctx, name, /*cascade=*/true,
+                           /*missing_ok=*/true);
     } catch (...) {
       // Surface the connect error, not the cleanup's -- boot replay heals a
       // row that outlives this (it re-attaches persisted servers).
@@ -115,7 +134,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   // our row while it ran -- that DROP saw no attachment yet, so it detached
   // nothing. Own what we attached: take it back down rather than leaving an
   // attachment holding the alias with no row to drop it by.
-  if (!catalog.GetCatalogSnapshot()->GetForeignServer(name)) {
+  if (!catalog::FindForeignServer(&conn_ctx.GetClientContext(), db_id, name)) {
     catalog::DetachForeignServerAttachment(name, attachment);
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("server \"", name,
@@ -125,15 +144,12 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
 
 void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                        bool missing_ok, bool cascade) {
-  auto& catalog = catalog::GetCatalog();
   // Captured before the row goes: the detach afterwards removes this exact
   // attachment or nothing, so it cannot tear down one that a concurrent
   // same-named CREATE SERVER attached in the meantime.
   const auto attachment = catalog::ForeignServerAttachmentId(name);
   // The catalog drops the server row; absent + missing_ok returns false.
-  if (!catalog.DropForeignServer(catalog::ActingAs(conn_ctx.GetRoleId()),
-                                 conn_ctx.GetDatabase(), name, cascade,
-                                 missing_ok)) {
+  if (!DropForeignServerRow(conn_ctx, name, cascade, missing_ok)) {
     return;
   }
 

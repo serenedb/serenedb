@@ -42,8 +42,8 @@ void CollapseTsDictUnnest(duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
 void ClaimTsDictFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::SereneDBScanBindData& bind_data,
-  connector::SereneDBScanBindData& ss, const catalog::InvertedIndex& index,
-  std::shared_ptr<const catalog::Snapshot> snapshot,
+  connector::SereneDBScanBindData& ss,
+  const catalog::CreateInvertedIndexInfo& index,
   duckdb::ClientContext& context);
 
 }  // namespace sdb::optimizer

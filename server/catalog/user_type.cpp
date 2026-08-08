@@ -22,52 +22,23 @@
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/extra_type_info.hpp>
-#include <ranges>
-
-#include "basics/serializer.h"
-#include "catalog/create_info_serde.h"
-#include "database/ticks.h"
+#include <duckdb/common/types/value.hpp>
+#include <string>
+#include <utility>
 
 namespace sdb::catalog {
 
-PgSqlType::PgSqlType(Permissions perm, ObjectId schema_id, ObjectId id,
-                     std::string_view name,
-                     duckdb::unique_ptr<duckdb::CreateTypeInfo> info)
-  : Object{std::move(perm), schema_id,
-           id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id, name,
-           ObjectType::Type},
-    _info{std::move(info)} {
-  auto type_info = _info->type.AuxInfo()
-                     ? _info->type.AuxInfo()->DeepCopy()
+duckdb::LogicalType StampUserType(const duckdb::LogicalType& type,
+                                  std::string_view name, ObjectId id) {
+  auto type_info = type.AuxInfo()
+                     ? type.AuxInfo()->DeepCopy()
                      : duckdb::make_shared_ptr<duckdb::ExtraTypeInfo>(
                          duckdb::ExtraTypeInfoType::GENERIC_TYPE_INFO);
-  type_info->alias = GetName();
+  type_info->alias = std::string{name};
   auto ext = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
-  ext->properties[kPgSqlTypeOidProp] = duckdb::Value::UBIGINT(GetId().id());
+  ext->properties[kPgSqlTypeOidProp] = duckdb::Value::UBIGINT(id.id());
   type_info->extension_info = std::move(ext);
-  _info->type = {_info->type.id(), std::move(type_info)};
-}
-
-std::shared_ptr<PgSqlType> PgSqlType::Deserialize(duckdb::Deserializer& src,
-                                                  ReadContext ctx) {
-  CreateInfoReadData<duckdb::CreateTypeInfo> data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<PgSqlType>(std::move(data.perm), ctx.schema_id,
-                                     ctx.id, data.name,
-                                     std::move(data.info.info));
-}
-
-void PgSqlType::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, CreateInfoWriteData<duckdb::CreateTypeInfo>{
-                             GetName(), {_info.get()}, GetPermissions()});
-}
-
-std::shared_ptr<Object> PgSqlType::Clone() const {
-  auto cloned_info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
-      _info->Copy());
-  return std::make_shared<PgSqlType>(GetPermissions(), GetParentId(), GetId(),
-                                     GetName(), std::move(cloned_info));
+  return {type.id(), std::move(type_info)};
 }
 
 }  // namespace sdb::catalog

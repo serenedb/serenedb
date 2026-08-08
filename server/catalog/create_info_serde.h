@@ -27,8 +27,8 @@
 #include <string>
 #include <string_view>
 
+#include "catalog/entry.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/object.h"
 
 namespace sdb::catalog {
 
@@ -41,6 +41,14 @@ struct CreateInfoRef {
   }
 };
 
+// ObjectFormat (JSON) renders the info as its CREATE statement text; the
+// binary tuple format keeps the duckdb member Serialize above.
+template<typename Context, typename Info>
+  requires std::is_same_v<typename Context::Format, basics::ObjectFormat>
+void SerdeWrite(Context ctx, const CreateInfoRef<Info>& ref) {
+  basics::detail::WriteString(ctx.io(), ref.info->ToString());
+}
+
 template<typename Info>
 struct CreateInfoOwned {
   duckdb::unique_ptr<Info> info;
@@ -49,22 +57,6 @@ struct CreateInfoOwned {
     return CreateInfoOwned{duckdb::unique_ptr_cast<duckdb::CreateInfo, Info>(
       duckdb::CreateInfo::Deserialize(deserializer))};
   }
-};
-
-// Persistent on-disk catalog format.
-template<typename Info>
-struct CreateInfoWriteData {
-  std::string_view name;
-  CreateInfoRef<Info> info;
-  Permissions perm;
-};
-
-// Persistent on-disk catalog format.
-template<typename Info>
-struct CreateInfoReadData {
-  std::string name;
-  CreateInfoOwned<Info> info;
-  Permissions perm;
 };
 
 }  // namespace sdb::catalog

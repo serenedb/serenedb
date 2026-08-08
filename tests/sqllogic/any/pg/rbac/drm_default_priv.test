@@ -40,6 +40,12 @@ CREATE ROLE ddp_clickclack;
 # ===========================================================================
 # Part 1 -- role as GRANTEE of a global (no FOR ROLE) default-priv entry.
 # The entry is owned by the current superuser; ddp_vedernikoff is the grantee.
+#
+# Without FOR ROLE the entry belongs to the current role, which on a shared
+# server is the one superuser every other session is also creating objects
+# under. A role rewrite is an alter of the entry rather than a drop and a
+# re-create, so a dependency another session committed in between no longer
+# refuses this commit.
 # ===========================================================================
 
 statement ok

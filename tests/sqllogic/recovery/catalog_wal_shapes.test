@@ -1,0 +1,163 @@
+control substitution on
+
+# The durable shape of each DDL, pinned. These are the thing most likely to
+# drift silently: a wrong shape still answers the client correctly and only
+# shows up as a crash-recovery bug much later.
+#
+# Every assertion filters sdb_catalog_wal() by object id, so it is unaffected
+# by whatever else the shared server is doing -- the WAL itself is global. Ids
+# of dropped objects are captured into a table first, since pg_class no longer
+# has them afterwards.
+
+statement ok
+CREATE SCHEMA wsh;
+
+
+# CREATE TABLE: one entry, appended when the statement's transaction commits.
+statement ok
+CREATE TABLE wsh.wt (a INTEGER PRIMARY KEY, b TEXT);
+
+query ok
+SELECT string_agg(op, '+' ORDER BY frame) AS shape FROM sdb_catalog_wal()
+WHERE id = (SELECT oid FROM pg_class WHERE relname = 'wt');
+----
+shape
+PutTable
+
+
+# ADD COLUMN reshapes the store and RENAME touches no data, but both are the
+# same shape now: the definition, once. Both land under the table's own id, so
+# one assertion pins the object's whole history in order.
+statement ok
+ALTER TABLE wsh.wt ADD COLUMN c INTEGER;
+
+statement ok
+ALTER TABLE wsh.wt RENAME TO wt2;
+
+query ok
+SELECT string_agg(op, '+' ORDER BY frame) AS shape FROM sdb_catalog_wal()
+WHERE id = (SELECT oid FROM pg_class WHERE relname = 'wt2');
+----
+shape
+PutTable+PutTable+PutTable
+
+
+# DROP keeps its bracket: the record is the ack point, and the commit that
+# closes it is the async sweep reporting the artifacts gone.
+statement ok
+CREATE TABLE wsh.wt2_id AS SELECT oid AS v FROM pg_class WHERE relname = 'wt2';
+
+statement ok
+DROP TABLE wsh.wt2;
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(op, '+' ORDER BY frame) AS shape FROM sdb_catalog_wal()
+WHERE id = (SELECT v FROM wsh.wt2_id);
+----
+shape
+PutTable+PutTable+PutTable+DropPrepare+PrepareCommit
+
+
+# CREATE INDEX is the same shape as CREATE TABLE -- the build runs inside the
+# statement's transaction, so the entry is appended once it has committed.
+statement ok
+CREATE TABLE wsh.it (a INTEGER, b TEXT);
+
+statement ok
+CREATE INDEX ii ON wsh.it(a);
+
+statement ok
+CREATE TABLE wsh.ii_id AS SELECT oid AS v FROM pg_class WHERE relname = 'ii';
+
+query ok
+SELECT string_agg(op, '+' ORDER BY frame) AS shape FROM sdb_catalog_wal()
+WHERE id = (SELECT v FROM wsh.ii_id);
+----
+shape
+PutEntry
+
+# RENAME rewrites the definition, so it is one more put of the index. The record
+# is the CreateIndexInfo its catalog entry is built from, and the relation it
+# covers rides on that info -- PutEntry itself names only the schema.
+statement ok
+ALTER INDEX wsh.ii RENAME TO ii2;
+
+query ok
+SELECT string_agg(op, '+' ORDER BY frame) AS shape FROM sdb_catalog_wal()
+WHERE id = (SELECT v FROM wsh.ii_id);
+----
+shape
+PutEntry+PutEntry
+
+statement ok
+DROP INDEX wsh.ii2;
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(op, '+' ORDER BY frame) AS shape FROM sdb_catalog_wal()
+WHERE id = (SELECT v FROM wsh.ii_id);
+----
+shape
+PutEntry+PutEntry+DropPrepare+PrepareCommit
+
+
+# Catalog-only objects: one entry. A sequence also seeds its
+# counter, which lives outside the definition tree.
+statement ok
+CREATE SEQUENCE wsh.sq;
+
+query ok
+SELECT string_agg(op, '+' ORDER BY frame) AS shape FROM sdb_catalog_wal()
+WHERE id = (SELECT oid FROM pg_class WHERE relname = 'sq');
+----
+shape
+PutEntry+SetSequence
+
+statement ok
+CREATE VIEW wsh.vv AS SELECT 1 AS x;
+
+query ok
+SELECT string_agg(op, '+' ORDER BY frame) AS shape FROM sdb_catalog_wal()
+WHERE id = (SELECT oid FROM pg_class WHERE relname = 'vv');
+----
+shape
+PutEntry
+
+
+# A cascade opens the drop on the root only. Levels below it carry no drop, so each
+# names its own children instead -- that is the one case DropChildren exists
+# for, and the reason it cannot be folded into the commit.
+statement ok
+CREATE SCHEMA wsh_casc;
+
+statement ok
+CREATE TABLE wsh_casc.a (x INTEGER);
+
+statement ok
+CREATE INDEX wsh_casc_ai ON wsh_casc.a(x);
+
+statement ok
+CREATE TABLE wsh.casc_id AS SELECT oid AS v FROM pg_class WHERE relname = 'a'
+  AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'wsh_casc');
+
+statement ok
+DROP SCHEMA wsh_casc CASCADE;
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS levels FROM sdb_catalog_wal()
+WHERE op = 'DropChildren' AND parent_id = (SELECT v FROM wsh.casc_id);
+----
+levels
+1
+
+# The root's own commit takes its definition and its children, so the root
+# never emits DropChildren for itself.
+query ok
+SELECT count(*) AS root_children FROM sdb_catalog_wal()
+WHERE op = 'DropChildren'
+  AND parent_id = (SELECT oid FROM pg_namespace WHERE nspname = 'wsh_casc');
+----
+root_children
+0
+
+statement ok
+DROP SCHEMA wsh CASCADE;

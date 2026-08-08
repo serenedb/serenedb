@@ -76,7 +76,9 @@ oid	relname	reltablespace	relkind
 999997	sdb_progress	0	r
 <slt:ignore>	pg_roles	0	v
 <slt:ignore>	pg_shadow	0	v
+<slt:ignore>	pg_group	0	v
 <slt:ignore>	pg_user	0	v
+<slt:ignore>	pg_policies	0	v
 <slt:ignore>	pg_rules	0	v
 <slt:ignore>	pg_views	0	v
 <slt:ignore>	pg_tables	0	v
@@ -84,6 +86,9 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	pg_indexes	0	v
 <slt:ignore>	pg_sequences	0	v
 <slt:ignore>	pg_stats	0	v
+<slt:ignore>	pg_stats_ext	0	v
+<slt:ignore>	pg_stats_ext_exprs	0	v
+<slt:ignore>	pg_publication_tables	0	v
 <slt:ignore>	pg_locks	0	v
 <slt:ignore>	pg_cursors	0	v
 <slt:ignore>	pg_available_extensions	0	v
@@ -143,6 +148,7 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	pg_stat_progress_create_index	0	v
 <slt:ignore>	pg_stat_progress_basebackup	0	v
 <slt:ignore>	pg_stat_progress_copy	0	v
+<slt:ignore>	pg_stat_progress_create_table_as	0	v
 <slt:ignore>	pg_user_mappings	0	v
 <slt:ignore>	pg_replication_origin_status	0	v
 <slt:ignore>	pg_stat_subscription_stats	0	v
@@ -168,6 +174,7 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	domain_udt_usage	0	v
 <slt:ignore>	domains	0	v
 <slt:ignore>	enabled_roles	0	v
+<slt:ignore>	key_column_usage	0	v
 <slt:ignore>	parameters	0	v
 <slt:ignore>	referential_constraints	0	v
 <slt:ignore>	role_column_grants	0	v

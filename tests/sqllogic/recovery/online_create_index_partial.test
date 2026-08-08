@@ -28,9 +28,14 @@ statement async ok
 CREATE INDEX ocp_race_idx ON ocp_race USING inverted(label) WHERE live;
 
 
+# The build has started. Its catalog entry is not the gate: an uncommitted
+# CREATE INDEX belongs to the building transaction and PG 18 shows it to nobody
+# else, so this waits on the live progress view instead -- which is what PG's
+# own pg_stat_progress_create_index is for.
 connection default
 query ok retry 40 backoff 250ms
-SELECT count(*) FROM pg_class WHERE relname = 'ocp_race_idx';
+SELECT count(*) FROM pg_stat_progress_create_index
+WHERE relid = 'ocp_race'::regclass;
 ----
 count
 1

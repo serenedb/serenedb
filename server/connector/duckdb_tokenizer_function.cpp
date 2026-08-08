@@ -47,15 +47,17 @@
 #include "basics/assert.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
-#include "catalog/search_analyzer_impl.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/store/data_store.h"
 #include "catalog/tokenizer.h"
-#include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "search/search_analyzer_impl.h"
 
 namespace sdb::connector {
 namespace {
@@ -101,18 +103,26 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   const auto missing_ok = args[1].GetValue<bool>();
 
   auto& conn_ctx = GetSereneDBContext(context);
-  auto& catalog = catalog::GetCatalog();
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
-  if (!catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema, name.relation,
-                             false, missing_ok)) {
+  catalog::JoinStoreTransaction(&context);
+  catalog::Catalog::MutationScope mutation{catalog::GetCatalog()};
+  const auto database_id =
+    catalog::FindDatabase(&context, conn_ctx.GetDatabase()).Id();
+  const auto schema_id =
+    database_id.isSet()
+      ? catalog::FindSchemaId(&context, database_id, name.schema)
+      : ObjectId{};
+  if (!DropEntryObject(catalog::ActingAs(context),
+                       duckdb::CatalogType::TOKENIZER_ENTRY, database_id,
+                       schema_id, name.relation,
+                       /*cascade=*/false, missing_ok)) {
     conn_ctx.AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                      ERR_MSG("text search dictionary \"", name.relation,
                              "\" does not exist, skipping")));
   }
-  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
 }
 
 }  // namespace

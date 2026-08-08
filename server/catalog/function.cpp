@@ -23,44 +23,10 @@
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/query_node.hpp>
-#include <ranges>
-
-#include "basics/serializer.h"
-#include "catalog/create_info_serde.h"
 
 namespace sdb::catalog {
 
-PgSqlFunction::PgSqlFunction(Permissions perm, ObjectId schema_id, ObjectId id,
-                             std::string_view name,
-                             duckdb::unique_ptr<duckdb::CreateMacroInfo> info)
-  : Object{std::move(perm), schema_id, id, std::string{name},
-           ObjectType::Function},
-    _info{std::move(info)} {}
-
-std::shared_ptr<PgSqlFunction> PgSqlFunction::Deserialize(
-  duckdb::Deserializer& src, ReadContext ctx) {
-  CreateInfoReadData<duckdb::CreateMacroInfo> data;
-  basics::ReadTuple(src, data);
-  return std::make_shared<PgSqlFunction>(std::move(data.perm), ctx.schema_id,
-                                         ctx.id, data.name,
-                                         std::move(data.info.info));
-}
-
-void PgSqlFunction::Serialize(duckdb::Serializer& sink) const {
-  basics::WriteTuple(sink, CreateInfoWriteData<duckdb::CreateMacroInfo>{
-                             GetName(), {_info.get()}, GetPermissions()});
-}
-
-std::shared_ptr<Object> PgSqlFunction::Clone() const {
-  auto cloned_info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
-      _info->Copy());
-  return std::make_shared<PgSqlFunction>(GetPermissions(), GetParentId(),
-                                         GetId(), GetName(),
-                                         std::move(cloned_info));
-}
-
-Refs PgSqlFunction::GetRefs(RefKinds kinds) const {
+Refs MacroRefs(const duckdb::CreateMacroInfo& info, RefKinds kinds) {
   Refs out;
   auto append = [&](Refs body) {
     out.sequences.insert(out.sequences.end(), body.sequences.begin(),
@@ -75,7 +41,7 @@ Refs PgSqlFunction::GetRefs(RefKinds kinds) const {
     out.types.insert(out.types.end(), body.types.begin(), body.types.end());
   };
   const bool wants_types = RefKinds::None != (kinds & RefKinds::Types);
-  for (const auto& macro : _info->macros) {
+  for (const auto& macro : info.macros) {
     if (!macro) {
       continue;
     }

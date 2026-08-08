@@ -69,9 +69,8 @@ bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
 
 namespace {
 
-constexpr irs::field_id kStandaloneFieldId =
-  catalog::Column::kMaxRealIdValue + 4;
-constexpr catalog::Column::Id kStandaloneSyntheticColumnId{kStandaloneFieldId};
+constexpr irs::field_id kStandaloneFieldId = catalog::kMaxRealColumnIdValue + 4;
+constexpr catalog::ColumnId kStandaloneSyntheticColumnId{kStandaloneFieldId};
 
 class SortingOffsetTokenizer final
   : public irs::analysis::TypedAnalyzer<SortingOffsetTokenizer> {
@@ -81,7 +80,7 @@ class SortingOffsetTokenizer final
   }
 
   explicit SortingOffsetTokenizer(
-    catalog::Tokenizer::TokenizerWrapper inner) noexcept
+    catalog::CreateTokenizerInfo::TokenizerWrapper inner) noexcept
     : _inner{std::move(inner)},
       _term{irs::get<irs::TermAttr>(*_inner)},
       _offs{irs::get<irs::OffsAttr>(*_inner)} {}
@@ -116,7 +115,7 @@ class SortingOffsetTokenizer final
  private:
   using Gram = std::tuple<uint32_t, uint32_t, irs::bstring>;
 
-  catalog::Tokenizer::TokenizerWrapper _inner;
+  catalog::CreateTokenizerInfo::TokenizerWrapper _inner;
   const irs::TermAttr* _term;
   const irs::OffsAttr* _offs;
   std::tuple<irs::IncAttr, irs::TermAttr, irs::OffsAttr> _attrs;
@@ -124,8 +123,8 @@ class SortingOffsetTokenizer final
   size_t _idx{0};
 };
 
-catalog::Tokenizer::TokenizerWrapper EnsureOffsets(
-  catalog::Tokenizer::TokenizerWrapper tokenizer) {
+catalog::CreateTokenizerInfo::TokenizerWrapper EnsureOffsets(
+  catalog::CreateTokenizerInfo::TokenizerWrapper tokenizer) {
   const auto id = tokenizer->type();
   if (id == irs::Type<irs::analysis::UnionTokenizer>::id()) {
     THROW_SQL_ERROR(
@@ -135,14 +134,14 @@ catalog::Tokenizer::TokenizerWrapper EnsureOffsets(
   }
   if (id == irs::Type<irs::analysis::SparseNGramTokenizer>::id()) {
     return {new SortingOffsetTokenizer(std::move(tokenizer)),
-            catalog::Tokenizer::Deleter{}};
+            catalog::CreateTokenizerInfo::Deleter{}};
   }
   return tokenizer;
 }
 
 struct IndexField {
-  void Reset(catalog::Column::Id column_id,
-             catalog::Tokenizer::TokenizerWrapper analyzer) {
+  void Reset(catalog::ColumnId column_id,
+             catalog::CreateTokenizerInfo::TokenizerWrapper analyzer) {
     id = static_cast<irs::field_id>(column_id);
     tokens = EnsureOffsets(std::move(analyzer));
   }
@@ -157,7 +156,7 @@ struct IndexField {
   void SetValue(std::string_view value) const { tokens->reset(value); }
 
   irs::field_id id{irs::field_limits::invalid()};
-  catalog::Tokenizer::TokenizerWrapper tokens;
+  catalog::CreateTokenizerInfo::TokenizerWrapper tokens;
 };
 
 struct OffsetsLocalState final : duckdb::FunctionLocalState {
@@ -172,13 +171,13 @@ auto& EnsureField(duckdb::ClientContext& context,
   }
 
   auto column_id = kStandaloneSyntheticColumnId;
-  catalog::Tokenizer::TokenizerWrapper wrapper;
+  catalog::CreateTokenizerInfo::TokenizerWrapper wrapper;
   if (bind.IsStandalone()) {
     wrapper = bind.dict_tokenizer->GetTokenizer();
   } else {
-    auto snapshot = GetSereneDBContext(context).CatalogSnapshot();
     auto column_tokenizer = bind.inverted_index->GetTokenizer(
-      snapshot, static_cast<irs::field_id>(bind.column_id));
+      catalog::ResolveTokenizers(context, *bind.inverted_index),
+      static_cast<irs::field_id>(bind.column_id));
     wrapper = std::move(column_tokenizer.analyzer);
     column_id = bind.column_id;
   }
@@ -309,8 +308,7 @@ int64_t EvalOptionalLimit(duckdb::ClientContext& context,
 
 std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
   duckdb::ClientContext& context, const duckdb::Expression& tsquery_expr,
-  catalog::Column::Id column_id,
-  const std::shared_ptr<catalog::Tokenizer>& dict_tokenizer) {
+  catalog::ColumnId column_id, const catalog::TokenizerRef& dict_tokenizer) {
   static constexpr duckdb::idx_t kSyntheticTableIdx = 0;
   static constexpr duckdb::idx_t kSyntheticColumnIdx = 0;
 

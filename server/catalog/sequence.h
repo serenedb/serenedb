@@ -24,12 +24,14 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <utility>
 
-#include "catalog/object.h"
-#include "catalog/persistence/sequence.h"
+#include "catalog/entry.h"
 
 namespace duckdb {
 
@@ -39,65 +41,124 @@ class Deserializer;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-using persistence::SequenceOptions;
+// The option set nextval works in: the bounds and the increment as one lattice,
+// unsigned because the counter is. It is a view of the definition, not a second
+// copy of it -- START/INCREMENT/MIN/MAX/CYCLE are duckdb's own fields, CACHE
+// and the owning table ride the info's tags, and the name and comment are the
+// CreateInfo's.
+struct SequenceOptions {
+  std::string name;
+  uint64_t start_value = 1;
+  uint64_t increment = 1;
+  uint64_t min_value = 1;
+  uint64_t max_value = std::numeric_limits<int64_t>::max();
+  uint64_t cache = 1;
+  uint64_t owner_table_id = 0;
+  bool cycle = false;
+  std::string comment;
 
-class Table;
+  uint64_t Seed() const noexcept { return start_value - increment; }
+};
 
-class Sequence final : public Object {
-  friend class Table;
-
+// The live counter of one sequence, shared by every version of its definition.
+// A comment, owner or ACL change writes a new definition, and a nextval running
+// against the version it replaced must advance the same counter -- copying the
+// value at rewrite time loses that advance and hands the number out twice.
+//
+// It is not part of the definition and is never serialized: what the catalog
+// log holds is the durable horizon, as SetSequence / BumpSequence records.
+class SequenceCounter {
  public:
-  // opts.name and opts.owner_table_id provide the Object name and the owner
-  // table id; no separate parameters needed.
-  Sequence(ObjectId schema_id, ObjectId id, SequenceOptions opts);
+  SequenceCounter(ObjectId id, uint64_t increment, uint64_t cache) noexcept
+    : _id{id}, _increment{increment}, _cache{cache} {}
 
-  ~Sequence() = default;
+  ObjectId GetId() const noexcept { return _id; }
 
-  static std::shared_ptr<Sequence> Deserialize(duckdb::Deserializer& src,
-                                               ReadContext ctx);
-
-  void Serialize(duckdb::Serializer& s) const final;
-  std::shared_ptr<Object> Clone() const final;
-
-  const SequenceOptions& Options() const noexcept { return _options; }
-
-  std::string_view Comment() const noexcept { return _options.comment; }
-  std::shared_ptr<Sequence> CloneWithComment(std::string_view comment) const;
-
-  // Set for SERIAL implicit sequences (and the auto-PK Sequence). Wires the
-  // sequence into TableDependency::owned_sequences for PG OWNED BY cascade.
-  ObjectId GetOwnerTableId() const noexcept {
-    return ObjectId{_options.owner_table_id};
-  }
+  void Seed(uint64_t value);
+  // Re-reads the durable counter from the catalog store. Boot calls this after
+  // replay: the definition is read mid-replay, so the SetSequence entries that
+  // follow it in the log are not folded in yet.
+  void ReloadDurable();
 
   // Hand out [base, base+count-1]; returns base. The counter persists
   // before the atomic increment, so a crash burns the range but never
   // reuses it.
   uint64_t Reserve(uint64_t count);
 
-  // Caller guarantees Write is never called on this Sequence. Used by the
-  // auto-PK path which is invisible to setval.
-  uint64_t ReserveWriteUnsafe(uint64_t count);
-
   uint64_t Read() const;
   void Write(uint64_t value);
 
  private:
-  std::atomic_uint64_t _cnt{0};
-  mutable absl::Mutex _cnt_mtx;
-  // Owns the wire-format state (name, options, owner_table_id) -- see
-  // SequenceOptions comment for the reflection-based persistence contract.
-  SequenceOptions _options;
+  // How far past the handed-out range each persist runs (PG's SEQ_LOG_VALS):
+  // values up to the durable horizon are covered by a synced append, so the
+  // next kLogAhead fetches are append-free. A crash burns at most the gap.
+  static constexpr uint64_t kLogAhead = 32;
 
-  std::atomic_uint64_t _cache_begin{0};
-  std::atomic_uint64_t _cache_end{0};
+  // The horizon in counter units. The counter lives in value space and must
+  // stay on the increment lattice (see Write, whose cycle wrap depends on it),
+  // so the log-ahead is that many *values*, not that many units -- PG logs
+  // SEQ_LOG_VALS increments ahead for the same reason.
+  uint64_t LogAhead() const noexcept { return kLogAhead * _increment; }
 
   uint64_t LoadFromDb() const;
   uint64_t ReserveCached(uint64_t count);
   uint64_t AdvanceCounter(uint64_t count);
   uint64_t RefillCache(uint64_t count);
-  // Persists the absolute counter value; requires _cnt_mtx held.
-  void Persist(uint64_t value);
+  // Ensures values up to next_end are durably covered: fast when already
+  // durable, waits on a covering in-flight append, or extends the horizon
+  // (dropping the lock around the wal append). Requires the counter lock held.
+  void CoverDurable(uint64_t next_end) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mtx);
+
+  ObjectId _id;
+  uint64_t _increment = 1;
+  uint64_t _cache = 1;
+
+  std::atomic_uint64_t _cnt{0};
+  mutable absl::Mutex _mtx;
+  // Two-stage horizon: extend publishes `_pending` and appends the max-merge
+  // BumpSequence record OUTSIDE the lock (so concurrent bumps of one sequence
+  // group-commit); the append's return promotes it to `_durable`. Values are
+  // handed out only once durably covered.
+  uint64_t _durable ABSL_GUARDED_BY(_mtx) = 0;
+  uint64_t _pending ABSL_GUARDED_BY(_mtx) = 0;
+  // Advance appends in flight; Write drains them so its authoritative
+  // SetSequence lands after every advance it raced (wal order == map order).
+  uint32_t _appends_in_flight ABSL_GUARDED_BY(_mtx) = 0;
+  std::atomic_uint64_t _cache_begin{0};
+  std::atomic_uint64_t _cache_end{0};
 };
+
+// A sequence is duckdb's own duckdb::CreateSequenceInfo.
+// START/INCREMENT/MIN/MAX/CYCLE are its fields, the name and the comment are
+// the CreateInfo's, and the two things upstream has no room for -- CACHE and
+// the table a SERIAL sequence goes down with -- ride its tags, the way a
+// table's engine does.
+//
+// Owner and ACL are not on the info: they live on the entry.
+std::shared_ptr<duckdb::CreateSequenceInfo> MakeSequenceInfo(
+  ObjectId id, ObjectId schema_id, const SequenceOptions& opts);
+
+// The option set as the definition states it.
+SequenceOptions SequenceOptionsOf(const duckdb::CreateSequenceInfo& info);
+
+// Set for SERIAL implicit sequences (and the auto-PK sequence): the table the
+// sequence goes down with (PG OWNED BY). Its name still lives in the schema's
+// relation namespace, so this changes what drops it, not where it is found.
+ObjectId SequenceOwnerTableOf(const duckdb::CreateSequenceInfo& info) noexcept;
+
+inline std::string_view SequenceNameOf(
+  const duckdb::CreateSequenceInfo& info) noexcept {
+  return info.GetSequenceName().GetIdentifierName();
+}
+
+using SequenceRef = std::shared_ptr<const duckdb::CreateSequenceInfo>;
+
+// The counter a sequence's entry carries: seeded from START for a create, and
+// from the durable value the catalog log already holds for a replay. Bound onto
+// the entry after it is placed; a rewrite inherits its predecessor's instead.
+std::shared_ptr<SequenceCounter> NewCounter(ObjectId id,
+                                            const SequenceOptions& opts);
+std::shared_ptr<SequenceCounter> ReloadedCounter(ObjectId id,
+                                                 const SequenceOptions& opts);
 
 }  // namespace sdb::catalog

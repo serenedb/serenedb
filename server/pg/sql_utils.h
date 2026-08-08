@@ -24,7 +24,7 @@
 #include <string_view>
 
 #include "basics/assert.h"
-#include "catalog/object.h"
+#include "catalog/entry.h"
 
 namespace sdb::pg {
 
@@ -38,72 +38,44 @@ struct ObjectName {
 ObjectName ParseObjectName(std::string_view name,
                            std::string_view default_schema);
 
+// The noun an error message uses for a kind of catalog entry. "object" for the
+// kinds no statement names.
 std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept;
 
-constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
-  switch (t) {
-    using enum catalog::ObjectType;
-    case Table:
-      return "table";
-    case View:
-      return "view";
-    case SecondaryIndex:
-    case InvertedIndex:
-      return "index";
-    case Function:
-      return "function";
-    case Sequence:
-      return "sequence";
-    case Schema:
-      return "schema";
-    case Database:
-      return "database";
-    case Tokenizer:
-      return "text search dictionary";
-    case Type:
-      return "type";
-    case ForeignServer:
-      return "foreign server";
-    case UserMapping:
-      return "user mapping";
-    default:
-      // usually used for error messages, so we want to specify the type.
-      SDB_ASSERT(false);
-      return "object";
-  }
-}
+// How postgres names an absent object of one kind, and the code it reports --
+// which is not always the kind the statement said: a sequence and an index
+// share the relation namespace, and an absent one is reported by that.
+[[noreturn]] void ThrowUndefinedObject(duckdb::CatalogType type,
+                                       std::string_view name);
 
-constexpr catalog::ObjectType FromPgObjectTypeName(
+constexpr duckdb::CatalogType FromPgObjectTypeName(
   std::string_view word) noexcept {
-  using enum catalog::ObjectType;
+  using enum duckdb::CatalogType;
   if (word == "TABLE") {
-    return Table;
+    return TABLE_ENTRY;
   }
   if (word == "VIEW") {
-    return View;
+    return VIEW_ENTRY;
   }
   if (word == "SEQUENCE") {
-    return Sequence;
+    return SEQUENCE_ENTRY;
   }
   if (word == "FUNCTION") {
-    return Function;
+    return MACRO_ENTRY;
   }
   if (word == "DATABASE") {
-    return Database;
+    return DATABASE_ENTRY;
   }
   if (word == "SCHEMA") {
-    return Schema;
+    return SCHEMA_ENTRY;
   }
   if (word == "TYPE") {
-    return Type;
+    return TYPE_ENTRY;
   }
   if (word == "FOREIGN SERVER") {
-    return ForeignServer;
+    return FOREIGN_SERVER_ENTRY;
   }
-  if (word == "USER MAPPING") {
-    return UserMapping;
-  }
-  return Invalid;
+  return INVALID;
 }
 
 static constexpr size_t kSqlStateSize = 5;

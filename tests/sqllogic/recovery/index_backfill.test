@@ -11,7 +11,7 @@ CREATE TEXT SEARCH DICTIONARY test_english(
     position = true
 );
 
-# crash before tombstone removal, index should be gone
+# crash before the catalog record commits, index should be gone
 
 statement ok
 CREATE TABLE idx_bf_t(a INTEGER PRIMARY KEY, b TEXT);
@@ -20,7 +20,7 @@ statement ok
 INSERT INTO idx_bf_t VALUES (1, 'pudge goes mid'), (2, 'vedernikoff carries team'), (3, 'babsky afk again');
 
 statement ok
-SET sdb_faults = 'crash_before_remove_tombstone';
+SET sdb_faults = 'crash_before_catalog_commit';
 
 statement error connection closed
 CREATE INDEX idx_bf_crash ON idx_bf_t USING inverted(a, b test_english);

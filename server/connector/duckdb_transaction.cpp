@@ -22,49 +22,26 @@
 
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/transaction/transaction_manager.hpp>
+#include <duckdb/transaction/transaction.hpp>
 
 #include "catalog/store/store.h"
-#include "connector/duckdb_client_state.h"
-#include "pg/connection_context.h"
 
 namespace sdb::connector {
 
-SereneDBTransaction::SereneDBTransaction(duckdb::TransactionManager& manager,
-                                         duckdb::ClientContext& context)
-  : duckdb::Transaction(manager, context) {}
-
 SereneDBTransactionManager::SereneDBTransactionManager(
   duckdb::AttachedDatabase& db)
-  : duckdb::TransactionManager(db) {}
-
-duckdb::Transaction& SereneDBTransactionManager::StartTransaction(
-  duckdb::ClientContext& context) {
-  duckdb::lock_guard<duckdb::mutex> lock(_lock);
-  auto txn = duckdb::make_uniq<SereneDBTransaction>(*this, context);
-  auto& ref = *txn;
-  _transactions.push_back(std::move(txn));
-  return ref;
-}
-
-duckdb::ErrorData SereneDBTransactionManager::CommitTransaction(
-  duckdb::ClientContext& context, duckdb::Transaction& transaction) {
-  return {};
-}
-
-void SereneDBTransactionManager::RollbackTransaction(
-  duckdb::Transaction& transaction) {}
+  : duckdb::DuckTransactionManager(db) {}
 
 void SereneDBTransactionManager::Checkpoint(duckdb::ClientContext& context,
                                             bool force) {
-  // serenedb tables are backed by native DuckDB tables in the hidden store
-  // database. Forward the user's CHECKPOINT to the store so its WAL is flushed
-  // and deleted rows are vacuumed/compacted -- the user never names the store.
-  auto store = duckdb::DatabaseManager::Get(context).GetDatabase(
-    context, duckdb::Identifier{catalog::kStoreDatabaseName});
-  if (store) {
-    store->GetTransactionManager().Checkpoint(context, force);
-  }
+  // The rows are in this attachment, so the user's CHECKPOINT reaches them
+  // directly. The statement issuing it already has a transaction here -- it is
+  // the database it runs in -- and duckdb refuses a FORCE with one open. That
+  // refusal guards against waiting on oneself, which a read-only transaction
+  // cannot cause, so drop the force rather than the checkpoint.
+  const bool self_force =
+    force && !duckdb::Transaction::TryGet(context, db).get();
+  duckdb::DuckTransactionManager::Checkpoint(context, self_force);
 }
 
 }  // namespace sdb::connector

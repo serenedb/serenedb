@@ -25,17 +25,18 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <memory>
 
-#include "catalog/table.h"
+#include "connector/search_table_dispatch.h"
 
 namespace sdb::connector {
 
 class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
  public:
-  // Insert mode: pre-existing target table.
-  SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
-                       std::shared_ptr<catalog::Table> table,
+  // Insert mode: pre-existing target table. `return_chunk` is RETURNING: the
+  // operator then hands back the rows it inserted rather than their count, and
+  // `types` is the whole row.
+  SereneDBSearchInsert(duckdb::PhysicalPlan& plan, SearchWriteTarget target,
                        duckdb::vector<duckdb::LogicalType> types,
-                       duckdb::idx_t estimated_cardinality);
+                       duckdb::idx_t estimated_cardinality, bool return_chunk);
 
   // CTAS mode: create the target table from `info` in GetGlobalSinkState.
   SereneDBSearchInsert(duckdb::PhysicalPlan& plan,
@@ -68,12 +69,15 @@ class SereneDBSearchInsert final : public duckdb::PhysicalOperator {
   bool IsSource() const final { return true; }
 
  private:
-  // Insert mode: the pre-existing target table. Null in CTAS mode.
-  std::shared_ptr<catalog::Table> _table;
+  // Insert mode: the pre-existing target, resolved off its entry at plan time.
+  // Unset in CTAS mode, where the table does not exist until the sink runs.
+  SearchWriteTarget _target;
 
-  // CTAS mode only -- mutually exclusive with _table; null in insert mode.
+  // CTAS mode only -- mutually exclusive with _target; null in insert mode.
   duckdb::unique_ptr<duckdb::BoundCreateTableInfo> _ctas_info;
   duckdb::SchemaCatalogEntry* _ctas_schema = nullptr;
+
+  bool _return_chunk = false;
 };
 
 }  // namespace sdb::connector

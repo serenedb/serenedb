@@ -21,22 +21,34 @@
 #include "catalog/catalog.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/flags/flag.h>
 #include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/synchronization/mutex.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <duckdb/common/exception/parser_exception.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/query_context.hpp>
+#include <duckdb/parser/constraints/check_constraint.hpp>
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/parser.hpp>
+#include <duckdb/storage/checkpoint/checkpoint_options.hpp>
+#include <duckdb/storage/storage_manager.hpp>
+#include <filesystem>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <ranges>
@@ -65,20 +77,30 @@
 #include "basics/system-compiler.h"
 #include "catalog/column_expr.h"
 #include "catalog/database.h"
+#include "catalog/deferred_writes.h"
 #include "catalog/drop_task.h"
+#include "catalog/duckdb_catalog.h"
+#include "catalog/duckdb_catalog_sets.h"
+#include "catalog/duckdb_dependency.h"
+#include "catalog/duckdb_global_catalog.h"
+#include "catalog/duckdb_index_entry.h"
+#include "catalog/duckdb_object_entry.h"
+#include "catalog/duckdb_object_index.h"
+#include "catalog/duckdb_table_entry.h"
+#include "catalog/duckdb_view_entry.h"
+#include "catalog/entry.h"
 #include "catalog/foreign_server.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
-#include "catalog/object.h"
 #include "catalog/object_dependency.h"
 #include "catalog/persistence/role.h"
-#include "catalog/resolution_table.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
 #include "catalog/sequence.h"
+#include "catalog/store/data_store.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -86,7 +108,7 @@
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_entry_cache.h"
+#include "connector/duckdb_storage_extension.h"
 #include "network/credentials.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -97,58 +119,85 @@
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
 
+// A database file that is gone or will not open is not a state the server
+// reaches on its own: somebody removed or corrupted it. Refusing is the default
+// because silently recreating an empty database is the one outcome that turns a
+// recoverable accident into data loss.
+ABSL_FLAG(std::string, missing_database, "refuse",
+          "What boot does with a database whose data file is missing or will "
+          "not open: 'refuse' (default) stops the server, 'skip' leaves it "
+          "unattached, 'drop' removes it from the catalog.");
+
 namespace sdb::catalog {
 
 AccessContext RequireAccess(duckdb::ClientContext& context, AclMode need) {
-  return RequireAccess(connector::GetSereneDBContext(context).GetRoleId(),
-                       need);
+  return {connector::GetSereneDBContext(context).GetRoleId(), need, &context};
 }
 
 AccessContext ActingAs(duckdb::ClientContext& context) {
-  return ActingAs(connector::GetSereneDBContext(context).GetRoleId());
+  return {connector::GetSereneDBContext(context).GetRoleId(), AclMode::NoRights,
+          &context};
 }
 
 namespace {
 
-void RequireRoleAttribute(const Snapshot& snapshot, ObjectId actor_id,
-                          RoleOption attribute, std::string_view denied_action,
-                          std::string_view detail = {});
-
-void RequireAttributesGrantable(const Snapshot& snapshot, ObjectId actor_id,
-                                RoleOption granting, bool creating);
-
-template<ResolveType Type>
-[[noreturn]] void ThrowDuplicateName(std::string_view name) {
-  if constexpr (Type == ResolveType::Database) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
-                    ERR_MSG("database \"", name, "\" already exists"));
-  } else if constexpr (Type == ResolveType::Schema) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
-                    ERR_MSG("schema \"", name, "\" already exists"));
-  } else if constexpr (Type == ResolveType::Relation ||
-                       Type == ResolveType::Function) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                    ERR_MSG("relation \"", name, "\" already exists"));
-  } else if constexpr (Type == ResolveType::Type) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("type \"", name, "\" already exists"));
-  } else if constexpr (Type == ResolveType::Tokenizer) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("text search dictionary \"", name, "\" already exists"));
-  } else if constexpr (Type == ResolveType::ForeignServer) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("server \"", name, "\" already exists"));
-  } else {
-    static_assert(Type == ResolveType::Role);
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("role \"", name, "\" already exists"));
+// Roles and databases hang off the instance, not off a database, so their
+// writes are attributed to the storage-less cluster-global attachment rather
+// than to whichever database the statement happens to run in. Called before
+// _mutex, for the same reason JoinStoreTransaction is: it opens the
+// transaction there.
+// The context-less callers -- boot, WAL replay, background drop tasks -- have
+// no transaction to attribute anything to.
+void JoinClusterGlobal(duckdb::ClientContext* context,
+                       duckdb::DatabaseModificationType modification) {
+  if (context != nullptr) {
+    catalog::ModifyGlobalDatabase(*context, modification);
   }
 }
 
+// One index record, and the resolution it carries. Every version's record has
+// its own, taken where the version is built: a rename has moved the names it
+// resolved by the time boot reads it back, so re-resolving there would drop the
+// edge without a word. The relation the index covers rides on the info, so
+// PutEntry's one parent is the schema its name lives in.
+void PutIndex(CatalogStore::WriteContext& ctx, const IndexInfoRef& index,
+              wal::PutMode mode) {
+  ctx.catalog().PutEntry(index->GetSchemaId(), duckdb::CatalogType::INDEX_ENTRY,
+                         index->GetId(), mode, index, Permissions{});
+}
+
+void RequireRoleAttribute(duckdb::ClientContext* context, ObjectId actor_id,
+                          RoleOption attribute, std::string_view denied_action,
+                          std::string_view detail = {});
+
+void RequireAttributesGrantable(duckdb::ClientContext* context,
+                                ObjectId actor_id, RoleOption granting,
+                                bool creating);
+
+[[noreturn]] void ThrowDuplicateDatabase(std::string_view name) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+                  ERR_MSG("database \"", name, "\" already exists"));
+}
+
+std::optional<ObjectId> FindDatabaseId(duckdb::ClientContext* context,
+                                       std::string_view name) {
+  auto database = catalog::FindDatabase(context, name);
+  return database ? std::optional{database.Id()} : std::nullopt;
+}
+
+std::optional<ObjectId> TryFindSchemaId(duckdb::ClientContext* context,
+                                        ObjectId database_id,
+                                        std::string_view name) {
+  const auto id = catalog::FindSchemaId(context, database_id, name);
+  return id.isSet() ? std::optional{id} : std::nullopt;
+}
+
+// The three namespaces a create can collide in, each with its own errcode and
+// noun. A function shares the relation namespace, as it does in postgres.
+
 [[noreturn]] void ThrowWrongObjectType(std::string_view name,
                                        std::string_view kind,
-                                       ObjectType actual) {
+                                       duckdb::CatalogType actual) {
   const auto actual_kind = pg::ToPgObjectTypeName(actual);
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
@@ -159,55 +208,21 @@ template<ResolveType Type>
              "."));
 }
 
-void Apply(
-  std::shared_ptr<const Snapshot>& snapshot, auto&& f,
-  std::function<void(const std::shared_ptr<Snapshot>&)> rollback = {}) {
-  std::shared_ptr<Snapshot> clone = snapshot->Clone();
-  try {
-    f(clone);
-  } catch (...) {
-    if (rollback) {
-      rollback(clone);
-    }
-    throw;
-  }
-  clone->StampVersion(snapshot->Version() + 1);
-  std::atomic_store(&snapshot,
-                    std::shared_ptr<const Snapshot>(std::move(clone)));
-}
-
-// Re-render a stored expression-index `pretty_printed` (valid SQL baked with
-// the column names at CREATE INDEX time) after a RENAME COLUMN: re-parse it and
-// remap only ColumnRefExpression leaves whose trailing name changed. The bound
-// serialized_expr (column-id keyed) is unaffected; only the display text is
-// stale. Returns nullopt on parse failure (caller keeps the old text).
-std::optional<std::string> RerenderPrettyAfterRename(
-  std::string_view pretty,
-  const containers::FlatHashMap<std::string, std::string>& renames) {
-  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> parsed;
-  try {
-    parsed = duckdb::Parser::ParseExpressionList(std::string{pretty});
-  } catch (const duckdb::ParserException&) {
-    return std::nullopt;
-  }
-  if (parsed.size() != 1 || !parsed[0]) {
-    return std::nullopt;
-  }
-  auto rewrite = [&](this auto& self, duckdb::ParsedExpression& e) -> void {
-    if (e.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
-      auto& cref = e.Cast<duckdb::ColumnRefExpression>();
-      if (!cref.ColumnNames().empty()) {
-        auto it = renames.find(cref.ColumnNames().back().GetIdentifierName());
-        if (it != renames.end()) {
-          cref.ColumnNamesMutable().back() = duckdb::Identifier{it->second};
-        }
-      }
-    }
-    duckdb::ParsedExpressionIterator::EnumerateChildren(
-      e, [&](duckdb::ParsedExpression& child) { self(child); });
-  };
-  rewrite(*parsed[0]);
-  return parsed[0]->ToString();
+// The record that opens a drop bracket: where the root sits, and everything
+// under it whose artifacts the async sweep still has to reclaim. Carrying it is
+// what lets a boot rebuild the task tree without reading back definitions the
+// drop has already taken out of the catalog.
+wal::DropPrepare MakeDropPrepare(const DropTask& task, ObjectId parent_id,
+                                 duckdb::CatalogType type, ObjectId id,
+                                 ObjectId database_id, ObjectId schema_id) {
+  auto subtree = std::make_shared<std::vector<wal::DropNode>>();
+  task.DescribeSubtree(parent_id, *subtree);
+  return {.parent_id = parent_id,
+          .type = type,
+          .id = id,
+          .database_id = database_id,
+          .schema_id = schema_id,
+          .subtree = std::move(subtree)};
 }
 
 void UpdatePendingDrops(PendingDrops& pending_drops, ObjectId parend_id,
@@ -224,478 +239,303 @@ void UpdatePendingDrops(PendingDrops& pending_drops, ObjectId parend_id,
 }
 
 }  // namespace
+namespace {
 
-void Snapshot::StampVersion(uint64_t version) noexcept { _version = version; }
-
-Snapshot::Snapshot() = default;
-Snapshot::~Snapshot() = default;
-
-std::shared_ptr<Snapshot> Snapshot::Clone() const {
-  // TODO(gnusi): COW
-  auto result = std::make_shared<Snapshot>();
-  result->_resolution_table = _resolution_table;
-  result->_objects = _objects;
-  result->_deps = _deps;
-  result->_version = _version + 1;
-  result->_in_load = _in_load;
-  result->_version = _version;
-  // Inherit the built role closures. A mutation that changes the role graph
-  // overwrites them via RebuildRoleClosures; everything else reuses the
-  // parent's map unchanged.
-  result->_role_closures = _role_closures;
-  // New snapshot starts with empty DuckDB cache (lazily populated)
-  return result;
-}
-
-void Snapshot::EndLoad() noexcept { _in_load = false; }
-
-connector::DuckDBEntryCache& Snapshot::GetDuckDBEntryCache() const {
-  return _duckdb_cache;
-}
-
-std::shared_ptr<DatabaseDrop> Snapshot::CreateDatabaseDrop(
-  PendingDrops& pending_drops, const std::shared_ptr<Database>& db,
-  duckdb::shared_ptr<void> keep_alive) {
-  const auto db_id = db->GetId();
-  auto db_deps = GetDependency<DatabaseDependency>(db_id);
-  auto schemas_drop =
-    db_deps->schemas | std::views::transform([&](ObjectId id) {
-      auto schema = GetObject<Schema>(id);
-      SDB_ASSERT(schema);
-      return CreateSchemaDrop(pending_drops, db_id, schema, false);
-    }) |
-    std::ranges::to<std::vector>();
-  auto task = std::make_shared<DatabaseDrop>(db, std::move(schemas_drop),
-                                             std::move(keep_alive));
-  UpdatePendingDrops(pending_drops, ObjectId{}, db_id, task, false);
-  return task;
-}
-
-std::shared_ptr<SchemaDrop> Snapshot::CreateSchemaDrop(
-  PendingDrops& pending_drops, ObjectId db_id,
-  const std::shared_ptr<Schema>& schema, bool is_root) {
-  const auto schema_id = schema->GetId();
-  auto schema_deps = GetDependency<SchemaDependency>(schema_id);
-  auto tables_drop =
-    schema_deps->tables | std::views::transform([&](ObjectId id) {
-      auto table = GetObject<Table>(id);
-      SDB_ASSERT(table);
-      return CreateTableDrop(pending_drops, db_id, schema_id, table, false);
-    }) |
-    std::ranges::to<std::vector>();
-
-  auto task = std::make_shared<SchemaDrop>(schema, std::move(tables_drop),
-                                           db_id, is_root);
-  UpdatePendingDrops(pending_drops, db_id, schema_id, task, is_root);
-  return task;
-}
-
-// Store-table name of `table_id` ("db.schema.table"), or nullopt when
-// the id is unset (self-referencing FK) or not resolvable.
-std::optional<std::string> Snapshot::ComposeStoreTableName(
-  ObjectId table_id) const {
-  if (!table_id.isSet()) {
-    return std::nullopt;
-  }
-  auto table = GetObject<Table>(table_id);
-  if (!table) {
-    return std::nullopt;
-  }
-  auto schema_obj = GetObject<Schema>(table->GetParentId());
-  if (!schema_obj) {
-    return std::nullopt;
-  }
-  auto db = GetObject<Database>(schema_obj->GetParentId());
-  if (!db) {
-    return std::nullopt;
-  }
-  return StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
-}
-
-std::shared_ptr<TableDropBase> Snapshot::CreateTableDrop(
-  PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
-  const std::shared_ptr<Table>& table, bool is_root) {
-  const auto table_id = table->GetId();
-  auto table_deps = GetDependency<TableDependency>(table_id);
-  auto owned_sequences =
-    table_deps->owned_sequences | std::ranges::to<std::vector>();
-
-  std::shared_ptr<TableDropBase> task;
-  if (table->GetEngine() == TableEngine::Search) {
-    task = std::make_shared<SearchTableDrop>(
-      table, db_id, std::move(owned_sequences), schema_id, is_root);
-  } else {
-    auto indexes = table_deps->indexes |
-                   std::views::transform([&](ObjectId id) {
-                     auto index = GetObject<Index>(id);
-                     SDB_ASSERT(index);
-                     return CreateIndexDrop(pending_drops, db_id, schema_id,
-                                            table_id, index, false);
-                   }) |
-                   std::ranges::to<std::vector>();
-    std::string store_name;
-    std::vector<std::string> fk_referenced;
-    if (!table->Tombstoned()) {
-      auto db = GetObject<Database>(db_id);
-      auto schema_obj = GetObject<Schema>(schema_id);
-      SDB_ASSERT(db && schema_obj);
-      store_name =
-        StoreTableName(db->GetName(), schema_obj->GetName(), table->GetName());
-      for (const auto& fk : table->ForeignKeys()) {
-        if (auto name = ComposeStoreTableName(fk.referenced_table)) {
-          fk_referenced.push_back(std::move(*name));
-        }
-      }
-    }
-    task = std::make_shared<TableDrop>(
-      table, std::move(indexes), std::move(owned_sequences), schema_id,
-      std::move(store_name), std::move(fk_referenced), is_root);
-  }
-  UpdatePendingDrops(pending_drops, schema_id, table_id, task, is_root);
-  return task;
-}
-
-std::shared_ptr<IndexDrop> Snapshot::CreateIndexDrop(
-  PendingDrops& pending_drops, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, const std::shared_ptr<Index>& index, bool is_root) {
-  // Capture the iresearch storage handle (weak) so the async IndexDrop can wait
-  // for every holder (snapshots, txns, tasks) to release before removing the
-  // on-disk directory. Secondary indexes have no storage -> empty weak.
-  std::weak_ptr<search::InvertedIndexStorage> data;
-  if (index->GetType() == ObjectType::InvertedIndex) {
-    data = basics::downCast<const InvertedIndex>(*index).GetData();
-  }
-  auto task = std::make_shared<IndexDrop>(index, db_id, schema_id, table_id,
-                                          std::move(data), is_root);
-  UpdatePendingDrops(pending_drops, table_id, index->GetId(), task, is_root);
-  return task;
-}
-
-template<typename T>
-void Snapshot::RegisterObject(std::shared_ptr<T> object, ObjectId parent_id,
-                              bool replace) {
-  if constexpr (std::is_same_v<T, Database>) {
-    AddToResolution<ResolveType::Database>(parent_id, object->GetId(),
-                                           object->GetName(), replace);
-    AddObjectDefinition<DatabaseDependency>(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, Schema>) {
-    AddToResolution<ResolveType::Schema>(parent_id, object->GetId(),
-                                         object->GetName(), replace);
-    AddObjectDefinition<SchemaDependency>(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, PgSqlView>) {
-    AddToResolution<ResolveType::Relation>(parent_id, object->GetId(),
-                                           object->GetName(), replace);
-    AddObjectDefinition<ViewDependency>(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, Sequence>) {
-    // Sequences share the relation namespace (PG: pg_class.relkind='S').
-    if (!_resolution_table.AddObject<ResolveType::Relation>(
-          parent_id, object->GetName(), object->GetId(), replace))
-      [[unlikely]] {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("relation \"", object->GetName(), "\" already exists"));
-    }
-    AddObjectDefinition<SequenceDependency>(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
-    AddToResolution<ResolveType::Function>(parent_id, object->GetId(),
-                                           object->GetName(), replace);
-    AddObjectDefinition<PgSqlFunctionDependency>(parent_id, object);
-  } else if constexpr (std::is_same_v<T, Tokenizer>) {
-    AddToResolution<ResolveType::Tokenizer>(parent_id, object->GetId(),
-                                            object->GetName(), replace);
-    AddObjectDefinition<TokenizerDependency>(parent_id, object);
-  } else if constexpr (std::is_same_v<T, ForeignServer>) {
-    AddToResolution<ResolveType::ForeignServer>(parent_id, object->GetId(),
-                                                object->GetName(), replace);
-    AddObjectDefinition<ForeignServerDependency>(parent_id, object);
-  } else if constexpr (std::is_same_v<T, PgSqlType>) {
-    AddToResolution<ResolveType::Type>(parent_id, object->GetId(),
-                                       object->GetName(), replace);
-    AddObjectDefinition<PgSqlTypeDependency>(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, Table>) {
-    AddToResolution<ResolveType::Relation>(parent_id, object->GetId(),
-                                           object->GetName(), replace);
-    AddObjectDefinition<TableDependency>(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, Index>) {
-    AddToResolution<ResolveType::Relation>(
-      object->GetParentId(), object->GetId(), object->GetName(), replace);
-    AddObjectDefinition<IndexDependency>(parent_id, std::move(object));
-  } else if constexpr (std::is_same_v<T, Role>) {
-    AddToResolution<ResolveType::Role>(parent_id, object->GetId(),
-                                       object->GetName(), replace);
-    AddObjectDefinition(parent_id, std::move(object));
-  } else {
-    static_assert(false);
-  }
-}
-
-template<typename T>
-void Snapshot::UnregisterObject(std::shared_ptr<T> object, ObjectId parent_id,
-                                bool maybe_not_found) noexcept {
-  if constexpr (std::is_same_v<T, Database>) {
-    RemoveFromResolution<ResolveType::Database>(parent_id, object->GetName(),
-                                                maybe_not_found);
-  } else if constexpr (std::is_same_v<T, Role>) {
-    RemoveFromResolution<ResolveType::Role>(parent_id, object->GetName(),
-                                            maybe_not_found);
-  } else if constexpr (std::is_same_v<T, Schema>) {
-    RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
-                                              maybe_not_found);
-  } else if constexpr (std::is_same_v<T, PgSqlView>) {
-    RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
-                                                maybe_not_found);
-  } else if constexpr (std::is_same_v<T, Sequence>) {
-    RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
-                                                maybe_not_found);
-  } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
-    RemoveFromResolution<ResolveType::Function>(parent_id, object->GetName(),
-                                                maybe_not_found);
-  } else if constexpr (std::is_same_v<T, Tokenizer>) {
-    RemoveFromResolution<ResolveType::Tokenizer>(parent_id, object->GetName(),
-                                                 maybe_not_found);
-  } else if constexpr (std::is_same_v<T, ForeignServer>) {
-    RemoveFromResolution<ResolveType::ForeignServer>(
-      parent_id, object->GetName(), maybe_not_found);
-  } else if constexpr (std::is_same_v<T, PgSqlType>) {
-    RemoveFromResolution<ResolveType::Type>(parent_id, object->GetName(),
-                                            maybe_not_found);
-  } else if constexpr (std::is_same_v<T, Table>) {
-    RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
-                                                maybe_not_found);
-  } else if constexpr (std::is_same_v<T, Index>) {
-    RemoveFromResolution<ResolveType::Relation>(
-      object->GetParentId(), object->GetName(), maybe_not_found);
-    parent_id = object->GetRelationId();
-  } else {
-    static_assert(false);
-  }
-  SDB_ASSERT(parent_id.isSet());
-  RemoveObjectDefinition(parent_id, object->GetId(), true, maybe_not_found);
-}
-
-template<ResolveType Type>
-void Snapshot::AddToResolution(ObjectId parent_id, ObjectId id,
-                               std::string_view name, bool replace) {
-  if (!_resolution_table.AddObject<Type>(parent_id, name, id, replace))
-    [[unlikely]] {
-    ThrowDuplicateName<Type>(name);
-  }
-}
-
-template<ResolveType Type>
-void Snapshot::RemoveFromResolution(ObjectId parent_id, std::string_view name,
-                                    bool maybe_not_found) noexcept {
-  auto res = _resolution_table.RemoveObject<Type>(parent_id, name);
-  if (!maybe_not_found) {
-    SDB_ASSERT(res);
-  }
-}
-
-template<typename Dep, typename Member, typename Edge>
-void Snapshot::ModifyDependency(ObjectId target, Member Dep::* mem,
-                                const Edge& edge, EdgeAction action) {
-  if (!_deps.TryGetDependency(target)) {
-    // unset target: pg_catalog/information_schema ref -- no edge to track.
-    // missing Dep: graph traversal reached the same target twice, fine
-    // on Delete (firstly we delete auto drop dependencies and then cascade).
-    SDB_ASSERT(_in_load || action == EdgeAction::Delete || !target.isSet());
-    return;
-  }
-  auto d = GetDependencyForWrite<Dep>(target);
-  switch (action) {
-    case EdgeAction::Add:
-      (d.get()->*mem).insert(edge);
-      break;
-    case EdgeAction::Delete:
-      (d.get()->*mem).erase(edge);
-      break;
-  }
-}
-
-void Snapshot::ModifyTableDependencies(ObjectId schema_id, const Table& table,
-                                       EdgeAction action) {
-  auto database_id = GetDatabaseId(table);
-  auto resolve_seq = [&](const QualifiedRef& ref) {
-    return Resolve<ResolveType::Relation, ObjectType::Sequence>(
-      database_id, schema_id, ref.catalog, ref.schema, ref.name);
-  };
-  for (const auto& col : table.Columns()) {
-    Refs type_refs;
-    CollectTypeRefs(col.type, type_refs);
-    for (auto type_id : type_refs.types) {
-      ModifyDependency(type_id, &PgSqlTypeDependency::column_types, col.GetId(),
-                       action);
-    }
-    if (col.expr && col.expr->HasExpr() && !col.IsGenerated()) {
-      auto refs = col.expr->GetRefs(RefKinds::Sequences | RefKinds::Functions |
-                                    RefKinds::Types);
-      for (const auto& ref : refs.sequences) {
-        ModifyDependency(resolve_seq(ref), &SequenceDependency::column_defaults,
-                         col.GetId(), action);
-      }
-      for (const auto& ref : refs.functions) {
-        ModifyDependency(
-          Resolve<ResolveType::Function, ObjectType::Function>(
-            database_id, schema_id, ref.catalog, ref.schema, ref.name),
-          &PgSqlFunctionDependency::column_defaults, col.GetId(), action);
-      }
-      for (const auto& ref : refs.unbound_types) {
-        ModifyDependency(
-          Resolve<ResolveType::Type, ObjectType::Type>(
-            database_id, schema_id, ref.catalog, ref.schema, ref.name),
-          &PgSqlTypeDependency::column_defaults, col.GetId(), action);
-      }
-    }
-  }
-  for (const auto& fk : table.ForeignKeys()) {
-    if (fk.referenced_table.isSet()) {
-      ModifyDependency(fk.referenced_table,
-                       &TableDependency::fk_referencing_tables, table.GetId(),
-                       action);
-    }
-  }
-  for (const auto& c : table.CheckConstraints()) {
-    if (!c.expr || !c.expr->HasExpr()) {
-      continue;
-    }
-    auto refs = c.expr->GetRefs(RefKinds::Sequences | RefKinds::Functions |
-                                RefKinds::Types);
-    auto edge = c.GetId();
-    for (const auto& ref : refs.functions) {
-      ModifyDependency(
-        Resolve<ResolveType::Function, ObjectType::Function>(
-          database_id, schema_id, ref.catalog, ref.schema, ref.name),
-        &PgSqlFunctionDependency::constraints, edge, action);
-    }
-    for (const auto& ref : refs.sequences) {
-      ModifyDependency(resolve_seq(ref), &SequenceDependency::constraints, edge,
-                       action);
-    }
-    for (const auto& ref : refs.unbound_types) {
-      ModifyDependency(
-        Resolve<ResolveType::Type, ObjectType::Type>(
-          database_id, schema_id, ref.catalog, ref.schema, ref.name),
-        &PgSqlTypeDependency::constraints, edge, action);
-    }
-  }
-}
-
-template<ResolveType Kind, ObjectType... Allowed>
-ObjectId Snapshot::Resolve(ObjectId db_id, ObjectId default_schema_id,
-                           std::string_view catalog, std::string_view schema,
-                           std::string_view name) const {
+// The database and schema a qualified reference lands in, or unset when it
+// names pg_catalog, information_schema, or something that is not there.
+ObjectId ResolveSchemaOf(duckdb::ClientContext* context, ObjectId db_id,
+                         ObjectId default_schema_id, std::string_view catalog,
+                         std::string_view schema) {
   if (schema == StaticStrings::kPgCatalogSchema ||
       schema == StaticStrings::kInformationSchema) {
     return {};
   }
   if (!catalog.empty()) {
-    auto r = _resolution_table.ResolveObject<ResolveType::Database>(
-      id::kInstance, catalog);
+    auto r = catalog::FindDatabase(context, catalog);
     if (!r) {
       return {};
     }
-    db_id = *r;
+    db_id = r.Id();
   }
-  ObjectId schema_id = default_schema_id;
-  if (!schema.empty()) {
-    auto r =
-      _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
-    if (!r) {
-      return {};
-    }
-    schema_id = *r;
+  if (schema.empty()) {
+    return default_schema_id;
   }
-  auto r = _resolution_table.ResolveObject<Kind>(schema_id, name);
-  if (!r) {
-    return {};
-  }
-  auto it = _objects.find(*r);
-  if (it == _objects.end()) {
-    return {};
-  }
-  auto t = (*it)->GetType();
-  if (!((t == Allowed) || ...)) {
-    return {};
-  }
-  return *r;
+  return catalog::FindSchemaId(context, db_id, schema);
 }
 
-void Snapshot::ModifyViewDependencies(ObjectId schema_id, const PgSqlView& view,
-                                      RefKinds kinds, EdgeAction action) {
-  auto database_id = GetDatabaseId(view);
-  auto view_id = view.GetId();
-  auto refs = view.GetRefs(kinds);
+ObjectId ResolveTypeId(duckdb::ClientContext* context, ObjectId db_id,
+                       ObjectId default_schema_id, std::string_view catalog,
+                       std::string_view schema, std::string_view name) {
+  const auto schema_id =
+    ResolveSchemaOf(context, db_id, default_schema_id, catalog, schema);
+  if (!schema_id.isSet()) {
+    return {};
+  }
+  const auto* type = catalog::Find<SereneDBTypeEntry>(context, schema_id, name);
+  return type != nullptr ? ObjectId{type->oid} : ObjectId{};
+}
+
+ObjectId ResolveSequenceId(duckdb::ClientContext* context, ObjectId db_id,
+                           ObjectId default_schema_id, std::string_view catalog,
+                           std::string_view schema, std::string_view name) {
+  const auto schema_id =
+    ResolveSchemaOf(context, db_id, default_schema_id, catalog, schema);
+  if (!schema_id.isSet()) {
+    return {};
+  }
+  const auto* sequence =
+    catalog::Find<SereneDBSequenceEntry>(context, schema_id, name);
+  return sequence != nullptr ? ObjectId{sequence->oid} : ObjectId{};
+}
+
+ObjectId ResolveFunctionId(duckdb::ClientContext* context, ObjectId db_id,
+                           ObjectId default_schema_id, std::string_view catalog,
+                           std::string_view schema, std::string_view name) {
+  const auto schema_id =
+    ResolveSchemaOf(context, db_id, default_schema_id, catalog, schema);
+  if (!schema_id.isSet()) {
+    return {};
+  }
+  auto function = catalog::FindFunction(context, schema_id, name);
+  return function ? IdOf(*function) : ObjectId{};
+}
+
+// Both halves of the relation namespace answer here: a table and a view are
+// separate kinds with one set between them.
+ObjectId ResolveRelationId(duckdb::ClientContext* context, ObjectId db_id,
+                           ObjectId default_schema_id, std::string_view catalog,
+                           std::string_view schema, std::string_view name) {
+  const auto schema_id =
+    ResolveSchemaOf(context, db_id, default_schema_id, catalog, schema);
+  if (!schema_id.isSet()) {
+    return {};
+  }
+  if (const auto* table =
+        catalog::Find<SereneDBTableEntry>(context, schema_id, name)) {
+    return ObjectId{table->oid};
+  }
+  auto view = catalog::Find<SereneDBViewEntry>(context, schema_id, name);
+  return view ? IdOf(*view) : ObjectId{};
+}
+
+// The id one name in an expression body resolves to, by what the node states.
+// An unset answer is a pg_catalog / information_schema reference or something
+// that is not there, which is not an edge.
+ObjectId ResolveExprRef(duckdb::ClientContext* context, ObjectId database_id,
+                        ObjectId schema_id, RefKinds kind,
+                        const QualifiedRef& ref) {
+  switch (kind) {
+    case RefKinds::Sequences:
+      return ResolveSequenceId(context, database_id, schema_id, ref.catalog,
+                               ref.schema, ref.name);
+    case RefKinds::Functions:
+      return ResolveFunctionId(context, database_id, schema_id, ref.catalog,
+                               ref.schema, ref.name);
+    default:
+      return ResolveTypeId(context, database_id, schema_id, ref.catalog,
+                           ref.schema, ref.name);
+  }
+}
+
+// Stamps what every name in `expr` resolves to onto the node stating it. Taken
+// where the version is written, because only the catalog the statement sees
+// knows what the names point at -- and read back off the node afterwards,
+// because a rename since has moved them.
+void StampExprIds(duckdb::ClientContext* context, ObjectId database_id,
+                  ObjectId schema_id, duckdb::ParsedExpression& expr) {
+  auto refs = ExtractMutableRefs(
+    expr, RefKinds::Sequences | RefKinds::Functions | RefKinds::Types);
+  const auto stamp = [&](const std::vector<QualifiedRef>& list, RefKinds kind) {
+    for (const auto& ref : list) {
+      if (ref.node != nullptr) {
+        ref.node->oid =
+          ResolveExprRef(context, database_id, schema_id, kind, ref).id();
+      }
+    }
+  };
+  stamp(refs.sequences, RefKinds::Sequences);
+  stamp(refs.functions, RefKinds::Functions);
+  stamp(refs.unbound_types, RefKinds::Types);
+}
+
+void CollectRef(std::vector<ObjectId>& out, ObjectId target) {
+  if (target.isSet()) {
+    out.push_back(target);
+  }
+}
+
+void CollectRefs(duckdb::ClientContext* context, ObjectId database_id,
+                 ObjectId schema_id, const Refs& refs, ObjectId self,
+                 std::vector<ObjectId>& out) {
   for (const auto& ref : refs.sequences) {
-    ModifyDependency(
-      Resolve<ResolveType::Relation, ObjectType::Sequence>(
-        database_id, schema_id, ref.catalog, ref.schema, ref.name),
-      &SequenceDependency::views, view_id, action);
+    CollectRef(out, ResolveSequenceId(context, database_id, schema_id,
+                                      ref.catalog, ref.schema, ref.name));
   }
   for (const auto& ref : refs.relations) {
-    // Table or View -- both inherit RelationDependency.views.
-    ModifyDependency(
-      Resolve<ResolveType::Relation, ObjectType::Table, ObjectType::View>(
-        database_id, schema_id, ref.catalog, ref.schema, ref.name),
-      &RelationDependency::views, view_id, action);
+    CollectRef(out, ResolveRelationId(context, database_id, schema_id,
+                                      ref.catalog, ref.schema, ref.name));
   }
   for (const auto& ref : refs.functions) {
-    ModifyDependency(
-      Resolve<ResolveType::Function, ObjectType::Function>(
-        database_id, schema_id, ref.catalog, ref.schema, ref.name),
-      &PgSqlFunctionDependency::views, view_id, action);
-  }
-  for (const auto& ref : refs.unbound_types) {
-    ModifyDependency(
-      Resolve<ResolveType::Type, ObjectType::Type>(
-        database_id, schema_id, ref.catalog, ref.schema, ref.name),
-      &PgSqlTypeDependency::views, view_id, action);
-  }
-}
-
-void Snapshot::ModifyFunctionDependencies(ObjectId schema_id,
-                                          const PgSqlFunction& func,
-                                          EdgeAction action) {
-  auto database_id = GetDatabaseId(func);
-  auto fn_id = func.GetId();
-  auto refs = func.GetRefs(RefKinds::All);
-  for (const auto& ref : refs.sequences) {
-    ModifyDependency(
-      Resolve<ResolveType::Relation, ObjectType::Sequence>(
-        database_id, schema_id, ref.catalog, ref.schema, ref.name),
-      &SequenceDependency::functions, fn_id, action);
-  }
-  for (const auto& ref : refs.relations) {
-    ModifyDependency(
-      Resolve<ResolveType::Relation, ObjectType::Table, ObjectType::View>(
-        database_id, schema_id, ref.catalog, ref.schema, ref.name),
-      &RelationDependency::functions, fn_id, action);
-  }
-  for (const auto& ref : refs.functions) {
-    auto target = Resolve<ResolveType::Function, ObjectType::Function>(
-      database_id, schema_id, ref.catalog, ref.schema, ref.name);
-    if (target == fn_id) {
-      continue;  // skip self
+    const auto target = ResolveFunctionId(context, database_id, schema_id,
+                                          ref.catalog, ref.schema, ref.name);
+    if (target != self) {  // a recursive function is not its own dependent
+      CollectRef(out, target);
     }
-    ModifyDependency(target, &PgSqlFunctionDependency::functions, fn_id,
-                     action);
   }
   for (const auto& ref : refs.unbound_types) {
-    ModifyDependency(
-      Resolve<ResolveType::Type, ObjectType::Type>(
-        database_id, schema_id, ref.catalog, ref.schema, ref.name),
-      &PgSqlTypeDependency::functions, fn_id, action);
+    CollectRef(out, ResolveTypeId(context, database_id, schema_id, ref.catalog,
+                                  ref.schema, ref.name));
   }
-  for (auto type_id : refs.types) {
-    ModifyDependency(type_id, &PgSqlTypeDependency::functions, fn_id, action);
+  for (const auto type_id : refs.types) {
+    CollectRef(out, type_id);
   }
 }
 
-void Snapshot::ModifyInvertedIndexDependencies(const InvertedIndex& index,
-                                               ObjectId index_id,
-                                               EdgeAction action) {
-  auto database_id = GetDatabaseId(index);
-  auto schema_id = index.GetParentId();
-  for (const auto& key : index.ExpressionKeys()) {
+// The roles one object names -- as owner, as grantee, as grantor. Every one of
+// them is what DROP ROLE is refused over.
+void CollectRoleRefs(const Permissions& perm, std::vector<ObjectId>& out) {
+  CollectRef(out, OwnerOf(perm));
+  for (const auto& item : perm.acl) {
+    CollectRef(out, GranteeOf(item));
+    CollectRef(out, GrantorOf(item));
+  }
+}
+
+duckdb::LogicalDependencyList ReferenceList(std::vector<ObjectId> ids) {
+  std::ranges::sort(ids);
+  ids.erase(std::ranges::unique(ids).begin(), ids.end());
+  return catalog::DependencyList(ids);
+}
+
+}  // namespace
+
+std::vector<TableReference> TableReferences(
+  const duckdb::CreateTableInfo& info) {
+  std::vector<TableReference> out;
+  const auto collect = [&](const duckdb::ParsedExpression& expr, ObjectId sub,
+                           TableRefKind kind) {
+    std::vector<ObjectId> ids;
+    CollectExprIds(expr, ids);
+    for (const auto id : ids) {
+      out.push_back({id, sub, kind});
+    }
+  };
+  for (const auto& column : info.columns.Logical()) {
+    const ObjectId column_id{column.CatalogOid()};
+    Refs type_refs;
+    CollectTypeRefs(column.Type(), type_refs);
+    for (const auto type_id : type_refs.types) {
+      out.push_back({type_id, column_id, TableRefKind::ColumnType});
+    }
+    if (column.HasDefaultValue() && !column.Generated()) {
+      collect(column.DefaultValue(), column_id, TableRefKind::ColumnDefault);
+    } else if (column.Generated()) {
+      collect(column.GeneratedExpression(), column_id,
+              TableRefKind::ColumnDefault);
+    }
+  }
+  for (const auto& constraint : info.constraints) {
+    if (constraint->type == duckdb::ConstraintType::CHECK) {
+      const auto& check = constraint->Cast<duckdb::CheckConstraint>();
+      collect(*check.expression, ObjectId{check.oid}, TableRefKind::Check);
+      continue;
+    }
+    if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
+      continue;
+    }
+    const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+    const ObjectId referenced{fk.host_referenced_id};
+    if (referenced.isSet() && referenced != catalog::IdOf(info)) {
+      out.push_back({referenced, ObjectId{fk.oid}, TableRefKind::ForeignKey});
+    }
+  }
+  return out;
+}
+
+duckdb::LogicalDependencyList TableDependencies(
+  const duckdb::CreateTableInfo& info, const Permissions& perm) {
+  std::vector<ObjectId> ids;
+  CollectRoleRefs(perm, ids);
+  // A column carries grants of its own, which name roles the table's ACL does
+  // not.
+  for (const auto& [column_id, acl] : perm.column_acl) {
+    for (const auto& item : acl) {
+      CollectRef(ids, GranteeOf(item));
+      CollectRef(ids, GrantorOf(item));
+    }
+  }
+  for (const auto& reference : TableReferences(info)) {
+    CollectRef(ids, reference.referenced);
+  }
+  return ReferenceList(std::move(ids));
+}
+
+TableInfoRef NextTableVersion(duckdb::ClientContext* context, ObjectId id,
+                              ObjectId schema_id, TableInfoRef info) {
+  auto next = catalog::Clone(*info);
+  SetIdentity(*next, id, schema_id);
+  const auto database_id = catalog::SchemaDatabaseId(context, schema_id);
+  // One member for both, as duckdb keeps them: a DEFAULT on a plain column, the
+  // body on a generated one.
+  for (idx_t i = 0; i < next->columns.LogicalColumnCount(); ++i) {
+    auto& column = next->columns.GetColumnMutable(duckdb::LogicalIndex{i});
+    if (auto* expression = column.ExpressionMutable()) {
+      StampExprIds(context, database_id, schema_id, *expression);
+    }
+  }
+  for (auto& constraint : next->constraints) {
+    if (constraint->type == duckdb::ConstraintType::CHECK) {
+      StampExprIds(context, database_id, schema_id,
+                   *constraint->Cast<duckdb::CheckConstraint>().expression);
+    }
+  }
+  return next;
+}
+
+std::shared_ptr<const duckdb::CreateViewInfo> NextViewVersion(
+  duckdb::ClientContext* context,
+  std::shared_ptr<const duckdb::CreateViewInfo> view) {
+  auto next =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
+      view->Copy());
+  const auto schema_id = ParentIdOf(*next);
+  std::vector<ObjectId> ids;
+  CollectRefs(context, catalog::SchemaDatabaseId(context, schema_id), schema_id,
+              ViewRefs(*next, RefKinds::All), IdOf(*next), ids);
+  next->dependencies = ReferenceList(std::move(ids));
+  return std::shared_ptr<const duckdb::CreateViewInfo>{next.release()};
+}
+
+std::shared_ptr<const duckdb::CreateMacroInfo> NextFunctionVersion(
+  duckdb::ClientContext* context,
+  std::shared_ptr<const duckdb::CreateMacroInfo> function) {
+  auto next =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      function->Copy());
+  const auto schema_id = ParentIdOf(*next);
+  std::vector<ObjectId> ids;
+  CollectRefs(context, catalog::SchemaDatabaseId(context, schema_id), schema_id,
+              MacroRefs(*next, RefKinds::All), IdOf(*next), ids);
+  next->dependencies = ReferenceList(std::move(ids));
+  return std::shared_ptr<const duckdb::CreateMacroInfo>{next.release()};
+}
+
+IndexInfoRef NextIndexVersion(duckdb::ClientContext* context,
+                              const IndexInfoRef& index) {
+  if (!index->IsInverted()) {
+    return index;
+  }
+  auto next = duckdb::unique_ptr_cast<duckdb::CreateInfo, CreateIndexInfoBase>(
+    index->Copy());
+  const auto schema_id = next->GetSchemaId();
+  const auto database_id = catalog::SchemaDatabaseId(context, schema_id);
+  // The dictionaries its entries name, by id, and the functions its expression
+  // keys name, by resolution.
+  std::vector<ObjectId> ids;
+  for (const auto tokenizer_id : next->GetTokenizers()) {
+    CollectRef(ids, tokenizer_id);
+  }
+  for (const auto& key : InvertedInfo(*next).ExpressionKeys()) {
     const auto& expr = key.data;
     SDB_ASSERT(!expr.pretty_printed.empty());
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> parsed;
@@ -706,1645 +546,1158 @@ void Snapshot::ModifyInvertedIndexDependencies(const InvertedIndex& index,
     }
     for (const auto& p : parsed) {
       SDB_ASSERT(p);
-      for (const auto& ref : ExtractRefs(*p, RefKinds::Functions).functions) {
-        ModifyDependency(
-          Resolve<ResolveType::Function, ObjectType::Function>(
-            database_id, schema_id, ref.catalog, ref.schema, ref.name),
-          &PgSqlFunctionDependency::indexes, index_id, action);
-      }
+      CollectRefs(context, database_id, schema_id,
+                  ExtractRefs(*p, RefKinds::Functions), ObjectId{}, ids);
     }
   }
+  next->dependencies = ReferenceList(std::move(ids));
+  return std::shared_ptr<const CreateIndexInfoBase>{next.release()};
 }
 
-void Snapshot::ModifyRoleDependencies(const Object& obj, EdgeAction action) {
-  const auto self = obj.GetId();
-  // PUBLIC pseudo-grantee (id 0) and the unset owner, so they are skipped --
-  // PUBLIC and "no owner" are not droppable roles.
-  auto touch = [&](ObjectId role) {
-    if (!role.isSet()) {
-      return;
-    }
-    if (action == EdgeAction::Add) {
-      // The role's dependency node may not exist yet (a role nobody references
-      // has none); create-if-missing before GetDependencyForWrite, which
-      // assumes the node is present.
-      _deps.AddDependency<RoleDependency>(role);
-      GetDependencyForWrite<RoleDependency>(role)->referencing_objects.insert(
-        self);
-    } else if (_deps.TryGetDependency(role)) {
-      GetDependencyForWrite<RoleDependency>(role)->referencing_objects.erase(
-        self);
-    }
-  };
-  auto touch_acl = [&](auto acl) {
-    for (const auto& item : acl) {
-      touch(item.grantee);
-      touch(item.grantor);
-    }
-  };
-  touch(obj.GetOwner());
-  touch_acl(obj.GetAcl());
-  if (obj.GetType() == ObjectType::Table) {
-    for (const auto& col : basics::downCast<const Table>(obj).Columns()) {
-      touch_acl(col.GetAcl());
-    }
-  } else if (obj.GetType() == ObjectType::Role) {
-    const auto& defaults = basics::downCast<const Role>(obj).DefaultAcls();
-    if (!defaults.empty()) {
-      touch(self);
-    }
-    for (const auto& entry : defaults) {
-      touch_acl(entry.acl);
-    }
-  }
-}
-
-template<typename DependencyType>
-void Snapshot::AddObjectDefinition(ObjectId parent_id,
-                                   std::shared_ptr<Object> object) {
-  if constexpr (!std::is_void_v<DependencyType>) {
-    bool inserted = _deps.AddDependency<DependencyType>(object->GetId());
-    SDB_ASSERT(inserted);
-  }
-  SDB_ASSERT(object->GetId().isSet());
-  auto [_, inserted] = _objects.insert(object);
-  SDB_ASSERT(inserted);
-  AddDependencies(parent_id, *object);
-}
-
-void Snapshot::AddDependencies(ObjectId parent_id, const Object& obj) {
-  auto id = obj.GetId();
-  ModifyRoleDependencies(obj, EdgeAction::Add);
-  switch (obj.GetType()) {
-    case ObjectType::Database:
-    case ObjectType::Role:
-      break;
-    case ObjectType::Schema:
-      GetDependencyForWrite<DatabaseDependency>(parent_id)->schemas.insert(id);
-      break;
-    case ObjectType::Tokenizer:
-      GetDependencyForWrite<SchemaDependency>(parent_id)->tokenizers.insert(id);
-      break;
-    case ObjectType::ForeignServer:
-      GetDependencyForWrite<DatabaseDependency>(parent_id)
-        ->foreign_servers.insert(id);
-      break;
-    case ObjectType::UserMapping:
-      break;
-    case ObjectType::Table: {
-      GetDependencyForWrite<SchemaDependency>(parent_id)->tables.insert(id);
-      const auto& table = basics::downCast<Table>(obj);
-      for (const auto& c : table.Columns()) {
-        if (!_objects.contains(c.GetId())) {
-          _objects.insert(std::make_shared<Column>(c));
-        }
-      }
-      for (const auto& c : table.CheckConstraints()) {
-        if (!_objects.contains(c.GetId())) {
-          _objects.insert(std::make_shared<CheckConstraint>(c));
-        }
-      }
-      ModifyTableDependencies(parent_id, table, EdgeAction::Add);
-    } break;
-    case ObjectType::View:
-      GetDependencyForWrite<SchemaDependency>(parent_id)->views.insert(id);
-      ModifyViewDependencies(parent_id, basics::downCast<PgSqlView>(obj),
-                             RefKinds::All, EdgeAction::Add);
-      break;
-    case ObjectType::Function:
-      GetDependencyForWrite<SchemaDependency>(parent_id)->functions.insert(id);
-      ModifyFunctionDependencies(
-        parent_id, basics::downCast<PgSqlFunction>(obj), EdgeAction::Add);
-      break;
-    case ObjectType::Type:
-      GetDependencyForWrite<SchemaDependency>(parent_id)->types.insert(id);
-      break;
-    case ObjectType::Sequence: {
-      // Owned sequences live under the table only
-      const auto& seq = basics::downCast<Sequence>(obj);
-      if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
-        GetDependencyForWrite<TableDependency>(owner)->owned_sequences.insert(
-          id);
-        auto table = GetObject<Table>(owner);
-        SDB_ASSERT(table);
-        ModifyTableDependencies(parent_id, *table, EdgeAction::Add);
-      } else {
-        GetDependencyForWrite<SchemaDependency>(parent_id)->sequences.insert(
-          id);
-      }
-    } break;
-    case ObjectType::SecondaryIndex:
-    case ObjectType::InvertedIndex: {
-      const auto& index = basics::downCast<Index>(obj);
-      GetDependencyForWrite<RelationDependency>(index.GetRelationId())
-        ->indexes.insert(id);
-      for (auto tokenizer_id : index.GetTokenizers()) {
-        GetDependencyForWrite<TokenizerDependency>(tokenizer_id)
-          ->indexes.insert(id);
-      }
-      if (obj.GetType() == ObjectType::InvertedIndex) {
-        ModifyInvertedIndexDependencies(basics::downCast<InvertedIndex>(index),
-                                        id, EdgeAction::Add);
-      }
-    } break;
-    case ObjectType::Virtual:
-    case ObjectType::Column:
-    case ObjectType::CheckConstraint:
-      SDB_ASSERT(_in_load);
-      break;
-    case ObjectType::Invalid:
-    case ObjectType::Tombstone:
-      SDB_UNREACHABLE();
-  }
-}
-
-std::vector<std::shared_ptr<Database>> Snapshot::GetDatabases() const {
-  return _resolution_table.GetDatabaseIds() |
-         std::views::transform([&](ObjectId db_id) {
-           auto it = _objects.find(db_id);
-           SDB_ASSERT(it != _objects.end());
-           return basics::downCast<Database>(*it);
-         }) |
-         std::ranges::to<std::vector>();
-}
-
-std::vector<std::shared_ptr<Role>> Snapshot::GetRoles() const {
-  return _resolution_table.GetRoleIds() |
-         std::views::transform([&](ObjectId role_id) {
-           auto it = _objects.find(role_id);
-           SDB_ASSERT(it != _objects.end());
-           return basics::downCast<Role>(*it);
-         }) |
-         std::ranges::to<std::vector>();
-}
-
-std::vector<std::shared_ptr<Schema>> Snapshot::GetSchemas(
-  ObjectId db_id) const {
-  auto db_deps = GetDependency<DatabaseDependency>(db_id);
-  return db_deps->schemas | std::views::transform([&](ObjectId schema_id) {
-           auto it = _objects.find(schema_id);
-           SDB_ASSERT(it != _objects.end());
-           return basics::downCast<Schema>(*it);
-         }) |
-         std::ranges::to<std::vector>();
-}
-
-std::vector<std::shared_ptr<Object>> Snapshot::GetRelations(
-  ObjectId db_id, std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      return _resolution_table.GetRelationIds(schema_id) |
-             std::views::transform(
-               [&](ObjectId relation_id) -> std::shared_ptr<Object> {
-                 return GetObject(relation_id);
-               }) |
-             std::ranges::to<std::vector>();
-    })
-    .value_or(std::vector<std::shared_ptr<Object>>{});
-}
-
-std::vector<std::shared_ptr<Table>> Snapshot::GetTables(
-  ObjectId db_id, std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
-      return schema_deps->tables |
-             std::views::transform([&](ObjectId table_id) {
-               auto it = _objects.find(table_id);
-               SDB_ASSERT(it != _objects.end());
-               return basics::downCast<Table>(*it);
-             }) |
-             std::ranges::to<std::vector>();
-    })
-    .value_or(std::vector<std::shared_ptr<Table>>{});
-}
-
-std::vector<std::shared_ptr<PgSqlView>> Snapshot::GetViews(
-  ObjectId db_id, std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
-      return schema_deps->views | std::views::transform([&](ObjectId view_id) {
-               auto it = _objects.find(view_id);
-               SDB_ASSERT(it != _objects.end());
-               return basics::downCast<PgSqlView>(*it);
-             }) |
-             std::ranges::to<std::vector>();
-    })
-    .value_or(std::vector<std::shared_ptr<PgSqlView>>{});
-}
-
-std::vector<std::shared_ptr<Sequence>> Snapshot::GetSequences(
-  ObjectId db_id, std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
-      return schema_deps->sequences |
-             std::views::transform([&](ObjectId sequence_id) {
-               auto it = _objects.find(sequence_id);
-               SDB_ASSERT(it != _objects.end());
-               return basics::downCast<Sequence>(*it);
-             }) |
-             std::ranges::to<std::vector>();
-    })
-    .value_or(std::vector<std::shared_ptr<Sequence>>{});
-}
-
-std::vector<std::shared_ptr<PgSqlFunction>> Snapshot::GetFunctions(
-  ObjectId db_id, std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
-      return schema_deps->functions |
-             std::views::transform([&](ObjectId function_id) {
-               auto it = _objects.find(function_id);
-               SDB_ASSERT(it != _objects.end());
-               return basics::downCast<PgSqlFunction>(*it);
-             }) |
-             std::ranges::to<std::vector>();
-    })
-    .value_or(std::vector<std::shared_ptr<PgSqlFunction>>{});
-}
-
-std::vector<std::shared_ptr<Index>> Snapshot::GetIndexes(
-  ObjectId db_id, std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      std::vector<std::shared_ptr<Index>> result;
-      const auto& schema_deps = GetDependency<SchemaDependency>(schema_id);
-      for (const auto table_id : schema_deps->tables) {
-        const auto& table_deps = GetDependency<TableDependency>(table_id);
-        for (const auto index_id : table_deps->indexes) {
-          auto it = _objects.find(index_id);
-          SDB_ASSERT(it != _objects.end());
-          result.push_back(basics::downCast<Index>(*it));
-        }
-      }
-      for (const auto view_id : schema_deps->views) {
-        const auto& view_deps = GetDependency<ViewDependency>(view_id);
-        for (const auto index_id : view_deps->indexes) {
-          auto it = _objects.find(index_id);
-          SDB_ASSERT(it != _objects.end());
-          result.push_back(basics::downCast<Index>(*it));
-        }
-      }
-      return result;
-    })
-    .value_or(std::vector<std::shared_ptr<Index>>{});
-}
-
-void Snapshot::VisitRelations(
-  ObjectId db_id, std::string_view schema,
-  absl::FunctionRef<void(const Object&)> visitor) const {
-  auto schema_id =
-    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
-  if (!schema_id) {
-    return;
-  }
-  for (const auto relation_id : _resolution_table.GetRelationIds(*schema_id)) {
-    auto it = _objects.find(relation_id);
-    SDB_ASSERT(it != _objects.end());
-    visitor(basics::downCast<Object>(**it));
-  }
-}
-
-void Snapshot::VisitViews(
-  ObjectId db_id, std::string_view schema,
-  absl::FunctionRef<void(const PgSqlView&)> visitor) const {
-  auto schema_id =
-    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
-  if (!schema_id) {
-    return;
-  }
-  const auto& schema_deps = GetDependency<SchemaDependency>(*schema_id);
-  for (const auto view_id : schema_deps->views) {
-    auto it = _objects.find(view_id);
-    SDB_ASSERT(it != _objects.end());
-    visitor(basics::downCast<PgSqlView>(**it));
-  }
-}
-
-void Snapshot::VisitFunctions(
-  ObjectId db_id, std::string_view schema,
-  absl::FunctionRef<void(const PgSqlFunction&)> visitor) const {
-  auto schema_id =
-    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
-  if (!schema_id) {
-    return;
-  }
-  const auto& schema_deps = GetDependency<SchemaDependency>(*schema_id);
-  for (const auto function_id : schema_deps->functions) {
-    auto it = _objects.find(function_id);
-    SDB_ASSERT(it != _objects.end());
-    visitor(basics::downCast<PgSqlFunction>(**it));
-  }
-}
-
-void Snapshot::VisitIndexes(
-  ObjectId db_id, std::string_view schema,
-  absl::FunctionRef<void(const Index&)> visitor) const {
-  auto schema_id =
-    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
-  if (!schema_id) {
-    return;
-  }
-  const auto& schema_deps = GetDependency<SchemaDependency>(*schema_id);
-  for (const auto table_id : schema_deps->tables) {
-    const auto& table_deps = GetDependency<TableDependency>(table_id);
-    for (const auto index_id : table_deps->indexes) {
-      auto it = _objects.find(index_id);
-      SDB_ASSERT(it != _objects.end());
-      visitor(basics::downCast<Index>(**it));
-    }
-  }
-  for (const auto view_id : schema_deps->views) {
-    const auto& view_deps = GetDependency<ViewDependency>(view_id);
-    for (const auto index_id : view_deps->indexes) {
-      auto it = _objects.find(index_id);
-      SDB_ASSERT(it != _objects.end());
-      visitor(basics::downCast<Index>(**it));
-    }
-  }
-}
-
-std::vector<std::shared_ptr<Tokenizer>> Snapshot::GetTokenizers(
-  ObjectId db_id, std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      return _resolution_table.GetTokenizerIds(schema_id) |
-             std::views::transform(
-               [&](ObjectId tokenizer_id) -> std::shared_ptr<Tokenizer> {
-                 return GetObject<Tokenizer>(tokenizer_id);
-               }) |
-             std::ranges::to<std::vector>();
-    })
-    .value_or(std::vector<std::shared_ptr<Tokenizer>>{});
-}
-
-std::vector<std::shared_ptr<ForeignServer>> Snapshot::GetForeignServers(
-  ObjectId db_id) const {
-  return _resolution_table.GetForeignServerIds(db_id) |
-         std::views::transform(
-           [&](ObjectId server_id) -> std::shared_ptr<ForeignServer> {
-             return GetObject<ForeignServer>(server_id);
-           }) |
-         std::ranges::to<std::vector>();
-}
-
-std::vector<std::shared_ptr<PgSqlType>> Snapshot::GetTypes(
-  ObjectId db_id, std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      return _resolution_table.GetTypeIds(schema_id) |
-             std::views::transform(
-               [&](ObjectId type_id) -> std::shared_ptr<PgSqlType> {
-                 return GetObject<PgSqlType>(type_id);
-               }) |
-             std::ranges::to<std::vector>();
-    })
-    .value_or(std::vector<std::shared_ptr<PgSqlType>>{});
-}
-
-std::shared_ptr<Role> Snapshot::GetRole(std::string_view name) const {
-  auto id =
-    _resolution_table.ResolveObject<ResolveType::Role>(id::kInstance, name);
-  if (!id) {
-    return {};
-  }
-  auto role = GetObject<Role>(*id);
-  SDB_ASSERT(role);
-  return role;
-}
-
-std::shared_ptr<Database> Snapshot::GetDatabase(
-  std::string_view database) const {
-  return _resolution_table
-    .ResolveObject<ResolveType::Database>(id::kInstance, database)
-    .transform([&](ObjectId db_id) {
-      auto it = _objects.find(db_id);
-      SDB_ASSERT(it != _objects.end());
-      return basics::downCast<Database>(*it);
-    })
-    .value_or(nullptr);
-}
-
-std::shared_ptr<Schema> Snapshot::GetSchema(ObjectId db_id,
-                                            std::string_view schema) const {
-  return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-    .transform([&](ObjectId schema_id) {
-      auto it = _objects.find(schema_id);
-      SDB_ASSERT(it != _objects.end());
-      return basics::downCast<Schema>(*it);
-    })
-    .value_or(nullptr);
-}
-
-bool Snapshot::CheckSchemaEmptyDependency(ObjectId schema_id) const {
-  return GetDependency<SchemaDependency>(schema_id)->Empty();
-}
-
-const auth::RoleClosure& Snapshot::ClosureFor(ObjectId role) const {
-  if (const auto* rc = _role_closures.Find(role)) {
-    return *rc;
-  }
-  static const auth::RoleClosure kEmpty;
-  return kEmpty;
-}
-
-void Snapshot::RebuildRoleClosures() { _role_closures.Build(*this); }
-
-std::size_t Snapshot::RoleDependentCount(ObjectId role) const {
-  auto dep = _deps.TryGetDependency(role);
-  if (!dep) {
-    return 0;
-  }
-  return basics::downCast<const RoleDependency>(*dep)
-    .referencing_objects.size();
-}
-
-void Snapshot::RequireAccess(ObjectId role, const Object& object,
-                             AclMode need) const {
-  if (need == AclMode::NoRights || ClosureFor(role).Can(object, need)) {
+void RequireAccess(duckdb::ClientContext* context, ObjectId role,
+                   duckdb::CatalogType type, std::string_view name,
+                   const Permissions& perm, AclMode need) {
+  if (need == AclMode::NoRights ||
+      auth::ClosureFor(context, role)->Can(type, perm, need)) {
     return;
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(object.GetType()),
-            " ", object.GetName()));
+    ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(type), " ", name));
 }
 
-template<typename T>
-std::shared_ptr<T> Snapshot::EnforceRead(const AccessContext& ax,
-                                         std::shared_ptr<T> obj) const {
-  if (obj) {
-    RequireAccess(ax.role, *obj, ax.need);
-  }
-  return obj;
-}
-
-std::shared_ptr<PgSqlType> Snapshot::GetType(const AccessContext& ax,
-                                             ObjectId db_id,
-                                             std::string_view schema,
-                                             std::string_view name) const {
-  auto type =
-    _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-      .and_then([&](ObjectId schema_id) {
-        return _resolution_table.ResolveObject<ResolveType::Type>(schema_id,
-                                                                  name);
-      })
-      .transform(
-        [&](ObjectId type_id) { return GetObject<PgSqlType>(type_id); })
-      .value_or(nullptr);
-  return EnforceRead(ax, std::move(type));
-}
-
-std::shared_ptr<Object> Snapshot::GetRelation(const AccessContext& ax,
-                                              ObjectId db_id,
-                                              std::string_view schema,
-                                              std::string_view relation) const {
-  auto rel = _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-               .and_then([&](ObjectId schema_id) {
-                 return _resolution_table.ResolveObject<ResolveType::Relation>(
-                   schema_id, relation);
-               })
-               .transform([&](ObjectId relation_id) {
-                 auto it = _objects.find(relation_id);
-                 SDB_ASSERT(it != _objects.end());
-                 return basics::downCast<Object>(*it);
-               })
-               .value_or(nullptr);
-  return EnforceRead(ax, std::move(rel));
-}
-
-std::shared_ptr<PgSqlFunction> Snapshot::GetFunction(
-  const AccessContext& ax, ObjectId db_id, std::string_view schema,
-  std::string_view function) const {
-  auto fn = _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
-              .and_then([&](ObjectId schema_id) {
-                return _resolution_table.ResolveObject<ResolveType::Function>(
-                  schema_id, function);
-              })
-              .transform([&](ObjectId function_id) {
-                return GetObject<PgSqlFunction>(function_id);
-              })
-              .value_or(nullptr);
-  return EnforceRead(ax, std::move(fn));
-}
-
-std::shared_ptr<Tokenizer> Snapshot::GetTokenizer(const AccessContext& ax,
-                                                  ObjectId db_id,
-                                                  std::string_view schema,
-                                                  std::string_view name) const {
-  std::shared_ptr<Tokenizer> tok;
-  if (auto schema_id =
-        _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)) {
-    if (auto id = _resolution_table.ResolveObject<ResolveType::Tokenizer>(
-          *schema_id, name)) {
-      tok = GetObject<Tokenizer>(*id);
-    }
-  }
-  return EnforceRead(ax, std::move(tok));
-}
-
-std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
-  ObjectId db_id, std::string_view name) const {
-  auto id =
-    _resolution_table.ResolveObject<ResolveType::ForeignServer>(db_id, name);
-  if (!id) {
+TableInfoRef GetTable(const AccessContext& ax, ObjectId database_id,
+                      std::string_view schema, std::string_view name,
+                      Permissions* perm) {
+  const auto schema_id = catalog::FindSchemaId(ax.context, database_id, schema);
+  if (!schema_id.isSet()) {
     return nullptr;
   }
-  return GetObject<ForeignServer>(*id);
-}
-
-std::shared_ptr<ForeignServer> Snapshot::GetForeignServer(
-  std::string_view name) const {
-  // Server names are unique instance-wide (CreateForeignServer rejects a
-  // same-named server in any database), so the first match is the only match.
-  for (const auto& db : GetDatabases()) {
-    if (auto server = GetForeignServer(db->GetId(), name)) {
-      return server;
-    }
-  }
-  return nullptr;
-}
-
-std::shared_ptr<Table> Snapshot::GetTable(const AccessContext& ax,
-                                          ObjectId db_id,
-                                          std::string_view schema,
-                                          std::string_view table) const {
-  auto rel = GetRelation(NoAccessCheck(), db_id, schema, table);
-  if (!rel || rel->GetType() != ObjectType::Table) {
+  const auto* table =
+    catalog::Find<SereneDBTableEntry>(ax.context, schema_id, name);
+  if (table == nullptr) {
     return nullptr;
   }
-  return EnforceRead(ax, basics::downCast<Table>(std::move(rel)));
+  RequireAccess(ax.context, ax.role, duckdb::CatalogType::TABLE_ENTRY,
+                table->name.GetIdentifierName(), table->permissions, ax.need);
+  if (perm != nullptr) {
+    *perm = table->permissions;
+  }
+  return table->Definition();
 }
 
-std::shared_ptr<Sequence> Snapshot::GetSequence(const AccessContext& ax,
-                                                ObjectId db_id,
-                                                ObjectId schema_id,
-                                                std::string_view name) const {
-  std::shared_ptr<Sequence> seq;
-  if (auto id = _resolution_table.ResolveObject<ResolveType::Relation>(
-        schema_id, name)) {
-    auto obj = GetObject(*id);
-    if (obj && obj->GetType() == ObjectType::Sequence) {
-      seq = basics::downCast<Sequence>(std::move(obj));
+SequenceOwners CollectSequenceOwners(duckdb::ClientContext* context,
+                                     ObjectId database_id) {
+  SequenceOwners out;
+  catalog::Visit<SereneDBSequenceEntry>(
+    context, database_id, [&](const catalog::SereneDBSequenceEntry& sequence) {
+      const auto owner = sequence.GetOwnerTableId().isSet()
+                           ? sequence.GetOwnerTableId()
+                           : ObjectId{sequence.ParentSchema().oid};
+      out.by_owner[owner].push_back(ObjectId{sequence.oid});
+    });
+  for (auto& [owner, ids] : out.by_owner) {
+    std::ranges::sort(ids);
+  }
+  return out;
+}
+
+IndexOwners CollectIndexOwners(duckdb::ClientContext* context,
+                               ObjectId database_id) {
+  IndexOwners out;
+  catalog::VisitDefinitions<SereneDBIndexEntry>(
+    context, database_id,
+    [&](const IndexInfoRef& index, const catalog::Permissions&) {
+      out.by_relation[index->GetRelationId()].push_back(index);
+    });
+  for (auto& [relation, indexes] : out.by_relation) {
+    std::ranges::sort(indexes, {},
+                      [](const IndexInfoRef& index) { return index->GetId(); });
+  }
+  return out;
+}
+
+namespace {
+
+// Every table of one database, with the reverse index a cascade needs: the
+// tables of a schema. Read once per plan, because each answer is a walk of the
+// sets.
+struct DatabaseTables {
+  containers::FlatHashMap<ObjectId, HeldTable> by_id;
+  containers::FlatHashMap<ObjectId, std::vector<ObjectId>> by_schema;
+
+  const HeldTable* Find(ObjectId id) const {
+    const auto it = by_id.find(id);
+    return it == by_id.end() ? nullptr : &it->second;
+  }
+};
+
+DatabaseTables CollectDatabaseTables(duckdb::ClientContext* context,
+                                     ObjectId database_id) {
+  DatabaseTables out;
+  if (!database_id.isSet()) {
+    return out;
+  }
+  catalog::VisitDefinitions<SereneDBTableEntry>(
+    context, database_id,
+    [&](const TableInfoRef& table, const Permissions& perm) {
+      const auto id = catalog::IdOf(*table);
+      out.by_schema[catalog::ParentIdOf(*table)].push_back(id);
+      out.by_id.emplace(id, HeldTable{catalog::Clone(*table), perm});
+    });
+  return out;
+}
+
+// The indexes of one relation the plan does not take with it.
+std::vector<IndexInfoRef> SurvivingIndexes(std::vector<IndexInfoRef> indexes,
+                                           const DropPlan& plan) {
+  std::erase_if(indexes, [&](const IndexInfoRef& index) {
+    return std::ranges::any_of(plan.index_drops,
+                               [&](const IndexInfoRef& dropped) {
+                                 return dropped->GetId() == index->GetId();
+                               });
+  });
+  return indexes;
+}
+
+// The database everything a cascade from `seed` can reach lives in. Every
+// object is an entry, so the seed's own entry names the schema it hangs off and
+// the schema names the database; a database seed names itself.
+ObjectId CascadeDatabase(duckdb::ClientContext* context, ObjectId seed) {
+  if (context == nullptr) {
+    return {};
+  }
+  if (const auto under_schema = catalog::SchemaDatabaseId(context, seed);
+      under_schema.isSet()) {
+    return under_schema;
+  }
+  if (catalog::FindDatabase(context, seed)) {
+    return seed;
+  }
+  if (auto entry = catalog::LookupEntryById(*context, seed)) {
+    return catalog::SchemaDatabaseId(context, ParentIdOf(*entry));
+  }
+  return {};
+}
+
+// The victim closure of one DROP, walked over the pre-mutation catalog.
+//
+// The fan-out is duckdb's: DependencyView is ScanDependents, and what each
+// dependent is comes off its own entry. What duckdb cannot say is here and
+// only here -- a table that names the victim is usually rewritten rather than
+// dropped, and DependencyDependentFlags has two bits and CheckDropDependencies
+// answers with a set of entries to drop, with no notion of a surviving one.
+// The plan also has to reach containment no edge records, and come out in the
+// order CommitDropPlan and the drop tasks consume it.
+class DropCascade {
+ public:
+  DropCascade(duckdb::ClientContext* context, ObjectId seed)
+    : _context{context}, _deps{context}, _auto_drops{seed}, _stack{seed} {
+    // Read off the sets once: each of these is a walk of the schema sets, and a
+    // cascade that cannot reach one leaves every DEFAULT naming it -- or every
+    // index over it -- in place.
+    const auto database_id = CascadeDatabase(context, seed);
+    if (!database_id.isSet()) {
+      return;
+    }
+    _sequences = CollectSequenceOwners(context, database_id);
+    _indexes = CollectIndexOwners(context, database_id);
+    _tables = CollectDatabaseTables(context, database_id);
+    catalog::VisitFunctions(
+      context, database_id, [&](const duckdb::MacroCatalogEntry& function) {
+        _functions[ObjectId{function.ParentSchema().oid}].push_back(
+          ObjectId{function.oid});
+      });
+  }
+
+  DropPlan Run() &&;
+
+ private:
+  // AUTO/INTERNAL dep. Tag closure, queue for walk (dedup via _visited).
+  void EmitAutoDrop(ObjectId id) {
+    _auto_drops.insert(id);
+    if (_visited.insert(id).second) {
+      _stack.push_back(id);
     }
   }
-  return EnforceRead(ax, std::move(seq));
-}
 
-bool Snapshot::HasIndexes(ObjectId relation_id) const {
-  return !GetDependency<RelationDependency>(relation_id)->indexes.empty();
-}
-
-std::shared_ptr<Object> Snapshot::GetObject(ObjectId id) const {
-  auto it = _objects.find(id);
-  if (it == _objects.end()) {
-    return nullptr;
-  }
-  return *it;
-}
-
-std::vector<std::shared_ptr<Index>> Snapshot::GetIndexesByRelation(
-  ObjectId relation_id) const {
-  auto relation_deps = GetDependency<RelationDependency>(relation_id);
-  return relation_deps->indexes | std::views::transform([&](auto index_id) {
-           return GetObject<Index>(index_id);
-         }) |
-         std::ranges::to<std::vector>();
-}
-
-template<ResolveType Type>
-std::optional<ObjectId> Snapshot::GetObjectId(ObjectId parent_id,
-                                              std::string_view name) const {
-  return _resolution_table.ResolveObject<Type>(parent_id, name);
-}
-
-std::shared_ptr<Database> Snapshot::GetDatabase(ObjectId database) const {
-  auto obj = GetObject(database);
-  if (!obj) {
-    return nullptr;
-  }
-  return basics::downCast<Database>(obj);
-}
-
-template<ResolveType Type>
-void Snapshot::ReplaceObject(ObjectId parent_id, std::string_view old_name,
-                             std::shared_ptr<Object> new_object) {
-  if (old_name != new_object->GetName()) {
-    auto removed = _resolution_table.RemoveObject<Type>(parent_id, old_name);
-    SDB_ASSERT(removed);
-    if (!_resolution_table.AddObject<Type>(parent_id, new_object->GetName(),
-                                           new_object->GetId(), false))
-      [[unlikely]] {
-      ThrowDuplicateName<Type>(new_object->GetName());
+  // A view or a function the cascade takes whole. The parent and the name come
+  // off the entry now, in the database the session is connected to -- which is
+  // the one holding everything a cascade can reach.
+  void EmitEntryDrop(const duckdb::CatalogEntry& entry) {
+    const auto id = IdOf(entry);
+    if (_auto_drops.contains(id) || !_visited.insert(id).second) {
+      return;
     }
-  } else {
-    // Name unchanged, but must refresh the string_view to point to new
-    // object's _name
-    bool ok = _resolution_table.AddObject<Type>(
-      parent_id, new_object->GetName(), new_object->GetId(), true);
-    SDB_ASSERT(ok);
+    _plan.entry_drops.push_back({ParentIdOf(entry), id,
+                                 std::string{entry.name.GetIdentifierName()},
+                                 catalog::KindOf(entry.type)});
+    _stack.push_back(id);
   }
 
-  auto it = _objects.find(new_object->GetId());
-  SDB_ASSERT(it != _objects.end());
-  SDB_ASSERT((*it)->GetId() == new_object->GetId());
-  auto old_object = *it;
-  ModifyRoleDependencies(*old_object, EdgeAction::Delete);
-  // Refresh reverse-edges if the object's body changed. Replaces of
-  // objects without body (Sequence, ...) are pure name/value
-  // swaps and need no edge fixups.
-  switch (new_object->GetType()) {
-    case ObjectType::Table:
-      ModifyTableDependencies(parent_id, basics::downCast<Table>(*old_object),
-                              EdgeAction::Delete);
-      break;
-    case ObjectType::View:
-      ModifyViewDependencies(parent_id,
-                             basics::downCast<PgSqlView>(*old_object),
-                             RefKinds::All, EdgeAction::Delete);
-      break;
-    case ObjectType::Function:
-      ModifyFunctionDependencies(parent_id,
-                                 basics::downCast<PgSqlFunction>(*old_object),
-                                 EdgeAction::Delete);
-      break;
-    default:
-      break;
+  // Tokenizer->index, column->index etc. -- cross-tree index drop with
+  // a recovery anchor written in CommitDropPlan.
+  void EmitCascadeIndexDrop(IndexInfoRef index) {
+    if (!index) {
+      return;
+    }
+    const auto id = index->GetId();
+    if (_auto_drops.contains(id) || !_visited.insert(id).second) {
+      return;
+    }
+    _plan.index_drops.push_back(std::move(index));
   }
-  const_cast<std::shared_ptr<Object>&>(*it) = new_object;
-  ModifyRoleDependencies(*new_object, EdgeAction::Add);
-  switch (new_object->GetType()) {
-    case ObjectType::Table: {
-      const auto& table = basics::downCast<Table>(*new_object);
-      for (const auto& c : table.Columns()) {
-        if (!_objects.contains(c.GetId())) {
-          _objects.insert(std::make_shared<Column>(c));
+
+  // The index of a relation whose entry is the object. It is an AUTO drop --
+  // it goes because its relation does -- but no drop task's subtree carries it,
+  // so the plan has to name it.
+  void EmitOwnedIndexDrop(const IndexInfoRef& index) {
+    const auto id = index->GetId();
+    if (std::ranges::none_of(
+          _plan.owned_index_drops,
+          [&](const IndexInfoRef& listed) { return listed->GetId() == id; })) {
+      _plan.owned_index_drops.push_back(index);
+    }
+  }
+
+  // The slot a surviving table's next definition is built in, or null when the
+  // cascade takes the table itself.
+  TableRewrite* RewriteSlot(ObjectId table_id) {
+    if (!table_id.isSet() || _auto_drops.contains(table_id)) {
+      return nullptr;
+    }
+    auto& slot = _plan.table_rewrites[table_id];
+    if (slot.info) {
+      return &slot;
+    }
+    const auto* held = _tables.Find(table_id);
+    SDB_ASSERT(held != nullptr);
+    if (held == nullptr) {
+      return nullptr;
+    }
+    slot.schema_id = catalog::ParentIdOf(*held->first);
+    slot.id = table_id;
+    slot.before = held->first;
+    slot.perm = held->second;
+    slot.info = held->first;
+    return &slot;
+  }
+
+  // Held back rather than applied here: a column drop is the one cascade effect
+  // that reshapes the store table, so it lands in its own definition version
+  // once the walk is done (see Run) and the shape-preserving half stays
+  // separately durable.
+  void EmitCascadeColumnDrop(ObjectId table_id, ObjectId col_id) {
+    if (RewriteSlot(table_id) == nullptr) {
+      return;
+    }
+    _column_drops[table_id].push_back(col_id);
+    // PG's column->index cascade: any index that covers col_id goes too.
+    const auto it = _indexes.by_relation.find(table_id);
+    if (it == _indexes.by_relation.end()) {
+      return;
+    }
+    for (const auto& index : it->second) {
+      if (index->ReferencesColumn(col_id)) {
+        EmitCascadeIndexDrop(index);
+      }
+    }
+  }
+
+  // What the drop of `self` does to a table that names it. The four rewrites
+  // are read off the table's own definition -- which column, which constraint,
+  // and therefore which one -- so nothing about the cascade is written down.
+  void ApplyToTable(const duckdb::CreateTableInfo& table, ObjectId self) {
+    const auto table_id = catalog::IdOf(table);
+    for (const auto& reference : TableReferences(table)) {
+      if (reference.referenced != self) {
+        continue;
+      }
+      switch (reference.kind) {
+        case TableRefKind::ForeignKey:
+          if (auto* slot = RewriteSlot(table_id)) {
+            slot->info = catalog::DropForeignKeysReferencing(*slot->info, self);
+          }
+          break;
+        case TableRefKind::Check:
+          if (auto* slot = RewriteSlot(table_id)) {
+            slot->info = catalog::DropConstraint(*slot->info, reference.sub_id);
+          }
+          break;
+        case TableRefKind::ColumnDefault:
+          if (auto* slot = RewriteSlot(table_id)) {
+            slot->info =
+              catalog::DropColumnDefault(*slot->info, reference.sub_id);
+          }
+          break;
+        case TableRefKind::ColumnType:
+          EmitCascadeColumnDrop(table_id, reference.sub_id);
+          break;
+      }
+    }
+  }
+
+  void Apply(const catalog::Dependent& dependent, ObjectId self) {
+    switch (dependent.type) {
+      using enum duckdb::CatalogType;
+      case VIEW_ENTRY:
+      case MACRO_ENTRY:
+      case TABLE_MACRO_ENTRY:
+        EmitEntryDrop(*dependent.entry);
+        return;
+      case INDEX_ENTRY: {
+        const auto* dropped =
+          _context == nullptr
+            ? nullptr
+            : catalog::FindSession<SereneDBIndexEntry>(*_context, dependent.id);
+        EmitCascadeIndexDrop(dropped != nullptr ? dropped->Definition()
+                                                : nullptr);
+      }
+        return;
+      case TABLE_ENTRY: {
+        // The one dependent whose edges are not all the same thing: a column's
+        // declared type, a column's DEFAULT, a CHECK and a foreign key each do
+        // something different, and each names a part of the table rather than
+        // the table. The index-name wrapper shares this slot and is nobody's
+        // dependent.
+        const auto* held = _tables.Find(dependent.id);
+        if (held != nullptr) {
+          ApplyToTable(*held->first, self);
         }
+        return;
       }
-      for (const auto& c : table.CheckConstraints()) {
-        if (!_objects.contains(c.GetId())) {
-          _objects.insert(std::make_shared<CheckConstraint>(c));
-        }
-      }
-      ModifyTableDependencies(parent_id, table, EdgeAction::Add);
-    } break;
-    case ObjectType::View:
-      ModifyViewDependencies(parent_id,
-                             basics::downCast<PgSqlView>(*new_object),
-                             RefKinds::All, EdgeAction::Add);
-      break;
-    case ObjectType::Function:
-      ModifyFunctionDependencies(parent_id,
-                                 basics::downCast<PgSqlFunction>(*new_object),
-                                 EdgeAction::Add);
-      break;
-    default:
-      break;
+      default:
+        // A schema, a type, a sequence, a tokenizer, a database, a foreign
+        // server: each references nothing but roles, and DROP ROLE is refused
+        // over them rather than cascading.
+        return;
+    }
   }
-}
 
-template<typename T>
-std::shared_ptr<const T> Snapshot::GetDependency(ObjectId id) const {
-  return basics::downCast<const T>(_deps.GetDependency(id));
-}
+  duckdb::ClientContext* const _context;
+  SequenceOwners _sequences;
+  IndexOwners _indexes;
+  DatabaseTables _tables;
+  containers::FlatHashMap<ObjectId, std::vector<ObjectId>> _functions;
+  const catalog::DependencyView _deps;
+  DropPlan _plan;
+  containers::FlatHashSet<ObjectId> _auto_drops;
+  containers::FlatHashMap<ObjectId, std::vector<ObjectId>> _column_drops;
+  std::vector<ObjectId> _stack;
+  containers::FlatHashSet<ObjectId> _visited;  // push-dedup
+};
 
-template<typename T>
-std::shared_ptr<T> Snapshot::GetDependencyForWrite(ObjectId id) {
-  auto dep = basics::downCast<T>(_deps.GetDependency(id)->Clone());
-  _deps.SetDependency(id, dep);
-  return dep;
-}
-
-// Cross-tree fixups for DROP seed. Composition cleanup is async.
-DropPlan Snapshot::ComputeDropPlan(ObjectId seed) const {
-  auto lookup = [this](ObjectId id) { return GetObject(id); };
-  auto indexes_using_col = [this](ObjectId table_id, ObjectId col_id) {
-    std::vector<ObjectId> result;
-    auto td = GetDependency<TableDependency>(table_id);
-    SDB_ASSERT(td);
-    for (auto idx_id : td->indexes) {
-      auto idx = GetObject<Index>(idx_id);
-      SDB_ASSERT(idx);
-      if (idx->ReferencesColumn(col_id)) {
-        result.push_back(idx_id);
+DropPlan DropCascade::Run() && {
+  while (!_stack.empty()) {
+    const auto cur = _stack.back();
+    _stack.pop_back();
+    // Whether the removal of `cur` carries its own subtree: a relation with a
+    // store table has a drop task describing everything under it, while every
+    // other kind leaves a single record with nothing attached.
+    const bool carries_subtree = _tables.Find(cur) != nullptr;
+    // The structural children are the AUTO/INTERNAL half of the cascade:
+    // everything under the object goes with it, and the seed's own drop task is
+    // what removes it, so tagging the closure is all the plan needs.
+    if (const auto it = _tables.by_schema.find(cur);
+        it != _tables.by_schema.end()) {
+      for (const auto child : it->second) {
+        EmitAutoDrop(child);
       }
     }
-    return result;
-  };
-  auto dep_lookup = [this](ObjectId id) { return _deps.TryGetDependency(id); };
-  return DropEmitter{seed, lookup, indexes_using_col, dep_lookup}.ComputePlan();
+    if (const auto it = _functions.find(cur); it != _functions.end()) {
+      for (const auto child : it->second) {
+        EmitAutoDrop(child);
+      }
+    }
+    // And the children containment cannot hold. They are AUTO drops like the
+    // ones above -- the parent's own removal takes them -- but their dependents
+    // are reached from here and nowhere else, and an index under a relation
+    // whose entry IS the object has to be named by the plan as well.
+    if (const auto it = _sequences.by_owner.find(cur);
+        it != _sequences.by_owner.end()) {
+      for (const auto sequence_id : it->second) {
+        EmitAutoDrop(sequence_id);
+      }
+    }
+    if (const auto it = _indexes.by_relation.find(cur);
+        it != _indexes.by_relation.end()) {
+      for (const auto& index : it->second) {
+        if (!carries_subtree) {
+          EmitOwnedIndexDrop(index);
+        }
+        EmitAutoDrop(index->GetId());
+      }
+    }
+    // Materialized rather than borrowed: the dependents come out of a
+    // CatalogSet whose lock is held only for the scan, and Apply runs arbitrary
+    // lookups.
+    for (const auto& dependent : _deps.Dependents(cur)) {
+      Apply(dependent, cur);
+    }
+  }
+
+  // Auto drops run via the DropTask
+  std::erase_if(_plan.entry_drops,
+                [&](const EntryDrop& d) { return _auto_drops.contains(d.id); });
+  std::erase_if(_plan.index_drops, [&](const IndexInfoRef& index) {
+    return _auto_drops.contains(index->GetId());
+  });
+  absl::erase_if(_plan.table_rewrites, [&](const auto& kv) {
+    return _auto_drops.contains(kv.first);
+  });
+
+  // The column drops go on last, on top of whatever the walk left, so the
+  // shape-preserving definition stays available as its own version. Last is
+  // also the safest order for the mutations themselves: a CHECK a column drop
+  // takes with it can no longer be dropped twice.
+  for (auto& [table_id, columns] : _column_drops) {
+    auto it = _plan.table_rewrites.find(table_id);
+    if (it == _plan.table_rewrites.end() || !it->second.info) {
+      continue;
+    }
+    auto& slot = it->second;
+    auto reshaped = slot.info;
+    for (auto col_id : columns) {
+      reshaped = catalog::DropColumn(*reshaped, col_id);
+    }
+    slot.reshaped = std::move(reshaped);
+  }
+  // The indexes a rewritten table keeps: a column removal is refused by the
+  // store while one of them covers a column past the one going away, so the
+  // recording pass drops and recreates them around it.
+  for (auto& [table_id, rewrite] : _plan.table_rewrites) {
+    rewrite.surviving_indexes = SurvivingIndexes(_indexes.Of(table_id), _plan);
+  }
+  return std::move(_plan);
 }
 
-DropPlan Snapshot::ComputeDropPlanRestrict(ObjectId seed, bool cascade,
-                                           std::string_view kind,
-                                           std::string_view name) const {
-  auto plan = ComputeDropPlan(seed);
+}  // namespace
+
+DropPlan ComputeDropPlan(duckdb::ClientContext* context, ObjectId seed) {
+  return DropCascade{context, seed}.Run();
+}
+
+DropPlan ComputeDropPlanRestrict(duckdb::ClientContext* context, ObjectId seed,
+                                 bool cascade, std::string_view kind,
+                                 std::string_view name) {
+  auto plan = ComputeDropPlan(context, seed);
   if (!cascade && plan.IsCascade()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
       ERR_MSG("cannot drop ", kind, " ", name,
               " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*this, kind, name)),
+      ERR_DETAIL(plan.FormatDependentsDetail(kind, name)),
       ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
   }
   return plan;
 }
 
-// Plan for ALTER TABLE DROP COLUMN: rewrite the owning table without the
-// column and cascade-drop every index covering it (PG column->index cascade).
-// The column has no dependency edges of its own, so this is built directly
-// rather than seeded into DropEmitter (which walks a seed's dependents).
-DropPlan Snapshot::ComputeColumnDropPlan(ObjectId table_id,
-                                         ObjectId col_id) const {
+DropPlan ComputeColumnDropPlan(duckdb::ClientContext* context,
+                               const TableInfoRef& table,
+                               const Permissions& perm, ObjectId col_id) {
   DropPlan plan;
-  auto table = GetObject<Table>(table_id);
-  SDB_ASSERT(table);
+  const auto table_id = catalog::IdOf(*table);
   auto& rw = plan.table_rewrites[table_id];
-  rw.schema_id = table->GetParentId();
-  rw.table = table->DropColumn(col_id);
-  if (auto td = GetDependency<TableDependency>(table_id)) {
-    for (auto idx_id : td->indexes) {
-      auto idx = GetObject<Index>(idx_id);
-      if (idx && idx->ReferencesColumn(col_id)) {
-        plan.index_drops.push_back(idx_id);
-      }
+  rw.schema_id = catalog::ParentIdOf(*table);
+  rw.id = table_id;
+  rw.before = table;
+  rw.perm = perm;
+  rw.info = table;
+  // Nothing but the column changes, so there is no shape-preserving half to
+  // make durable ahead of the data.
+  rw.reshaped = catalog::DropColumn(*table, col_id);
+  auto indexes =
+    catalog::RelationIndexes(context, catalog::ParentIdOf(*table), table_id);
+  for (auto& index : indexes) {
+    if (index->ReferencesColumn(col_id)) {
+      plan.index_drops.push_back(index);
     }
   }
+  rw.surviving_indexes = SurvivingIndexes(indexes, plan);
   return plan;
 }
 
-std::vector<PgDependEdge> Snapshot::CollectPgDependEdges(ObjectId db_id) const {
-  std::vector<PgDependEdge> edges;
-  auto attnum = [](const Table& t, Column::Id col) -> int32_t {
-    auto pos = t.ColumnPosById(col);
-    return pos == t.Columns().size() ? 0 : static_cast<int32_t>(pos) + 1;
-  };
-  auto attnum_of = [&](ObjectId col_id) -> int32_t {
-    auto col = GetObject(col_id);
-    if (!col) {
-      return 0;
-    }
-    auto table = GetObject<Table>(col->GetParentId());
-    return table ? attnum(*table, col_id) : 0;
-  };
-  auto emit = [&](ObjectId dependent, int32_t dependent_sub,
-                  DependClass dependent_class, ObjectId referenced,
-                  int32_t referenced_sub, DependClass referenced_class,
-                  DependType deptype) {
-    edges.push_back({dependent, dependent_sub, dependent_class, referenced,
-                     referenced_sub, referenced_class, deptype});
-  };
-  for (const auto& obj : _objects) {
-    if (GetDatabaseId(*obj) != db_id) {
-      continue;
-    }
-    auto ref = obj->GetId();
-    switch (obj->GetType()) {
-      case ObjectType::Table:
-      case ObjectType::View:
-        emit(ref, 0, DependClass::Relation, obj->GetParentId(), 0,
-             DependClass::Namespace, DependType::Normal);
-        break;
-      case ObjectType::Sequence:
-        if (!basics::downCast<const Sequence>(*obj).GetOwnerTableId().isSet()) {
-          emit(ref, 0, DependClass::Relation, obj->GetParentId(), 0,
-               DependClass::Namespace, DependType::Normal);
-        }
-        break;
-      case ObjectType::Function:
-        emit(ref, 0, DependClass::Proc, obj->GetParentId(), 0,
-             DependClass::Namespace, DependType::Normal);
-        break;
-      case ObjectType::Type:
-        emit(ref, 0, DependClass::Type, obj->GetParentId(), 0,
-             DependClass::Namespace, DependType::Normal);
-        break;
-      default:
-        break;
-    }
-    auto dep = _deps.TryGetDependency(ref);
-    if (!dep) {
-      continue;
-    }
-    switch (obj->GetType()) {
-      case ObjectType::Table:
-      case ObjectType::View: {
-        const auto& rel = basics::downCast<const RelationDependency>(*dep);
-        const Table* table = obj->GetType() == ObjectType::Table
-                               ? &basics::downCast<const Table>(*obj)
-                               : nullptr;
-        ObjectId pk_index = table ? table->PKIndexId() : ObjectId{};
-        for (auto idx : rel.indexes) {
-          if (idx == pk_index) {
-            continue;
-          }
-          auto index = GetObject<Index>(idx);
-          if (index && index->ReferencesColumn(Column::kGeneratedPKId)) {
-            continue;
-          }
-          bool emitted = false;
-          if (table && index) {
-            for (auto col : index->GetColumns()) {
-              if (auto sub = attnum(*table, col)) {
-                emit(idx, 0, DependClass::Relation, ref, sub,
-                     DependClass::Relation, DependType::Auto);
-                emitted = true;
-              }
-            }
-          }
-          if (!emitted) {
-            emit(idx, 0, DependClass::Relation, ref, 0, DependClass::Relation,
-                 DependType::Auto);
-          }
-        }
-        for (auto fn : rel.functions) {
-          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Relation,
-               DependType::Normal);
-        }
-        if (table) {
-          for (const auto& fk : table->ForeignKeys()) {
-            if (!fk.referenced_table.isSet()) {
-              continue;
-            }
-            auto reft = GetObject<Table>(fk.referenced_table);
-            for (auto rc : fk.referenced_columns) {
-              emit(fk.id, 0, DependClass::Constraint, fk.referenced_table,
-                   reft ? attnum(*reft, rc) : 0, DependClass::Relation,
-                   DependType::Normal);
-            }
-          }
-          for (const auto& col : table->Columns()) {
-            if (col.GetId() == Column::kGeneratedPKId) {
-              continue;
-            }
-            if (!(col.expr && col.expr->HasExpr())) {
-              continue;
-            }
-            if (auto sub = attnum(*table, col.GetId())) {
-              emit(col.GetId(), 0, DependClass::Attrdef, ref, sub,
-                   DependClass::Relation, DependType::Auto);
-            }
-          }
-        }
-        for (auto view : rel.views) {
-          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
-               DependType::Normal);
-        }
-        if (obj->GetType() == ObjectType::View) {
-          emit(ref, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
-               DependType::Internal);
-        }
-      } break;
-      case ObjectType::Sequence: {
-        const auto& sd = basics::downCast<const SequenceDependency>(*dep);
-        for (auto fn : sd.functions) {
-          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Relation,
-               DependType::Normal);
-        }
-        for (auto view : sd.views) {
-          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Relation,
-               DependType::Normal);
-        }
-        for (auto col : sd.column_defaults) {
-          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Relation,
-               DependType::Normal);
-        }
-      } break;
-      case ObjectType::Type: {
-        const auto& ty = basics::downCast<const PgSqlTypeDependency>(*dep);
-        for (auto col : ty.column_types) {
-          auto c = GetObject(col);
-          if (!c) {
-            continue;
-          }
-          emit(c->GetParentId(), attnum_of(col), DependClass::Relation, ref, 0,
-               DependClass::Type, DependType::Normal);
-        }
-        for (auto fn : ty.functions) {
-          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Type,
-               DependType::Normal);
-        }
-        for (auto view : ty.views) {
-          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Type,
-               DependType::Normal);
-        }
-        for (auto col : ty.column_defaults) {
-          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Type,
-               DependType::Normal);
-        }
-      } break;
-      case ObjectType::Function: {
-        const auto& fnd = basics::downCast<const PgSqlFunctionDependency>(*dep);
-        for (auto fn : fnd.functions) {
-          emit(fn, 0, DependClass::Proc, ref, 0, DependClass::Proc,
-               DependType::Normal);
-        }
-        for (auto view : fnd.views) {
-          emit(view, 0, DependClass::Rewrite, ref, 0, DependClass::Proc,
-               DependType::Normal);
-        }
-        for (auto col : fnd.column_defaults) {
-          emit(col, 0, DependClass::Attrdef, ref, 0, DependClass::Proc,
-               DependType::Normal);
-        }
-      } break;
-      default:
-        break;
-    }
+bool CheckSchemaEmptyDependency(duckdb::ClientContext* context,
+                                ObjectId schema_id) {
+  bool empty = true;
+  const auto database_id = catalog::SchemaDatabaseId(context, schema_id);
+  if (!database_id.isSet()) {
+    return empty;
   }
-  return edges;
+  catalog::VisitDefinitions<SereneDBTableEntry>(
+    context, database_id, [&](const TableInfoRef& table, const Permissions&) {
+      empty &= catalog::ParentIdOf(*table) != schema_id;
+    });
+  catalog::VisitFunctions(
+    context, database_id, [&](const duckdb::MacroCatalogEntry& function) {
+      empty &= ObjectId{function.ParentSchema().oid} != schema_id;
+    });
+  return empty;
 }
 
-void Snapshot::CommitDropPlan(CatalogStore::WriteContext& ctx,
-                              const DropPlan& plan) const {
-  duckdb::MemoryStream stream;
-  // Store-side index drops precede the column ALTERs below: a covering
-  // index must be gone before its column can be dropped, and enforcement
-  // (UNIQUE) must stop the moment the drop commits. The async task only
-  // sweeps index storage and definitions.
-  for (auto idx_id : plan.index_drops) {
-    if (auto idx = GetObject<Index>(idx_id)) {
-      ctx.WriteTombstone(idx->GetRelationId(), idx_id);
-      ctx.DropStoreIndex(idx_id);
-    }
+void CommitDropPlan(duckdb::ClientContext* context,
+                    CatalogStore::WriteContext& ctx, DropPlan& plan) {
+  // Store-side index drops precede the column ALTERs below: a covering index
+  // must be gone before its column can be dropped, and enforcement (UNIQUE)
+  // must stop the moment the drop commits. The async task only sweeps index
+  // storage and definitions.
+  const auto drop_index = [&](const IndexInfoRef& index) {
+    const auto db_id = catalog::SchemaDatabaseId(context, index->GetParentId());
+    ctx.catalog().DropPrepare({.parent_id = index->GetRelationId(),
+                               .type = duckdb::CatalogType::INDEX_ENTRY,
+                               .inverted = index->IsInverted(),
+                               .id = index->GetId(),
+                               .database_id = db_id,
+                               .schema_id = index->GetParentId()});
+    ctx.store().DropIndex(db_id, index->GetRelationId(), index->GetName());
+  };
+  for (const auto& index : plan.index_drops) {
+    drop_index(index);
   }
-  for (const auto& [tid, rw] : plan.table_rewrites) {
-    ctx.PutDefinition(rw.schema_id, ObjectType::Table, tid,
-                      catalog::SerializeObject(*rw.table, stream));
+  for (const auto& index : plan.owned_index_drops) {
+    drop_index(index);
+  }
+  for (auto& [tid, rw] : plan.table_rewrites) {
+    if (!rw.info) {
+      continue;
+    }
+    // One record: the cascade's removals and the new shape of the table that
+    // survives them are one decision, and the log position is what tells boot
+    // whether the rows caught up with it.
+    const auto final_table =
+      NextTableVersion(context, tid, rw.schema_id, rw.Final());
+    // A dropped column's grants go with it. Ids are never reissued, so a
+    // leftover entry would name a column no reader can resolve while still
+    // holding its grantee's role dependency open.
+    std::erase_if(rw.perm.column_acl, [&](const auto& granted) {
+      return catalog::ColumnById(*final_table, ObjectId{granted.catalog_oid}) ==
+             nullptr;
+    });
+    ctx.catalog().PutTable(*final_table, wal::PutMode::Replace, rw.perm);
+    rw.published = final_table;
     // Cascades can drop columns of surviving tables (e.g. a column whose
     // dependency lived in the dropped schema) -- the store table follows.
-    if (rw.table->GetEngine() != TableEngine::Transactional ||
-        rw.table->Tombstoned()) {
+    if (catalog::TableEngineOf(*final_table) != TableEngine::Transactional ||
+        !rw.before || !rw.reshaped) {
       continue;
     }
-    auto old_table = GetObject<Table>(tid);
-    if (!old_table) {
+    const auto& old_info = *rw.before;
+    const auto db_id = catalog::SchemaDatabaseId(context, rw.schema_id);
+    if (final_table->columns.LogicalColumnCount() == 0) {
+      // Dropping the last column is refused by ALTER; rebuild the rows instead
+      // (PG keeps the zero-column table).
+      ctx.store().DropTable(db_id, tid);
+      ctx.store().CreateTable(db_id, catalog::IdOf(*final_table));
       continue;
     }
-    auto schema_obj = GetObject<Schema>(rw.schema_id);
-    SDB_ASSERT(schema_obj);
-    auto database = GetObject<Database>(schema_obj->GetParentId());
-    SDB_ASSERT(database);
-    auto store_name = StoreTableName(database->GetName(), schema_obj->GetName(),
-                                     old_table->GetName());
-    for (const auto& fk : old_table->ForeignKeys()) {
-      auto kept = absl::c_any_of(rw.table->ForeignKeys(), [&](const auto& f) {
-        return f.referenced_table == fk.referenced_table &&
-               f.columns == fk.columns;
-      });
-      if (kept) {
-        continue;
-      }
-      if (auto referenced = ComposeStoreTableName(fk.referenced_table)) {
-        ctx.DropStoreForeignKey(*referenced, store_name);
-        ctx.DropStoreForeignKey(store_name, *referenced);
-      }
-    }
-    auto rewritten =
-      MakeStoreTableDef(database->GetName(), schema_obj->GetName(), *rw.table);
-    if (rewritten.columns.empty()) {
-      // Dropping the last column is refused by ALTER; recreate instead
-      // (PG keeps the zero-column table). TODO(M2): rows must survive
-      // this once the store tables hold the data.
-      ctx.DropStoreTable(store_name);
-      ctx.CreateStoreTable(std::move(rewritten));
-      continue;
-    }
-    std::vector<std::string> dropped_columns;
-    for (const auto& old_col : old_table->Columns()) {
-      if (old_col.GetId() == Column::kGeneratedPKId) {
-        continue;
-      }
-      auto it = std::ranges::find_if(rw.table->Columns(), [&](const auto& c) {
-        return c.GetId() == old_col.GetId();
-      });
-      if (it == rw.table->Columns().end()) {
-        dropped_columns.emplace_back(old_col.GetName());
+    std::vector<std::pair<std::string, ObjectId>> dropped_columns;
+    for (const auto& column : old_info.columns.Logical()) {
+      const ObjectId column_id{column.CatalogOid()};
+      if (catalog::ColumnById(*rw.reshaped, column_id) == nullptr) {
+        dropped_columns.emplace_back(column.Name().GetIdentifierName(),
+                                     column_id);
       }
     }
     if (dropped_columns.empty()) {
       continue;
     }
-    // Surviving store indexes block the ALTER whenever they cover a
-    // column positioned after the dropped one; recreate them around the
-    // drop (data lives in the rows / iresearch, so rebuilds are cheap
-    // and inverted instances carry no state of their own).
-    std::vector<std::shared_ptr<Index>> surviving;
-    if (auto table_deps = GetDependency<TableDependency>(tid)) {
-      for (auto idx_id : table_deps->indexes) {
-        if (std::ranges::find(plan.index_drops, idx_id) !=
-            plan.index_drops.end()) {
-          continue;
-        }
-        if (auto idx = GetObject<Index>(idx_id)) {
-          surviving.push_back(std::move(idx));
-        }
+    // A CHECK the column drop takes with it goes from the store table first:
+    // duckdb's own DROP COLUMN strips a CHECK that names only that column but
+    // refuses one that names another as well, and postgres drops both.
+    for (const auto& constraint : old_info.constraints) {
+      if (constraint->type != duckdb::ConstraintType::CHECK) {
+        continue;
       }
+      const auto survives = absl::c_any_of(
+        rw.reshaped->constraints,
+        [&](const auto& kept) { return kept->oid == constraint->oid; });
+      if (survives) {
+        continue;
+      }
+      ctx.store().Alter(
+        db_id, tid,
+        duckdb::make_uniq<duckdb::DropConstraintInfo>(
+          StoreTarget(duckdb::OnEntryNotFound::RETURN_NULL),
+          constraint->Cast<duckdb::CheckConstraint>().expression->ToString(),
+          /*if_constraint_not_found=*/true, /*cascade=*/false));
     }
-    for (const auto& idx : surviving) {
-      ctx.DropStoreIndex(idx->GetId());
+    // Surviving store indexes block the ALTER whenever they cover a column
+    // positioned after the dropped one; recreate them around the drop (data
+    // lives in the rows / iresearch, so rebuilds are cheap and inverted
+    // instances carry no state of their own).
+    for (const auto& idx : rw.surviving_indexes) {
+      ctx.store().DropIndex(db_id, idx->GetRelationId(), idx->GetName());
     }
-    for (auto& name : dropped_columns) {
-      ctx.DropStoreColumn(store_name, std::move(name));
+    for (auto& [name, column_id] : dropped_columns) {
+      ctx.store().Alter(db_id, tid,
+                        duckdb::make_uniq<duckdb::RemoveColumnInfo>(
+                          StoreTarget(), std::move(name),
+                          /*if_column_exists=*/false, /*cascade=*/false));
     }
-    for (const auto& idx : surviving) {
-      if (auto def = MakeStoreIndexDef(
-            database->GetName(), schema_obj->GetName(), *rw.table, *idx)) {
-        ctx.CreateStoreIndex(std::move(*def));
+    for (const auto& idx : rw.surviving_indexes) {
+      if (auto info = MakeStoreIndexInfo(*final_table, *idx)) {
+        ctx.store().CreateIndex(db_id, std::move(info), final_table, idx);
       }
     }
   }
-  for (const auto& [schema_id, view_id] : plan.view_drops) {
-    ctx.DropDefinition(schema_id, ObjectType::View, view_id);
-  }
-  for (const auto& [schema_id, fn_id] : plan.function_drops) {
-    ctx.DropDefinition(schema_id, ObjectType::Function, fn_id);
+  for (const auto& drop : plan.entry_drops) {
+    ctx.catalog().DropObject(drop.parent_id, drop.type, drop.id);
   }
 }
 
-// Apply cross-tree mutations in-memory; schedule IndexDrop tasks for
-// cascade-dropped indexes (column->index cascade).
-void Snapshot::ApplyDropPlan(PendingDrops& pending_drops, ObjectId db_id,
-                             DropPlan& plan) {
-  for (const auto& [schema_id, view_id] : plan.view_drops) {
-    if (auto v = GetObject<PgSqlView>(view_id)) {
-      UnregisterObject(std::move(v), schema_id);
-    }
-  }
-  for (const auto& [schema_id, fn_id] : plan.function_drops) {
-    if (auto f = GetObject<PgSqlFunction>(fn_id)) {
-      UnregisterObject(std::move(f), schema_id);
-    }
-  }
-  for (auto& [tid, rw] : plan.table_rewrites) {
-    auto it = _objects.find(tid);
-    if (it == _objects.end()) {
+void PublishDropPlan(duckdb::ClientContext* context, const DropPlan& plan) {
+  // CommitDropPlan put every rewrite's record in the frame beside the removals.
+  catalog::Catalog::RecordedScope recorded;
+  for (const auto& [tid, rw] : plan.table_rewrites) {
+    if (!rw.published) {
       continue;
     }
-    ReplaceObject<ResolveType::Relation>(rw.schema_id, (*it)->GetName(),
-                                         std::move(rw.table));
-  }
-  for (auto idx_id : plan.index_drops) {
-    auto idx = GetObject<Index>(idx_id);
-    if (!idx) {
-      continue;
+    catalog::PutEntry(context, catalog::TableNameOf(*rw.published),
+                      rw.published, rw.perm);
+    // The keys the cascade stripped: the referenced half of one is derived from
+    // the edges this table states, so every table the version before it pointed
+    // at and that outlived the cascade has to be rebuilt.
+    if (rw.before) {
+      catalog::RefreshForeignKeyTargets(context, *rw.before);
     }
-    auto table_id = idx->GetRelationId();
-    auto table = GetObject<Table>(table_id);
-    if (!table) {
-      continue;
-    }
-    auto task =
-      CreateIndexDrop(pending_drops, db_id, table->GetParentId(), table_id, idx,
-                      /*is_root=*/true);
-    UnregisterObject(std::move(idx), table_id);
-    DropTask::Schedule(std::move(task)).Detach();
   }
 }
 
-void Snapshot::RemoveObjectDefinition(ObjectId parent_id, ObjectId id,
-                                      bool root,
-                                      bool maybe_not_found) noexcept {
-  auto node = _objects.extract(id);
-  if (maybe_not_found && node.empty()) {
-    return;
-  }
-  SDB_ASSERT(!node.empty());
-  std::shared_ptr<Object> obj = node.value();
-  SDB_ASSERT(obj);
-  ModifyRoleDependencies(*obj, EdgeAction::Delete);
-  auto drop_childs = [&](const auto& deps) {
-    for (auto child_id : deps) {
-      RemoveObjectDefinition(id, child_id);
-    }
-  };
-  // Drop from parent deps
-  if (root) {
-    switch (obj->GetType()) {
-      case ObjectType::Database:
-      case ObjectType::Role:
-        break;
-      case ObjectType::Schema: {
-        auto db_deps = GetDependencyForWrite<DatabaseDependency>(parent_id);
-        SDB_ASSERT(db_deps);
-        db_deps->schemas.erase(id);
-      } break;
-      case ObjectType::SecondaryIndex:
-      case ObjectType::InvertedIndex: {
-        const auto& index = basics::downCast<Index>(*obj);
-        auto relation_deps =
-          GetDependencyForWrite<RelationDependency>(index.GetRelationId());
-        relation_deps->indexes.erase(id);
-        for (auto tokenizer_id : index.GetTokenizers()) {
-          auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
-          SDB_ASSERT(dep);
-          dep->indexes.erase(obj->GetId());
-        }
-        if (obj->GetType() == ObjectType::InvertedIndex) {
-          ModifyInvertedIndexDependencies(
-            basics::downCast<InvertedIndex>(index), id, EdgeAction::Delete);
-        }
-      } break;
-      case ObjectType::Function: {
-        GetDependencyForWrite<SchemaDependency>(parent_id)->functions.erase(id);
-        ModifyFunctionDependencies(
-          parent_id, basics::downCast<PgSqlFunction>(*obj), EdgeAction::Delete);
-      } break;
-      case ObjectType::Tokenizer:
-        GetDependencyForWrite<SchemaDependency>(parent_id)->tokenizers.erase(
-          id);
-        break;
-      case ObjectType::ForeignServer:
-        GetDependencyForWrite<DatabaseDependency>(parent_id)
-          ->foreign_servers.erase(id);
-        break;
-      case ObjectType::UserMapping:
-        break;
-      case ObjectType::Table: {
-        GetDependencyForWrite<SchemaDependency>(parent_id)->tables.erase(id);
-        const auto& t = basics::downCast<Table>(*obj);
-        ModifyTableDependencies(parent_id, t, EdgeAction::Delete);
-        for (const auto& col : t.Columns()) {
-          _objects.erase(col.GetId());
-        }
-        for (const auto& c : t.CheckConstraints()) {
-          _objects.erase(c.GetId());
-        }
-      } break;
-      case ObjectType::View: {
-        GetDependencyForWrite<SchemaDependency>(parent_id)->views.erase(id);
-        ModifyViewDependencies(parent_id, basics::downCast<PgSqlView>(*obj),
-                               RefKinds::All, EdgeAction::Delete);
-      } break;
-      case ObjectType::Type: {
-        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-        SDB_ASSERT(schema_deps);
-        schema_deps->types.erase(id);
-      } break;
-      case ObjectType::Sequence: {
-        // owned sequences live under the table;
-        // free-standing CREATE SEQUENCE under the schema.
-        const auto& seq = basics::downCast<Sequence>(*obj);
-        if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
-          auto table_deps = GetDependencyForWrite<TableDependency>(owner);
-          SDB_ASSERT(table_deps);
-          table_deps->owned_sequences.erase(id);
-        } else {
-          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-          SDB_ASSERT(schema_deps);
-          schema_deps->sequences.erase(id);
-        }
-      } break;
-      case ObjectType::Invalid:
-      case ObjectType::Tombstone:
-      case ObjectType::Column:
-      case ObjectType::CheckConstraint:
-      case ObjectType::Virtual:
-        SDB_UNREACHABLE();
-    }
-  }
-  // Drop childs
-  switch (obj->GetType()) {
-    case ObjectType::Database: {
-      auto db_deps = GetDependency<DatabaseDependency>(id);
-      drop_childs(db_deps->schemas);
-      drop_childs(db_deps->foreign_servers);
-    } break;
-    case ObjectType::Role:
-      break;
-    case ObjectType::Schema: {
-      auto schema_deps = GetDependency<SchemaDependency>(id);
-      drop_childs(schema_deps->types);
-      drop_childs(schema_deps->functions);
-      drop_childs(schema_deps->views);
-      drop_childs(schema_deps->tables);
-      drop_childs(schema_deps->sequences);
-      drop_childs(schema_deps->tokenizers);
-    } break;
-    case ObjectType::Table:
-    case ObjectType::View: {
-      auto relation_deps = GetDependency<RelationDependency>(id);
-      if (obj->GetType() == ObjectType::Table) {
-        const auto& table_deps =
-          basics::downCast<TableDependency>(*relation_deps);
-        // Owned sequences are parented under the schema (same parent_id
-        // as the table), not the table -- unlike indexes.
-        auto owned_sequences = table_deps.owned_sequences;
-        for (auto seq_id : owned_sequences) {
-          if (root) {
-            auto seq = GetObject<Sequence>(seq_id);
-            UnregisterObject(seq, parent_id, false);
-          } else {
-            RemoveObjectDefinition(parent_id, seq_id);
-          }
-        }
-      }
-      // TODO(codeworse): Avoid copy, maybe erase_if?
-      auto index_ids = relation_deps->indexes;
-      for (auto index_id : index_ids) {
-        if (root) {
-          // Indexes are not erased from the resolution table during DROP --
-          // they're nested in schema scope. Erase explicitly.
-          auto index = GetObject<Index>(index_id);
-          UnregisterObject(index, id, false);
-        } else {
-          RemoveObjectDefinition(id, index_id);
-        }
-      }
-    } break;
-    case ObjectType::SecondaryIndex:
-    case ObjectType::InvertedIndex:
-      break;
-    case ObjectType::ForeignServer:
-    case ObjectType::Function:
-    case ObjectType::Type:
-    case ObjectType::Tokenizer:
-    case ObjectType::UserMapping:
-    case ObjectType::Sequence:
-      break;
-    case ObjectType::Invalid:
-    case ObjectType::Tombstone:
-    case ObjectType::Column:
-    case ObjectType::CheckConstraint:
-    case ObjectType::Virtual:
-      SDB_UNREACHABLE();
-  }
-  _deps.RemoveDependency(id);
-}
-
-std::string DropPlan::FormatDependentsDetail(const Snapshot& snap,
-                                             std::string_view seed_kind,
+std::string DropPlan::FormatDependentsDetail(std::string_view seed_kind,
                                              std::string_view seed_name) const {
   std::vector<std::string> lines;
-  auto add = [&](std::string_view kind, std::string_view name) {
+  const auto add = [&](std::string_view kind, std::string_view name) {
     lines.push_back(
       absl::StrCat(kind, " ", name, " depends on ", seed_kind, " ", seed_name));
   };
-  for (const auto& [tid, _] : table_rewrites) {
-    if (auto t = snap.GetObject<Table>(tid)) {
-      add("table", t->GetName());
+  for (const auto& [tid, rewrite] : table_rewrites) {
+    if (rewrite.info) {
+      add(pg::ToPgObjectTypeName(duckdb::CatalogType::TABLE_ENTRY),
+          catalog::TableNameOf(*rewrite.info));
     }
   }
-  for (const auto& [_, view_id] : view_drops) {
-    if (auto v = snap.GetObject<PgSqlView>(view_id)) {
-      add("view", v->GetName());
-    }
+  for (const auto& drop : entry_drops) {
+    add(pg::ToPgObjectTypeName(drop.type), drop.name);
   }
-  for (const auto& [_, fn_id] : function_drops) {
-    if (auto f = snap.GetObject<PgSqlFunction>(fn_id)) {
-      add("function", f->GetName());
-    }
-  }
-  for (auto idx_id : index_drops) {
-    if (auto i = snap.GetObject<Index>(idx_id)) {
-      add("index", i->GetName());
-    }
+  for (const auto& index : index_drops) {
+    add(pg::ToPgObjectTypeName(duckdb::CatalogType::INDEX_ENTRY),
+        index->GetName());
   }
   return absl::StrJoin(lines, "\n");
 }
 
-Catalog::Catalog()
-  : _snapshot(std::make_shared<Snapshot>()), _engine{&GetCatalogStore()} {}
-
-void Catalog::RegisterRole(std::shared_ptr<Role> role) {
-  SDB_DEBUG(GENERAL, "Register role ", role->GetName());
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(role), id::kInstance, false);
-  });
+void ThrowConcurrentlyDropped(duckdb::CatalogType type, std::string_view name) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+    ERR_MSG("could not serialize access due to concurrent delete of ",
+            pg::ToPgObjectTypeName(type), " \"", name, "\""));
 }
 
-void Catalog::RegisterDatabase(std::shared_ptr<Database> database) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(database), id::kInstance, false);
-  });
+void ThrowConcurrentlyDropped(ObjectId /*id*/) {
+  // No name to give: what is gone is an object this one hangs off, and the
+  // catalog no longer holds it. The id is deliberately out of the message --
+  // it is an internal oid, and it would make the error unassertable.
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+    ERR_MSG("could not serialize access due to concurrent delete of a "
+            "referenced object"));
 }
 
-void Catalog::RegisterSchema(ObjectId database_id,
-                             std::shared_ptr<Schema> schema) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(schema), database_id, false);
-  });
-}
-
-void Catalog::RegisterView(ObjectId schema_id,
-                           std::shared_ptr<PgSqlView> view) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(view), schema_id, false);
-  });
-}
-
-void Catalog::RegisterSequence(ObjectId database_id, ObjectId schema_id,
-                               std::shared_ptr<Sequence> sequence) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(sequence), schema_id, false);
-  });
-}
-
-void Catalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
-                            std::shared_ptr<Table> table) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot,
-        [&](auto& clone) { clone->RegisterObject(table, schema_id, false); });
-}
-
-void Catalog::RegisterFunction(ObjectId database_id, ObjectId schema_id,
-                               std::shared_ptr<PgSqlFunction> function) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(function), schema_id, false);
-  });
-}
-
-void Catalog::RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
-                                std::shared_ptr<Tokenizer> tokenizer) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(tokenizer), schema_id, false);
-  });
-}
-
-void Catalog::RegisterForeignServer(
-  ObjectId database_id, std::shared_ptr<ForeignServer> foreign_server) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(foreign_server), database_id, false);
-  });
-}
-
-void Catalog::RegisterType(ObjectId database_id, ObjectId schema_id,
-                           std::shared_ptr<PgSqlType> type) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(std::move(type), schema_id, false);
-  });
-}
-
-bool Catalog::CreateDatabase(const AccessContext& ax,
-                             std::shared_ptr<Database> database,
-                             bool if_not_exists) {
-  const auto database_id = database->GetId();
-
-  // TODO(gnusi): make it atomic
-
-  absl::MutexLock lock{&_mutex};
-  RequireRoleAttribute(*_snapshot, ax.role, RoleOption::CreateDb,
-                       "create database");
-  if (if_not_exists && _snapshot->GetObjectId<ResolveType::Database>(
-                         id::kInstance, database->GetName())) {
-    return false;
-  }
-  Apply(
-    _snapshot,
-    [&](auto& clone) {
-      clone->RegisterObject(database, id::kInstance, false);
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-      duckdb::MemoryStream stream;
-      {
-        auto bytes = catalog::SerializeObject(*database, stream);
-        _engine->CreateDefinition(id::kInstance, ObjectType::Database,
-                                  database_id, bytes);
-      }
-
-      auto schema = std::make_shared<Schema>(
-        database->GetOwner(), database_id, ObjectId{}, StaticStrings::kPublic);
-      clone->RegisterObject(schema, database_id, false);
-      auto bytes = catalog::SerializeObject(*schema, stream);
-      _engine->CreateDefinition(database_id, ObjectType::Schema,
-                                schema->GetId(), bytes);
-    },
-    [&](auto clone) {
-      clone->UnregisterObject(database, id::kInstance, true);
-    });
-  return true;
-}
+Catalog::Catalog() : _engine{&GetCatalogStore()} {}
 
 namespace {
 
-// Defined below (with the other Create*/Drop* ownership helpers).
-void RequireCreateOn(const Snapshot& snapshot, ObjectId role,
-                     ObjectId parent_id);
+std::atomic<uint64_t> gCatalogVersion{1};
+
+thread_local uint32_t gRecordedDepth = 0;
 
 }  // namespace
 
-bool Catalog::CreateSchema(const AccessContext& ax, ObjectId database_id,
-                           std::shared_ptr<Schema> schema, bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  // CREATE SCHEMA requires CREATE on the target database.
-  RequireCreateOn(*_snapshot, ax.role, database_id);
-  if (if_not_exists && _snapshot->GetObjectId<ResolveType::Schema>(
-                         database_id, schema->GetName())) {
-    return false;
+catalog::Catalog::RecordedScope::RecordedScope() noexcept { ++gRecordedDepth; }
+
+catalog::Catalog::RecordedScope::~RecordedScope() { --gRecordedDepth; }
+
+bool catalog::Catalog::RecordedScope::Open() noexcept {
+  return gRecordedDepth != 0;
+}
+
+uint64_t CatalogVersion() noexcept {
+  return gCatalogVersion.load(std::memory_order_relaxed);
+}
+
+void ThrowDuplicateName(NameKind kind, std::string_view name) {
+  switch (kind) {
+    case NameKind::Relation:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                      ERR_MSG("relation \"", name, "\" already exists"));
+    case NameKind::Type:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                      ERR_MSG("type \"", name, "\" already exists"));
+    case NameKind::Role:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                      ERR_MSG("role \"", name, "\" already exists"));
   }
-  Apply(
-    _snapshot,
-    [&](auto& clone) {
-      clone->RegisterObject(schema, database_id, false);
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*schema, stream);
-      _engine->CreateDefinition(database_id, ObjectType::Schema,
-                                schema->GetId(), bytes);
-    },
-    [&](auto clone) { clone->UnregisterObject(schema, database_id, true); });
-  return true;
+  SDB_UNREACHABLE();
 }
 
-void Catalog::CreateRole(const AccessContext& ax, std::shared_ptr<Role> role) {
-  SDB_DEBUG(GENERAL, "Creating role: ", role->GetName());
-  absl::MutexLock lock{&_mutex};
-  RequireRoleAttribute(
-    *_snapshot, ax.role, RoleOption::CreateRole, "create role",
-    "Only roles with the CREATEROLE attribute may create roles.");
-  RequireAttributesGrantable(*_snapshot, ax.role, role->Options(),
-                             /*creating=*/true);
-  Apply(
-    _snapshot,
-    [&](auto& clone) {
-      clone->RegisterObject(role, id::kInstance, false);
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*role, stream);
-      _engine->CreateDefinition(id::kInstance, ObjectType::Role, role->GetId(),
-                                bytes);
-      auto creator = clone->template GetObject<Role>(ax.role);
-      if (creator && !creator->IsSuperuser()) {
-        auto updated = std::static_pointer_cast<Role>(creator->Clone());
-        updated->AddMembership(Membership{
-          .role = role->GetId(),
-          .admin_option = true,
-          .inherit_option = false,
-          .set_option = false,
-        });
-        clone->template ReplaceObject<ResolveType::Role>(
-          id::kInstance, updated->GetName(), updated);
-        duckdb::MemoryStream cstream;
-        auto cbytes = catalog::SerializeObject(*updated, cstream);
-        _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                  updated->GetId(), cbytes);
-      }
-      clone->RebuildRoleClosures();
-    },
-    [&](auto& clone) { clone->UnregisterObject(role, id::kInstance, true); });
-}
-
-void Catalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
-                            std::shared_ptr<Index> index) {
-  absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](auto& clone) {
-    clone->RegisterObject(index, index->GetRelationId(), false);
+void Catalog::Apply(duckdb::ClientContext* context,
+                    absl::FunctionRef<void(CatalogStore::WriteContext&)> fill) {
+  // The records go to the log and the entries into the CatalogSets; nothing
+  // else holds a copy of the catalog, so a batch is performed exactly where it
+  // is written.
+  _engine->Write(context, fill, [&](std::span<const wal::Entry> entries) {
+    gCatalogVersion.fetch_add(1, std::memory_order_relaxed);
+    if (context != nullptr) {
+      RecordCatalogDelta(*context);
+    }
   });
 }
 
-void Catalog::CreateIndexImpl(std::string_view relation_schema,
-                              std::shared_ptr<Index> index,
-                              CreateIndexOperationOptions operation_options) {
-  Apply(
-    _snapshot,
-    [&](auto& clone) {
-      clone->RegisterObject(index, index->GetRelationId(), false);
+void Catalog::RecordEntry(duckdb::ClientContext* context, ObjectId parent_id,
+                          duckdb::CatalogType type, ObjectId id,
+                          wal::PutMode mode,
+                          std::shared_ptr<const duckdb::CreateInfo> info,
+                          Permissions perm) {
+  Apply(context, [&](auto& ctx) {
+    ctx.catalog().PutEntry(parent_id, type, id, mode, std::move(info),
+                           std::move(perm));
+  });
+}
 
-      if (operation_options.create_with_tombstone) {
-        _engine->WriteTombstone(index->GetRelationId(), index->GetId());
-        index->SetTombstoned(true);
+void Catalog::RecordSequence(
+  duckdb::ClientContext* context,
+  std::shared_ptr<const duckdb::CreateSequenceInfo> sequence, Permissions perm,
+  uint64_t seed) {
+  const auto id = catalog::IdOf(*sequence);
+  const auto schema_id = catalog::ParentIdOf(*sequence);
+  Apply(context, [&](auto& ctx) {
+    ctx.catalog().PutEntry(schema_id, duckdb::CatalogType::SEQUENCE_ENTRY, id,
+                           wal::PutMode::Create, std::move(sequence),
+                           std::move(perm));
+    ctx.catalog().SetSequence(id, seed);
+  });
+}
+
+void Catalog::RecordTable(duckdb::ClientContext* context,
+                          const duckdb::CreateTableInfo& table,
+                          wal::PutMode mode, Permissions perm) {
+  Apply(context, [&](auto& ctx) {
+    ctx.catalog().PutTable(table, mode, std::move(perm));
+  });
+}
+
+uint64_t Catalog::CommitTransaction(
+  duckdb::ClientContext* context,
+  std::span<const std::vector<wal::Entry>> frames) {
+  absl::MutexLock lock{&_mutex};
+  return _engine->CommitFrames(context, frames, [] {});
+}
+
+// The lock is conditional and released by a guard, neither of which clang's
+// analysis can follow.
+ABSL_NO_THREAD_SAFETY_ANALYSIS bool Catalog::TryExcludingMutations(
+  absl::FunctionRef<void()> fn) {
+  // TryLock also fails when this very thread holds the mutex, which is the
+  // common case: a mutation attempts a fold on its way out.
+  if (!_mutex.TryLock()) {
+    return false;
+  }
+  const absl::Cleanup unlock = [this]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    _mutex.Unlock();
+  };
+  fn();
+  return true;
+}
+
+std::shared_ptr<IndexDrop> Catalog::CreateIndexDrop(
+  ObjectId db_id, ObjectId schema_id, ObjectId table_id,
+  const CreateIndexInfoBase& index, bool is_root) {
+  // Capture the iresearch storage handle (weak) so the async IndexDrop can wait
+  // for every holder (entry versions, txns, tasks) to release before removing
+  // the on-disk directory. Secondary indexes have no storage -> empty weak.
+  std::weak_ptr<search::InvertedIndexStorage> data;
+  if (index.IsInverted()) {
+    data = index.GetData();
+  }
+  auto task = std::make_shared<IndexDrop>(index, db_id, schema_id, table_id,
+                                          std::move(data), is_root);
+  UpdatePendingDrops(_pending_drops, table_id, index.GetId(), task, is_root);
+  return task;
+}
+
+std::shared_ptr<TableDropBase> Catalog::CreateTableDrop(
+  ObjectId db_id, ObjectId schema_id, const TableInfoRef& table,
+  const SequenceOwners& sequences, const IndexOwners& indexes, bool is_root) {
+  const auto table_id = catalog::IdOf(*table);
+  auto owned_sequences = sequences.Of(table_id);
+
+  std::shared_ptr<TableDropBase> task;
+  if (catalog::TableEngineOf(*table) == TableEngine::Search) {
+    const auto* entry = catalog::FindTableEntryIn(nullptr, db_id, table_id);
+    task = std::make_shared<SearchTableDrop>(
+      table, entry != nullptr ? entry->GetSearchData() : nullptr, db_id,
+      std::move(owned_sequences), schema_id, is_root);
+  } else {
+    auto index_drops =
+      indexes.Of(table_id) |
+      std::views::transform([&](const IndexInfoRef& index) {
+        return CreateIndexDrop(db_id, schema_id, table_id, *index, false);
+      }) |
+      std::ranges::to<std::vector>();
+    task = std::make_shared<TableDrop>(table, db_id, std::move(index_drops),
+                                       std::move(owned_sequences), schema_id,
+                                       is_root);
+  }
+  UpdatePendingDrops(_pending_drops, schema_id, table_id, task, is_root);
+  return task;
+}
+
+std::shared_ptr<SchemaDrop> Catalog::CreateSchemaDrop(
+  duckdb::ClientContext* context, ObjectId db_id, ObjectId schema_id,
+  const SequenceOwners& sequences, const IndexOwners& indexes, bool is_root) {
+  // Collected before anything is built: a table drop reads the index set of the
+  // same schema, and the walk that found these is holding one of its sets.
+  std::vector<TableInfoRef> tables;
+  catalog::VisitDefinitions<SereneDBTableEntry>(
+    context, db_id, [&](const TableInfoRef& table, const Permissions&) {
+      if (catalog::ParentIdOf(*table) == schema_id) {
+        tables.push_back(table);
       }
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-      duckdb::MemoryStream stream;
-      {  // Write index definition
-        auto bytes = catalog::SerializeObject(*index, stream);
-        _engine->CreateDefinition(index->GetRelationId(), index->GetType(),
-                                  index->GetId(), bytes);
-      }
-      // The inverted index's mutable iresearch storage hangs off the metadata
-      // object itself, so the CREATE INDEX build (GetGlobalSinkState) reaches
-      // it via the index's GetData(). Bind it here, before the build runs.
-      if (index->GetType() == ObjectType::InvertedIndex) {
-        const auto& inverted = basics::downCast<const InvertedIndex>(*index);
-        inverted.SetData(search::InvertedIndexStorage::Create(
-          inverted.GetId(), inverted, /*is_new=*/true));
-      }
-      {
-        auto table = clone->template GetObject<Table>(index->GetRelationId());
-        auto schema_obj =
-          table ? clone->template GetObject<Schema>(table->GetParentId())
-                : nullptr;
-        auto database =
-          schema_obj
-            ? clone->template GetObject<Database>(schema_obj->GetParentId())
-            : nullptr;
-        if (database) {
-          if (auto def = MakeStoreIndexDef(
-                database->GetName(), schema_obj->GetName(), *table, *index)) {
-            _engine->Write(
-              [&](auto& ctx) { ctx.CreateStoreIndex(std::move(*def)); });
-          }
-        }
-      }
-    },
-    [&](auto& clone) {
-      // Unregistering drops the index (and its just-bound storage) from the
-      // clone; mirrors the prior rollback, which only dropped the registry ref.
-      clone->UnregisterObject(index, index->GetRelationId(), true);
     });
+  std::vector<std::shared_ptr<TableDropBase>> tables_drop;
+  tables_drop.reserve(tables.size());
+  for (const auto& table : tables) {
+    tables_drop.push_back(
+      CreateTableDrop(db_id, schema_id, table, sequences, indexes, false));
+  }
+
+  auto task = std::make_shared<SchemaDrop>(
+    schema_id, std::move(tables_drop), sequences.Of(schema_id), db_id, is_root);
+  UpdatePendingDrops(_pending_drops, db_id, schema_id, task, is_root);
+  return task;
+}
+
+std::shared_ptr<DatabaseDrop> Catalog::CreateDatabaseDrop(
+  duckdb::ClientContext* context, ObjectId db_id,
+  const SequenceOwners& sequences, const IndexOwners& indexes,
+  duckdb::shared_ptr<void> keep_alive) {
+  std::vector<ObjectId> schema_ids;
+  catalog::VisitSchemas(
+    context, db_id,
+    [&](const duckdb::CreateSchemaInfo& schema, const Permissions&) {
+      schema_ids.push_back(IdOf(schema));
+    });
+  std::vector<std::shared_ptr<SchemaDrop>> schemas_drop;
+  schemas_drop.reserve(schema_ids.size());
+  for (const auto schema_id : schema_ids) {
+    schemas_drop.push_back(
+      CreateSchemaDrop(context, db_id, schema_id, sequences, indexes, false));
+  }
+  auto task = std::make_shared<DatabaseDrop>(db_id, std::move(schemas_drop),
+                                             std::move(keep_alive));
+  UpdatePendingDrops(_pending_drops, ObjectId{}, db_id, task, false);
+  return task;
+}
+
+void Catalog::ScheduleDrop(duckdb::ClientContext* context,
+                           std::shared_ptr<DropTask> task) {
+  if (context != nullptr && QueueDropTask(*context, task)) {
+    return;
+  }
+  DropTask::Schedule(std::move(task)).Detach();
+}
+
+void Catalog::ScheduleDropPlanIndexes(duckdb::ClientContext* context,
+                                      ObjectId db_id, const DropPlan& plan) {
+  // The entry-backed victims of the cascade. Their records ride the same batch
+  // as everything else's; their entries are written outside it, as every
+  // entry-backed mutator writes its own.
+  for (const auto& drop : plan.entry_drops) {
+    catalog::DropEntryOfKind(context, drop.type, drop.parent_id, drop.name);
+  }
+  // The relation is not looked up: an index over a view has no table behind it,
+  // and everything the task needs -- the schema it is named in and the relation
+  // it covers -- the index itself carries. The entry goes here too: an index is
+  // named in the schema's sets, which the cascade's records do not touch.
+  const auto schedule = [&](const IndexInfoRef& index) {
+    auto task = CreateIndexDrop(db_id, index->GetParentId(),
+                                index->GetRelationId(), *index,
+                                /*is_root=*/true);
+    catalog::DropIndexEntry(context, index->GetParentId(), index->GetName());
+    ScheduleDrop(context, std::move(task));
+  };
+  for (const auto& index : plan.index_drops) {
+    schedule(index);
+  }
+  for (const auto& index : plan.owned_index_drops) {
+    schedule(index);
+  }
+}
+
+HeldSchema Catalog::CreateDatabase(const AccessContext& ax,
+                                   std::shared_ptr<CreateDatabaseInfo> database,
+                                   ObjectId owner, bool if_not_exists) {
+  JoinClusterGlobal(ax.context,
+                    duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
+  absl::MutexLock lock{&_mutex};
+  RequireRoleAttribute(ax.context, ax.role, RoleOption::CreateDb,
+                       "create database");
+  if (catalog::FindDatabase(ax.context, database->GetName())) {
+    if (if_not_exists) {
+      return {};
+    }
+    ThrowDuplicateDatabase(database->GetName());
+  }
+  if (!database->GetId().isSet()) {
+    database->SetId(NextId());
+  }
+  const auto database_id = database->GetId();
+  SDB_IF_FAILURE("unable_to_create") {
+    THROW_SQL_ERROR(ERR_MSG("internal error"));
+  }
+  Permissions perm{owner};
+  auto schema =
+    catalog::MakeSchemaInfo(NextId(), database_id, StaticStrings::kPublic);
+  const auto schema_id = IdOf(*schema);
+  // One frame, not two: a database and its public schema are one operation,
+  // and a crash between two appends would leave a database that has no
+  // schema to create anything in. Deferred to the transaction's commit like
+  // any other create: the data file already exists at this point, so an
+  // inline append would make a rolled-back CREATE DATABASE durable and the
+  // file it names would never be reclaimed.
+  RecordedScope recorded;
+  Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().PutEntry(id::kInstance, duckdb::CatalogType::DATABASE_ENTRY,
+                           database_id, wal::PutMode::Create, database, perm);
+    ctx.catalog().PutEntry(database_id, duckdb::CatalogType::SCHEMA_ENTRY,
+                           schema_id, wal::PutMode::Create, schema, perm);
+  });
+  catalog::PutDatabase(ax.context, {}, std::move(database), perm);
+  // The schema entry is the attach's to make: its set belongs to a catalog
+  // that comes into being only once this call returns.
+  return HeldSchema{std::move(schema), perm};
 }
 
 namespace {
 
-struct ResolvedIndexRelation {
-  ObjectId relation_id;
-  std::vector<Column> columns;
+void RequireDatabaseOwner(duckdb::ClientContext* context, ObjectId role,
+                          const catalog::DatabaseRef& database);
+
+}  // namespace
+
+void Catalog::CreateRole(const AccessContext& ax,
+                         std::shared_ptr<CreateRoleInfo> role) {
+  SDB_DEBUG(GENERAL, "Creating role: ", role->GetName());
+  JoinClusterGlobal(ax.context,
+                    duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
+  absl::MutexLock lock{&_mutex};
+  RequireRoleAttribute(
+    ax.context, ax.role, RoleOption::CreateRole, "create role",
+    "Only roles with the CREATEROLE attribute may create roles.");
+  RequireAttributesGrantable(ax.context, ax.role, role->Options(),
+                             /*creating=*/true);
+  if (catalog::FindRole(ax.context, role->GetName())) {
+    ThrowDuplicateName(NameKind::Role, role->GetName());
+  }
+  if (!role->GetId().isSet()) {
+    role->SetId(NextId());
+  }
+  std::shared_ptr<CreateRoleInfo> updated;
+  if (auto creator = catalog::FindRole(ax.context, ax.role);
+      creator && !creator->IsSuperuser()) {
+    updated = creator->CloneRole();
+    updated->AddMembership(Membership{
+      .role = role->GetId(),
+      .admin_option = true,
+      .inherit_option = false,
+      .set_option = false,
+    });
+  }
+  // One frame: the new role and the creator's membership in it are the same
+  // operation, so a crash must not be able to land only one of them.
+  RecordedScope recorded;
+  Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().PutEntry(id::kInstance, duckdb::CatalogType::ROLE_ENTRY,
+                           role->GetId(), wal::PutMode::Create, role);
+    if (updated) {
+      ctx.catalog().PutEntry(id::kInstance, duckdb::CatalogType::ROLE_ENTRY,
+                             updated->GetId(), wal::PutMode::Replace, updated);
+    }
+  });
+  catalog::PutRole(ax.context, {}, std::move(role));
+  if (updated) {
+    const auto name = updated->GetName();
+    catalog::PutRole(ax.context, name, std::move(updated));
+  }
+}
+
+namespace {
+
+// One column of the relation an index is being built on, as the key binder
+// needs it: a table column carries its catalog id, a view column its position.
+struct IndexableColumn {
+  ObjectId id;
+  std::string name;
+  duckdb::LogicalType type;
 };
 
-ResolvedIndexRelation ResolveIndexRelation(
-  const std::shared_ptr<Object>& relation) {
-  if (relation->GetType() == ObjectType::Table) {
-    auto& table = basics::downCast<Table>(*relation);
-    return ResolvedIndexRelation{
-      .relation_id = table.GetId(),
-      .columns = table.Columns(),
-    };
-  } else if (relation->GetType() == ObjectType::View) {
-    auto& view = basics::downCast<PgSqlView>(*relation);
-    const auto& view_info = view.GetInfo();
-    auto columns =
-      std::views::iota(size_t{0}, view_info.names.size()) |
-      std::views::transform([&](size_t i) {
-        Column c{ObjectId{}, Column::Id{i},
-                 view_info.names[i].GetIdentifierName(), view_info.types[i]};
-        c.SetId(Column::Id{i});
-        return c;
-      }) |
-      std::ranges::to<std::vector>();
-    return ResolvedIndexRelation{
-      .relation_id = view.GetId(),
-      .columns = std::move(columns),
-    };
+struct ResolvedIndexRelation {
+  ObjectId relation_id;
+  std::vector<IndexableColumn> columns;
+};
+
+ResolvedIndexRelation ResolveIndexRelation(const IndexRelation& relation) {
+  if (relation.table) {
+    std::vector<IndexableColumn> columns;
+    for (const auto& column : relation.table->columns.Logical()) {
+      columns.push_back({ObjectId{column.CatalogOid()},
+                         std::string{column.Name().GetIdentifierName()},
+                         column.Type()});
+    }
+    return ResolvedIndexRelation{.relation_id = catalog::IdOf(*relation.table),
+                                 .columns = std::move(columns)};
+  }
+  if (relation.view != nullptr) {
+    const auto& view = *relation.view;
+    std::vector<IndexableColumn> columns;
+    if (const auto view_columns = view.GetColumnInfo()) {
+      columns.reserve(view_columns->names.size());
+      for (size_t i = 0; i != view_columns->names.size(); ++i) {
+        columns.push_back(
+          {ColumnId{i}, std::string{view_columns->names[i].GetIdentifierName()},
+           view_columns->types[i]});
+      }
+    }
+    return ResolvedIndexRelation{.relation_id = ObjectId{view.oid},
+                                 .columns = std::move(columns)};
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   ERR_MSG("Only table or view indexes are supported"));
+}
+
+// CREATE INDEX requires ownership of the target relation; an index has no
+// independent owner of its own.
+void RequireRelationOwner(duckdb::ClientContext* context, ObjectId role,
+                          const IndexRelation& relation) {
+  if (auth::ClosureFor(context, role)->Owns(OwnerOf(relation.perm))) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("must be owner of ",
+                          pg::ToPgObjectTypeName(
+                            relation.table ? duckdb::CatalogType::TABLE_ENTRY
+                                           : duckdb::CatalogType::VIEW_ENTRY),
+                          " ", relation.GetName()));
+}
+
+// Points each key column at its catalog column in `relation_columns`, which
+// must outlive the CreateIndexColumn vector. Expression keys carry their own
+// bound payload (dependent columns + serialized expr) and have no base column
+// to resolve by name; the store-side ART builds them from the rendered SQL.
+void BindIndexColumns(const std::vector<IndexableColumn>& relation_columns,
+                      std::vector<CreateIndexColumn>& columns) {
+  for (auto& c : columns) {
+    if (c.IsIndexedExpression()) {
+      continue;
+    }
+    auto it = absl::c_find_if(
+      relation_columns, [&](const auto& col) { return col.name == c.name; });
+    if (it == relation_columns.end()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("column \"", c.name, "\" does not exist"));
+    }
+    c.column = IndexedColumnRef{it->id, it->type};
+  }
+}
+
+void RequireDatabaseOwner(duckdb::ClientContext* context, ObjectId role,
+                          const catalog::DatabaseRef& database) {
+  if (!database ||
+      auth::ClosureFor(context, role)->Owns(catalog::OwnerOf(database.perm))) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("must be owner of database ", database.Name()));
+}
+
+}  // namespace
+
+void RequireDatabaseAccess(duckdb::ClientContext* context, ObjectId role,
+                           const catalog::DatabaseRef& database, AclMode need) {
+  if (!database ||
+      auth::ClosureFor(context, role)
+        ->Can(duckdb::CatalogType::DATABASE_ENTRY, database.perm, need)) {
+    return;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied for database ", database.Name()));
 }
 
 // CREATE inside `parent_id` requires CREATE on it (a schema for relations, a
 // database for schemas). Throws 42501 "permission denied for <type> <name>"
 // (type/name from the parent) on a non-creator; a missing parent is a no-op
 // (the mutation's own resolution reports the real error).
-void RequireCreateOn(const Snapshot& snapshot, ObjectId role,
+void RequireCreateOn(duckdb::ClientContext* context, ObjectId role,
                      ObjectId parent_id) {
-  auto parent = snapshot.GetObject(parent_id);
-  if (!parent || snapshot.ClosureFor(role).Can(*parent, AclMode::Create)) {
+  Permissions schema_perm;
+  auto schema = catalog::FindSchema(context, parent_id, &schema_perm);
+  if (!schema || auth::ClosureFor(context, role)
+                   ->Can(duckdb::CatalogType::SCHEMA_ENTRY, schema_perm,
+                         AclMode::Create)) {
     return;
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("permission denied for ", pg::ToPgObjectTypeName(parent->GetType()),
-            " ", parent->GetName()));
+    ERR_MSG("permission denied for schema ", SchemaNameOf(*schema)));
 }
 
-// ALTER/DROP requires ownership of the target object. ok() if the object is
-// gone (the mutation's own resolution reports the real error).
-// Throw 42501 "must be owner of <type> <name>" unless `role` owns `owner_id`
-// (directly, via membership, or as superuser). The error names `reported` --
-// the object the user acted on -- and its type/name come straight from it
-// (ToPgObjectTypeName + GetName), so callers don't repeat them. A missing
-// owner object is a no-op (the mutation's own resolution reports not-found).
-void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
-                        ObjectId owner_id, const Object& reported) {
-  auto owner_obj = snapshot.GetObject(owner_id);
-  if (!owner_obj || snapshot.ClosureFor(role).Owns(*owner_obj)) {
+// PG's ownership test for an ALTER or a DROP: the actor must own the object,
+// directly, through a role it is a member of, or as a superuser.
+void RequireOwner(duckdb::ClientContext* context, ObjectId role,
+                  const Permissions& perm, std::string_view noun,
+                  std::string_view name) {
+  if (auth::ClosureFor(context, role)->Owns(catalog::OwnerOf(perm))) {
     return;
   }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("must be owner of ", pg::ToPgObjectTypeName(reported.GetType()),
-            " ", reported.GetName()));
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("must be owner of ", noun, " ", name));
 }
 
-// Common case: the object that confers authority IS the one acted on. Resolves
-// `object_id` once; a missing object is a no-op (the mutation reports
-// not-found).
-void RequireObjectOwner(const Snapshot& snapshot, ObjectId role,
-                        ObjectId object_id) {
-  if (auto obj = snapshot.GetObject(object_id)) {
-    RequireObjectOwner(snapshot, role, object_id, *obj);
+void RequireOwnerTransfer(const AccessContext& ax, ObjectId schema_id,
+                          const Permissions& perm, ObjectId new_owner,
+                          std::string_view new_owner_name,
+                          std::string_view noun, std::string_view name) {
+  if (auth::ClosureFor(ax.context, ax.role)->is_superuser) {
+    return;
+  }
+  RequireOwner(ax.context, ax.role, perm, noun, name);
+  if (!auth::ComputeSetRoleClosure(*auth::RolesOf(ax.context), ax.role)
+         .contains(new_owner)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("must be able to SET ROLE \"", new_owner_name, "\""));
+  }
+  // A schema has no schema above it, so an unset parent skips the last check
+  // rather than resolving nothing.
+  if (!schema_id.isSet() || new_owner == OwnerOf(perm)) {
+    return;
+  }
+  Permissions schema_perm;
+  auto schema = catalog::FindSchema(ax.context, schema_id, &schema_perm);
+  if (schema && !auth::ClosureFor(ax.context, new_owner)
+                   ->Can(duckdb::CatalogType::SCHEMA_ENTRY, schema_perm,
+                         AclMode::Create)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied for schema ", SchemaNameOf(*schema)));
   }
 }
 
-void RequireRoleMembership(const Snapshot& snapshot, ObjectId actor_id,
-                           const Role& target) {
-  const auto& rc = snapshot.ClosureFor(actor_id);
-  if (rc.MemberOf(target.GetId())) {
+namespace {
+
+void RequireRoleMembership(duckdb::ClientContext* context, ObjectId actor_id,
+                           const CreateRoleInfo& target) {
+  if (auth::ClosureFor(context, actor_id)->MemberOf(target.GetId())) {
     return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -2353,9 +1706,9 @@ void RequireRoleMembership(const Snapshot& snapshot, ObjectId actor_id,
                              "\" to alter its default privileges."));
 }
 
-void RequireRoleAdmin(const Snapshot& snapshot, ObjectId actor_id,
-                      const Role& target, std::string_view verb) {
-  auto actor = snapshot.GetObject<Role>(actor_id);
+void RequireRoleAdmin(duckdb::ClientContext* context, ObjectId actor_id,
+                      const CreateRoleInfo& target, std::string_view verb) {
+  auto actor = catalog::FindRole(context, actor_id);
   if (actor && actor->IsSuperuser()) {
     return;
   }
@@ -2366,7 +1719,8 @@ void RequireRoleAdmin(const Snapshot& snapshot, ObjectId actor_id,
                                verb, " roles with the SUPERUSER attribute."));
   }
   if (!actor || !actor->Has(RoleOption::CreateRole) ||
-      !auth::HasAdminOption(snapshot, actor_id, target.GetId())) {
+      !auth::HasAdminOption(*auth::RolesOf(context), actor_id,
+                            target.GetId())) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to ", verb, " role"),
@@ -2376,13 +1730,13 @@ void RequireRoleAdmin(const Snapshot& snapshot, ObjectId actor_id,
   }
 }
 
-void RequireRoleAttribute(const Snapshot& snapshot, ObjectId actor_id,
+void RequireRoleAttribute(duckdb::ClientContext* context, ObjectId actor_id,
                           RoleOption attribute, std::string_view denied_action,
                           std::string_view detail) {
   if (actor_id == id::kRootUser) {
     return;
   }
-  auto actor = snapshot.GetObject<Role>(actor_id);
+  auto actor = catalog::FindRole(context, actor_id);
   if (!actor || actor->IsSuperuser() || actor->Has(attribute)) {
     return;
   }
@@ -2399,12 +1753,13 @@ void RequireRoleAttribute(const Snapshot& snapshot, ObjectId actor_id,
 // SUPERUSER; the matching bit for CREATEDB/REPLICATION/BYPASSRLS). `granting`
 // is the set of attributes being conferred; CREATEROLE/LOGIN/INHERIT are not
 // gated (a CREATEROLE actor may set them, matching PostgreSQL).
-void RequireAttributesGrantable(const Snapshot& snapshot, ObjectId actor_id,
-                                RoleOption granting, bool creating) {
+void RequireAttributesGrantable(duckdb::ClientContext* context,
+                                ObjectId actor_id, RoleOption granting,
+                                bool creating) {
   if (actor_id == id::kRootUser) {
     return;
   }
-  auto actor = snapshot.GetObject<Role>(actor_id);
+  auto actor = catalog::FindRole(context, actor_id);
   const bool actor_super = actor && actor->IsSuperuser();
 
   const auto require = [&](RoleOption attr, bool actor_has,
@@ -2439,926 +1794,326 @@ void RequireAttributesGrantable(const Snapshot& snapshot, ObjectId actor_id,
 
 }  // namespace
 
-bool Catalog::CreateSecondaryIndex(
+TableInfoRef SereneDBCatalog::CreateTable(
   const AccessContext& ax, ObjectId database_id, std::string_view schema,
-  std::string_view relation, std::string name,
-  std::vector<CreateIndexColumn>&& columns, bool unique,
-  CreateIndexOperationOptions operation_options) {
-  if (columns.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Cannot create index without columns"));
-  }
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  auto rel =
-    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
-  if (!rel) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", relation, "\" does not exist"));
-  }
-  // CREATE INDEX requires ownership of the target relation (an index has no
-  // independent owner -- it derives from the table).
-  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
-  if (operation_options.if_not_exists &&
-      _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
-    return false;
-  }
-  auto resolved = ResolveIndexRelation(rel);
-  for (auto& c : columns) {
-    if (c.IsIndexedExpression()) {
-      // Expression keys carry their own bound payload (dependent columns +
-      // serialized expr); they have no base column to resolve by name. The
-      // store-side ART builds/maintains them natively from the rendered SQL.
-      continue;
-    }
-    auto it = absl::c_find_if(resolved.columns, [&](const Column& col) {
-      return col.GetName() == c.name;
-    });
-    if (it == resolved.columns.end()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                      ERR_MSG("column \"", c.name, "\" does not exist"));
-    }
-    c.catalog_column = &*it;
-  }
-  auto index = catalog::CreateSecondaryIndex(
-    database_id, *schema_id, ObjectId{0}, resolved.relation_id, std::move(name),
-    std::move(columns), unique);
-  CreateIndexImpl(schema, std::move(index), operation_options);
-  return true;
-}
-
-bool Catalog::CreateInvertedIndex(
-  const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
-  std::string_view schema, std::string_view relation, std::string name,
-  std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
-  ExpressionData predicate, CreateIndexOperationOptions operation_options) {
-  if (columns.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Cannot create index without columns"));
-  }
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  auto rel =
-    _snapshot->GetRelation(NoAccessCheck(), database_id, schema, relation);
-  if (!rel) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", relation, "\" does not exist"));
-  }
-  // CREATE INDEX requires ownership of the target relation (an index has no
-  // independent owner -- it derives from the table).
-  RequireObjectOwner(*_snapshot, ax.role, rel->GetId());
-  if (operation_options.if_not_exists &&
-      _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
-    return false;
-  }
-  auto resolved = ResolveIndexRelation(rel);
-  for (auto& c : columns) {
-    if (c.IsIndexedExpression()) {
-      continue;
-    }
-    auto it = absl::c_find_if(resolved.columns, [&](const Column& col) {
-      return col.GetName() == c.name;
-    });
-    if (it == resolved.columns.end()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                      ERR_MSG("column \"", c.name, "\" does not exist"));
-    }
-    c.catalog_column = &*it;
-  }
-  auto index = catalog::CreateInvertedIndex(
-    context, database_id, schema, *schema_id, ObjectId{0}, resolved.relation_id,
-    std::move(name), std::move(columns), _snapshot, std::move(options),
-    std::move(predicate));
-  CreateIndexImpl(schema, std::move(index), operation_options);
-  return true;
-}
-
-bool Catalog::CreateView(const AccessContext& ax, ObjectId database_id,
-                         std::string_view schema,
-                         std::shared_ptr<PgSqlView> view, bool replace,
-                         bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  RequireCreateOn(*_snapshot, ax.role, *schema_id);
-  view->SetParentId(*schema_id);
-
-  ObjectId existed_id;
-  if (replace) {
-    existed_id =
-      _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, view->GetName())
-        .value_or(ObjectId{});
-    if (existed_id.isSet()) {
-      auto existing = _snapshot->GetObject<Object>(existed_id);
-      if (existing->GetType() != ObjectType::View) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                        ERR_MSG("\"", view->GetName(), "\" is not a view"));
-      }
-      // CREATE OR REPLACE preserves the original owner and grants (PG keeps the
-      // existing catalog tuple's relowner and relacl).
-      view->SetPermissions(existing->GetPermissions());
-    }
-  } else if (if_not_exists && _snapshot->GetObjectId<ResolveType::Relation>(
-                                *schema_id, view->GetName())) {
-    return false;
-  }
-
-  Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      if (existed_id.isSet()) {
-        view->SetId(existed_id);
-        clone->ReplaceObject<ResolveType::Relation>(*schema_id, view->GetName(),
-                                                    view);
-      } else {
-        clone->RegisterObject(view, *schema_id, /*replace=*/false);
-      }
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*view, stream);
-      if (existed_id.isSet()) {
-        _engine->Write([&](auto& ctx) {
-          ctx.PutDefinition(*schema_id, ObjectType::View, view->GetId(),
-                            std::string_view{bytes});
-        });
-        return;
-      }
-      _engine->CreateDefinition(*schema_id, ObjectType::View, view->GetId(),
-                                bytes);
-    },
-    [&](auto clone) {
-      if (!existed_id.isSet()) {
-        clone->UnregisterObject(view, *schema_id, true);
-      }
-    });
-  return true;
-}
-
-bool Catalog::CreateSequence(const AccessContext& ax, ObjectId database_id,
-                             std::string_view schema,
-                             std::shared_ptr<Sequence> sequence,
-                             bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  RequireCreateOn(*_snapshot, ax.role, *schema_id);
-  if (auto existed = _snapshot->GetObjectId<ResolveType::Relation>(
-        *schema_id, sequence->GetName())) {
-    if (if_not_exists) {
-      return false;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("relation \"", sequence->GetName(), "\" already exists"));
-  }
-  sequence->SetParentId(*schema_id);
-
-  Apply(
-    _snapshot,
-    [&](auto& clone) {
-      clone->RegisterObject(sequence, *schema_id, false);
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*sequence, stream);
-      _engine->Write([&](auto& ctx) {
-        ctx.PutDefinition(*schema_id, ObjectType::Sequence, sequence->GetId(),
-                          std::string_view{bytes});
-        ctx.PutSequence(sequence->GetId(), sequence->Options().Seed());
-      });
-    },
-    [&](auto clone) { clone->UnregisterObject(sequence, *schema_id, true); });
-  return true;
-}
-
-bool Catalog::CreateFunction(const AccessContext& ax, ObjectId database_id,
-                             std::string_view schema,
-                             std::shared_ptr<PgSqlFunction> function,
-                             bool replace, bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  RequireCreateOn(*_snapshot, ax.role, *schema_id);
-  function->SetParentId(*schema_id);
-
-  ObjectId existed_id;
-  if (replace) {
-    existed_id =
-      _snapshot
-        ->GetObjectId<ResolveType::Function>(*schema_id, function->GetName())
-        .value_or(ObjectId{});
-    // CREATE OR REPLACE preserves the original owner and grants (PG keeps the
-    // existing catalog tuple's proowner and proacl).
-    if (existed_id.isSet()) {
-      RequireObjectOwner(*_snapshot, ax.role, existed_id);
-      if (auto existing = _snapshot->GetObject<Object>(existed_id)) {
-        function->SetPermissions(existing->GetPermissions());
-      }
-    }
-  } else if (if_not_exists && _snapshot->GetObjectId<ResolveType::Function>(
-                                *schema_id, function->GetName())) {
-    return false;
-  }
-
-  Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      if (existed_id.isSet()) {
-        if (auto deps =
-              clone->GetDependency<PgSqlFunctionDependency>(existed_id);
-            deps && !deps->indexes.empty()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-            ERR_MSG("cannot replace function \"", function->GetName(),
-                    "\" because indexes depend on it"));
-        }
-        function->SetId(existed_id);
-        clone->ReplaceObject<ResolveType::Function>(
-          *schema_id, function->GetName(), function);
-      } else {
-        clone->RegisterObject(function, *schema_id, /*replace=*/false);
-      }
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*function, stream);
-      if (existed_id.isSet()) {
-        _engine->Write([&](auto& ctx) {
-          ctx.PutDefinition(*schema_id, ObjectType::Function, function->GetId(),
-                            std::string_view{bytes});
-        });
-        return;
-      }
-      _engine->CreateDefinition(*schema_id, ObjectType::Function,
-                                function->GetId(), bytes);
-    },
-    [&](auto clone) {
-      if (!existed_id.isSet()) {
-        clone->UnregisterObject(function, *schema_id, true);
-      }
-    });
-  return true;
-}
-
-bool Catalog::CreateTable(const AccessContext& ax, ObjectId database_id,
-                          std::string_view schema, CreateTableOptions options,
-                          CreateTableOperationOptions operation_options) {
+  std::shared_ptr<duckdb::CreateTableInfo> info,
+  std::vector<SerialSequence> sequence_specs,
+  CreateTableOperationOptions operation_options) {
+  const auto name = std::string{catalog::TableNameOf(*info)};
   // Uniqueness keys are enforced by the store table's DuckDB ART, which cannot
   // index nested types. Reject a nested-type key column up front with a clear
-  // error instead of silently creating the table with the constraint dropped
-  // (the store-side names_for clears it otherwise). Scalar key types are
-  // handled natively by the ART.
-  auto reject_nested_key = [&](std::span<const Column::Id> ids,
-                               std::string_view what) {
-    for (auto col_id : ids) {
-      auto col = absl::c_find_if(
-        options.columns, [&](const auto& c) { return c.GetId() == col_id; });
-      SDB_ASSERT(col != options.columns.end());
-      if (col->type.IsNested()) {
+  // error instead of silently creating the table with the constraint dropped.
+  for (const auto& constraint : info->constraints) {
+    if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+      continue;
+    }
+    const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+    const std::string_view what =
+      unique.IsPrimaryKey() ? "primary key" : "unique constraint";
+    for (const auto& key : unique.GetColumnNames()) {
+      const auto* column =
+        catalog::ColumnByName(*info, key.GetIdentifierName());
+      if (column != nullptr && column->Type().IsNested()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG(what, " column \"", col->GetName(),
-                  "\" has unsupported nested type ", col->type.ToString()));
+          ERR_MSG(what, " column \"", column->Name().GetIdentifierName(),
+                  "\" has unsupported nested type ",
+                  column->Type().ToString()));
       }
     }
-  };
-  reject_nested_key(options.pk_columns, "primary key");
-  for (const auto& unique : options.unique_constraints) {
-    reject_nested_key(unique.columns, "unique constraint");
   }
-  auto sequence_specs = std::move(options.sequences);
 
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  auto schema_id = TryFindSchemaId(ax.context, database_id, schema);
   if (!schema_id) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                     ERR_MSG("schema \"", schema, "\" does not exist"));
   }
-  RequireCreateOn(*_snapshot, ax.role, *schema_id);
+  RequireCreateOn(ax.context, ax.role, *schema_id);
   if (operation_options.if_not_exists &&
-      _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, options.name)) {
-    return false;
+      (catalog::Find<SereneDBTableEntry>(ax.context, *schema_id, name) ||
+       catalog::Find<SereneDBViewEntry>(ax.context, *schema_id, name) ||
+       catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id, name) ||
+       catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id, name))) {
+    return nullptr;
   }
 
-  for (const auto& fk : options.foreign_keys) {
-    if (!fk.referenced_table.isSet()) {
+  // REFERENCES on the referenced table's key columns, which is what postgres
+  // asks of the creator of a foreign key.
+  for (const auto& constraint : info->constraints) {
+    if (constraint->type != duckdb::ConstraintType::FOREIGN_KEY) {
       continue;
     }
-    auto ref = _snapshot->GetObject<Table>(fk.referenced_table);
-    if (!ref) {
+    const auto& fk = constraint->Cast<duckdb::ForeignKeyConstraint>();
+    const ObjectId referenced_id{fk.host_referenced_id};
+    if (!referenced_id.isSet()) {
       continue;
     }
-    const auto& ref_ids = fk.referenced_columns;
-    if (!_snapshot->ClosureFor(ax.role).CanColumns(
-          *ref, AclMode::References, [&](uint64_t, const Column& c) {
-            return absl::c_linear_search(ref_ids, c.GetId());
-          })) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied for table ", ref->GetName()));
+    const auto* ref = catalog::FindIn<SereneDBTableEntry>(
+      ax.context, database_id, referenced_id);
+    if (ref == nullptr) {
+      continue;
+    }
+    const auto& ref_perm = ref->permissions;
+    std::vector<AclView> ref_acls;
+    ref_acls.reserve(fk.host_pk_column_ids.size());
+    for (const auto column_id : fk.host_pk_column_ids) {
+      ref_acls.push_back(ref->GetColumnAcl(ObjectId{column_id}));
+    }
+    if (!auth::ClosureFor(ax.context, ax.role)
+           ->CanColumns(ref_perm, AclMode::References, ref_acls)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied for table ", ref->name.GetIdentifierName()));
     }
   }
 
   // PG mangles `<table>_<col>_seq` with a numeric suffix on collision. Done
-  // under the mutex so concurrent CREATE TABLEs can't race on it.
-  auto pick_unique_name = [&](std::string_view base) {
+  // under the mutex so concurrent CREATE TABLEs can't race on it. Every half of
+  // the relation namespace is asked, because a sequence shares it.
+  const auto pick_unique_name = [&](std::string_view base) {
+    const auto taken = [&](std::string_view candidate) {
+      return catalog::Find<SereneDBTableEntry>(ax.context, *schema_id,
+                                               candidate) ||
+             catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id,
+                                                  candidate) ||
+             catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id,
+                                               candidate) ||
+             catalog::Find<SereneDBViewEntry>(ax.context, *schema_id,
+                                              candidate);
+    };
     std::string candidate{base};
-    for (size_t i = 1;
-         _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, candidate);
-         ++i) {
+    for (size_t i = 1; taken(candidate); ++i) {
       candidate = absl::StrCat(base, i);
     }
     return candidate;
   };
 
-  auto make_nextval_default = [](std::string_view qualified) {
+  const auto make_nextval_default = [](std::string_view qualified) {
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> args;
     args.emplace_back(duckdb::make_uniq<duckdb::ConstantExpression>(
       duckdb::Value{std::string{qualified}}));
-    return std::make_shared<ColumnExpr>(
-      duckdb::make_uniq<duckdb::FunctionExpression>("nextval",
-                                                    std::move(args)));
+    return duckdb::make_uniq<duckdb::FunctionExpression>("nextval",
+                                                         std::move(args));
   };
 
-  // A caller-provided id means CTAS mode: created tombstoned, no store table.
-  const bool with_tombstone = operation_options.table_id.id() != 0;
-  // Columns come in with whatever owner_table_id callers set (unused);
-  // Table's constructor stamps the real id on each.
-  auto table_id = with_tombstone ? operation_options.table_id : NextId();
+  // A caller-provided id means CTAS mode: the data side makes the store table
+  // itself, under its own transaction.
+  const bool ctas_mode = operation_options.table_id.id() != 0;
+  const auto table_id = ctas_mode ? operation_options.table_id : NextId();
 
   // Generated serial/PK sequences are owned by the table owner too (PG: ALTER
   // TABLE OWNER TO cascades to them, so they must start matching). The owner is
   // the acting role from the access context (root for internal/bootstrap
   // callers via NoAccessCheck).
   const ObjectId owner = ax.role;
-
-  std::vector<std::shared_ptr<Sequence>> sequences;
+  const Permissions perm{owner};
+  const Permissions sequence_perm{owner};
+  std::vector<std::shared_ptr<const duckdb::CreateSequenceInfo>> sequences;
   sequences.reserve(sequence_specs.size() + 1);
+  const auto make_sequence = [&](SequenceOptions opts) {
+    return catalog::MakeSequenceInfo(NextId(), *schema_id, std::move(opts));
+  };
   for (const auto& spec : sequence_specs) {
-    auto col_it = absl::c_find_if(options.columns, [&](const auto& c) {
-      return c.GetId() == spec.column_id;
-    });
-    SDB_ASSERT(col_it != options.columns.end());
+    const auto* column = catalog::ColumnById(*info, spec.column_id);
+    SDB_ASSERT(column != nullptr);
     auto resolved = pick_unique_name(
-      absl::StrCat(options.name, "_", col_it->GetName(), "_seq"));
-    col_it->expr = make_nextval_default(absl::StrCat(schema, ".", resolved));
+      absl::StrCat(name, "_", column->Name().GetIdentifierName(), "_seq"));
+    info->columns.GetColumnMutable(column->Logical())
+      .SetDefaultValue(
+        make_nextval_default(absl::StrCat(schema, ".", resolved)));
     auto seq_opts = spec.options;
     seq_opts.name = resolved;
     seq_opts.owner_table_id = table_id.id();
-    seq_opts.perm = Permissions{owner};
-    sequences.push_back(
-      std::make_shared<Sequence>(*schema_id, ObjectId{}, std::move(seq_opts)));
+    sequences.push_back(make_sequence(std::move(seq_opts)));
   }
 
-  // Tables without an explicit PK get an auto-PK owned sequence. Table
-  // holds its id directly so the insert path doesn't have to scan
-  // owned_sequences for it.
+  // Tables without an explicit PK get an auto-PK owned sequence, whose id the
+  // definition holds directly so the insert path does not have to look for it.
+  std::shared_ptr<const duckdb::CreateSequenceInfo> generated_pk_seq;
   ObjectId generated_pk_seq_id;
-  if (options.pk_columns.empty()) {
-    auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));
+  if (TablePrimaryKey(*info) == nullptr) {
     SequenceOptions opts;
-    opts.name = resolved;
+    opts.name = pick_unique_name(absl::StrCat(name, "_pk_seq"));
     opts.cache = 65536;
     opts.owner_table_id = table_id.id();
-    opts.perm = Permissions{owner};
-    auto pk_seq =
-      std::make_shared<Sequence>(*schema_id, ObjectId{}, std::move(opts));
-    generated_pk_seq_id = pk_seq->GetId();
-    sequences.push_back(std::move(pk_seq));
+    generated_pk_seq = make_sequence(std::move(opts));
+    generated_pk_seq_id = catalog::IdOf(*generated_pk_seq);
+    sequences.push_back(generated_pk_seq);
+  }
+  catalog::SetTableTags(*info, catalog::TableEngineOf(*info),
+                        catalog::SearchOptionsOf(*info), generated_pk_seq_id);
+
+  auto table =
+    NextTableVersion(ax.context, table_id, *schema_id, std::move(info));
+  bool store_table =
+    catalog::TableEngineOf(*table) == TableEngine::Transactional;
+  // Runtime state, bound onto the entry once it is placed: the shard the rows
+  // of a search table live in, and the counter the insert path reserves from.
+  std::shared_ptr<search::SearchTable> search_data;
+  if (catalog::TableEngineOf(*table) == TableEngine::Search) {
+    search_data = search::SearchTable::Create(database_id, *schema_id, table_id,
+                                              /*is_new=*/true,
+                                              catalog::SearchOptionsOf(*table));
   }
 
-  // Constraints get real catalog OIDs like every other object: one for the
-  // constraint itself and one for its backing index relation (PG allocates a
-  // pg_class entry per PK/UNIQUE index; the pg_catalog views expose these).
-  ObjectId pk_constraint_id;
-  ObjectId pk_index_id;
-  if (!options.pk_columns.empty()) {
-    pk_constraint_id = NextId();
-    pk_index_id = NextId();
-  }
-  for (auto& unique : options.unique_constraints) {
-    unique.id = NextId();
-    unique.index_id = NextId();
-  }
-  for (auto& fk : options.foreign_keys) {
-    fk.id = NextId();
-  }
-
-  auto table = std::make_shared<Table>(
-    Permissions{owner}, *schema_id, table_id, options.name,
-    std::move(options.columns), std::move(options.pk_columns),
-    std::move(options.check_constraints), generated_pk_seq_id, options.engine,
-    std::move(options.unique_constraints), std::move(options.foreign_keys),
-    std::move(options.pk_name), pk_constraint_id, pk_index_id);
-  table->SetSearchOptions(options.search_options);
-  if (with_tombstone) {
-    table->SetTombstoned(true);
-  }
-
-  std::optional<StoreTableDef> store_table;
-  if (table->GetEngine() == TableEngine::Transactional) {
-    auto database = _snapshot->GetObject<Database>(database_id);
-    SDB_ASSERT(database);
-    store_table = MakeStoreTableDef(database->GetName(), schema, *table);
-    for (const auto& fk : table->ForeignKeys()) {
-      StoreForeignKey out;
-      const Table* referenced = nullptr;
-      if (!fk.referenced_table.isSet()) {
-        referenced = table.get();
-        out.referenced_table = store_table->name;
-      } else {
-        auto ref_obj = _snapshot->GetObject<Table>(fk.referenced_table);
-        if (!ref_obj || ref_obj->GetEngine() != TableEngine::Transactional) {
-          continue;
-        }
-        auto ref_schema = _snapshot->GetObject<Schema>(ref_obj->GetParentId());
-        SDB_ASSERT(ref_schema);
-        out.referenced_table = StoreTableName(
-          database->GetName(), ref_schema->GetName(), ref_obj->GetName());
-        referenced = ref_obj.get();
-      }
-      auto names_for = [](const Table& t, std::span<const Column::Id> ids,
-                          std::vector<std::string>& out_names) {
-        for (auto col_id : ids) {
-          auto it = std::ranges::find_if(
-            t.Columns(), [&](const auto& c) { return c.GetId() == col_id; });
-          if (it == t.Columns().end() || it->type.IsNested()) {
-            out_names.clear();
-            return;
-          }
-          out_names.emplace_back(it->GetName());
-        }
-      };
-      names_for(*table, fk.columns, out.columns);
-      names_for(*referenced, fk.referenced_columns, out.referenced_columns);
-      if (!out.columns.empty() && !out.referenced_columns.empty()) {
-        store_table->foreign_keys.push_back(std::move(out));
-      }
+  // The names the op registers, checked here in the order it registers them:
+  // the store table is created before the publish, so a collision thrown from
+  // inside the op would leave it behind. Two generated sequences can collide
+  // with each other (pick_unique_name only sees the transaction's view), which
+  // is why this tracks the batch's own names too. Sequences share the relation
+  // namespace but not its errcode.
+  {
+    std::vector<std::string_view> registering;
+    registering.reserve(sequences.size() + 1);
+    const auto taken = [&](std::string_view candidate) {
+      return catalog::Find<SereneDBTableEntry>(ax.context, *schema_id,
+                                               candidate) ||
+             catalog::Find<SereneDBViewEntry>(ax.context, *schema_id,
+                                              candidate) ||
+             catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id,
+                                               candidate) ||
+             catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id,
+                                                  candidate) ||
+             absl::c_linear_search(registering, candidate);
+    };
+    if (taken(name)) {
+      ThrowDuplicateName(NameKind::Relation, name);
     }
-    if (with_tombstone) {
-      // Not-yet-committed (CTAS) tables live under the dropped name; commit
-      // renames to the public name (RemoveTombstone), failure drops by id.
-      store_table->name = DroppedStoreTableName(table->GetId());
-    }
-  } else if (table->GetEngine() == TableEngine::Search) {
-    table->SetData(search::SearchTable::Create(database_id, *schema_id,
-                                               table->GetId(), /*is_new=*/true,
-                                               table->SearchOptions()));
-  }
-
-  Apply(
-    _snapshot,
-    [&](auto& clone) {
-      clone->RegisterObject(table, *schema_id, false);
-
-      for (const auto& seq : sequences) {
-        clone->RegisterObject(seq, *schema_id, false);
+    registering.push_back(name);
+    for (const auto& seq : sequences) {
+      if (taken(catalog::SequenceNameOf(*seq))) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                        ERR_MSG("relation \"", catalog::SequenceNameOf(*seq),
+                                "\" already exists"));
       }
-      if (with_tombstone) {
-        _engine->WriteTombstone(*schema_id, table->GetId());
-      }
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-      // PutDefinition copies into the catalog store batch, so one reused stream
-      // is enough: each view is consumed before the next serialize overwrites
-      // it.
-      duckdb::MemoryStream stream;
-      _engine->Write([&](auto& ctx) {
-        ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
-                          catalog::SerializeObject(*table, stream));
-        for (const auto& seq : sequences) {
-          ctx.PutDefinition(*schema_id, ObjectType::Sequence, seq->GetId(),
-                            catalog::SerializeObject(*seq, stream));
-          ctx.PutSequence(seq->GetId(), seq->Options().Seed());
-        }
-        if (store_table && !with_tombstone) {
-          ctx.CreateStoreTable(std::move(*store_table));
-        }
-      });
-    },
-    [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
-  return true;
-}
-
-bool Catalog::CreateTokenizer(const AccessContext& ax, ObjectId database_id,
-                              std::string_view schema,
-                              std::shared_ptr<Tokenizer> dict,
-                              bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  RequireCreateOn(*_snapshot, ax.role, *schema_id);
-  if (if_not_exists && _snapshot->GetObjectId<ResolveType::Tokenizer>(
-                         *schema_id, dict->GetName())) {
-    return false;
-  }
-  dict->SetParentId(*schema_id);
-
-  Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      clone->RegisterObject(dict, *schema_id, false);
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*dict, stream);
-      _engine->CreateDefinition(*schema_id, ObjectType::Tokenizer,
-                                dict->GetId(), bytes);
-    },
-    [&](auto& clone) { clone->UnregisterObject(dict, *schema_id, true); });
-  return true;
-}
-
-bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
-                                  std::shared_ptr<ForeignServer> foreign_server,
-                                  bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  // Servers are database children, like PG (no schema). Gated on CREATE on
-  // the database, same as CREATE SCHEMA -- PG gates on FDW USAGE instead, but
-  // serenedb has no foreign-data-wrapper catalog object to hang an ACL on.
-  RequireCreateOn(*_snapshot, ax.role, database_id);
-  if (!IsSupportedFdw(foreign_server->GetFdwName())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("foreign-data wrapper \"", foreign_server->GetFdwName(),
-              "\" is not supported"),
-      ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
-  }
-  if (_snapshot->GetForeignServer(database_id, foreign_server->GetName())) {
-    if (if_not_exists) {
-      return false;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-      ERR_MSG("server \"", foreign_server->GetName(), "\" already exists"));
-  }
-  // Catalog names are per-database, but the live attachment alias is
-  // instance-global: a second same-named server would race the first for it
-  // (nondeterministic boot winner; DROP DATABASE detaching the other
-  // database's attachment). The attach cannot catch this -- it only collides
-  // while the first server's attachment is live, not when its remote is down.
-  for (const auto& db : _snapshot->GetDatabases()) {
-    // A database shares the alias namespace with foreign servers, so a server
-    // named after one would make DROP SERVER's detach tear the database down.
-    if (db->GetName() == foreign_server->GetName()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("database \"", db->GetName(),
-                "\" already exists, so a server cannot take that name"),
-        ERR_HINT("Foreign server attachment names are instance-wide; "
-                 "choose a name not used by any database."));
-    }
-    if (db->GetId() != database_id &&
-        _snapshot->GetForeignServer(db->GetId(), foreign_server->GetName())) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("server \"", foreign_server->GetName(),
-                "\" already exists in database \"", db->GetName(), "\""),
-        ERR_HINT("Foreign server attachment names are instance-wide; "
-                 "choose a name not used by any database."));
-    }
-  }
-  foreign_server->SetParentId(database_id);
-
-  Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      clone->RegisterObject(foreign_server, database_id, false);
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*foreign_server, stream);
-      _engine->CreateDefinition(database_id, ObjectType::ForeignServer,
-                                foreign_server->GetId(), bytes);
-    },
-    [&](auto& clone) {
-      clone->UnregisterObject(foreign_server, database_id, true);
-    });
-  return true;
-}
-
-bool Catalog::CreateType(const AccessContext& ax, ObjectId database_id,
-                         std::string_view schema,
-                         std::shared_ptr<PgSqlType> type, bool if_not_exists) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  RequireCreateOn(*_snapshot, ax.role, *schema_id);
-  if (if_not_exists &&
-      _snapshot->GetObjectId<ResolveType::Type>(*schema_id, type->GetName())) {
-    return false;
-  }
-  type->SetParentId(*schema_id);
-
-  Apply(
-    _snapshot,
-    [&](auto& clone) {
-      clone->RegisterObject(type, *schema_id, false);
-      SDB_IF_FAILURE("unable_to_create") {
-        THROW_SQL_ERROR(ERR_MSG("internal error"));
-      }
-
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*type, stream);
-      _engine->CreateDefinition(*schema_id, ObjectType::Type, type->GetId(),
-                                bytes);
-    },
-    [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
-  return true;
-}
-
-template<typename T>
-void Catalog::RenameObjectImpl(ObjectId schema_id,
-                               std::string_view database_name,
-                               std::string_view schema_name,
-                               std::string_view name, std::string_view new_name,
-                               std::shared_ptr<T> object) {
-  constexpr auto kResolveType = std::is_same_v<T, PgSqlFunction>
-                                  ? ResolveType::Function
-                                  : ResolveType::Relation;
-
-  if (object->GetName() == new_name) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                    ERR_MSG("relation \"", new_name, "\" already exists"));
-  }
-
-  auto cloned = object->Clone();
-  if (!cloned) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to clone object"));
-  }
-  auto new_object = basics::downCast<T>(std::move(cloned));
-  SDB_ASSERT(new_object);
-  new_object->SetName(new_name);
-
-  Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      clone->ReplaceObject<kResolveType>(schema_id, name, new_object);
-
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*new_object, stream);
-
-      ObjectId parent_id;
-      if constexpr (std::is_same_v<T, Index>) {
-        parent_id = object->GetRelationId();
-      } else {
-        parent_id = schema_id;
-      }
-
-      if constexpr (std::is_same_v<T, Table>) {
-        if (new_object->GetEngine() == TableEngine::Transactional &&
-            !new_object->Tombstoned()) {
-          _engine->Write([&](auto& ctx) {
-            ctx.PutDefinition(parent_id, new_object->GetType(),
-                              new_object->GetId(), bytes);
-            ctx.RenameStoreTable(
-              StoreTableName(database_name, schema_name, name),
-              StoreTableName(database_name, schema_name, new_name));
-          });
-          return;
-        }
-      }
-      _engine->CreateDefinition(parent_id, new_object->GetType(),
-                                new_object->GetId(), bytes);
-    },
-    [&](const std::shared_ptr<Snapshot>& clone) {
-      auto current = clone->GetObject<T>(new_object->GetId());
-      if (current->GetName() == new_object->GetName()) {
-        clone->ReplaceObject<kResolveType>(schema_id, new_name, object);
-      }
-    });
-}
-
-template<typename T>
-void Catalog::RenameObjectImpl(const AccessContext& ax, ObjectId database_id,
-                               std::string_view schema, std::string_view name,
-                               std::string_view new_name) {
-  static constexpr auto kResolveType = std::is_same_v<T, PgSqlFunction>
-                                         ? ResolveType::Function
-                                         : ResolveType::Relation;
-  absl::MutexLock lock{&_mutex};
-
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-
-  auto object_id = _snapshot->GetObjectId<kResolveType>(*schema_id, name);
-  if (!object_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-
-  auto object = _snapshot->GetObject(*object_id);
-  if (!object) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, *object_id);
-
-  auto typed = std::dynamic_pointer_cast<T>(std::move(object));
-  if (!typed) {
-    if constexpr (std::is_same_v<T, PgSqlView>) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                      ERR_MSG("\"", name, "\" is not a view"));
-    } else {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                      ERR_MSG("\"", name, "\" is not a table"));
+      registering.push_back(catalog::SequenceNameOf(*seq));
     }
   }
 
-  auto database = _snapshot->GetObject<Database>(database_id);
-  SDB_ASSERT(database);
-  RenameObjectImpl<T>(*schema_id, database->GetName(), schema, name, new_name,
-                      std::move(typed));
-}
-
-void Catalog::RenameView(const AccessContext& ax, ObjectId database_id,
-                         std::string_view schema, std::string_view name,
-                         std::string_view new_name) {
-  RenameObjectImpl<PgSqlView>(ax, database_id, schema, name, new_name);
-}
-
-bool Catalog::RenameFunction(const AccessContext& ax, ObjectId database_id,
-                             std::string_view schema, std::string_view name,
-                             std::string_view new_name, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  std::shared_ptr<PgSqlFunction> function;
-  if (schema_id) {
-    if (auto object_id =
-          _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name)) {
-      function = _snapshot->GetObject<PgSqlFunction>(*object_id);
+  SDB_IF_FAILURE("unable_to_create") {
+    THROW_SQL_ERROR(ERR_MSG("internal error"));
+  }
+  // Ahead of the records: the table's SERIAL columns name these sequences in
+  // their DEFAULT, and the resolution the table's record carries is taken while
+  // the entry is written -- so the entries have to be there to be resolved to,
+  // or the table lands with no edge to its own sequence and DROP SEQUENCE stops
+  // being refused. Their records ride the table's own, one frame below.
+  catalog::Catalog::RecordedScope recorded;
+  // The counter the auto-PK column reserves from has to be the one the entry
+  // carries, not a second one over the same sequence.
+  std::shared_ptr<SequenceCounter> generated_pk_counter;
+  for (const auto& seq : sequences) {
+    auto placed =
+      catalog::PutEntry(ax.context, /*old_name=*/{}, seq, sequence_perm);
+    // Seeded from START: a create has no predecessor to inherit a counter
+    // from, and the insert path reserves off the entry's.
+    if (const auto* entry =
+          dynamic_cast<const catalog::SereneDBSequenceEntry*>(placed.get())) {
+      auto counter =
+        NewCounter(catalog::IdOf(*seq), catalog::SequenceOptionsOf(*seq));
+      if (catalog::IdOf(*seq) == generated_pk_seq_id) {
+        generated_pk_counter = counter;
+      }
+      entry->AdoptCounter(std::move(counter));
     }
   }
-  if (!function) {
-    if (missing_ok) {
-      return false;
+  // Re-resolved now that the owned sequences are written: the first pass
+  // could not see them.
+  table = NextTableVersion(ax.context, table_id, *schema_id, table);
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
+    std::vector<wal::OwnedSequence> owned;
+    owned.reserve(sequences.size());
+    for (const auto& seq : sequences) {
+      owned.push_back({.id = catalog::IdOf(*seq),
+                       .info = seq,
+                       .perm = sequence_perm,
+                       .seed = catalog::SequenceOptionsOf(*seq).Seed()});
     }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-                    ERR_MSG("could not find a function named \"", name, "\""));
+    ctx.catalog().PutTable(*table, wal::PutMode::Create, perm,
+                           std::move(owned));
+    // In CTAS mode the store table is the caller's own work, made later in
+    // the same transaction; the entry above waits for that transaction to
+    // commit either way, so there is nothing further to hold back here.
+    if (store_table && !ctas_mode) {
+      ctx.store().CreateTable(database_id, table_id);
+    }
+  });
+  const auto placed =
+    catalog::PutEntry(ax.context, /*old_name=*/{}, table, perm);
+  if (const auto* entry =
+        dynamic_cast<const catalog::SereneDBTableEntry*>(placed.get())) {
+    if (generated_pk_counter) {
+      entry->Runtime()->SetGeneratedPkSequence(generated_pk_counter);
+    }
+    if (search_data) {
+      entry->Runtime()->SetData(std::move(search_data));
+    }
   }
-  RequireObjectOwner(*_snapshot, ax.role, function->GetId());
-
-  auto database = _snapshot->GetObject<Database>(database_id);
-  SDB_ASSERT(database);
-  RenameObjectImpl<PgSqlFunction>(*schema_id, database->GetName(), schema, name,
-                                  new_name, std::move(function));
-  return true;
-}
-
-void Catalog::RenameRelation(const AccessContext& ax, ObjectId database_id,
-                             std::string_view schema, std::string_view name,
-                             std::string_view new_name) {
-  absl::MutexLock lock{&_mutex};
-
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!object_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-
-  auto object = _snapshot->GetObject(*object_id);
-  if (!object) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, *object_id);
-
-  auto database = _snapshot->GetObject<Database>(database_id);
-  SDB_ASSERT(database);
-  switch (object->GetType()) {
-    case ObjectType::Table:
-      RenameObjectImpl<Table>(*schema_id, database->GetName(), schema, name,
-                              new_name,
-                              std::static_pointer_cast<Table>(object));
-      return;
-    case ObjectType::View:
-      RenameObjectImpl<PgSqlView>(*schema_id, database->GetName(), schema, name,
-                                  new_name,
-                                  std::static_pointer_cast<PgSqlView>(object));
-      return;
-    case ObjectType::SecondaryIndex:
-    case ObjectType::InvertedIndex:
-      RenameObjectImpl<Index>(*schema_id, database->GetName(), schema, name,
-                              new_name,
-                              std::static_pointer_cast<Index>(object));
-      return;
-    default:
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                      ERR_MSG("\"", name, "\" is not a table"));
-  }
+  return table;
 }
 
 void Catalog::ChangeRoleImpl(
-  ObjectId actor_id, std::string_view name,
-  absl::FunctionRef<void(const Snapshot&, const Role&)> check,
-  ChangeCallback<Role> callback) {
+  duckdb::ClientContext* context, ObjectId actor_id, std::string_view name,
+  absl::FunctionRef<void(duckdb::ClientContext*, const CreateRoleInfo&)> check,
+  ChangeCallback<CreateRoleInfo> callback) {
+  JoinClusterGlobal(context, duckdb::DatabaseModificationType::ALTER_TABLE);
   absl::MutexLock lock{&_mutex};
-  auto role = _snapshot->GetRole(name);
-  if (!role) {
+  auto current = catalog::FindRole(context, name);
+  if (!current) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", name, "\" does not exist"));
   }
-  check(*_snapshot, *role);  // op-specific access check, on the live snapshot
-  std::shared_ptr<Role> new_role_ptr;
-  callback(*role, new_role_ptr);
-  if (!new_role_ptr) {
+  catalog::RequireRoleNotVanished(context, name);
+  check(context, *current);  // caller's access check, on the live entry
+
+  std::shared_ptr<CreateRoleInfo> updated;
+  callback(*current, updated);
+  if (!updated) {
     return;
   }
-  // A change may only add privileged attributes the actor holds itself.
-  RequireAttributesGrantable(*_snapshot, actor_id,
-                             new_role_ptr->Options() & ~role->Options(),
+  // A change may only add privileged attributes the actor holds itself. A
+  // rename onto a taken name is refused here rather than by the set, so the
+  // error is PG's "role already exists" rather than a serialization failure.
+  RequireAttributesGrantable(context, actor_id,
+                             updated->Options() & ~current->Options(),
                              /*creating=*/false);
-  Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      clone->ReplaceObject<ResolveType::Role>(id::kInstance, name,
-                                              new_role_ptr);
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*new_role_ptr, stream);
-      _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                new_role_ptr->GetId(), bytes);
-      clone->RebuildRoleClosures();
-    },
-    [&](const std::shared_ptr<Snapshot>& clone) {
-      auto obj = clone->GetObject<Role>(new_role_ptr->GetId());
-      if (obj->GetName() == new_role_ptr->GetName()) {
-        clone->ReplaceObject<ResolveType::Role>(id::kInstance,
-                                                new_role_ptr->GetName(), role);
-      }
-    });
+  const auto old_name = std::string{current->GetName()};
+  if (updated->GetName() != old_name &&
+      catalog::FindRole(context, updated->GetName())) {
+    ThrowDuplicateName(NameKind::Role, updated->GetName());
+  }
+  catalog::PutRole(context, old_name, std::move(updated));
 }
 
 void Catalog::ChangeRole(const AccessContext& ax, std::string_view name,
                          std::string_view verb, bool allow_self,
-                         ChangeCallback<Role> callback) {
+                         ChangeCallback<CreateRoleInfo> callback) {
   ChangeRoleImpl(
-    ax.role, name,
-    [&](const Snapshot& snap, const Role& role) {
+    ax.context, ax.role, name,
+    [&](duckdb::ClientContext* context, const CreateRoleInfo& role) {
       if (allow_self && ax.role == role.GetId()) {
         return;  // a role may change its own entry (e.g. SET config)
       }
-      RequireRoleAdmin(snap, ax.role, role, verb);
+      RequireRoleAdmin(context, ax.role, role, verb);
     },
     std::move(callback));
 }
 
 void Catalog::ChangeDefaultAcl(const AccessContext& ax,
                                std::string_view role_name, ObjectId schema,
-                               char objtype, ObjectType type,
-                               absl::FunctionRef<void(Acl&)> mutate) {
+                               char objtype, duckdb::CatalogType type,
+                               absl::AnyInvocable<void(Acl&)> mutate) {
   ChangeRoleImpl(
-    ax.role, role_name,
-    [&](const Snapshot& snap, const Role& role) {
-      RequireRoleMembership(snap, ax.role, role);
+    ax.context, ax.role, role_name,
+    [&](duckdb::ClientContext* context, const CreateRoleInfo& role) {
+      RequireRoleMembership(context, ax.role, role);
     },
-    [&](const Role& old_role, std::shared_ptr<Role>& new_role) {
-      new_role = basics::downCast<Role>(old_role.Clone());
+    [schema, objtype, type, mutate = std::move(mutate)](
+      const CreateRoleInfo& old_role,
+      std::shared_ptr<CreateRoleInfo>& new_role) mutable {
+      new_role = old_role.CloneRole();
       new_role->ChangeDefaultAcl(schema, objtype, type, mutate);
     });
 }
@@ -3368,10 +2123,12 @@ void Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
                                std::string_view member_name,
                                const Membership& edge, bool revoke,
                                bool admin_option_only) {
+  JoinClusterGlobal(ax.context, duckdb::DatabaseModificationType::ALTER_TABLE);
   absl::MutexLock lock{&_mutex};
-  auto actor = _snapshot->GetObject<Role>(ax.role);
+  auto roles = auth::RolesOf(ax.context);
+  auto actor = catalog::FindRole(ax.context, ax.role);
   if (!(actor && actor->IsSuperuser()) &&
-      !auth::HasAdminOption(*_snapshot, ax.role, role)) {
+      !auth::HasAdminOption(*roles, ax.role, role)) {
     const auto verb = revoke ? "revoke" : "grant";
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -3380,23 +2137,26 @@ void Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
                  "\" may ", verb, " this role."));
   }
   if (!revoke) {
-    if (!_snapshot->GetObject<Role>(role)) {
+    if (!catalog::FindRole(ax.context, role)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("role \"", role_name, "\" does not exist"));
     }
-    if (auth::ComputeMembershipClosure(*_snapshot, role).contains(member)) {
+    catalog::RequireRoleNotVanished(ax.context, role_name);
+    if (auth::ComputeMembershipClosure(*roles, role).contains(member)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
                       ERR_MSG("role \"", role_name, "\" is a member of role \"",
                               member_name, "\""));
     }
   }
 
-  auto member_role = _snapshot->GetObject<Role>(member);
+  const auto member_role = catalog::FindRole(ax.context, member);
   if (!member_role) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("role \"", member_name, "\" does not exist"));
   }
-  auto new_role = std::static_pointer_cast<Role>(member_role->Clone());
+  catalog::RequireRoleNotVanished(ax.context, member_name);
+
+  auto new_role = member_role->CloneRole();
   if (revoke && admin_option_only) {
     auto edges = new_role->MemberOf();
     auto it = std::ranges::find(edges, role, &Membership::role);
@@ -3410,826 +2170,160 @@ void Catalog::ChangeMembership(const AccessContext& ax, ObjectId role,
   } else {
     new_role->AddMembership(edge);
   }
-
-  Apply(
-    _snapshot,
-    [&](std::shared_ptr<Snapshot>& clone) {
-      clone->ReplaceObject<ResolveType::Role>(id::kInstance,
-                                              new_role->GetName(), new_role);
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*new_role, stream);
-      _engine->CreateDefinition(id::kInstance, ObjectType::Role,
-                                new_role->GetId(), bytes);
-      clone->RebuildRoleClosures();
-    },
-    [&](const std::shared_ptr<Snapshot>& clone) {
-      auto obj = clone->GetObject<Role>(new_role->GetId());
-      if (obj->GetName() == new_role->GetName()) {
-        clone->ReplaceObject<ResolveType::Role>(
-          id::kInstance, new_role->GetName(), member_role);
-      }
-    });
+  const auto name = std::string{new_role->GetName()};
+  catalog::PutRole(ax.context, name, std::move(new_role));
 }
 
-namespace {
-
-// PG ownership transfer: drop the old owner's implicit self-grant and rewrite
-// grantor old->new on the rows it had granted, then install the new owner.
-// Operates on an already-cloned object (the COW analogue of writing a new
-// catalog tuple).
-void TransferOwner(Object& cloned, ObjectId new_owner) {
-  auto perm = cloned.GetPermissions();
-  const ObjectId old_owner = perm.owner;
-  std::erase_if(perm.acl, [&](const AclItem& item) {
-    return item.grantee == old_owner && item.grantor == old_owner;
-  });
-  for (auto& item : perm.acl) {
-    if (item.grantor == old_owner) {
-      item.grantor = new_owner;
-    }
+void SereneDBCatalog::ChangeTableOwner(const AccessContext& ax,
+                                       const duckdb::CreateTableInfo& table,
+                                       duckdb::CatalogType type,
+                                       ObjectId new_owner,
+                                       std::string_view new_owner_name) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto table_id = catalog::IdOf(table);
+  const auto schema_id = catalog::ParentIdOf(table);
+  const auto* live =
+    catalog::Find<SereneDBTableEntry>(ax.context, schema_id, table_id);
+  if (live == nullptr) {
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
   }
-  perm.owner = new_owner;
-  cloned.SetPermissions(std::move(perm));
+  const auto& perm = live->permissions;
+  const auto name = live->name.GetIdentifierName();
+  // The definition the record carries: the owner moves, the table does not.
+  const auto definition = live->Definition();
+  // `type` is the type the statement named the table as, which is what the
+  // refusal has to say -- a statement may name an index by ALTER TABLE.
+  RequireOwnerTransfer(ax, schema_id, perm, new_owner, new_owner_name,
+                       pg::ToPgObjectTypeName(type), name);
+
+  auto updated_perm = auth::TransferredOwner(perm, new_owner);
+  const auto database_id = catalog::SchemaDatabaseId(ax.context, schema_id);
+  // A table's SERIAL sequences follow its owner, and are rewritten as their own
+  // definitions in the same frame.
+  auto sequences = catalog::DatabaseSequences(ax.context, database_id);
+  std::erase_if(sequences, [&](const catalog::SereneDBSequenceEntry* seq) {
+    return seq->GetOwnerTableId() != table_id;
+  });
+  std::vector<
+    std::pair<std::shared_ptr<const duckdb::CreateSequenceInfo>, Permissions>>
+    rewritten;
+  rewritten.reserve(sequences.size());
+  for (const auto* sequence : sequences) {
+    rewritten.emplace_back(
+      sequence->Definition(),
+      auth::TransferredOwner(sequence->permissions, new_owner));
+  }
+  // One frame for the table and everything that follows its owner: a table and
+  // the sequences its SERIAL columns own must never end up owned by different
+  // roles, which one append per object allows a crash to do.
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().PutTable(*definition, wal::PutMode::Replace, updated_perm);
+    for (const auto& [sequence, sequence_perm] : rewritten) {
+      ctx.catalog().PutEntry(catalog::ParentIdOf(*sequence),
+                             duckdb::CatalogType::SEQUENCE_ENTRY,
+                             catalog::IdOf(*sequence), wal::PutMode::Replace,
+                             sequence, sequence_perm);
+    }
+  });
+  catalog::PutEntry(ax.context, name, definition, updated_perm);
+  for (auto& [sequence, sequence_perm] : rewritten) {
+    const auto sequence_name = std::string{catalog::SequenceNameOf(*sequence)};
+    catalog::PutEntry(ax.context, sequence_name, std::move(sequence),
+                      std::move(sequence_perm));
+  }
 }
 
-}  // namespace
-
-void Catalog::ChangeOwner(const AccessContext& ax, ObjectId database_id,
-                          std::string_view schema, std::string_view name,
-                          ObjectType type, ObjectId new_owner,
-                          std::string_view new_owner_name) {
+void Catalog::ChangeDatabaseAcl(const AccessContext& ax, ObjectId database_id,
+                                AclMutator mutate) {
+  JoinClusterGlobal(ax.context, duckdb::DatabaseModificationType::ALTER_TABLE);
   absl::MutexLock lock{&_mutex};
+  auto database = catalog::FindDatabase(ax.context, database_id);
+  if (!database) [[unlikely]] {
+    ThrowConcurrentlyDropped(database_id);
+  }
+  auto perm = auth::MutatedAcl(database.perm,
+                               duckdb::CatalogType::DATABASE_ENTRY, mutate);
+  auto updated = database.info->CloneDatabase();
+  const auto name = std::string{updated->GetName()};
+  catalog::PutDatabase(ax.context, name, std::move(updated), std::move(perm));
+}
 
-  auto require_owner_change = [&](const Object& obj) {
-    const auto& rc = _snapshot->ClosureFor(ax.role);
-    // A superuser bypasses every ALTER OWNER check (owner, SET-ROLE-to-new,
-    // and CREATE on the target schema).
-    if (rc.is_superuser) {
-      return;
-    }
-    if (!rc.Owns(obj)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("must be owner of ", pg::ToPgObjectTypeName(type), " ", name));
-    }
-    const ObjectId real_owner = obj.GetOwner();
-    if (!auth::ComputeSetRoleClosure(*_snapshot, ax.role).contains(new_owner)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("must be able to SET ROLE \"", new_owner_name, "\""));
-    }
-    if (type != ObjectType::Schema && new_owner != real_owner) {
-      auto sch = _snapshot->GetSchema(database_id, schema);
-      if (sch && !_snapshot->ClosureFor(new_owner).Can(*sch, AclMode::Create)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied for schema ", schema));
-      }
-    }
-  };
+void SereneDBCatalog::ChangeTable(const AccessContext& ax,
+                                  const duckdb::CreateTableInfo& table,
+                                  TableChange change) {
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto table_id = catalog::IdOf(table);
+  const auto schema_id = catalog::ParentIdOf(table);
+  const auto* current =
+    catalog::Find<SereneDBTableEntry>(ax.context, schema_id, table_id);
+  if (current == nullptr) {
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
+  }
+  const auto& perm = current->permissions;
+  RequireOwner(ax.context, ax.role, perm, "table",
+               current->name.GetIdentifierName());
 
-  // ALTER SCHEMA name OWNER TO: in-place body swap that rebinds the schema-name
-  // resolution key onto the new body while leaving the child namespaces (keyed
-  // by the stable schema_id) intact, so contained relations stay reachable.
-  if (type == ObjectType::Schema) {
-    auto schema_id =
-      _snapshot->GetObjectId<ResolveType::Schema>(database_id, name);
-    if (!schema_id) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", name, "\" does not exist"));
-    }
-    auto obj = _snapshot->GetObject(*schema_id);
-    if (!obj) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", name, "\" does not exist"));
-    }
-    require_owner_change(*obj);
-    auto cloned = obj->Clone();
-    TransferOwner(*cloned, new_owner);
-    Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*cloned, stream);
-      clone->ReplaceObject<ResolveType::Schema>(database_id, cloned->GetName(),
-                                                cloned);
-      _engine->CreateDefinition(database_id, ObjectType::Schema,
-                                cloned->GetId(), bytes);
-    });
+  const auto current_info = current->Definition();
+  auto info = change(*current_info);
+  if (!info) {
     return;
   }
-
-  // Types live in their own per-schema namespace, separate from relations.
-  if (type == ObjectType::Type) {
-    auto schema_id =
-      _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-    if (!schema_id) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", schema, "\" does not exist"));
-    }
-    auto type_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
-    if (!type_id) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("type \"", name, "\" does not exist"));
-    }
-    auto obj = _snapshot->GetObject(*type_id);
-    SDB_ASSERT(obj);
-    require_owner_change(*obj);
-    auto cloned = obj->Clone();
-    TransferOwner(*cloned, new_owner);
-    Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*cloned, stream);
-      clone->ReplaceObject<ResolveType::Type>(*schema_id, cloned->GetName(),
-                                              cloned);
-      _engine->CreateDefinition(*schema_id, ObjectType::Type, cloned->GetId(),
-                                bytes);
-    });
-    return;
-  }
-
-  // Relations (table / view / sequence) live under a schema.
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!object_id) {
+  const auto& old_info = *current_info;
+  // Adding a primary key changes which columns provide row identity, so every
+  // index already built over the table indexes the wrong thing afterwards.
+  if (TablePrimaryKey(old_info) == nullptr &&
+      TablePrimaryKey(*info) != nullptr &&
+      !catalog::RelationIndexes(ax.context, schema_id, table_id).empty()) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-      ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name, "\" does not exist"));
+      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+      ERR_MSG("Cannot alter entry \"", current->name.GetIdentifierName(),
+              "\" because there are entries that depend on it."));
   }
-  auto obj = _snapshot->GetObject(*object_id);
-  if (!obj) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-      ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name, "\" does not exist"));
-  }
-  require_owner_change(*obj);
+  auto updated =
+    NextTableVersion(ax.context, table_id, schema_id, std::move(info));
+  const auto& new_info = *updated;
+  const auto rerendered =
+    RerenderedIndexes(catalog::RelationIndexes(ax.context, schema_id, table_id),
+                      old_info, new_info);
 
-  std::vector<std::shared_ptr<Object>> cascade;
-  if (obj->GetType() == ObjectType::Table) {
-    cascade =
-      _snapshot->GetDependency<TableDependency>(*object_id)->owned_sequences |
-      std::views::transform([&](ObjectId seq_id) -> std::shared_ptr<Object> {
-        auto seq = _snapshot->GetObject<Sequence>(seq_id);
-        SDB_ASSERT(seq);
-        return seq;
-      }) |
-      std::ranges::to<std::vector<std::shared_ptr<Object>>>();
-  }
+  const bool reshape =
+    catalog::TableEngineOf(*updated) == TableEngine::Transactional;
+  const auto db_id = catalog::SchemaDatabaseId(ax.context, schema_id);
 
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    auto restamp = [&](const std::shared_ptr<Object>& original) {
-      auto cloned = original->Clone();
-      TransferOwner(*cloned, new_owner);
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*cloned, stream);
-      clone->ReplaceObject<ResolveType::Relation>(cloned->GetParentId(),
-                                                  cloned->GetName(), cloned);
-      _engine->CreateDefinition(cloned->GetParentId(), cloned->GetType(),
-                                cloned->GetId(), bytes);
-    };
-
-    restamp(obj);
-    for (const auto& dep : cascade) {
-      restamp(dep);
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().PutTable(*updated, wal::PutMode::Replace, perm);
+    for (const auto& new_idx : rerendered) {
+      PutIndex(ctx, new_idx, wal::PutMode::Replace);
+    }
+    if (reshape) {
+      ctx.store().ReshapeTable(db_id, table_id, old_info, new_info);
     }
   });
-}
-
-void Catalog::ChangeAcl(ObjectId database_id, std::string_view schema,
-                        std::string_view name, ObjectType type,
-                        AclMutator mutate) {
-  absl::MutexLock lock{&_mutex};
-
-  std::shared_ptr<Object> obj;
-  ObjectId parent;
-  if (type == ObjectType::Database) {
-    obj = _snapshot->GetObject(database_id);
-  } else if (type == ObjectType::ForeignServer) {
-    // A foreign server is a database child with no schema; `name` is its name.
-    auto server_id =
-      _snapshot->GetObjectId<ResolveType::ForeignServer>(database_id, name);
-    if (!server_id) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("server \"", name, "\" does not exist"));
-    }
-    obj = _snapshot->GetObject(*server_id);
-    parent = database_id;
-  } else if (type == ObjectType::Schema) {
-    // For a schema target the schema's own name arrives in `name`; `schema` is
-    // empty (it has no containing schema).
-    auto schema_id =
-      _snapshot->GetObjectId<ResolveType::Schema>(database_id, name);
-    if (!schema_id) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", name, "\" does not exist"));
-    }
-    obj = _snapshot->GetObject(*schema_id);
-    parent = database_id;
-  } else {
-    auto schema_id =
-      _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-    if (!schema_id) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                      ERR_MSG("schema \"", schema, "\" does not exist"));
-    }
-    // Functions and types live in their own per-schema namespaces; everything
-    // else resolves in the relation namespace.
-    std::optional<ObjectId> object_id;
-    if (type == ObjectType::Function) {
-      object_id =
-        _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
-    } else if (type == ObjectType::Type) {
-      object_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
-    } else {
-      object_id =
-        _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-    }
-    if (!object_id) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name,
-                              "\" does not exist"));
-    }
-    obj = _snapshot->GetObject(*object_id);
-    parent = *schema_id;
+  // After the records and before the index wrappers: the entry the wrappers
+  // project has to be the rewritten one.
+  catalog::PutEntry(ax.context, catalog::TableNameOf(*updated), updated, perm);
+  // What the new version states is refreshed by the write; a key it no longer
+  // states leaves its referenced half behind on a table that still exists.
+  catalog::RefreshForeignKeyTargets(ax.context, *current_info);
+  for (const auto& new_idx : rerendered) {
+    catalog::PutEntry(ax.context, new_idx->GetName(), new_idx);
   }
-  if (!obj) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG(pg::ToPgObjectTypeName(type), " \"", name, "\" does not exist"));
-  }
-
-  // The stored ACL holds only non-owner grants; the owner's privileges are
-  // derived from ownership at check time and synthesized at render time.
-  const auto owner = obj->GetOwner();
-  auto acl = auth::AclForStorage(obj->GetAcl(), type, owner);
-  mutate(*_snapshot, owner, acl);
-
-  auto cloned = obj->Clone();
-  cloned->SetPermissions({owner, std::move(acl)});
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    duckdb::MemoryStream stream;
-    auto bytes = catalog::SerializeObject(*cloned, stream);
-    if (type == ObjectType::Database) {
-      clone->ReplaceObject<ResolveType::Database>({}, cloned->GetName(),
-                                                  cloned);
-      _engine->Write([&](auto& ctx) {
-        ctx.PutDefinition(id::kInstance, ObjectType::Database, cloned->GetId(),
-                          bytes);
-      });
-      return;
-    }
-    if (type == ObjectType::Schema) {
-      clone->ReplaceObject<ResolveType::Schema>(parent, cloned->GetName(),
-                                                cloned);
-      _engine->CreateDefinition(parent, ObjectType::Schema, cloned->GetId(),
-                                bytes);
-      return;
-    }
-    if (type == ObjectType::ForeignServer) {
-      clone->ReplaceObject<ResolveType::ForeignServer>(
-        parent, cloned->GetName(), cloned);
-      _engine->CreateDefinition(parent, ObjectType::ForeignServer,
-                                cloned->GetId(), bytes);
-      return;
-    }
-    if (type == ObjectType::Function) {
-      clone->ReplaceObject<ResolveType::Function>(parent, cloned->GetName(),
-                                                  cloned);
-    } else if (type == ObjectType::Type) {
-      clone->ReplaceObject<ResolveType::Type>(parent, cloned->GetName(),
-                                              cloned);
-    } else {
-      clone->ReplaceObject<ResolveType::Relation>(parent, cloned->GetName(),
-                                                  cloned);
-    }
-    _engine->CreateDefinition(parent, cloned->GetType(), cloned->GetId(),
-                              bytes);
-  });
-}
-
-void Catalog::ChangeColumnAcl(ObjectId database_id, std::string_view schema,
-                              std::string_view table_name,
-                              std::string_view column, AclMutator mutate) {
-  absl::MutexLock lock{&_mutex};
-
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                    ERR_MSG("schema \"", schema, "\" does not exist"));
-  }
-  auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table_name);
-  if (!object_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("relation \"", table_name, "\" does not exist"));
-  }
-  auto table = _snapshot->GetObject<Table>(*object_id);
-  if (!table) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("relation \"", table_name, "\" does not exist"));
-  }
-
-  const ObjectId owner = table->GetOwner();
-  std::shared_ptr<Table> cloned;
-  table->ChangeColumnAcl(
-    cloned, column, [&](catalog::Acl& acl) { mutate(*_snapshot, owner, acl); });
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    duckdb::MemoryStream stream;
-    auto bytes = catalog::SerializeObject(*cloned, stream);
-    clone->ReplaceObject<ResolveType::Relation>(*schema_id, cloned->GetName(),
-                                                cloned);
-    _engine->CreateDefinition(*schema_id, cloned->GetType(), cloned->GetId(),
-                              bytes);
-  });
-}
-
-void Catalog::AlterInvertedIndexOptions(
-  const AccessContext& ax, ObjectId database_id, std::string_view schema,
-  std::string_view name, absl::FunctionRef<void(InvertedIndexOptions&)> mutate,
-  bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  std::shared_ptr<Object> obj;
-  if (schema_id) {
-    if (auto object_id =
-          _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
-      obj = _snapshot->GetObject(*object_id);
-    }
-  }
-  if (!obj) {
-    if (missing_ok) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
-  if (obj->GetType() != ObjectType::InvertedIndex) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", name, "\" is not an inverted index"));
-  }
-
-  auto& index = basics::downCast<InvertedIndex>(*obj);
-  auto options = index.GetOptions();
-  mutate(options);
-  auto updated = std::static_pointer_cast<InvertedIndex>(index.Clone());
-  updated->ReplaceOptions(std::move(options));
-
-  Apply(_snapshot, [&](auto& clone) {
-    clone->template ReplaceObject<ResolveType::Relation>(*schema_id, name,
-                                                         updated);
-    duckdb::MemoryStream stream;
-    auto bytes = catalog::SerializeObject(*updated, stream);
-    _engine->Write([&](auto& ctx) {
-      ctx.PutDefinition(updated->GetRelationId(), ObjectType::InvertedIndex,
-                        updated->GetId(), bytes);
-    });
-  });
-
-  if (const auto& storage = updated->GetData()) {
-    storage->ApplyOptions(updated->GetOptions());
-  }
-}
-
-namespace {
-
-duckdb::Value CommentValue(std::string_view comment) {
-  return comment.empty() ? duckdb::Value{} : duckdb::Value{comment};
-}
-
-}  // namespace
-
-void Catalog::SetObjectComment(const AccessContext& ax, ObjectId database_id,
-                               std::string_view schema, std::string_view name,
-                               ObjectType type, std::string_view comment,
-                               bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  std::shared_ptr<Object> obj;
-  if (schema_id) {
-    std::optional<ObjectId> object_id;
-    if (type == ObjectType::Function) {
-      object_id =
-        _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
-    } else if (type == ObjectType::Type) {
-      object_id = _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
-    } else {
-      object_id =
-        _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-    }
-    if (object_id) {
-      obj = _snapshot->GetObject(*object_id);
-    }
-  }
-  if (!obj) {
-    if (missing_ok) {
-      return;
-    }
-    switch (type) {
-      case ObjectType::Function:
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-          ERR_MSG("could not find a function named \"", name, "\""));
-      case ObjectType::Type:
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                        ERR_MSG("type \"", name, "\" does not exist"));
-      default:
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                        ERR_MSG("relation \"", name, "\" does not exist"));
-    }
-  }
-  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
-  const bool matches =
-    IsIndex(type) ? IsIndex(obj->GetType()) : obj->GetType() == type;
-  if (!matches) {
-    std::string_view what = [&] {
-      switch (type) {
-        case ObjectType::View:
-          return "a view";
-        case ObjectType::Sequence:
-          return "a sequence";
-        default:
-          SDB_ASSERT(IsIndex(type));
-          return "an index";
-      }
-    }();
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", name, "\" is not ", what));
-  }
-
-  std::shared_ptr<Object> updated;
-  ObjectId parent = *schema_id;
-  switch (obj->GetType()) {
-    case ObjectType::View: {
-      updated = obj->Clone();
-      basics::downCast<PgSqlView>(*updated).GetInfo().comment =
-        CommentValue(comment);
-    } break;
-    case ObjectType::Sequence: {
-      updated = basics::downCast<Sequence>(*obj).CloneWithComment(comment);
-    } break;
-    case ObjectType::SecondaryIndex:
-    case ObjectType::InvertedIndex: {
-      updated = obj->Clone();
-      auto& index = basics::downCast<Index>(*updated);
-      index.SetComment(comment);
-      parent = index.GetRelationId();
-    } break;
-    case ObjectType::Type: {
-      updated = obj->Clone();
-      basics::downCast<PgSqlType>(*updated).GetInfo().comment =
-        CommentValue(comment);
-    } break;
-    case ObjectType::Function: {
-      updated = obj->Clone();
-      basics::downCast<PgSqlFunction>(*updated).GetInfo().comment =
-        CommentValue(comment);
-    } break;
-    default:
-      SDB_UNREACHABLE();
-  }
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    if (type == ObjectType::Function) {
-      clone->ReplaceObject<ResolveType::Function>(*schema_id, name, updated);
-    } else if (type == ObjectType::Type) {
-      clone->ReplaceObject<ResolveType::Type>(*schema_id, name, updated);
-    } else {
-      clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
-    }
-    duckdb::MemoryStream stream;
-    auto bytes = catalog::SerializeObject(*updated, stream);
-    _engine->Write([&](auto& ctx) {
-      ctx.PutDefinition(parent, updated->GetType(), updated->GetId(), bytes);
-    });
-  });
-}
-
-void Catalog::SetViewColumnComment(const AccessContext& ax,
-                                   ObjectId database_id,
-                                   std::string_view schema,
-                                   std::string_view name,
-                                   std::string_view column,
-                                   std::string_view comment, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  std::shared_ptr<Object> obj;
-  if (schema_id) {
-    if (auto object_id =
-          _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
-      obj = _snapshot->GetObject(*object_id);
-    }
-  }
-  if (!obj) {
-    if (missing_ok) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
-  if (obj->GetType() != ObjectType::View) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", name, "\" is not a view"));
-  }
-
-  auto updated = std::static_pointer_cast<PgSqlView>(obj->Clone());
-  auto& info = updated->GetInfo();
-  duckdb::Identifier resolved{column};
-  const auto name_it = absl::c_find(info.names, resolved);
-  if (name_it == info.names.end()) {
-    const auto alias_it = absl::c_find(info.aliases, resolved);
-    if (alias_it == info.aliases.end()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                      ERR_MSG("column \"", column, "\" of relation \"", name,
-                              "\" does not exist"));
-    }
-    const auto alias_index =
-      static_cast<size_t>(std::distance(info.aliases.begin(), alias_it));
-    SDB_ASSERT(alias_index < info.names.size());
-    resolved = info.names[alias_index];
-  }
-  if (comment.empty()) {
-    info.column_comments_map.erase(resolved);
-  } else {
-    info.column_comments_map[resolved] = duckdb::Value(std::string{comment});
-  }
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
-    duckdb::MemoryStream stream;
-    auto bytes = catalog::SerializeObject(*updated, stream);
-    _engine->Write([&](auto& ctx) {
-      ctx.PutDefinition(*schema_id, ObjectType::View, updated->GetId(), bytes);
-    });
-  });
-}
-
-void Catalog::ChangeTable(const AccessContext& ax, ObjectId database_id,
-                          std::string_view schema, std::string_view name,
-                          ChangeCallback<Table> new_table,
-                          const ChangeTableOptions& options) {
-  absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  std::shared_ptr<Object> obj;
-  if (schema_id) {
-    if (auto object_id =
-          _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name)) {
-      obj = _snapshot->GetObject(*object_id);
-    }
-  }
-  if (!obj) {
-    if (options.missing_ok) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, obj->GetId());
-  if (obj->GetType() != ObjectType::Table) {
-    if (options.on_type_mismatch) {
-      options.on_type_mismatch(*obj);
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", name, "\" is not a table"));
-  }
-
-  auto table = basics::downCast<Table>(std::move(obj));
-  std::shared_ptr<Table> updated;
-  new_table(*table, updated);
-  if (!updated) {
-    return;
-  }
-
-  std::string store_name;
-  if (updated->GetEngine() == TableEngine::Transactional &&
-      !updated->Tombstoned()) {
-    auto database = _snapshot->GetObject<Database>(database_id);
-    SDB_ASSERT(database);
-    store_name = StoreTableName(database->GetName(), schema, name);
-  }
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    clone->ReplaceObject<ResolveType::Relation>(*schema_id, name, updated);
-
-    {
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*updated, stream);
-      _engine->Write([&](auto& ctx) {
-        ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
-                          bytes);
-        if (store_name.empty()) {
-          return;
-        }
-        bool renamed_columns = false;
-        containers::FlatHashMap<std::string, std::string> renames;
-        for (const auto& old_col : table->Columns()) {
-          if (old_col.GetId() == Column::kGeneratedPKId) {
-            continue;
-          }
-          auto it = std::ranges::find_if(
-            updated->Columns(),
-            [&](const auto& c) { return c.GetId() == old_col.GetId(); });
-          if (it != updated->Columns().end() &&
-              it->GetName() != old_col.GetName()) {
-            ctx.RenameStoreColumn(store_name, std::string{old_col.GetName()},
-                                  std::string{it->GetName()});
-            renames.emplace(std::string{old_col.GetName()},
-                            std::string{it->GetName()});
-            renamed_columns = true;
-          }
-        }
-        // Newly added columns -> mirror to the store table. A constant
-        // DEFAULT backfills existing rows; the store handler retries without
-        // it when the expression calls a facade-only function.
-        for (const auto& new_col : updated->Columns()) {
-          if (new_col.GetId() == Column::kGeneratedPKId) {
-            continue;
-          }
-          auto existed = absl::c_any_of(table->Columns(), [&](const auto& c) {
-            return c.GetId() == new_col.GetId();
-          });
-          if (existed) {
-            continue;
-          }
-          std::string default_sql;
-          if (new_col.expr && new_col.expr->HasExpr()) {
-            default_sql = new_col.expr->GetExpr().ToString();
-          }
-          ctx.AddStoreColumn(store_name, std::string{new_col.GetName()},
-                             new_col.type.ToString(), std::move(default_sql),
-                             new_col.compression);
-        }
-        if (renamed_columns) {
-          // Mirrored index definitions embed column names;
-          // recreate them against the renamed table (rowid
-          // postings and row data are untouched).
-          auto deps =
-            _snapshot->GetDependency<TableDependency>(updated->GetId());
-          auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
-          auto database = _snapshot->GetObject<Database>(database_id);
-          if (deps && schema_obj && database) {
-            for (auto idx_id : deps->indexes) {
-              auto idx = _snapshot->GetObject<Index>(idx_id);
-              if (!idx) {
-                continue;
-              }
-              // Expression keys bake column NAMES into pretty_printed at
-              // CREATE INDEX time; re-render against the renamed columns so
-              // the store recreate SQL binds, and persist the refreshed text.
-              if (idx->GetType() == ObjectType::SecondaryIndex) {
-                const auto& sec = basics::downCast<const SecondaryIndex>(*idx);
-                if (!sec.Expressions().empty()) {
-                  auto exprs = sec.Expressions();
-                  bool changed = false;
-                  for (auto& e : exprs) {
-                    if (auto pretty = RerenderPrettyAfterRename(
-                          e.pretty_printed, renames)) {
-                      if (*pretty != e.pretty_printed) {
-                        e.pretty_printed = std::move(*pretty);
-                        changed = true;
-                      }
-                    }
-                  }
-                  if (changed) {
-                    auto new_idx = std::make_shared<SecondaryIndex>(
-                      sec.GetDatabaseId(), sec.GetParentId(), sec.GetId(),
-                      sec.GetRelationId(), std::string{sec.GetName()},
-                      sec.Columns(), std::move(exprs), sec.IsUnique());
-                    clone->ReplaceObject<ResolveType::Relation>(
-                      *schema_id, new_idx->GetName(), new_idx);
-                    duckdb::MemoryStream idx_stream;
-                    ctx.PutDefinition(
-                      new_idx->GetRelationId(), ObjectType::SecondaryIndex,
-                      new_idx->GetId(),
-                      catalog::SerializeObject(*new_idx, idx_stream));
-                    idx = new_idx;
-                  }
-                }
-              }
-              if (auto def =
-                    MakeStoreIndexDef(database->GetName(),
-                                      schema_obj->GetName(), *updated, *idx)) {
-                ctx.DropStoreIndex(idx_id);
-                ctx.CreateStoreIndex(std::move(*def));
-              }
-            }
-          }
-        }
-        for (const auto& oc : table->CheckConstraints()) {
-          bool survives = absl::c_any_of(
-            updated->CheckConstraints(),
-            [&](const auto& nc) { return nc.GetId() == oc.GetId(); });
-          if (survives) {
-            continue;
-          }
-          if (auto idx = oc.IsNotNull(table->Columns())) {
-            const auto& col = table->Columns()[*idx];
-            if (col.GetId() != Column::kGeneratedPKId) {
-              ctx.DropStoreNotNull(store_name, std::string{col.GetName()});
-            }
-          } else if (oc.expr && oc.expr->HasExpr()) {
-            ctx.DropStoreCheck(store_name, oc.expr->GetExpr().ToString());
-          }
-        }
-        // Newly added PRIMARY KEY -> ADD PRIMARY KEY on the store table; it
-        // recreates storage, validates existing rows (no duplicates/nulls).
-        // The implied NOT NULL CHECKs flow through the loop below.
-        if (table->PKColumns().empty() && !updated->PKColumns().empty()) {
-          std::vector<std::string> pk_names;
-          pk_names.reserve(updated->PKColumns().size());
-          bool ok = true;
-          for (auto id : updated->PKColumns()) {
-            const auto* col = updated->ColumnById(id);
-            if (!col || col->type.IsNested()) {
-              ok = false;
-              break;
-            }
-            pk_names.emplace_back(col->GetName());
-          }
-          if (ok) {
-            ctx.AddStorePrimaryKey(store_name, std::move(pk_names));
-          }
-        }
-        // Newly added UNIQUE constraints -> ADD UNIQUE on the store table.
-        for (const auto& uc : updated->UniqueConstraints()) {
-          bool existed = absl::c_any_of(
-            table->UniqueConstraints(),
-            [&](const auto& oc) { return oc.columns == uc.columns; });
-          if (existed) {
-            continue;
-          }
-          std::vector<std::string> names;
-          names.reserve(uc.columns.size());
-          bool ok = true;
-          for (auto id : uc.columns) {
-            const auto* col = updated->ColumnById(id);
-            if (!col || col->type.IsNested()) {
-              ok = false;
-              break;
-            }
-            names.emplace_back(col->GetName());
-          }
-          if (ok) {
-            ctx.AddStoreUnique(store_name, std::move(names));
-          }
-        }
-        // Newly added NOT NULL constraints -> SET NOT NULL on the store
-        // column (queued after the column add above, so it already exists).
-        for (const auto& nc : updated->CheckConstraints()) {
-          bool existed = absl::c_any_of(
-            table->CheckConstraints(),
-            [&](const auto& oc) { return oc.GetId() == nc.GetId(); });
-          if (existed) {
-            continue;
-          }
-          if (auto idx = nc.IsNotNull(updated->Columns())) {
-            const auto& col = updated->Columns()[*idx];
-            if (col.GetId() != Column::kGeneratedPKId) {
-              ctx.AddStoreNotNull(store_name, col.GetName());
-            }
-          } else if (nc.expr && nc.expr->HasExpr()) {
-            // Function calls bind against the store connection's catalog, so
-            // such checks stay facade-side (as at CREATE time); plain checks
-            // mirror to the store, which verifies them against existing rows.
-            bool has_function = false;
-            auto scan = [&](this auto& self,
-                            const duckdb::ParsedExpression& e) -> void {
-              if (e.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
-                has_function = true;
-                return;
-              }
-              duckdb::ParsedExpressionIterator::EnumerateChildren(
-                e, [&](const duckdb::ParsedExpression& child) { self(child); });
-            };
-            scan(nc.expr->GetExpr());
-            if (!has_function) {
-              ctx.AddStoreCheck(store_name, nc.expr->GetExpr().ToString());
-            }
-          }
-        }
-      });
-    }
-  });
 }
 
 bool Catalog::DropRole(const AccessContext& ax, std::string_view role,
                        bool missing_ok) {
+  JoinClusterGlobal(ax.context,
+                    duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   absl::MutexLock lock{&_mutex};
-  RequireRoleAttribute(*_snapshot, ax.role, RoleOption::CreateRole, "drop role",
+  RequireRoleAttribute(ax.context, ax.role, RoleOption::CreateRole, "drop role",
                        "Only roles with the CREATEROLE attribute and the ADMIN "
                        "option on the target roles may drop roles.");
-  auto role_ptr = _snapshot->GetRole(role);
+  auto role_ptr = catalog::FindRole(ax.context, role);
   if (!role_ptr) {
     if (missing_ok) {
       return false;
@@ -4246,74 +2340,71 @@ bool Catalog::DropRole(const AccessContext& ax, std::string_view role,
                     ERR_MSG("cannot drop role ", role,
                             " because it is required by the database system"));
   }
-  RequireRoleAdmin(*_snapshot, ax.role, *role_ptr, "drop");
-  if (auto deps = _snapshot->RoleDependentCount(role_ptr->GetId()); deps > 0) {
+  RequireRoleAdmin(ax.context, ax.role, *role_ptr, "drop");
+  if (auto deps =
+        catalog::DependencyView{ax.context}.CountDependents(role_ptr->GetId());
+      deps > 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
       ERR_MSG("role \"", role,
               "\" cannot be dropped because some objects depend on it"),
       ERR_DETAIL(deps, " object(s) in database depend on role \"", role, "\""));
   }
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    clone->UnregisterObject(role_ptr, id::kInstance);
-    _engine->DropDefinition(id::kInstance, ObjectType::Role, role_ptr->GetId());
-    clone->RebuildRoleClosures();
+  Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().DropObject(id::kInstance, duckdb::CatalogType::ROLE_ENTRY,
+                             role_ptr->GetId());
   });
+  catalog::DropRoleEntry(ax.context, role);
   return true;
 }
 
-std::vector<ForeignServerAttachment> Catalog::DropDatabase(
-  const AccessContext& ax, std::string_view name,
-  duckdb::shared_ptr<void> keep_alive) {
+void Catalog::DropDatabase(const AccessContext& ax, std::string_view name,
+                           duckdb::shared_ptr<void> keep_alive) {
+  JoinStoreTransaction(ax.context);
+  JoinClusterGlobal(ax.context,
+                    duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   absl::MutexLock lock{&_mutex};
-  auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, name);
-  if (!database_id) {
+  auto database = catalog::FindDatabase(ax.context, name);
+  if (!database) {
     THROW_SQL_ERROR(ERR_MSG("database \"", name, "\" does not exist"));
   }
-  RequireObjectOwner(*_snapshot, ax.role, *database_id);
+  const auto database_id = std::optional{database.Id()};
+  RequireDatabaseOwner(ax.context, ax.role, database);
 
-  // Collected under the lock, atomic with the drop: the cascade removes the
-  // servers' catalog rows but not their instance-global DuckDB attachments. The
-  // attachment identity is captured here too, so the detach afterwards can only
-  // remove what this drop actually saw -- never an attachment a concurrent
-  // same-named CREATE SERVER put there in between.
-  std::vector<ForeignServerAttachment> detach_servers;
-  for (const auto& server : _snapshot->GetForeignServers(*database_id)) {
-    auto server_name = std::string{server->GetName()};
-    detach_servers.emplace_back(ForeignServerAttachment{
-      server_name, ForeignServerAttachmentId(server_name)});
-  }
+  auto plan = ComputeDropPlan(ax.context, *database_id);
 
-  auto plan = _snapshot->ComputeDropPlan(*database_id);
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto database = clone->GetObject<Database>(*database_id);
-    SDB_ASSERT(database);
-    auto task = clone->CreateDatabaseDrop(_pending_drops, database,
-                                          std::move(keep_alive));
-    _engine->Write([&](auto& ctx) {
-      ctx.WriteTombstone(id::kInstance, *database_id);
-      clone->CommitDropPlan(ctx, plan);
-      task->EmitStoreFkCleanups(ctx);
-      task->EmitStoreDrops(ctx);
-    });
-    clone->UnregisterObject(std::move(database), id::kInstance);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-    // Check that SereneDB won't open this database after reboot
-    SDB_IF_FAILURE("crash_on_drop") { return; }
-    DropTask::Schedule(std::move(task)).Detach();
+  const auto owned_sequences = CollectSequenceOwners(ax.context, *database_id);
+  const auto owned_indexes = CollectIndexOwners(ax.context, *database_id);
+  auto task = CreateDatabaseDrop(ax.context, *database_id, owned_sequences,
+                                 owned_indexes, std::move(keep_alive));
+  // Against the pre-mutation view: a plan never names an index inside the
+  // seed's own subtree, which the seed's structural task covers.
+  ScheduleDropPlanIndexes(ax.context, *database_id, plan);
+  Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().DropPrepare(
+      MakeDropPrepare(*task, id::kInstance, duckdb::CatalogType::DATABASE_ENTRY,
+                      *database_id, *database_id, ObjectId{}));
+    CommitDropPlan(ax.context, ctx, plan);
+    task->EmitStoreDrops(ctx);
   });
-  return detach_servers;
+  PublishDropPlan(ax.context, plan);
+  // Check that SereneDB won't open this database after reboot
+  bool crash_on_drop = false;
+  SDB_IF_FAILURE("crash_on_drop") { crash_on_drop = true; }
+  if (!crash_on_drop) {
+    ScheduleDrop(ax.context, std::move(task));
+  }
+  catalog::DropDatabaseEntry(ax.context, name);
 }
 
-bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
-                         std::string_view name, bool cascade, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
+bool SereneDBCatalog::DropSchema(const AccessContext& ax,
+                                 std::string_view database,
+                                 std::string_view name, bool cascade,
+                                 bool missing_ok) {
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
 
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  const auto database_id = FindDatabaseId(ax.context, database);
   if (!database_id) {
     if (missing_ok) {
       return false;
@@ -4321,18 +2412,47 @@ bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("schema \"", name, "\" does not exist"));
   }
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, name);
-  if (!schema_id) {
+  Permissions schema_perm;
+  const auto schema =
+    catalog::FindSchema(ax.context, *database_id, name, &schema_perm);
+  if (!schema) {
     if (missing_ok) {
       return false;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("schema \"", name, "\" does not exist"));
   }
-  RequireObjectOwner(*_snapshot, ax.role, *schema_id);
+  const std::optional schema_id{IdOf(*schema)};
+  RequireOwner(ax.context, ax.role, schema_perm, "schema",
+               SchemaNameOf(*schema));
 
-  if (!cascade && !_snapshot->CheckSchemaEmptyDependency(*schema_id)) {
+  // The containment index does not hold a tokenizer or a type -- their entry is
+  // the object -- so what it contains is asked of the sets that do.
+  bool has_entry_child = false;
+  catalog::VisitDefinitions<SereneDBTokenizerEntry>(
+    ax.context, *database_id,
+    [&](const TokenizerRef& tokenizer, const Permissions&) {
+      has_entry_child |= tokenizer->GetParentId() == *schema_id;
+    });
+  catalog::Visit<SereneDBTypeEntry>(
+    ax.context, *database_id, [&](const duckdb::TypeCatalogEntry& type) {
+      has_entry_child |= ObjectId{type.ParentSchema().oid} == *schema_id;
+    });
+  catalog::VisitFunctions(
+    ax.context, *database_id, [&](const duckdb::MacroCatalogEntry& function) {
+      has_entry_child |= ObjectId{function.ParentSchema().oid} == *schema_id;
+    });
+  catalog::Visit<SereneDBViewEntry>(
+    ax.context, *database_id, [&](const duckdb::ViewCatalogEntry& view) {
+      has_entry_child |= ObjectId{view.ParentSchema().oid} == *schema_id;
+    });
+  catalog::Visit<SereneDBSequenceEntry>(
+    ax.context, *database_id,
+    [&](const catalog::SereneDBSequenceEntry& sequence) {
+      has_entry_child |= ObjectId{sequence.ParentSchema().oid} == *schema_id;
+    });
+  if (!cascade && (has_entry_child ||
+                   !CheckSchemaEmptyDependency(ax.context, *schema_id))) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
       ERR_MSG("cannot drop schema ", name,
@@ -4340,36 +2460,39 @@ bool Catalog::DropSchema(const AccessContext& ax, std::string_view database,
       ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
   }
 
-  auto plan = _snapshot->ComputeDropPlan(*schema_id);
+  auto plan = ComputeDropPlan(ax.context, *schema_id);
 
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto schema = clone->GetObject<Schema>(*schema_id);
-    SDB_ASSERT(schema);
-    auto task =
-      clone->CreateSchemaDrop(_pending_drops, *database_id, schema, true);
-    _engine->Write([&](auto& ctx) {
-      ctx.WriteTombstone(*database_id, *schema_id);
-      clone->CommitDropPlan(ctx, plan);
-      task->EmitStoreFkCleanups(ctx);
-      task->EmitStoreDrops(ctx);
-    });
-    clone->UnregisterObject(std::move(schema), *database_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-    // Check that SereneDB won't open this schema after reboot
-    SDB_IF_FAILURE("crash_on_drop") { return; }
-    DropTask::Schedule(std::move(task)).Detach();
+  const auto owned_sequences = CollectSequenceOwners(ax.context, *database_id);
+  const auto owned_indexes = CollectIndexOwners(ax.context, *database_id);
+  auto task = catalog::GetCatalog().CreateSchemaDrop(
+    ax.context, *database_id, *schema_id, owned_sequences, owned_indexes, true);
+  catalog::GetCatalog().ScheduleDropPlanIndexes(ax.context, *database_id, plan);
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().DropPrepare(
+      MakeDropPrepare(*task, *database_id, duckdb::CatalogType::SCHEMA_ENTRY,
+                      *schema_id, *database_id, *schema_id));
+    CommitDropPlan(ax.context, ctx, plan);
+    task->EmitStoreDrops(ctx);
   });
+  PublishDropPlan(ax.context, plan);
+  catalog::DropSchemaEntry(ax.context, *database_id, name);
+  // Check that SereneDB won't open this schema after reboot
+  bool crash_on_drop = false;
+  SDB_IF_FAILURE("crash_on_drop") { crash_on_drop = true; }
+  if (!crash_on_drop) {
+    catalog::GetCatalog().ScheduleDrop(ax.context, std::move(task));
+  }
   return true;
 }
 
-bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
-                        std::string_view schema, std::string_view name,
-                        bool cascade, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
+bool SereneDBCatalog::DropTable(const AccessContext& ax,
+                                std::string_view database,
+                                std::string_view schema, std::string_view name,
+                                bool cascade, bool missing_ok) {
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
 
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  const auto database_id = FindDatabaseId(ax.context, database);
   if (!database_id) {
     if (missing_ok) {
       return false;
@@ -4377,8 +2500,7 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("table \"", name, "\" does not exist"));
   }
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
+  const auto schema_id = TryFindSchemaId(ax.context, *database_id, schema);
   if (!schema_id) {
     if (missing_ok) {
       return false;
@@ -4386,1167 +2508,635 @@ bool Catalog::DropTable(const AccessContext& ax, std::string_view database,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("table \"", name, "\" does not exist"));
   }
-  const auto table_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!table_id) {
+  const auto* table =
+    catalog::Find<SereneDBTableEntry>(ax.context, *schema_id, name);
+  if (table == nullptr) {
+    // A view, a sequence and an index hold a relation name too, so the kind
+    // mismatch has to be asked of the sets that hold them.
+    if (catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id, name)) {
+      ThrowWrongObjectType(name, "table", duckdb::CatalogType::SEQUENCE_ENTRY);
+    }
+    if (catalog::Find<SereneDBViewEntry>(ax.context, *schema_id, name)) {
+      ThrowWrongObjectType(name, "table", duckdb::CatalogType::VIEW_ENTRY);
+    }
+    if (catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id, name) !=
+        nullptr) {
+      ThrowWrongObjectType(name, "table", duckdb::CatalogType::INDEX_ENTRY);
+    }
     if (missing_ok) {
       return false;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("table \"", name, "\" does not exist"));
   }
-  RequireObjectOwner(*_snapshot, ax.role, *table_id);
+  const auto table_id = ObjectId{table->oid};
+  RequireOwner(ax.context, ax.role, table->permissions, "table",
+               table->name.GetIdentifierName());
+  const auto definition = table->Definition();
 
   auto plan =
-    _snapshot->ComputeDropPlanRestrict(*table_id, cascade, "table", name);
+    ComputeDropPlanRestrict(ax.context, table_id, cascade, "table", name);
 
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto object = clone->GetObject(*table_id);
-    SDB_ASSERT(object);
-    if (object->GetType() != ObjectType::Table) {
-      ThrowWrongObjectType(name, "table", object->GetType());
-    }
-    auto table = basics::downCast<Table>(std::move(object));
-    auto task = clone->CreateTableDrop(_pending_drops, *database_id, *schema_id,
-                                       table, true);
-    _engine->Write([&](auto& ctx) {
-      ctx.WriteTombstone(*schema_id, *table_id);
-      clone->CommitDropPlan(ctx, plan);
-      task->EmitStoreFkCleanups(ctx);
-      task->EmitStoreDrops(ctx);
+  // The sequences and indexes this table owns, read off the sets before
+  // anything is removed: nothing else names them, and the drop task's subtree
+  // is what makes their ids and counters part of this one operation.
+  const auto owned_sequences = CollectSequenceOwners(ax.context, *database_id);
+  const auto owned_indexes = CollectIndexOwners(ax.context, *database_id);
+  std::vector<std::string> owned_sequence_names;
+  catalog::Visit<SereneDBSequenceEntry>(
+    ax.context, *database_id,
+    [&](const catalog::SereneDBSequenceEntry& sequence) {
+      if (sequence.GetOwnerTableId() == table_id) {
+        owned_sequence_names.emplace_back(sequence.name.GetIdentifierName());
+      }
     });
-
-    clone->UnregisterObject(std::move(table), *schema_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-    SDB_IF_FAILURE("crash_on_drop") { return; }
-    DropTask::Schedule(std::move(task)).Detach();
+  auto task = catalog::GetCatalog().CreateTableDrop(
+    *database_id, *schema_id, definition, owned_sequences, owned_indexes, true);
+  catalog::GetCatalog().ScheduleDropPlanIndexes(ax.context, *database_id, plan);
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().DropPrepare(
+      MakeDropPrepare(*task, *schema_id, duckdb::CatalogType::TABLE_ENTRY,
+                      table_id, *database_id, *schema_id));
+    CommitDropPlan(ax.context, ctx, plan);
+    task->EmitStoreDrops(ctx);
   });
+  PublishDropPlan(ax.context, plan);
+  // The schema's sets outlive the table, so the owned sequences' and the
+  // indexes' entries need a drop of their own -- the table's subtree covers the
+  // records, not the entries.
+  for (const auto& sequence_name : owned_sequence_names) {
+    catalog::DropEntryOfKind(ax.context, duckdb::CatalogType::SEQUENCE_ENTRY,
+                             *schema_id, sequence_name);
+  }
+  for (const auto& index : owned_indexes.Of(table_id)) {
+    catalog::DropIndexEntry(ax.context, *schema_id, index->GetName());
+  }
+  catalog::DropEntryOfKind(ax.context, duckdb::CatalogType::TABLE_ENTRY,
+                           *schema_id, name);
+  bool crash_on_drop = false;
+  SDB_IF_FAILURE("crash_on_drop") { crash_on_drop = true; }
+  if (!crash_on_drop) {
+    catalog::GetCatalog().ScheduleDrop(ax.context, std::move(task));
+  }
   return true;
 }
 
-void Catalog::DropTableColumn(const AccessContext& ax, ObjectId database_id,
-                              std::string_view schema, std::string_view table,
-                              std::string_view column, bool if_exists) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", table, "\" does not exist"));
+void SereneDBCatalog::ChangeColumnType(
+  const AccessContext& ax, const duckdb::CreateTableInfo& table,
+  std::string_view column, duckdb::LogicalType new_type,
+  duckdb::unique_ptr<duckdb::ParsedExpression> using_expr) {
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto table_id = catalog::IdOf(table);
+  const auto schema_id = catalog::ParentIdOf(table);
+  const auto* entry =
+    catalog::Find<SereneDBTableEntry>(ax.context, schema_id, table_id);
+  if (entry == nullptr) {
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
   }
-  const auto table_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table);
-  if (!table_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", table, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, *table_id);
-  auto object = _snapshot->GetObject(*table_id);
-  if (!object || object->GetType() != ObjectType::Table) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", table, "\" is not a table"));
-  }
-  auto table_ptr = basics::downCast<Table>(std::move(object));
-  auto col_it = absl::c_find_if(table_ptr->Columns(), [&](const Column& c) {
-    return c.GetName() == column;
-  });
-  if (col_it == table_ptr->Columns().end()) {
-    if (if_exists) {
-      return;
-    }
+  const auto& perm = entry->permissions;
+  const auto live = entry->Definition();
+  RequireOwner(ax.context, ax.role, perm, "table",
+               entry->name.GetIdentifierName());
+  const auto* col = catalog::ColumnByName(*live, column);
+  if (col == nullptr) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column, "\" of relation \"", table,
-                            "\" does not exist"));
+                    ERR_MSG("column \"", column, "\" of relation \"",
+                            catalog::TableNameOf(*live), "\" does not exist"));
   }
-  const auto col_id = col_it->GetId();
+  const ObjectId col_id{col->CatalogOid()};
 
-  auto plan = _snapshot->ComputeColumnDropPlan(*table_id, col_id);
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    _engine->Write([&](auto& ctx) { clone->CommitDropPlan(ctx, plan); });
-    clone->ApplyDropPlan(_pending_drops, database_id, plan);
-  });
-}
-
-void Catalog::ChangeColumnType(const AccessContext& ax, ObjectId database_id,
-                               std::string_view schema, std::string_view table,
-                               std::string_view column,
-                               duckdb::LogicalType new_type,
-                               std::string using_sql) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", table, "\" does not exist"));
-  }
-  const auto table_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, table);
-  if (!table_id) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", table, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, *table_id);
-  auto object = _snapshot->GetObject(*table_id);
-  if (!object || object->GetType() != ObjectType::Table) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-                    ERR_MSG("\"", table, "\" is not a table"));
-  }
-  auto table_ptr = basics::downCast<Table>(std::move(object));
-  auto col_it = absl::c_find_if(table_ptr->Columns(), [&](const Column& c) {
-    return c.GetName() == column;
-  });
-  if (col_it == table_ptr->Columns().end()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-                    ERR_MSG("column \"", column, "\" of relation \"", table,
-                            "\" does not exist"));
-  }
-  const auto col_id = col_it->GetId();
-
+  const auto table_indexes =
+    catalog::RelationIndexes(ax.context, schema_id, table_id);
   // The index stores values of the column's old type; a type change would
   // leave them inconsistent. Reject and let the user drop the index first.
-  if (auto td = _snapshot->GetDependency<TableDependency>(*table_id)) {
-    for (auto idx_id : td->indexes) {
-      auto idx = _snapshot->GetObject<Index>(idx_id);
-      if (idx && idx->ReferencesColumn(col_id)) {
-        THROW_SQL_ERROR(ERR_MSG("cannot alter type of column \"", column,
-                                "\" because index \"", idx->GetName(),
-                                "\" depends on it; drop the index first"));
-      }
+  for (const auto& idx : table_indexes) {
+    if (idx->ReferencesColumn(col_id)) {
+      THROW_SQL_ERROR(ERR_MSG("cannot alter type of column \"", column,
+                              "\" because index \"", idx->GetName(),
+                              "\" depends on it; drop the index first"));
     }
   }
 
-  std::shared_ptr<Table> updated;
-  table_ptr->ChangeColumnType(updated, column, new_type);
+  auto updated =
+    NextTableVersion(ax.context, table_id, schema_id,
+                     catalog::ChangeColumnType(*live, column, new_type));
 
-  std::string store_name;
-  if (updated->GetEngine() == TableEngine::Transactional &&
-      !updated->Tombstoned()) {
-    auto database = _snapshot->GetObject<Database>(database_id);
-    SDB_ASSERT(database);
-    store_name = StoreTableName(database->GetName(), schema, table);
+  const bool reshape =
+    catalog::TableEngineOf(*updated) == TableEngine::Transactional;
+  duckdb::Identifier store_column;
+  if (reshape) {
+    if (const auto* moved = catalog::ColumnById(*updated, col_id)) {
+      store_column = moved->Name();
+    }
   }
-  std::string type_sql = new_type.ToString();
+  const auto db_id = catalog::SchemaDatabaseId(ax.context, schema_id);
 
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    clone->ReplaceObject<ResolveType::Relation>(*schema_id, table, updated);
-    {
-      duckdb::MemoryStream stream;
-      auto bytes = catalog::SerializeObject(*updated, stream);
-      _engine->Write([&](auto& ctx) {
-        ctx.PutDefinition(*schema_id, ObjectType::Table, updated->GetId(),
-                          bytes);
-        if (store_name.empty()) {
-          return;
-        }
-        // The store blocks ALTER COLUMN TYPE while any index depends on the
-        // table; drop the mirrored store indexes, change the type, then
-        // recreate them (the data lives in the rows / iresearch, so the
-        // rebuild carries no state of its own).
-        std::vector<StoreIndexDef> recreate;
-        auto deps = _snapshot->GetDependency<TableDependency>(*table_id);
-        auto schema_obj = _snapshot->GetObject<Schema>(*schema_id);
-        auto database = _snapshot->GetObject<Database>(database_id);
-        if (deps && schema_obj && database) {
-          for (auto idx_id : deps->indexes) {
-            auto idx = _snapshot->GetObject<Index>(idx_id);
-            if (!idx) {
-              continue;
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(ax.context, [&](auto& ctx) {
+    ctx.catalog().PutTable(*updated, wal::PutMode::Replace, perm);
+    if (!reshape) {
+      return;
+    }
+    // The store blocks ALTER COLUMN TYPE while any index depends on the
+    // table; drop the mirrored store indexes, change the type, then
+    // recreate them (the data lives in the rows / iresearch, so the
+    // rebuild carries no state of its own).
+    std::vector<
+      std::pair<duckdb::unique_ptr<duckdb::CreateIndexInfo>, IndexInfoRef>>
+      recreate;
+    for (const auto& idx : table_indexes) {
+      if (auto info = MakeStoreIndexInfo(*updated, *idx)) {
+        ctx.store().DropIndex(db_id, idx->GetRelationId(), idx->GetName());
+        recreate.emplace_back(std::move(info), idx);
+      }
+    }
+    ctx.store().Alter(db_id, table_id,
+                      duckdb::make_uniq<duckdb::ChangeColumnTypeInfo>(
+                        StoreTarget(), store_column, new_type,
+                        using_expr ? using_expr->Copy() : nullptr));
+    for (auto& [info, idx] : recreate) {
+      ctx.store().CreateIndex(db_id, std::move(info), updated, std::move(idx));
+    }
+  });
+  catalog::PutEntry(ax.context, catalog::TableNameOf(*updated), updated, perm);
+}
+
+void Catalog::DropResolved(duckdb::ClientContext* context, ObjectId database_id,
+                           ObjectId parent_id, duckdb::CatalogType type,
+                           ObjectId id, std::string_view name, DropPlan& plan) {
+  ScheduleDropPlanIndexes(context, database_id, plan);
+  Apply(context, [&](auto& ctx) {
+    ctx.catalog().DropObject(parent_id, type, id);
+    if (type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+      // The counter row goes in the same atomic batch.
+      ctx.catalog().DropSequence(id);
+    }
+    CommitDropPlan(context, ctx, plan);
+  });
+  PublishDropPlan(context, plan);
+  catalog::DropEntryOfKind(context, type, parent_id, name);
+}
+
+void Catalog::ReplayRecords(std::span<const wal::Entry> entries) {
+  absl::MutexLock lock{&_mutex};
+  SDB_ASSERT(_loading);
+  // These are the records being read: an entry write must not append them
+  // again.
+  RecordedScope recorded;
+  // A record goes straight into the CatalogSet that holds its kind. The global
+  // attachment is up before the log is read, which is what lets this run here
+  // rather than in a second pass.
+  for (const auto& entry : entries) {
+    std::visit(
+      [&](const auto& e) {
+        using T = std::decay_t<decltype(e)>;
+        if constexpr (std::is_same_v<T, wal::PutTable>) {
+          catalog::ReplayTableRecord(e);
+        } else if constexpr (std::is_same_v<T, wal::PutEntry>) {
+          catalog::ReplayEntryRecord(e);
+        } else if constexpr (std::is_same_v<T, wal::DropObject> ||
+                             std::is_same_v<T, wal::DropPrepare>) {
+          // An index's own removal is a DropPrepare naming the relation as its
+          // parent, so the schema its name lives in is the record's schema_id
+          // and the subtree pass below is what takes it.
+          if (e.type != duckdb::CatalogType::INDEX_ENTRY) {
+            if (auto name =
+                  catalog::EntryNameOfKind(nullptr, e.type, e.parent_id, e.id);
+                !name.empty()) {
+              catalog::DropEntryOfKind(nullptr, e.type, e.parent_id, name);
+              if (e.type == duckdb::CatalogType::DATABASE_ENTRY) {
+                // The attachment the database's own record made a moment ago.
+                // The record has removed the database itself, so this only
+                // takes the attachment back out.
+                connector::DiscardDatabaseAttachment(name);
+              }
             }
-            if (auto def = MakeStoreIndexDef(
-                  database->GetName(), schema_obj->GetName(), *updated, *idx)) {
-              ctx.DropStoreIndex(idx_id);
-              recreate.push_back(std::move(*def));
+          }
+          // A table's owned sequences and its indexes live in the schema's set,
+          // which the table's own removal does not touch, and no record of
+          // their own names them -- so the subtree it carries is what takes
+          // their entries. A schema or database drop needs none of this: the
+          // sets go with the schema entries.
+          if constexpr (std::is_same_v<T, wal::DropPrepare>) {
+            const auto drop = [&](duckdb::CatalogType type, ObjectId id) {
+              if (auto name =
+                    catalog::EntryNameOfKind(nullptr, type, e.schema_id, id);
+                  !name.empty()) {
+                catalog::DropEntryOfKind(nullptr, type, e.schema_id, name);
+              }
+            };
+            if (e.type == duckdb::CatalogType::INDEX_ENTRY) {
+              drop(duckdb::CatalogType::INDEX_ENTRY, e.id);
+            }
+            if (e.type == duckdb::CatalogType::TABLE_ENTRY && e.subtree) {
+              for (const auto& node : *e.subtree) {
+                if (node.type == duckdb::CatalogType::SEQUENCE_ENTRY ||
+                    node.type == duckdb::CatalogType::INDEX_ENTRY) {
+                  drop(node.type, node.id);
+                }
+              }
             }
           }
         }
-        ctx.ChangeStoreColumnType(store_name, std::string{column}, type_sql,
-                                  using_sql);
-        for (auto& def : recreate) {
-          ctx.CreateStoreIndex(std::move(def));
+      },
+      entry);
+  }
+}
+
+namespace {
+
+// The counter of a sequence a table owns, bound onto the table so an insert
+// finds it without a catalog lookup. Only the version that survived the log
+// matters, which is the one the entry holds.
+void BindOwnedSequence(duckdb::ClientContext* context, ObjectId database_id,
+                       const catalog::SereneDBSequenceEntry& sequence) {
+  const auto owner_id = sequence.GetOwnerTableId();
+  if (!owner_id.isSet()) {
+    return;
+  }
+  const auto* owner = catalog::FindTableEntryIn(context, database_id, owner_id);
+  if (owner != nullptr && catalog::GeneratedPkSeqIdOf(*owner->Definition()) ==
+                            ObjectId{sequence.oid}) {
+    owner->Runtime()->SetGeneratedPkSequence(sequence.Counter());
+  }
+}
+
+}  // namespace
+
+void Catalog::OpenBootStorage() {
+  std::vector<ObjectId> databases;
+  catalog::VisitDatabases(nullptr, [&](const catalog::DatabaseRef& ref) {
+    databases.push_back(ref.Id());
+  });
+  for (const auto database_id : databases) {
+    // The shard a search table's rows live in. Off the sets, like everything
+    // else here: what survived the log is the version the entries hold.
+    std::vector<const catalog::SereneDBTableEntry*> tables;
+    catalog::Visit<SereneDBTableEntry>(
+      nullptr, database_id, [&](const catalog::SereneDBTableEntry& table) {
+        if (table.IsSearchTable()) {
+          tables.push_back(&table);
         }
       });
+    for (const auto* table : tables) {
+      table->Runtime()->SetData(search::SearchTable::Create(
+        database_id, ObjectId{table->ParentSchema().oid}, ObjectId{table->oid},
+        /*is_new=*/false, table->SearchOptions()));
     }
-  });
-}
-
-void Catalog::RemoveTombstone(ObjectId database_id, std::string_view schema,
-                              std::string_view name) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
-  if (!schema_id) {
-    THROW_SQL_ERROR(ERR_MSG("tombstoned object \"", name, "\" not found"));
+    // The sequences: replay read each definition mid-log, where the counter
+    // records after it had not been folded in yet, and the table a counter is
+    // bound onto has to be the version that survived the log.
+    for (const auto* sequence :
+         catalog::DatabaseSequences(nullptr, database_id)) {
+      sequence->Counter()->ReloadDurable();
+      BindOwnedSequence(nullptr, database_id, *sequence);
+    }
+    // Before the databases attach: their data WAL replays into the index
+    // through GetData(), so the segments have to be open by then.
+    std::vector<IndexInfoRef> indexes;
+    catalog::VisitDefinitions<SereneDBIndexEntry>(
+      nullptr, database_id,
+      [&](const IndexInfoRef& index, const catalog::Permissions&) {
+        if (index->IsInverted()) {
+          indexes.push_back(index);
+        }
+      });
+    for (const auto& index : indexes) {
+      index->SetData(search::InvertedIndexStorage::Create(
+        database_id, InvertedInfo(*index), /*is_new=*/false));
+    }
   }
-  const auto object_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!object_id) {
-    THROW_SQL_ERROR(ERR_MSG("tombstoned object \"", name, "\" not found"));
-  }
-
-  auto object = _snapshot->GetObject(*object_id);
-  if (!object) {
-    THROW_SQL_ERROR(ERR_MSG("tombstoned object \"", name, "\" not found"));
-  }
-
-  ObjectId tombstone_parent;
-  if (IsIndex(object->GetType())) {
-    auto& index = basics::downCast<Index>(*object);
-    tombstone_parent = index.GetRelationId();
-  } else {
-    tombstone_parent = *schema_id;
-  }
-
-  // Unlike most catalog operations that clone the snapshot, here we modify the
-  // object in-place because the tombstone flag is simple in-memory state.
-  irs::Finally clear_tombstone = [&] noexcept {
-    basics::downCast<Object>(*object).SetTombstoned(false);
-  };
-
-  _engine->Write([&](auto& ctx) {
-    ctx.DropDefinition(tombstone_parent, ObjectType::Tombstone, *object_id);
-    if (object->GetType() == ObjectType::Table) {
-      auto& table = basics::downCast<Table>(*object);
-      if (table.GetEngine() == TableEngine::Transactional) {
-        auto database = _snapshot->GetObject<Database>(database_id);
-        SDB_ASSERT(database);
-        ctx.RenameStoreTable(DroppedStoreTableName(*object_id),
-                             StoreTableName(database->GetName(), schema, name));
-      }
-    }
-  });
-}
-
-bool Catalog::DropIndex(const AccessContext& ax, std::string_view database,
-                        std::string_view schema, std::string_view name,
-                        bool cascade, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  if (!database_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
-  if (!schema_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
-  const auto index_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!index_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("index \"", name, "\" does not exist"));
-  }
-  // An index has no independent owner (PG: its relowner is derived from the
-  // table). Drop authority therefore belongs to the underlying table's owner,
-  // so check that, not the index's own (unset) owner.
-  if (auto index = _snapshot->GetObject<Index>(*index_id)) {
-    // Check the parent table's owner, but report the index in the error.
-    RequireObjectOwner(*_snapshot, ax.role, index->GetRelationId(), *index);
-  }
-
-  DropIndexByIdLocked(*database_id, *index_id, cascade);
-  return true;
-}
-
-void Catalog::DropIndexById(ObjectId database_id, ObjectId index_id,
-                            bool cascade) {
-  absl::MutexLock lock{&_mutex};
-  DropIndexByIdLocked(database_id, index_id, cascade);
-}
-
-void Catalog::DropIndexByIdLocked(ObjectId database_id, ObjectId index_id,
-                                  bool cascade) {
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto obj = clone->GetObject(index_id);
-    if (!obj) {
-      THROW_SQL_ERROR(
-        ERR_MSG("index with id ", index_id.id(), " does not exist"));
-    }
-    if (!IsIndex(obj->GetType())) {
-      ThrowWrongObjectType(obj->GetName(), "index", obj->GetType());
-    }
-    auto index = basics::downCast<Index>(std::move(obj));
-    const auto schema_id = index->GetParentId();
-    // Store-side index drop is synchronous: UNIQUE enforcement
-    // must stop when DROP INDEX commits, not when the async sweep
-    // runs.
-    _engine->Write([&](auto& ctx) {
-      ctx.WriteTombstone(index->GetRelationId(), index_id);
-      ctx.DropStoreIndex(index_id);
-    });
-
-    // Check that SereneDB won't open this index after reboot
-    SDB_IF_FAILURE("crash_on_drop") { return; }
-
-    auto task = clone->CreateIndexDrop(_pending_drops, database_id, schema_id,
-                                       index->GetRelationId(), index, true);
-    clone->UnregisterObject(index, schema_id);
-    DropTask::Schedule(std::move(task)).Detach();
-  });
-}
-
-bool Catalog::DropView(const AccessContext& ax, std::string_view database,
-                       std::string_view schema, std::string_view name,
-                       bool cascade, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  if (!database_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("view \"", name, "\" does not exist"));
-  }
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
-  if (!schema_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("view \"", name, "\" does not exist"));
-  }
-  const auto view_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!view_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("view \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, *view_id);
-
-  auto plan =
-    _snapshot->ComputeDropPlanRestrict(*view_id, cascade, "view", name);
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto object = clone->GetObject(*view_id);
-    SDB_ASSERT(object);
-    if (object->GetType() != ObjectType::View) {
-      ThrowWrongObjectType(name, "view", object->GetType());
-    }
-    auto view = basics::downCast<PgSqlView>(std::move(object));
-
-    _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*schema_id, ObjectType::View, *view_id);
-      clone->CommitDropPlan(ctx, plan);
-    });
-    clone->UnregisterObject(std::move(view), *schema_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-  });
-  return true;
-}
-
-bool Catalog::DropSequence(const AccessContext& ax, std::string_view database,
-                           std::string_view schema, std::string_view name,
-                           bool cascade, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  if (!database_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("sequence \"", name, "\" does not exist"));
-  }
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
-  if (!schema_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("sequence \"", name, "\" does not exist"));
-  }
-  const auto seq_id =
-    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
-  if (!seq_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("sequence \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, *seq_id);
-
-  auto plan = _snapshot->ComputeDropPlan(*seq_id);
-  if (!cascade && plan.IsCascade()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-      ERR_MSG("cannot drop sequence ", name,
-              " because other objects depend on it"),
-      ERR_DETAIL(plan.FormatDependentsDetail(*_snapshot, "sequence", name)),
-      ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too, or "
-               "DROP TABLE on the owning table."));
-  }
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto object = clone->GetObject(*seq_id);
-    SDB_ASSERT(object);
-    if (object->GetType() != ObjectType::Sequence) {
-      ThrowWrongObjectType(name, "sequence", object->GetType());
-    }
-    auto seq = basics::downCast<Sequence>(std::move(object));
-
-    _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*schema_id, ObjectType::Sequence, *seq_id);
-      ctx.DropSequence(*seq_id);  // counter row in same atomic batch
-      clone->CommitDropPlan(ctx, plan);
-    });
-    clone->UnregisterObject(std::move(seq), *schema_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-  });
-  return true;
-}
-
-bool Catalog::DropType(const AccessContext& ax, std::string_view database,
-                       std::string_view schema, std::string_view name,
-                       bool cascade, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  if (!database_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("type \"", name, "\" does not exist"));
-  }
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
-  if (!schema_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("type \"", name, "\" does not exist"));
-  }
-  const auto type_id =
-    _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
-  if (!type_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("type \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, *type_id);
-
-  auto plan =
-    _snapshot->ComputeDropPlanRestrict(*type_id, cascade, "type", name);
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto object = clone->GetObject(*type_id);
-    SDB_ASSERT(object);
-    if (object->GetType() != ObjectType::Type) {
-      ThrowWrongObjectType(name, "type", object->GetType());
-    }
-    auto type = basics::downCast<PgSqlType>(std::move(object));
-
-    _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*schema_id, ObjectType::Type, *type_id);
-      clone->CommitDropPlan(ctx, plan);
-    });
-    clone->UnregisterObject(std::move(type), *schema_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-  });
-  return true;
-}
-
-bool Catalog::DropFunction(const AccessContext& ax, std::string_view database,
-                           std::string_view schema, std::string_view name,
-                           bool cascade, bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  if (!database_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("function \"", name, "\" does not exist"));
-  }
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
-  if (!schema_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("function \"", name, "\" does not exist"));
-  }
-  const auto function_id =
-    _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
-  if (!function_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("function \"", name, "\" does not exist"));
-  }
-  RequireObjectOwner(*_snapshot, ax.role, *function_id);
-
-  auto plan =
-    _snapshot->ComputeDropPlanRestrict(*function_id, cascade, "function", name);
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto function = clone->GetObject<PgSqlFunction>(*function_id);
-    SDB_ASSERT(function);
-
-    _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*schema_id, ObjectType::Function, *function_id);
-      clone->CommitDropPlan(ctx, plan);
-    });
-    clone->UnregisterObject(std::move(function), *schema_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-  });
-  return true;
-}
-
-bool Catalog::DropTokenizer(std::string_view database, std::string_view schema,
-                            std::string_view name, bool cascade,
-                            bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  if (!database_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("text search dictionary \"", name, "\" does not exist"));
-  }
-  const auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
-  if (!schema_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("text search dictionary \"", name, "\" does not exist"));
-  }
-  const auto tokenizer_id =
-    _snapshot->GetObjectId<ResolveType::Tokenizer>(*schema_id, name);
-  if (!tokenizer_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("text search dictionary \"", name, "\" does not exist"));
-  }
-
-  auto plan = _snapshot->ComputeDropPlanRestrict(
-    *tokenizer_id, cascade, "text search dictionary", name);
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto tokenizer = clone->GetObject<Tokenizer>(*tokenizer_id);
-    SDB_ASSERT(tokenizer);
-
-    _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*schema_id, ObjectType::Tokenizer, *tokenizer_id);
-      clone->CommitDropPlan(ctx, plan);
-    });
-
-    clone->UnregisterObject(std::move(tokenizer), *schema_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-  });
-  return true;
-}
-
-bool Catalog::DropForeignServer(const AccessContext& ax,
-                                std::string_view database,
-                                std::string_view name, bool cascade,
-                                bool missing_ok) {
-  absl::MutexLock lock{&_mutex};
-
-  const auto database_id =
-    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
-  const auto foreign_server_id =
-    database_id
-      ? _snapshot->GetObjectId<ResolveType::ForeignServer>(*database_id, name)
-      : std::nullopt;
-  if (!foreign_server_id) {
-    if (missing_ok) {
-      return false;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("server \"", name, "\" does not exist"));
-  }
-  // PG semantics: only the server's owner (or a superuser) may drop it.
-  RequireObjectOwner(*_snapshot, ax.role, *foreign_server_id);
-
-  auto plan = _snapshot->ComputeDropPlan(*foreign_server_id);
-
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    SDB_ASSERT(clone);
-    auto foreign_server = clone->GetObject<ForeignServer>(*foreign_server_id);
-    SDB_ASSERT(foreign_server);
-
-    _engine->Write([&](auto& ctx) {
-      ctx.DropDefinition(*database_id, ObjectType::ForeignServer,
-                         *foreign_server_id);
-      clone->CommitDropPlan(ctx, plan);
-    });
-
-    clone->UnregisterObject(std::move(foreign_server), *database_id);
-    clone->ApplyDropPlan(_pending_drops, *database_id, plan);
-  });
-  return true;
 }
 
 void Catalog::FinalizeLoad() {
   absl::MutexLock lock{&_mutex};
-  Apply(_snapshot, [&](std::shared_ptr<Snapshot>& clone) {
-    for (const auto& obj : clone->Objects()) {
-      clone->AddDependencies(obj->GetParentId(), *obj);
-    }
-    clone->EndLoad();
-    clone->RebuildRoleClosures();
-  });
-}
-
-std::shared_ptr<const Snapshot> Catalog::GetCatalogSnapshot() const noexcept {
-  return std::atomic_load(&_snapshot);
+  // Boot's closing pass, over a catalog nobody else can reach yet: the state
+  // that hangs off a definition rather than living in it cannot be bound
+  // mid-log, because a later record may drop the object it belongs to.
+  SDB_ASSERT(_loading);
+  OpenBootStorage();
+  _loading = false;
 }
 
 namespace {
 
-// In case of recovery the ColumnExpr shouldn't be parsed
-TableEngine CheckTableForDrop(std::string_view bytes, ReadContext ctx) {
-  auto table = catalog::DeserializeObject<Table>(bytes, ctx);
-  if (!table) {
-    THROW_SQL_ERROR(
-      ERR_MSG("failed to deserialize table definition during drop recovery"));
-  }
-  return table->GetEngine();
-}
-
-std::shared_ptr<IndexDrop> CreateIndexDrop(ObjectId db_id, ObjectId schema_id,
-                                           ObjectId table_id, ObjectId index_id,
-                                           ObjectType index_type,
-                                           bool is_root = false) {
-  return std::make_shared<IndexDrop>(index_id, index_type, db_id, schema_id,
-                                     table_id, is_root);
-}
-
-std::shared_ptr<TableDropBase> CreateTableDrop(
-  CatalogStore& store, ObjectId db_id, ObjectId schema_id, ObjectId table_id,
-  TableEngine engine, bool is_root = false) {
-  std::vector<ObjectId> owned_sequences;
-  store.VisitBoot(
-    schema_id, ObjectType::Sequence,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto seq = catalog::DeserializeObject<Sequence>(
-        bytes, {.id = key.id, .database_id = db_id, .schema_id = schema_id});
-      if (seq && seq->GetOwnerTableId() == table_id) {
-        owned_sequences.push_back(key.id);
-      }
-      return true;
-    });
-  if (engine == TableEngine::Search) {
-    // Search tables reject CREATE INDEX, so there are no child index drops.
-    return std::make_shared<SearchTableDrop>(
-      table_id, db_id, std::move(owned_sequences), schema_id, is_root);
-  }
-
-  std::vector<std::shared_ptr<IndexDrop>> indexes;
-  auto collect_indexes = [&](ObjectType type) {
-    store.VisitBoot(
-      table_id, type, [&](CatalogStore::Key key, std::string_view) {
-        indexes.push_back(
-          CreateIndexDrop(db_id, schema_id, table_id, key.id, type));
-        return true;
-      });
-  };
-  collect_indexes(ObjectType::SecondaryIndex);
-  collect_indexes(ObjectType::InvertedIndex);
-  return std::make_shared<TableDrop>(table_id, std::move(indexes),
-                                     std::move(owned_sequences), schema_id,
-                                     is_root);
-}
-
-std::shared_ptr<SchemaDrop> CreateSchemaDrop(CatalogStore& store,
-                                             ObjectId db_id, ObjectId schema_id,
-                                             bool is_root = false) {
-  std::vector<std::shared_ptr<TableDropBase>> tables;
-  store.VisitBoot(
-    schema_id, ObjectType::Table,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      const auto engine = CheckTableForDrop(
-        bytes, {.id = key.id, .database_id = db_id, .schema_id = schema_id});
-      tables.push_back(
-        CreateTableDrop(store, db_id, schema_id, key.id, engine));
-      return true;
-    });
-
-  return std::make_shared<SchemaDrop>(schema_id, std::move(tables), db_id,
-                                      is_root);
-}
-
-std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(CatalogStore& store,
-                                                 ObjectId db_id) {
-  std::vector<std::shared_ptr<SchemaDrop>> schemas;
-  store.VisitBoot(db_id, ObjectType::Schema,
-                  [&](CatalogStore::Key key, std::string_view) {
-                    schemas.push_back(CreateSchemaDrop(store, db_id, key.id));
-                    return true;
-                  });
-  return std::make_shared<DatabaseDrop>(db_id, std::move(schemas));
-}
-
-class OpenDatabase {
+// A drop still open at boot, rebuilt from the record that opened it. The
+// subtree the record carries is flat and keyed by parent, so each level picks
+// up its own children by id. Nothing here reads a definition: the reclamation
+// travels with the record, exactly as the store operations do.
+class DropRecovery {
  public:
-  enum class DeletedScope : uint8_t {
-    Root = 0,  // deleted object with parent = id::kInstance
-    Database,  // parent is daatabase
-    Schema,    // parent is schema
-    Relation,  // parent is relation
-  };
-
-  OpenDatabase(Catalog& catalog) : _catalog{catalog} {}
-
-  void operator()() {
-    CollectDeletedDefinitions(id::kInstance, DeletedScope::Root);
-    irs::Finally cleanup = [&] noexcept {
-      ClearDeletedDefinitions(DeletedScope::Root);
-    };
-    RegisterDatabases();
+  explicit DropRecovery(const wal::DropPrepare& drop) : _drop{drop} {
+    if (!drop.subtree) {
+      return;
+    }
+    for (const auto& node : *drop.subtree) {
+      _children[node.parent_id].push_back(&node);
+    }
   }
 
-  void AddRoles();
+  std::shared_ptr<DropTask> Build() const {
+    switch (_drop.type) {
+      case duckdb::CatalogType::DATABASE_ENTRY:
+        return BuildDatabase(_drop.id);
+      case duckdb::CatalogType::SCHEMA_ENTRY:
+        return BuildSchema(_drop.database_id, _drop.id, true);
+      case duckdb::CatalogType::TABLE_ENTRY:
+        return BuildTable(_drop.database_id, _drop.schema_id, _drop.id,
+                          RootEngine(), true);
+      case duckdb::CatalogType::INDEX_ENTRY:
+        return std::make_shared<IndexDrop>(_drop.id, _drop.inverted,
+                                           _drop.database_id, _drop.schema_id,
+                                           _drop.parent_id, true);
+      default:
+        SDB_FATAL(STARTUP, "catalog: open drop of ",
+                  duckdb::CatalogTypeToString(_drop.type),
+                  " cannot be reclaimed");
+    }
+  }
 
  private:
-  void Resolve();
-
-  void RegisterDatabases();
-  void RegisterSchemas(ObjectId database_id);
-  void RegisterFunctions(ObjectId database_id, ObjectId schema_id);
-  void RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
-  void RegisterForeignServers(ObjectId database_id);
-  void RegisterViews(ObjectId database_id, ObjectId schema_id);
-  // Sequences load in two passes: standalone before tables/views (so refs
-  // to them resolve at the referrer's own registration), owned after
-  // tables.
-  void RegisterSequences(ObjectId database_id, ObjectId schema_id, bool owned);
-  void RegisterTypes(ObjectId database_id, ObjectId schema_id);
-  void RegisterTables(ObjectId database_id, ObjectId schema_id);
-  void RegisterInvertedStorage(const std::shared_ptr<Index>& index);
-  void RegisterSearchTable(ObjectId db_id, ObjectId schema_id,
-                           const Table& table);
-  void RegisterIndexes(ObjectId database_id, ObjectId schema_id,
-                       ObjectId table_id);
-
-  void AddDatabase(ObjectId database_id, std::string_view bytes);
-  void AddSchema(ObjectId database_id, ObjectId schema_id,
-                 std::string_view bytes);
-  void AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
-                std::shared_ptr<Table> table);
-  void AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
-                ObjectId index_id, ObjectType entry_type,
-                std::string_view bytes);
-
-  bool IsDeleted(ObjectId id, DeletedScope scope) {
-    return _deleted[magic_enum::enum_integer(scope)].contains(id);
+  std::span<const wal::DropNode* const> ChildrenOf(ObjectId parent) const {
+    const auto it = _children.find(parent);
+    if (it == _children.end()) {
+      return {};
+    }
+    return it->second;
   }
 
-  void ClearDeletedDefinitions(DeletedScope scope) noexcept {
-    _deleted[magic_enum::enum_integer(scope)].clear();
+  TableEngine RootEngine() const {
+    for (const auto* node : ChildrenOf(_drop.parent_id)) {
+      if (node->id == _drop.id) {
+        return node->engine;
+      }
+    }
+    return TableEngine::Transactional;
   }
 
-  void CollectDeletedDefinitions(ObjectId id, DeletedScope scope) {
-    auto& store = GetCatalogStore();
-    auto& deleted = _deleted[magic_enum::enum_integer(scope)];
-    SDB_ASSERT(deleted.empty());
-    store.VisitBoot(id, ObjectType::Tombstone,
-                    [&](CatalogStore::Key key, std::string_view) {
-                      deleted.insert(key.id);
-                      return true;
-                    });
+  std::shared_ptr<DatabaseDrop> BuildDatabase(ObjectId db_id) const {
+    std::vector<std::shared_ptr<SchemaDrop>> schemas;
+    for (const auto* node : ChildrenOf(db_id)) {
+      if (node->type == duckdb::CatalogType::SCHEMA_ENTRY) {
+        schemas.push_back(BuildSchema(db_id, node->id, false));
+      }
+    }
+    return std::make_shared<DatabaseDrop>(db_id, std::move(schemas));
   }
 
-  Catalog& _catalog;
+  std::shared_ptr<SchemaDrop> BuildSchema(ObjectId db_id, ObjectId schema_id,
+                                          bool is_root) const {
+    std::vector<std::shared_ptr<TableDropBase>> tables;
+    std::vector<ObjectId> sequences;
+    for (const auto* node : ChildrenOf(schema_id)) {
+      if (node->type == duckdb::CatalogType::TABLE_ENTRY) {
+        tables.push_back(
+          BuildTable(db_id, schema_id, node->id, node->engine, false));
+      } else if (node->type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+        sequences.push_back(node->id);
+      }
+    }
+    return std::make_shared<SchemaDrop>(schema_id, std::move(tables),
+                                        std::move(sequences), db_id, is_root);
+  }
 
-  // Names of the database/schema currently being walked; the boot walk is
-  // strictly nested, so plain members suffice.
-  std::string _database_name;
-  std::string _schema_name;
+  std::shared_ptr<TableDropBase> BuildTable(ObjectId db_id, ObjectId schema_id,
+                                            ObjectId table_id,
+                                            TableEngine engine,
+                                            bool is_root) const {
+    std::vector<ObjectId> owned;
+    std::vector<std::shared_ptr<IndexDrop>> indexes;
+    for (const auto* node : ChildrenOf(table_id)) {
+      if (node->type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+        owned.push_back(node->id);
+      } else if (node->type == duckdb::CatalogType::INDEX_ENTRY) {
+        indexes.push_back(std::make_shared<IndexDrop>(
+          node->id, node->inverted, db_id, schema_id, table_id, false));
+      }
+    }
+    // Search tables reject CREATE INDEX, so they carry no child index drops.
+    if (engine == TableEngine::Search) {
+      return std::make_shared<SearchTableDrop>(
+        table_id, db_id, std::move(owned), schema_id, is_root);
+    }
+    return std::make_shared<TableDrop>(table_id, db_id, std::move(indexes),
+                                       std::move(owned), schema_id, is_root);
+  }
 
-  std::array<containers::FlatHashSet<ObjectId>,
-             magic_enum::enum_count<DeletedScope>()>
-    _deleted;
+  const wal::DropPrepare& _drop;
+  containers::FlatHashMap<ObjectId, std::vector<const wal::DropNode*>>
+    _children;
 };
 
-void OpenDatabase::AddRoles() {
-  GetCatalogStore().VisitBoot(
-    id::kInstance, ObjectType::Role,
-    [&](CatalogStore::Key, std::string_view bytes) {
-      auto role = catalog::DeserializeObject<catalog::Role>(bytes, {});
-      if (!role) {
-        THROW_SQL_ERROR(ERR_MSG(
-          "Failed to read roles, error: Failed to read role definition"));
-      }
-      _catalog.RegisterRole(std::move(role));
-      return true;
-    });
-}
-
-void OpenDatabase::AddDatabase(ObjectId database_id, std::string_view bytes) {
-  auto db =
-    catalog::DeserializeObject<catalog::Database>(bytes, {.id = database_id});
-  if (!db) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to read database definition"));
-  }
-  _database_name = db->GetName();
-  _catalog.RegisterDatabase(db);
-  CollectDeletedDefinitions(database_id, DeletedScope::Database);
-  irs::Finally cleanup = [&] noexcept {
-    ClearDeletedDefinitions(DeletedScope::Database);
-  };
-  RegisterSchemas(database_id);
-  RegisterForeignServers(database_id);
-}
-
-void OpenDatabase::RegisterDatabases() {
-  GetCatalogStore().VisitBoot(
-    id::kInstance, ObjectType::Database,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      if (!IsDeleted(key.id, DeletedScope::Root)) {
-        AddDatabase(key.id, bytes);
-        return true;
-      }
-      DropTask::Schedule(CreateDatabaseDrop(GetCatalogStore(), key.id))
-        .Detach();
-      return true;
-    });
-}
-
-void OpenDatabase::RegisterSchemas(ObjectId database_id) {
-  GetCatalogStore().VisitBoot(
-    database_id, ObjectType::Schema,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto schema_id = key.id;
-      if (!IsDeleted(key.id, DeletedScope::Database)) {
-        AddSchema(database_id, schema_id, bytes);
-        return true;
-      }
-
-      DropTask::Schedule(
-        CreateSchemaDrop(GetCatalogStore(), database_id, key.id, true))
-        .Detach();
-      return true;
-    });
-}
-
-void OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
-  GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::Function,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto function = catalog::DeserializeObject<catalog::PgSqlFunction>(
-        bytes, {
-                 .id = key.id,
-                 .database_id = db_id,
-                 .schema_id = schema_id,
-               });
-      if (!function) {
-        THROW_SQL_ERROR(ERR_MSG("Failed to read function definition"));
-      }
-      _catalog.RegisterFunction(db_id, schema_id, std::move(function));
-      return true;
-    });
-}
-
-void OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
-  GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::Tokenizer,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto tokenizer =
-        catalog::DeserializeObject<Tokenizer>(bytes, {
-                                                       .id = key.id,
-                                                       .database_id = db_id,
-                                                       .schema_id = schema_id,
-                                                     });
-      if (!tokenizer) {
-        THROW_SQL_ERROR(ERR_MSG("Failed to read tokenizer definition"));
-      }
-      _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
-      return true;
-    });
-}
-
-// Foreign servers live flat under the database in the store (PG shape).
-void OpenDatabase::RegisterForeignServers(ObjectId db_id) {
-  GetCatalogStore().VisitBoot(
-    db_id, ObjectType::ForeignServer,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto foreign_server =
-        catalog::DeserializeObject<ForeignServer>(bytes, {
-                                                           .id = key.id,
-                                                           .database_id = db_id,
-                                                         });
-      if (!foreign_server) {
-        THROW_SQL_ERROR(ERR_MSG("Failed to read foreign server definition"));
-      }
-      _catalog.RegisterForeignServer(db_id, std::move(foreign_server));
-      return true;
-    });
-}
-
-void OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
-  GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::View,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto view_id = key.id;
-      auto view = catalog::DeserializeObject<PgSqlView>(
-        bytes, {.id = view_id, .database_id = db_id, .schema_id = schema_id});
-      if (!view) {
-        THROW_SQL_ERROR(ERR_MSG("Failed to read view definition"));
-      }
-      _catalog.RegisterView(schema_id, std::move(view));
-      CollectDeletedDefinitions(view_id, DeletedScope::Relation);
-      irs::Finally cleanup = [&] noexcept {
-        ClearDeletedDefinitions(DeletedScope::Relation);
-      };
-      RegisterIndexes(db_id, schema_id, view_id);
-      return true;
-    });
-}
-
-void OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id,
-                                     bool owned) {
-  GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::Sequence,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto seq =
-        catalog::DeserializeObject<Sequence>(bytes, {
-                                                      .id = key.id,
-                                                      .database_id = db_id,
-                                                      .schema_id = schema_id,
-                                                    });
-      if (!seq) {
-        THROW_SQL_ERROR(ERR_MSG("Failed to read sequence definition"));
-      }
-      if (seq->GetOwnerTableId().isSet() != owned) {
-        return true;
-      }
-      // Owner table is tombstoned -> skip; its DropTask will clean the seq.
-      if (auto owner = seq->GetOwnerTableId();
-          owner.isSet() && IsDeleted(owner, DeletedScope::Schema)) {
-        return true;
-      }
-      _catalog.RegisterSequence(db_id, schema_id, std::move(seq));
-      return true;
-    });
-}
-
-void OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
-  GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::Type,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto type =
-        catalog::DeserializeObject<PgSqlType>(bytes, {
-                                                       .id = key.id,
-                                                       .database_id = db_id,
-                                                       .schema_id = schema_id,
-                                                     });
-      if (!type) {
-        THROW_SQL_ERROR(ERR_MSG("Failed to read type definition"));
-      }
-      _catalog.RegisterType(db_id, schema_id, std::move(type));
-      return true;
-    });
-}
-
-void OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
-                                   ObjectId table_id) {
-  auto visit = [&](ObjectType type) {
-    GetCatalogStore().VisitBoot(
-      table_id, type, [&](CatalogStore::Key key, std::string_view bytes) {
-        auto index_id = key.id;
-        if (!IsDeleted(index_id, DeletedScope::Relation)) {
-          AddIndex(db_id, schema_id, table_id, index_id, type, bytes);
-          return true;
-        }
-
-        auto drop =
-          CreateIndexDrop(db_id, schema_id, table_id, key.id, type, true);
-        DropTask::Schedule(std::move(drop)).Detach();
-        return true;
-      });
-  };
-  visit(ObjectType::SecondaryIndex);
-  visit(ObjectType::InvertedIndex);
-}
-
-void OpenDatabase::RegisterInvertedStorage(
-  const std::shared_ptr<Index>& index) {
-  // The inverted index's durable state is its iresearch segment directory; the
-  // storage is (re)opened from it here and bound onto the index. Must run
-  // before InitInvertedIndexes/BindStoreTableIndexes so WAL replay resolves it
-  // via index->GetData().
-  const auto& inverted = basics::downCast<const InvertedIndex>(*index);
-  inverted.SetData(search::InvertedIndexStorage::Create(
-    inverted.GetId(), inverted, /*is_new=*/false));
-}
-
-void OpenDatabase::RegisterSearchTable(ObjectId db_id, ObjectId schema_id,
-                                       const Table& table) {
-  table.SetData(search::SearchTable::Create(db_id, schema_id, table.GetId(),
-                                            /*is_new=*/false,
-                                            table.SearchOptions()));
-}
-
-void OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
-  GetCatalogStore().VisitBoot(
-    schema_id, ObjectType::Table,
-    [&](CatalogStore::Key key, std::string_view bytes) {
-      auto table_id = key.id;
-      if (!IsDeleted(table_id, DeletedScope::Schema)) {
-        auto table = catalog::DeserializeObject<Table>(
-          bytes,
-          {.id = table_id, .database_id = db_id, .schema_id = schema_id});
-        if (!table) {
-          THROW_SQL_ERROR(ERR_MSG("Failed to read table definition"));
-        }
-        if (table->GetEngine() == TableEngine::Transactional) {
-          GetCatalogStore().ValidateStoreTable(
-            MakeStoreTableDef(_database_name, _schema_name, *table));
-        } else if (table->GetEngine() == TableEngine::Search) {
-          RegisterSearchTable(db_id, schema_id, *table);
-        }
-        AddTable(db_id, schema_id, table_id, std::move(table));
-        return true;
-      }
-      const auto engine = CheckTableForDrop(
-        bytes, {.id = table_id, .database_id = db_id, .schema_id = schema_id});
-      DropTask::Schedule(CreateTableDrop(GetCatalogStore(), db_id, schema_id,
-                                         table_id, engine, true))
-        .Detach();
-      return true;
-    });
-}
-
-void OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
-                            ObjectId table_id, std::shared_ptr<Table> table) {
-  _catalog.RegisterTable(db_id, schema_id, std::move(table));
-  CollectDeletedDefinitions(table_id, DeletedScope::Relation);
-  irs::Finally cleanup = [&] noexcept {
-    ClearDeletedDefinitions(DeletedScope::Relation);
-  };
-  RegisterIndexes(db_id, schema_id, table_id);
-}
-
-void OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
-                            ObjectId table_id, ObjectId index_id,
-                            ObjectType entry_type, std::string_view bytes) {
-  ReadContext ctx{.id = index_id,
-                  .database_id = database_id,
-                  .schema_id = schema_id,
-                  .relation_id = table_id};
-  std::shared_ptr<Index> index;
-  if (entry_type == ObjectType::SecondaryIndex) {
-    index = catalog::DeserializeObject<SecondaryIndex>(bytes, ctx);
-  } else {
-    index = catalog::DeserializeObject<InvertedIndex>(bytes, ctx);
-  }
-  if (!index) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to read index definition"));
-  }
-  _catalog.RegisterIndex(database_id, schema_id, index);
-
-#ifdef SDB_DEV
-  // Check there are no tombstones in index scope
-  size_t counter = 0;
-  GetCatalogStore().VisitBoot(index_id, ObjectType::Tombstone,
-                              [&](CatalogStore::Key, std::string_view) {
-                                counter++;
-                                return true;
-                              });
-  SDB_ASSERT(counter == 0);
-#endif
-
-  if (entry_type == ObjectType::InvertedIndex) {
-    RegisterInvertedStorage(index);
+// Driven by the records rather than by the definitions they removed: the
+// record carries the whole subtree the drop has to sweep.
+void ScheduleOpenDrops() {
+  auto& store = GetCatalogStore();
+  for (const auto id : store.AllOpenDrops()) {
+    const auto drop = store.OpenDrop(id);
+    SDB_ASSERT(drop);
+    if (!drop) {
+      continue;
+    }
+    DropTask::Schedule(DropRecovery{*drop}.Build()).Detach();
   }
 }
 
-void OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
-                             std::string_view bytes) {
-  auto schema =
-    catalog::DeserializeObject<catalog::Schema>(bytes, {.database_id = db_id});
-  if (!schema) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to read schema definition"));
+// The first boot of a data directory: the log is empty, so the database every
+// connection defaults to has to be written before anything can be created in
+// it. Not through Catalog::CreateDatabase -- there is no role to check a
+// privilege against yet, and the id is fixed rather than allocated.
+void EnsureSystemDatabase(Catalog& catalog) {
+  if (catalog::FindDatabase(nullptr, id::kSystemDB)) {
+    SDB_TRACE(STARTUP, "Found system database");
+    return;
   }
-  _schema_name = schema->GetName();
-
-  _catalog.RegisterSchema(db_id, std::move(schema));
-
-  CollectDeletedDefinitions(schema_id, DeletedScope::Schema);
-  irs::Finally cleanup = [&] noexcept {
-    ClearDeletedDefinitions(DeletedScope::Schema);
-  };
-
-  RegisterTokenizers(db_id, schema_id);
-  RegisterTypes(db_id, schema_id);
-  RegisterSequences(db_id, schema_id, false);
-  RegisterFunctions(db_id, schema_id);
-  RegisterTables(db_id, schema_id);
-  RegisterViews(db_id, schema_id);
-  RegisterSequences(db_id, schema_id, true);
+  // One frame, as in Catalog::CreateDatabase: a first boot that crashed between
+  // two appends would come back with a database and no public schema.
+  std::vector<wal::Entry> entries;
+  entries.emplace_back(
+    wal::PutEntry{.parent_id = id::kInstance,
+                  .type = duckdb::CatalogType::DATABASE_ENTRY,
+                  .id = id::kSystemDB,
+                  .mode = wal::PutMode::Create,
+                  .info = std::make_shared<CreateDatabaseInfo>(
+                    id::kSystemDB, StaticStrings::kDefaultDatabase),
+                  .perm = Permissions{id::kRootUser}});
+  const auto schema_id = NextId();
+  entries.emplace_back(wal::PutEntry{
+    .parent_id = id::kSystemDB,
+    .type = duckdb::CatalogType::SCHEMA_ENTRY,
+    .id = schema_id,
+    .mode = wal::PutMode::Create,
+    .info =
+      catalog::MakeSchemaInfo(schema_id, id::kSystemDB, StaticStrings::kPublic),
+    .perm = Permissions{id::kRootUser}});
+  // The records are the intent, so they go to the log and through the
+  // applier -- not built twice, once for each.
+  GetCatalogStore().WriteFrame(entries);
+  catalog.ReplayRecords(entries);
 }
 
 }  // namespace
 namespace {
 
-std::shared_ptr<Catalog> g_catalog;
+std::shared_ptr<Catalog> gCatalog;
+
+// What boot does with a database whose data file is gone or will not open. Not
+// a state that occurs on its own: somebody removed or corrupted a file.
+enum class MissingDatabase : uint8_t {
+  Refuse,
+  Skip,
+  Drop,
+};
+
+MissingDatabase ParseMissingDatabasePolicy() {
+  const auto value = absl::GetFlag(FLAGS_missing_database);
+  if (value == "refuse") {
+    return MissingDatabase::Refuse;
+  }
+  if (value == "skip") {
+    return MissingDatabase::Skip;
+  }
+  if (value == "drop") {
+    return MissingDatabase::Drop;
+  }
+  SDB_FATAL(STARTUP, "--missing_database must be refuse, skip or drop, not '",
+            value, "'");
+}
+
+void ReportUnusableDatabase(const catalog::DatabaseRef& db,
+                            std::string_view reason, MissingDatabase policy) {
+  switch (policy) {
+    case MissingDatabase::Refuse:
+      SDB_FATAL(STARTUP, "database '", db.Name(), "' (id ", db.Id().id(),
+                ") cannot be opened: ", reason,
+                ". Pass --missing_database=skip to leave it unattached or "
+                "--missing_database=drop to remove it from the catalog.");
+    case MissingDatabase::Skip:
+      SDB_WARN(STARTUP, "database '", db.Name(), "' is not attached: ", reason);
+      return;
+    case MissingDatabase::Drop:
+      SDB_WARN(STARTUP, "dropping database '", db.Name(),
+               "' from the catalog: ", reason);
+      return;
+  }
+}
+
+// A missing file is a loss only when the catalog says there was something in
+// it. An empty database whose file has not been created yet is the ordinary
+// first-boot shape, and recreating it loses nothing.
+bool DatabaseFileUsable(const catalog::DatabaseRef& db,
+                        MissingDatabase policy) {
+  const auto path = CatalogStore::DatabaseFilePath(db.Id());
+  std::error_code ec;
+  if (std::filesystem::exists(path, ec)) {
+    return true;
+  }
+  bool has_content = false;
+  catalog::VisitDefinitions<SereneDBTableEntry>(
+    nullptr, db.Id(),
+    [&](const TableInfoRef&, const Permissions&) { has_content = true; });
+  catalog::Visit<SereneDBViewEntry>(
+    nullptr, db.Id(),
+    [&](const duckdb::ViewCatalogEntry&) { has_content = true; });
+  if (!has_content) {
+    return true;
+  }
+  ReportUnusableDatabase(db, absl::StrCat("'", path, "' does not exist"),
+                         policy);
+  return false;
+}
+
+// Brings every attached database up to the catalog log tail. The catalog
+// commits first, so a database's committed position is behind exactly when a
+// crash landed between the two halves; the work is the frames in between and
+// nothing else -- one number per database in the clean case, which is why this
+// costs nothing on a boot that has no gap.
+void ReplayCatalogGaps() {
+  const auto begin = std::chrono::steady_clock::now();
+  auto& store = GetCatalogStore();
+  std::vector<catalog::DatabaseRef> databases;
+  catalog::VisitDatabases(
+    nullptr, [&](const catalog::DatabaseRef& db) { databases.push_back(db); });
+  std::vector<ObjectId> live;
+  live.reserve(databases.size());
+  for (const auto& db : databases) {
+    live.push_back(db.Id());
+  }
+  store.ForgetUnackedExcept(live);
+  for (const auto& db : databases) {
+    auto attachment = TryStoreDatabase(db.Id());
+    if (!attachment || !attachment->HasStorageManager()) {
+      store.AckDatabasePosition(db.Id(), UINT64_MAX);
+      continue;
+    }
+    const auto committed = attachment->GetStorageManager().GetCatalogPosition();
+    auto pending = store.PendingFor(db.Id(), committed);
+    if (pending.empty()) {
+      store.AckDatabasePosition(db.Id(), committed);
+      GetDataStore().RebuildMissingIndexes(db.Id());
+      continue;
+    }
+    SDB_INFO(STARTUP, "database '", db.Name(), "' is at catalog position ",
+             committed, ", replaying ", pending.size(),
+             " batch(es) up to position ", pending.back().position);
+    for (const auto& batch : pending) {
+      if (auto r =
+            GetDataStore().ApplyStoreOps(nullptr, *batch.ops, batch.position);
+          !r.ok()) {
+        SDB_FATAL(STARTUP, "database '", db.Name(),
+                  "': replaying catalog position ", batch.position,
+                  " failed: ", r.message());
+      }
+      store.AckDatabasePosition(db.Id(), batch.position);
+    }
+    // What the replay built is in memory only: it ran without a transaction, so
+    // nothing named it in the data WAL, and the fold below drops the very ops
+    // that would rebuild it. A checkpoint puts it in the file, and carries the
+    // position it came from into the header the next boot compares against.
+    GetDataStore().RebuildMissingIndexes(db.Id());
+    auto& storage = attachment->GetStorageManager();
+    storage.SetCatalogPosition(pending.back().position);
+    duckdb::CheckpointOptions options;
+    options.action = duckdb::CheckpointAction::ALWAYS_CHECKPOINT;
+    storage.CreateCheckpoint(duckdb::QueryContext{}, options);
+  }
+  SDB_INFO(STARTUP, "catalog position checked for ", live.size(),
+           " database(s) against log tail ", store.LogPosition(), " in ",
+           absl::FormatDuration(
+             absl::FromChrono(std::chrono::steady_clock::now() - begin)));
+  // The gap is closed, so a log the outstanding work was holding open can fold.
+  store.TryCompact();
+}
 
 }  // namespace
 
 void InitCatalog() {
-  g_catalog = std::make_shared<Catalog>();
+  gCatalog = std::make_shared<Catalog>();
 
-  GetCatalogStore().LoadBootState();
-  irs::Finally release_boot = [] noexcept {
-    GetCatalogStore().ReleaseBootState();
-  };
+  // Before the roles are read and long before any database is attached: a
+  // cluster-global write must never run without the attachment it belongs to.
+  catalog::AttachGlobalDatabase();
 
-  OpenDatabase open_db{GetCatalog()};
-  open_db.AddRoles();
+  // The catalog log, replayed straight into the CatalogSets that hold it. A
+  // database record attaches its database on the spot -- catalog only, no file
+  // -- so every record after it lands in a real set. No data file is open yet
+  // and no data WAL has been replayed: that is the last boot step.
+  try {
+    GetCatalogStore().Replay([](std::span<const wal::Entry> entries) {
+      GetCatalog().ReplayRecords(entries);
+    });
+  } catch (const SqlException& e) {
+    SDB_FATAL(GENERAL, "Failed to read the catalog log, ", e.message());
+  }
+  EnsureSystemDatabase(GetCatalog());
 
-  if (GetCatalog().GetCatalogSnapshot()->GetRoles().empty()) {
+  bool has_roles = false;
+  catalog::VisitRoles(nullptr,
+                      [&](const CreateRoleInfo&) { has_roles = true; });
+  if (!has_roles) {
     std::string initial_verifier;
     if (const char* pw = std::getenv("POSTGRES_PASSWORD");
         pw != nullptr && *pw != '\0') {
@@ -5560,75 +3150,581 @@ void InitCatalog() {
       SDB_INFO(GENERAL, "bootstrap: initial password set for role '",
                StaticStrings::kDefaultUser, "' from POSTGRES_PASSWORD");
     }
-    auto root = std::make_shared<Role>(persistence::RoleData{
-      .id = id::kRootUser,
-      .name = std::string{StaticStrings::kDefaultUser},
-      .options = static_cast<uint32_t>(RoleOption::All),
-      .conn_limit = Role::kNoConnLimit,
-      .valid_until = Role::kNoValidUntil,
-      .password_verifier = std::move(initial_verifier),
-    });
+    auto root = std::make_shared<CreateRoleInfo>(
+      id::kRootUser, persistence::RoleData{
+                       .name = std::string{StaticStrings::kDefaultUser},
+                       .options = static_cast<uint32_t>(RoleOption::All),
+                       .conn_limit = CreateRoleInfo::kNoConnLimit,
+                       .valid_until = CreateRoleInfo::kNoValidUntil,
+                       .password_verifier = {std::move(initial_verifier)},
+                     });
     GetCatalog().CreateRole(NoAccessCheck(), std::move(root));
   }
 
-  try {
-    open_db();
-  } catch (const SqlException& e) {
-    SDB_FATAL(GENERAL, "Failed to open database, ", e.message());
-  }
+  ScheduleOpenDrops();
 
   GetCatalog().FinalizeLoad();
 
-  if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
+  if (!catalog::GetDatabaseId(StaticStrings::kDefaultDatabase).isSet()) {
     SDB_FATAL(GENERAL, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");
   }
 
-  // Attach all existing databases into DuckDB
+  // A data file whose id no committed catalog record names is garbage: the
+  // create crashed between the file operation and the catalog append, or the
+  // drop crashed after it. Ids are never reissued, so the file can only ever
+  // be unreachable. Reclaim before attaching, so nothing opens one.
   {
-    auto snapshot = GetCatalog().GetCatalogSnapshot();
-    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
-    for (auto& db : snapshot->GetDatabases()) {
-      auto query = absl::StrCat("ATTACH '", db->GetId().id(), "' AS \"",
-                                db->GetName(), "\" (TYPE serenedb)");
-      auto result = conn->Query(query);
-      if (result->HasError()) {
-        SDB_FATAL(GENERAL, "Failed to attach database ", db->GetName(), ": ",
-                  result->GetError());
+    for (const auto id : CatalogStore::DatabaseFileIds()) {
+      if (catalog::FindDatabase(nullptr, id)) {
+        continue;
+      }
+      const auto path = CatalogStore::DatabaseFilePath(id);
+      SDB_INFO(STARTUP, "reclaiming orphaned database file '", path, "'");
+      for (const auto& name : {path, path + ".wal"}) {
+        std::error_code ec;
+        std::filesystem::remove(name, ec);
+        if (ec) {
+          SDB_WARN(STARTUP, "could not remove '", name, "': ", ec.message());
+        }
       }
     }
   }
+
+  // The data half of every attachment: the catalog log already made each one
+  // and filled its sets, so this opens the file and replays the data WAL into
+  // inverted indexes OpenBootStorage has already injected.
+  {
+    const auto attach_begin = std::chrono::steady_clock::now();
+    const auto missing_policy = ParseMissingDatabasePolicy();
+    auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
+    std::vector<catalog::DatabaseRef> databases;
+    catalog::VisitDatabases(nullptr, [&](const catalog::DatabaseRef& db) {
+      databases.push_back(db);
+    });
+    std::vector<catalog::DatabaseRef> unusable;
+    for (const auto& db : databases) {
+      if (!DatabaseFileUsable(db, missing_policy)) {
+        unusable.push_back(db);
+        continue;
+      }
+      try {
+        connector::LoadDatabaseStorage(db.Name());
+      } catch (const std::exception& e) {
+        ReportUnusableDatabase(db, e.what(), missing_policy);
+        unusable.push_back(db);
+      }
+    }
+    for (const auto& db : unusable) {
+      // The attachment goes whatever the policy is: nothing may reach a
+      // database whose rows could not be opened.
+      connector::DiscardDatabaseAttachment(db.Name());
+      if (missing_policy == MissingDatabase::Drop) {
+        GetCatalog().DropDatabase(NoAccessCheck(), std::string{db.Name()},
+                                  nullptr);
+      }
+    }
+    // DuckDB always has a main database, so an unused in-memory "memory" one
+    // exists until something is attached; the default database supersedes it.
+    // The default has to move first -- DETACH refuses the default database,
+    // and detaching does not repoint it, so a connection with no search path
+    // would resolve a name that is gone.
+    duckdb::DatabaseManager::Get(*conn->context)
+      .SetDefaultDatabase(*conn->context,
+                          std::string{StaticStrings::kDefaultDatabase});
+    if (auto result = conn->Query("DETACH \"memory\""); result->HasError()) {
+      SDB_WARN(STARTUP, "could not detach the initial in-memory database: ",
+               result->GetError());
+    }
+    SDB_INFO(STARTUP, "database storage loaded in ",
+             absl::FormatDuration(absl::FromChrono(
+               std::chrono::steady_clock::now() - attach_begin)));
+  }
+  GetDataStore().MarkReady();
+
+  // Now that every database is attached and its entries are in their sets, the
+  // tables a foreign key points at can be rebuilt to carry the referenced half
+  // of that key -- the half a DELETE checks children with, and one a parent
+  // placed ahead of its child could not see.
+  {
+    std::vector<ObjectId> databases;
+    catalog::VisitDatabases(nullptr, [&](const catalog::DatabaseRef& ref) {
+      databases.push_back(ref.Id());
+    });
+    for (const auto database_id : databases) {
+      // Contextless, so the rebuilt entries are committed outright: boot has
+      // no statement of its own and nobody else can reach the catalog yet.
+      catalog::RefreshForeignKeyReferents(nullptr, database_id);
+    }
+  }
+
+  // After MarkReady: a replayed CREATE INDEX builds its store-side index
+  // through the bind contexts, which are gated on the store being up.
+  ReplayCatalogGaps();
 
   // Re-attach persisted foreign servers (external DBs: clickhouse/postgres) so
   // they survive restart, the same way the databases above do. Unlike a local
   // database, a remote being unreachable must NOT abort startup -- warn and
   // continue; the server stays defined and a later access will surface it.
   {
-    auto snapshot = GetCatalog().GetCatalogSnapshot();
+    // Collected before anything is attached: the ATTACH runs a whole statement
+    // on a fresh connection, and the walk that found these is holding the set
+    // it came out of.
+    std::vector<HeldForeignServer> servers;
+    std::vector<ObjectId> databases;
+    catalog::VisitDatabases(nullptr, [&](const catalog::DatabaseRef& db) {
+      databases.push_back(db.Id());
+    });
+    for (const auto database_id : databases) {
+      auto of_database = catalog::DatabaseForeignServers(nullptr, database_id);
+      servers.insert(servers.end(),
+                     std::make_move_iterator(of_database.begin()),
+                     std::make_move_iterator(of_database.end()));
+    }
     auto conn = sdb::DuckDBEngine::Instance().CreateConnection();
-    for (auto& db : snapshot->GetDatabases()) {
-      for (auto& server : snapshot->GetForeignServers(db->GetId())) {
-        auto res = RunForeignServerAttach(*conn, *server);
-        if (res.status == ForeignServerAttachResult::Status::Failed) {
-          SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
-                   server->GetName(), ": ", res.error);
-        }
+    for (const auto& [server, perm] : servers) {
+      auto res = RunForeignServerAttach(*conn, *server);
+      if (res.status == ForeignServerAttachResult::Status::Failed) {
+        SDB_WARN(GENERAL, "Failed to re-attach foreign server ",
+                 server->GetName(), ": ", res.error);
       }
     }
   }
 }
 
-void ShutdownCatalog() { g_catalog.reset(); }
+void ShutdownCatalog() { gCatalog.reset(); }
 
-std::shared_ptr<Database> GetDatabase(std::string_view name) {
-  return GetCatalog().GetCatalogSnapshot()->GetDatabase(name);
+ObjectId GetDatabaseId(std::string_view name) {
+  return catalog::FindDatabase(nullptr, name).Id();
 }
 
 Catalog& GetCatalog() {
-  SDB_ASSERT(g_catalog, "Catalog is not initialized");
-  return *g_catalog;
+  SDB_ASSERT(gCatalog, "Catalog is not initialized");
+  return *gCatalog;
 }
 
-Catalog* TryGetCatalog() { return g_catalog.get(); }
+Catalog* TryGetCatalog() { return gCatalog.get(); }
+
+IndexInfoRef SereneDBCatalog::CreateSecondaryIndex(
+  const AccessContext& ax, const IndexRelation& relation, std::string name,
+  std::vector<CreateIndexColumn>&& columns, bool unique,
+  CreateIndexOperationOptions operation_options) {
+  if (columns.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Cannot create index without columns"));
+  }
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto& live = relation;
+  const auto schema_id = live.GetParentId();
+  RequireRelationOwner(ax.context, ax.role, live);
+  if (operation_options.if_not_exists &&
+      (catalog::Find<SereneDBTableEntry>(ax.context, schema_id, name) ||
+       catalog::Find<SereneDBSequenceEntry>(ax.context, schema_id, name) ||
+       catalog::Find<SereneDBIndexEntry>(ax.context, schema_id, name))) {
+    return nullptr;
+  }
+  auto resolved = ResolveIndexRelation(live);
+  BindIndexColumns(resolved.columns, columns);
+  auto index = NewSecondaryIndex(schema_id, ObjectId{0}, resolved.relation_id,
+                                 std::move(name), std::move(columns), unique);
+  CreateIndexImpl(ax.context, index, operation_options);
+  return index;
+}
+
+IndexInfoRef SereneDBCatalog::CreateInvertedIndex(
+  const AccessContext& ax, duckdb::ClientContext& context, ObjectId database_id,
+  std::string_view schema, const IndexRelation& relation, std::string name,
+  std::vector<CreateIndexColumn>&& columns, InvertedIndexOptions options,
+  ExpressionData predicate, CreateIndexOperationOptions operation_options) {
+  if (columns.empty()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Cannot create index without columns"));
+  }
+  JoinStoreTransaction(&context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto& live = relation;
+  const auto schema_id = live.GetParentId();
+  RequireRelationOwner(ax.context, ax.role, live);
+  if (operation_options.if_not_exists &&
+      (catalog::Find<SereneDBTableEntry>(ax.context, schema_id, name) ||
+       catalog::Find<SereneDBSequenceEntry>(ax.context, schema_id, name) ||
+       catalog::Find<SereneDBIndexEntry>(ax.context, schema_id, name))) {
+    return nullptr;
+  }
+  auto resolved = ResolveIndexRelation(live);
+  BindIndexColumns(resolved.columns, columns);
+  auto index =
+    NewInvertedIndex(context, database_id, schema, schema_id, ObjectId{0},
+                     resolved.relation_id, std::move(name), std::move(columns),
+                     std::move(options), std::move(predicate));
+  CreateIndexImpl(&context, index, operation_options);
+  return index;
+}
+
+void SereneDBCatalog::CreateIndexImpl(
+  duckdb::ClientContext* context, const IndexInfoRef& index,
+  CreateIndexOperationOptions operation_options) {
+  const auto schema_id = index->GetParentId();
+  // An index name is in the relation namespace, so every half of it answers.
+  if (catalog::Find<SereneDBTableEntry>(context, schema_id, index->GetName()) ||
+      catalog::Find<SereneDBSequenceEntry>(context, schema_id,
+                                           index->GetName()) ||
+      catalog::Find<SereneDBViewEntry>(context, schema_id, index->GetName()) ||
+      catalog::Find<SereneDBIndexEntry>(context, schema_id, index->GetName())) {
+    ThrowDuplicateName(NameKind::Relation, index->GetName());
+  }
+  // A key constraint's index is filed under the constraint's own name and goes
+  // on the same list as this one, so the two share a namespace -- which is what
+  // postgres says too, where a constraint's index is a relation.
+  if (const auto* relation = catalog::Find<SereneDBTableEntry>(
+        context, schema_id, index->GetRelationId())) {
+    for (const auto& constraint : relation->GetConstraints()) {
+      if (constraint->type == duckdb::ConstraintType::UNIQUE &&
+          constraint->constraint_name == index->GetName()) {
+        ThrowDuplicateName(NameKind::Relation, index->GetName());
+      }
+    }
+  }
+
+  SDB_IF_FAILURE("unable_to_create") {
+    THROW_SQL_ERROR(ERR_MSG("internal error"));
+  }
+  const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
+  SDB_ASSERT(db_id.isSet());
+  // The inverted index's iresearch storage hangs off the definition, so the
+  // CREATE INDEX build (GetGlobalSinkState) reaches it via GetData(). Bind it
+  // here, before the build runs.
+  if (index->IsInverted()) {
+    index->SetData(search::InvertedIndexStorage::Create(
+      db_id, InvertedInfo(*index), /*is_new=*/true));
+  }
+  const auto stamped = NextIndexVersion(context, index);
+  const auto* entry = catalog::Find<SereneDBTableEntry>(context, schema_id,
+                                                        index->GetRelationId());
+  const auto table = entry != nullptr ? entry->Definition() : nullptr;
+  auto store_index = table ? MakeStoreIndexInfo(*table, *stamped) : nullptr;
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(context, [&](auto& ctx) {
+    PutIndex(ctx, stamped, wal::PutMode::Create);
+    if (store_index) {
+      ctx.store().CreateIndex(db_id, std::move(store_index), table, stamped);
+    }
+  });
+  // After the store op, so a relation another transaction has already dropped
+  // is refused by the rows rather than by the set -- the store names the
+  // relation, and the set can only say that something clashed.
+  catalog::PutEntry(context, /*old_name=*/{}, stamped);
+}
+
+void SereneDBCatalog::RenameIndex(duckdb::ClientContext* context,
+                                  const CreateIndexInfoBase& index,
+                                  std::string_view new_name) {
+  const auto schema_id = index.GetParentId();
+  const auto renamed = NextIndexVersion(context, RenamedIndex(index, new_name));
+  const auto db_id = catalog::SchemaDatabaseId(context, schema_id);
+  const auto* entry = catalog::Find<SereneDBTableEntry>(context, schema_id,
+                                                        index.GetRelationId());
+  const auto table = entry != nullptr ? entry->Definition() : nullptr;
+  catalog::Catalog::RecordedScope recorded;
+  catalog::GetCatalog().Apply(context, [&](auto& ctx) {
+    PutIndex(ctx, renamed, wal::PutMode::Replace);
+    if (table && MakeStoreIndexInfo(*table, index)) {
+      ctx.store().RenameIndex(db_id, index.GetRelationId(), index.GetName(),
+                              new_name);
+    }
+  });
+  catalog::PutEntry(context, index.GetName(), renamed);
+}
+
+bool SereneDBCatalog::DropIndex(const AccessContext& ax,
+                                std::string_view database,
+                                std::string_view schema, std::string_view name,
+                                bool cascade, bool missing_ok) {
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+
+  const auto database_id = FindDatabaseId(ax.context, database);
+  if (!database_id) {
+    if (missing_ok) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
+  const auto schema_id = TryFindSchemaId(ax.context, *database_id, schema);
+  if (!schema_id) {
+    if (missing_ok) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
+  const auto* index_entry =
+    catalog::Find<SereneDBIndexEntry>(ax.context, *schema_id, name);
+  const auto index =
+    index_entry != nullptr ? index_entry->Definition() : nullptr;
+  if (!index) {
+    if (missing_ok) {
+      return false;
+    }
+    if (catalog::Find<SereneDBTableEntry>(ax.context, *schema_id, name) ||
+        catalog::Find<SereneDBViewEntry>(ax.context, *schema_id, name) ||
+        catalog::Find<SereneDBSequenceEntry>(ax.context, *schema_id, name)) {
+      ThrowWrongObjectType(name, "index", duckdb::CatalogType::TABLE_ENTRY);
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("index \"", name, "\" does not exist"));
+  }
+  // An index has no independent owner (PG: its relowner is derived from the
+  // table). Drop authority therefore belongs to the underlying relation's
+  // owner, so check that, not the index's own (unset) owner.
+  catalog::RequireIndexOwner(ax, *index);
+  DropIndexLocked(ax.context, *database_id, index, cascade);
+  return true;
+}
+
+void SereneDBCatalog::DropIndexById(duckdb::ClientContext* context,
+                                    ObjectId database_id, ObjectId index_id,
+                                    bool cascade) {
+  JoinStoreTransaction(context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto* session_index =
+    context != nullptr
+      ? catalog::FindSession<SereneDBIndexEntry>(*context, index_id)
+      : nullptr;
+  IndexInfoRef index =
+    session_index != nullptr ? session_index->Definition() : nullptr;
+  if (!index) {
+    // The compensating drop of a build that failed can arrive with no statement
+    // to read through, so the committed sets of the index's own database are
+    // all there is.
+    if (auto database = TryStoreDatabase(database_id)) {
+      if (const auto* found = catalog::FindIn<SereneDBIndexEntry>(
+            nullptr, database->GetCatalog(), index_id)) {
+        index = found->Definition();
+      }
+    }
+  }
+  if (!index) {
+    THROW_SQL_ERROR(
+      ERR_MSG("index with id ", index_id.id(), " does not exist"));
+  }
+  DropIndexLocked(context, database_id, index, cascade);
+}
+
+void SereneDBCatalog::DropIndexLocked(duckdb::ClientContext* context,
+                                      ObjectId database_id,
+                                      const IndexInfoRef& index, bool cascade) {
+  const auto schema_id = index->GetParentId();
+  const auto index_id = index->GetId();
+  // Store-side index drop is synchronous: UNIQUE enforcement
+  // must stop when DROP INDEX commits, not when the async sweep
+  // runs.
+  auto task = catalog::GetCatalog().CreateIndexDrop(
+    database_id, schema_id, index->GetRelationId(), *index, true);
+  // Before the records: the relation's own entry advertises a virtual column
+  // per indexed column, and Apply is what rebuilds it.
+  catalog::DropIndexEntry(context, schema_id, index->GetName());
+  catalog::GetCatalog().Apply(context, [&](auto& ctx) {
+    ctx.catalog().DropPrepare({.parent_id = index->GetRelationId(),
+                               .type = duckdb::CatalogType::INDEX_ENTRY,
+                               .inverted = index->IsInverted(),
+                               .id = index_id,
+                               .database_id = database_id,
+                               .schema_id = schema_id});
+    ctx.store().DropIndex(database_id, index->GetRelationId(),
+                          index->GetName());
+  });
+
+  // Check that SereneDB won't open this index after reboot
+  SDB_IF_FAILURE("crash_on_drop") { return; }
+
+  catalog::GetCatalog().ScheduleDrop(context, std::move(task));
+}
+
+void SereneDBCatalog::DropUncommittedIndex(duckdb::ClientContext& context,
+                                           ObjectId database_id,
+                                           ObjectId index_id) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto* index_entry =
+    catalog::FindSession<SereneDBIndexEntry>(context, index_id);
+  if (index_entry == nullptr) {
+    return;
+  }
+  const auto index = index_entry->Definition();
+  const auto relation_id = index->GetRelationId();
+  // No catalog entries: passing the transaction keeps Write off `_mutex`, and
+  // the store op runs inline either way.
+  catalog::GetCatalog()._engine->Write(&context, [&](auto& ctx) {
+    ctx.store().DropIndex(database_id, relation_id, index->GetName());
+  });
+  auto task = catalog::GetCatalog().CreateIndexDrop(
+    database_id, index->GetParentId(), relation_id, *index, true);
+  DropTask::Schedule(std::move(task)).Detach();
+}
+
+bool SereneDBCatalog::CreateTokenizer(
+  const AccessContext& ax, ObjectId database_id, std::string_view schema,
+  std::shared_ptr<CreateTokenizerInfo> tokenizer, bool if_not_exists) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  auto schema_id = TryFindSchemaId(ax.context, database_id, schema);
+  if (!schema_id) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                    ERR_MSG("schema \"", schema, "\" does not exist"));
+  }
+  RequireCreateOn(ax.context, ax.role, *schema_id);
+  const auto name = tokenizer->GetName();
+  if (catalog::FindTokenizer(ax.context, *schema_id, name)) {
+    if (if_not_exists) {
+      return false;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+      ERR_MSG("text search dictionary \"", name, "\" already exists"));
+  }
+  if (!tokenizer->GetId().isSet()) {
+    tokenizer->SetId(NextId());
+  }
+  tokenizer->SetSchemaId(*schema_id);
+  Permissions perm{ax.role};
+  std::shared_ptr<const CreateTokenizerInfo> info = std::move(tokenizer);
+  catalog::PutEntry(ax.context, /*old_name=*/{}, std::move(info),
+                    std::move(perm));
+  return true;
+}
+
+bool SereneDBCatalog::CreateForeignServer(
+  const AccessContext& ax, ObjectId database_id,
+  std::shared_ptr<CreateForeignServerInfo> info, Permissions perm,
+  bool if_not_exists) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  // Servers are database children, like PG (no schema). Gated on CREATE on
+  // the database, same as CREATE SCHEMA -- PG gates on FDW USAGE instead, but
+  // serenedb has no foreign-data-wrapper catalog object to hang an ACL on.
+  RequireDatabaseAccess(ax.context, ax.role,
+                        catalog::FindDatabase(ax.context, database_id),
+                        AclMode::Create);
+  const auto name = info->GetName();
+  if (!IsSupportedFdw(info->GetFdwName())) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("foreign-data wrapper \"", info->GetFdwName(),
+                            "\" is not supported"),
+                    ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
+  }
+  if (catalog::FindForeignServer(ax.context, database_id, name)) {
+    if (if_not_exists) {
+      return false;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("server \"", name, "\" already exists"));
+  }
+  // Catalog names are per-database, but the live attachment alias is
+  // instance-global: a second same-named server would race the first for it
+  // (nondeterministic boot winner; DROP DATABASE detaching the other
+  // database's attachment). The attach cannot catch this -- it only collides
+  // while the first server's attachment is live, not when its remote is down.
+  std::vector<catalog::DatabaseRef> databases;
+  catalog::VisitDatabases(ax.context, [&](const catalog::DatabaseRef& db) {
+    databases.push_back(db);
+  });
+  for (const auto& db : databases) {
+    // A database shares the alias namespace with foreign servers, so a server
+    // named after one would make DROP SERVER's detach tear the database down.
+    if (db.Name() == name) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("database \"", db.Name(),
+                "\" already exists, so a server cannot take that name"),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+    if (db.Id() != database_id &&
+        catalog::FindForeignServer(ax.context, db.Id(), name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("server \"", name, "\" already exists in database \"",
+                db.Name(), "\""),
+        ERR_HINT("Foreign server attachment names are instance-wide; "
+                 "choose a name not used by any database."));
+    }
+  }
+  info->SetDatabaseId(database_id);
+  const auto id = info->GetId().isSet() ? info->GetId() : NextId();
+  info->SetId(id);
+  // One definition, handed to the record and to the entry: nothing is derived
+  // at append time.
+  catalog::PutEntry(
+    ax.context, /*old_name=*/{},
+    std::shared_ptr<const CreateForeignServerInfo>{std::move(info)}, perm);
+  return true;
+}
+
+void SereneDBCatalog::ReplaceFunction(
+  duckdb::ClientContext& context, ObjectId database_id, std::string_view schema,
+  std::string_view name, std::shared_ptr<const duckdb::CreateMacroInfo> info) {
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto schema_id = TryFindSchemaId(&context, database_id, schema);
+  if (!schema_id) {
+    return;
+  }
+  const auto* existing = catalog::FindFunction(&context, *schema_id, name);
+  if (existing == nullptr) {
+    return;
+  }
+  const auto& perm = existing->permissions;
+  // PG: only the owner may drop an overload, and what is left is a rewrite of
+  // the function the owner holds -- so the ACL and the owner carry over.
+  const auto fn_name = existing->name.GetIdentifierName();
+  RequireOwner(&context, ActingAs(context).role, perm, "function", fn_name);
+  // The overloads that stay are the new info's; the identity is the one the
+  // owner already holds.
+  auto next =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      info->Copy());
+  SetIdentity(*next, ObjectId{existing->oid},
+              ObjectId{existing->ParentSchema().oid});
+  catalog::PutEntry(
+    &context, fn_name,
+    NextFunctionVersion(
+      &context, std::shared_ptr<const duckdb::CreateMacroInfo>{next.release()}),
+    perm);
+}
+
+void SereneDBCatalog::DropTableColumn(const AccessContext& ax,
+                                      ObjectId database_id,
+                                      const duckdb::CreateTableInfo& table,
+                                      std::string_view column, bool if_exists) {
+  JoinStoreTransaction(ax.context);
+  catalog::Catalog::MutationScope lock{catalog::GetCatalog()};
+  const auto table_id = catalog::IdOf(table);
+  const auto* entry = catalog::Find<SereneDBTableEntry>(
+    ax.context, catalog::ParentIdOf(table), table_id);
+  if (entry == nullptr) {
+    ThrowConcurrentlyDropped(duckdb::CatalogType::TABLE_ENTRY,
+                             catalog::TableNameOf(table));
+  }
+  const auto& perm = entry->permissions;
+  const auto live = entry->Definition();
+  RequireOwner(ax.context, ax.role, perm, "table",
+               entry->name.GetIdentifierName());
+  const auto* col = catalog::ColumnByName(*live, column);
+  if (col == nullptr) {
+    if (if_exists) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                    ERR_MSG("column \"", column, "\" of relation \"",
+                            catalog::TableNameOf(*live), "\" does not exist"));
+  }
+  const ObjectId col_id{col->CatalogOid()};
+
+  auto plan = ComputeColumnDropPlan(ax.context, live, perm, col_id);
+
+  catalog::GetCatalog().ScheduleDropPlanIndexes(ax.context, database_id, plan);
+  catalog::GetCatalog().Apply(
+    ax.context, [&](auto& ctx) { CommitDropPlan(ax.context, ctx, plan); });
+  PublishDropPlan(ax.context, plan);
+}
 
 }  // namespace sdb::catalog

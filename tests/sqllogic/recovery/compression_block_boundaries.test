@@ -1,0 +1,259 @@
+# Segment sizing at block boundaries for EVERY forceable compression, not just dict_fsst.
+#
+# The dict_fsst work showed the failure class: a codec's segment must stop accepting rows before its
+# serialized layout exceeds one block, and the hard cases are single rows that re-price more than
+# themselves -- width steps, mode flips, exception bursts, incompressible spikes. Each codec here
+# gets the shape that stresses ITS version of that, at ROW_GROUP_SIZE 1048576 so segments actually
+# reach blocks (default row groups cap segments long before the boundary).
+#
+# force_compression is GLOBAL and compression is chosen at CHECKPOINT, so every table is
+# checkpointed while its own setting is in force. Everything is a pure function of ord: failures
+# replay exactly, and every row is verified against its generator -- in release an overflow corrupts
+# instead of aborting, so surviving the checkpoint proves nothing by itself.
+#
+#   bitpacking  BIGINT magnitude staircase stepping 18 bits per 100k rows, then a 2^62 spike late
+#   rle         long runs collapsing to run-length-1 near the boundary, NULLs threaded through
+#   dictionary  the dict_fsst defect-4 shape (127 distinct values, then the 128th at ~292k rows).
+#               Legacy Dictionary is subsumed by DICT_FSST in this fork: forcing it FALLS BACK to
+#               Uncompressed, and this file pins that fallback so a silent revival gets noticed.
+#   fsst        all-unique strings with late length spikes. Same subsumption, same pinned fallback.
+#   zstd        compressible prose flipping to incompressible digest soup near the boundary
+#   uncompressed strings crossing many blocks with a 60KB value dropped mid-stream
+#   alp         ALP-friendly decimals with a late burst of high-entropy exceptions
+#   alprd       high-entropy doubles end to end (the exceptions ARE the data)
+#   roaring     validity: dense NULL runs, sparse NULLs, and alternating flips across 1M rows
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/cbb.db' AS cbb (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+SET force_compression='bitpacking';
+
+
+statement ok
+CREATE TABLE cbb.t_bitpacking AS
+  SELECT ord, CASE WHEN ord = 390000 THEN 4611686018427387904
+              ELSE (ord % 200) * (1::BIGINT << LEAST(54, (ord // 100000) * 18)::INT) END::BIGINT AS v
+  FROM range(400000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='rle';
+
+
+statement ok
+CREATE TABLE cbb.t_rle AS
+  SELECT ord, CASE WHEN ord % 13 = 7 THEN NULL
+              WHEN ord < 300000 THEN (ord // 1000)::BIGINT
+              ELSE ord::BIGINT END AS v
+  FROM range(400000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='dictionary';
+
+
+statement ok
+CREATE TABLE cbb.t_dictionary AS
+  SELECT ord, CASE WHEN ord < 292000 THEN 'w' || lpad((ord % 127)::VARCHAR, 3, '0')
+                   ELSE 'w' || lpad((ord % 128)::VARCHAR, 3, '0') END AS v
+  FROM range(300000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='fsst';
+
+
+statement ok
+CREATE TABLE cbb.t_fsst AS
+  SELECT ord, CASE WHEN ord % 40000 = 39999 THEN repeat('L', 400 + (ord // 40000) * 400) || ord::VARCHAR
+              ELSE 'shared/prefix/' || md5(ord::VARCHAR) END AS v
+  FROM range(200000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='zstd';
+
+
+statement ok
+CREATE TABLE cbb.t_zstd AS
+  SELECT ord, CASE WHEN ord % 50000 > 48000
+              THEN md5(ord::VARCHAR) || md5((ord * 3)::VARCHAR) || md5((ord * 7)::VARCHAR)
+              ELSE repeat('the quick brown fox jumps over the lazy dog ', 3) || (ord % 500)::VARCHAR END AS v
+  FROM range(150000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='uncompressed';
+
+
+statement ok
+CREATE TABLE cbb.t_uncompressed AS
+  SELECT ord, CASE WHEN ord = 100000 THEN repeat('H', 60000)
+              ELSE 'plain-' || md5(ord::VARCHAR) END AS v
+  FROM range(200000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='alp';
+
+
+statement ok
+CREATE TABLE cbb.t_alp AS
+  SELECT ord, CASE WHEN ord % 60000 > 57000 THEN sqrt(ord::DOUBLE) * pi()
+              ELSE round(ord * 0.01, 2) END AS v
+  FROM range(400000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='alprd';
+
+
+statement ok
+CREATE TABLE cbb.t_alprd AS
+  SELECT ord, sqrt(ord::DOUBLE + 0.1) * exp(1) AS v
+  FROM range(400000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='roaring';
+
+
+statement ok
+CREATE TABLE cbb.t_roaring AS
+  SELECT ord, CASE WHEN ord < 300000 AND (ord // 5000) % 2 = 0 THEN NULL
+                   WHEN ord >= 300000 AND ord < 600000 AND ord % 97 = 0 THEN NULL
+                   WHEN ord >= 600000 AND ord % 2 = 0 THEN NULL
+                   ELSE ord END::BIGINT AS v
+  FROM range(1000000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT cbb;
+
+
+statement ok
+SET force_compression='auto';
+
+
+# every codec round-trips by value against its generator
+query
+SELECT 'bitpacking' AS codec, count(*) AS n,
+       bool_and(v = CASE WHEN ord = 390000 THEN 4611686018427387904 ELSE (ord % 200) * (1::BIGINT << LEAST(54, (ord // 100000) * 18)::INT) END::BIGINT) AS rows_match
+  FROM cbb.t_bitpacking
+UNION ALL SELECT 'rle', count(*),
+       bool_and(v IS NOT DISTINCT FROM CASE WHEN ord % 13 = 7 THEN NULL WHEN ord < 300000 THEN (ord // 1000)::BIGINT ELSE ord::BIGINT END)
+  FROM cbb.t_rle
+UNION ALL SELECT 'dictionary', count(*),
+       bool_and(v = CASE WHEN ord < 292000 THEN 'w' || lpad((ord % 127)::VARCHAR, 3, '0') ELSE 'w' || lpad((ord % 128)::VARCHAR, 3, '0') END)
+  FROM cbb.t_dictionary
+UNION ALL SELECT 'fsst', count(*),
+       bool_and(v = CASE WHEN ord % 40000 = 39999 THEN repeat('L', 400 + (ord // 40000) * 400) || ord::VARCHAR ELSE 'shared/prefix/' || md5(ord::VARCHAR) END)
+  FROM cbb.t_fsst
+UNION ALL SELECT 'zstd', count(*),
+       bool_and(v = CASE WHEN ord % 50000 > 48000 THEN md5(ord::VARCHAR) || md5((ord * 3)::VARCHAR) || md5((ord * 7)::VARCHAR) ELSE repeat('the quick brown fox jumps over the lazy dog ', 3) || (ord % 500)::VARCHAR END)
+  FROM cbb.t_zstd
+UNION ALL SELECT 'uncompressed', count(*),
+       bool_and(v = CASE WHEN ord = 100000 THEN repeat('H', 60000) ELSE 'plain-' || md5(ord::VARCHAR) END)
+  FROM cbb.t_uncompressed
+UNION ALL SELECT 'alp', count(*),
+       bool_and(v = CASE WHEN ord % 60000 > 57000 THEN sqrt(ord::DOUBLE) * pi() ELSE round(ord * 0.01, 2) END)
+  FROM cbb.t_alp
+UNION ALL SELECT 'alprd', count(*),
+       bool_and(v = sqrt(ord::DOUBLE + 0.1) * exp(1))
+  FROM cbb.t_alprd
+UNION ALL SELECT 'roaring', count(*),
+       bool_and(v IS NOT DISTINCT FROM CASE WHEN ord < 300000 AND (ord // 5000) % 2 = 0 THEN NULL WHEN ord >= 300000 AND ord < 600000 AND ord % 97 = 0 THEN NULL WHEN ord >= 600000 AND ord % 2 = 0 THEN NULL ELSE ord END::BIGINT)
+  FROM cbb.t_roaring
+ORDER BY codec;
+----
+codec	n	rows_match
+alp	400000	t
+alprd	400000	t
+bitpacking	400000	t
+dictionary	300000	t
+fsst	200000	t
+rle	400000	t
+roaring	1000000	t
+uncompressed	200000	t
+zstd	150000	t
+
+
+# the pins took effect: each column actually carries its forced codec (Constant may appear on
+# constant stretches; the forced codec must be present), and roaring landed on the VALIDITY layer.
+# Legacy 'dictionary' and 'fsst' are subsumed by DICT_FSST here, so forcing them falls back to
+# Uncompressed -- pinned as such; if either codec is ever revived these rows flip and say so.
+query
+SELECT 'bitpacking' AS codec, bool_or(compression = 'BitPacking') AS used FROM pragma_storage_info('cbb.t_bitpacking', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'rle', bool_or(compression = 'RLE') FROM pragma_storage_info('cbb.t_rle', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'dictionary_fallback', bool_or(compression = 'Uncompressed') AND NOT bool_or(compression = 'Dictionary') FROM pragma_storage_info('cbb.t_dictionary', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'fsst_fallback', bool_or(compression = 'Uncompressed') AND NOT bool_or(compression = 'FSST') FROM pragma_storage_info('cbb.t_fsst', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'zstd', bool_or(compression = 'ZSTD') FROM pragma_storage_info('cbb.t_zstd', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'uncompressed', bool_or(compression = 'Uncompressed') FROM pragma_storage_info('cbb.t_uncompressed', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'alp', bool_or(compression = 'ALP') FROM pragma_storage_info('cbb.t_alp', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'alprd', bool_or(compression = 'ALPRD') FROM pragma_storage_info('cbb.t_alprd', include_segment_info=true) WHERE column_name='v' AND segment_type != 'VALIDITY'
+UNION ALL SELECT 'roaring', bool_or(compression = 'Roaring') FROM pragma_storage_info('cbb.t_roaring', include_segment_info=true) WHERE column_name='v' AND segment_type = 'VALIDITY'
+ORDER BY codec;
+----
+codec	used
+alp	t
+alprd	t
+bitpacking	t
+dictionary_fallback	t
+fsst_fallback	t
+rle	t
+roaring	t
+uncompressed	t
+zstd	t
+
+
+# aggregate invariants against silent row loss, and the null patterns survived exactly
+query
+SELECT (SELECT count(*) FROM cbb.t_rle WHERE v IS NULL) AS rle_nulls,
+       (SELECT count(*) FROM cbb.t_roaring WHERE v IS NULL) AS roaring_nulls,
+       (SELECT count(DISTINCT v) FROM cbb.t_dictionary) AS dict_distinct,
+       (SELECT max(length(v)) FROM cbb.t_uncompressed) AS unc_maxlen,
+       (SELECT max(length(v)) FROM cbb.t_fsst) AS fsst_maxlen;
+----
+rle_nulls	roaring_nulls	dict_distinct	unc_maxlen	fsst_maxlen
+30769	353093	128	60000	2006
+
+
+statement ok
+DETACH cbb;

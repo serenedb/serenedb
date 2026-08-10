@@ -678,7 +678,7 @@ TEST(segment_reader_test, open) {
         ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("E")),
                   (terms->max)());
 
-        auto term = terms->iterator(irs::SeekMode::NORMAL);
+        auto term = terms->iterator();
 
         // check term: A
         {
@@ -789,7 +789,7 @@ TEST(segment_reader_test, open) {
         ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("xyz")),
                   (terms->max)());
 
-        auto term = terms->iterator(irs::SeekMode::NORMAL);
+        auto term = terms->iterator();
 
         // check term: xyz
         {
@@ -834,7 +834,7 @@ TEST(segment_reader_test, open) {
         ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("vczc")),
                   (terms->max)());
 
-        auto term = terms->iterator(irs::SeekMode::NORMAL);
+        auto term = terms->iterator();
 
         // check term: abcd
         {
@@ -891,7 +891,7 @@ TEST(segment_reader_test, open) {
         ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("abcde")),
                   (terms->max)());
 
-        auto term = terms->iterator(irs::SeekMode::NORMAL);
+        auto term = terms->iterator();
 
         // check term: abcd
         {

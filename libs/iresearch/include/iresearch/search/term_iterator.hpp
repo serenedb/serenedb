@@ -39,55 +39,152 @@ struct TermBoost : Attribute {
   score_t value{kNoBoost};
 };
 
-class WrappedTermIterator : public TermIterator {
- public:
-  bytes_view value() const noexcept final { return _impl->value(); }
-  void read() final { _impl->read(); }
-  DocIterator::ptr postings(IndexFeatures features) const final {
-    return _impl->postings(features);
-  }
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept override {
-    return _impl->GetMutable(id);
-  }
-  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+inline bstring AfterKey(bytes_view key) {
+  bstring after{key};
+  after.push_back(0);
+  return after;
+}
 
- protected:
-  explicit WrappedTermIterator(SeekTermIterator::ptr&& impl) noexcept
-    : _impl{std::move(impl)} {
+inline bstring UpperBoundOf(bytes_view prefix) {
+  bstring upper{prefix};
+  while (!upper.empty()) {
+    if (upper.back() != 0xFF) {
+      ++upper.back();
+      return upper;
+    }
+    upper.pop_back();
+  }
+  return upper;
+}
+
+class BoundedTermIterator : public SeekTermIterator {
+ public:
+  explicit BoundedTermIterator(SeekTermIterator::ptr&& impl,
+                               bytes_view lower = {}, bytes_view upper = {},
+                               const TermPredicate* predicate = nullptr)
+    : _impl{std::move(impl)},
+      _predicate{predicate},
+      _lower{lower},
+      _upper{upper} {
     SDB_ASSERT(_impl);
   }
 
+  SeekTermIterator& GetImpl() noexcept { return *_impl; }
+
+  bytes_view value() const noexcept final { return _value; }
+
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    return _impl->GetMutable(id);
+  }
+
+  const PostingMeta& cookie() const final { return _impl->cookie(); }
+
+  DocIterator::ptr postings(IndexFeatures features) const final {
+    return _impl->postings(features);
+  }
+
+  bool next() final {
+    if (_done) {
+      return false;
+    }
+    if (_started) {
+      if (!_impl->next()) {
+        return Stop();
+      }
+    } else {
+      _started = true;
+      if (_lower.empty() ? !_impl->next()
+                         : SeekResult::End == _impl->seek_ge(_lower)) {
+        return Stop();
+      }
+    }
+    return Scan();
+  }
+
+  SeekResult seek_ge(bytes_view target) final {
+    if (_done) {
+      return SeekResult::End;
+    }
+    _started = true;
+    const bytes_view from = std::max(target, bytes_view{_lower});
+    if (SeekResult::End == _impl->seek_ge(from)) {
+      Stop();
+      return SeekResult::End;
+    }
+    if (!Scan()) {
+      return SeekResult::End;
+    }
+    return _value == target ? SeekResult::Found : SeekResult::NotFound;
+  }
+
+  bool seek(bytes_view target) final {
+    return SeekResult::Found == seek_ge(target);
+  }
+
+ private:
+  bool Scan() {
+    for (;;) {
+      const auto key = _impl->value();
+      if (!_upper.empty() && key >= _upper) {
+        return Stop();
+      }
+      if (_predicate == nullptr || _predicate->Accepts(key)) {
+        _value = key;
+        return true;
+      }
+      if (!_impl->next()) {
+        return Stop();
+      }
+    }
+  }
+
+  bool Stop() {
+    _done = true;
+    _value = {};
+    return false;
+  }
+
   SeekTermIterator::ptr _impl;
+  const TermPredicate* _predicate;
+  bstring _lower;
+  bstring _upper;
+  bytes_view _value;
+  bool _started{false};
+  bool _done{false};
 };
 
 class FilteredTermIterator : public TermIterator {
  public:
-  FilteredTermIterator(TermIterator::ptr&& inner,
+  FilteredTermIterator(TermIterator::ptr&& impl,
                        TermPredicate::ptr&& predicate) noexcept
-    : _inner{std::move(inner)}, _predicate{std::move(predicate)} {
-    SDB_ASSERT(_inner);
+    : _impl{std::move(impl)}, _predicate{std::move(predicate)} {
+    SDB_ASSERT(_impl);
     SDB_ASSERT(_predicate);
   }
 
+  bytes_view value() const noexcept final { return _impl->value(); }
+
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    return _impl->GetMutable(id);
+  }
+
+  const PostingMeta& cookie() const final { return _impl->cookie(); }
+
+  DocIterator::ptr postings(IndexFeatures features) const final {
+    return _impl->postings(features);
+  }
+
   bool next() final {
-    while (_inner->next()) {
-      if (_predicate->Accepts(_inner->value())) {
+    while (_impl->next()) {
+      if (_predicate->Accepts(_impl->value())) {
         return true;
       }
     }
     return false;
   }
-  bytes_view value() const noexcept final { return _inner->value(); }
-  void read() final { _inner->read(); }
-  DocIterator::ptr postings(IndexFeatures features) const final {
-    return _inner->postings(features);
-  }
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return _inner->GetMutable(id);
-  }
 
  private:
-  TermIterator::ptr _inner;
+  TermIterator::ptr _impl;
   TermPredicate::ptr _predicate;
 };
 

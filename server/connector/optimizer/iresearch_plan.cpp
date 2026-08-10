@@ -325,7 +325,14 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       column_info.null_field_id = irs::field_limits::invalid();
     }
     if (irs::field_limits::valid(column_info.null_field_id)) {
-      null_markers[column_info.null_field_id] = column_info.field_id;
+      for (const auto value :
+           {column_info.field_id, column_info.true_field_id,
+            column_info.false_field_id, column_info.numeric_field_id,
+            column_info.json_null_field_id}) {
+        if (irs::field_limits::valid(value)) {
+          null_markers[value] = column_info.null_field_id;
+        }
+      }
     }
     if (column_info.tokenizer.analyzer->type() !=
         irs::Type<irs::StringTokenizer>::id()) {

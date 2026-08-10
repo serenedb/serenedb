@@ -49,7 +49,6 @@
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -123,13 +122,12 @@ struct SingleChildRule {
 // Exclusion normal form. Three algebraic steps over the excludes list:
 // an excluded any-of disjunction (min_match 1) splits into flat siblings
 // (A \ (a|b) == A \ a \ b), excluding the same filter twice is excluding
-// it once, and
-// a null-marker exclude is dropped when the include side anchors its
-// parent column -- a postings-only positive on F already rejects every
-// row F's marker matches (OptimizeContext.null_markers is the embedder's
-// contract for that disjointness; without the map the marker step is
-// inert). Only the flat Exclusion shape needs handling: coalescing
-// normalizes every And/Not combination to it within the same slot visit.
+// it once, and a null-marker exclude is dropped when the include side anchors
+// one of its column's value fields -- a postings-only positive on F already
+// rejects every row F's marker matches (OptimizeContext.null_markers is the
+// embedder's contract for that disjointness; without the map the marker step is
+// inert). Only the flat Exclusion shape needs handling: coalescing normalizes
+// every And/Not combination to it within the same slot visit.
 struct ExclusionNormalizeRule {
   static constexpr std::string_view kName = "exclusion_normalize";
   static constexpr std::array kTargets{Type<Exclusion>::id()};
@@ -165,6 +163,8 @@ struct AndAcceptorFusionRule {
   struct Operand {
     field_id field;
     bstring pattern;
+    TermBounds bounds;
+    TermAcceptorSource::ptr exact;
   };
 
   static std::optional<Operand> OperandOf(const Filter& child);
@@ -602,7 +602,10 @@ bool OrAcceptorFusionRule::Render(std::string& out, const Filter& child) {
   if (type == Type<AutomatonFilter>::id()) {
     const auto& options =
       sdb::basics::downCast<AutomatonFilter>(child).options();
-    if (options.pattern.empty()) {
+    // The rendering is a Perl regexp, so only a pattern that is one can be
+    // spliced into it: a wildcard reads `%` and `_` as literals here, and a
+    // fused pattern parses as neither dialect.
+    if (options.kind != PatternKind::RegexpPerl || options.pattern.empty()) {
       return false;
     }
     const auto chars = ViewCast<char>(bytes_view{options.pattern});
@@ -659,17 +662,39 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   }
   const auto rendered = absl::StrJoin(fragments, "|");
   const auto pattern = ViewCast<byte_type>(std::string_view{rendered});
-  auto dfa = FromRegexp(pattern, kDefaultMaxDfaStates, RegexpSyntax::Perl);
-  if (dfa.NumStates() == 0 || !Validate(dfa)) {
+  AutomatonOptions options{pattern, PatternKind::RegexpPerl,
+                           scored_terms_limit};
+  if (!options.source->ok()) {
     return false;
   }
   auto fused = std::make_unique<AutomatonFilter>();
   *fused->mutable_field_id() = head->field;
-  *fused->mutable_options() =
-    AutomatonOptions{std::move(dfa), pattern, scored_terms_limit};
+  *fused->mutable_options() = std::move(options);
   fused->boost(ctx.scored ? node.Boost() * head->boost : node.Boost());
   slot = std::move(fused);
   return true;
+}
+
+// What makes an operand a good driver, which is not what makes it a cheap
+// predicate: a driver is the one walk the conjunction runs, so an operand that
+// can prune inside a dictionary walk beats one that can only bound it. `ByTerm`
+// stays first because its bounds are a single key -- there is nothing left to
+// prune.
+size_t DriverRank(const Filter& filter) noexcept {
+  const auto type = filter.type();
+  if (type == Type<ByTerm>::id()) {
+    return 0;
+  }
+  if (type == Type<AutomatonFilter>::id()) {
+    return 1;
+  }
+  if (type == Type<ByTerms>::id()) {
+    return 2;
+  }
+  if (type == Type<ByPrefix>::id() || type == Type<ByRange>::id()) {
+    return 3;
+  }
+  return 4;
 }
 
 std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
@@ -677,22 +702,23 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
     const auto& filter = sdb::basics::downCast<ByTerm>(child);
-    return Operand{filter.field_id(), MakeTermAcceptor(filter.options().term),
-                   filter.options().term};
+    const auto& term = filter.options().term;
+    auto upper = term;
+    upper += byte_type{0};
+    return Operand{filter.field_id(), term, TermBounds{term, std::move(upper)},
+                   nullptr};
   }
   if (type == Type<ByPrefix>::id()) {
     const auto& filter = sdb::basics::downCast<ByPrefix>(child);
-    auto pattern = filter.options().term;
+    const auto& prefix = filter.options().term;
+    auto pattern = prefix;
     pattern += static_cast<byte_type>('%');
-    return Operand{filter.field_id(), MakePrefixAcceptor(filter.options().term),
-                   std::move(pattern)};
+    return Operand{filter.field_id(), std::move(pattern),
+                   TermBounds{prefix, UpperBoundOf(prefix)}, nullptr};
   }
   if (type == Type<ByRange>::id()) {
     const auto& filter = sdb::basics::downCast<ByRange>(child);
     const auto& range = filter.options().range;
-    const auto bound = [](const bstring& value, BoundType type) {
-      return type == BoundType::Unbounded ? bytes_view{} : bytes_view{value};
-    };
     bstring pattern;
     pattern += static_cast<byte_type>(
       range.min_type == BoundType::Exclusive ? '(' : '[');
@@ -702,33 +728,43 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
     pattern += range.max;
     pattern += static_cast<byte_type>(
       range.max_type == BoundType::Exclusive ? ')' : ']');
-    return Operand{filter.field_id(),
-                   MakeRangeAcceptor(bound(range.min, range.min_type),
-                                     bound(range.max, range.max_type),
-                                     range.min_type == BoundType::Inclusive,
-                                     range.max_type == BoundType::Inclusive),
-                   std::move(pattern)};
+    // Both bounds only narrow the walk -- the operand's own predicate decides
+    // the open ends -- so an exclusive minimum needs no adjustment here and an
+    // inclusive maximum needs the key just above it.
+    TermBounds bounds;
+    if (range.min_type != BoundType::Unbounded) {
+      bounds.lower = range.min;
+    }
+    if (range.max_type != BoundType::Unbounded) {
+      bounds.upper = range.max;
+      if (range.max_type == BoundType::Inclusive) {
+        bounds.upper += byte_type{0};
+      }
+    }
+    return Operand{filter.field_id(), std::move(pattern), std::move(bounds),
+                   nullptr};
   }
   if (type == Type<AutomatonFilter>::id()) {
     const auto& filter = sdb::basics::downCast<AutomatonFilter>(child);
     const auto& options = filter.options();
-    if (!options.compiled) {
+    if (!options.source) {
       return std::nullopt;
     }
-    return Operand{filter.field_id(), options.compiled->acceptor,
-                   options.pattern};
+    return Operand{filter.field_id(), options.pattern, TermBounds{},
+                   options.source};
   }
   if (type == Type<LevenshteinAutomatonFilter>::id()) {
     const auto& filter =
       sdb::basics::downCast<LevenshteinAutomatonFilter>(child);
     const auto& options = filter.options();
-    if (!options.compiled) {
+    if (!options.parametric) {
       return std::nullopt;
     }
     auto pattern = options.target;
     pattern += static_cast<byte_type>('~');
-    return Operand{filter.field_id(), options.compiled->acceptor,
-                   std::move(pattern)};
+    const auto prefix = options.parametric->LowerBound();
+    return Operand{filter.field_id(), std::move(pattern),
+                   TermBounds{bstring{prefix}, UpperBoundOf(prefix)}, nullptr};
   }
   return std::nullopt;
 }
@@ -746,7 +782,7 @@ bool AndAcceptorFusionRule::Apply(Filter::ptr& slot,
   absl::InlinedVector<size_t, 8> order(children.size());
   absl::c_iota(order, size_t{0});
   absl::c_stable_sort(order, [&](size_t lhs, size_t rhs) {
-    return AcceptorRank(*children[lhs]) < AcceptorRank(*children[rhs]);
+    return DriverRank(*children[lhs]) < DriverRank(*children[rhs]);
   });
   if (children[order.front()]->type() ==
       Type<LevenshteinAutomatonFilter>::id()) {
@@ -756,34 +792,47 @@ bool AndAcceptorFusionRule::Apply(Filter::ptr& slot,
   if (!driver) {
     return false;
   }
-  auto fused = std::move(driver->acceptor);
   auto pattern = std::move(driver->pattern);
-  bool any = false;
+  auto bounds = std::move(driver->bounds);
+  // Every operand's predicate is applied to what the driver walk reports; the
+  // driver's own is skipped only when its source walks its language exactly.
+  auto residual = std::make_unique<And>();
+  auto& operands = residual->mutable_filters();
   for (const auto index : std::span{order}.subspan(1)) {
     auto& child = children[index];
     auto operand = OperandOf(*child);
     if (!operand || operand->field != driver->field) {
       continue;
     }
-    auto product =
-      IntersectAcceptors(fused, operand->acceptor, kDefaultMaxDfaStates);
-    if (!product || !Validate(*product)) {
-      continue;
-    }
-    fused = std::move(*product);
     pattern += static_cast<byte_type>('&');
     pattern += operand->pattern;
-    child = nullptr;
-    any = true;
+    // A folded operand still bounds the walk even though its language is only
+    // re-tested: the conjunction lies inside every operand's range, and the
+    // tightest of them is free to apply.
+    if (bounds.lower < operand->bounds.lower) {
+      bounds.lower = std::move(operand->bounds.lower);
+    }
+    if (!operand->bounds.upper.empty() &&
+        (bounds.upper.empty() || operand->bounds.upper < bounds.upper)) {
+      bounds.upper = std::move(operand->bounds.upper);
+    }
+    operands.emplace_back(std::move(child));
   }
-  if (!any) {
+  if (operands.empty()) {
     return false;
+  }
+  auto& slot_child = children[order.front()];
+  if (!driver->exact) {
+    operands.emplace(operands.begin(), std::move(slot_child));
   }
   auto fused_filter = std::make_unique<AutomatonFilter>();
   *fused_filter->mutable_field_id() = driver->field;
-  *fused_filter->mutable_options() =
-    AutomatonOptions{std::move(fused), pattern, 0};
-  children[order.front()] = std::move(fused_filter);
+  *fused_filter->mutable_options() = AutomatonOptions{
+    pattern,
+    MakeConjunctionSource(std::move(driver->exact), std::move(bounds),
+                          std::move(residual)),
+    0};
+  slot_child = std::move(fused_filter);
   std::erase_if(children, [](const auto& child) { return !child; });
   if (children.size() == 1) {
     slot = std::move(children.front());
@@ -988,7 +1037,18 @@ bool ExclusionNormalizeRule::Apply(Filter::ptr& slot,
 
   const bool can_prune =
     ctx.null_markers && !ctx.null_markers->empty() && exclusion.GetInclude();
-  sdb::containers::FlatHashSet<field_id> anchors;
+  // `null_markers` is keyed by the value field, and a column may have several
+  // of them, so the prunable set is the anchors' image over the map. Walking
+  // the include tree to build it is only worth doing for an exclude that names
+  // a marker at all, which the map's own values answer in one lookup.
+  sdb::containers::FlatHashSet<field_id> markers;
+  if (can_prune) {
+    markers.reserve(ctx.null_markers->size());
+    for (const auto& [value_field, marker] : *ctx.null_markers) {
+      markers.insert(marker);
+    }
+  }
+  sdb::containers::FlatHashSet<field_id> anchored_markers;
   bool anchors_ready = false;
   sdb::containers::FlatHashSet<const Filter*, ExcludeHasher, ExcludeEqual> kept;
   kept.reserve(exclusion.GetExcludes().size());
@@ -998,16 +1058,20 @@ bool ExclusionNormalizeRule::Apply(Filter::ptr& slot,
     }
     if (can_prune) {
       if (const auto field = RequiringLeafFieldOf(*f);
-          field_limits::valid(field)) {
-        const auto it = ctx.null_markers->find(field);
-        if (it != ctx.null_markers->end()) {
-          if (!anchors_ready) {
-            anchors_ready = true;
-            CollectAnchorFields(*exclusion.mutable_include(), anchors);
+          field_limits::valid(field) && markers.contains(field)) {
+        if (!anchors_ready) {
+          anchors_ready = true;
+          sdb::containers::FlatHashSet<field_id> anchors;
+          CollectAnchorFields(*exclusion.mutable_include(), anchors);
+          for (const auto anchor : anchors) {
+            if (const auto it = ctx.null_markers->find(anchor);
+                it != ctx.null_markers->end()) {
+              anchored_markers.insert(it->second);
+            }
           }
-          if (anchors.contains(it->second)) {
-            return true;
-          }
+        }
+        if (anchored_markers.contains(field)) {
+          return true;
         }
       }
     }

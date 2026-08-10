@@ -354,7 +354,7 @@ void OpenReader(std::string_view format,
   ASSERT_EQ(1, segment.live_docs_count());
   auto terms = segment.field(kSameId);
   ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+  auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
   auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
   ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -483,7 +483,7 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
     ASSERT_EQ(1, segment.live_docs_count());
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -627,7 +627,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_EQ(1, segment.live_docs_count());
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -745,7 +745,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_EQ(1, segment.live_docs_count());
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -870,7 +870,7 @@ TEST(index_death_test_formats_15,
     ASSERT_EQ(1, segment.live_docs_count());
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -971,7 +971,7 @@ TEST(index_death_test_formats_15,
       ASSERT_EQ(1, segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -990,7 +990,7 @@ TEST(index_death_test_formats_15,
       ASSERT_EQ(1, segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1113,7 +1113,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_EQ(1, segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1132,7 +1132,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_EQ(1, segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1151,7 +1151,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_EQ(1, segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1170,7 +1170,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_EQ(1, segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1267,8 +1267,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   // regiseter reopen failure in term dictionary
   {
     dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.idx");
-    auto term_itr =
-      terms->iterator(irs::SeekMode::NORMAL);  // successful attempt
+    auto term_itr = terms->iterator();  // successful attempt
     ASSERT_NE(nullptr, term_itr);
     ASSERT_THROW(term_itr->next(), irs::IoError);
   }
@@ -1276,13 +1275,12 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   // regiseter reopen failure in term dictionary (nullptr)
   {
     dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.idx");
-    auto term_itr =
-      terms->iterator(irs::SeekMode::NORMAL);  // successful attempt
+    auto term_itr = terms->iterator();  // successful attempt
     ASSERT_NE(nullptr, term_itr);
     ASSERT_THROW(term_itr->next(), irs::IoError);
   }
 
-  auto term_itr = terms->iterator(irs::SeekMode::NORMAL);  // successful attempt
+  auto term_itr = terms->iterator();  // successful attempt
   ASSERT_NE(nullptr, term_itr);
   ASSERT_TRUE(term_itr->next());
 
@@ -1453,7 +1451,7 @@ TEST(index_death_test_formats_15,
     ASSERT_EQ(1, segment.live_docs_count());
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1515,7 +1513,7 @@ TEST(index_death_test_formats_15,
       ASSERT_EQ(1, segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1532,7 +1530,7 @@ TEST(index_death_test_formats_15,
       ASSERT_EQ(1, segment.live_docs_count());
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1675,7 +1673,7 @@ TEST(index_death_test_formats_15,
     ASSERT_EQ(1, segment.live_docs_count());
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -1803,7 +1801,7 @@ TEST(index_death_test_formats_15,
     ASSERT_EQ(1, segment.live_docs_count());
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2055,7 +2053,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2070,7 +2068,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2155,7 +2153,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2170,7 +2168,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       irs::tests::BlobPointReader values{segment, *column};
       auto terms = segment.field(kSameId);
       ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+      auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
       auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2307,7 +2305,7 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2417,7 +2415,7 @@ TEST(index_death_test_formats_15,
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2593,7 +2591,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2692,7 +2690,7 @@ TEST(index_death_test_formats_15, fails_in_exists) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2850,7 +2848,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
     irs::tests::BlobPointReader values{segment, *column};
     auto terms = segment.field(kSameId);
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
     auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));
@@ -2936,7 +2934,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
   ASSERT_EQ(1, segment.live_docs_count());
   auto terms = segment.field(kSameId);
   ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+  auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
   auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
   ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->advance()));

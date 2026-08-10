@@ -74,7 +74,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
                                         const irs::Filter& filter) {
     constexpr size_t kK = 1024;
     irs::TFIDF scorer{/*normalize=*/false};
-    std::vector<irs::ScoreDoc> hits(irs::BlockSize(kK));
+    std::vector<irs::ScoreDoc> hits(kK);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, kK, std::span{hits});
     hits.resize(std::min(count, kK));

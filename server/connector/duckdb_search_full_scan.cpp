@@ -1356,30 +1356,85 @@ const irs::QueryBuilder& EnsureSegmentQuery(IResearchScanGlobalState& g,
   return *q;
 }
 
-void PreparePhase(duckdb::ClientContext& ctx, IResearchScanGlobalState& g,
-                  IResearchScanLocalState& l) {
+class PrepareUnitScope {
+ public:
+  PrepareUnitScope(IResearchScanGlobalState& g, bool& reduced) noexcept
+    : _g{g}, _reduced{reduced} {}
+
+  ~PrepareUnitScope() {
+    if (_g.prepare_count.fetch_add(1, std::memory_order_acq_rel) + 1 !=
+        _g.total_segments) {
+      return;
+    }
+    try {
+      SDB_IF_FAILURE("SearchPrepareStatsFault") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+      const uint32_t used = _g.collector_slots.load(std::memory_order_relaxed);
+      auto& merged = *_g.collectors[0];
+      merged.MergeAll([&](irs::PrepareCollector::MergeSink sink) {
+        for (uint32_t i = 1; i < used; ++i) {
+          sink(*_g.collectors[i]);
+        }
+      });
+      _g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
+    } catch (...) {
+      _g.prepare_error = std::current_exception();
+    }
+    _g.prepare_finished.Notify();
+    _reduced = true;
+  }
+
+ private:
+  IResearchScanGlobalState& _g;
+  bool& _reduced;
+};
+
+bool RunPrepareUnits(IResearchScanGlobalState& g, IResearchScanLocalState& l) {
   for (;;) {
     const auto seg = g.prepare_segment.fetch_add(1, std::memory_order_relaxed);
     if (seg >= g.total_segments) {
-      break;
+      return g.prepare_finished.HasBeenNotified();
     }
     SDB_ASSERT((*g.reader)[seg].live_docs_count() != 0);
-    EnsureSegmentQuery(g, l, (*g.reader)[seg], seg);
-    if (g.prepare_count.fetch_add(1, std::memory_order_acq_rel) + 1 ==
-        g.total_segments) {
-      const uint32_t used = g.collector_slots.load(std::memory_order_relaxed);
-      auto& merged = *g.collectors[0];
-      merged.MergeAll([&](irs::PrepareCollector::MergeSink sink) {
-        for (uint32_t i = 1; i < used; ++i) {
-          sink(*g.collectors[i]);
-        }
-      });
-      g.stats.emplace(merged.Finish(irs::IResourceManager::gNoop));
-      g.prepare_finished.Notify();
-      return;
+    bool reduced = false;
+    {
+      const PrepareUnitScope unit{g, reduced};
+      EnsureSegmentQuery(g, l, (*g.reader)[seg], seg);
+    }
+    if (reduced) {
+      return true;
     }
   }
-  g.prepare_finished.WaitForNotification();
+}
+
+class PrepareAsyncTask final : public duckdb::AsyncTask {
+ public:
+  explicit PrepareAsyncTask(IResearchScanGlobalState& g) noexcept : _g{g} {}
+
+  void Execute() final { _g.prepare_finished.WaitForNotification(); }
+
+ private:
+  IResearchScanGlobalState& _g;
+};
+
+bool PreparePhase(IResearchScanGlobalState& g, IResearchScanLocalState& l,
+                  duckdb::TableFunctionInput& data) {
+  if (!RunPrepareUnits(g, l)) {
+    if (data.results_execution_mode ==
+        duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
+      duckdb::vector<duckdb::unique_ptr<duckdb::AsyncTask>> tasks;
+      tasks.push_back(duckdb::make_uniq<PrepareAsyncTask>(g));
+      data.async_result =
+        duckdb::AsyncResult{std::move(tasks), duckdb::TaskSchedulerType::ASYNC};
+      return false;
+    }
+    g.prepare_finished.WaitForNotification();
+  }
+  if (g.prepare_error) {
+    std::rethrow_exception(g.prepare_error);
+  }
+  return true;
 }
 
 void WriteChunkOffsets(std::vector<FieldEntry>& offsets_entries,
@@ -1677,8 +1732,9 @@ void IResearchScanFunction(duckdb::ClientContext& context,
     case ScanMode::TopK: {
       auto& l = data.local_state->Cast<TopKScanLocalState>();
       if (!l.prepared) {
-        if (gstate.total_segments != 0 && !gstate.vector_scorer) {
-          PreparePhase(context, gstate, l);
+        if (gstate.scorer_obj && gstate.total_segments != 0 &&
+            !gstate.vector_scorer && !PreparePhase(gstate, l, data)) {
+          return;
         }
         l.prepared = true;
       }
@@ -1694,8 +1750,8 @@ void IResearchScanFunction(duckdb::ClientContext& context,
       auto& l = data.local_state->Cast<StreamScanLocalState>();
       if (!l.prepared) {
         if (gstate.scorer_obj && gstate.total_segments != 0 &&
-            !gstate.vector_scorer) {
-          PreparePhase(context, gstate, l);
+            !gstate.vector_scorer && !PreparePhase(gstate, l, data)) {
+          return;
         }
         l.prepared = true;
       }

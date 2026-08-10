@@ -132,8 +132,8 @@ struct GetVisitor {
   field_visitor operator()(const auto&) const { SDB_UNREACHABLE(); }
 
   field_visitor operator()(const AutomatonOptions& options) const {
-    SDB_ASSERT(options.compiled);
-    return AutomatonFilter::visitor(options.compiled->acceptor);
+    SDB_ASSERT(options.source);
+    return AutomatonFilter::visitor(options.source);
   }
 
   field_visitor operator()(const LevenshteinAutomatonOptions& options) const {
@@ -573,8 +573,7 @@ bool ByPhraseOptions::LowerParts() {
           return opts;
         },
         [lim](bytes_view pattern) -> phrase_part {
-          return AutomatonOptions{pattern, PatternKind::Wildcard,
-                                  RegexpSyntax::Perl, lim};
+          return AutomatonOptions{pattern, PatternKind::Wildcard, lim};
         });
       changed = true;
     } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
@@ -595,7 +594,7 @@ bool ByPhraseOptions::LowerParts() {
           return opts;
         },
         [lim, syntax](bytes_view pattern) -> phrase_part {
-          return AutomatonOptions{pattern, PatternKind::Regexp, syntax, lim};
+          return AutomatonOptions{pattern, RegexpPattern(syntax), lim};
         });
       changed = true;
     } else if (const auto* e = std::get_if<ByEditDistanceOptions>(&info.part);

@@ -29,6 +29,7 @@
 #include <optional>
 #include <span>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"
@@ -48,7 +49,9 @@ struct SearchColumnInfo {
   // holds; IS NULL claims match it; invalid keeps negations plain acceptor
   // shapes and declines IS NULL claims.
   irs::field_id null_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id json_null_field_id = irs::field_limits::invalid();
+  irs::field_id true_field_id = irs::field_limits::invalid();
+  irs::field_id false_field_id = irs::field_limits::invalid();
   irs::field_id numeric_field_id = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
@@ -95,12 +98,23 @@ inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
   };
   const auto kind = catalog::term_dict::Classify(type_id);
   if (kind == catalog::term_dict::Kind::Bool) {
-    return pick(column_info.bool_field_id);
+    return pick(column_info.true_field_id);
   }
   if (catalog::term_dict::IsNumeric(kind)) {
     return pick(column_info.numeric_field_id);
   }
   return column_info.field_id;
+}
+
+inline bool HasBoolFieldIds(const SearchColumnInfo& column_info) {
+  return irs::field_limits::valid(column_info.true_field_id) &&
+         irs::field_limits::valid(column_info.false_field_id);
+}
+
+inline irs::field_id PickBoolFieldId(const SearchColumnInfo& column_info,
+                                     bool value) {
+  SDB_ASSERT(HasBoolFieldIds(column_info));
+  return value ? column_info.true_field_id : column_info.false_field_id;
 }
 
 // True when the expression tree contains an optimizer-claimed index-only

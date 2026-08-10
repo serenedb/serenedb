@@ -783,8 +783,8 @@ DocIterator::ptr RangeVectorQuery::Execute(const ExecutionContext& ctx,
   });
 
   using Disjunction = DisjunctionIterator<ScoreAdapter, ScoreMergeType::Sum>;
-  DocIterator::ptr res = MakeDisjunction<Disjunction>(WandContext{}, docs_count,
-                                                      std::move(adapters));
+  DocIterator::ptr res =
+    MakeDisjunction<Disjunction>(false, docs_count, std::move(adapters));
   if (_inner) {
     auto inner_it = _inner->Execute(ctx, stats);
     if (!inner_it) {

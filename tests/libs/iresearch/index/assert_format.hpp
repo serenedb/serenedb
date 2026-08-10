@@ -28,6 +28,7 @@
 #include "doc_generator.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/utils/regexp_acceptor.hpp"
 
 namespace tests {
 
@@ -234,14 +235,18 @@ void IndexSegment::insert(IndexedFieldIterator indexed_begin,
 
 using index_t = std::vector<IndexSegment>;
 
+// With `acceptor`, both the expected terms and the actual walk are restricted
+// to the terms it accepts -- which is the only way documents, frequencies,
+// positions and offsets get read through an acceptor-driven term iterator
+// rather than a plain one.
 void AssertIndex(irs::IndexReader::ptr actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
                  size_t skip = 0,
-                 irs::automaton_table_matcher* matcher = nullptr);
+                 const irs::RegexpAcceptor* acceptor = nullptr);
 
 void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
                  const index_t& index, irs::IndexFeatures features,
                  size_t skip = 0,
-                 irs::automaton_table_matcher* matcher = nullptr);
+                 const irs::RegexpAcceptor* acceptor = nullptr);
 
 }  // namespace tests

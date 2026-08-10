@@ -378,7 +378,7 @@ irs::ByEditDistance& AddEditDistanceFilter(Filter& root, uint64_t column,
                                            std::string_view term,
                                            uint8_t max_distance,
                                            bool with_transpositions = true,
-                                           size_t max_terms = 1024,
+                                           size_t max_terms = 64,
                                            std::string_view prefix = "") {
   auto& ed = AddFilter<irs::ByEditDistance>(root);
   *ed.mutable_field_id() = ExpectedFieldId(column);
@@ -400,6 +400,22 @@ irs::ByPhrase& AddPhraseFilter(Filter& root, uint64_t column,
   for (auto value : values) {
     wc.mutable_options()->template push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(value);
+  }
+  return wc;
+}
+
+template<typename Filter>
+irs::ByPhrase& AddSloppyPhraseFilter(Filter& root, uint64_t column,
+                                     std::vector<std::string_view> values,
+                                     irs::PosAttr::value_t slop) {
+  auto& wc = AddFilter<irs::ByPhrase>(root);
+  *wc.mutable_field_id() = ExpectedFieldId(column);
+  for (auto value : values) {
+    wc.mutable_options()->template push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(value);
+  }
+  if (slop > 0) {
+    wc.mutable_options()->set_slop(slop);
   }
   return wc;
 }
@@ -2008,6 +2024,18 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGap_BroadNumericTypes) {
   }
 }
 
+TEST_F(SearchFilterBuilderTest, test_PhraseGapFractionalRejected) {
+  // The reject half of the BroadNumericTypes contract: a numeric gap
+  // with a fractional part errors instead of silently rounding.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  AssertFilter(irs::And{},
+               "SELECT * FROM foo WHERE category @@ ts_phrase('quick', "
+               "1.5, 'fox')",
+               columns, false, SegmentationAnalyzerProvider,
+               "ts_phrase gap must be a non-null non-negative integer");
+}
+
 // ===========================================================================
 // Term equality / range / IN / LIKE -- migrated from the legacy
 // TERM_LT / TERM_LIKE / TERM_IN / BOOST functions to the
@@ -2439,7 +2467,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinWithPrefix) {
   irs::And expected;
   AddEditDistanceFilter(expected, 1, "roximate", 1,
                         /*with_transpositions=*/true,
-                        /*max_terms=*/1024, /*prefix=*/"app");
+                        /*max_terms=*/64, /*prefix=*/"app");
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ ts_levenshtein('roximate', 1, true, 'app')",
@@ -5302,7 +5330,7 @@ TEST_F(SearchFilterBuilderTest,
   irs::And expected;
   AddEditDistanceFilter(expected, 1, "roximate", 1,
                         /*with_transpositions=*/true,
-                        /*max_terms=*/1024, /*prefix=*/"app");
+                        /*max_terms=*/64, /*prefix=*/"app");
   AssertFilter(expected,
                "SELECT * FROM foo WHERE levenshtein_matches(b, 'roximate', 1, "
                "true, 'app')",
@@ -6350,6 +6378,838 @@ TEST_F(SearchFilterBuilderTest, test_BuiltinMix_OrEndsWithRegexp) {
 }
 
 // ===========================================================================
+// ts_phrase `slop := N` argument
+// ===========================================================================
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSimple) {
+  // ts_phrase('quick brown fox', slop := 2) -- 3 tokens chained with the
+  // ambient analyzer, slop budget = 2.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox', slop := 2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseZeroSlop) {
+  // slop=0 must fall through to the exact phrase path: the produced
+  // filter should be byte-for-byte identical to ts_phrase('...') --
+  // i.e. NO set_slop call on the options.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox', slop := 0)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseWithExactGap) {
+  // ts_phrase('a', 1, 'b', slop := 2) -- slop=2 budget with an
+  // expected position offset of 2 between 'a' and 'b' (gap=1 means
+  // one word between). offs_min == offs_max for exact gaps, so this
+  // does not trip the interval-gap rejection.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  // gap=1 -> offs_min=offs_max=2 (1+1, ParsePhraseGap +1 rule)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', 1, 'b', slop := 2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseRejectsIntervalGap) {
+  // ts_phrase('a', ARRAY[1, 3], 'b', slop := 2) -- slop budget + interval
+  // gap is rejected at filter-build time. The phrase_query.cpp SDB_ENSURE
+  // forbids the combination at execution time; we surface the rejection
+  // earlier with a specific message.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', ARRAY[1, 3], 'b', slop := 2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "incompatible with interval gaps");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseRejectsNegativeSlop) {
+  // slop must be >= 0. -1 is a bind-time error.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox', slop := -1)",
+               columns, false, SegmentationAnalyzerProvider,
+               "slop must be >= 0");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSingleToken) {
+  // Single-token phrase: ts_phrase('foo', slop := 5) -- one term + slop.
+  // Exercises the first-text-pattern path with only one token emitted.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"foo"}, 5);
+  AssertFilter(
+    expected, "SELECT * FROM foo WHERE category @@ ts_phrase('foo', slop := 5)",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseMultipleExactGaps) {
+  // ts_phrase('a', 1, 'b', 2, 'c', slop := 2) -- two exact gaps in one
+  // phrase. Verifies that gap parsing handles more than a single
+  // text/gap/text triplet.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  // gap=1 -> offs_min=offs_max=2 (ParsePhraseGap +1 rule)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  // gap=2 -> offs_min=offs_max=3
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"c"});
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', 1, 'b', 2, 'c', slop := 2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseGapInMultiToken) {
+  // The gap applies only to the first token of the second chunk
+  // ('c'); 'd' stays adjacent. Catches regressions in
+  // pending_gap.reset() placement.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  // First chunk 'a b': two adjacent terms.
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  // gap=1 -> 'c' lands at offs_min=offs_max=2.
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"c"});
+  // 'd' is adjacent to 'c': default offs (implicit 1/1).
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"d"});
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b', 1, 'c d', slop := 2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseNegated) {
+  // WHERE NOT (col @@ ts_phrase(..., slop := N)) -- exercise the Negate
+  // path. Mirror the existing test_NotLike structure: expected is an
+  // AND containing a Not containing the ByPhrase.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddSloppyPhraseFilter(not_filter, 1, {"foo", "bar"}, 2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT (category @@ "
+               "ts_phrase('foo bar', slop := 2))",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseTrailingGap) {
+  // ts_phrase('a', 1, slop := 2) -- last arg is a gap with no text after.
+  // Must be rejected with the "ends with a gap" message.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', 1, slop := 2)",
+               columns, false, SegmentationAnalyzerProvider, "ends with a gap");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseConsecutiveGaps) {
+  // ts_phrase('a', 1, 2, 'b', slop := 2) -- two gap args in a row
+  // (the slop arg at index 1 is skipped, so children [2] = 1 and
+  // [3] = 2 are both gaps with no text between). Must be rejected
+  // with the "consecutive gaps" message.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', 1, 2, 'b', slop := 2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "consecutive gaps");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseGapZero) {
+  // gap=0 -> offs_min=offs_max=1 (ParsePhraseGap +1 rule), which is the
+  // same as the default push_back() output. ts_phrase('a', 0, 'b',
+  // slop := 2) is therefore equivalent to ts_phrase('a b', slop := 2).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"a", "b"}, 2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', 0, 'b', slop := 2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseGapNegative) {
+  // gap=-1 is rejected by ParsePhraseGap with "gap must be >= 0".
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', -1, 'b', slop := 2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "gap must be >= 0");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseGapHuge) {
+  // Large gap values are passed through unchanged. 1000000 fits in
+  // PosAttr::value_t (uint32_t); the filter builder produces
+  // offs_min=offs_max=1000001 with no clamping.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()
+    ->push_back<irs::ByTermOptions>(1000001, 1000001)
+    .term = irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', 1000000, 'b', slop := 2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseEmptyPhrase) {
+  // Empty text -> 0 tokens after analysis -> "produced no searchable
+  // terms".
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ ts_phrase('', slop := 2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "produced no searchable terms");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSlopMax) {
+  // INT32_MAX slop fits PosAttr::value_t (uint32_t) and flows through
+  // unchanged. Values above uint32_t max are rejected -- see
+  // test_SloppyPhraseSlopTooLarge.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"a", "b"}, 2147483647);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b', slop := 2147483647)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseInAnd) {
+  // Sloppy phrase composed with a plain comparison via AND.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"},
+    {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "price"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+  AddRangeFilter<int32_t>(expected, 2, 10, false, std::nullopt, false);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox', slop := 2) AND price > 10",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseInOr) {
+  // Sloppy phrase composed with an exact phrase via OR.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddSloppyPhraseFilter(or_filter, 1, {"quick", "brown", "fox"}, 2);
+  AddPhraseFilter(or_filter, 1, {"quick", "lazy", "fox"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox', slop := 2) OR category @@ "
+               "ts_phrase('quick lazy fox')",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TwoSloppyPhrasesInAnd) {
+  // Two sloppy phrases in one WHERE, each with its own slop
+  // value. Catches accidental shared state in FromSloppyPhrase.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+  AddSloppyPhraseFilter(expected, 1, {"quick", "lazy", "fox"}, 5);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox', slop := 2) AND category @@ "
+               "ts_phrase('quick lazy fox', slop := 5)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseOnNonStringField) {
+  // Non-VARCHAR field is rejected with "field is not VARCHAR".
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "price"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE price @@ "
+               "ts_phrase('quick brown fox', slop := 2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "field is not VARCHAR");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseOnNonAnalyzedField) {
+  // VARCHAR column without the Positions+Frequency index features is
+  // rejected. Mirrors the existing test_SimplePhraseNoFeatures setup.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox', slop := 2)",
+               columns, false,
+               SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>,
+               "Positions and Frequency");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseMultipleChunksMultipleGaps) {
+  // ts_phrase('a b', 1, 'c d', 2, 'e f', slop := 2) -- chain of multi-
+  // token chunks with gaps between them. Verifies that pending_gap
+  // resets correctly across multiple chunk transitions in one phrase.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  // 'a b': two adjacent terms.
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  // gap=1 -> 'c' at offs=2/2, 'd' adjacent.
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"c"});
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"d"});
+  // gap=2 -> 'e' at offs=3/3, 'f' adjacent.
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"e"});
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"f"});
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b', 1, 'c d', 2, 'e f', slop := 2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSlopTooLarge) {
+  // The named argument binds as an ANY vararg, so an out-of-uint32
+  // budget reaches the builder's overflow check instead of a generic
+  // binder cast error -- symmetric with ::slop(5000000000).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b', slop := 5000000000)",
+               columns, false, SegmentationAnalyzerProvider, "slop too large");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseNonConstantSlop) {
+  // Slop must be a constant: a column-dependent expression is rejected
+  // by GetIntArg.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b', slop := LENGTH(category))",
+               columns, false, SegmentationAnalyzerProvider,
+               "must be a non-null INTEGER");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseGapFractionalRejected) {
+  // Gaps of the sloppy form go through the same parser: fractional
+  // values error instead of silently rounding.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick', 1.5, 'fox', slop := 0)",
+               columns, false, SegmentationAnalyzerProvider,
+               "ts_phrase gap must be a non-null non-negative integer");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseIntervalGapZeroSlop) {
+  // slop=0 falls through to the exact path, so interval gaps are
+  // allowed -- byte-for-byte a ts_phrase with the same interval.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  // interval [1, 3] -> offs_min=2, offs_max=4 (ParsePhraseGap +1 rule)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', ARRAY[1, 3], 'b', slop := 0)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSingleTokenFreqOnly) {
+  // A single-term sloppy phrase reduces to a term query at prepare
+  // time (GetKind -> kSingleWord) and the matcher ignores slop for
+  // phrase_size == 1, so a Freq-only column is accepted -- mirrors
+  // ts_phrase, which only requires Positions for multi-term phrases.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"foo"}, 5);
+  AssertFilter(
+    expected, "SELECT * FROM foo WHERE category @@ ts_phrase('foo', slop := 5)",
+    columns, true, SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>);
+}
+
+// ===========================================================================
+// ::slop(N) modifier -- composable phrase-slop cast, parallel to
+// ::tokenize / ::boost. Distinct from the `slop := N` argument:
+// both must produce an identical ByPhraseOptions{slop, offs}.
+// ===========================================================================
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierSimple) {
+  // ts_phrase('quick brown fox')::slop(2) -- core happy path. Must match
+  // AddSloppyPhraseFilter (the `slop := N` argument form's expected).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox')::slop(2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierEquivalentToFunction) {
+  // ts_phrase('q b f')::slop(2) and ts_phrase('q b f', slop := 2) build
+  // the byte-identical filter. Both use AddSloppyPhraseFilter as the
+  // single expected; this asserts the two surfaces converge.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  {
+    irs::And expected;
+    AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+    AssertFilter(expected,
+                 "SELECT * FROM foo WHERE category @@ "
+                 "ts_phrase('quick brown fox')::slop(2)",
+                 columns, true, SegmentationAnalyzerProvider);
+  }
+  {
+    irs::And expected;
+    AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+    AssertFilter(expected,
+                 "SELECT * FROM foo WHERE category @@ "
+                 "ts_phrase('quick brown fox', slop := 2)",
+                 columns, true, SegmentationAnalyzerProvider);
+  }
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierZero) {
+  // ::slop(0) -- no set_slop call: byte-for-byte a plain ts_phrase.
+  // AddSloppyPhraseFilter with slop=0 skips set_slop, so it equals
+  // AddPhraseFilter.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox')::slop(0)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierWithExactGap) {
+  // ts_phrase('a', 1, 'b')::slop(2) -- exact gap (offs_min==offs_max)
+  // is compatible with slop. gap=1 -> offs 2/2 (ParsePhraseGap +1).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', 1, 'b')::slop(2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierThenTokenize) {
+  // ts_phrase('quick fox')::slop(2)::tokenize('keyword') -- inner
+  // tokenize forces raw-bytes single-term phrase; slop budget = 2.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "ts_phrase('quick fox')::slop(2)::tokenize('keyword')",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierTokenizeThenSlop) {
+  // Symmetric ordering: ::tokenize('keyword')::slop(2). Both effects
+  // apply regardless of cast order.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "ts_phrase('quick fox')::tokenize('keyword')::slop(2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierThenBoost) {
+  // ts_phrase('quick brown fox')::slop(2)::boost(3.0) -- slop on the
+  // options, boost on the phrase filter node.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2).boost(3.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox')::slop(2)::boost(3.0)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierBoostThenSlop) {
+  // Symmetric: ::boost(3.0)::slop(2).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2).boost(3.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('quick brown fox')::boost(3.0)::slop(2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierThenTokenizeThenBoost) {
+  // Full three-modifier chain: ::slop(2)::tokenize('keyword')::boost(3.0).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field_id() = ExpectedFieldId(1);
+  phrase.boost(3.0f);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
+  phrase.mutable_options()->set_slop(2);
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ "
+    "ts_phrase('quick fox')::slop(2)::tokenize('keyword')::boost(3.0)",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnBareStringRejected) {
+  // 'foo'::TSQUERY::slop(2): the string cast folds to a TSQUERY value,
+  // the slop cast throws at runtime so it survives to the walker, and
+  // the budget lands on a term leaf. Rejected -- a single literal has
+  // no term pairs to reorder.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::slop(2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "only valid on a phrase");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnLikeRejected) {
+  // ts_like('foo%')::slop(2) -- non-phrase constructor, rejected.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ts_like('foo%')::slop(2)", columns,
+               false, SegmentationAnalyzerProvider, "only valid on a phrase");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierWithSlopArgRejected) {
+  // ts_phrase('a b', slop := 2)::slop(3) -- two budgets collide;
+  // rejected instead of silently picking one.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b', slop := 2)::slop(3)",
+               columns, false, SegmentationAnalyzerProvider, "more than once");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierDoubleRejected) {
+  // ::slop(2)::slop(3) -- specifying slop twice is rejected.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b')::slop(2)::slop(3)",
+               columns, false, SegmentationAnalyzerProvider, "more than once");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierIntervalGapRejected) {
+  // ts_phrase('a', ARRAY[1, 3], 'b')::slop(2) -- interval gap +
+  // slop is rejected (mirrors the `slop := N` argument rule).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a', ARRAY[1, 3], 'b')::slop(2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "incompatible with interval gaps");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierNegativeRejected) {
+  // ::slop(-1) -- rejected by the bind callback ("budget must be >= 0").
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b')::slop(-1)",
+               columns, false, SegmentationAnalyzerProvider, "budget must be");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierNegated) {
+  // WHERE NOT (... ::slop(2)) -- Negate path with the modifier.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddSloppyPhraseFilter(not_filter, 1, {"foo", "bar"}, 2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT (category @@ "
+               "ts_phrase('foo bar')::slop(2))",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnPhraseToTsquery) {
+  // phraseto_tsquery('...')::slop(2) -- the second op that consumes
+  // ctx.slop (dispatch admits Phrase and PhraseToTsquery). Must build
+  // the same filter as ts_phrase('...')::slop(2).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "phraseto_tsquery('quick brown fox')::slop(2)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierPhraseToTsqueryEquivalence) {
+  // phraseto_tsquery('...')::slop(2) and ts_phrase('...', slop := 2)
+  // build the identical filter (same expected helper).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  {
+    irs::And expected;
+    AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+    AssertFilter(expected,
+                 "SELECT * FROM foo WHERE category @@ "
+                 "phraseto_tsquery('quick brown fox')::slop(2)",
+                 columns, true, SegmentationAnalyzerProvider);
+  }
+  {
+    irs::And expected;
+    AddSloppyPhraseFilter(expected, 1, {"quick", "brown", "fox"}, 2);
+    AssertFilter(expected,
+                 "SELECT * FROM foo WHERE category @@ "
+                 "ts_phrase('quick brown fox', slop := 2)",
+                 columns, true, SegmentationAnalyzerProvider);
+  }
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnPhraseSeqRejected) {
+  // (a ## b)::slop(2) - `##` builds a phrase but does not consume
+  // ctx.slop; rejected to avoid silently dropping the budget (pins the
+  // BuildTSQuery dispatch comment).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "('a'::TSQUERY ## 2 ## 'b'::TSQUERY)::slop(2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "only valid on a phrase");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierInsideOr) {
+  // ts_phrase('a b')::slop(2) || ts_phrase('c d') -- the slop cast sits
+  // on one leg of a foldable combinator. The fold renders the leg back
+  // into structured text (RenderCast slop branch + whitelist), and the
+  // re-bound phrase leaf consumes the budget; the other leg stays exact.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddSloppyPhraseFilter(or_filter, 1, {"a", "b"}, 2);
+  AddPhraseFilter(or_filter, 1, {"c", "d"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "(ts_phrase('a b')::slop(2) || ts_phrase('c d'))",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnTsqueryPhrasePart) {
+  // Slop on an argument of tsquery_phrase: per-part slop has no ES
+  // analog and the composite phrase cannot honor it. Same rule
+  // covers `##` legs (both go through EmitPhraseSeq).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "tsquery_phrase(ts_phrase('hello')::slop(1), "
+               "ts_phrase('world'), 3)",
+               columns, false, SegmentationAnalyzerProvider,
+               "must not carry a slop modifier");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnNullDeclined) {
+  // NULL::TSQUERY::slop(2) -- the NULL constant retypes through both
+  // casts without cast nodes, so `@@` sees a constant NULL argument and
+  // folds to SQL NULL at bind. The builder declines the predicate and
+  // row-level NULL semantics yield 0 rows (pinned in
+  // sloppy_phrase.test); the slop budget dissolves with the NULL.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // not claimed
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ NULL::TSQUERY::slop(2)",
+               columns, false, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnTsqueryPhraseRejected) {
+  // tsquery_phrase(...)::slop(2) -- same rule as `##`.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "tsquery_phrase(ts_phrase('hello'), ts_phrase('world'), "
+               "3)::slop(2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "only valid on a phrase");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierTokenizeChainOnBareString) {
+  // 'quick fox'::tokenize('keyword')::slop(2): both modifier casts
+  // throw at runtime, so neither folds away. 'keyword' makes the inner
+  // text a single raw term, and slop on a term leaf is rejected.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "'quick fox'::tokenize('keyword')::slop(2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "only valid on a phrase");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnTSQueryBoost) {
+  // (ts_phrase('a b') ^ 2.0)::slop(3): `^` folds the factor into the
+  // TSQUERY value's boost child and the structured text re-binds to
+  // the phrase, which consumes the budget. Equivalent to
+  // ts_phrase('a b')::boost(2.0)::slop(3).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  AddSloppyPhraseFilter(expected, 1, {"a", "b"}, 3).boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "(ts_phrase('a b') ^ 2.0)::slop(3)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierOnOrRejected) {
+  // (x || y)::slop(N) -- distributing the budget over a boolean
+  // combinator is ambiguous; rejected like every non-phrase leaf.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "(ts_phrase('a') || ts_phrase('b'))::slop(2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "only valid on a phrase");
+}
+
+TEST_F(SearchFilterBuilderTest, test_SlopModifierNonIntegralRejected) {
+  // ::slop(1.5) -- the type binder uses a strict cast (mirrors
+  // ParsePhraseGap), so a fractional budget errors instead of silently
+  // rounding to 2.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;  // unused on the negative path
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b')::slop(1.5)",
+               columns, false, SegmentationAnalyzerProvider, "budget must be");
+}
+
+// ===========================================================================
 // Structured text values -- a constant TSQUERY whose text is a whitelisted
 // constructor expression (the prepared-parameter path through
 // BuildTSQueryValue): accepted shapes compile structurally; everything else
@@ -6425,6 +7285,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryValue_FallbackShapes) {
   for (std::string_view text : {
          std::string_view{"main.ts_like('k')"},
          std::string_view{"ts_like(x := 'k')"},
+         std::string_view{"ts_phrase(foo := 'k')"},
          std::string_view{"ts_like(DISTINCT 'k')"},
          std::string_view{"ts_levenshtein('k', try_cast('1' AS INTEGER))"},
          std::string_view{"ts_like('k'::VARCHAR)"},

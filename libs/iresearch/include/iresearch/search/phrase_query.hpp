@@ -47,11 +47,13 @@ class PhraseQuery : public QueryBuilder {
     IndexFeatures::Freq | IndexFeatures::Pos;
 
   PhraseQuery(const SubReader& segment, StateType&& state,
-              positions_t&& positions, score_t boost) noexcept
+              positions_t&& positions, score_t boost,
+              PosAttr::value_t slop = 0) noexcept
     : QueryBuilder{segment},
       state{std::move(state)},
       positions{std::move(positions)},
       boost{boost},
+      slop{slop},
       has_intervals{absl::c_any_of(this->positions, [](const auto& pos) {
         return pos.offs_max != pos.offs_min;
       })} {}
@@ -61,14 +63,17 @@ class PhraseQuery : public QueryBuilder {
   StateType state;
   positions_t positions;
   score_t boost;
+  PosAttr::value_t slop{0};
   bool has_intervals;
 };
 
 class FixedPhraseQuery : public PhraseQuery<FixedPhraseState> {
  public:
   FixedPhraseQuery(const SubReader& segment, FixedPhraseState&& state,
-                   positions_t&& positions, score_t boost) noexcept
-    : PhraseQuery{segment, std::move(state), std::move(positions), boost} {}
+                   positions_t&& positions, score_t boost,
+                   PosAttr::value_t slop = 0) noexcept
+    : PhraseQuery{segment, std::move(state), std::move(positions), boost,
+                  slop} {}
 
   DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& stats) const final;
@@ -83,8 +88,10 @@ class FixedPhraseQuery : public PhraseQuery<FixedPhraseState> {
 class VariadicPhraseQuery : public PhraseQuery<VariadicPhraseState> {
  public:
   VariadicPhraseQuery(const SubReader& segment, VariadicPhraseState&& state,
-                      positions_t&& positions, score_t boost) noexcept
-    : PhraseQuery{segment, std::move(state), std::move(positions), boost} {}
+                      positions_t&& positions, score_t boost,
+                      PosAttr::value_t slop = 0) noexcept
+    : PhraseQuery{segment, std::move(state), std::move(positions), boost,
+                  slop} {}
 
   DocIterator::ptr Execute(const ExecutionContext& ctx,
                            const StatsBuffer& stats) const final;

@@ -60,6 +60,7 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
@@ -287,6 +288,21 @@ std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type) {
   return mods[0].value.GetValue<double>();
 }
 
+// Slop modifier is an INTEGER (stored as BIGINT by the bind callback),
+// so it never aliases the DOUBLE boost or VARCHAR tokenizer modifier.
+std::optional<int64_t> TryGetSlopModifier(const duckdb::LogicalType& type) {
+  if (!IsTSQueryStructType(type) || !type.HasExtensionInfo()) {
+    return {};
+  }
+  const auto* ext = type.GetExtensionInfo().get();
+  const auto& mods = ext->modifiers;
+  if (mods.empty() || mods[0].value.IsNull() ||
+      mods[0].value.type().id() != duckdb::LogicalTypeId::BIGINT) {
+    return {};
+  }
+  return mods[0].value.GetValue<int64_t>();
+}
+
 namespace {
 
 bool IsComparisonExpr(const duckdb::Expression& expr) {
@@ -331,6 +347,7 @@ absl::Status FromExpression(irs::BooleanFilter& filter,
 void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs);
+void RejectSlopOnNonPhrase(const FilterContext& ctx);
 
 void FillNullMarker(irs::ByTerm& term, irs::field_id null_field_id) {
   *term.mutable_field_id() = null_field_id;
@@ -1191,6 +1208,34 @@ bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
   return true;
 }
 
+// `(...)::slop(N)` -- records the phrase-slop budget in ctx and recurses.
+// Cast-only shape: slop-modifier casts throw at runtime, so they never
+// fold into constants.
+bool TryDispatchSlopCast(irs::BooleanFilter& parent, const FilterContext& ctx,
+                         const SearchColumnInfo& column_info,
+                         const duckdb::Expression& peeled) {
+  if (peeled.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+    return false;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  const auto slop = TryGetSlopModifier(cast_expr.GetReturnType());
+  if (!slop) {
+    return false;
+  }
+  if (ctx.slop != 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::slop specified more than once"),
+                    ERR_HINT("Apply ::slop(N) at most once per phrase."));
+  }
+  if (*slop > std::numeric_limits<irs::PosAttr::value_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::slop too large: ", *slop));
+  }
+  BuildTSQuery(parent, ctx.WithSlop(static_cast<irs::PosAttr::value_t>(*slop)),
+               column_info, cast_expr.Child());
+  return true;
+}
+
 bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
                              const FilterContext& ctx,
                              const duckdb::Expression& peeled) {
@@ -1241,6 +1286,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   if (tokenizer == irs::StringTokenizer::type_name()) {
     if (val && !val->IsNull() &&
         val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
+      RejectSlopOnNonPhrase(ctx);
       BuildFtsTerm(parent, ctx, column_info, *val);
       return true;
     }
@@ -1264,6 +1310,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
                       ERR_MSG("::tokenize(<name>): inner value must be "
                               "VARCHAR or BLOB"));
     }
+    RejectSlopOnNonPhrase(sub_ctx);
     BuildFtsTokens(parent, sub_ctx, column_info, duckdb::StringValue::Get(*val),
                    /*require_all=*/false);
     return true;
@@ -1597,7 +1644,7 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     const auto& source = cast.Child().GetReturnType();
     // Modifier-bearing casts must be preserved so the walker sees them.
     if (!TryGetTokenizerModifier(target).empty() ||
-        TryGetBoostModifier(target)) {
+        TryGetBoostModifier(target) || TryGetSlopModifier(target)) {
       break;
     }
     // Peel transit casts between string-ish types and the TSQUERY
@@ -1756,6 +1803,17 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
 
 namespace {
 
+// Throws if a ::slop(N) budget reached a leaf that cannot consume it.
+// Only FromPhrase (ts_phrase / phraseto_tsquery) consumes slop.
+void RejectSlopOnNonPhrase(const FilterContext& ctx) {
+  if (ctx.slop > 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("::slop(N) is only valid on a phrase"),
+                    ERR_HINT("Apply ::slop to ts_phrase(...), e.g. "
+                             "ts_phrase('a b c')::slop(2)."));
+  }
+}
+
 void BuildTSQueryValue(irs::BooleanFilter& parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::Value& value) {
@@ -1770,6 +1828,7 @@ void BuildTSQueryValue(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (structured) {
       BuildTSQuery(parent, sub_ctx, column_info, *structured);
     } else {
+      RejectSlopOnNonPhrase(sub_ctx);
       BuildFtsTokens(parent, sub_ctx, column_info, parts->text,
                      /*require_all=*/false);
     }
@@ -1805,6 +1864,7 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                         ERR_MSG("BOOLEAN inside TSQUERY must be a constant"),
                         ERR_HINT("Use a literal true / false / NULL."));
       }
+      RejectSlopOnNonPhrase(ctx);
       if (val->IsNull() || !val->GetValue<bool>()) {
         AddFilter<irs::Empty>(parent);
       } else {
@@ -1814,6 +1874,7 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
   }
   if (const auto* val = TryGetConstant(unwrapped); val && val->IsNull()) {
+    RejectSlopOnNonPhrase(ctx);
     AddFilter<irs::Empty>(parent);
     return;
   }
@@ -1826,6 +1887,10 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
 
+  if (TryDispatchSlopCast(parent, ctx, column_info, unwrapped)) {
+    return;
+  }
+
   // Bare string (promoted via VARCHAR -> TSQUERY cast) -> tokenize via
   // the ambient (column) analyzer. Multi-token input composes with OR
   // (min_match=1) per the plan's "col @@ 'Quick Fox' ≡ ANY_OF(tokens)"
@@ -1835,13 +1900,19 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     const auto& val =
       unwrapped.Cast<duckdb::BoundConstantExpression>().GetValue();
     if (val.IsNull()) {
+      RejectSlopOnNonPhrase(ctx);
       AddFilter<irs::Empty>(parent);
       return;
     }
     if (IsTSQueryStructType(val.type())) {
+      // Slop is not rejected up front: structured text re-binds below
+      // and the dispatched leaf decides (FromPhrase consumes the
+      // budget, everything else rejects). Plain text rejects inside
+      // BuildTSQueryValue.
       BuildTSQueryValue(parent, ctx, column_info, val);
       return;
     }
+    RejectSlopOnNonPhrase(ctx);
     if (val.type().id() == duckdb::LogicalTypeId::VARCHAR ||
         val.type().id() == duckdb::LogicalTypeId::BLOB) {
       BuildFtsTokens(parent, ctx, column_info, duckdb::StringValue::Get(val),
@@ -1864,6 +1935,13 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
   const auto op =
     ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName());
+
+  // Only the phrase emitters consume ctx.slop. Any other op carrying a
+  // non-zero slop (ts_like('x')::slop(2); ## which builds a phrase but
+  // ignores ctx.slop) is rejected to avoid silently dropping the budget.
+  if (op != TSQueryOp::Phrase && op != TSQueryOp::PhraseToTsquery) {
+    RejectSlopOnNonPhrase(ctx);
+  }
 
   switch (op) {
     case TSQueryOp::Phrase:
@@ -1945,11 +2023,17 @@ absl::Status MakeSearchFilter(
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   containers::NodeHashMap<irs::field_id, SearchColumnInfo> expr_cache;
 
-  size_t scored_terms_limit = 1024;
+  uint32_t scored_terms_limit = 1024;
   duckdb::Value v;
   if (context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
       !v.IsNull()) {
-    scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
+    scored_terms_limit = static_cast<uint32_t>(v.GetValue<int32_t>());
+  }
+
+  uint32_t levenshtein_max_terms = 64;
+  if (context.TryGetCurrentSetting("sdb_levenshtein_max_terms", v) &&
+      !v.IsNull()) {
+    levenshtein_max_terms = static_cast<uint32_t>(v.GetValue<int32_t>());
   }
 
   FilterContext ctx{
@@ -1962,6 +2046,7 @@ absl::Status MakeSearchFilter(
     .tokenizer = identity,
     .client_context = context,
     .scored_terms_limit = scored_terms_limit,
+    .levenshtein_max_terms = levenshtein_max_terms,
   };
 
   for (const auto& expr : conjuncts) {

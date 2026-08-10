@@ -27,6 +27,7 @@
 #include <span>
 #include <vector>
 
+#include "faiss/VectorTransform.h"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 
@@ -43,6 +44,8 @@ enum class ClusteringAlgo {
 };
 
 std::vector<float> MakeRotation(uint32_t d, uint32_t seed);
+
+faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d);
 
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,

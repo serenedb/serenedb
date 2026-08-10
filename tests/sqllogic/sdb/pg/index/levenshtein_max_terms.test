@@ -1,0 +1,384 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS mt_english;
+
+statement ok
+DROP TABLE IF EXISTS mt_words;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mt_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
+);
+
+statement ok
+CREATE TABLE mt_words (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX mt_words_idx ON mt_words USING inverted(a, b mt_english);
+
+statement ok
+INSERT INTO mt_words VALUES
+    (1, 'cat'), (2, 'bat'), (3, 'rat'), (4, 'hat'), (5, 'mat'),
+    (6, 'cab'), (7, 'can'), (8, 'cap'), (9, 'car'), (10, 'cot'),
+    (11, 'cut'), (12, 'cats'), (13, 'act');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_words;
+
+query
+SHOW sdb_levenshtein_max_terms;
+----
+sdb_levenshtein_max_terms
+64
+
+# All 13 terms sit within distance 1 of 'cat' and the default cap of 64
+# leaves every one of them matching.
+query
+SELECT count(*) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+13
+
+# The cap bounds the number of dictionary terms the predicate expands to,
+# so it bounds the rows too.
+statement ok
+SET sdb_levenshtein_max_terms = 5;
+
+query
+SELECT count(*) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+5
+
+# Survivors are the terms closest to the query. At a cap of 1 the exact
+# match wins outright: similarity 1.0 against 1 - 1/3 for every other term.
+statement ok
+SET sdb_levenshtein_max_terms = 1;
+
+query
+SELECT a, b FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1) ORDER BY a;
+----
+a	b
+1	cat
+
+# 0 removes the cap.
+statement ok
+SET sdb_levenshtein_max_terms = 0;
+
+query
+SELECT count(*) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+13
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+# sdb_scored_terms_limit bounds scoring work in multi-term filters and must
+# not move the fuzzy result set.
+statement ok
+SET sdb_scored_terms_limit = 2;
+
+query
+SELECT count(*) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+13
+
+statement ok
+RESET sdb_scored_terms_limit;
+
+statement error
+SET sdb_levenshtein_max_terms = -1;
+
+# Term enumeration is the result of a ts_dict query, so the cap does not
+# apply there: the automaton walk visits every accepted term either way and
+# truncating the list would just return a wrong answer.
+statement ok
+SET sdb_levenshtein_max_terms = 1;
+
+query
+SELECT count(*) FROM (SELECT unnest(ts_dict_agg(b)) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1)) s;
+----
+count
+13
+
+query
+SELECT a, b FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1) ORDER BY a;
+----
+a	b
+1	cat
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+# Inside a ts_dict query the exemption covers the conjunct that drives
+# enumeration. A fuzzy predicate that only filters documents keeps the cap,
+# exactly as it would in any other query.
+statement ok
+DROP TABLE IF EXISTS mt_docs;
+
+statement ok
+CREATE TABLE mt_docs (a INTEGER PRIMARY KEY, cat VARCHAR, body VARCHAR);
+
+statement ok
+CREATE INDEX mt_docs_idx ON mt_docs USING inverted(a, cat, body mt_english);
+
+statement ok
+INSERT INTO mt_docs VALUES (1, 'phone', 'cat'), (2, 'phony', 'bat'), (3, 'phonetic', 'rat');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_docs;
+
+# The plan carries both values: the enumerated column uncapped, the document
+# filter at the session cap.
+query
+EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_docs_idx
+WHERE cat @@ ts_levenshtein('phon', 2) AND body @@ ts_levenshtein('cat', 1);
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────────────╮
+│ Groups: #0                                      │
+│ ~0 rows                                         │
+╰────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴────────────────────────╮
+│ Index: mt_docs_idx                              │
+│ Index Filter:                                   │
+│ ╭─ And ───────────────╮                         │
+│ ╰──────────┬──────────╯                         │
+│            ├────────────────────────╮           │
+│ ╭─ Levenshtein ───────╮  ╭─ Levenshtein ──────╮ │
+│ │ Field: body(string) │  │ Field: cat(string) │ │
+│ │ Target: cat         │  │ Target: phon       │ │
+│ │ Max Terms: 64       │  │ Max Terms: 0       │ │
+│ ╰─────────────────────╯  ╰────────────────────╯ │
+│ TsDict: cat                                     │
+│ Projections: sdb_inverted_index_term$cat        │
+│ ~1 row                                          │
+╰─────────────────────────────────────────────────╯
+
+# Uncapped: the body filter admits cat, bat and rat, so both cat terms within
+# distance 2 of 'phon' enumerate.
+query
+SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_docs_idx
+WHERE cat @@ ts_levenshtein('phon', 2) AND body @@ ts_levenshtein('cat', 1)
+ORDER BY term;
+----
+term
+phone
+phony
+
+statement ok
+SET sdb_levenshtein_max_terms = 1;
+
+# The body filter now expands to the single closest term, 'cat' at similarity
+# 1.0, so only row 1 survives and only its cat term enumerates.
+query
+SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_docs_idx
+WHERE cat @@ ts_levenshtein('phon', 2) AND body @@ ts_levenshtein('cat', 1)
+ORDER BY term;
+----
+term
+phone
+
+# Same cap, no document filter: enumeration is still complete.
+query
+SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_docs_idx
+WHERE cat @@ ts_levenshtein('phon', 2)
+ORDER BY term;
+----
+term
+phone
+phony
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+statement ok
+DROP TABLE mt_docs;
+
+# A cap above the number of matching terms is a no-op.
+statement ok
+SET sdb_levenshtein_max_terms = 100;
+
+query
+SELECT count(*) FROM mt_words_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+13
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+# The override is per resolved column, so an OR that mixes the enumerated
+# column with a document filter caps only the latter. Uncapped, the body side
+# also admits bat and rat, so phonetic (4 edits from 'phon', reachable only
+# through its row) enumerates too.
+statement ok
+DROP TABLE IF EXISTS mt_or;
+
+statement ok
+CREATE TABLE mt_or (a INTEGER PRIMARY KEY, cat VARCHAR, body VARCHAR);
+
+statement ok
+CREATE INDEX mt_or_idx ON mt_or USING inverted(a, cat, body mt_english);
+
+statement ok
+INSERT INTO mt_or VALUES (1, 'phone', 'cat'), (2, 'phony', 'bat'), (3, 'phonetic', 'rat');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_or;
+
+query
+SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_or_idx
+WHERE cat @@ ts_levenshtein('phon', 2) OR body @@ ts_levenshtein('cat', 1)
+ORDER BY term;
+----
+term
+phone
+phonetic
+phony
+
+statement ok
+SET sdb_levenshtein_max_terms = 1;
+
+# The body side now expands to 'cat' alone, dropping row 3, while the
+# enumerated column stays uncapped and still contributes phony at distance 1.
+query
+SELECT unnest(ts_dict_agg(cat)) AS term FROM mt_or_idx
+WHERE cat @@ ts_levenshtein('phon', 2) OR body @@ ts_levenshtein('cat', 1)
+ORDER BY term;
+----
+term
+phone
+phony
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+statement ok
+DROP TABLE mt_or;
+
+# The cap applies per index segment, so the same query over the same rows
+# returns more terms while they sit in separate segments than after a merge.
+statement ok
+SET compaction_interval = 0;
+
+statement ok
+DROP TABLE IF EXISTS mt_segs;
+
+statement ok
+CREATE TABLE mt_segs (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX mt_segs_idx ON mt_segs USING inverted(a, b mt_english);
+
+statement ok
+INSERT INTO mt_segs VALUES (1,'cat'), (2,'bat'), (3,'rat'), (4,'hat'), (5,'mat'), (6,'oat');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_segs;
+
+statement ok
+INSERT INTO mt_segs VALUES (7,'cab'), (8,'cad'), (9,'can'), (10,'cap'), (11,'car'), (12,'caw');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_segs;
+
+statement ok
+SET sdb_levenshtein_max_terms = 3;
+
+query
+SELECT count(*) FROM mt_segs_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+6
+
+statement ok
+VACUUM (COMPACT_TABLE) mt_segs;
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_segs;
+
+query
+SELECT count(*) FROM mt_segs_idx WHERE b @@ ts_levenshtein('cat', 1);
+----
+count
+3
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+statement ok
+RESET compaction_interval;
+
+statement ok
+DROP TABLE mt_segs;
+
+# The cap also applies to a fuzzy part inside a phrase.
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS mt_english_pos;
+
+statement ok
+DROP TABLE IF EXISTS mt_phrases;
+
+statement ok
+CREATE TABLE mt_phrases (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mt_english_pos(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    position = true,
+    frequency = true
+);
+
+statement ok
+CREATE INDEX mt_phrases_idx ON mt_phrases USING inverted(a, b mt_english_pos);
+
+statement ok
+INSERT INTO mt_phrases VALUES
+    (1, 'cat zzz'), (2, 'bat zzz'), (3, 'rat zzz'), (4, 'hat zzz'),
+    (5, 'mat zzz'), (6, 'cab zzz'), (7, 'can zzz'), (8, 'cap zzz');
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_phrases;
+
+query
+SELECT count(*) FROM mt_phrases_idx WHERE b @@ (ts_levenshtein('cat', 1) ## 'zzz');
+----
+count
+8
+
+statement ok
+SET sdb_levenshtein_max_terms = 3;
+
+query
+SELECT count(*) FROM mt_phrases_idx WHERE b @@ (ts_levenshtein('cat', 1) ## 'zzz');
+----
+count
+3
+
+statement ok
+SET sdb_levenshtein_max_terms = 1;
+
+query
+SELECT a, b FROM mt_phrases_idx WHERE b @@ (ts_levenshtein('cat', 1) ## 'zzz') ORDER BY a;
+----
+a	b
+1	cat zzz
+
+statement ok
+RESET sdb_levenshtein_max_terms;
+
+statement ok
+DROP TABLE mt_phrases;
+
+statement ok
+DROP TABLE mt_words;

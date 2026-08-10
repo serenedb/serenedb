@@ -1,0 +1,228 @@
+hash-threshold 100
+
+# Non-padded posting payload for the fast-scan quantizers (pq, rabitq).
+#
+# A fast-scan group is 32 lanes and is the atomic unit on disk, so groups are
+# shared across clusters: a cluster's lanes need not start on a group boundary,
+# and only the stream's very last group is padded. A cluster records the byte
+# offset of the group it starts in plus its lane inside that group.
+#
+# sdb_ivf_posting_size is set small so the tree splits into many leaves of a
+# handful of documents each -- far below the 32-lane group -- which is the only
+# way a group ends up holding two clusters' codes, each encoded against its own
+# centroid. Every other ivf test leaves the posting size at its default, where a
+# small table is a single cluster and every cluster starts at lane 0.
+#
+# A lane mis-mapping is silent: the document is scored against a neighbour's
+# code and still returns a plausible-looking result set. So the vectors form a
+# ladder with gaps far wider than quantization error, making the expected order
+# unambiguous, and nprobe is exhaustive so every cluster is probed.
+
+statement ok
+SET sdb_nprobe = 1000
+
+statement ok
+SET sdb_ivf_posting_size = 5
+
+# ===========================================================================
+# 1. PQ: 100 documents in ~20 clusters of ~5, so nearly every cluster starts
+#    mid-group and the stream spans 4 groups (100 lanes) instead of 20.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sg_pq (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX sg_pq_idx ON sg_pq
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'pq', pq_m = 4))
+
+# emb is (100 * i, 0, ..., 0), so the distance to the origin is exactly 100 * i:
+# a ladder with 100-wide gaps.
+statement count 100
+INSERT INTO sg_pq
+SELECT i,
+  list_transform(range(8),
+    x -> CASE WHEN x = 0 THEN (i * 100)::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8]
+FROM range(1, 101) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sg_pq
+
+# Nearest to the origin: the bottom of the ladder, in order.
+query
+SELECT pk FROM sg_pq_idx
+ORDER BY emb <-> list_transform(range(8), x -> 0.0::FLOAT)::FLOAT[8] LIMIT 8;
+----
+pk
+1
+2
+3
+4
+5
+6
+7
+8
+
+# Mid-ladder query: pk=50 sits at lane 49, inside the second group, and its
+# neighbours straddle a cluster boundary. An off-by-k lane would surface here.
+query
+SELECT pk FROM sg_pq_idx
+ORDER BY emb <-> list_transform(range(8),
+  x -> CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
+----
+pk
+50
+49
+51
+48
+52
+
+# Top of the ladder: the last group is the padded one, and its padding lanes
+# must never be emitted.
+query
+SELECT pk FROM sg_pq_idx
+ORDER BY emb <-> list_transform(range(8),
+  x -> CASE WHEN x = 0 THEN 10000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 4;
+----
+pk
+100
+99
+98
+97
+
+# Every document is reachable and counted exactly once, padding included.
+query
+SELECT count(*) FROM sg_pq_idx;
+----
+count
+100
+
+# ===========================================================================
+# 2. RaBitQ, same shape: its group carries packed sign codes plus a per-lane
+#    factor record, so a shared group exercises both halves of the layout.
+# ===========================================================================
+
+statement ok
+CREATE TABLE sg_rq (pk INTEGER PRIMARY KEY, emb FLOAT[8])
+
+statement ok
+CREATE INDEX sg_rq_idx ON sg_rq
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 8))
+
+statement count 100
+INSERT INTO sg_rq
+SELECT i,
+  list_transform(range(8),
+    x -> CASE WHEN x = 0 THEN (i * 100)::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8]
+FROM range(1, 101) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) sg_rq
+
+query
+SELECT pk FROM sg_rq_idx
+ORDER BY emb <-> list_transform(range(8), x -> 0.0::FLOAT)::FLOAT[8] LIMIT 8;
+----
+pk
+1
+2
+3
+4
+5
+6
+7
+8
+
+query
+SELECT pk FROM sg_rq_idx
+ORDER BY emb <-> list_transform(range(8),
+  x -> CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
+----
+pk
+50
+49
+51
+48
+52
+
+query
+SELECT pk FROM sg_rq_idx
+ORDER BY emb <-> list_transform(range(8),
+  x -> CASE WHEN x = 0 THEN 10000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 4;
+----
+pk
+100
+99
+98
+97
+
+query
+SELECT count(*) FROM sg_rq_idx;
+----
+count
+100
+
+# ===========================================================================
+# 3. Deletes: the docs_mask path reads the same shared groups through the
+#    fallback scorer rather than the block fast path.
+# ===========================================================================
+
+statement count 10
+DELETE FROM sg_pq WHERE pk BETWEEN 3 AND 12
+
+statement ok
+VACUUM (REFRESH_TABLE) sg_pq
+
+query
+SELECT pk FROM sg_pq_idx
+ORDER BY emb <-> list_transform(range(8), x -> 0.0::FLOAT)::FLOAT[8] LIMIT 4;
+----
+pk
+1
+2
+13
+14
+
+query
+SELECT count(*) FROM sg_pq_idx;
+----
+count
+90
+
+# ===========================================================================
+# 4. Merge: compaction re-runs the writer, so lanes are re-derived rather than
+#    copied. The answers must not move.
+# ===========================================================================
+
+statement ok
+VACUUM (COMPACT_TABLE) sg_rq
+
+query
+SELECT pk FROM sg_rq_idx
+ORDER BY emb <-> list_transform(range(8),
+  x -> CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
+----
+pk
+50
+49
+51
+48
+52
+
+query
+SELECT count(*) FROM sg_rq_idx;
+----
+count
+100
+
+statement ok
+RESET sdb_ivf_posting_size
+
+statement ok
+RESET sdb_nprobe
+
+statement ok
+DROP TABLE sg_pq
+
+statement ok
+DROP TABLE sg_rq

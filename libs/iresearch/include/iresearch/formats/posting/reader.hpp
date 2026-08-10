@@ -123,7 +123,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
 
   const bool needs_pay =
     IndexFeatures::None !=
-    (features & (IndexFeatures::Offs | IndexFeatures::Pay));
+    (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state,
@@ -193,8 +193,9 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
   auto& term_meta = static_cast<TermMetaImpl&>(state);
   const auto* p = in;
 
-  SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Offs) ||
-             IndexFeatures::None == (features & IndexFeatures::Pay));
+  SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Vec) ||
+             IndexFeatures::None ==
+               (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
 
   term_meta.docs_count = vread<uint32_t>(p);
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
@@ -208,9 +209,9 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
       term_meta.pay_start += vread<uint64_t>(p);
     }
     term_meta.pos_offset = *p++;
-  }
-  if (IndexFeatures::None != (features & IndexFeatures::Pay)) {
+  } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
     term_meta.pay_start += vread<uint64_t>(p);
+    term_meta.pos_offset = *p++;
   }
 
   if (1 == term_meta.docs_count) {

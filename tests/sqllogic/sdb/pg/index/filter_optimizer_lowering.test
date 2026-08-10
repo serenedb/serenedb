@@ -144,7 +144,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Target: alpha       │ │
-│ │ Max Terms: 1024     │ │
+│ │ Max Terms: 64       │ │
 │ ╰─────────────────────╯ │
 │ Projections: id         │
 │ ~1 row                  │
@@ -217,7 +217,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Target: alpha       │ │
-│ │ Max Terms: 1024     │ │
+│ │ Max Terms: 64       │ │
 │ ╰─────────────────────╯ │
 │ Projections: id         │
 │ ~1 row                  │
@@ -245,7 +245,7 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮  ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │  │ Field: name(string) │ │
 │ │ Prefix: xyz         │  │ Target: alpha       │ │
-│ │ Limit: 1024         │  │ Max Terms: 1024     │ │
+│ │ Limit: 1024         │  │ Max Terms: 64       │ │
 │ ╰─────────────────────╯  ╰─────────────────────╯ │
 │ Projections: id                                  │
 │ ~1 row                                           │
@@ -269,7 +269,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Target: alpha       │ │
-│ │ Max Terms: 1024     │ │
+│ │ Max Terms: 64       │ │
 │ ╰─────────────────────╯ │
 │ Projections: id         │
 │ ~1 row                  │
@@ -297,7 +297,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ───────╮  ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │  │ Field: name(string) │ │
 │ │ Target: alpha       │  │ Target: alpino      │ │
-│ │ Max Terms: 1024     │  │ Max Terms: 1024     │ │
+│ │ Max Terms: 64       │  │ Max Terms: 64       │ │
 │ ╰─────────────────────╯  ╰─────────────────────╯ │
 │ Projections: id                                  │
 │ ~1 row                                           │
@@ -318,7 +318,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ───────╮  ╭─ Levenshtein ───────╮  ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │  │ Field: name(string) │  │ Field: name(string) │ │
 │ │ Target: alpha       │  │ Target: alpino      │  │ Target: beta        │ │
-│ │ Max Terms: 1024     │  │ Max Terms: 1024     │  │ Max Terms: 1024     │ │
+│ │ Max Terms: 64       │  │ Max Terms: 64       │  │ Max Terms: 64       │ │
 │ ╰─────────────────────╯  ╰─────────────────────╯  ╰─────────────────────╯ │
 │ Projections: id                                                           │
 │ ~1 row                                                                    │
@@ -374,7 +374,7 @@ QUERY PLAN
 │ ╭─ Starts With ───────╮  ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │  │ Field: name(string) │ │
 │ │ Prefix: alphab      │  │ Target: alpha       │ │
-│ │ Limit: 1024         │  │ Max Terms: 1024     │ │
+│ │ Limit: 1024         │  │ Max Terms: 64       │ │
 │ ╰─────────────────────╯  ╰─────────────────────╯ │
 │ Projections: id                                  │
 │ ~1 row                                           │
@@ -398,7 +398,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ───────╮ │
 │ │ Field: name(string) │ │
 │ │ Target: alpha       │ │
-│ │ Max Terms: 1024     │ │
+│ │ Max Terms: 64       │ │
 │ ╰─────────────────────╯ │
 │ Projections: id         │
 │ ~1 row                  │
@@ -440,7 +440,7 @@ QUERY PLAN
 │ ╭─ Starts With ────╮  ╭─ Levenshtein ────╮ │
 │ │ Field: t(string) │  │ Field: t(string) │ │
 │ │ Prefix: al       │  │ Target: alpha    │ │
-│ │ Limit: 1024      │  │ Max Terms: 1024  │ │
+│ │ Limit: 1024      │  │ Max Terms: 64    │ │
 │ ╰──────────────────╯  ╰──────────────────╯ │
 │ Projections: id                            │
 │ ~1 row                                     │
@@ -483,7 +483,7 @@ QUERY PLAN
 │ ╭─ Levenshtein ────╮  ╭─ Starts With ────╮  ╭─ Levenshtein ────╮ │
 │ │ Field: k(string) │  │ Field: a(string) │  │ Field: a(string) │ │
 │ │ Target: alpha    │  │ Prefix: al       │  │ Target: alpha    │ │
-│ │ Max Terms: 1024  │  │ Limit: 1024      │  │ Max Terms: 1024  │ │
+│ │ Max Terms: 64    │  │ Limit: 1024      │  │ Max Terms: 64    │ │
 │ ╰──────────────────╯  ╰──────────────────╯  ╰──────────────────╯ │
 │ Projections: id                                                  │
 │ ~1 row                                                           │

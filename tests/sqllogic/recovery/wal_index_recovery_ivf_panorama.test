@@ -1,0 +1,119 @@
+control substitution on
+
+# WAL recovery for a quant='none' IVF column wide enough to use the rotated,
+# progressively-pruned payload.
+#
+# The rotation is trained per segment and shipped in the .idx quantizer stats
+# blob, while the rotated vectors and their per-level suffix norms live in the
+# posting payload. Recovery re-feeds the columnstore writer and the next commit
+# rebuilds the index, so both halves have to come back together: a stats blob
+# that survives without its payload (or the reverse) would read garbage floats
+# and return the wrong neighbours rather than failing loudly.
+#
+# Vectors are (i, 0, ..., 0) at d = 64, so every query has one exact nearest
+# neighbour and the assertions stay exact through the rotation.
+
+statement ok
+CREATE TABLE wal_pano_t(pk INTEGER PRIMARY KEY, emb FLOAT[64]);
+
+statement ok
+INSERT INTO wal_pano_t
+SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+FROM range(1, 1201) t(i);
+
+statement ok
+CREATE INDEX wal_pano_idx ON wal_pano_t
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+VACUUM (REFRESH_TABLE) wal_pano_t;
+
+statement ok
+SET sdb_nprobe = 1000;
+
+query
+SELECT pk FROM wal_pano_idx
+  ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 700.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+  LIMIT 1;
+----
+pk
+700
+
+# Freeze iresearch commits before the next batch: these rows reach the storage
+# WAL but their vectors never make it into a segment.
+statement ok
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_pano_t
+SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+FROM range(1201, 1204) t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+# --- server restarts here ---
+
+connection pano_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) wal_pano_t;
+
+connection pano_after
+statement ok
+SET sdb_nprobe = 1000;
+
+connection pano_after
+query
+SELECT COUNT(*) AS n FROM wal_pano_idx;
+----
+n
+1203
+
+# A pre-crash and a post-crash vector, both exact after the rebuild.
+connection pano_after
+query
+SELECT pk, round(emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64], 3) AS d
+FROM wal_pano_idx ORDER BY d LIMIT 3;
+----
+pk	d
+1	1
+2	2
+3	3
+
+connection pano_after
+query
+SELECT pk FROM wal_pano_idx
+  ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 1202.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+  LIMIT 1;
+----
+pk
+1202
+
+# The rebuilt payload must agree with a sequential scan of the table for a
+# deeper pool as well, where the running k-th best does the pruning.
+connection pano_after
+query
+SELECT count(*) AS diff FROM (
+  ((SELECT pk FROM wal_pano_idx
+      ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+      LIMIT 30)
+   EXCEPT
+   (SELECT pk FROM wal_pano_t
+      ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+      LIMIT 30))
+  UNION ALL
+  ((SELECT pk FROM wal_pano_t
+      ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+      LIMIT 30)
+   EXCEPT
+   (SELECT pk FROM wal_pano_idx
+      ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+      LIMIT 30))
+) q;
+----
+diff
+0

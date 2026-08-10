@@ -1,0 +1,355 @@
+hash-threshold 100
+
+# Progressive (Panorama) pruning for quant = 'none'.
+#
+# The payload is stored in a PCA-rotated basis with per-level suffix norms, and
+# a candidate is dropped as soon as a Cauchy-Schwarz bound on its distance can
+# no longer reach the running k-th best. The bound is exact, so every query here
+# asserts the index agrees with a sequential scan of the base table -- the
+# comparison is done in SQL rather than against hand-written distances, since a
+# rotated basis reproduces a distance only to float rounding.
+#
+# The layout only engages above the build gate (d >= 64 and enough rows to train
+# a d x d basis), which is why these tables are wider and longer than the rest of
+# the ivf suite. Covered: all three rotatable metrics, the deletes fallback, the
+# radius path (where the threshold is known from the first candidate), a
+# multi-cluster tree, store_pk = 'none', and l1 staying on the legacy layout.
+
+statement ok
+SET sdb_nprobe = 1000
+
+# --- l2: separated points, so the distances are exact integers ---------------
+# Every vector is (i, 0, ..., 0) at d = 64, and the gate needs >= 1024 rows.
+
+statement ok
+CREATE TABLE pn_axis (pk INTEGER PRIMARY KEY, emb FLOAT[64])
+
+statement ok
+CREATE INDEX pn_axis_idx ON pn_axis USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'))
+
+statement count 2000
+INSERT INTO pn_axis
+SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+FROM range(1, 2001) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_axis
+
+query
+SELECT pk, round(emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64], 3) AS d
+FROM pn_axis_idx ORDER BY d LIMIT 5;
+----
+pk	d
+1	1
+2	2
+3	3
+4	4
+5	5
+
+# A deep pool keeps the threshold moving while the scan is still running.
+query
+SELECT count(*) AS n, round(sum(d)::DOUBLE, 1) AS s FROM (
+  SELECT emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64] AS d
+  FROM pn_axis_idx ORDER BY d LIMIT 500
+) q;
+----
+n	s
+500	125250
+
+query
+SELECT count(*) FROM pn_axis_idx;
+----
+count
+2000
+
+# --- structured data across l2 / ip / cosine ---------------------------------
+# Amplitude decays as 1/(j+1) per dimension, so the trained basis has real
+# energy to concentrate and the bound prunes hard.
+
+statement ok
+CREATE TABLE pn_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[64])
+
+statement ok
+CREATE INDEX pn_l2_idx ON pn_l2 USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'))
+
+statement count 2000
+INSERT INTO pn_l2
+SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
+FROM range(2000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_l2
+
+statement ok
+CREATE TABLE pn_ip (pk INTEGER PRIMARY KEY, emb FLOAT[64])
+
+statement ok
+CREATE INDEX pn_ip_idx ON pn_ip USING inverted(pk, emb ivf (metric = 'ip', quant = 'none'))
+
+statement count 2000
+INSERT INTO pn_ip
+SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
+FROM range(2000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_ip
+
+statement ok
+CREATE TABLE pn_cos (pk INTEGER PRIMARY KEY, emb FLOAT[64])
+
+statement ok
+CREATE INDEX pn_cos_idx ON pn_cos USING inverted(pk, emb ivf (metric = 'cosine', quant = 'none'))
+
+statement count 2000
+INSERT INTO pn_cos
+SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
+FROM range(2000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_cos
+
+# The index top-k must be the sequential scan's top-k, exactly, for every
+# metric. Zero rows in either direction of the symmetric difference.
+query
+SELECT count(*) AS diff FROM (
+  ((SELECT pk FROM pn_l2_idx
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM pn_l2
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20))
+  UNION ALL
+  ((SELECT pk FROM pn_l2
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM pn_l2_idx
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20))
+) q;
+----
+diff
+0
+
+query
+SELECT count(*) AS diff FROM (
+  ((SELECT pk FROM pn_ip_idx
+      ORDER BY emb <#> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM pn_ip
+      ORDER BY emb <#> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20))
+  UNION ALL
+  ((SELECT pk FROM pn_ip
+      ORDER BY emb <#> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM pn_ip_idx
+      ORDER BY emb <#> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20))
+) q;
+----
+diff
+0
+
+query
+SELECT count(*) AS diff FROM (
+  ((SELECT pk FROM pn_cos_idx
+      ORDER BY emb <=> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM pn_cos
+      ORDER BY emb <=> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20))
+  UNION ALL
+  ((SELECT pk FROM pn_cos
+      ORDER BY emb <=> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM pn_cos_idx
+      ORDER BY emb <=> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20))
+) q;
+----
+diff
+0
+
+# The projected distance must be the scan's distance, not just the same ranking.
+query
+SELECT count(*) AS mismatched FROM (
+  SELECT i.pk, round(i.d::DOUBLE, 4) AS di, round(t.d::DOUBLE, 4) AS dt FROM
+    (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+       FROM pn_l2_idx
+       ORDER BY d LIMIT 20) i
+    JOIN
+    (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+       FROM pn_l2) t
+    USING (pk)
+) q WHERE di <> dt;
+----
+mismatched
+0
+
+# --- radius: the threshold is fixed, so pruning starts at the first candidate -
+# Membership stays exact -- a pruned candidate's bound is already outside.
+
+query
+SELECT count(*) AS n FROM pn_axis_idx
+WHERE emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64] < 10.5;
+----
+n
+10
+
+query
+SELECT pk FROM pn_axis_idx
+WHERE emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64] <= 3
+ORDER BY pk;
+----
+pk
+1
+2
+3
+
+query
+SELECT count(*) AS diff FROM (
+  (SELECT pk FROM pn_l2_idx
+     WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 0.9)
+  EXCEPT
+  (SELECT pk FROM pn_l2
+     WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 0.9)
+) q;
+----
+diff
+0
+
+# --- deletes: the masked segment falls back to the unpruned scan --------------
+
+statement count 600
+DELETE FROM pn_l2 WHERE pk % 10 < 3
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_l2
+
+query
+SELECT count(*) FROM pn_l2_idx;
+----
+count
+1400
+
+query
+SELECT count(*) AS diff FROM (
+  ((SELECT pk FROM pn_l2_idx
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM pn_l2
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20))
+  UNION ALL
+  ((SELECT pk FROM pn_l2
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20)
+   EXCEPT
+   (SELECT pk FROM pn_l2_idx
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 20))
+) q;
+----
+diff
+0
+
+# --- a real tree: many clusters, so the threshold carries across postings -----
+
+statement ok
+SET sdb_ivf_posting_size = 16
+
+statement ok
+CREATE TABLE pn_tree (pk INTEGER PRIMARY KEY, emb FLOAT[64])
+
+statement ok
+CREATE INDEX pn_tree_idx ON pn_tree USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'))
+
+statement count 3000
+INSERT INTO pn_tree
+SELECT i, list_transform(range(64), j -> (sin(i * 1.1 + j * 0.9) / (j + 1))::FLOAT)::FLOAT[64]
+FROM range(3000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_tree
+
+statement ok
+RESET sdb_ivf_posting_size
+
+query
+SELECT count(*) AS diff FROM (
+  ((SELECT pk FROM pn_tree_idx
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 25)
+   EXCEPT
+   (SELECT pk FROM pn_tree
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 25))
+  UNION ALL
+  ((SELECT pk FROM pn_tree
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 25)
+   EXCEPT
+   (SELECT pk FROM pn_tree_idx
+      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      LIMIT 25))
+) q;
+----
+diff
+0
+
+# --- store_pk = 'none': no lookup source, and none never needed one ----------
+
+statement ok
+CREATE TABLE pn_nopk (pk INTEGER PRIMARY KEY, emb FLOAT[64])
+
+statement ok
+CREATE INDEX pn_nopk_idx ON pn_nopk USING inverted(emb ivf (metric = 'l2', quant = 'none')) WITH (store_pk = 'none')
+
+statement count 2000
+INSERT INTO pn_nopk
+SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+FROM range(1, 2001) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_nopk
+
+query
+SELECT round(emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64], 3) AS d
+FROM pn_nopk_idx ORDER BY d LIMIT 3;
+----
+d
+1
+2
+3
+
+# --- l1 stays on the legacy layout, since a rotation does not preserve it -----
+
+statement ok
+CREATE TABLE pn_l1 (pk INTEGER PRIMARY KEY, emb FLOAT[64])
+
+statement ok
+CREATE INDEX pn_l1_idx ON pn_l1 USING inverted(pk, emb ivf (metric = 'l1', quant = 'none'))
+
+statement count 2000
+INSERT INTO pn_l1
+SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+FROM range(1, 2001) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) pn_l1
+
+query
+SELECT pk, emb <+> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64] AS d
+FROM pn_l1_idx ORDER BY d LIMIT 3;
+----
+pk	d
+1	1
+2	2
+3	3

@@ -709,6 +709,120 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   EXPECT_GE(recall, 0.999) << "multi-level Search recall vs brute force";
 }
 
+// Rows drawn with variance decaying along a random orthonormal basis, so the
+// energy is concentrated in a subspace that is not axis-aligned -- exactly the
+// case a PCA rotation has to discover.
+std::vector<float> MakeAnisotropic(uint32_t d, size_t n, uint32_t seed) {
+  auto basis = MakeRotation(d, seed);
+  std::mt19937 rng{seed};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  std::vector<float> coef(d);
+  std::vector<float> out(n * d, 0.f);
+  for (size_t i = 0; i < n; ++i) {
+    for (uint32_t j = 0; j < d; ++j) {
+      coef[j] = nd(rng) / static_cast<float>(j + 1);
+    }
+    float* row = out.data() + i * d;
+    for (uint32_t j = 0; j < d; ++j) {
+      const float* b = basis.data() + size_t{j} * d;
+      for (uint32_t t = 0; t < d; ++t) {
+        row[t] += coef[j] * b[t];
+      }
+    }
+  }
+  return out;
+}
+
+double TailEnergy(const float* data, size_t n, uint32_t d, uint32_t from) {
+  double tail = 0.0;
+  double total = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    const float* row = data + i * d;
+    for (uint32_t j = 0; j < d; ++j) {
+      const double sq = static_cast<double>(row[j]) * row[j];
+      total += sq;
+      if (j >= from) {
+        tail += sq;
+      }
+    }
+  }
+  return total == 0.0 ? 0.0 : tail / total;
+}
+
+TEST(pca_rotation_test, orthonormal_preserves_distances_and_concentrates) {
+  const uint32_t d = 64;
+  const size_t n = 4096;
+  auto data = MakeAnisotropic(d, n, 11);
+
+  auto rotation = TrainPcaRotation(data.data(), n, d);
+  ASSERT_EQ(rotation.A.size(), size_t{d} * d);
+
+  for (uint32_t i = 0; i < d; ++i) {
+    for (uint32_t j = i; j < d; ++j) {
+      double dot = 0.0;
+      for (uint32_t t = 0; t < d; ++t) {
+        dot += static_cast<double>(rotation.A[size_t{i} * d + t]) *
+               rotation.A[size_t{j} * d + t];
+      }
+      ASSERT_NEAR(dot, i == j ? 1.0 : 0.0, 2e-3) << "i=" << i << " j=" << j;
+    }
+  }
+
+  std::vector<float> rotated(data.size());
+  rotation.apply_noalloc(n, data.data(), rotated.data());
+
+  for (size_t i = 0; i + 1 < 32; ++i) {
+    const float* a = data.data() + i * d;
+    const float* b = data.data() + (i + 1) * d;
+    const float* ra = rotated.data() + i * d;
+    const float* rb = rotated.data() + (i + 1) * d;
+    double l2 = 0.0, rl2 = 0.0, ip = 0.0, rip = 0.0;
+    for (uint32_t t = 0; t < d; ++t) {
+      l2 += (a[t] - b[t]) * static_cast<double>(a[t] - b[t]);
+      rl2 += (ra[t] - rb[t]) * static_cast<double>(ra[t] - rb[t]);
+      ip += static_cast<double>(a[t]) * b[t];
+      rip += static_cast<double>(ra[t]) * rb[t];
+    }
+    ASSERT_NEAR(rl2, l2, 1e-3 * (1.0 + l2)) << "row " << i;
+    ASSERT_NEAR(rip, ip, 1e-3 * (1.0 + std::fabs(ip))) << "row " << i;
+  }
+
+  std::vector<float> one(d);
+  rotation.apply_noalloc(1, data.data(), one.data());
+  for (uint32_t t = 0; t < d; ++t) {
+    ASSERT_NEAR(one[t], rotated[t], 1e-4) << "dim " << t;
+  }
+
+  const uint32_t from = d / 4;
+  const double raw_tail = TailEnergy(data.data(), n, d, from);
+  const double rot_tail = TailEnergy(rotated.data(), n, d, from);
+  EXPECT_LT(rot_tail, raw_tail / 4)
+    << "rotated tail " << rot_tail << " vs raw " << raw_tail;
+}
+
+TEST(pca_rotation_test, eigenvalues_are_descending) {
+  const uint32_t d = 32;
+  const size_t n = 2048;
+  auto data = MakeAnisotropic(d, n, 5);
+  auto rotation = TrainPcaRotation(data.data(), n, d);
+  ASSERT_EQ(rotation.A.size(), size_t{d} * d);
+
+  std::vector<float> rotated(data.size());
+  rotation.apply_noalloc(n, data.data(), rotated.data());
+
+  std::vector<double> energy(d, 0.0);
+  for (size_t i = 0; i < n; ++i) {
+    const float* row = rotated.data() + i * d;
+    for (uint32_t j = 0; j < d; ++j) {
+      energy[j] += static_cast<double>(row[j]) * row[j];
+    }
+  }
+  for (uint32_t j = 0; j + 1 < d; ++j) {
+    EXPECT_GE(energy[j] * 1.001 + 1e-6, energy[j + 1])
+      << "dim " << j << ": " << energy[j] << " then " << energy[j + 1];
+  }
+}
+
 TEST(matrix_qr_test, blocked_qr_orthonormal_and_spanning) {
   std::mt19937 rng{7};
   std::normal_distribution<float> nd{0.f, 1.f};

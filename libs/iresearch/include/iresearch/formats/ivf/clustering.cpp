@@ -30,7 +30,6 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <numeric>
 
 #include "basics/misc.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
@@ -94,6 +93,19 @@ std::vector<float> MakeRotation(uint32_t d, uint32_t seed) {
                                        static_cast<int>(d));
   rotation.init(static_cast<int>(seed));
   return std::move(rotation.A);
+}
+
+faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d) {
+  SDB_ASSERT(d);
+  const auto dim = static_cast<int>(d);
+  faiss::PCAMatrix pca{dim, dim, /*eigen_power=*/0.f,
+                       /*random_rotation=*/false};
+  pca.have_bias = false;
+  pca.train(static_cast<faiss::idx_t>(n), data);
+  SDB_ASSERT(pca.is_trained);
+  SDB_ASSERT(pca.is_orthonormal);
+  SDB_ASSERT(pca.A.size() == size_t{d} * d);
+  return pca;
 }
 
 void NormalizeRows(float* data, size_t n, uint32_t d) {

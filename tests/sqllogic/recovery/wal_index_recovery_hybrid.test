@@ -3,7 +3,7 @@ control substitution on
 # WAL index recovery for a HYBRID index: text column(s) + IVF vector column(s).
 #
 # A text field with the 'offset' feature sets IndexFeatures::Offs; an IVF vector
-# field quantized with sq8 (the default) sets IndexFeatures::Pay. Both live in
+# field quantized with sq8 (the default) sets IndexFeatures::Vec. Both live in
 # one segment and share the ".pay" stream, so the segment aggregate carries
 # Offs|Pay at once. This confirms the mixed-feature fields serialize and survive
 # WAL recovery: pre-crash rows go through a normal iresearch commit (on-disk

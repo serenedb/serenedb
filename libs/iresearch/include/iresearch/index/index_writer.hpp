@@ -466,6 +466,14 @@ class IndexWriter : private util::Noncopyable {
       return Commit();
     }
 
+    // Serialize the active segment on the calling thread without committing --
+    // no tick is assigned; pair with a later Commit(last_tick).
+    void Flush() noexcept {
+      if (auto* segment = _active.Segment()) {
+        segment->Flush();
+      }
+    }
+
     bool Commit(uint64_t last_tick) noexcept {
       auto* segment = _active.Segment();
       if (segment == nullptr) {

@@ -337,6 +337,11 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
     SDB_ASSERT(lstate->chunk_writer,
                "bulk sink thread with rows but no chunk writer");
     pending = lstate->chunk_writer->Finish();
+    // Serialize this worker's tail segment now, in parallel with the other
+    // workers, rather than deferring it to the single-threaded refresh commit.
+    // The commit tick is still assigned serially, later, in
+    // SearchTableTransaction::Commit -- so flush only, never FlushAndCommit.
+    lstate->search_trx->Flush();
   }
 
   std::lock_guard<std::mutex> lock(gstate.combine_mu);

@@ -29,6 +29,7 @@
 
 #include "basics/assert.h"
 #include "catalog/table.h"
+#include "connector/inverted_index_options_util.h"
 #include "connector/with_option_resolver.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -77,6 +78,20 @@ duckdb::Value ExtractUint(std::string_view option_key,
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
       ERR_MSG("WITH option \"", option_key, "\" expects an integer literal"));
   }
+}
+
+// Extract + validate a byte-sized WITH option (e.g. segment_memory_max) through
+// the same validator the inverted-index CREATE path uses, so a search table
+// rejects the same values (0, non-integer, out of range) with identical errors.
+uint64_t ExtractValidatedUbigint(std::string_view option_key,
+                                 const duckdb::ParsedExpression& expr) {
+  if (expr.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("WITH option \"", option_key, "\" expects an integer literal"));
+  }
+  return ValidateInvertedIndexOptionValue(
+    option_key, expr.Cast<duckdb::ConstantExpression>().GetValue());
 }
 
 constexpr std::string_view kStorageKey = "storage";
@@ -155,11 +170,22 @@ void ApplyStorageKind(
     }
     return ResolveUintWithOption(context, key, /*with_value=*/nullptr);
   };
+  auto resolve_ubigint = [&](std::string_view key) -> uint64_t {
+    auto it = with_options.find(std::string{key});
+    if (it != with_options.end() && it->second) {
+      const uint64_t value = ExtractValidatedUbigint(key, *it->second);
+      with_options.erase(std::string{key});
+      return value;
+    }
+    return ResolveUbigintWithOption(context, key, /*with_value=*/nullptr);
+  };
   options.search_options.refresh_interval_ms = resolve(kRefreshIntervalSetting);
   options.search_options.compaction_interval_ms =
     resolve(kCompactionIntervalSetting);
   options.search_options.cleanup_interval_step =
     resolve(kCleanupIntervalStepSetting);
+  options.search_options.segment_memory_max =
+    resolve_ubigint(kSegmentMemoryMaxSetting);
 }
 
 }  // namespace sdb::connector

@@ -227,7 +227,8 @@ SearchTable::SearchTable(ObjectId db_id, ObjectId schema_id, ObjectId table_id,
     _db_id{db_id},
     _schema_id{schema_id},
     _is_new{is_new},
-    _pk_columns{std::move(pk_columns)} {
+    _pk_columns{std::move(pk_columns)},
+    _segment_memory_max{options.segment_memory_max} {
   catalog::InvertedIndex::Entries entries;
   TermsByColumn terms;
   BuildPkInto(entries, terms, _pk_columns);
@@ -337,7 +338,7 @@ void SearchTable::OpenWriter() {
                                               resource_manager);
 
   irs::IndexWriterOptions writer_options;
-  writer_options.segment_memory_max = 256 * (size_t{1} << 20);
+  writer_options.segment_memory_max = _segment_memory_max;
   // TODO(Dronplane): for now we rely on rocksdb (still present) lock
   // But in future we need own server wide data dir lock.
   writer_options.lock_repository = false;

@@ -232,6 +232,7 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   ObjectId _schema_id;
   bool _is_new;
   std::vector<catalog::Column::Id> _pk_columns;
+  uint64_t _segment_memory_max;
   std::atomic<int64_t> _num_rows{0};
   mutable std::shared_mutex _table_lock;
   // Merged per-field index config (PK + declared inverted indexes), RCU-swapped

@@ -110,6 +110,16 @@ PERF_INDEX_TEXT_COL="${PERF_INDEX_TEXT_COL:-URL}"
 # post-hoc build can be set against the "index before load" numbers. Off with 0.
 PERF_BACKFILL_RUN="${PERF_BACKFILL_RUN:-1}"
 
+# Optional segment_memory_max (BYTES) for the search table's shared iresearch
+# store, injected into its CTAS WITH clause. Empty = server default (256MB).
+# e.g. 16777216 = 16MB. Lets you A/B the segment budget through the harness
+# (session SET won't work -- the script uses a fresh psql per statement).
+PERF_SEARCH_SEGMENT_MEMORY_MAX="${PERF_SEARCH_SEGMENT_MEMORY_MAX:-}"
+SEARCH_SEG_OPT=""
+if [[ -n "${PERF_SEARCH_SEGMENT_MEMORY_MAX}" ]]; then
+	SEARCH_SEG_OPT=", segment_memory_max = ${PERF_SEARCH_SEGMENT_MEMORY_MAX}"
+fi
+
 if [[ ! -f "${PARQUET_FILE}" ]]; then
 	echo "missing ${PARQUET_FILE} -- run scripts/perf/download_hits.sh first" >&2
 	echo "(override the location with PERF_PARQUET_FILE=...)" >&2
@@ -134,8 +144,32 @@ PSQL_CONN="postgres://postgres@localhost:${PORT}/postgres"
 # Called once per cold-load run (sole, indexed, backfill); each run first kills
 # any prior instance, and the exit trap kills the last one when the script ends.
 start_serened() {
-	killall -9 serened >/dev/null 2>&1 || true
-	sleep 1
+	# Between our own cold-load runs (sole -> indexed -> backfill) the previous
+	# run's serened is killed here -- but on slow storage a serened killed
+	# mid-flush lingers in uninterruptible IO and keeps holding the port for a
+	# few seconds. If we launch before it releases, the new process bind-fails
+	# while the readiness probe connects to the still-dying OLD one, silently
+	# running against the wrong binary and its leftover catalog (the tell-tale
+	# "hits_view already exists"). So re-kill and WAIT for the port to go quiet
+	# (SELECT 1 failing == nothing serving) before launching.
+	local freed=""
+	for _ in $(seq 1 60); do
+		killall -9 serened >/dev/null 2>&1 || true
+		pkill -9 -f -- "${SERENED_DATA_DIR}" >/dev/null 2>&1 || true
+		if ! psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1; then
+			freed=1
+			break
+		fi
+		sleep 0.5
+	done
+	# Never freed after ~30s: a serened our kills can't reach (different owner) or
+	# a non-serened process holds the port. Abort loudly rather than hijack.
+	if [[ -z "${freed}" ]]; then
+		echo "port ${PORT} still serving after ~30s of kill attempts -- a serened we can't kill or another process holds it." >&2
+		echo "find and free it, or run with a different PERF_PORT:  lsof -i:${PORT}" >&2
+		exit 1
+	fi
+
 	rm -rf "${SERENED_DATA_DIR}"
 	rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal"
 
@@ -143,8 +177,11 @@ start_serened() {
 	"${SERENED_BIN}" "${SERENED_DATA_DIR}" \
 		--listen="postgres://0.0.0.0:${PORT}" \
 		>"${LOG}" 2>&1 &
+	# Detach from job control so bash doesn't print a "Killed" line when we
+	# SIGKILL it later (next restart / cleanup). We track it by port, not job id.
+	disown 2>/dev/null || true
 
-	# A SELECT 1 is the cheapest PG reachability probe.
+	# The port was free above, so once SELECT 1 answers it is OUR instance.
 	for _ in $(seq 1 30); do
 		if psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1; then
 			break
@@ -157,12 +194,11 @@ start_serened() {
 		exit 1
 	fi
 }
-# Kill our serened, matched by its unique data dir on the command line. This is
-# robust where $! and the port are not: serened forks a child listener, so $! is
-# stale (and could be a reused pid by exit), and an unprivileged `lsof -i` often
-# can't attribute the socket. pkill -f matches every process carrying our data
-# dir (this run's instance only) with no privileges or lsof needed; killall is
-# the fallback if pkill is absent. Runs on normal exit AND on Ctrl-C / TERM.
+# Kill our serened, matched by its unique data dir on the command line. pkill -f
+# reads /proc/<pid>/cmdline (always readable for our own processes), so it needs
+# no privileges or lsof and doesn't depend on $! (untracked, and a possibly
+# reused pid by exit). killall is the fallback if pkill is absent. Runs on
+# normal exit AND on Ctrl-C / TERM.
 cleanup() {
 	if command -v pkill >/dev/null 2>&1; then
 		pkill -9 -f -- "${SERENED_DATA_DIR}" >/dev/null 2>&1 || true
@@ -340,7 +376,7 @@ TXN_TABLE_BYTES=$((TXN_AFTER - TXN_BASELINE))
 # into the iresearch writer but the segments are not yet committed to disk.
 run_sql "search_insert" "${BUILD_THREADS}" "
 CREATE TABLE hits_search
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0) AS
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0${SEARCH_SEG_OPT}) AS
 SELECT * FROM hits_view;
 "
 
@@ -564,7 +600,7 @@ VACUUM (REFRESH_TABLE) hits_txn_idx;
 	# --- search table + inverted index ---
 	run_setup "idx_search_create" "${BUILD_THREADS}" "
 CREATE TABLE hits_search_idx
-  WITH (storage = 'search', compaction_interval = 0) AS
+  WITH (storage = 'search', compaction_interval = 0${SEARCH_SEG_OPT}) AS
 SELECT * FROM hits_view WHERE false;
 "
 	run_setup "idx_search_create_index" "${BUILD_THREADS}" "

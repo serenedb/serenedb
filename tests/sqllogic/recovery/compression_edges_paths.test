@@ -1,12 +1,8 @@
-# KNOWN BUG, deliberately not covered here: a single NaN in a DOUBLE column hangs CHECKPOINT
-# forever (infinite loop on the ALP path; reproduces identically on unmodified v2026.07.07, so it
-# predates the dict_fsst work). Minimal repro:
-#   CREATE TABLE t AS SELECT CASE WHEN i = 7 THEN 'nan'::DOUBLE ELSE i*0.5 END v FROM range(100) t(i);
-#   CHECKPOINT;   -- never returns
-# When that is fixed, add NaN back to the dbl generator below. Inf, -Inf and -0.0 checkpoint fine
-# and ARE covered.
+# NaN in the dbl column doubles as the regression test for serenedb/duckdb#60's RLE fix: one NaN
+# used to hang CHECKPOINT forever (RLE's flat run scan never advances past a value that is not
+# equal to itself, and every codec's analyze runs on the auto path -- forcing any codec masks it).
 #
-# The last coverable classes: codec-hostile SPECIAL VALUES (Inf/-Inf/-0.0 under ALP, INT64 extremes
+# The last coverable classes: codec-hostile SPECIAL VALUES (NaN/Inf/-0.0, INT64 extremes
 # under bitpacking's frame-of-reference, INT128 decimals, the 12/13-byte string_t inline boundary,
 # BOOLEAN), the AUTO-checkpoint write path (compression triggered by WAL size with nobody calling
 # CHECKPOINT), OPTIMISTIC writes (one transaction big enough to spill row groups before COMMIT,
@@ -26,7 +22,8 @@ ATTACH '${__TEST_DIR__}/cep.db' AS ce (TYPE duckdb, STORAGE_VERSION 'serenedb_v1
 statement ok
 CREATE TABLE ce.specials AS
   SELECT ord,
-         CASE WHEN ord % 50000 = 200 THEN 'inf'::DOUBLE
+         CASE WHEN ord % 50000 = 100 THEN 'nan'::DOUBLE
+              WHEN ord % 50000 = 200 THEN 'inf'::DOUBLE
               WHEN ord % 50000 = 300 THEN '-inf'::DOUBLE
               WHEN ord % 50000 = 400 THEN -0.0
               ELSE round(ord * 0.01, 2) END AS dbl,
@@ -46,16 +43,16 @@ CHECKPOINT ce;
 
 query
 SELECT count(*) AS n,
-       bool_and(dbl IS NOT DISTINCT FROM CASE WHEN ord % 50000 = 200 THEN 'inf'::DOUBLE WHEN ord % 50000 = 300 THEN '-inf'::DOUBLE WHEN ord % 50000 = 400 THEN -0.0 ELSE round(ord * 0.01, 2) END) AS dbl_ok,
+       bool_and(dbl IS NOT DISTINCT FROM CASE WHEN ord % 50000 = 100 THEN 'nan'::DOUBLE WHEN ord % 50000 = 200 THEN 'inf'::DOUBLE WHEN ord % 50000 = 300 THEN '-inf'::DOUBLE WHEN ord % 50000 = 400 THEN -0.0 ELSE round(ord * 0.01, 2) END) AS dbl_ok,
        bool_and(big = CASE WHEN ord = 150000 THEN -9223372036854775807 - 1 WHEN ord = 250000 THEN 9223372036854775807 ELSE (ord - 200000)::BIGINT END) AS big_ok,
        bool_and(dec38 = (ord::HUGEINT - 200000)::DECIMAL(38,10) / 7) AS dec38_ok,
        bool_and(s1213 = CASE WHEN ord % 2 = 0 THEN 'i' || lpad((ord % 90000)::VARCHAR, 11, '0') ELSE 'i' || lpad((ord % 90000)::VARCHAR, 12, '0') END) AS s1213_ok,
        bool_and(flag = (ord % 3 = 0)) AS flag_ok,
-       count(*) FILTER (dbl = 'inf'::DOUBLE) AS infs,
-       count(*) FILTER (dbl = '-inf'::DOUBLE) AS neginfs
+       count(*) FILTER (isnan(dbl)) AS nans,
+       count(*) FILTER (dbl = 'inf'::DOUBLE) AS infs
   FROM ce.specials;
 ----
-n	dbl_ok	big_ok	dec38_ok	s1213_ok	flag_ok	infs	neginfs
+n	dbl_ok	big_ok	dec38_ok	s1213_ok	flag_ok	nans	infs
 400000	t	t	t	t	t	8	8
 
 

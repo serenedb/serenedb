@@ -1,0 +1,203 @@
+# The last uncovered combination axes: compression running over WAL-REPLAYED rows (crash before the
+# first CHECKPOINT, so recovery hands the cut machinery its input), nested-type CHILD columns (a
+# LIST's VARCHAR child is its own column tree and crosses its own block boundaries), temporal types
+# under bitpacking, and force_dict_fsst_mode against native storage.
+#
+# The last one pins a sharp edge: AUTO never writes a plus mode into a native-versioned file (that
+# is the vanilla-duckdb-readability contract), but a FORCED plus mode punches through allow_plus
+# and does. That may or may not be intended; this test pins the current behaviour so a deliberate
+# change has to update it, and an accidental one gets caught.
+#
+# Crash mechanics require the recovery harness (one serened per file with a restart loop); this
+# file must not run on a shared server.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/cwnt.db' AS w (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+# the near-block uniqueness-flip shape, committed but NOT checkpointed: it must reach the
+# compressor through WAL replay, not through the buffer it was created in
+statement ok
+CREATE TABLE w.wal_flip AS
+  SELECT ord, CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR), 1, 12)
+              ELSE substr(md5('0'), 1, 12) END AS v
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+# LIST children: the child VARCHAR column carries the dictionary pressure (uniques + a flip), the
+# list offsets bitpack, and both are independent column trees under one table column
+statement ok
+CREATE TABLE w.nested AS
+  SELECT ord, [md5(ord::VARCHAR), 'tag' || (ord % 50)::VARCHAR,
+               CASE WHEN ord % 700 < 600 THEN 'u' || md5((ord * 7)::VARCHAR) ELSE 'dup' END] AS l
+  FROM range(60000) t(ord) ORDER BY ord;
+
+
+statement ok
+SET force_compression='bitpacking';
+
+
+# temporal types: second-granularity timestamps and wrapping dates, plus a far-future spike that
+# re-prices the frame late in the segment
+statement ok
+CREATE TABLE w.temporal AS
+  SELECT ord,
+         CASE WHEN ord = 190000 THEN TIMESTAMP '2200-01-01'
+              ELSE TIMESTAMP '2026-01-01' + INTERVAL (ord) SECOND END AS ts,
+         (DATE '2026-01-01' + INTERVAL (ord % 3000) DAY)::DATE AS d
+  FROM range(200000) t(ord) ORDER BY ord;
+
+
+statement ok
+SET force_compression='auto';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart: everything above comes back through WAL replay ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+statement ok
+ATTACH '${__TEST_DIR__}/cwnt.db' AS w (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+# compression now runs for the first time, over rows the WAL handed back
+connection after_crash
+statement ok
+SET force_compression='dict_fsst';
+
+
+connection after_crash
+statement ok
+CHECKPOINT w;
+
+
+connection after_crash
+statement ok
+SET force_compression='auto';
+
+
+connection after_crash
+query
+SELECT 'nested' AS shape, count(*) AS n,
+       bool_and(l = [md5(ord::VARCHAR), 'tag' || (ord % 50)::VARCHAR,
+                     CASE WHEN ord % 700 < 600 THEN 'u' || md5((ord * 7)::VARCHAR) ELSE 'dup' END]) AS rows_match
+  FROM w.nested
+UNION ALL SELECT 'temporal', count(*),
+       bool_and(ts = CASE WHEN ord = 190000 THEN TIMESTAMP '2200-01-01' ELSE TIMESTAMP '2026-01-01' + INTERVAL (ord) SECOND END
+            AND d = (DATE '2026-01-01' + INTERVAL (ord % 3000) DAY)::DATE)
+  FROM w.temporal
+UNION ALL SELECT 'wal_flip', count(*),
+       bool_and(v = CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR), 1, 12) ELSE substr(md5('0'), 1, 12) END)
+  FROM w.wal_flip
+ORDER BY shape;
+----
+shape	n	rows_match
+nested	60000	t
+temporal	200000	t
+wal_flip	34600	t
+
+
+# the WAL-replayed rows really landed in the codecs under test: dict_fsst on the flip table AND on
+# the list's child VARCHAR column (path-nested), bitpacking on both temporal columns
+connection after_crash
+query
+SELECT 'wal_flip_dict_fsst' AS combo, (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('w.wal_flip', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR') AS ok
+UNION ALL SELECT 'nested_child_dict_fsst', (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('w.nested', include_segment_info=true) WHERE column_name='l' AND segment_type='VARCHAR')
+UNION ALL SELECT 'nested_offsets_bitpack', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('w.nested', include_segment_info=true) WHERE column_name='l' AND segment_type='VARCHAR[]')
+UNION ALL SELECT 'timestamp_bitpacks', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('w.temporal', include_segment_info=true) WHERE column_name='ts' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'date_bitpacks', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('w.temporal', include_segment_info=true) WHERE column_name='d' AND segment_type NOT IN ('VALIDITY'))
+ORDER BY combo;
+----
+combo	ok
+date_bitpacks	t
+nested_child_dict_fsst	t
+nested_offsets_bitpack	t
+timestamp_bitpacks	t
+wal_flip_dict_fsst	t
+
+
+# --- forced plus modes vs native storage: the punch-through, pinned ---
+
+connection after_crash
+statement ok
+ATTACH '${__TEST_DIR__}/cwnt_native.db' AS wn (TYPE duckdb, ROW_GROUP_SIZE 1048576);
+
+
+connection after_crash
+statement ok
+SET force_compression='dict_fsst';
+
+
+connection after_crash
+statement ok
+SET force_dict_fsst_mode='FSST_PLUS';
+
+
+connection after_crash
+statement ok
+CREATE TABLE wn.forced_plus AS SELECT ord, md5(ord::VARCHAR) AS v FROM range(30000) t(ord) ORDER BY ord;
+
+
+connection after_crash
+statement ok
+CHECKPOINT wn;
+
+
+connection after_crash
+statement ok
+SET force_dict_fsst_mode='DEFAULT';
+
+
+connection after_crash
+statement ok
+SET force_compression='auto';
+
+
+connection after_crash
+query
+SELECT count(*) AS n, bool_and(v = md5(ord::VARCHAR)) AS rows_match FROM wn.forced_plus;
+----
+n	rows_match
+30000	t
+
+
+# CURRENT behaviour: the forced plus mode IS written into the native-versioned file, overriding the
+# allow_plus=false the AUTO path honours. Vanilla duckdb cannot read such a file. If this flips to
+# f, the force started honouring the storage contract -- update the docs and this pin together.
+connection after_crash
+query
+SELECT bool_or(segment_info LIKE '%PLUS%') AS forced_plus_overrides_native
+  FROM pragma_storage_info('wn.forced_plus', include_segment_info=true)
+ WHERE column_name='v' AND segment_type='VARCHAR';
+----
+forced_plus_overrides_native
+t
+
+
+connection after_crash
+statement ok
+DETACH w;
+
+
+connection after_crash
+statement ok
+DETACH wn;

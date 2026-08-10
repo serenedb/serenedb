@@ -488,6 +488,9 @@ struct FilterPrinter {
       ExplainNode node{"Phrase"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Parts"] = PhraseParts(f);
+      if (const auto slop = f.options().slop(); slop > 0) {
+        node.attributes["Slop"] = absl::StrCat(slop);
+      }
       return node;
     }
     if (type == Type<GeoFilter>::id()) {

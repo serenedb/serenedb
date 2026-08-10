@@ -21,10 +21,10 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 
-#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 
@@ -32,29 +32,41 @@ namespace irs {
 
 class ColumnReader;
 class ReadContext;
+class DataOutput;
 class IndexOutput;
-class IndexInput;
+
+struct PayloadBlockSetting {
+  uint32_t group_size = 1;
+  uint32_t record_size = 0;
+
+  size_t RecordCount(size_t docs) const noexcept {
+    return (docs + group_size - 1) / group_size * group_size;
+  }
+};
 
 class QuantizerWriter {
  public:
+  static constexpr size_t kTrainStreaming = std::numeric_limits<size_t>::max();
+
   virtual ~QuantizerWriter() = default;
+
+  virtual size_t TrainSamples(size_t /*rows*/) const noexcept { return 0; }
 
   virtual void Train(const float* vecs, size_t n) = 0;
 
   virtual void SetClusterCentroid(const float* /*centroid*/) {}
 
-  virtual void BeginCluster(size_t /*total_docs*/) {}
+  virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
 
-  virtual void EncodeCluster(IndexOutput& out, const float* vecs,
-                             size_t n) const = 0;
+  virtual void Encode(IndexOutput& out, const float* vecs, size_t n) = 0;
 
-  virtual void FinishCluster(IndexOutput& /*out*/) {}
+  virtual void Finish(IndexOutput& out) = 0;
 
-  virtual std::span<const byte_type> StatsBytes() const = 0;
+  virtual uint32_t PendingLanes() const noexcept { return 0; }
+
+  virtual void Serialize(DataOutput& out) const = 0;
 
   virtual VectorQuantization Kind() const noexcept = 0;
-
-  virtual uint32_t CodeSize() const noexcept = 0;
 
   virtual uint32_t ScanCostBytes() const noexcept = 0;
 };
@@ -62,17 +74,17 @@ class QuantizerWriter {
 class QuantizerReader {
  public:
   virtual ~QuantizerReader() = default;
-  virtual void StartCluster(uint64_t pay_start, size_t num_docs,
-                            const float* centroid) = 0;
-  virtual void ComputeBlock(size_t offset, size_t length, score_t* out) = 0;
+  virtual PayloadBlockSetting BlockSetting() const noexcept = 0;
+  virtual void StartCluster(const float* centroid) = 0;
+  virtual void ComputeBlock(std::span<const byte_type> block, score_t threshold,
+                            score_t* out) = 0;
 };
 
 class QuantizerCodebook
   : public std::enable_shared_from_this<QuantizerCodebook> {
  public:
   virtual ~QuantizerCodebook() = default;
-  virtual std::unique_ptr<QuantizerReader> MakeReader(
-    std::unique_ptr<IndexInput> pay_in) const = 0;
+  virtual std::unique_ptr<QuantizerReader> MakeReader() const = 0;
 };
 
 // Query-independent, deserialized quantizer statistics. Parsed once from the
@@ -86,6 +98,12 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
     std::span<const float> query) const = 0;
 };
 
+constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
+  return quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
+}
+
+bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;
+
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   VectorQuantization quant, uint32_t d, VectorMetric metric, uint32_t pq_m,
   uint32_t pq_niter, uint32_t nb_bits);
@@ -95,7 +113,6 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorMetric metric);
 
 std::unique_ptr<QuantizerReader> MakeQuantizerReader(
-  const std::shared_ptr<const QuantizerCodebook>& codebook,
-  std::unique_ptr<IndexInput> pay_in);
+  const std::shared_ptr<const QuantizerCodebook>& codebook);
 
 }  // namespace irs

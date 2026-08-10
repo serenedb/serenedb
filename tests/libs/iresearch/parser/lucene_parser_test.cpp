@@ -58,13 +58,14 @@ void AssertTerm(const irs::Filter& f, irs::field_id field,
   }
 }
 
-void AssertPhrase(const irs::Filter& f, irs::field_id field,
-                  float boost = 0.0f) {
+void AssertPhrase(const irs::Filter& f, irs::field_id field, float boost = 0.0f,
+                  irs::PosAttr::value_t slop = 0) {
   const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(f);
   EXPECT_EQ(field, phrase.field_id());
   if (boost > 0.0f) {
     EXPECT_FLOAT_EQ(boost, phrase.Boost());
   }
+  EXPECT_EQ(slop, phrase.options().slop());
 }
 
 void AssertPrefix(const irs::Filter& f, irs::field_id field,
@@ -244,6 +245,13 @@ TEST_F(LuceneParserTest, FuzzyTerm) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello~"));
   ASSERT_EQ(1, OptionalRoot().size());
   AssertFuzzy(OptionalRoot()[0], kFieldId, "hello", 2);
+}
+
+TEST_F(LuceneParserTest, SloppyPhraseBareTilde) {
+  // `"..."~` without a number keeps the exact phrase (slop 0).
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"~"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertPhrase(OptionalRoot()[0], kFieldId);
 }
 
 TEST_F(LuceneParserTest, FuzzyTermWithDistance) {
@@ -1284,21 +1292,21 @@ TEST_F(LuceneParserTest, PhraseWithSlop) {
   // "hello world"~3 -> Optional[phrase with slop]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"~3"));
   ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId);
+  AssertPhrase(OptionalRoot()[0], kFieldId, 0.0f, 3);
 }
 
 TEST_F(LuceneParserTest, PhraseWithSlopAndBoost) {
   // "hello world"~3^2 -> Optional[phrase with slop and boost]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"~3^2"));
   ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId, 2.0f);
+  AssertPhrase(OptionalRoot()[0], kFieldId, 2.0f, 3);
 }
 
 TEST_F(LuceneParserTest, FieldPhraseWithSlop) {
   // title:"hello world"~4 -> Optional[title:phrase with slop]
   ASSERT_TRUE(sdb::ParseQuery(ctx, "title:\"hello world\"~4"));
   ASSERT_EQ(1, OptionalRoot().size());
-  AssertPhrase(OptionalRoot()[0], kFieldId);
+  AssertPhrase(OptionalRoot()[0], kFieldId, 0.0f, 4);
 }
 
 TEST_F(LuceneParserTest, AndOrChain) {

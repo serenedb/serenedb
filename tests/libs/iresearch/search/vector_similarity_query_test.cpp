@@ -139,7 +139,7 @@ void AssertQuantizedPath(const irs::SubReader& segment) {
   const auto* postings = segment.field(kVec);
   ASSERT_NE(nullptr, postings);
   ASSERT_NE(irs::IndexFeatures::None,
-            postings->meta().index_features & irs::IndexFeatures::Pay);
+            postings->meta().index_features & irs::IndexFeatures::Vec);
   ASSERT_NE(nullptr, segment.Column(kVec));
 }
 

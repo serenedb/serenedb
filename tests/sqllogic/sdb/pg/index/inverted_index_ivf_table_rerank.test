@@ -1,0 +1,368 @@
+hash-threshold 100
+
+# Exact distances for a quantized IVF index come from the scan's LOOKUP SOURCE,
+# not from the index's own vector copy. Covers the shapes that take a different
+# path through the lookup, and the shapes that have no lookup at all:
+#   - a pool larger than one lookup chunk (chunked Materialize)
+#   - rowids with holes (row-group skipping + the non-ascending sort path)
+#   - no lookup source -> the index's own vectors, still exact:
+#     store_pk = 'none' (TopK and both Stream shapes) and an expression-keyed
+#     vector field
+#   - a score predicate, which must apply to exact scores
+#   - a radius predicate: an approximate range, where count(*) and the emitted
+#     rows must still agree because both consult the same gate
+#   - MVCC: the index snapshot and the source read must agree
+
+statement ok
+SET sdb_nprobe = 1000
+
+# --- a pool spanning several lookup chunks ------------------------------------
+# The lookup fetches by bytes, not rows, so at d = 1024 one chunk holds 256 rows;
+# LIMIT 300 over-fetches a 1200-candidate pool and crosses the boundary.
+
+statement ok
+CREATE TABLE tr_wide (pk INTEGER PRIMARY KEY, emb FLOAT[1024])
+
+statement ok
+CREATE INDEX tr_wide_sq8 ON tr_wide USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
+
+statement count 400
+INSERT INTO tr_wide
+SELECT i, list_transform(range(1024), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[1024]
+FROM range(1, 401) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_wide
+
+# emb is (i, 0, ...), so the distance to the origin is exactly i.
+query
+SELECT pk, emb <-> list_transform(range(1024), x -> 0.0::FLOAT)::FLOAT[1024] AS d
+FROM tr_wide_sq8 ORDER BY d LIMIT 5;
+----
+pk	d
+1	1
+2	2
+3	3
+4	4
+5	5
+
+# A 300-row limit over-fetches a 1200-candidate pool: 1..300 exactly, summing to
+# 45150, so every chunk of the lookup contributed correct distances.
+query
+SELECT count(*) AS n, sum(d)::BIGINT AS s FROM (
+  SELECT emb <-> list_transform(range(1024), x -> 0.0::FLOAT)::FLOAT[1024] AS d
+  FROM tr_wide_sq8 ORDER BY d LIMIT 300
+) q;
+----
+n	s
+300	45150
+
+# --- rowids with holes -------------------------------------------------------
+
+statement ok
+CREATE TABLE tr_gap (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tr_gap_sq8 ON tr_gap USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
+
+statement count 300
+INSERT INTO tr_gap SELECT i, [i, 0, 0]::FLOAT[3] FROM range(1, 301) t(i)
+
+statement count 200
+DELETE FROM tr_gap WHERE pk BETWEEN 51 AND 250
+
+statement count 3
+INSERT INTO tr_gap VALUES
+  (1001, [1001, 0, 0]::FLOAT[3]),
+  (1002, [1002, 0, 0]::FLOAT[3]),
+  (1003, [1003, 0, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_gap
+
+query
+SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_gap_sq8 ORDER BY d LIMIT 4;
+----
+pk	d
+1	1
+2	2
+3	3
+4	4
+
+query
+SELECT count(*) AS n FROM tr_gap_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] < 300;
+----
+n
+99
+
+# --- store_pk = 'none': no PK to look up, so the index vectors stay in use ----
+
+statement ok
+CREATE TABLE tr_nopk (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tr_nopk_sq8 ON tr_nopk USING inverted(emb ivf (metric = 'l2', quant = 'sq8')) WITH (store_pk = 'none')
+
+statement count 4
+INSERT INTO tr_nopk VALUES
+  (1, [3, 4, 0]::FLOAT[3]),
+  (2, [6, 8, 0]::FLOAT[3]),
+  (3, [0, 0, 12]::FLOAT[3]),
+  (4, [9, 12, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_nopk
+
+# TopK (emit-side rerank over the index's own vectors).
+query
+SELECT emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_nopk_sq8 ORDER BY d LIMIT 3;
+----
+d
+5
+10
+12
+
+# Stream, compound order -- the path that has no other coverage at all.
+query
+SELECT emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_nopk_sq8
+ORDER BY d, emb <-> [1, 0, 0]::FLOAT[3] LIMIT 3;
+----
+d
+5
+10
+12
+
+# Stream, no pushed limit.
+query
+SELECT emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_nopk_sq8 ORDER BY 1;
+----
+d
+5
+10
+12
+15
+
+# --- an expression-keyed vector field also has no column to look up ----------
+
+statement ok
+CREATE TABLE tr_expr (pk INTEGER PRIMARY KEY, x FLOAT, y FLOAT, z FLOAT)
+
+statement ok
+CREATE INDEX tr_expr_sq8 ON tr_expr
+  USING inverted(pk, (array_value(x, y, z)) ivf (metric = 'l2', quant = 'sq8'))
+
+statement count 4
+INSERT INTO tr_expr VALUES (1, 3, 4, 0), (2, 6, 8, 0), (3, 0, 0, 12), (4, 9, 12, 0)
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_expr
+
+query
+SELECT pk, array_value(x, y, z) <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_expr_sq8
+ORDER BY d LIMIT 3;
+----
+pk	d
+1	5
+2	10
+3	12
+
+query
+SELECT pk, array_value(x, y, z) <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_expr_sq8
+ORDER BY pk;
+----
+pk	d
+1	5
+2	10
+3	12
+4	15
+
+# --- a score predicate on a quantized index ----------------------------------
+# The pool is picked by the approximate quantized score, so the predicate cannot
+# be applied before the k-cut; the scan streams instead and filters exact scores.
+
+statement ok
+CREATE TABLE tr_flt (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tr_flt_sq8 ON tr_flt USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
+
+statement count 4
+INSERT INTO tr_flt VALUES
+  (1, [3, 4, 0]::FLOAT[3]),
+  (2, [6, 8, 0]::FLOAT[3]),
+  (3, [0, 0, 12]::FLOAT[3]),
+  (4, [9, 12, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_flt
+
+query
+SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_flt_sq8
+WHERE emb <-> [0, 0, 0]::FLOAT[3] > 9 ORDER BY d LIMIT 2;
+----
+pk	d
+2	10
+3	12
+
+query
+SELECT pk FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] < 11 ORDER BY pk;
+----
+pk
+1
+2
+
+# --- a radius predicate on a quantized index ---------------------------------
+# A quantized index answers the range APPROXIMATELY: membership is decided by the
+# lossy payload distance alone, and the exact distance is resolved only for the
+# rows that survive. So a returned row may report a distance outside the radius,
+# and a row just inside it may be missed -- both are accepted, and the predicate
+# is therefore not kept above the scan. What must hold is consistency: every path
+# has to use the same gate, so count(*) always equals the number of rows emitted.
+
+query
+SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_flt_sq8
+WHERE emb <-> [0, 0, 0]::FLOAT[3] < 11 ORDER BY pk;
+----
+pk	d
+1	5
+2	10
+
+query
+SELECT count(*) AS n FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] < 11;
+----
+n
+2
+
+query
+SELECT count(*) AS n FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 13;
+----
+n
+3
+
+# The visible cost of an approximate range: pk 3's exact distance IS 12, but its
+# quantized distance rounds just above the radius, so the gate drops it. An
+# unquantized index returns 3 here.
+query
+SELECT count(*) AS n FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12;
+----
+n
+2
+
+# The consistency property, which is what actually has to be enforced: counting
+# and emitting go through different scan modes, and both must ask the same gate.
+# Counting through an exact rescan while emitting used the payload gate reported
+# 3 here against 2 rows.
+query
+SELECT count(*) AS emitted FROM (
+  SELECT pk FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12
+) q;
+----
+emitted
+2
+
+# And the predicate must not survive above the scan: a Column Filter here would
+# re-check the exact score and silently turn the approximate range back into a
+# half-exact one.
+query
+EXPLAIN SELECT pk FROM tr_flt_sq8 WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───╮
+│ Index: tr_flt_sq8  │
+│ Lookup: table      │
+│ Index Filter:      │
+│ ╭─ Vector Range ─╮ │
+│ │ Field: emb     │ │
+│ │ Metric: l2     │ │
+│ │ Radius: <= 12  │ │
+│ ╰────────────────╯ │
+│ Projections: pk    │
+│ ~4 rows            │
+╰────────────────────╯
+
+statement ok
+CREATE TABLE tr_flt_n (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tr_flt_none ON tr_flt_n USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'))
+
+statement count 4
+INSERT INTO tr_flt_n VALUES
+  (1, [3, 4, 0]::FLOAT[3]),
+  (2, [6, 8, 0]::FLOAT[3]),
+  (3, [0, 0, 12]::FLOAT[3]),
+  (4, [9, 12, 0]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_flt_n
+
+query
+SELECT count(*) AS n FROM tr_flt_none WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 12;
+----
+n
+3
+
+# --- MVCC: the pinned index snapshot and the table read must agree -----------
+
+statement ok
+CREATE TABLE tr_mvcc (pk INTEGER PRIMARY KEY, emb FLOAT[3])
+
+statement ok
+CREATE INDEX tr_mvcc_sq8 ON tr_mvcc USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8'))
+
+statement count 3
+INSERT INTO tr_mvcc VALUES
+  (1, [3, 4, 0]::FLOAT[3]),
+  (2, [6, 8, 0]::FLOAT[3]),
+  (3, [0, 0, 12]::FLOAT[3])
+
+statement ok
+VACUUM (REFRESH_TABLE) tr_mvcc
+
+connection rr
+
+connection rr
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+connection rr
+query
+SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_mvcc_sq8 ORDER BY d;
+----
+pk	d
+1	5
+2	10
+3	12
+
+connection w
+statement count 1
+DELETE FROM tr_mvcc WHERE pk = 2
+
+connection w
+statement count 1
+UPDATE tr_mvcc SET emb = [0, 0, 1]::FLOAT[3] WHERE pk = 3
+
+connection w
+statement ok
+VACUUM (REFRESH_TABLE) tr_mvcc;
+
+connection rr
+query
+SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_mvcc_sq8 ORDER BY d;
+----
+pk	d
+1	5
+2	10
+3	12
+
+connection rr
+statement ok
+COMMIT;
+
+connection w
+query
+SELECT pk, emb <-> [0, 0, 0]::FLOAT[3] AS d FROM tr_mvcc_sq8 ORDER BY d;
+----
+pk	d
+3	1
+1	5

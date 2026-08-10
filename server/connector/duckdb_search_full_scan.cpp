@@ -863,20 +863,9 @@ void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
     gstate.produced_rows.load(std::memory_order_relaxed);
 }
 
-void ApplyScoreEmit(const IResearchScanGlobalState& gstate, float* scores,
-                    duckdb::idx_t n) {
-  // Map in place at the emit boundary so the output vector sees the user-facing
-  // value. Text scores are already user-facing (no vector scorer).
-  if (gstate.vector_scorer == nullptr) {
-    return;
-  }
-  const auto emit = gstate.vector_scorer->score_emit;
-  if (emit == ScoreEmit::Identity) {
-    return;
-  }
-  for (duckdb::idx_t i = 0; i < n; ++i) {
-    scores[i] = ApplyScoreEmit(emit, scores[i]);
-  }
+ScoreEmit ScoreEmitOf(const IResearchScanGlobalState& gstate) noexcept {
+  return gstate.vector_scorer == nullptr ? ScoreEmit::Identity
+                                         : gstate.vector_scorer->score_emit;
 }
 
 void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
@@ -894,10 +883,19 @@ void AccountAndWriteVirtualColumns(IResearchScanGlobalState& gstate,
   if (!gstate.ScanScore()) {
     return;
   }
-  // Scores arrive already mapped to the user-facing value (ApplyScoreEmit runs
-  // at the emit boundary) in the batcher's staged vector: reference it.
   SDB_ASSERT(scores != nullptr);
-  output.data[gstate.score_output_idx].Reference(*scores);
+  auto& score_out = output.data[gstate.score_output_idx];
+  const auto emit = ScoreEmitOf(gstate);
+  if (emit == ScoreEmit::Identity) {
+    score_out.Reference(*scores);
+    return;
+  }
+  SDB_ASSERT(score_out.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
+  const auto* raw = duckdb::FlatVector::GetData<float>(*scores);
+  auto* mapped = duckdb::FlatVector::GetDataMutable<float>(score_out);
+  for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+    mapped[i] = ApplyScoreEmit(emit, raw[i]);
+  }
 }
 
 namespace {
@@ -909,6 +907,11 @@ const irs::Filter& MatchAllFilter() {
 
 uint32_t ReadRerankFactor(duckdb::ClientContext& context) {
   return ReadIntSetting(context, "sdb_rerank_factor");
+}
+
+size_t CollectorPoolSize(const IResearchScanGlobalState& g,
+                         const SereneDBScanBindData& bind) {
+  return g.topk.rerank_pool != 0 ? g.topk.rerank_pool : *bind.score_top_k;
 }
 
 void RerankHits(IResearchScanGlobalState& g, std::span<irs::ScoreDoc> hits) {
@@ -1626,9 +1629,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
     if (!gstate.vector_scorer) {
       lstate->local_threshold = std::numeric_limits<irs::score_t>::min();
     }
-    const size_t k =
-      gstate.topk.rerank_pool ? gstate.topk.rerank_pool : *bd.score_top_k;
-    lstate->hit_buf.resize(irs::BlockSize(k));
+    lstate->hit_buf.resize(irs::BlockSize(CollectorPoolSize(gstate, bd)));
     lstate->hit_slice = std::span<irs::ScoreDoc>{lstate->hit_buf};
     BuildOffsetsEntries(*lstate, input, bd);
     return lstate;
@@ -1874,9 +1875,8 @@ void CollectSegmentTopK(TopKScanLocalState& s, const irs::SubReader& seg,
   using C = irs::NthPartitionScoreCollector;
   const auto& search = *g.scan;
   if (!std::holds_alternative<C>(s.collector)) {
-    const size_t k =
-      g.topk.rerank_pool ? g.topk.rerank_pool : *search.score_top_k;
-    s.collector.template emplace<C>(s.local_threshold, k, s.hit_slice);
+    s.collector.template emplace<C>(s.local_threshold,
+                                    CollectorPoolSize(g, search), s.hit_slice);
   }
   auto& collector = std::get<C>(s.collector);
 
@@ -2129,9 +2129,6 @@ void StreamScanLocalState::PushHits(IResearchScanGlobalState& g) {
       const auto n = streaming_doc->EmitScoredDocs(
         hit_batcher->WindowHead(), hit_batcher->ScoreHead(), cursor + span,
         streaming_score_function, &score_fetcher, cursor);
-      // User-facing scores in the batcher: the score-column filter (applied on
-      // _scores in EmitFiltered) and the output vector both see the one value.
-      ApplyScoreEmit(g, hit_batcher->ScoreHead(), n);
       hit_batcher->CommitWindow(n);
     } else {
       const auto n = streaming_doc->EmitDocs(hit_batcher->WindowHead(), cursor,
@@ -2357,12 +2354,6 @@ bool EmitBufferedScoreDocs(duckdb::ClientContext& ctx,
         }
         ++n;
         ++current_idx;
-      }
-      // Map the collector's raw scores to the user-facing value in the batcher,
-      // symmetric with the streaming path (AccountAndWriteVirtualColumns copies
-      // them straight out).
-      if (out_scores != nullptr) {
-        ApplyScoreEmit(g, out_scores, n);
       }
       batcher.CommitWindow(n);
     }

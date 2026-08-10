@@ -29,6 +29,7 @@ add_bench(config_var_lookup)
 add_bench(norm_gather)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
+add_bench(sloppy_phrase_vs_disjunction)
 add_bench(filter_prepare)
 add_bench(consecutive_run_length)
 add_bench(parse_query)
@@ -70,6 +71,15 @@ target_include_directories(
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/lz4/lib
 )
 
+target_compile_options(
+    serenedb-bench-micro-sloppy_phrase_vs_disjunction
+    PRIVATE -fno-lto
+)
+target_link_options(
+    serenedb-bench-micro-sloppy_phrase_vs_disjunction
+    PRIVATE -fno-lto
+)
+
 # frozen_vs_alternatives measures the boost::text frozen::set use-cases against
 # what we already vendor; needs frozen headers + the boost::text data tables.
 if(ARCH_AMD64)
@@ -90,8 +100,19 @@ endif()
 
 # regexp_vs_wildcard splits UTF-8 via duckdb's vendored utf8proc + simdutf.
 target_link_libraries(serenedb-bench-micro-regexp_vs_wildcard PRIVATE simdutf)
+
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard
+    SYSTEM
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+)
+
+target_link_libraries(
+    serenedb-bench-micro-sloppy_phrase_vs_disjunction
+    PRIVATE simdutf
+)
+target_include_directories(
+    serenedb-bench-micro-sloppy_phrase_vs_disjunction
     SYSTEM
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )

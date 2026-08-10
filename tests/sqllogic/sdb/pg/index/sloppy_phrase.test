@@ -1,0 +1,385 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE sloppy (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sloppy_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX sloppy_idx ON sloppy USING inverted(a, b sloppy_english);
+
+statement ok
+INSERT INTO sloppy values (1, 'quick brown fox');
+
+statement ok
+INSERT INTO sloppy values (2, 'quick fox');
+
+statement ok
+INSERT INTO sloppy values (3, 'quick red angry fox');
+
+statement ok
+INSERT INTO sloppy values (4, 'fox quick');
+
+statement ok
+INSERT INTO sloppy values (5, 'slow grey turtle');
+
+statement ok
+INSERT INTO sloppy values (6, 'lazy quick fox dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) sloppy;
+
+# ----------------------------------------------------------------------
+# slop counts position moves: one inserted word
+# costs 1, a transposed adjacent pair costs 2.
+# ----------------------------------------------------------------------
+
+# slop=0 is an exact phrase.
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 0) ORDER BY a;
+----
+a
+2
+6
+
+# slop=1 admits one inserted word ('quick brown fox').
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 1) ORDER BY a;
+----
+a
+1
+2
+6
+
+# slop=2 admits two inserted words and the transposed pair 'fox quick'.
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 2) ORDER BY a;
+----
+a
+1
+2
+3
+4
+6
+
+# ----------------------------------------------------------------------
+# slop=0 coincides with ts_phrase.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox') ORDER BY a;
+----
+a
+2
+6
+
+# ----------------------------------------------------------------------
+# ::slop(N) modifier is equivalent to the function form, on both
+# phrase constructors.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(1) ORDER BY a;
+----
+a
+1
+2
+6
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ phraseto_tsquery('quick fox')::slop(1) ORDER BY a;
+----
+a
+1
+2
+6
+
+# ----------------------------------------------------------------------
+# ::slop composes through the value path: the fold renders the leg back
+# into structured text and the re-bound phrase consumes the budget.
+# Row 1 discriminates slop=1 from the exact phrase.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ (ts_phrase('quick fox')::slop(1) || ts_phrase('slow grey')) ORDER BY a;
+----
+a
+1
+2
+5
+6
+
+# Lucene `"..."~N` phrase slop through to_tsquery.
+query
+SELECT a FROM sloppy_idx WHERE b @@ to_tsquery('"quick fox"~1') ORDER BY a;
+----
+a
+1
+2
+6
+
+# Structured text with ::slop arriving as a prepared parameter re-parses
+# through the whitelist.
+statement ok
+PREPARE sp_slop AS SELECT a FROM sloppy_idx WHERE b @@ $1 ORDER BY a;
+
+query
+EXECUTE sp_slop('ts_phrase(''quick fox'')::slop(1)');
+----
+a
+1
+2
+6
+
+query
+EXECUTE sp_slop('ts_phrase(''quick fox'', slop := 1)');
+----
+a
+1
+2
+6
+
+statement ok
+DEALLOCATE sp_slop;
+
+# ::slop on a scalar compound bucket: the argument renders through the
+# same structured-text path and the re-bound leaf consumes the budget.
+# List buckets cannot carry modifier-typed elements: there is no
+# TSQUERY_MODIFIER[] -> TSQUERY[] list cast (family-wide, same for
+# ::tokenize / ::boost elements).
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_compound(ts_phrase('quick fox')::slop(1), NULL, NULL) ORDER BY a;
+----
+a
+1
+2
+6
+
+# ----------------------------------------------------------------------
+# Exact gaps compose with the sloppy form: quick <exactly one word> fox.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick', 1, 'fox', slop := 0) ORDER BY a;
+----
+a
+1
+
+# ----------------------------------------------------------------------
+# Error paths.
+# ----------------------------------------------------------------------
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := -1);
+----
+db error: ERROR: ts_phrase slop must be >= 0, got -1
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+# NULL slop folds the predicate to NULL at bind: no rows, no error.
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := NULL) ORDER BY a;
+----
+a
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick', [1, 3], 'fox', slop := 2);
+----
+db error: ERROR: slop is incompatible with interval gaps ([min, max])
+HINT: Use exact gaps (single INTEGER) with slop, or drop it.
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_like('quick')::slop(2);
+----
+db error: ERROR: ::slop(N) is only valid on a phrase
+HINT: Apply ::slop to ts_phrase(...), e.g. ts_phrase('a b c')::slop(2).
+
+
+# ::slop over NULL: casting a NULL constant retypes it without a cast
+# node, so the modifier dissolves with the NULL and the predicate
+# degrades to an empty match -- same NULL propagation as the function
+# form above.
+query
+SELECT a FROM sloppy_idx WHERE b @@ NULL::tsquery::slop(2) ORDER BY a;
+----
+a
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ tsquery_phrase(ts_phrase('quick')::slop(1), ts_phrase('fox'), 2);
+----
+db error: ERROR: ## part must not carry a slop modifier
+HINT: Use ts_phrase(..., slop := N) or ts_phrase(...)::slop(N) for a sloppy phrase.
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(1)::slop(2);
+----
+db error: ERROR: ::slop specified more than once
+HINT: Apply ::slop(N) at most once per phrase.
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 1)::slop(2);
+----
+db error: ERROR: slop specified more than once
+HINT: Use either the `slop := N` argument or `::slop(N)`, not both.
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(-2);
+----
+db error: ERROR: slop() budget must be >= 0, got -2
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(5000000000);
+----
+db error: ERROR: ::slop too large: 5000000000
+
+
+# Additional corpus for the multi-term, repeated-term, and gap cases.
+
+statement ok
+INSERT INTO sloppy values (7, 'quick brown lazy fox');
+
+statement ok
+INSERT INTO sloppy values (8, 'quick red brown red fox');
+
+statement ok
+INSERT INTO sloppy values (9, 'quick quick fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) sloppy;
+
+# ----------------------------------------------------------------------
+# Three terms: one budget shared across all pairs.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox', slop := 0) ORDER BY a;
+----
+a
+1
+
+# One inserted word ('lazy' between brown and fox).
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox', slop := 1) ORDER BY a;
+----
+a
+1
+7
+
+# Two inserted words, one in each pair.
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox', slop := 2) ORDER BY a;
+----
+a
+1
+7
+8
+
+# ----------------------------------------------------------------------
+# Repeated query term: one document occurrence cannot satisfy two
+# query slots, so a single 'quick' never matches 'quick quick'.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick quick', slop := 0) ORDER BY a;
+----
+a
+9
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick quick', slop := 2) ORDER BY a;
+----
+a
+9
+
+# ----------------------------------------------------------------------
+# Declared gap + slop: the budget counts deviation from the declared
+# gap, not from adjacency. 'quick <one word> fox' declares step 2.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick', 1, 'fox', slop := 0) ORDER BY a;
+----
+a
+1
+9
+
+# Budget 1 admits step 1 (adjacent) and step 3 (two words between).
+query
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick', 1, 'fox', slop := 1) ORDER BY a;
+----
+a
+1
+2
+3
+6
+7
+9
+
+# ----------------------------------------------------------------------
+# Budget validation: strict integer, no silent rounding.
+# ----------------------------------------------------------------------
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(1.5);
+----
+db error: ERROR: slop() budget must be a non-null integer, got 1.5
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox')::slop(NULL);
+----
+db error: ERROR: slop() budget must be a non-null integer, got NULL
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 5000000000);
+----
+db error: ERROR: ts_phrase slop too large: 5000000000
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick', 1.5, 'fox');
+----
+db error: ERROR: ts_phrase gap must be a non-null non-negative integer, got 1.5 of type DECIMAL(2,1) (argument 1)
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+query error
+SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick', 1.5, 'fox', slop := 0);
+----
+db error: ERROR: ts_phrase gap must be a non-null non-negative integer, got 1.5 of type DECIMAL(2,1) (argument 1)
+HINT: Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b', slop := 2). INTEGER / INTEGER[] gap allowed between text args; `slop := N` is a non-negative budget for position rearrangements (incompatible with interval gaps).
+
+
+query
+EXPLAIN SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick fox', slop := 1);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: sloppy_idx                      │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Phrase ───────────────────────────╮ │
+│ │ Field: b(string)                   │ │
+│ │ Parts:                             │ │
+│ │ Term:quick(0, 0); Term:fox(1, 1);  │ │
+│ │ Slop: 1                            │ │
+│ ╰────────────────────────────────────╯ │
+│ Projections: a                         │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯

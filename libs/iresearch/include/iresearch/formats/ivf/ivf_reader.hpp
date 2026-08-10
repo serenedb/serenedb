@@ -27,7 +27,6 @@
 #include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/ivf/vector_block_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"

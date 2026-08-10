@@ -20,34 +20,23 @@
 
 #pragma once
 
-#include <memory>
-#include <vector>
+#include <cstdint>
 
-#include "iresearch/index/column_info.hpp"
 #include "iresearch/search/filter.hpp"
+#include "iresearch/search/vector_filter_util.hpp"
 
 namespace irs {
 
 class ByVectorSimilarity;
 
-struct ByVectorSimilarityOptions {
+struct ByVectorSimilarityOptions : VectorFilterOptions {
   using FilterType = ByVectorSimilarity;
 
-  std::vector<float> query;
-  field_id centroids_id = field_limits::invalid();
-  field_id postings_id = field_limits::invalid();
-  VectorMetric metric = VectorMetric::L2Sqr;
-  VectorQuantization quant = VectorQuantization::None;
   uint32_t nprobe = 1;
   uint32_t max_search_fanout = 0;
-  std::shared_ptr<const Filter> inner;
 
-  bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept {
-    return query == rhs.query && centroids_id == rhs.centroids_id &&
-           postings_id == rhs.postings_id && metric == rhs.metric &&
-           quant == rhs.quant && nprobe == rhs.nprobe &&
-           max_search_fanout == rhs.max_search_fanout && inner == rhs.inner;
-  }
+  bool operator==(const ByVectorSimilarityOptions& rhs) const noexcept =
+    default;
 };
 
 class ByVectorSimilarity final

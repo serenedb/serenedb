@@ -1,0 +1,262 @@
+control substitution on
+
+hash-threshold 100
+
+# Fetching every transform target type back through the read_json pk-lookup
+# (JSONLookupScan), which is a different code path from the batched scan in
+# tests/sqllogic/sdb/pg/data_source/json_types.test: the index hands it a list
+# of byte offsets and it materialises exactly those rows.
+#
+# `ts_phrase('pudge')` matches rows 1, 3 and 4 but not 2, so every query here
+# probes a non-contiguous set -- the survivors must be compacted to output
+# rows 0..2 while keeping each row's own values. A lookup that mixed rows up
+# (all rows sharing one row's nested child data, or every row landing on row
+# 0) reads as identical values repeated down the column, which the distinct
+# per-row values below would catch. Row 3 is all-NULL, and rows 1/4 differ in
+# every column.
+
+statement ok
+CREATE TABLE jsonl_src (
+    id INTEGER,
+    body VARCHAR,
+    c_bool BOOLEAN,
+    c_i8 TINYINT,
+    c_i16 SMALLINT,
+    c_i32 INTEGER,
+    c_i64 BIGINT,
+    c_i128 HUGEINT,
+    c_u8 UTINYINT,
+    c_u16 USMALLINT,
+    c_u32 UINTEGER,
+    c_u64 UBIGINT,
+    c_f32 FLOAT,
+    c_f64 DOUBLE,
+    c_dec16 DECIMAL(4,2),
+    c_dec32 DECIMAL(9,3),
+    c_dec64 DECIMAL(18,4),
+    c_dec128 DECIMAL(38,5),
+    c_varchar VARCHAR,
+    c_blob BLOB,
+    c_date DATE,
+    c_time TIME,
+    c_ts TIMESTAMP,
+    c_ival INTERVAL,
+    c_uuid UUID,
+    c_list INTEGER[],
+    c_list_list INTEGER[][],
+    c_struct STRUCT(a INTEGER, b VARCHAR),
+    c_nested STRUCT(p STRUCT(q INTEGER, r INTEGER[])),
+    c_map MAP(VARCHAR, INTEGER),
+    c_array DOUBLE[3],
+    c_los STRUCT(x INTEGER, y VARCHAR)[],
+    c_json JSON,
+    c_union UNION(num INTEGER, str VARCHAR),
+    c_u128 UHUGEINT
+);
+
+statement ok
+INSERT INTO jsonl_src VALUES
+(1, 'pudge alpha', true, -8, 300, 70000, 5000000000,
+ 170141183460469231731687303715884105727, 250, 65000, 4000000000, 18446744073709551615,
+ 1.5, -2.25, 12.25, 12345.625, 1234567890.0625, 1024.03125,
+ 'héllo "x"', '\x0001ff'::BLOB, DATE '2024-02-29', TIME '13:45:06.123456',
+ TIMESTAMP '2024-02-29 13:45:06.123456', INTERVAL '1 year 2 months 3 days 04:05:06',
+ '123e4567-e89b-12d3-a456-426614174000'::UUID,
+ [1,2,3], [[1,2],[3]], {'a': 1, 'b': 'x'}, {'p': {'q': 7, 'r': [1,2]}},
+ MAP {'k1': 10, 'k2': 20}, [1.5,2.5,3.5], [{'x':1,'y':'a'},{'x':2,'y':'b'}],
+ '{"nested":{"deep":[1,2]}}', union_value(num := 42), 340282366920938463463374607431768211455),
+(2, 'manga beta', false, 127, -32768, -2147483648, -9223372036854775808,
+ -170141183460469231731687303715884105728, 0, 0, 0, 0,
+ -0.5, 1e100, -12.25, -0.001, -0.0001, -0.00001,
+ '', '\x'::BLOB, DATE '1970-01-01', TIME '00:00:00',
+ TIMESTAMP '1970-01-01 00:00:00', INTERVAL '-5 days',
+ '00000000-0000-0000-0000-000000000000'::UUID,
+ [], [[]], {'a': -1, 'b': ''}, {'p': {'q': -7, 'r': []}},
+ MAP {}, [0.0,-0.0,0.5], [], '[]', union_value(str := 'tag'), 0),
+(3, 'pudge gamma', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+(4, 'pudge delta', true, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+ 0.25, 3.5, 0.01, 0.001, 0.0001, 0.00001,
+ 'quo"te and\backslash', '\x41'::BLOB, DATE '9999-12-31', TIME '23:59:59.999999',
+ TIMESTAMP '9999-12-31 23:59:59.999999', INTERVAL '00:00:00.000001',
+ 'ffffffff-ffff-ffff-ffff-ffffffffffff'::UUID,
+ [NULL, 4], [[NULL],[5,6]], {'a': NULL, 'b': 'z'}, {'p': {'q': NULL, 'r': [NULL]}},
+ MAP {'only': NULL}, [NULL, 1.0, NULL], [{'x':NULL,'y':NULL}], '{"k":null}',
+ union_value(num := NULL), 1);
+
+statement ok
+COPY jsonl_src TO '${__TEST_DIR__}/jsonl.jsonl' (FORMAT json);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jsonl_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW jsonl_v AS SELECT * FROM read_json('${__TEST_DIR__}/jsonl.jsonl', columns={
+    id: 'INTEGER', body: 'VARCHAR', c_bool: 'BOOLEAN', c_i8: 'TINYINT', c_i16: 'SMALLINT',
+    c_i32: 'INTEGER', c_i64: 'BIGINT', c_i128: 'HUGEINT', c_u8: 'UTINYINT', c_u16: 'USMALLINT',
+    c_u32: 'UINTEGER', c_u64: 'UBIGINT', c_f32: 'FLOAT', c_f64: 'DOUBLE',
+    c_dec16: 'DECIMAL(4,2)', c_dec32: 'DECIMAL(9,3)', c_dec64: 'DECIMAL(18,4)',
+    c_dec128: 'DECIMAL(38,5)', c_varchar: 'VARCHAR', c_blob: 'BLOB', c_date: 'DATE',
+    c_time: 'TIME', c_ts: 'TIMESTAMP', c_ival: 'INTERVAL', c_uuid: 'UUID',
+    c_list: 'INTEGER[]', c_list_list: 'INTEGER[][]', c_struct: 'STRUCT(a INTEGER, b VARCHAR)',
+    c_nested: 'STRUCT(p STRUCT(q INTEGER, r INTEGER[]))', c_map: 'MAP(VARCHAR, INTEGER)',
+    c_array: 'DOUBLE[3]', c_los: 'STRUCT(x INTEGER, y VARCHAR)[]', c_json: 'JSON',
+    c_union: 'UNION(num INTEGER, str VARCHAR)', c_u128: 'UHUGEINT'});
+
+# file_row_number is auto-detected as the PK, which is what the lookup probes.
+statement ok
+CREATE INDEX jsonl_idx ON jsonl_v USING inverted(body jsonl_en);
+
+# count(*) is answered from iresearch alone -- no materialisation.
+query
+SELECT count(*) FROM jsonl_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# ============================================================================
+# Signed integers and BOOLEAN through the lookup.
+# ============================================================================
+
+query
+SELECT id, body, c_bool, c_i8, c_i16, c_i32, c_i64, c_i128::VARCHAR AS c_i128
+FROM jsonl_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body	c_bool	c_i8	c_i16	c_i32	c_i64	c_i128
+1	pudge alpha	t	-8	300	70000	5000000000	170141183460469231731687303715884105727
+3	pudge gamma	NULL	NULL	NULL	NULL	NULL	NULL
+4	pudge delta	t	1	1	1	1	1
+
+
+# ============================================================================
+# Unsigned integers.
+# ============================================================================
+
+query
+SELECT id, c_u8, c_u16, c_u32, c_u64, c_u128::VARCHAR AS c_u128
+FROM jsonl_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	c_u8	c_u16	c_u32	c_u64	c_u128
+1	250	65000	4000000000	18446744073709551615	340282366920938463463374607431768211455
+3	NULL	NULL	NULL	NULL	NULL
+4	1	1	1	1	1
+
+
+# ============================================================================
+# Floats and the four DECIMAL physical widths.
+# ============================================================================
+
+query
+SELECT id, c_f32, c_f64::VARCHAR AS c_f64, c_dec16, c_dec32, c_dec64, c_dec128
+FROM jsonl_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	c_f32	c_f64	c_dec16	c_dec32	c_dec64	c_dec128
+1	1.5	-2.25	12.25	12345.625	1234567890.0625	1024.03125
+3	NULL	NULL	NULL	NULL	NULL	NULL
+4	0.25	3.5	0.01	0.001	0.0001	0.00001
+
+
+# ============================================================================
+# Strings, temporal types and UUID. The VARCHAR values are the interesting
+# ones here: the lookup writes string_t descriptors that borrow the reader's
+# buffers, so a lifetime slip shows up as garbage rather than a wrong row.
+# ============================================================================
+
+query
+SELECT id, c_varchar, c_blob, c_date, c_time, c_ts, c_ival, c_uuid
+FROM jsonl_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	c_varchar	c_blob	c_date	c_time	c_ts	c_ival	c_uuid
+1	héllo "x"	\\x5c7830305c7830315c784646	2024-02-29	13:45:06.123456	2024-02-29 13:45:06.123456	1 year 2 mons 3 days 04:05:06	123e4567-e89b-12d3-a456-426614174000
+3	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+4	quo"te and\\backslash	\\x41	9999-12-31	23:59:59.999999	9999-12-31 23:59:59.999999	00:00:00.000001	ffffffff-ffff-ffff-ffff-ffffffffffff
+
+
+# ============================================================================
+# LIST, nested LIST and STRUCT. These are the shapes that broke when the
+# lookup materialised a row through a one-row slice of the output: a slice of
+# a nested type gets its own child buffer, so every row ended up pointing at
+# the same child data.
+# ============================================================================
+
+query
+SELECT id, c_list, c_list_list::VARCHAR AS c_list_list, c_struct, c_nested
+FROM jsonl_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	c_list	c_list_list	c_struct	c_nested
+1	{1,2,3}	[[1, 2], [3]]	(1,x)	("(7,""{1,2}"")")
+3	NULL	NULL	NULL	NULL
+4	{NULL,4}	[[NULL], [5, 6]]	(,z)	("(,{NULL})")
+
+
+# ============================================================================
+# MAP, fixed-size ARRAY, LIST of STRUCT, JSON and UNION.
+# ============================================================================
+
+query
+SELECT id, c_map, c_array, c_los, c_json, c_union
+FROM jsonl_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	c_map	c_array	c_los	c_json	c_union
+1	{"(k1,10)","(k2,20)"}	{1.5,2.5,3.5}	{"(1,a)","(2,b)"}	{"nested":{"deep":[1,2]}}	42
+3	NULL	NULL	NULL	NULL	NULL
+4	{"(only,)"}	{NULL,1,NULL}	{"(,)"}	{"k":null}	NULL
+
+
+# ============================================================================
+# Projecting a subset of a STRUCT's children: the pruned children are filled
+# with NULL for every materialised row, not just the first.
+# ============================================================================
+
+query
+SELECT id, (c_struct).b, (c_nested).p.r
+FROM jsonl_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	b	r
+1	x	{1,2}
+3	NULL	NULL
+4	z	{NULL}
+
+
+# ============================================================================
+# A single-row batch, and a term that matches only the all-NULL row.
+# ============================================================================
+
+query
+SELECT id, c_list, c_struct FROM jsonl_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id	c_list	c_struct
+1	{1,2,3}	(1,x)
+
+query
+SELECT id, c_list, c_struct, c_varchar FROM jsonl_idx WHERE body @@ ts_phrase('gamma') ORDER BY id;
+----
+id	c_list	c_struct	c_varchar
+3	NULL	NULL	NULL
+
+
+# ============================================================================
+# The lookup must agree with the plain scan of the same view, row for row.
+# ============================================================================
+
+query
+WITH idx AS MATERIALIZED (SELECT * FROM jsonl_idx WHERE body @@ ts_phrase('pudge')),
+     src AS (SELECT * FROM jsonl_v WHERE id IN (1, 3, 4))
+SELECT count(*) AS mismatches FROM (
+  (SELECT * FROM idx EXCEPT ALL SELECT * FROM src)
+  UNION ALL
+  (SELECT * FROM src EXCEPT ALL SELECT * FROM idx)
+) t;
+----
+mismatches
+0

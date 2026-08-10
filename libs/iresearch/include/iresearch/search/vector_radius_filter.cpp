@@ -20,13 +20,11 @@
 
 #include "iresearch/search/vector_radius_filter.hpp"
 
+#include <limits>
 #include <span>
-#include <vector>
+#include <utility>
 
 #include "basics/memory.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/vector_filter_util.hpp"
 #include "iresearch/search/vector_similarity_query.hpp"
 
@@ -35,46 +33,10 @@ namespace irs {
 QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   const auto& opts = options();
-  if (opts.query.empty() || !field_limits::valid(opts.postings_id)) {
-    return QueryBuilder::Empty();
-  }
-
-  const auto* postings = segment.field(opts.postings_id);
-  const auto* vector_col = segment.Column(field_id());
-  const auto* col_reader = segment.GetColReader();
-  if (!postings || !vector_col || !col_reader) {
-    return QueryBuilder::Empty();
-  }
-  if (opts.query.size() != vector_col->ArraySize()) {
-    return QueryBuilder::Empty();
-  }
-
-  auto terms = postings->iterator(SeekMode::NORMAL);
-  if (!terms) {
-    return QueryBuilder::Empty();
-  }
-  const auto* term_meta = irs::get<TermMeta>(*terms);
-
   VectorState state{ctx.memory};
-  state.reader = postings;
-  state.vector_column = vector_col;
-
-  CostAttr::Type estimation = 0;
-  while (terms->next()) {
-    terms->read();
-    if (term_meta) {
-      estimation += term_meta->docs_count;
-    }
-    state.cookies.emplace_back(terms->cookie());
-  }
-  state.estimation = estimation;
-
-  if (state.cookies.empty()) {
-    return QueryBuilder::Empty();
-  }
-
   QueryBuilder::ptr inner;
-  if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
+  if (!PrepareVectorState(segment, ctx, field_id(), opts,
+                          std::numeric_limits<uint32_t>::max(), state, inner)) {
     return QueryBuilder::Empty();
   }
 

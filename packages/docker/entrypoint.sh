@@ -18,6 +18,37 @@ if [ "$1" = "serened" ]; then
 		echo "Config: $RUNTIME_CONFIG"
 	fi
 
+	: "${SERENEDB_HOST_AUTH_METHOD:=}"
+	if [ -n "$SERENEDB_HOST_AUTH_METHOD" ]; then
+		RUNTIME_HBA="/tmp/pg_hba.conf"
+		{
+			echo "# Generated from SERENEDB_HOST_AUTH_METHOD by the container entrypoint."
+			if [ "$SERENEDB_HOST_AUTH_METHOD" = "trust" ]; then
+				echo "# warning: trust is enabled for all connections"
+				echo "# https://www.postgresql.org/docs/current/auth-trust.html"
+			fi
+			echo "local all all $SERENEDB_HOST_AUTH_METHOD"
+			echo "host  all all 0.0.0.0/0 $SERENEDB_HOST_AUTH_METHOD"
+			echo "host  all all ::/0      $SERENEDB_HOST_AUTH_METHOD"
+		} >"$RUNTIME_HBA"
+		set -- "$@" "--hba_config=$RUNTIME_HBA"
+		echo "Auth: $SERENEDB_HOST_AUTH_METHOD ($RUNTIME_HBA)"
+
+		if [ "$SERENEDB_HOST_AUTH_METHOD" = "trust" ]; then
+			cat >&2 <<-'EOWARN'
+				********************************************************************************
+				WARNING: SERENEDB_HOST_AUTH_METHOD has been set to "trust". This will allow
+				         anyone with access to the SereneDB port to connect as any role
+				         without a password. In Docker's default configuration that is
+				         effectively any other container on the same system.
+
+				         Fine for a laptop and a demo. For anything else, set
+				         SERENEDB_HOST_AUTH_METHOD=scram-sha-256 and give the role a password.
+				********************************************************************************
+			EOWARN
+		fi
+	fi
+
 	# TODO: benchmark NUMA policy on multi-socket systems.
 	# numactl --interleave=all spreads memory across all NUMA nodes evenly,
 	# but jemalloc (our allocator) has its own NUMA-aware per-CPU arenas

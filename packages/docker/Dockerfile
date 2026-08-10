@@ -16,8 +16,10 @@ RUN \
   rm /tmp/install.tar.gz && \
   # numactl: NUMA optimization for multi-socket systems
   # postgresql-client: psql for debugging, pg_isready for health checks
+  # ca-certificates: root store for outbound TLS (attaching a remote
+  #   ClickHouse/Postgres over TLS fails without it)
   apt-get update && \
-  apt-get install -y --no-install-recommends numactl postgresql-client && \
+  apt-get install -y --no-install-recommends numactl postgresql-client ca-certificates && \
   # Create non-root user for running serened
   groupadd -r serenedb && \
   useradd -r -g serenedb -d /var/lib/serenedb -s /usr/sbin/nologin serenedb && \
@@ -37,6 +39,11 @@ RUN \
   rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/* \
          /usr/share/doc/* /usr/share/man/* /usr/share/info/* \
          /usr/share/locale/* /usr/share/i18n/* /root/.cache /tmp/*
+
+# The bundled OpenSSL resolves its default verify paths at build time, which do
+# not match Ubuntu's store, so point it at the installed bundle explicitly.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/certs
 
 VOLUME ["/var/lib/serenedb"]
 EXPOSE 7890

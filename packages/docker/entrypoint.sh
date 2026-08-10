@@ -20,6 +20,19 @@ if [ "$1" = "serened" ]; then
 
 	: "${SERENEDB_HOST_AUTH_METHOD:=}"
 	if [ -n "$SERENEDB_HOST_AUTH_METHOD" ]; then
+		# Only the methods serened evaluates itself. The parser accepts more
+		# (ident, peer, gss, ldap, cert, ...) but they are either unenforced or
+		# refuse the connection, so a typo would silently cost you access: the
+		# server logs a parse error and falls back to requiring a password.
+		case "$SERENEDB_HOST_AUTH_METHOD" in
+		trust | reject | password | md5 | scram-sha-256) ;;
+		*)
+			echo >&2 "SERENEDB_HOST_AUTH_METHOD=\"$SERENEDB_HOST_AUTH_METHOD\" is not supported."
+			echo >&2 "Use one of: trust, scram-sha-256, md5, password, reject."
+			exit 1
+			;;
+		esac
+
 		RUNTIME_HBA="/tmp/pg_hba.conf"
 		{
 			echo "# Generated from SERENEDB_HOST_AUTH_METHOD by the container entrypoint."

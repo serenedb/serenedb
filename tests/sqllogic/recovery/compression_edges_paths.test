@@ -33,7 +33,8 @@ CREATE TABLE ce.specials AS
          (ord::HUGEINT - 200000)::DECIMAL(38,10) / 7 AS dec38,
          CASE WHEN ord % 2 = 0 THEN 'i' || lpad((ord % 90000)::VARCHAR, 11, '0')
               ELSE 'i' || lpad((ord % 90000)::VARCHAR, 12, '0') END AS s1213,
-         ord % 3 = 0 AS flag
+         ord % 3 = 0 AS flag,
+         CASE WHEN ord % 50000 = 500 THEN 'nan'::REAL ELSE ((ord % 1000) * 0.25)::REAL END AS flt
   FROM range(400000) t(ord) ORDER BY ord;
 
 
@@ -48,12 +49,13 @@ SELECT count(*) AS n,
        bool_and(dec38 = (ord::HUGEINT - 200000)::DECIMAL(38,10) / 7) AS dec38_ok,
        bool_and(s1213 = CASE WHEN ord % 2 = 0 THEN 'i' || lpad((ord % 90000)::VARCHAR, 11, '0') ELSE 'i' || lpad((ord % 90000)::VARCHAR, 12, '0') END) AS s1213_ok,
        bool_and(flag = (ord % 3 = 0)) AS flag_ok,
+       bool_and(flt IS NOT DISTINCT FROM CASE WHEN ord % 50000 = 500 THEN 'nan'::REAL ELSE ((ord % 1000) * 0.25)::REAL END) AS flt_ok,
        count(*) FILTER (isnan(dbl)) AS nans,
-       count(*) FILTER (dbl = 'inf'::DOUBLE) AS infs
+       count(*) FILTER (isnan(flt)) AS fnans
   FROM ce.specials;
 ----
-n	dbl_ok	big_ok	dec38_ok	s1213_ok	flag_ok	nans	infs
-400000	t	t	t	t	t	8	8
+n	dbl_ok	big_ok	dec38_ok	s1213_ok	flag_ok	flt_ok	nans	fnans
+400000	t	t	t	t	t	t	8	8
 
 
 # the inline-boundary strings landed in dict_fsst. INT64_MIN/MAX spikes do NOT de-bitpack the

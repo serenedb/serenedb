@@ -4,10 +4,17 @@
 # Override tags:
 #   SERENEDB_TAG=v1.2.3 SERENE_UI_TAG=v0.5.0 PSQL_TAG=16 \
 #     curl -fsSL https://install.serenedb.com | sh
+# Require a password instead of the quick-start default:
+#   SERENEDB_HOST_AUTH_METHOD=scram-sha-256 \
+#     curl -fsSL https://install.serenedb.com | sh
 
 SERENEDB_TAG="${SERENEDB_TAG:-latest}"
 SERENE_UI_TAG="${SERENE_UI_TAG:-latest}"
 PSQL_TAG="${PSQL_TAG:-latest}"
+
+# A throwaway local stack is worth no friction, so connections are trusted
+# unless the caller asks for something stricter.
+SERENEDB_HOST_AUTH_METHOD="${SERENEDB_HOST_AUTH_METHOD:-trust}"
 
 DIR="/tmp/serenedb-quick"
 COMPOSE_FILE="${DIR}/docker-compose.yml"
@@ -76,6 +83,8 @@ services:
     image: serenedb/serenedb:${SERENEDB_TAG}
     restart: on-failure
     stop_grace_period: 5s
+    environment:
+      SERENEDB_HOST_AUTH_METHOD: ${SERENEDB_HOST_AUTH_METHOD}
     ports:
       - "7890-7895:7890"
 

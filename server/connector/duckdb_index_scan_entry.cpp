@@ -172,8 +172,8 @@ duckdb::virtual_column_map_t TableInvertedIndexScanEntry::GetVirtualColumns()
 }
 
 ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
-  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-  duckdb::CreateTableInfo& info,
+  duckdb::ClientContext& context, duckdb::Catalog& catalog,
+  duckdb::SchemaCatalogEntry& schema, duckdb::CreateTableInfo& info,
   std::shared_ptr<const catalog::PgSqlView> sdb_view,
   std::vector<size_t> indexed_col_indices,
   std::shared_ptr<const catalog::InvertedIndex> inverted_index)
@@ -183,6 +183,8 @@ ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
     _sdb_view(std::move(sdb_view)) {
   SDB_ASSERT(_sdb_view);
   _relation = _sdb_view.get();
+  _fast_path = ResolveViewFastPath(context, *_sdb_view,
+                                   _inverted_index->GetOptions().key_columns);
 }
 
 duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
@@ -202,9 +204,7 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   data->table_entry = this;
   data->entry_kind = ScanEntryKind::InvertedIndex;
   data->inverted_index = _inverted_index;
-  std::span<const std::string> key_cols =
-    _inverted_index->GetOptions().key_columns;
-  data->fast_path = ResolveViewFastPath(context, *_sdb_view, key_cols);
+  data->fast_path = _fast_path;
   if (data->fast_path) {
     data->lookup_label = FormatLookupLabel(*data->fast_path);
     data->lookup_supports_filters = data->fast_path->supports_filters;
@@ -246,11 +246,14 @@ duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
   result.reserve(3);
   result.emplace(kColumnIdentifierTableOid,
                  duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
-  result.emplace(
-    kColumnIdentifierGeneratedPk,
-    duckdb::TableColumn{"generated_pk", duckdb::LogicalType::ROW_TYPE});
   result.emplace(duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn{"", duckdb::LogicalType::BOOLEAN});
+  if (_fast_path && _inverted_index->GetOptions().pk_column ==
+                      catalog::PkColumnKind::Has) {
+    result.emplace(
+      kColumnIdentifierGeneratedPk,
+      duckdb::TableColumn{"generated_pk", _fast_path->GeneratedPkType()});
+  }
   return result;
 }
 

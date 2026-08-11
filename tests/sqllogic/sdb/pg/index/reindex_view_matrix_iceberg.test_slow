@@ -1,0 +1,526 @@
+control substitution on
+
+# REFRESH x iceberg cross-matrix: format (v2/v3) x mutation kind (append,
+# row delete, whole-file delete, whole-table delete, cross-file delete,
+# update, chained updates, reinsert, file born dead) x refresh cadence (one
+# op per refresh vs several snapshots batched into one refresh). Every case
+# asserts the action row, the visible content, and convergence (the next
+# refresh is up_to_date). Background compaction is disabled per index
+# (compaction_interval=0): a staged merge makes a delta legitimately degrade
+# to rebuild, which would make these expectations nondeterministic.
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET mx_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+SET GLOBAL unsafe_enable_version_guessing=true;
+
+statement ok
+DETACH DATABASE IF EXISTS mx_${__DATABASE__};
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS mx_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mx_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA mx_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+SET search_path TO public, mx_${__DATABASE__}.${__DATABASE__};
+
+# ---- v2: several snapshots (append + delete + update) batched into ONE
+# refresh: the added files scan, the delete-targeted file prunes.
+
+statement ok
+CREATE TABLE mx_${__DATABASE__}.${__DATABASE__}.mx2 (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO mx2 VALUES (1, 'pudge alpha'), (2, 'anchin alpha');
+
+statement count 1
+INSERT INTO mx2 VALUES (3, 'vedernikoff beta');
+
+statement ok
+CREATE VIEW mx2_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/mx2',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX mx2_idx ON mx2_v USING inverted(id, body mx_en) WITH (compaction_interval=0);
+
+query
+SELECT action FROM serenedb_reindex('mx2_idx');
+----
+action
+up_to_date
+
+statement count 1
+INSERT INTO mx2 VALUES (4, 'techies gamma');
+
+statement ok
+DELETE FROM mx2 WHERE id = 2;
+
+statement ok
+UPDATE mx2 SET body = 'pudge prime' WHERE id = 1;
+
+query
+SELECT * FROM serenedb_reindex('mx2_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	2	1	0	0
+
+query
+SELECT count(*) FROM mx2_idx;
+----
+count
+3
+
+query
+SELECT count(*) FROM mx2_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+0
+
+query
+SELECT count(*) FROM mx2_idx WHERE body @@ ts_phrase('prime');
+----
+count
+1
+
+query
+SELECT count(*) FROM mx2_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+1
+
+query
+SELECT action FROM serenedb_reindex('mx2_idx');
+----
+action
+up_to_date
+
+# ---- v2: kill a whole file's rows, then every remaining row of the table,
+# then reinsert into the empty table.
+
+statement ok
+DELETE FROM mx2 WHERE id = 3;
+
+query
+SELECT * FROM serenedb_reindex('mx2_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT count(*) FROM mx2_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+0
+
+query
+SELECT count(*) FROM mx2_idx;
+----
+count
+2
+
+statement ok
+DELETE FROM mx2 WHERE id IN (1, 4);
+
+query
+SELECT * FROM serenedb_reindex('mx2_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	0
+
+query
+SELECT count(*) FROM mx2_idx;
+----
+count
+0
+
+statement count 1
+INSERT INTO mx2 VALUES (5, 'pudge reborn');
+
+query
+SELECT * FROM serenedb_reindex('mx2_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT count(*) FROM mx2_idx;
+----
+count
+1
+
+query
+SELECT action FROM serenedb_reindex('mx2_idx');
+----
+action
+up_to_date
+
+# ---- v2: the SAME row updated twice between refreshes: the intermediate
+# file arrives already dead (its delete applies during its own scan).
+
+statement ok
+UPDATE mx2 SET body = 'pudge encore' WHERE id = 5;
+
+statement ok
+UPDATE mx2 SET body = 'pudge finale' WHERE id = 5;
+
+query
+SELECT * FROM serenedb_reindex('mx2_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	2	1	0	0
+
+query
+SELECT count(*) FROM mx2_idx;
+----
+count
+1
+
+query
+SELECT count(*) FROM mx2_idx WHERE body @@ ts_phrase('finale');
+----
+count
+1
+
+query
+SELECT count(*) FROM mx2_idx WHERE body @@ ts_phrase('encore');
+----
+count
+0
+
+query
+SELECT count(*) FROM mx2_idx WHERE body @@ ts_phrase('reborn');
+----
+count
+0
+
+query
+SELECT action FROM serenedb_reindex('mx2_idx');
+----
+action
+up_to_date
+
+# ---- v2: deletes from DIFFERENT snapshots hitting DIFFERENT files, one
+# refresh prunes both.
+
+statement ok
+CREATE TABLE mx_${__DATABASE__}.${__DATABASE__}.mx2b (id INTEGER, body TEXT);
+
+statement count 2
+INSERT INTO mx2b VALUES (1, 'pudge north'), (2, 'anchin north');
+
+statement count 2
+INSERT INTO mx2b VALUES (3, 'techies south'), (4, 'mines south');
+
+statement ok
+CREATE VIEW mx2b_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/mx2b',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX mx2b_idx ON mx2b_v USING inverted(id, body mx_en) WITH (compaction_interval=0);
+
+statement ok
+DELETE FROM mx2b WHERE id = 1;
+
+statement ok
+DELETE FROM mx2b WHERE id = 3;
+
+query
+SELECT * FROM serenedb_reindex('mx2b_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	0
+
+query
+SELECT count(*) FROM mx2b_idx;
+----
+count
+2
+
+query
+SELECT count(*) FROM mx2b_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+0
+
+query
+SELECT count(*) FROM mx2b_idx WHERE body @@ ts_phrase('mines');
+----
+count
+1
+
+query
+SELECT action FROM serenedb_reindex('mx2b_idx');
+----
+action
+up_to_date
+
+# ---- v2 partitioned: per-file attribution holds inside partitions; appends
+# and deletes stay partition-local deltas.
+
+statement ok
+CREATE TABLE mx_${__DATABASE__}.${__DATABASE__}.mxp (part TEXT, id INTEGER, body TEXT);
+
+statement ok
+ALTER TABLE mx_${__DATABASE__}.${__DATABASE__}.mxp SET PARTITIONED BY (part);
+
+statement count 3
+INSERT INTO mxp VALUES
+  ('a', 1, 'pudge east'),
+  ('a', 2, 'anchin east'),
+  ('b', 3, 'vedernikoff west');
+
+statement ok
+CREATE VIEW mxp_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/mxp',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX mxp_idx ON mxp_v USING inverted(id, body mx_en) WITH (compaction_interval=0);
+
+statement ok
+DELETE FROM mxp WHERE id = 2;
+
+query
+SELECT * FROM serenedb_reindex('mxp_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT count(*) FROM mxp_idx WHERE body @@ ts_phrase('east');
+----
+count
+1
+
+query
+SELECT count(*) FROM mxp_idx WHERE body @@ ts_phrase('west');
+----
+count
+1
+
+statement count 1
+INSERT INTO mxp VALUES ('b', 4, 'techies west');
+
+query
+SELECT * FROM serenedb_reindex('mxp_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT count(*) FROM mxp_idx;
+----
+count
+3
+
+query
+SELECT action FROM serenedb_reindex('mxp_idx');
+----
+action
+up_to_date
+
+# ---- v3 (deletion vectors): the same batched multi-op, chained updates and
+# cross-file deletes, all through DVs.
+
+statement ok
+CREATE TABLE mx_${__DATABASE__}.${__DATABASE__}.mx3 (id INTEGER, body TEXT) WITH ('format-version' = 3);
+
+statement count 2
+INSERT INTO mx3 VALUES (1, 'pudge iii'), (2, 'anchin iii');
+
+statement count 1
+INSERT INTO mx3 VALUES (3, 'vedernikoff iii');
+
+statement ok
+CREATE VIEW mx3_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/mx3',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX mx3_idx ON mx3_v USING inverted(id, body mx_en) WITH (compaction_interval=0);
+
+statement count 1
+INSERT INTO mx3 VALUES (4, 'techies iii');
+
+statement ok
+DELETE FROM mx3 WHERE id = 2;
+
+statement ok
+UPDATE mx3 SET body = 'pudge prime iii' WHERE id = 1;
+
+query
+SELECT * FROM serenedb_reindex('mx3_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	2	1	0	0
+
+query
+SELECT count(*) FROM mx3_idx;
+----
+count
+3
+
+query
+SELECT count(*) FROM mx3_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+query
+SELECT count(*) FROM mx3_idx WHERE body @@ ts_phrase('prime');
+----
+count
+1
+
+statement ok
+UPDATE mx3 SET body = 'pudge penult iii' WHERE id = 1;
+
+statement ok
+UPDATE mx3 SET body = 'pudge ultimate iii' WHERE id = 1;
+
+query
+SELECT * FROM serenedb_reindex('mx3_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	2	1	0	0
+
+query
+SELECT count(*) FROM mx3_idx WHERE body @@ ts_phrase('ultimate');
+----
+count
+1
+
+query
+SELECT count(*) FROM mx3_idx WHERE body @@ ts_phrase('penult');
+----
+count
+0
+
+statement ok
+DELETE FROM mx3 WHERE id = 3;
+
+statement ok
+DELETE FROM mx3 WHERE id = 4;
+
+query
+SELECT * FROM serenedb_reindex('mx3_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	0
+
+query
+SELECT count(*) FROM mx3_idx;
+----
+count
+1
+
+query
+SELECT action FROM serenedb_reindex('mx3_idx');
+----
+action
+up_to_date
+
+# ---- a file born and killed between two refreshes: it arrives as an ADDED
+# file whose own deletes apply during its scan -- zero live docs, still a
+# manifest entry.
+
+statement ok
+CREATE TABLE mx_${__DATABASE__}.${__DATABASE__}.mx2c (id INTEGER, body TEXT);
+
+statement count 1
+INSERT INTO mx2c VALUES (1, 'pudge lone');
+
+statement ok
+CREATE VIEW mx2c_v AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/mx2c',
+  allow_moved_paths=true);
+
+statement ok
+CREATE INDEX mx2c_idx ON mx2c_v USING inverted(id, body mx_en) WITH (compaction_interval=0);
+
+statement count 1
+INSERT INTO mx2c VALUES (2, 'anchin doomed');
+
+statement ok
+DELETE FROM mx2c WHERE id = 2;
+
+query
+SELECT * FROM serenedb_reindex('mx2c_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT count(*) FROM mx2c_idx;
+----
+count
+1
+
+query
+SELECT count(*) FROM mx2c_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+query
+SELECT action FROM serenedb_reindex('mx2c_idx');
+----
+action
+up_to_date
+
+# ---- residue: nothing server-global may leak into later tests.
+
+statement ok
+DROP VIEW mx2_v;
+
+statement ok
+DROP VIEW mx2b_v;
+
+statement ok
+DROP VIEW mxp_v;
+
+statement ok
+DROP VIEW mx3_v;
+
+statement ok
+DROP VIEW mx2c_v;
+
+statement ok
+DETACH DATABASE mx_${__DATABASE__};
+
+statement ok
+DROP PERSISTENT SECRET mx_${__DATABASE__};
+
+statement ok
+RESET GLOBAL unsafe_enable_version_guessing;

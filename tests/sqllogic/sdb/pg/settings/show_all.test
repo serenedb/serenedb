@@ -176,7 +176,7 @@ http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
-httpfs_connection_caching	off	Enable connection caching for HTTP requests
+httpfs_connection_caching	on	Enable connection caching for HTTP requests
 iceberg_logging_post_body_truncate_limit	10000	Maximum number of characters of a REST catalog POST body to include in Iceberg log messages. Bodies longer than this are truncated with a trailing '... (truncated)' marker. Set to 0 to omit the body.
 iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
 iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
@@ -261,6 +261,7 @@ profiling_renderer_settings	{}	A map of settings passed to the renderer of the p
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
+reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 role	none	Sets the current role.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
 s3_access_key_id	NULL	S3 Access Key ID
@@ -511,7 +512,7 @@ http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
-httpfs_connection_caching	off	Enable connection caching for HTTP requests
+httpfs_connection_caching	on	Enable connection caching for HTTP requests
 iceberg_logging_post_body_truncate_limit	10000	Maximum number of characters of a REST catalog POST body to include in Iceberg log messages. Bodies longer than this are truncated with a trailing '... (truncated)' marker. Set to 0 to omit the body.
 iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
 iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
@@ -596,6 +597,7 @@ profiling_renderer_settings	{}	A map of settings passed to the renderer of the p
 progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching
+reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 role	none	Sets the current role.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
 s3_access_key_id	NULL	S3 Access Key ID

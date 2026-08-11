@@ -432,6 +432,28 @@ launch_iceberg_rest() {
 		sleep 1
 	done
 
+	# The TCP probe above is not enough on host-published ports: docker's
+	# userland proxy accepts the connection before the Java fixture's listener
+	# is up, so the first test's ATTACH/CREATE SERVER races it and fails with
+	# "Server returned nothing" (same trap as the ClickHouse native-protocol
+	# wait below). Require an actual catalog reply.
+	# Skipped in COMPOSE_NETWORK mode, where tests reach the container by name.
+	if [[ "$ICEBERG_REST_HOST" == "localhost" ]]; then
+		echo "Waiting for iceberg-rest to answer /v1/config on host port ${ICEBERG_REST_PORT}..."
+		for i in $(seq 1 60); do
+			if curl -sf "${ICEBERG_REST_URL}/v1/config?warehouse=${ICEBERG_WAREHOUSE}" \
+				>/dev/null 2>&1; then
+				echo "iceberg-rest catalog is answering."
+				break
+			fi
+			if [[ $i -eq 60 ]]; then
+				echo "ERROR: iceberg-rest did not answer /v1/config within 60 seconds"
+				exit 1
+			fi
+			sleep 1
+		done
+	fi
+
 	echo "iceberg-rest running (url=$ICEBERG_REST_URL)."
 	echo
 }
@@ -688,12 +710,17 @@ launch_external() {
 	shopt -s globstar
 	local pattern test_files f
 	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false needs_azure=false
+	local needs_iceberg_fixture=false
 	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
 		[[ -n "$test_files" ]] || continue
 		while IFS= read -r f; do
 			[[ -n "$f" ]] || continue
+			# The local iceberg fixture is generated, not checked in.
+			if grep -q "resources/tests/iceberg" "$f" 2>/dev/null; then
+				needs_iceberg_fixture=true
+			fi
 			case "$f" in
 			# A test that boots a docker-backed service (MinIO, iceberg-rest,
 			# ollama, postgres) MUST be .test_slow so --fast runs -- e.g. the
@@ -736,6 +763,12 @@ launch_external() {
 		else
 			export ICEBERG_FIXTURES="${repo_root}/third_party/duckdb_iceberg/data/persistent"
 		fi
+	fi
+	# In compose mode run.sh executes inside the tests container, which can
+	# neither see the workspace nor docker-mount its paths (the socket is
+	# the host daemon's) -- run_in_docker.sh generates on the host instead.
+	if [[ "$needs_iceberg_fixture" == "true" && -z "${COMPOSE_NETWORK:-}" ]]; then
+		"${SCRIPT_DIR}/../../scripts/ensure_iceberg_fixture.sh"
 	fi
 	if [[ "$needs_s3" == "true" ]]; then
 		launch_s3

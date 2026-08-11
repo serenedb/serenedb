@@ -378,6 +378,15 @@ DELETE FROM view_idx_view WHERE a = 1;
 db error: ERROR: Can only delete from base table
 
 
+# The index itself has no DML surface either: only REFRESH's internal
+# equality-delete pass may plan a DELETE against an index entry.
+statement error
+DELETE FROM view_idx WHERE b = 'hello';
+----
+db error: ERROR: cannot open relation "view_idx"
+DETAIL: This operation is not supported for indexes.
+
+
 statement error
 COPY view_idx_view FROM '${__TEST_DIR__}/nonexistent.parquet' (FORMAT PARQUET);
 ----

@@ -57,6 +57,35 @@ struct ExternalKeyColumn {
   duckdb::LogicalType type;       // projected + stored type
 };
 
+// The file-shaped pk specs: row identity comes from (file, row-ish) -- the
+// shapes whose builds capture a file manifest. NOTE: the stored pk COLUMN
+// is the two-component struct below only for the glob variants;
+// single-file sources store a scalar row pk.
+constexpr bool IsFilePkSpec(catalog::PkSpec spec) noexcept {
+  switch (spec) {
+    case catalog::PkSpec::FileRowNumber:
+    case catalog::PkSpec::FileIndexPlusRowNumber:
+    case catalog::PkSpec::FileOffset:
+    case catalog::PkSpec::FileIndexPlusOffset:
+    case catalog::PkSpec::FileIndexPlusDuckDBRowId:
+      return true;
+    case catalog::PkSpec::DuckDBRowId:
+    case catalog::PkSpec::ExternalPostgresCtid:
+    case catalog::PkSpec::ExternalColumnKey:
+      return false;
+  }
+}
+
+inline const duckdb::LogicalType& FileIndexRowNumberStructType() {
+  static const auto kType = [] {
+    duckdb::child_list_t<duckdb::LogicalType> fields;
+    fields.emplace_back("file_index", duckdb::LogicalType::UBIGINT);
+    fields.emplace_back("row_number", duckdb::LogicalType::BIGINT);
+    return duckdb::LogicalType::STRUCT(std::move(fields));
+  }();
+  return kType;
+}
+
 struct ViewFastPath {
   duckdb::vector<duckdb::Value> args;
   duckdb::named_parameter_map_t named_params;
@@ -75,6 +104,18 @@ struct ViewFastPath {
   // duckdb yes; csv / json / text no). Drives filter pushdown -- see
   // IResearchSupportsPushdownFilter.
   bool supports_filters = false;
+  // The view supports per-file DELTA refresh -- it decomposes exactly per
+  // source file: glob pk shape, no union_by_name, no LIMIT. LIMIT is the
+  // only admitted construct that couples rows ACROSS files (GROUP BY /
+  // HAVING / QUALIFY / SAMPLE / CTEs / DISTINCT never get a fast path at
+  // all; WHERE re-applies when a pass binds the view narrowed to one file;
+  // ORDER BY drops no rows). Everything else refreshes by rebuild.
+  bool supports_delta = false;
+
+  // The stored pk column's type -- what the create sink stages and
+  // generated_pk declares/projects: one case per pk spec. A new spec must
+  // decide its exposure here.
+  duckdb::LogicalType GeneratedPkType() const;
 };
 
 // key_columns: user lookup key columns; empty = auto (pg ctid / CH PK).
@@ -94,9 +135,6 @@ duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp);
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp);
-
-// 0 for non-iceberg.
-int64_t ExtractIcebergSnapshotId(duckdb::FunctionData& bind_data) noexcept;
 
 void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept;
 

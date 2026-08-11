@@ -1,0 +1,96 @@
+control substitution on
+
+
+# A reader inside a transaction pins the pre-REINDEX index for the whole
+# transaction: the swap replaces the catalog object, but the reader's
+# transaction-pinned catalog snapshot keeps resolving the old index and its
+# search snapshot. The next transaction sees the rebuilt index.
+
+statement count 4
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 3, 'pudge plays again'
+      UNION ALL SELECT 4, 'vedernikoff signs off')
+TO '${__TEST_DIR__}/reindex_iso.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY reindex_iso_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+statement ok
+CREATE VIEW reindex_iso_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/reindex_iso.parquet');
+
+
+statement ok
+CREATE INDEX reindex_iso_idx ON reindex_iso_v USING inverted(id, body reindex_iso_en);
+
+connection reader
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+connection reader
+query
+SELECT count(*) FROM reindex_iso_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+
+connection writer
+statement count 5
+COPY (SELECT 10 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 11, 'pudge farms jungle'
+      UNION ALL SELECT 12, 'anchin reads manga'
+      UNION ALL SELECT 13, 'pudge plays again'
+      UNION ALL SELECT 14, 'vedernikoff verifies isolation')
+TO '${__TEST_DIR__}/reindex_iso.parquet' (FORMAT PARQUET);
+
+
+connection writer
+statement ok
+CALL serenedb_reindex('reindex_iso_idx');
+
+
+connection writer
+query
+SELECT count(*) FROM reindex_iso_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# The in-flight reader keeps the pre-REINDEX view of the index to the end of
+# its transaction. (Only the count class is asserted mid-transaction: the old
+# index's positional keys point into a rewritten file, so materialisation
+# through them is undefined by design until the manifest read path lands.)
+connection reader
+query
+SELECT count(*) FROM reindex_iso_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+
+connection reader
+statement ok
+COMMIT;
+
+
+connection reader
+query
+SELECT count(*) FROM reindex_iso_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3

@@ -21,14 +21,24 @@
 #include "search_remove_filter.hpp"
 
 #include <iresearch/index/index_reader.hpp>
+#include <limits>
+
+#include "basics/memory.hpp"
+#include "basics/primary_key.hpp"
 
 namespace sdb::connector {
 namespace {
 
+bool Masked(const irs::DocumentMask* segment_mask,
+            const irs::DocumentMask* pending_mask, irs::doc_id_t doc) noexcept {
+  return (segment_mask && segment_mask->contains(doc)) ||
+         (pending_mask && pending_mask->contains(doc));
+}
+
+template<typename Filter>
 class SearchRemoveQuery : public irs::QueryBuilder {
  public:
-  SearchRemoveQuery(const irs::SubReader& segment,
-                    const SearchRemoveFilter& filter)
+  SearchRemoveQuery(const irs::SubReader& segment, const Filter& filter)
     : irs::QueryBuilder{segment}, _filter{filter} {}
 
   irs::DocIterator::ptr Execute(const irs::ExecutionContext& ctx,
@@ -41,7 +51,7 @@ class SearchRemoveQuery : public irs::QueryBuilder {
   irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
 
  private:
-  const SearchRemoveFilter& _filter;
+  const Filter& _filter;
 };
 
 }  // namespace
@@ -51,8 +61,8 @@ irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
   if (_pks.empty()) {
     return irs::QueryBuilder::Empty();
   }
-  return irs::memory::make_tracked<SearchRemoveQuery>(ctx.memory, segment,
-                                                      *this);
+  return irs::memory::make_tracked<SearchRemoveQuery<SearchRemoveFilter>>(
+    ctx.memory, segment, *this);
 }
 
 irs::DocIterator::ptr SearchRemoveFilter::MakeIterator(
@@ -122,6 +132,132 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     _pks.pop_back();
     _doc = doc;
     return doc;
+  }
+}
+
+
+SearchRemovePrefixFilter::SearchRemovePrefixFilter(irs::field_id pk_field_id)
+  : _pk_field_id{pk_field_id} {}
+
+SearchRemovePrefixFilter::~SearchRemovePrefixFilter() = default;
+
+SearchRemovePrefixFilter::Entry& SearchRemovePrefixFilter::PushEntry(
+  std::string_view prefix) {
+  irs::bstring encoded{reinterpret_cast<const irs::byte_type*>(prefix.data()),
+                       prefix.size()};
+  SDB_ASSERT(_entries.empty() || _entries.back().prefix < encoded);
+  return _entries.emplace_back(Entry{.prefix = std::move(encoded)});
+}
+
+void SearchRemovePrefixFilter::NextEntry() const noexcept {
+  ++_pos;
+  _terms.reset();
+  _resume_row = std::numeric_limits<int64_t>::min();
+}
+
+irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
+  const irs::SubReader& segment, const irs::PrepareContext& ctx) const {
+  // Never empty: the remove builders return nullptr instead of an empty
+  // filter, and entries are not consumed across segments.
+  SDB_ASSERT(!_entries.empty());
+  return irs::memory::make_tracked<SearchRemoveQuery<SearchRemovePrefixFilter>>(
+    ctx.memory, segment, *this);
+}
+
+irs::DocIterator::ptr SearchRemovePrefixFilter::MakeIterator(
+  const irs::SubReader& segment, const irs::ExecutionContext& ctx) const {
+  _segment_mask = segment.docs_mask();
+  _pending_mask = ctx.pending_docs_mask;
+  _pk_field = segment.field(_pk_field_id);
+  SDB_ASSERT(_pk_field);
+  _terms.reset();
+  _postings.reset();
+  _pos = 0;
+  _resume_row = std::numeric_limits<int64_t>::min();
+  _doc = irs::doc_limits::invalid();
+  return irs::memory::to_managed<irs::DocIterator>(
+    const_cast<SearchRemovePrefixFilter&>(*this));
+}
+
+irs::doc_id_t SearchRemovePrefixFilter::advance() {
+  while (true) {
+    if (_postings) {
+      while (true) {
+        const auto doc = _postings->advance();
+        if (irs::doc_limits::eof(doc)) {
+          break;
+        }
+        if (Masked(_segment_mask, _pending_mask, doc)) {
+          continue;
+        }
+        return _doc = doc;
+      }
+      _postings.reset();
+    }
+    if (_pos == _entries.size()) {
+      return _doc = irs::doc_limits::eof();
+    }
+    auto& entry = _entries[_pos];
+    const irs::bytes_view prefix{entry.prefix};
+    if (entry.dead) {
+      // Leapfrog: the cursor names the next dead row, seek_ge jumps to its
+      // term, a landed alive term gallops the cursor forward. Seeks only --
+      // never mixed with next() on one iterator.
+      while (true) {
+        const auto dead_row = (*entry.dead)(_resume_row);
+        if (!dead_row) {
+          break;
+        }
+        _resume_row = *dead_row + 1;
+        _key_scratch.assign(reinterpret_cast<const char*>(prefix.data()),
+                            prefix.size());
+        primary_key::AppendSigned(_key_scratch, *dead_row);
+        if (!_terms) {
+          _terms = _pk_field->iterator();
+        }
+        const auto res = _terms->seek_ge(irs::bytes_view{
+          reinterpret_cast<const irs::byte_type*>(_key_scratch.data()),
+          _key_scratch.size()});
+        if (res == irs::SeekResult::End) {
+          break;
+        }
+        if (res == irs::SeekResult::NotFound) {
+          const auto term = _terms->value();
+          if (!term.starts_with(prefix)) {
+            break;  // no terms of this file at or above the dead row
+          }
+          // An alive row's term: gallop the cursor to it and re-check.
+          SDB_ASSERT(term.size() == prefix.size() + sizeof(int64_t));
+          _resume_row = primary_key::ReadSigned<int64_t>(std::string_view{
+            reinterpret_cast<const char*>(term.data()) + prefix.size(),
+            sizeof(int64_t)});
+          continue;
+        }
+        _postings = _terms->postings(irs::IndexFeatures::None);
+        break;
+      }
+      if (!_postings) {
+        NextEntry();
+      }
+      continue;
+    }
+    // Whole file: seek the prefix once, then walk -- every term under it
+    // dies.
+    if (!_terms) {
+      _terms = _pk_field->iterator();
+      if (_terms->seek_ge(prefix) == irs::SeekResult::End) {
+        NextEntry();
+        continue;
+      }
+    } else if (!_terms->next()) {
+      NextEntry();
+      continue;
+    }
+    if (!_terms->value().starts_with(prefix)) {
+      NextEntry();
+      continue;
+    }
+    _postings = _terms->postings(irs::IndexFeatures::None);
   }
 }
 

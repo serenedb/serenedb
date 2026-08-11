@@ -1,0 +1,635 @@
+control substitution on
+
+# REFRESH attribution rungs below exact file attribution, driven by the
+# static fixture (scripts/gen_iceberg_fixture.py): two local
+# iceberg tables whose second snapshot carries a positional delete file with
+# NO referenced_data_file and NO file_path bounds -- the shape foreign
+# writers produce, so metadata pins it to no single data file.
+#   part/  partitioned: the delete scopes to partition a -> only that
+#          partition's files invalidate -> delta rescans just them.
+#   plain/ unpartitioned: the delete scopes globally -> every file
+#          invalidates -> rebuild.
+# Both must converge: the (re)build captures the same delete fingerprints
+# observe computes, so the next reindex is up_to_date.
+
+system ok
+cp -r resources/tests/iceberg/plain $__TEST_DIR__/reil_plain && cp -r resources/tests/iceberg/part $__TEST_DIR__/reil_part && echo -n 1 > $__TEST_DIR__/reil_plain/metadata/version-hint.text && echo -n 1 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY reil_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW reil_plain_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/reil_plain', allow_moved_paths=true);
+
+statement ok
+CREATE VIEW reil_part_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/reil_part', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX reil_plain_idx ON reil_plain_v USING inverted(id, body reil_en);
+
+statement ok
+CREATE INDEX reil_part_idx ON reil_part_v USING inverted(id, body reil_en);
+
+query
+SELECT count(*) FROM reil_plain_idx;
+----
+count
+3
+
+query
+SELECT count(*) FROM reil_part_idx;
+----
+count
+5
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_idx');
+----
+action
+up_to_date
+
+# Advance both tables to the delete snapshot.
+system ok
+echo -n 2 > $__TEST_DIR__/reil_plain/metadata/version-hint.text && echo -n 2 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+
+# Partition rung: only partition a's two files (of four) count as changed;
+# the rescan goes through the iceberg reader, which applies the delete.
+query
+SELECT * FROM serenedb_reindex('reil_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	2
+
+query
+SELECT count(*) FROM reil_part_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+query
+SELECT id, body FROM reil_part_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	vedernikoff reviews part b
+4	pudge farms jungle
+5	techies plants mines
+
+# Global rung: unpartitioned, so the delete invalidates every file -- the
+# delta rescans the whole listing.
+query
+SELECT * FROM serenedb_reindex('reil_plain_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	2
+
+query
+SELECT count(*) FROM reil_plain_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+query
+SELECT id FROM reil_plain_idx ORDER BY id;
+----
+id
+1
+3
+
+# Convergence: both roads stamp the delete fingerprints observe computes --
+# the delta on its rescans, a rebuild via its manifest capture (a refresh
+# that re-observed as changed would refresh forever).
+query
+SELECT action FROM serenedb_reindex('reil_plain_idx');
+----
+action
+up_to_date
+
+query
+SELECT action FROM serenedb_reindex('reil_part_idx');
+----
+action
+up_to_date
+
+# Included-column index, built at snapshot 2: `id` is INCLUDE'd (stored,
+# no term dictionary), so an equality delete on it cannot translate to a
+# dictionary query -- the SCAN road evaluates it over the stored values
+# instead (rungs after the snapshot-3 bump below).
+statement ok
+CREATE INDEX reil_plain_inc_idx ON reil_plain_v USING inverted(body reil_en)
+  INCLUDE (id);
+
+query
+SELECT count(*) FROM reil_plain_inc_idx;
+----
+count
+2
+
+# Equality-delete rung: snapshot 3 carries a GLOBAL equality delete on id=1
+# and, in the SAME snapshot, a new data file re-inserting id=1 with a fresh
+# body (plus a NULL-id row for the next rung). The kept files' dead rows
+# are removed by query (files_rescanned=0); the new file scans fresh -- and
+# because the delete's sequence number is not strictly above the new
+# file's, the re-inserted row survives (the CDC upsert shape).
+system ok
+echo -n 3 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_plain_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	2	0	0
+
+query
+SELECT id, body FROM reil_plain_idx ORDER BY id;
+----
+id	body
+1	pudge reborn
+3	vedernikoff pins snapshots
+NULL	techies invisible
+
+query
+SELECT id FROM reil_plain_idx WHERE body @@ ts_phrase('goes');
+----
+id
+
+query
+SELECT id FROM reil_plain_idx WHERE body @@ ts_phrase('reborn');
+----
+id
+1
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_idx');
+----
+action
+up_to_date
+
+# The included-column index sees the same snapshot-3 equality delete on
+# id=1: no dictionary for `id`, so the rows evaluate through the index's
+# own scan over the STORED id values -- removed by pk, nothing rescanned
+# but the genuinely new data file.
+query
+SELECT * FROM serenedb_reindex('reil_plain_inc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	2	0	0
+
+query
+SELECT id, body FROM reil_plain_inc_idx ORDER BY id;
+----
+id	body
+1	pudge reborn
+3	vedernikoff pins snapshots
+NULL	techies invisible
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_inc_idx');
+----
+action
+up_to_date
+
+# The boundary: same shape but WITH (store_pk='none') -- the scan road
+# cannot read pks back, so the covered files demote to the rescan road
+# (the always-correct fallback).
+statement ok
+CREATE INDEX reil_plain_np_idx ON reil_plain_v USING inverted(body reil_en)
+  INCLUDE (id) WITH (store_pk='none');
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_np_idx');
+----
+action
+up_to_date
+
+# NULL-value rung (snapshot 4): an equality delete whose value is NULL --
+# the translated query is IS NULL through the null marker field. Also the
+# accumulation shape: the files snapshot 3 covered translate only THIS
+# delete the second time around (the seq bound skips the applied one).
+system ok
+echo -n 4 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_plain_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	3	0	0
+
+query
+SELECT id, body FROM reil_plain_idx ORDER BY id;
+----
+id	body
+1	pudge reborn
+3	vedernikoff pins snapshots
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_idx');
+----
+action
+up_to_date
+
+# The included-column index at snapshot 4: the IS NULL row travels the
+# scan road too (`id IS NULL` over the stored values) -- and only the NEW
+# delete translates (the seq bound skips snapshot 3's applied one).
+query
+SELECT * FROM serenedb_reindex('reil_plain_inc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	3	0	0
+
+query
+SELECT id, body FROM reil_plain_inc_idx ORDER BY id;
+----
+id	body
+1	pudge reborn
+3	vedernikoff pins snapshots
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_inc_idx');
+----
+action
+up_to_date
+
+# The store_pk='none' index at snapshot 4: no stored pks also means no pk
+# terms, so the index is not delta-capable at all -- every change takes
+# the rebuild road (the always-correct fallback below the scan road).
+query
+SELECT * FROM serenedb_reindex('reil_plain_np_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	3	0	3
+
+# Only INCLUDE'd columns are selectable without stored pks.
+query
+SELECT id FROM reil_plain_np_idx ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_np_idx');
+----
+action
+up_to_date
+
+# Multi-column rung (snapshot 5): equality_ids = (id, body). Rows must
+# match ALL columns; body rides an analyzer whose terms answer MATCH, not
+# value equality, so translation refuses -- and the SCAN road takes over:
+# the rows evaluate through the index's own SQL scan (body compared by its
+# RAW source value) and only the matching pks remove. Nothing rescans.
+system ok
+echo -n 5 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_plain_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	3	0	0
+
+query
+SELECT id, body FROM reil_plain_idx ORDER BY id;
+----
+id	body
+1	pudge reborn
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_idx');
+----
+action
+up_to_date
+
+# The included-column index at snapshot 5: BOTH conjuncts untranslatable
+# (id included, body analyzed) -- the whole row evaluates via the scan
+# road; same result as the keyed sibling.
+query
+SELECT * FROM serenedb_reindex('reil_plain_inc_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	3	0	0
+
+query
+SELECT id, body FROM reil_plain_inc_idx ORDER BY id;
+----
+id	body
+1	pudge reborn
+
+# Snapshot 6: three fresh rows (the same-snapshot id=999 delete matches
+# nothing -- restamp fodder).
+system ok
+echo -n 6 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_plain_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	3	0	0
+
+query
+SELECT count(*) FROM reil_plain_idx;
+----
+count
+4
+
+# Snapshot 7: ONE equality delete file with TWO rows on the analyzed body
+# column -- the multi-row (OR) shape through the scan road; both rows die,
+# the third survivor stays.
+system ok
+echo -n 7 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_plain_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	4	0	0
+
+query
+SELECT id, body FROM reil_plain_idx ORDER BY id;
+----
+id	body
+1	pudge reborn
+12	sniper stays back
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_idx');
+----
+action
+up_to_date
+
+# Metadata-only snapshot (a no-op commit): identical files and delete state
+# under a new snapshot id. The refresh restamps the pin through the
+# zero-file delta and reports up_to_date -- before the restamp arm this was
+# a full rebuild.
+system ok
+python3 -c "import json; p='$__TEST_DIR__/reil_plain/metadata'; m=json.load(open(p+'/v7.metadata.json')); c=[s for s in m['snapshots'] if s['snapshot-id']==m['current-snapshot-id']][0]; n=dict(c); n['snapshot-id']=c['snapshot-id']+1; n['sequence-number']=m['last-sequence-number']+1; n['parent-snapshot-id']=c['snapshot-id']; m['snapshots'].append(n); m['current-snapshot-id']=n['snapshot-id']; m['last-sequence-number']=n['sequence-number']; m.setdefault('snapshot-log',[]).append({'snapshot-id': n['snapshot-id'], 'timestamp-ms': c.get('timestamp-ms',0)+1}); json.dump(m, open(p+'/v8.metadata.json','w'))" && echo -n 8 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_idx');
+----
+action
+up_to_date
+
+# The restamped pin resolves reads and the next observe alike.
+query
+SELECT id FROM reil_plain_idx ORDER BY id;
+----
+id
+1
+12
+
+query
+SELECT action FROM serenedb_reindex('reil_plain_idx');
+----
+action
+up_to_date
+
+# Mixed snapshot: partition a gains another partition-scoped delete (id=4)
+# while a partition-b file gains a file-pinned delete (id=5) in the SAME
+# snapshot. The per-file mask gate rescans only partition a's files; the
+# pinned file keeps its docs and masks its dead row -- before the per-file
+# gate, the partition-scoped delete disabled masks for the whole listing.
+system ok
+echo -n 3 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	3	0	2
+
+query
+SELECT id, body FROM reil_part_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	vedernikoff reviews part b
+
+query
+SELECT action FROM serenedb_reindex('reil_part_idx');
+----
+action
+up_to_date
+
+# Partition-scoped equality delete (snapshot 4): id=1, scoped to partition
+# a. Only partition a's files translate the remove query; partition b's
+# fingerprints never move.
+system ok
+echo -n 4 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	0
+
+query
+SELECT id, body FROM reil_part_idx ORDER BY id;
+----
+id	body
+3	vedernikoff reviews part b
+
+query
+SELECT action FROM serenedb_reindex('reil_part_idx');
+----
+action
+up_to_date
+
+# A view that PROJECTS `part` away, indexed at snapshot 4: the delete
+# below names a column outside this view's output -- the one shape no
+# road can evaluate.
+statement ok
+CREATE VIEW reil_part_proj_v AS SELECT id, body FROM iceberg_scan(
+  '${__TEST_DIR__}/reil_part', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX reil_part_proj_idx ON reil_part_proj_v USING inverted(id, body reil_en);
+
+# Foreign-column rung (snapshot 5): an equality delete on `part` -- a
+# column the (id, body) index holds in NO form. The scan road still
+# answers: `part` is in the view output, so the index scan materializes it
+# from the source for the covered files' rows and removes the matches --
+# far cheaper than rebuilding the files' docs.
+system ok
+echo -n 5 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	0
+
+query
+SELECT count(*) FROM reil_part_idx;
+----
+count
+0
+
+query
+SELECT action FROM serenedb_reindex('reil_part_idx');
+----
+action
+up_to_date
+
+# The projected index sees the same snapshot-5 delete on `part` -- but
+# `part` is not in ITS view output, so neither translation nor the scan
+# road can evaluate it: the covered files demote to the rescan road, the
+# always-correct floor.
+query
+SELECT * FROM serenedb_reindex('reil_part_proj_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	2
+
+query
+SELECT count(*) FROM reil_part_proj_idx;
+----
+count
+0
+
+query
+SELECT action FROM serenedb_reindex('reil_part_proj_idx');
+----
+action
+up_to_date
+
+# Deletion-vector rungs (dv/, format-version 3). Snapshot 2 registers a DV
+# on positions {1,3} of the single data file: the mask road, nothing
+# rescanned. The published manifest stores the APPLIED chunks.
+system ok
+cp -r resources/tests/iceberg/dv $__TEST_DIR__/reil_dv && echo -n 1 > $__TEST_DIR__/reil_dv/metadata/version-hint.text
+
+statement ok
+CREATE VIEW reil_dv_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/reil_dv', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX reil_dv_idx ON reil_dv_v USING inverted(id, body reil_en);
+
+query
+SELECT count(*) FROM reil_dv_idx;
+----
+count
+5
+
+system ok
+echo -n 2 > $__TEST_DIR__/reil_dv/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_dv_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM reil_dv_idx ORDER BY id;
+----
+id
+1
+3
+5
+
+# Snapshot 3 = the accumulated SUPERSET {0,1,3}: the observe diffs it
+# against the applied chunks, so only position 0 (id 1) newly removes --
+# still the mask road, and the restamped chunks converge (up_to_date after).
+system ok
+echo -n 3 > $__TEST_DIR__/reil_dv/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_dv_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM reil_dv_idx ORDER BY id;
+----
+id
+3
+5
+
+query
+SELECT action FROM serenedb_reindex('reil_dv_idx');
+----
+action
+up_to_date
+
+# Snapshot 4 = the SAME set re-registered under a fresh sequence number (a
+# rewrite): unchanged cardinality proves the applied set (supersets only),
+# so the file restamps without the blob ever being fetched.
+system ok
+echo -n 4 > $__TEST_DIR__/reil_dv/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_dv_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM reil_dv_idx ORDER BY id;
+----
+id
+3
+5
+
+query
+SELECT action FROM serenedb_reindex('reil_dv_idx');
+----
+action
+up_to_date
+
+# An index CREATED on a DV-bearing snapshot captures the applied chunks at
+# build time: convergent immediately, and the next superset (snapshot 5 =
+# {0,1,2,3}) diffs against the captured set -- both indexes remove only
+# position 2 (id 3).
+statement ok
+CREATE INDEX reil_dv_idx2 ON reil_dv_v USING inverted(id, body reil_en);
+
+query
+SELECT count(*) FROM reil_dv_idx2;
+----
+count
+2
+
+query
+SELECT action FROM serenedb_reindex('reil_dv_idx2');
+----
+action
+up_to_date
+
+system ok
+echo -n 5 > $__TEST_DIR__/reil_dv/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('reil_dv_idx2');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM reil_dv_idx2 ORDER BY id;
+----
+id
+5
+
+query
+SELECT * FROM serenedb_reindex('reil_dv_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT id FROM reil_dv_idx ORDER BY id;
+----
+id
+5

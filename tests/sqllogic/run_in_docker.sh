@@ -28,6 +28,11 @@ fi
 # ($WORKSPACE is mounted at /serenedb, so resources lives at /serenedb/resources)
 export RESOURCES="/serenedb/resources"
 
+# The local iceberg fixture is generated, not checked in; the tests
+# container cannot generate it (see launch_external in run.sh), so
+# generate here on the host before compose starts.
+"$WORKSPACE/scripts/ensure_iceberg_fixture.sh"
+
 if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi

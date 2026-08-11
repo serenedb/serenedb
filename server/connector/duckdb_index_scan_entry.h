@@ -29,6 +29,7 @@
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/view_fast_path.h"
 
 namespace sdb::connector {
 
@@ -52,6 +53,11 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
 
 class InvertedIndexScanEntry : public SereneDBIndexScanEntry {
  public:
+  const std::shared_ptr<const catalog::InvertedIndex>& GetInvertedIndex()
+    const noexcept {
+    return _inverted_index;
+  }
+
   duckdb::vector<duckdb::ColumnSegmentInfo> GetColumnSegmentInfo(
     const duckdb::QueryContext& context,
     const duckdb::ColumnSegmentInfoScanOptions& options) final;
@@ -102,8 +108,8 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
  public:
   ViewInvertedIndexScanEntry(
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    duckdb::CreateTableInfo& info,
+    duckdb::ClientContext& context, duckdb::Catalog& catalog,
+    duckdb::SchemaCatalogEntry& schema, duckdb::CreateTableInfo& info,
     std::shared_ptr<const catalog::PgSqlView> sdb_view,
     std::vector<size_t> indexed_col_indices,
     std::shared_ptr<const catalog::InvertedIndex> inverted_index);
@@ -123,6 +129,10 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 
  private:
   std::shared_ptr<const catalog::PgSqlView> _sdb_view;
+  // Resolved once at construction (a parse-tree walk plus catalog entry
+  // lookups -- the source bind happens at scan time) and immutable after:
+  // GetVirtualColumns types generated_pk from it, GetScanFunction reuses it.
+  std::optional<ViewFastPath> _fast_path;
 };
 
 class SecondaryIndexScanEntry : public SereneDBIndexScanEntry {

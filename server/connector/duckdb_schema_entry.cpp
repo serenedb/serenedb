@@ -125,8 +125,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
   auto snapshot = conn_ctx.CatalogSnapshot();
   auto [result, object] = snapshot->GetDuckDBEntryCache().EnsureEntry(
-    lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(),
-    name.GetIdentifierName(), lookup_info.GetEntryName(), *snapshot);
+    lookup_info.GetCatalogType(), transaction.GetContext(), catalog, *this,
+    GetDatabaseId(), name.GetIdentifierName(), lookup_info.GetEntryName(),
+    *snapshot);
   if (result) {
     if (object && name.GetIdentifierName() != StaticStrings::kPgCatalogSchema) {
       const auto need = [&] {
@@ -178,8 +179,8 @@ void SereneDBSchemaEntry::Scan(
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.CatalogSnapshot();
   snapshot->GetDuckDBEntryCache().ScanEntries(
-    type, catalog, *this, GetDatabaseId(), name.GetIdentifierName(), callback,
-    *snapshot);
+    type, context, catalog, *this, GetDatabaseId(), name.GetIdentifierName(),
+    callback, *snapshot);
 }
 
 void SereneDBSchemaEntry::Scan(
@@ -607,6 +608,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     auto resolve_uint = [&](std::string_view key) -> uint32_t {
       return ResolveUintWithOption(context, key, find_with(key));
     };
+
+    if (find_with(kReindexIntervalSetting)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("option \"", kReindexIntervalSetting,
+                "\" only applies to view-backed inverted indexes"));
+    }
     catalog::InvertedIndexOptions options{
       .row_group_size = resolve_uint(kRowGroupSizeSetting),
       .refresh_interval_ms = resolve_uint(kRefreshIntervalSetting),
@@ -1068,6 +1076,8 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
         for (const auto& [option, value] : changes) {
           if (option == kRefreshIntervalSetting) {
             options.refresh_interval_ms = static_cast<uint32_t>(value);
+          } else if (option == kReindexIntervalSetting) {
+            options.reindex_interval_ms = static_cast<uint32_t>(value);
           } else if (option == kCompactionIntervalSetting) {
             options.compaction_interval_ms = static_cast<uint32_t>(value);
           } else if (option == kCleanupIntervalStepSetting) {

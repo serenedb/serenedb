@@ -28,6 +28,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/execution/index/bound_index.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/operator/persistent/physical_batch_insert.hpp>
@@ -37,6 +38,7 @@
 #include <duckdb/execution/operator/persistent/physical_update.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/function/function_binder.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -51,7 +53,9 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
@@ -86,7 +90,9 @@
 #include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
+#include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_index_utils.h"
+#include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_search_delete.h"
 #include "connector/duckdb_physical_search_insert.h"
@@ -95,6 +101,8 @@
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/file_manifest.h"
+#include "connector/index_expression.hpp"
 #include "connector/inverted_index_options_util.h"
 #include "connector/pg_logical_types.h"
 #include "connector/search_table_dispatch.h"
@@ -103,6 +111,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+#include "planning/iceberg_multi_file_list.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
@@ -708,6 +717,30 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
+  if (auto* index_entry =
+        dynamic_cast<ViewInvertedIndexScanEntry*>(&op.table)) {
+    // The remove side of REFRESH's equality-delete scan road: `DELETE FROM
+    // <index> WHERE <rows>` plans only on an internal connection (no client
+    // behind it -- only driver code issues statements there); the sink
+    // removes the matched (file, row) pks with the statement's own
+    // transaction on the live index. Wire sessions keep the canonical
+    // DML-on-index error: view indexes have no user DML surface.
+    auto* conn_ctx = GetSereneDBContextPtr(context);
+    if (!conn_ctx || conn_ctx->GetSendBuffer()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+        ERR_MSG("cannot open relation \"", op.table.name.GetIdentifierName(),
+                "\""),
+        ERR_DETAIL("This operation is not supported for indexes."));
+    }
+    // The scan's row-identity column (the generated_pk struct) is last.
+    std::vector<duckdb::idx_t> pk_indices{plan.types.size() - 1};
+    auto& index_del = planner.Make<SereneDBSearchDelete>(
+      nullptr, index_entry->GetInvertedIndex(), std::move(pk_indices),
+      op.estimated_cardinality);
+    index_del.children.push_back(plan);
+    return index_del;
+  }
   auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
 
@@ -735,7 +768,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
       }
     }
     auto& search_del = planner.Make<SereneDBSearchDelete>(
-      std::move(sdb_table), std::move(pk_indices), op.estimated_cardinality);
+      std::move(sdb_table), nullptr, std::move(pk_indices),
+      op.estimated_cardinality);
     search_del.children.push_back(plan);
     return search_del;
   }
@@ -864,6 +898,46 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
     duckdb::LogicalOperatorType::LOGICAL_ALTER, std::move(alter_info));
 }
 
+namespace {
+
+// A delta pass keeps the leaf's FULL file list (iceberg keeps its delete
+// state) and narrows the scan with a pushed `file_index IN (...)` filter:
+// the reader skips every other file pre-open. A scan file's manifest id is
+// `delta_file_base + listing ordinal`, so the pk projection is plain
+// `file_index + base`. If the listing moved between the tick's diff and
+// this bind (ordinal mismatch), the pass aborts and the next tick retries
+// on the fresh listing.
+duckdb::vector<duckdb::Value> ComputeDeltaOrdinals(
+  duckdb::MultiFileBindData& mfbd, const SereneDBCreateIndexInfo& info) {
+  containers::FlatHashMap<std::string_view, uint64_t> id_by_path;
+  id_by_path.reserve(info.manifest->entries.size());
+  for (const auto& [id, entry] : info.manifest->entries) {
+    id_by_path.emplace(entry.path, id);
+  }
+  const auto files = mfbd.file_list->GetAllFiles();
+  duckdb::vector<duckdb::Value> ordinals;
+  ordinals.reserve(info.delta_files.size());
+  for (uint64_t i = 0; i < files.size(); ++i) {
+    const auto it = id_by_path.find(files[i].path);
+    if (it == id_by_path.end() || it->second < info.delta_file_base) {
+      continue;
+    }
+    if (it->second != info.delta_file_base + i) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_IN_USE),
+        ERR_MSG("REINDEX delta: the source listing moved during the pass; "
+                "retried on the next tick"));
+    }
+    ordinals.push_back(duckdb::Value::UBIGINT(i));
+  }
+  // First-file stats don't describe the narrowed scan; without this the
+  // optimizer folds partial-index predicates from them.
+  mfbd.initial_reader.reset();
+  return ordinals;
+}
+
+}  // namespace
+
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::CatalogEntry& target,
@@ -875,15 +949,21 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     RejectIfSearchTable(*sdb_table, "CREATE INDEX");
   }
 
+  // A REINDEX pass arrives as a SereneDBCreateIndexInfo statement (only the
+  // driver can construct that subclass -- the parser never does).
+  const auto* reindex_pass =
+    dynamic_cast<const SereneDBCreateIndexInfo*>(stmt.info.get());
+  if (reindex_pass &&
+      reindex_pass->Pass() == SereneDBCreateIndexInfo::ReindexPass::None) {
+    reindex_pass = nullptr;
+  }
   // View-backed indexes are STATIC -- captured at CREATE INDEX, no DML refresh.
   duckdb::optional_ptr<duckdb::TableCatalogEntry> resolved_table;
   bool view_backed = false;
+  bool delta_pass = false;
   std::optional<ViewFastPath> view_fast_path;
-  int64_t pinned_iceberg_snapshot_id = 0;
+  std::optional<search::FileManifest> captured_manifest;
   std::optional<std::vector<duckdb::idx_t>> kept_view_positions;
-  const auto partial_view_index =
-    !!stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause;
-  std::optional<std::vector<duckdb::column_t>> vcols_opt;
   if (target.type == duckdb::CatalogType::VIEW_ENTRY) {
     view_backed = true;
     auto is_fast_path_wrapper = [](duckdb::LogicalOperator& op) -> bool {
@@ -911,6 +991,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         stmt.info->Cast<duckdb::CreateIndexInfo>().options);
       fp = ResolveViewFastPath(binder.context, *view, key_cols);
     }
+
+    const auto partial_view_index =
+      !!stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause;
     duckdb::LogicalOperator* leaf_parent_chain_root = plan.get();
     duckdb::LogicalGet* leaf_get = nullptr;
     {
@@ -929,8 +1012,16 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     }
     if (fp && leaf_get) {
       view_fast_path = std::move(fp);
-      vcols_opt = BackfillPkVirtualColumns(*view_fast_path);
-      const auto& vcols = *vcols_opt;
+      std::optional<duckdb::vector<duckdb::Value>> delta_ordinals;
+      if (reindex_pass &&
+          reindex_pass->Pass() == SereneDBCreateIndexInfo::ReindexPass::Delta) {
+        SDB_ASSERT(leaf_get->bind_data);
+        delta_ordinals = ComputeDeltaOrdinals(
+          leaf_get->bind_data->Cast<duckdb::MultiFileBindData>(),
+          stmt.info->Cast<SereneDBCreateIndexInfo>());
+        delta_pass = true;
+      }
+      const auto vcols = BackfillPkVirtualColumns(*view_fast_path);
 
       const auto leaf_orig_size = leaf_get->GetColumnIds().size();
       duckdb::vector<duckdb::LogicalType> pk_types;
@@ -938,7 +1029,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       for (size_t i = 0; i < vcols.size(); ++i) {
         const auto vcol = vcols[i];
         if (vcol == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
-          pk_types.push_back(duckdb::LogicalType::UBIGINT);
+          // The glob struct's file half -- the one definition.
+          pk_types.push_back(duckdb::StructType::GetChildType(
+            FileIndexRowNumberStructType(), 0));
         } else if (view_fast_path->pk_spec ==
                    catalog::PkSpec::ExternalColumnKey) {
           // Real key columns of arbitrary types -- project their own types, not
@@ -983,6 +1076,28 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
           }
         }
       }
+      if (delta_ordinals) {
+        // The narrowed scan: keep only the delta files, pre-open.
+        auto in_expr = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
+          duckdb::ExpressionType::COMPARE_IN, duckdb::LogicalType::BOOLEAN);
+        auto& in_children = in_expr->GetChildrenMutable();
+        in_children.push_back(
+          duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+            duckdb::LogicalType::UBIGINT, 0ULL));
+        for (const auto& ordinal : *delta_ordinals) {
+          in_children.push_back(
+            duckdb::make_uniq<duckdb::BoundConstantExpression>(ordinal));
+        }
+        for (size_t i = 0; i < vcols.size(); ++i) {
+          if (vcols[i] ==
+              duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
+            leaf_get->table_filters.PushFilter(
+              duckdb::ProjectionIndex(leaf_orig_size + i),
+              duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(in_expr)));
+            break;
+          }
+        }
+      }
       auto thread_pk_through = [&](auto& self,
                                    duckdb::LogicalOperator& op) -> void {
         if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
@@ -1004,9 +1119,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       };
       thread_pk_through(thread_pk_through, *leaf_parent_chain_root);
       if (leaf_get->bind_data) {
-        pinned_iceberg_snapshot_id =
-          ExtractIcebergSnapshotId(*leaf_get->bind_data);
         EnableIcebergSort(leaf_get->bind_data.get());
+      }
+
+      if (IsFilePkSpec(view_fast_path->pk_spec) && !delta_pass) {
+        SDB_ASSERT(leaf_get->bind_data);
+        captured_manifest = CaptureManifest(
+          binder.context,
+          leaf_get->bind_data->Cast<duckdb::MultiFileBindData>());
       }
 
       auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
@@ -1018,10 +1138,34 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         stmt.info->Cast<duckdb::CreateIndexInfo>().parsed_expressions,
         stmt.info->Cast<duckdb::CreateIndexInfo>().where_clause.get(),
         *column_info);
-      if (kept.size() < column_info->names.size() || partial_view_index) {
+      if (kept.size() < column_info->names.size() || partial_view_index ||
+          delta_pass) {
         plan = InsertBackfillFilterProjection(
           std::move(plan), kept, column_info->names.size(), vcols.size(),
           binder.GenerateTableIndex());
+        if (delta_pass) {
+          // The pk's file element: docs are born with their manifest ids,
+          // which are `file_index + base` by construction.
+          auto& proj = plan->Cast<duckdb::LogicalProjection>();
+          for (size_t i = 0; i < vcols.size(); ++i) {
+            if (vcols[i] !=
+                duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
+              continue;
+            }
+            auto& slot = proj.expressions[kept.size() + i];
+            duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
+            args.push_back(std::move(slot));
+            args.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+              duckdb::Value::UBIGINT(reindex_pass->delta_file_base)));
+            duckdb::FunctionBinder function_binder{binder};
+            duckdb::ErrorData error;
+            slot = function_binder.BindScalarFunction(
+              duckdb::Identifier{DEFAULT_SCHEMA}, duckdb::Identifier{"+"},
+              std::move(args), error, true);
+            SDB_ASSERT(slot, error.Message());
+            break;
+          }
+        }
         kept_view_positions = std::move(kept);
       }
     } else {
@@ -1043,9 +1187,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     resolved_table = &target.Cast<duckdb::TableCatalogEntry>();
   }
   // IndexBinder casts bind_data to TableScanBindData -- doesn't fit ours.
-  auto create_index_info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateIndexInfo>(
-      std::move(stmt.info));
+  // The info travels on as a SereneDBCreateIndexInfo (reindex passes already
+  // are one; plain user creates upgrade here) so the bind captures below ride
+  // the statement to the plan hook.
+  auto create_index_info = [&] {
+    auto base =
+      duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateIndexInfo>(
+        std::move(stmt.info));
+    if (dynamic_cast<SereneDBCreateIndexInfo*>(base.get())) {
+      return duckdb::unique_ptr_cast<duckdb::CreateIndexInfo,
+                                     SereneDBCreateIndexInfo>(std::move(base));
+    }
+    return duckdb::make_uniq<SereneDBCreateIndexInfo>(std::move(*base));
+  }();
 
   // DuckDB defaults to "" or "ART"; PG defaults to "btree".
   {
@@ -1229,57 +1383,24 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         [](const std::string& n) { return duckdb::Identifier{n}; }));
     create_index_info->SetSchema(target.ParentSchema().name);
     create_index_info->SetCatalog(target.ParentCatalog().GetName());
+
+    auto& planning = *create_index_info;
     if (view_fast_path) {
-      switch (view_fast_path->pk_spec) {
-        case catalog::PkSpec::ExternalPostgresCtid:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("external_postgres_ctid");
-          break;
-        case catalog::PkSpec::ExternalColumnKey:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("external_struct_key");
-          break;
-        case catalog::PkSpec::DuckDBRowId:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("duckdb_rowid");
-          break;
-        case catalog::PkSpec::FileIndexPlusDuckDBRowId:
-          create_index_info->options["_sdb_view_fast_path_pk"] =
-            duckdb::Value("file_index_plus_duckdb_rowid");
-          break;
-        default: {
-          SDB_ASSERT(vcols_opt,
-                     "view_fast_path set but vcols not populated -- the "
-                     "two are produced together in the leaf-rewrite block");
-          const auto& vcols = *vcols_opt;
-          if (vcols.size() == 1) {
-            create_index_info->options["_sdb_view_fast_path_pk"] =
-              duckdb::Value("file_row_number");
-          } else if (vcols.size() == 2) {
-            create_index_info->options["_sdb_view_fast_path_pk"] =
-              duckdb::Value("file_index_plus_row_number");
-          }
-          break;
-        }
+      if (!delta_pass) {
+        // A delta pass binds the view narrowed to its scan files, so ITS
+        // fast path claims a single-file pk -- the driver already put the
+        // REAL pk type on the statement; keep it.
+        planning.fast_path_pk_spec = view_fast_path->pk_spec;
+        planning.generated_pk_type = view_fast_path->GeneratedPkType();
       }
-      if (pinned_iceberg_snapshot_id != 0) {
-        create_index_info->options["_sdb_iceberg_snapshot_id"] =
-          duckdb::Value::BIGINT(pinned_iceberg_snapshot_id);
+      if (captured_manifest) {
+        planning.manifest =
+          std::make_shared<search::FileManifest>(std::move(*captured_manifest));
       }
     }
     if (kept_view_positions) {
-      duckdb::vector<duckdb::Value> kept_values;
-      kept_values.reserve(kept_view_positions->size());
-      for (auto p : *kept_view_positions) {
-        kept_values.emplace_back(duckdb::Value::UBIGINT(p));
-      }
-      create_index_info->options["_sdb_view_kept_positions"] =
-        duckdb::Value::LIST(duckdb::LogicalType::UBIGINT,
-                            std::move(kept_values));
+      planning.kept_positions = *kept_view_positions;
     }
-    // Remap col-ref bindings to (TableIndex(0), narrowed_position): the
-    // resolver matches LOGICAL_CREATE_INDEX exprs against TableIndex(0), and
-    // chunk positions follow kept_view_positions' (sorted) order.
     duckdb::IndexBinder index_binder(binder, binder.context, nullptr,
                                      create_index_info.get());
     // Remap col-ref bindings to (TableIndex(0), narrowed_position): the

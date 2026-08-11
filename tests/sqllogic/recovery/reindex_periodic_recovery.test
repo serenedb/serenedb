@@ -1,0 +1,227 @@
+control substitution on
+
+# Periodic reindex across restarts. The interval option is persisted
+# index state: a restarted server must resume the loop by itself (E1), a
+# crash INSIDE a background tick must heal on the next tick after restart
+# (E2), and an index without the option must stay quiet after a restart
+# (E3, the negative control).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rpr_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+system ok
+mkdir -p $__TEST_DIR__/rpr_glob $__TEST_DIR__/rpr_quiet $__TEST_DIR__/rpr_pending
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rpr_glob/f1.parquet' (FORMAT PARQUET);
+
+statement count 1
+COPY (SELECT 10 AS id, 'arrives while down' AS body)
+TO '${__TEST_DIR__}/rpr_pending/f2.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rpr_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_glob/f*.parquet');
+
+statement ok
+CREATE INDEX rpr_idx ON rpr_v USING inverted(id, body rpr_en) WITH (reindex_interval=100);
+
+# E3 companion: same source, NO interval option.
+statement count 1
+COPY (SELECT 1 AS id, 'quiet base' AS body)
+TO '${__TEST_DIR__}/rpr_quiet/f1.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rpr_quiet_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_quiet/f*.parquet');
+
+statement ok
+CREATE INDEX rpr_quiet_idx ON rpr_quiet_v USING inverted(id, body rpr_en);
+
+query
+SELECT count(*) FROM rpr_idx;
+----
+count
+1
+
+# E1: restart with the option set; the change lands while the server is
+# down; the resumed loop applies it with no manual REINDEX.
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+system ok
+mv $__TEST_DIR__/rpr_pending/f2.parquet $__TEST_DIR__/rpr_glob/f2.parquet && cp $__TEST_DIR__/rpr_quiet/f1.parquet $__TEST_DIR__/rpr_quiet/f2.parquet
+
+connection e1_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rpr_idx;
+----
+count
+2
+
+connection e1_after
+query
+SELECT id FROM rpr_idx WHERE body @@ ts_phrase('down');
+----
+id
+10
+
+# E3: the optionless index did NOT tick after the restart -- the file added
+# while down stays invisible until a manual REINDEX.
+connection e1_after
+query
+SELECT count(*) FROM rpr_quiet_idx;
+----
+count
+1
+
+connection e1_after
+statement ok
+CALL serenedb_reindex('rpr_quiet_idx');
+
+connection e1_after
+query
+SELECT count(*) FROM rpr_quiet_idx;
+----
+count
+2
+
+# E2: a tick crashes mid-delta (after the removes, before the manifest
+# publish). The next tick after restart recomputes the identical diff and
+# heals -- no manual involvement at any point.
+
+connection e1_after
+statement ok
+SET sdb_faults = 'crash_before_delta_publish';
+
+connection e1_after
+statement count 2
+COPY (SELECT 1 AS id, 'pudge rewritten mid' AS body
+      UNION ALL SELECT 2, 'anchin joins the file')
+TO '${__TEST_DIR__}/rpr_glob/f1.parquet' (FORMAT PARQUET);
+
+# The background tick (100ms cadence) hits the fault and kills the server.
+# Generous window: under a loaded Debug box the observe+delta before the
+# fault point can take a large fraction of a second by itself.
+system ok
+sleep 3
+
+connection e1_after
+statement error connection closed
+SELECT 1;
+
+connection e2_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rpr_idx;
+----
+count
+3
+
+connection e2_after
+query
+SELECT id, body FROM rpr_idx ORDER BY id;
+----
+id	body
+1	pudge rewritten mid
+2	anchin joins the file
+10	arrives while down
+
+# F: hint-less iceberg needs version guessing. The tick's internal session
+# reads GLOBAL settings: with only the SESSION setting on, ticks fail (the
+# loop survives, F2); once the GLOBAL is set, the next tick discovers the
+# new snapshot and converges (F1).
+
+connection e2_after
+system ok
+cp -r ../../resources/tests/iceberg/plain $__TEST_DIR__/rpr_ice && rm $__TEST_DIR__/rpr_ice/metadata/version-hint.text 2>/dev/null; mkdir -p $__TEST_DIR__/rpr_ice_hold && mv $__TEST_DIR__/rpr_ice/metadata/v[2-9].metadata.json $__TEST_DIR__/rpr_ice_hold/
+
+connection e2_after
+statement ok
+SET unsafe_enable_version_guessing=true;
+
+connection e2_after
+statement ok
+CREATE VIEW rpr_ice_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/rpr_ice', allow_moved_paths=true);
+
+connection e2_after
+statement ok
+CREATE INDEX rpr_ice_idx ON rpr_ice_v USING inverted(id, body rpr_en) WITH (reindex_interval=100);
+
+connection e2_after
+query
+SELECT count(*) FROM rpr_ice_idx;
+----
+count
+3
+
+# F2: the delete snapshot appears, but the GLOBAL is unset -- ticks fail to
+# bind the hint-less table, the loop stays alive, content stays put.
+connection e2_after
+system ok
+mv $__TEST_DIR__/rpr_ice_hold/v2.metadata.json $__TEST_DIR__/rpr_ice/metadata/
+
+connection e2_after
+system ok
+sleep 1.2
+
+connection e2_after
+query
+SELECT count(*) FROM rpr_ice_idx;
+----
+count
+3
+
+# A manual session REINDEX is NOT enough for a scan delta: the pass runs
+# on an internal connection that reads GLOBAL settings only (one rule with
+# the tick), and this snapshot's global delete forces a rescan pass.
+connection e2_after
+statement error version-hint
+CALL serenedb_reindex('rpr_ice_idx');
+
+connection e2_after
+query
+SELECT count(*) FROM rpr_ice_idx;
+----
+count
+3
+
+# ...and F1: with the GLOBAL set, the manual run lands v2 and the loop
+# handles the next snapshot by itself (v3 = the equality delete +
+# same-snapshot re-insert).
+connection e2_after
+statement ok
+SET GLOBAL unsafe_enable_version_guessing TO true;
+
+connection e2_after
+statement ok
+CALL serenedb_reindex('rpr_ice_idx');
+
+connection e2_after
+query
+SELECT count(*) FROM rpr_ice_idx;
+----
+count
+2
+
+connection e2_after
+system ok
+mv $__TEST_DIR__/rpr_ice_hold/v3.metadata.json $__TEST_DIR__/rpr_ice/metadata/
+
+connection e2_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rpr_ice_idx WHERE body @@ ts_phrase('reborn');
+----
+count
+1

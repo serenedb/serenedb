@@ -1,0 +1,119 @@
+control substitution on
+
+# Periodic reindex over S3 (the A3 container subset of the periodic
+# matrix): the background tick's internal connection reaches the object
+# store through the same instance-wide secret and virtual filesystem as the
+# session that created the index.
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+# Background ticks run on an internal session: they read GLOBAL settings,
+# not this session's -- the endpoint config must be global for the loop to
+# reach the object store (the same contract as version guessing on
+# hint-less iceberg). The extended protocol runs statements inside an
+# implicit transaction where globals cannot be set; the simple-engine run
+# (always first on a shared server) plants the value for both.
+skipif pg-wire-extended
+statement ok
+SET GLOBAL s3_use_ssl=false;
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvps3_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga')
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_p_a.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW rvps3_v AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_p_*.parquet');
+
+statement ok
+CREATE INDEX rvps3_idx ON rvps3_v USING inverted(id, body rvps3_en) WITH (reindex_interval=200);
+
+query
+SELECT count(*) FROM rvps3_idx;
+----
+count
+2
+
+# A new object joins the glob: the background tick refreshes without a
+# manual REINDEX.
+statement count 1
+COPY (SELECT 3 AS id, 'vedernikoff ships s3 cron' AS body)
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_p_b.parquet' (FORMAT parquet);
+
+query ok retry 40 backoff 500ms
+SELECT count(*) FROM rvps3_idx;
+----
+count
+3
+
+query
+SELECT id FROM rvps3_idx WHERE body @@ ts_phrase('cron');
+----
+id
+3
+
+# An object rewrite (etag moves) converges the same way.
+statement count 2
+COPY (SELECT 1 AS id, 'pudge farms jungle' AS body
+      UNION ALL SELECT 2, 'anchin binges manga')
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_p_a.parquet' (FORMAT parquet);
+
+query ok retry 40 backoff 500ms
+SELECT count(*) FROM rvps3_idx WHERE body @@ ts_phrase('farms');
+----
+count
+1
+
+# Stopping the loop stops the ticks: a further rewrite stays invisible over
+# a generous window until a manual REINDEX applies it.
+statement ok
+ALTER INDEX rvps3_idx SET (reindex_interval=0);
+
+system ok
+sleep 0.6
+
+statement count 1
+COPY (SELECT 4 AS id, 'silent object' AS body)
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_p_c.parquet' (FORMAT parquet);
+
+system ok
+sleep 1.5
+
+query
+SELECT count(*) FROM rvps3_idx;
+----
+count
+3
+
+statement ok
+CALL serenedb_reindex('rvps3_idx');
+
+query
+SELECT count(*) FROM rvps3_idx;
+----
+count
+4

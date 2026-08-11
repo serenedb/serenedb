@@ -41,6 +41,7 @@ namespace sdb::connector {
 
 inline constexpr auto kAlterableInvertedOptions = std::to_array({
   kRefreshIntervalSetting,
+  kReindexIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
   kSegmentMemoryMaxSetting,
@@ -53,6 +54,7 @@ inline constexpr auto kAlterableInvertedOptions = std::to_array({
 inline constexpr auto kNumericInvertedOptions = std::to_array({
   kRowGroupSizeSetting,
   kRefreshIntervalSetting,
+  kReindexIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
   kSegmentMemoryMaxSetting,
@@ -79,6 +81,7 @@ inline bool IsUint32InvertedOption(std::string_view name) {
   static constexpr auto kUint32Options = std::to_array({
     kRowGroupSizeSetting,
     kRefreshIntervalSetting,
+    kReindexIntervalSetting,
     kCompactionIntervalSetting,
     kCleanupIntervalStepSetting,
     kSegmentDocsMaxSetting,
@@ -95,6 +98,7 @@ inline bool IsZeroAllowedInvertedOption(std::string_view name) {
   static constexpr auto kZeroAllowed = std::to_array({
     kSegmentDocsMaxSetting,
     kRefreshIntervalSetting,
+    kReindexIntervalSetting,
     kCompactionIntervalSetting,
     kCleanupIntervalStepSetting,
   });

@@ -1,0 +1,188 @@
+control substitution on
+
+# REFRESH over a view on an ATTACHED iceberg catalog table (the foreign-server
+# road: CREATE SERVER ... iceberg_fdw). Unlike the iceberg_scan('<path>') road
+# the bind resolves the table version through the REST catalog -- no
+# version-hint probe, no metadata listing, and no unsafe_enable_version_guessing
+# anywhere. With max_table_staleness on the server the observe pass forces one
+# fresh LoadTable, so the barrier never trusts a stale cache. The server row
+# persists in the serenedb catalog and re-attaches at boot, so views and index
+# refresh loops over it survive restarts (covered by the recovery suite).
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET recat_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+  warehouse '${ICEBERG_WAREHOUSE}',
+  endpoint '${ICEBERG_REST_URL}',
+  authorization_type 'none',
+  max_table_staleness '10 minutes'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY recat_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.recat_t (id INTEGER, body TEXT);
+
+statement count 3
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.recat_t VALUES
+  (1, 'pudge goes mid'),
+  (2, 'anchin reads manga'),
+  (3, 'vedernikoff pins snapshots');
+
+statement ok
+CREATE VIEW recat_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.recat_t;
+
+statement ok
+CREATE INDEX recat_idx ON recat_v USING inverted(id, body recat_en) WITH (compaction_interval=0);
+
+query
+SELECT count(*) FROM recat_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+# Append-only snapshot advance: delta, only the new file scans.
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.recat_t VALUES (4, 'techies mines the jungle');
+
+query
+SELECT * FROM serenedb_reindex('recat_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM recat_idx WHERE body @@ ts_phrase('techies');
+----
+id
+4
+
+# Unchanged snapshot: up_to_date.
+
+query
+SELECT * FROM serenedb_reindex('recat_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+# A delete attributed to one data file: that file changes in place, nothing
+# rescans wholesale.
+
+statement count 1
+DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.recat_t WHERE id = 2;
+
+query
+SELECT action, files_added, files_changed FROM serenedb_reindex('recat_idx');
+----
+action	files_added	files_changed
+delta	0	1
+
+query
+SELECT id FROM recat_idx ORDER BY id;
+----
+id
+1
+3
+4
+
+# An update = delete + re-insert in one commit: changed file plus a new one.
+
+statement count 1
+UPDATE srv_${__DATABASE__}.${__DATABASE__}.recat_t SET body = 'pudge rewritten mid' WHERE id = 1;
+
+query
+SELECT action FROM serenedb_reindex('recat_idx');
+----
+action
+delta
+
+query
+SELECT id, body FROM recat_idx ORDER BY id;
+----
+id	body
+1	pudge rewritten mid
+3	vedernikoff pins snapshots
+4	techies mines the jungle
+
+# The periodic loop's internal session resolves the attachment too: with the
+# interval set, a commit becomes visible with no manual REINDEX.
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.recat_tick_t (id INTEGER, body TEXT);
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.recat_tick_t VALUES (1, 'base row');
+
+statement ok
+CREATE VIEW recat_tick_v AS SELECT * FROM srv_${__DATABASE__}.${__DATABASE__}.recat_tick_t;
+
+statement ok
+CREATE INDEX recat_tick_idx ON recat_tick_v USING inverted(id, body recat_en) WITH (reindex_interval=200);
+
+statement count 1
+INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.recat_tick_t VALUES (2, 'tick landed row');
+
+query ok retry 40 backoff 500ms
+SELECT count(*) FROM recat_tick_idx;
+----
+count
+2
+
+statement ok
+ALTER INDEX recat_tick_idx SET (reindex_interval=0);
+
+# Server-global residue (the server attachment and the persistent secret)
+# must not leak into later tests on the same instance.
+
+statement ok
+DROP INDEX recat_tick_idx;
+
+statement ok
+DROP VIEW recat_tick_v;
+
+statement ok
+DROP INDEX recat_idx;
+
+statement ok
+DROP VIEW recat_v;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.recat_t;
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.recat_tick_t;
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER srv_${__DATABASE__};
+
+statement ok
+DROP PERSISTENT SECRET recat_${__DATABASE__};

@@ -37,6 +37,7 @@
 
 #include "catalog/inverted_index.h"
 #include "catalog/types.h"
+#include "connector/file_manifest.h"
 #include "search/maintenance.h"
 #include "storage_engine/search_engine.h"
 
@@ -50,10 +51,12 @@ namespace sdb::search {
 class InvertedIndexStorage;
 
 struct InvertedIndexSnapshot {
-  explicit InvertedIndexSnapshot(irs::DirectoryReader&& index)
-    : reader{std::move(index)} {}
+  InvertedIndexSnapshot(irs::DirectoryReader&& index,
+                        std::shared_ptr<const FileManifest> manifest)
+    : reader{std::move(index)}, file_manifest{std::move(manifest)} {}
 
   irs::DirectoryReader reader;
+  const std::shared_ptr<const FileManifest> file_manifest;
 };
 using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
@@ -95,26 +98,6 @@ class InvertedIndexStorage final
 
   static std::shared_ptr<InvertedIndexStorage> Create(
     ObjectId id, const catalog::InvertedIndex& index, bool is_new);
-
-  struct TruncateGuard {
-    struct UnlockDeleter {
-      void operator()(absl::Mutex* m) const ABSL_NO_THREAD_SAFETY_ANALYSIS {
-        m->Unlock();
-      }
-    };
-    using Ptr = std::unique_ptr<absl::Mutex, UnlockDeleter>;
-    Ptr mutex;
-  };
-  TruncateGuard TruncateBegin() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    _refresh_mutex.Lock();
-    return {TruncateGuard::Ptr{&_refresh_mutex}};
-  }
-  // `user_txn` (nullable) is the connection's transaction whose pending
-  // per-conn iresearch staging we need to drop before Clear -- the new-arch
-  // analog of the old SearchTrxState cookie cleanup. Pass nullptr from
-  // contexts that don't have a user transaction (WAL recovery).
-  void TruncateCommit(TruncateGuard&& guard, Tick tick,
-                      query::Transaction* user_txn);
 
   auto GetTransaction() {
     SDB_ASSERT(_writer);
@@ -181,9 +164,39 @@ class InvertedIndexStorage final
     return std::atomic_load(&_snapshot);
   }
 
+  // One REINDEX at a time per index, across all connections: claim the
+  // storage for the whole refresh (observe -> delta/rebuild -> publish).
+  // Fail-fast, never waits -- a losing claimant reports "already in
+  // progress".
+  struct ReindexClaim {
+    explicit ReindexClaim(InvertedIndexStorage& storage) noexcept
+      : _storage{&storage},
+        _claimed{!storage._reindex_in_flight.exchange(
+          true, std::memory_order_acq_rel)} {}
+    ~ReindexClaim() {
+      if (_claimed) {
+        _storage->_reindex_in_flight.store(false, std::memory_order_release);
+      }
+    }
+    ReindexClaim(const ReindexClaim&) = delete;
+    ReindexClaim& operator=(const ReindexClaim&) = delete;
+    bool Claimed() const noexcept { return _claimed; }
+
+   private:
+    InvertedIndexStorage* _storage;
+    bool _claimed;
+  };
+
   void StoreInvertedIndexSnapshot(
     InvertedIndexSnapshotPtr inverted_index_snapshot) {
     std::atomic_store(&_snapshot, std::move(inverted_index_snapshot));
+  }
+
+  std::shared_ptr<const FileManifest> GetFileManifest() const {
+    return std::atomic_load(&_file_manifest);
+  }
+  void SetFileManifest(std::shared_ptr<const FileManifest> manifest) {
+    std::atomic_store(&_file_manifest, std::move(manifest));
   }
 
   auto& GetTasksSettings() { return _tasks_settings; }
@@ -264,11 +277,6 @@ class InvertedIndexStorage final
     _phase = Phase::Recovering;
   }
 
-  // Persisted in the segment meta payload to survive iceberg compactions. 0 =
-  // not pinned.
-  void SetIcebergSnapshotId(int64_t id) noexcept { _iceberg_snapshot_id = id; }
-  int64_t GetIcebergSnapshotId() const noexcept { return _iceberg_snapshot_id; }
-
  private:
   class MovingAverageMs {
    public:
@@ -308,9 +316,11 @@ class InvertedIndexStorage final
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
+  std::shared_ptr<const FileManifest> _file_manifest;
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
+  std::atomic<bool> _reindex_in_flight{false};
   TasksSettings _tasks_settings;
   absl::Mutex _refresh_mutex;
 
@@ -348,7 +358,6 @@ class InvertedIndexStorage final
   MovingAverageMs _avg_commit_time_ms;
   MovingAverageMs _avg_cleanup_time_ms;
   MovingAverageMs _avg_consolidation_time_ms;
-  int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};

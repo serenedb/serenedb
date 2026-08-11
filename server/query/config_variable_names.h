@@ -26,6 +26,7 @@ namespace sdb {
 
 inline constexpr std::string_view kRowGroupSizeSetting = "row_group_size";
 inline constexpr std::string_view kRefreshIntervalSetting = "refresh_interval";
+inline constexpr std::string_view kReindexIntervalSetting = "reindex_interval";
 inline constexpr std::string_view kCompactionIntervalSetting =
   "compaction_interval";
 inline constexpr std::string_view kCleanupIntervalStepSetting =

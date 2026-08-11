@@ -968,11 +968,12 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
     (this->*_proc_table[!doc_limits::valid(p->doc)])(*p, id, offs);
     SDB_ASSERT(doc_limits::valid(p->doc));
 
-    if (0 == ++_stats.len) {
+    if (_stats.len == std::numeric_limits<int32_t>::max()) {
       SDB_ERROR(IRESEARCH, "too many tokens in field: ", _meta.id,
                 ", document: ", id);
       return false;
     }
+    ++_stats.len;
 
     _last_pos = _pos;
   }

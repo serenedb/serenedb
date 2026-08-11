@@ -58,7 +58,7 @@ constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
 
 IRS_FORCE_INLINE score_t TfIdf(uint32_t freq, score_t idf) noexcept {
   // TODO(gnusi): do we need sqrt?
-  return std::sqrt(static_cast<score_t>(freq)) * idf;
+  return std::sqrt(TermCountToScore(freq)) * idf;
 }
 
 template<ScoreMergeType MergeType, bool HasNorm, bool HasBoost>
@@ -71,9 +71,9 @@ IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, scores_size_t n,
     const auto r = [&] IRS_FORCE_INLINE {
       if constexpr (HasNorm && HasBoost) {
         return boost[i] * TfIdf(freq[i], idf) /
-               std::sqrt(static_cast<score_t>(norm[i]));
+               std::sqrt(TermCountToScore(norm[i]));
       } else if constexpr (HasNorm) {
-        return TfIdf(freq[i], idf) / std::sqrt(static_cast<score_t>(norm[i]));
+        return TfIdf(freq[i], idf) / std::sqrt(TermCountToScore(norm[i]));
       } else if constexpr (HasBoost) {
         return boost[i] * TfIdf(freq[i], idf);
       } else {

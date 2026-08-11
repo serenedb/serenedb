@@ -869,7 +869,8 @@ class VariadicPhraseFrequencyOverlapped {
     if constexpr (HasBoost) {
       if (_lead_freq) {
         _phrase_boost =
-          (_phrase_boost + (_lead_boost / _lead_freq)) / _phrase_size;
+          (_phrase_boost + (_lead_boost / TermCountToScore(_lead_freq))) /
+          _phrase_size;
       }
     }
 

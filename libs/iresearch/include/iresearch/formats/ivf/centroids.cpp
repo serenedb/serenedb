@@ -30,6 +30,7 @@
 #include <deque>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <utility>
@@ -44,14 +45,22 @@ namespace irs {
 namespace {
 
 constexpr size_t kTrainSeed = 42;
-constexpr double kBeamOverprobe = 3.0;
 constexpr uint64_t kSampleSegmentOversample = 4;
-constexpr size_t kMaxFanout = 1024;
-constexpr size_t kTrainPointsPerLeaf = 64;
-constexpr size_t kMaxTrainSample = 4ull * 1024 * 1024;
 constexpr size_t kClusterIters = 15;
 constexpr size_t kLeafClusterIters = 8;
 constexpr size_t kClusterRedos = 1;
+
+uint32_t CeilRoot(uint32_t target, uint32_t exp) noexcept {
+  if (exp <= 1 || target <= 1) {
+    return target;
+  }
+  auto w = static_cast<uint32_t>(std::ceill(
+    std::pow(static_cast<double>(target), 1.0 / static_cast<double>(exp))));
+  w = std::max<uint32_t>(w, 1);
+  SDB_ASSERT(std::pow(static_cast<double>(w), static_cast<double>(exp)) >=
+             target);
+  return w;
+}
 
 struct LayerLayout {
   size_t n_total;
@@ -149,7 +158,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
 
 struct BuildSettings {
   size_t posting_size;
-  size_t max_fanout;
+  size_t max_centroids;
   VectorMetric metric;
   size_t niter;
 
@@ -159,12 +168,33 @@ struct BuildSettings {
 
   size_t Fanout(size_t sample_size) const noexcept {
     size_t f = (sample_size + posting_size - 1) / posting_size;
-    while (f > max_fanout) {
+    while (f > max_centroids) {
       f = static_cast<size_t>(std::ceil(std::sqrt(static_cast<double>(f))));
     }
     return std::max<size_t>(2, f);
   }
 };
+
+size_t RemoveEmptyCentroids(std::vector<float>& centroids,
+                            std::span<size_t> ids, size_t d) {
+  size_t kept = 0;
+  size_t prev = std::numeric_limits<size_t>::max();
+  for (auto& id : ids) {
+    SDB_ASSERT(prev == std::numeric_limits<size_t>::max() || id >= prev);
+    SDB_ASSERT((id + 1) * d <= centroids.size());
+    if (id != prev) {
+      prev = id;
+      if (kept != id) {
+        std::copy_n(centroids.begin() + id * d, d,
+                    centroids.begin() + kept * d);
+      }
+      ++kept;
+    }
+    id = kept - 1;
+  }
+  centroids.resize(kept * d);
+  return kept;
+}
 
 auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
                    size_t n_clusters, VectorMetric metric, size_t niter,
@@ -174,6 +204,7 @@ auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
     static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter),
     static_cast<uint32_t>(kClusterRedos), ClusteringAlgo::Auto, rotation);
   AssignNearestGrouped(metric, centroids, d, data, ids);
+  RemoveEmptyCentroids(centroids, ids, d);
   return centroids;
 }
 
@@ -227,25 +258,27 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     const size_t n_clusters = settings.Fanout(sample_size);
     auto centroids = BuildAndSplit(entry.sample, d, entry.ids, n_clusters,
                                    settings.metric, settings.niter, rot);
-    const size_t n_built = centroids.size() / d;
+    size_t n_built = centroids.size() / d;
 
-    size_t full_group = n_built;
-    ForEachGroup(entry.ids, n_built, [&](size_t g, size_t, size_t count) {
-      if (count == sample_size) {
-        full_group = g;
+    if (n_built == 1) {
+      // Only one centroid
+      centroids.resize(d * n_clusters);
+      const auto c = std::span{centroids}.first(d);
+      for (size_t c_id = 1; c_id < n_clusters; ++c_id) {
+        absl::c_copy(c, centroids.begin() + c_id * d);
       }
-    });
-    if (full_group != n_built) {
-      const std::vector<float> winner(centroids.begin() + full_group * d,
-                                      centroids.begin() + (full_group + 1) * d);
-      for (size_t g = 0; g < n_built; ++g) {
-        absl::c_copy(winner, centroids.begin() + g * d);
-      }
-      const size_t chunk = (sample_size + n_built - 1) / n_built;
+      auto chunk = (sample_size + n_clusters - 1) / n_clusters;
       for (size_t i = 0; i < sample_size; ++i) {
         entry.ids[i] = i / chunk;
       }
+      n_built = n_clusters;
     }
+
+#ifdef SDB_DEV
+    ForEachGroup(entry.ids, n_built, [&](size_t g, size_t, size_t count) {
+      SDB_ASSERT(count < sample_size);
+    });
+#endif
 
     if (entry.parent < nodes.size()) {
       nodes[entry.parent].children.emplace_back(nodes.size());
@@ -385,18 +418,22 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in, uint64_t byte_size) {
   return {std::move(head), std::move(node), next_level_offset};
 }
 
+uint32_t CentroidsTree::EffectiveFanout(
+  uint32_t nprobe, uint32_t max_search_fanout) const noexcept {
+  return std::max(max_search_fanout,
+                  CeilRoot(nprobe, static_cast<uint32_t>(_root.level)));
+}
+
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                            uint32_t nprobe, std::vector<uint32_t>& out_ids,
-                           std::vector<float>* out_centroids) const {
+                           std::vector<float>* out_centroids,
+                           uint32_t max_search_fanout) const {
   if (_root.size == 0) {
     out_ids.push_back(0);
     return;
   }
-  auto beam = static_cast<uint32_t>(
-    std::ceil(kBeamOverprobe * std::sqrt(static_cast<double>(nprobe))));
-  if (_root.level >= 2) {
-    beam = std::max(beam, nprobe);
-  }
+  SDB_ASSERT(max_search_fanout > 0);
+  const auto fanout = EffectiveFanout(nprobe, max_search_fanout);
   if (_root.level > 0) {
     in.Seek(_next_level_offset);
   }
@@ -407,7 +444,7 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
     .size = _root.size};
   std::vector<CentroidsNode::Candidate> leaves;
   irs::ResolveEnum<VectorMetric>(_head.metric, [&]<VectorMetric Metric>() {
-    CentroidsNode::Search<Metric>(query, in, beam, out_centroids != nullptr,
+    CentroidsNode::Search<Metric>(query, in, fanout, out_centroids != nullptr,
                                   _root.level, std::span{&root_view, 1}, 0,
                                   _root.size, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());
@@ -430,10 +467,10 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
 }
 
 void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
-                                 size_t max_fanout) {
+                                 size_t max_centroids) {
   BuildSettings settings{
     .posting_size = std::max<size_t>(1, leaf_size),
-    .max_fanout = max_fanout,
+    .max_centroids = max_centroids,
     .metric = _metric,
     .niter = kClusterIters,
   };
@@ -454,12 +491,16 @@ CentroidsBuilder CentroidsBuilder::BuildFromSample(std::vector<float> sample,
                                                    uint32_t d,
                                                    VectorMetric metric,
                                                    size_t leaf_size,
-                                                   size_t max_fanout) {
+                                                   size_t max_centroids) {
   CentroidsBuilder builder;
   builder._metric = metric;
   builder._d = d;
-  builder.BuildTree(std::move(sample), leaf_size,
-                    max_fanout != 0 ? max_fanout : kMaxFanout);
+  if (max_centroids == 0) {
+    const size_t rows = d == 0 ? 0 : sample.size() / d;
+    max_centroids = std::max<size_t>(
+      1, (rows + leaf_size - 1) / std::max<size_t>(1, leaf_size));
+  }
+  builder.BuildTree(std::move(sample), leaf_size, max_centroids);
   return builder;
 }
 
@@ -470,11 +511,8 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
   const size_t t = params.posting_size;
   SDB_ASSERT(t > 0);
 
-  size_t sample_size = params.sample_factor > 0
-                         ? static_cast<size_t>(params.sample_factor * rows)
-                         : (rows / t) * kTrainPointsPerLeaf;
+  size_t sample_size = static_cast<size_t>(params.sample_factor * rows);
   sample_size = std::max<size_t>(sample_size, params.min_train_sample);
-  sample_size = std::min<size_t>(sample_size, kMaxTrainSample);
   sample_size = std::min<size_t>(sample_size, rows);
 
   const size_t tau =
@@ -484,7 +522,8 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
           1, static_cast<size_t>(static_cast<double>(sample_size) / rows * t));
   auto sample =
     GatherTrainingSample(vector_column, rows, d, ctx, sample_size, kTrainSeed);
-  return BuildFromSample(std::move(sample), d, metric, tau, params.max_fanout);
+  return BuildFromSample(std::move(sample), d, metric, tau,
+                         params.max_centroids);
 }
 
 CentroidsBuilder CentroidsBuilder::CreateFromSample(
@@ -492,7 +531,7 @@ CentroidsBuilder CentroidsBuilder::CreateFromSample(
   const CentroidsBuildParams& params) {
   SDB_ASSERT(params.posting_size > 0);
   return BuildFromSample(std::move(sample), d, metric, params.posting_size,
-                         params.max_fanout);
+                         params.max_centroids);
 }
 
 CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {

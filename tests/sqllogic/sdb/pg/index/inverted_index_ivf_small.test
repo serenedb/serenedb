@@ -3,17 +3,24 @@ control substitution on
 # ============================================================================
 # Small-dataset IVF: no centroids tree, single all-docs cluster.
 #
-# When a column's whole valid dataset is smaller than the IVF leaf cap (the
-# default posting_size, 4096 vectors), the training sample rounds to empty, so
-# the builder skips clustering and puts every doc into a single cluster (id 0),
-# and there is no coarse tree to descend. Search then scans that one posting list
-# via the normal postings + reranker path -- exhaustive over the segment, hence
-# exact -- even at nprobe = 1. Points lie on a line so every query has a unique
-# exact nearest.
+# When a column's whole valid dataset is smaller than the IVF leaf cap, the
+# training sample stays under it too, so the builder never splits and puts every
+# doc into a single cluster (id 0) with no coarse tree to descend. Search then
+# scans that one posting list via the normal postings + reranker path --
+# exhaustive over the segment, hence exact -- even at nprobe = 1. Points lie on a
+# line so every query has a unique exact nearest.
+#
+# The leaf cap is pinned rather than left at the default: sdb_ivf_posting_size 0
+# derives it from the row count, the vector width and the quantizer's scan cost,
+# which on 300 rows of FLOAT[8] lands at 64 and splits this dataset across
+# clusters, making a single-probe search approximate.
 # ============================================================================
 
 statement ok
 SET sdb_nprobe = 1;
+
+statement ok
+SET sdb_ivf_posting_size = 4096;
 
 statement ok
 CREATE TABLE small_l2 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
@@ -64,6 +71,9 @@ SELECT pk FROM small_l2_idx
 ----
 pk
 150
+
+statement ok
+RESET sdb_ivf_posting_size;
 
 statement ok
 RESET sdb_nprobe;

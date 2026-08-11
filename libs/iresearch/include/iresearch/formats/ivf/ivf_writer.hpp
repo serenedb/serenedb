@@ -52,6 +52,16 @@ class ReadContext;
 class IdxWriter;
 class IvfTermIterator;
 
+struct IvfTreeShape {
+  uint64_t posting_size = 0;
+  uint64_t max_centroids = 0;
+};
+
+IvfTreeShape ResolveIvfTreeShape(uint64_t rows, uint32_t d,
+                                 uint64_t scan_cost_bytes,
+                                 uint64_t posting_size,
+                                 uint64_t max_centroids) noexcept;
+
 struct BuiltIvf {
   bool empty = true;
   uint32_t d = 0;

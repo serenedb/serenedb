@@ -425,6 +425,7 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
     .quant = {.kind = cfg.quant, .pq_m = cfg.pq_m, .nb_bits = cfg.rabitq_bits},
     .sample_factor = cfg.sample_factor,
     .posting_size = cfg.posting_size,
+    .max_centroids = cfg.max_centroids,
   };
 }
 

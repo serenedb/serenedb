@@ -35,7 +35,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
   if (!PrepareVectorState(segment, ctx, field_id(), opts, opts.nprobe, state,
-                          inner)) {
+                          inner, opts.max_search_fanout)) {
     return QueryBuilder::Empty();
   }
 

@@ -82,6 +82,21 @@ constexpr size_t kPcaTrainRows = 4096;
 
 size_t FastScanNsq(size_t m) noexcept { return m + (m & 1); }
 
+#if defined(__AVX512F__)
+constexpr uint32_t kSimdFloatLanes = 16;
+#elif defined(__AVX2__)
+constexpr uint32_t kSimdFloatLanes = 8;
+#elif defined(__SSE2__) || defined(__ARM_NEON) || defined(__aarch64__)
+constexpr uint32_t kSimdFloatLanes = 4;
+#else
+constexpr uint32_t kSimdFloatLanes = 1;
+#endif
+
+constexpr uint32_t kSq8OpsPerDim = 8;
+constexpr uint32_t kSq4OpsPerDim = 9;
+
+constexpr uint32_t kStreamBytesPerCycle = 12;
+
 constexpr int64_t kRaBitQRotationSeed = 0x5a17b17c5eed5eedULL;
 
 uint32_t RotatedDim(uint32_t d) noexcept {
@@ -265,6 +280,10 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::None;
+  }
+
+  uint32_t ScanCostBytes() const noexcept final {
+    return static_cast<uint32_t>(sizeof(float)) * _d;
   }
 
  private:
@@ -518,6 +537,12 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final { return _quant; }
 
+  uint32_t ScanCostBytes() const noexcept final {
+    const uint32_t ops =
+      _quant == VectorQuantization::SQ4 ? kSq4OpsPerDim : kSq8OpsPerDim;
+    return ops * _d * kStreamBytesPerCycle / kSimdFloatLanes;
+  }
+
  private:
   uint32_t _d;
   VectorQuantization _quant;
@@ -747,6 +772,12 @@ class ProductQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::PQ;
+  }
+
+  uint32_t ScanCostBytes() const noexcept final {
+    const size_t nsq = FastScanNsq(_pq.M);
+    return static_cast<uint32_t>(_pq.code_size +
+                                 nsq * kFastScanKsub / kFastScanBbs);
   }
 
  private:
@@ -1029,6 +1060,12 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
 
   VectorQuantization Kind() const noexcept final {
     return VectorQuantization::RaBitQ;
+  }
+
+  uint32_t ScanCostBytes() const noexcept final {
+    const size_t nsq = _sign_stride * 2;
+    return static_cast<uint32_t>(_sign_stride + _storage + sizeof(float) +
+                                 nsq * kFastScanKsub / kFastScanBbs);
   }
 
  private:

@@ -224,18 +224,14 @@ count
 3
 
 
-# Boolean with NOT child disables pruning on the And iterator
-# (boolean_query.cpp:133).
+# Boolean with NOT child: the include side still prunes, so the trip-wire
+# fires. Only the excludes run unpruned -- they are driven by `advance`, which
+# a pruning iterator does not implement.
 
-query
-SELECT COUNT(*) FROM (
-  SELECT id FROM prune_docs_idx
-  WHERE body @@ ts_phrase('fox') AND NOT (body @@ ts_phrase('lazy'))
-  ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3
-) x;
-----
-count
-3
+statement error db error: ERROR: intentional debug error
+SELECT id FROM prune_docs_idx
+WHERE body @@ ts_phrase('fox') AND NOT (body @@ ts_phrase('lazy'))
+ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 # No LIMIT -- score_top_k rule doesn't pull up.

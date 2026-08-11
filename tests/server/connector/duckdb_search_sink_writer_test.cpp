@@ -34,7 +34,6 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
 
-#include "basics/containers/node_hash_map.h"
 #include "basics/duckdb_engine.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
@@ -51,21 +50,6 @@ using namespace connector;
 // the same underlying type as `irs::field_id`, so no `static_cast` is needed
 // at call sites that pass column ids to sink writers / `segment.field()`.
 constexpr irs::field_id kPKFieldId = catalog::Column::kGeneratedPKId.id();
-
-// Stands in for the catalog, which reserves the two always-<X> boolean value
-// fields for any key that can hold a boolean. `base` keeps the pair clear of
-// the column ids a test hands out.
-EntryInfoProvider BoolFieldsEntryInfoProvider(irs::field_id base = 1'000'000) {
-  return [base, entries = std::make_shared<containers::NodeHashMap<
-                  irs::field_id, catalog::InvertedIndexEntryInfo>>()](
-           irs::field_id id) -> const catalog::InvertedIndexEntryInfo* {
-    auto [it, inserted] = entries->try_emplace(id);
-    if (inserted) {
-      it->second.bool_field_id = base + id;
-    }
-    return &it->second;
-  };
-}
 
 // Process-wide DuckDB instance, owned by sdb::DuckDBEngine. tests_main
 // brings it up before RUN_ALL_TESTS and tears it down before main returns,
@@ -183,10 +167,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   const std::vector<catalog::Column::Id> col_id{
     catalog::Column::Id{1}, catalog::Column::Id{2}, catalog::Column::Id{3},
     catalog::Column::Id{4}, catalog::Column::Id{5}};
-  // A boolean column is two always-<X> fields, so the entry has to carry the
-  // pair -- the catalog reserves it for every boolean-capable key.
-  DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id,
-                                    BoolFieldsEntryInfoProvider()};
+  DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id};
 
   const std::vector<std::string_view> pk{
     {"pk1", 3}, {"pk2", 3}, {"pk3", 3}, {"pk4", 3}};
@@ -295,12 +276,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_NE(nullptr, int32_terms);
     auto varchar_terms = segment.field(catalog::Column::Id{2});
     ASSERT_NE(nullptr, varchar_terms);
-    // The value picks the field, so `true` rows and `false` rows land in
-    // different ones and the column's own field holds no boolean terms.
-    ASSERT_EQ(nullptr, segment.field(catalog::Column::Id{3}));
-    const auto bool_field =
-      static_cast<irs::field_id>(col3 ? 1'000'000 + 3 : 2'000'000 + 3);
-    auto bool_terms = segment.field(bool_field);
+    auto bool_terms = segment.field(catalog::Column::Id{3});
     ASSERT_NE(nullptr, bool_terms);
     auto real_terms = segment.field(catalog::Column::Id{4});
     ASSERT_NE(nullptr, real_terms);

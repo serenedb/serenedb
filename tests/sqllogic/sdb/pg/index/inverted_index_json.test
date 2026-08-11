@@ -470,7 +470,7 @@ QUERY PLAN
 │ Lookup: table                         │
 │ Index Filter:                         │
 │ ╭─ Term ────────────────────────────╮ │
-│ │ Field: ("content" -> 'val')(true) │ │
+│ │ Field: ("content" -> 'val')(bool) │ │
 │ │ Value: true                       │ │
 │ ╰───────────────────────────────────╯ │
 │ Projections: id                       │

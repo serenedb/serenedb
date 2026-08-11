@@ -689,9 +689,10 @@ void SinglePruningIterator<IteratorTraits, Root, Pos, Offs, InputType>::
       GetDocIn().Seek(state.doc_ptr);
     }
     ReadBlock(state.doc);
+    const auto min = value();
     const auto* first =
       std::find_if(std::end(_docs) - _left_in_leaf, std::end(_docs),
-                   [&](doc_id_t doc) { return doc >= cand_docs[0]; });
+                   [&](doc_id_t doc) { return doc >= min; });
     SDB_ASSERT(first != std::end(_docs));
     _doc = *first;
     _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - first) - 1;

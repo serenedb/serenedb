@@ -106,10 +106,31 @@ struct [[clang::trivial_abi]] ScoreAdapter {
     return _it->FillBlock(min, max, mask, score, match);
   }
 
+  IRS_FORCE_INLINE uint32_t count() {
+    SDB_ASSERT(_it);
+    return _it->count();
+  }
+
+  IRS_FORCE_INLINE void Collect(const ScoreFunction& scorer,
+                                ColumnArgsFetcher& fetcher,
+                                ScoreCollector& collector) {
+    SDB_ASSERT(_it);
+    _it->Collect(scorer, fetcher, collector);
+  }
+
   IRS_FORCE_INLINE uint32_t EmitDocs(doc_id_t* out, doc_id_t min,
                                      doc_id_t max) {
     SDB_ASSERT(_it);
     return _it->EmitDocs(out, min, max);
+  }
+
+  IRS_FORCE_INLINE uint32_t EmitScoredDocs(doc_id_t* out, score_t* scores,
+                                           doc_id_t max,
+                                           const ScoreFunction& scorer,
+                                           ColumnArgsFetcher* fetcher,
+                                           doc_id_t min) {
+    SDB_ASSERT(_it);
+    return _it->EmitScoredDocs(out, scores, max, scorer, fetcher, min);
   }
 
  private:
@@ -225,6 +246,10 @@ struct ConjunctionBase : public DocIterator {
     }
   }
 
+  auto begin() const noexcept { return _itrs.begin(); }
+  auto end() const noexcept { return _itrs.end(); }
+  size_t size() const noexcept { return _itrs.size(); }
+
  protected:
   explicit ConjunctionBase(ScoreMergeType merge_type,
                            std::vector<Adapter>&& itrs)
@@ -235,10 +260,6 @@ struct ConjunctionBase : public DocIterator {
                CostAttr::extract(rhs, CostAttr::kMax);
       }));
   }
-
-  auto begin() const noexcept { return _itrs.begin(); }
-  auto end() const noexcept { return _itrs.end(); }
-  size_t size() const noexcept { return _itrs.size(); }
 
   ScoreMergeType _merge_type;
   std::vector<Adapter> _itrs;
@@ -277,6 +298,9 @@ class Conjunction : public ConjunctionBase<Adapter> {
   }
 
   doc_id_t seek(doc_id_t target) final {
+    if (target <= this->_doc) [[unlikely]] {
+      return this->_doc;
+    }
     return converge(this->_itrs[0].seek(target));
   }
 
@@ -338,9 +362,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
     // EmitDense's FillBlock requires value() >= min; position to the window
     // start via our own seek() (EmitDocsImpl's per-doc advance() would defeat
     // the dense path). No-op on resume, where value() == min already.
-    if (this->_doc < min) {
-      seek(min);
-    }
+    seek(min);
     return EmitDense(out, max);
   }
 
@@ -506,7 +528,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
 // Returns conjunction iterator created from the specified sub iterators
 template<template<typename> typename Wrapper = EmptyWrapper, typename Adapter,
          typename... Args>
-DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, WandContext ctx,
+DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, bool score_prune,
                                  doc_id_t docs_count,
                                  std::vector<Adapter>&& itrs, Args&&... args) {
   if (const auto size = itrs.size(); 0 == size) {

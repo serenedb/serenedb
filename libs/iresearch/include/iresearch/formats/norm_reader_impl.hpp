@@ -20,7 +20,11 @@
 
 #pragma once
 
+#include <algorithm>
+#include <type_traits>
+
 #include "basics/memory.hpp"
+#include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
@@ -28,207 +32,265 @@
 
 namespace irs {
 
-template<uint8_t ByteSize>
-class SingleRgNormReader : public NormReader {
- public:
-  // `_bytes` is the RG payload pre-shifted by `ByteSize * doc_limits::min()`
-  // so callers index by raw `doc` directly -- the per-element
-  // `doc - doc_limits::min()` subtraction is folded into the base pointer
-  // once at construction. Reads still land in the original buffer because
-  // `doc >= doc_limits::min()` is a precondition.
-  explicit SingleRgNormReader(const NormColumnReader& column) noexcept
-    : _bytes{column.RowGroupBytes(0).data() - ByteSize * doc_limits::min()},
-      _sum{column.Sum()},
-      _non_zero{column.NonZeroCount()} {
-    SDB_ASSERT(column.RowGroupCount() == 1);
-    SDB_ASSERT(column.ByteSize(0) == ByteSize);
-    SDB_ASSERT(column.RowCount() != 0);
+template<uint8_t Width>
+IRS_FORCE_INLINE uint32_t ReadNormAt(const byte_type* IRS_RESTRICT base,
+                                     uint64_t doc) noexcept {
+  static_assert(Width == 1 || Width == 2 || Width == 4);
+  if constexpr (Width == 1) {
+    return base[doc];
+  } else if constexpr (Width == 2) {
+    return absl::little_endian::Load16(base + doc * 2);
+  } else {
+    return absl::little_endian::Load32(base + doc * 4);
   }
+}
 
-  void Get(std::span<const doc_id_t> docs,
-           std::span<uint32_t> values) noexcept final {
-    SDB_ASSERT(docs.size() <= values.size());
-    const auto* IRS_RESTRICT const bytes = _bytes;
-    auto* IRS_RESTRICT const values_data = values.data();
-    const auto* IRS_RESTRICT const docs_data = docs.data();
+template<uint8_t Width, size_t N>
+IRS_FORCE_INLINE void ReadNorms(const byte_type* IRS_RESTRICT base,
+                                std::span<const doc_id_t, N> docs,
+                                uint32_t* IRS_RESTRICT values) noexcept {
+  if constexpr (N == std::dynamic_extent) {
     for (size_t i = 0, n = docs.size(); i != n; ++i) {
-      values_data[i] = ReadAt(bytes, docs_data[i]);
+      values[i] = ReadNormAt<Width>(base, docs[i]);
     }
+  } else {
+    [&]<size_t... I>(std::index_sequence<I...>) IRS_FORCE_INLINE {
+      ((values[I] = ReadNormAt<Width>(base, docs[I])), ...);
+    }(std::make_index_sequence<N>{});
   }
+}
 
-  uint32_t Get(doc_id_t doc) noexcept final {
-    SDB_ASSERT(doc >= doc_limits::min());
-    return ReadAt(_bytes, doc);
-  }
+class NormReaderBase : public NormReader {
+ public:
+  score_t GetAvg() const noexcept final { return _avg; }
 
-  void GetPostingBlock(
-    std::span<const doc_id_t, kPostingBlock> docs,
-    std::span<uint32_t, kPostingBlock> values) noexcept final {
-    const auto* IRS_RESTRICT const bytes = _bytes;
-    auto* IRS_RESTRICT const values_data = values.data();
-    const auto* IRS_RESTRICT const docs_data = docs.data();
-    if (docs_data[kPostingBlock - 1] - docs_data[0] == kPostingBlock - 1) {
-      const auto first = docs_data[0];
-      for (scores_size_t i = 0; i != kPostingBlock; ++i) {
-        values_data[i] = ReadAt(bytes, first + i);
-      }
-    } else {
-#pragma clang loop unroll(full)
-      for (scores_size_t i = 0; i != kPostingBlock; ++i) {
-        values_data[i] = ReadAt(bytes, docs_data[i]);
-      }
-    }
-  }
+ protected:
+  explicit NormReaderBase(const NormColumnReader& column) noexcept
+    : _avg{
+        column.NonZeroCount() == 0
+          ? score_t{}
+          : static_cast<score_t>(static_cast<double>(column.Sum()) /
+                                 static_cast<double>(column.NonZeroCount()))} {}
 
-  score_t GetAvg() const noexcept final {
-    if (_non_zero == 0) {
-      return {};
-    }
-    return static_cast<double>(_sum) / static_cast<double>(_non_zero);
-  }
-
- private:
-  IRS_FORCE_INLINE static uint32_t ReadAt(const byte_type* IRS_RESTRICT base,
-                                          uint64_t doc) noexcept {
-    if constexpr (ByteSize == 1) {
-      return base[doc];
-    } else if constexpr (ByteSize == 2) {
-      return absl::little_endian::Load16(base + doc * 2);
-    } else {
-      return absl::little_endian::Load32(base + doc * 4);
-    }
-  }
-
-  const byte_type* _bytes;
-  uint64_t _sum;
-  uint64_t _non_zero;
+  const byte_type* _bytes = nullptr;
+  score_t _avg;
 };
 
-class MultiRgNormReader : public NormReader {
+template<uint8_t W>
+class StaticNormWidth {
  public:
-  explicit MultiRgNormReader(const NormColumnReader& column) noexcept
-    : _column{&column} {
-    SDB_ASSERT(column.RowGroupCount() > 1);
+  IRS_FORCE_INLINE void Set(uint8_t width) noexcept { SDB_ASSERT(width == W); }
+  IRS_FORCE_INLINE constexpr uint8_t Get() const noexcept { return W; }
+
+  IRS_FORCE_INLINE static uint32_t At(const byte_type* IRS_RESTRICT base,
+                                      doc_id_t doc) noexcept {
+    return ReadNormAt<W>(base, doc);
+  }
+  template<size_t N>
+  IRS_FORCE_INLINE static void Read(const byte_type* IRS_RESTRICT base,
+                                    std::span<const doc_id_t, N> docs,
+                                    uint32_t* IRS_RESTRICT values) noexcept {
+    ReadNorms<W>(base, docs, values);
+  }
+};
+
+class DynamicNormWidth {
+ public:
+  IRS_FORCE_INLINE void Set(uint8_t width) noexcept { _width = width; }
+  IRS_FORCE_INLINE uint8_t Get() const noexcept { return _width; }
+
+  IRS_FORCE_INLINE uint32_t At(const byte_type* IRS_RESTRICT base,
+                               doc_id_t doc) const noexcept {
+    return ReadNormValue(base + static_cast<uint64_t>(doc) * _width, _width);
+  }
+  template<size_t N>
+  IRS_FORCE_INLINE void Read(const byte_type* IRS_RESTRICT base,
+                             std::span<const doc_id_t, N> docs,
+                             uint32_t* IRS_RESTRICT values) const noexcept {
+    switch (_width) {
+      case 1:
+        return ReadNorms<1>(base, docs, values);
+      case 2:
+        return ReadNorms<2>(base, docs, values);
+      default:
+        SDB_ASSERT(_width == 4);
+        return ReadNorms<4>(base, docs, values);
+    }
+  }
+
+ private:
+  uint8_t _width = 0;
+};
+
+template<typename Width>
+class SingleRgNormReader : public NormReaderBase {
+ public:
+  explicit SingleRgNormReader(const NormColumnReader& column) noexcept
+    : NormReaderBase{column} {
+    SDB_ASSERT(column.RowGroupCount() == 1);
+    SDB_ASSERT(column.RowCount() != 0);
+    _width.Set(column.ByteSize(0));
+    _bytes =
+      column.RowGroupBytes(0).data() - size_t{_width.Get()} * doc_limits::min();
   }
 
   void Get(std::span<const doc_id_t> docs,
            std::span<uint32_t> values) noexcept final {
     SDB_ASSERT(docs.size() <= values.size());
-    GetBatch(docs, values);
+    SDB_ASSERT(absl::c_is_sorted(docs));
+    _width.Read(_bytes, docs, values.data());
   }
 
   uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= doc_limits::min());
-    SDB_ASSERT(_column->RowCount() != 0);
-    if (doc < _rg_first_doc || _rg_end_doc <= doc) {
-      RefreshRowGroup(static_cast<uint64_t>(doc) - doc_limits::min());
-    }
-    const auto in_rg = static_cast<uint64_t>(doc) - _rg_first_doc;
-    if (_byte_size == 1) {
-      return _bytes[in_rg];
-    }
-    if (_byte_size == 2) {
-      return absl::little_endian::Load16(_bytes + in_rg * 2);
-    }
-    return absl::little_endian::Load32(_bytes + in_rg * 4);
+    return _width.At(_bytes, doc);
+  }
+
+  void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
+                     std::span<uint32_t, kScoreBlock> values) noexcept final {
+    SDB_ASSERT(absl::c_is_sorted(docs));
+    _width.Read(_bytes, docs, values.data());
   }
 
   void GetPostingBlock(
     std::span<const doc_id_t, kPostingBlock> docs,
     std::span<uint32_t, kPostingBlock> values) noexcept final {
-    GetBatch(docs, values);
-  }
-
-  score_t GetAvg() const noexcept final {
-    const auto nz = _column->NonZeroCount();
-    if (nz == 0) {
-      return {};
-    }
-    return static_cast<double>(_column->Sum()) / static_cast<double>(nz);
+    SDB_ASSERT(absl::c_is_sorted(docs));
+    _width.Read(_bytes, docs, values.data());
   }
 
  private:
-  template<uint8_t ByteSize>
-  IRS_FORCE_INLINE static void DecodeRun(const byte_type* IRS_RESTRICT base,
-                                         uint64_t rg_first_doc,
-                                         std::span<const doc_id_t> docs,
-                                         std::span<uint32_t> values) noexcept {
-    static_assert(ByteSize == 1 || ByteSize == 2 || ByteSize == 4);
-    for (size_t i = 0; i < docs.size(); ++i) {
-      const auto in_rg = static_cast<uint64_t>(docs[i]) - rg_first_doc;
-      if constexpr (ByteSize == 1) {
-        values[i] = base[in_rg];
-      } else if constexpr (ByteSize == 2) {
-        values[i] = absl::little_endian::Load16(base + in_rg * 2);
-      } else {
-        values[i] = absl::little_endian::Load32(base + in_rg * 4);
-      }
-    }
+  [[no_unique_address]] Width _width;
+};
+
+template<typename Width>
+class WindowedNormReader : public NormReaderBase {
+ public:
+  explicit WindowedNormReader(const NormColumnReader& column) noexcept
+    : NormReaderBase{column}, _column{&column} {
+    SDB_ASSERT(column.RowGroupCount() > 1);
+    SDB_ASSERT(column.RowCount() != 0);
+    Position(column.Rg(0));
   }
 
-  void DispatchRun(std::span<const doc_id_t> docs,
-                   std::span<uint32_t> values) const noexcept {
-    SDB_ASSERT(!docs.empty());
-    if (_byte_size == 1) {
-      DecodeRun<1>(_bytes, _rg_first_doc, docs, values);
-    } else if (_byte_size == 2) {
-      DecodeRun<2>(_bytes, _rg_first_doc, docs, values);
-    } else {
-      DecodeRun<4>(_bytes, _rg_first_doc, docs, values);
-    }
-  }
-
-  void GetBatch(std::span<const doc_id_t> docs,
-                std::span<uint32_t> values) noexcept {
-    SDB_ASSERT(_column->RowCount() != 0);
+  void Get(std::span<const doc_id_t> docs,
+           std::span<uint32_t> values) noexcept final {
+    SDB_ASSERT(docs.size() <= values.size());
     if (docs.empty()) {
       return;
     }
-    size_t i = 0;
-    while (i < docs.size()) {
-      if (docs[i] < _rg_first_doc || _rg_end_doc <= docs[i]) {
-        RefreshRowGroup(static_cast<uint64_t>(docs[i]) - doc_limits::min());
+    SDB_ASSERT(absl::c_is_sorted(docs));
+    if (InWindow(docs)) [[likely]] {
+      _width.Read(_bytes, docs, values.data());
+      return;
+    }
+    Split(docs.data(), values.data(), docs.size());
+  }
+
+  uint32_t Get(doc_id_t doc) noexcept final {
+    SDB_ASSERT(doc >= doc_limits::min());
+    if (!InWindow(doc)) [[unlikely]] {
+      Position(Locate(doc));
+    }
+    return _width.At(_bytes, doc);
+  }
+
+  void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
+                     std::span<uint32_t, kScoreBlock> values) noexcept final {
+    SDB_ASSERT(absl::c_is_sorted(docs));
+    if (InWindow(docs)) [[likely]] {
+      _width.Read(_bytes, docs, values.data());
+      return;
+    }
+    Split(docs.data(), values.data(), kScoreBlock);
+  }
+
+  void GetPostingBlock(
+    std::span<const doc_id_t, kPostingBlock> docs,
+    std::span<uint32_t, kPostingBlock> values) noexcept final {
+    SDB_ASSERT(absl::c_is_sorted(docs));
+    if (InWindow(docs)) [[likely]] {
+      _width.Read(_bytes, docs, values.data());
+      return;
+    }
+    Split(docs.data(), values.data(), kPostingBlock);
+  }
+
+ private:
+  bool InWindow(doc_id_t doc) const noexcept {
+    return doc >= _rg_first_doc && doc < _rg_end_doc;
+  }
+
+  bool InWindow(auto docs) const noexcept {
+    SDB_ASSERT(!docs.empty());
+    return docs.front() >= _rg_first_doc && docs.back() < _rg_end_doc;
+  }
+
+  NormColumnReader::RgInfo Locate(doc_id_t doc) const noexcept {
+    return _column->Locate(static_cast<uint64_t>(doc) - doc_limits::min());
+  }
+
+  void Position(const NormColumnReader::RgInfo& info) noexcept {
+    _width.Set(info.byte_size);
+    _rg_first_doc = static_cast<doc_id_t>(info.first_row + doc_limits::min());
+    _rg_end_doc = static_cast<doc_id_t>(_rg_first_doc + info.row_count);
+    _bytes =
+      info.bytes.data() - static_cast<size_t>(_width.Get()) * _rg_first_doc;
+  }
+
+  void Split(const doc_id_t* IRS_RESTRICT docs, uint32_t* IRS_RESTRICT values,
+             size_t n) noexcept {
+    for (size_t i = 0; i != n;) {
+      if (!InWindow(docs[i])) {
+        Position(Locate(docs[i]));
       }
       size_t j = i + 1;
-      while (j < docs.size() && docs[j] >= _rg_first_doc &&
-             docs[j] < _rg_end_doc) {
+      while (j != n && docs[j] < _rg_end_doc) {
         ++j;
       }
-      DispatchRun(docs.subspan(i, j - i), values.subspan(i, j - i));
+      _width.Read(_bytes, std::span<const doc_id_t>{docs + i, j - i},
+                  values + i);
       i = j;
     }
   }
 
-  void RefreshRowGroup(uint64_t row_pos) noexcept {
-    const auto [rg, _] = _column->Locate(row_pos);
-    const auto info = _column->Rg(rg);
-    _bytes = info.bytes.data();
-    _byte_size = info.byte_size;
-    _rg_first_doc = info.first_row + doc_limits::min();
-    _rg_end_doc = _rg_first_doc + info.row_count;
-  }
-
   const NormColumnReader* _column;
-  const byte_type* _bytes = nullptr;
-  uint64_t _rg_first_doc = 0;
-  uint64_t _rg_end_doc = 0;
-  uint8_t _byte_size = 0;
+  doc_id_t _rg_first_doc = 0;
+  doc_id_t _rg_end_doc = 0;
+  [[no_unique_address]] Width _width;
 };
+
+template<uint8_t ByteSize>
+using MultiRgNormReader = WindowedNormReader<StaticNormWidth<ByteSize>>;
+
+using MixedRgNormReader = WindowedNormReader<DynamicNormWidth>;
+
+template<bool Single, uint8_t ByteSize>
+using FixedRgNormReader =
+  std::conditional_t<Single, SingleRgNormReader<StaticNormWidth<ByteSize>>,
+                     MultiRgNormReader<ByteSize>>;
 
 inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   const NormColumnReader& column) {
-  if (column.RowGroupCount() == 1) {
-    switch (column.ByteSize(0)) {
-      case 1:
-        return memory::make_managed<SingleRgNormReader<1>>(column);
-      case 2:
-        return memory::make_managed<SingleRgNormReader<2>>(column);
-      default:
-        SDB_ASSERT(column.ByteSize(0) == 4);
-        return memory::make_managed<SingleRgNormReader<4>>(column);
-    }
+  const auto row_groups = column.RowGroupCount();
+  SDB_ASSERT(row_groups > 0);
+
+  if (!column.UniformByteSize()) {
+    return memory::make_managed<MixedRgNormReader>(column);
   }
-  return memory::make_managed<MultiRgNormReader>(column);
+
+  return ResolveBool(
+    row_groups == 1, [&]<bool Single>() -> memory::managed_ptr<NormReader> {
+      switch (const auto byte_size = column.ByteSize(0)) {
+        case 1:
+          return memory::make_managed<FixedRgNormReader<Single, 1>>(column);
+        case 2:
+          return memory::make_managed<FixedRgNormReader<Single, 2>>(column);
+        default:
+          SDB_ASSERT(byte_size == 4);
+          return memory::make_managed<FixedRgNormReader<Single, 4>>(column);
+      }
+    });
 }
 
 }  // namespace irs

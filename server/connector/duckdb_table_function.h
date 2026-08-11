@@ -135,8 +135,8 @@ enum class TsDictTermUses : uint8_t {
 
 ENABLE_BITMASK_ENUM(TsDictTermUses);
 
-bool WandEnabled(const catalog::InvertedIndex* index,
-                 const std::optional<catalog::ScorerOptions>& scorer);
+bool ScorePruneEnabled(const catalog::InvertedIndex* index,
+                       const std::optional<catalog::ScorerOptions>& scorer);
 
 enum class ScanEntryKind : uint8_t {
   BaseTable,
@@ -177,7 +177,7 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   // a text score filter that IS a lower bound (`score > c` / `>= c`) is
   // dropped from the plan and enforced by this floor instead -- the emitted
   // scores are compacted with `score > floor`, the top-k collectors start at
-  // it, and it seeds the streaming WAND threshold. lowest() = no bound.
+  // it, and it seeds the streaming prune threshold. lowest() = no bound.
   float score_static_floor = std::numeric_limits<float>::lowest();
 
   // ORDER BY <covered .col column> LIMIT accepted via set_scan_order: segments

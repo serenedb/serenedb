@@ -20,6 +20,8 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <cstdint>
+
 #include "basics/down_cast.h"
 #include "basics/memory.hpp"
 #include "iresearch/formats/empty_term_reader.hpp"
@@ -34,26 +36,16 @@
 
 namespace {
 
-struct TestTermMeta : irs::TermMeta {
-  TestTermMeta(uint32_t docs_count = 0, uint32_t freq = 0) noexcept {
+struct TestPostingMeta : irs::PostingMeta {
+  TestPostingMeta(uint32_t docs_count = 0, uint32_t freq = 0) noexcept {
     this->docs_count = docs_count;
     this->freq = freq;
   }
 };
 
-}  // namespace
-namespace irs {
-
-// use base irs::TermMeta type for ancestors
-template<>
-struct Type<::TestTermMeta> : Type<irs::TermMeta> {};
-
-}  // namespace irs
-namespace {
-
 class TestSeekTermIterator : public irs::SeekTermIterator {
  public:
-  typedef const std::pair<std::string_view, TestTermMeta>* IteratorType;
+  typedef const std::pair<std::string_view, TestPostingMeta>* IteratorType;
 
   TestSeekTermIterator(IteratorType begin, IteratorType end)
     : _begin(begin), _end(end), _cookie_ptr(begin) {}
@@ -64,18 +56,10 @@ class TestSeekTermIterator : public irs::SeekTermIterator {
 
   bool seek(irs::bytes_view) final { return false; }
 
-  irs::SeekCookie::ptr cookie() const final {
-    return std::make_unique<struct SeekPtr>(_cookie_ptr);
-  }
+  const irs::PostingMeta& cookie() const final { return _meta; }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-    if (type == irs::Type<decltype(_meta)>::id()) {
-      return &_meta;
-    }
-    if (type == irs::Type<irs::TermAttr>::id()) {
-      return &_value;
-    }
-    return nullptr;
+    return type == irs::Type<irs::TermAttr>::id() ? &_value : nullptr;
   }
 
   bool next() noexcept final {
@@ -86,30 +70,29 @@ class TestSeekTermIterator : public irs::SeekTermIterator {
     _value.value = irs::ViewCast<irs::byte_type>(_begin->first);
     _cookie_ptr = _begin;
     _meta = _begin->second;
+    // Two terms of one segment can carry identical counts (`D` and `J` below
+    // are both {5,5}), so a meta alone does not say *which* term the selector
+    // picked. Stamping the entry's identity into a field nothing else reads
+    // keeps that assertion, which the pointer-valued cookie used to give.
+    _meta.doc_start = reinterpret_cast<uintptr_t>(_begin);
     ++_begin;
     return true;
   }
 
   irs::bytes_view value() const noexcept final { return _value.value; }
 
-  void read() final {}
-
   irs::DocIterator::ptr postings(irs::IndexFeatures /*features*/) const final {
     return irs::DocIterator::empty();
   }
 
-  struct SeekPtr final : irs::SeekCookie {
+  struct SeekPtr {
     explicit SeekPtr(IteratorType ptr) noexcept : ptr(ptr) {}
-
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-      return nullptr;
-    }
 
     IteratorType ptr;
   };
 
  private:
-  TestTermMeta _meta;
+  TestPostingMeta _meta;
   irs::TermAttr _value;
   IteratorType _begin;
   IteratorType _end;
@@ -142,7 +125,7 @@ struct State {
   struct SegmentState {
     const irs::TermReader* field;
     uint32_t docs_count;
-    std::vector<const std::pair<std::string_view, TestTermMeta>*> cookies;
+    std::vector<const std::pair<std::string_view, TestPostingMeta>*> cookies;
   };
 
   std::map<const irs::SubReader*, SegmentState> segments;
@@ -158,11 +141,13 @@ struct StateVisitor {
     expected_cookie = it->second.cookies.begin();
   }
 
-  void operator()(irs::SeekCookie::ptr& cookie) const {
-    auto* cookie_impl =
-      static_cast<const ::TestSeekTermIterator::SeekPtr*>(cookie.get());
-
-    ASSERT_EQ(*expected_cookie, cookie_impl->ptr);
+  // A cookie is a value now, so the collected term carries its counts -- and
+  // the identity the iterator stamped, which is what pins *which* term the
+  // selector picked rather than merely one with the same counts.
+  void operator()(irs::PostingMeta& cookie) const {
+    ASSERT_EQ((*expected_cookie)->second.docs_count, cookie.docs_count);
+    ASSERT_EQ((*expected_cookie)->second.freq, cookie.freq);
+    ASSERT_EQ(reinterpret_cast<uintptr_t>(*expected_cookie), cookie.doc_start);
 
     ++expected_cookie;
   }
@@ -182,7 +167,7 @@ TEST(TopTermsSelector_test, test_top_k) {
   // segment 0
   irs::EmptyTermReader term_reader0(42);
   SubReader segment0(100);
-  const std::pair<std::string_view, TestTermMeta> term_s0[]{
+  const std::pair<std::string_view, TestPostingMeta> term_s0[]{
     {"A", {3, 3}}, {"C", {15, 15}}, {"E", {2, 2}}, {"G", {5, 5}}, {"I", {1, 1}},
   };
 
@@ -198,7 +183,7 @@ TEST(TopTermsSelector_test, test_top_k) {
   // segment 1
   irs::EmptyTermReader term_reader1(42);
   SubReader segment1(100);
-  const std::pair<std::string_view, TestTermMeta> term_s1[]{
+  const std::pair<std::string_view, TestPostingMeta> term_s1[]{
     {"B", {3, 3}}, {"D", {5, 5}}, {"F", {2, 2}}, {"H", {15, 15}}, {"J", {5, 5}},
   };
 
@@ -242,7 +227,7 @@ TEST(TopTermsSelector_test, test_top_0) {
   // segment 0
   irs::EmptyTermReader term_reader0(42);
   SubReader segment0(100);
-  const std::pair<std::string_view, TestTermMeta> term_s0[]{
+  const std::pair<std::string_view, TestPostingMeta> term_s0[]{
     {"A", {3, 3}}, {"C", {15, 15}}, {"E", {2, 2}}, {"G", {5, 5}}, {"I", {1, 1}},
   };
 
@@ -258,7 +243,7 @@ TEST(TopTermsSelector_test, test_top_0) {
   // segment 1
   irs::EmptyTermReader term_reader1(42);
   SubReader segment1(100);
-  const std::pair<std::string_view, TestTermMeta> term_s1[]{
+  const std::pair<std::string_view, TestPostingMeta> term_s1[]{
     {"B", {3, 3}}, {"D", {5, 5}}, {"F", {2, 2}}, {"H", {15, 15}}, {"J", {5, 5}},
   };
 

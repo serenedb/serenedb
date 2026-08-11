@@ -34,19 +34,9 @@ class IdxWriter;
 }  // namespace irs
 namespace irs::burst_trie {
 
-enum class Version : int32_t {
-  // * Encryption support
-  // * Term dictionary stored on disk as fst::fstext::ImmutableFst<...>
-  // * Pluggable field features support
-  // * WAND support
-  Min = 0,
-  Max = Min,
-};
-
 class FieldWriter final {
  public:
-  FieldWriter(PostingsWriter::ptr pw, bool compaction, IResourceManager& rm,
-              Version version = Version::Max);
+  FieldWriter(PostingsWriter::ptr pw, bool compaction, IResourceManager& rm);
   ~FieldWriter();
 
   FieldWriter(const FieldWriter&) = delete;

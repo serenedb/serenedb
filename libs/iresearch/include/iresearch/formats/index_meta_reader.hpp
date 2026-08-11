@@ -80,10 +80,8 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
 
   const auto checksum = format_utils::Checksum(*in);
 
-  // check header
-  [[maybe_unused]] const int32_t version = format_utils::CheckHeader(
-    *in, IndexMetaWriterImpl::kFormatName, IndexMetaWriterImpl::kFormatMin,
-    IndexMetaWriterImpl::kFormatMax);
+  format_utils::CheckHeader(*in, IndexMetaWriterImpl::kFormatName,
+                            IndexMetaWriterImpl::kFormatVersion);
 
   // read data from segments file
   auto gen = in->ReadV64();

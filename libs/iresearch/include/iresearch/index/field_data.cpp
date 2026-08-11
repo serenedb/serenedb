@@ -470,7 +470,7 @@ class SortingDocIteratorImpl : public DocIterator {
   Attributes _attrs;
 };
 
-class TermIteratorImpl : public irs::TermIterator {
+class TermIteratorImpl : public irs::TermOnlyIterator {
  public:
   explicit TermIteratorImpl(FieldsData::postings_ref_t& postings,
                             const DocMap* docmap) noexcept
@@ -502,10 +502,6 @@ class TermIteratorImpl : public irs::TermIterator {
   }
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-
-  void read() noexcept final {
-    // Does nothing now
-  }
 
   DocIterator::ptr postings(IndexFeatures /*features*/) const final {
     SDB_ASSERT(_it != _end);
@@ -593,9 +589,8 @@ class TermReaderImpl final : public irs::BasicTermReader,
 
   void Reset(const FieldData& field) { _it.Reset(field, _min, _max); }
 
-  bytes_view(min)() const noexcept final { return _min; }
-
-  bytes_view(max)() const noexcept final { return _max; }
+  bytes_view min() const noexcept final { return _min; }
+  bytes_view max() const noexcept final { return _max; }
 
   const FieldMeta& Meta() const noexcept { return _it.Meta(); }
 
@@ -603,8 +598,8 @@ class TermReaderImpl final : public irs::BasicTermReader,
 
   FieldProperties properties() const noexcept final { return Meta(); }
 
-  irs::TermIterator::ptr iterator() const noexcept final {
-    return memory::to_managed<irs::TermIterator>(_it);
+  irs::TermOnlyIterator::ptr iterator() const noexcept final {
+    return memory::to_managed<irs::TermOnlyIterator>(_it);
   }
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
@@ -620,7 +615,7 @@ class TermReaderImpl final : public irs::BasicTermReader,
 FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
                      int_block_pool::inserter& int_writer,
                      IndexFeatures index_features, ColWriter* col_writer,
-                     NormColumnOptions norm_options)
+                     field_id norm_id, uint32_t row_group_size)
   // Unset optional features
   : _meta{id, index_features & (~IndexFeatures::Offs)},
     _terms{*byte_writer},
@@ -630,10 +625,10 @@ FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
     _requested_features{index_features},
     _last_doc{doc_limits::invalid()} {
   if (IsSubsetOf(IndexFeatures::Norm, index_features) && col_writer &&
-      field_limits::valid(norm_options.id)) {
+      field_limits::valid(norm_id)) {
     _col_writer = col_writer;
-    _norm_row_group_size = norm_options.row_group_size;
-    _meta.norm = norm_options.id;
+    _row_group_size = row_group_size;
+    _meta.norm = norm_id;
   }
 
   SDB_ASSERT(!field_limits::valid(_meta.norm) ||
@@ -643,8 +638,7 @@ FieldData::FieldData(field_id id, byte_block_pool::inserter& byte_writer,
 void FieldData::compute_features() const {
   SDB_ASSERT(_col_writer);
   if (!_norm_writer) {
-    _norm_writer =
-      &_col_writer->OpenNormColumn(_meta.norm, _norm_row_group_size);
+    _norm_writer = &_col_writer->OpenNormColumn(_meta.norm, _row_group_size);
   }
   const auto target_row = static_cast<uint64_t>(_last_doc) - doc_limits::min();
   _norm_writer->Append(target_row, _stats.len);
@@ -1006,17 +1000,20 @@ FieldData* FieldsData::emplace(field_id id, IndexFeatures index_features) {
     return it->second;
   }
 
-  NormColumnOptions norm_options{};
+  field_id norm_id = field_limits::invalid();
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   if (_col_writer && IsSubsetOf(IndexFeatures::Norm, index_features)) {
     SDB_ASSERT(_field_options,
                "Norm-featured field requires per-field index options");
-    norm_options = _field_options->GetNormColumnOptions(id);
-    SDB_ASSERT(field_limits::valid(norm_options.id),
-               "GetNormColumnOptions must return a valid id for field ", id);
+    norm_id = _field_options->GetNormColumnId(id);
+    SDB_ASSERT(field_limits::valid(norm_id),
+               "GetNormColumnId must return a valid id for field ", id);
+    row_group_size = _field_options->row_group_size;
   }
   try {
-    it->second = &_fields.emplace_back(
-      id, _byte_writer, _int_writer, index_features, _col_writer, norm_options);
+    it->second =
+      &_fields.emplace_back(id, _byte_writer, _int_writer, index_features,
+                            _col_writer, norm_id, row_group_size);
   } catch (...) {
     _fields_map.erase(it);
     throw;

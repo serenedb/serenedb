@@ -24,8 +24,7 @@
 
 #include <limits>
 
-#include "iresearch/formats/seek_cookie.hpp"
-#include "iresearch/search/cost.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs {
@@ -37,8 +36,7 @@ class MultiTermState {
   static constexpr uint32_t kUnscored = std::numeric_limits<uint32_t>::max();
 
   struct Entry {
-    SeekCookie::ptr cookie;
-    uint32_t docs_count = 0;
+    PostingMeta cookie;
     score_t boost = kNoBoost;
     uint32_t stat_offset = kUnscored;
   };
@@ -56,9 +54,9 @@ class MultiTermState {
   bool Empty() const noexcept { return _terms.empty(); }
   const auto* Reader() const noexcept { return _reader; }
 
-  void Push(Entry&& entry) {
-    _terms.emplace_back(std::move(entry));
-    _estimation += _terms.back().docs_count;
+  void Push(const PostingMeta& cookie, score_t boost,
+            uint32_t stat_offset = kUnscored) {
+    _terms.emplace_back(cookie, boost, stat_offset);
   }
 
   auto& Terms() noexcept { return _terms; }
@@ -70,7 +68,6 @@ class MultiTermState {
   const TermReader* _reader = nullptr;
 
   ManagedVector<Entry> _terms;
-  CostAttr::Type _estimation = 0;
 };
 
 }  // namespace irs

@@ -27,7 +27,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
-#include "iresearch/utils/automaton_decl.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

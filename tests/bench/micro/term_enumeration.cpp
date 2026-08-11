@@ -191,7 +191,7 @@ void ExactSeekRandomOnly(benchmark::State& state) {
   const auto targets = SampleTerms(index, 1000);
   size_t i = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::RandomOnly);
+    auto it = field.iterator();
     const bool found = it->seek(AsBytes(targets[i++ % targets.size()]));
     benchmark::DoNotOptimize(found);
   }
@@ -204,7 +204,7 @@ void ExactSeekNormal(benchmark::State& state) {
   const auto targets = SampleTerms(index, 1000);
   size_t i = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     const bool found = it->seek(AsBytes(targets[i++ % targets.size()]));
     benchmark::DoNotOptimize(found);
   }
@@ -264,7 +264,7 @@ void PrefixSeekScan(benchmark::State& state) {
   const auto target = AsBytes(prefix);
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     if (irs::SeekResult::End != it->seek_ge(target) &&
         it->value().starts_with(target)) {
@@ -344,7 +344,7 @@ void RangeSeekScan(benchmark::State& state) {
   const auto max_bytes = AsBytes(max);
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     if (irs::SeekResult::End != it->seek_ge(min_bytes)) {
       do {
@@ -395,7 +395,7 @@ void InSeeks(benchmark::State& state) {
     SampleTerms(index, static_cast<size_t>(state.range(1)));
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     for (const auto& candidate : candidates) {
       if (it->seek(AsBytes(candidate))) {
@@ -453,7 +453,7 @@ void FusedDriverPlusPredicate(benchmark::State& state) {
   const auto& predicate = RegexpAcceptorFor();
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     if (irs::SeekResult::End != it->seek_ge(target)) {
       do {
@@ -480,7 +480,7 @@ void FullWalk(benchmark::State& state) {
   const auto& field = FieldOf(index);
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     while (it->next()) {
       benchmark::DoNotOptimize(it->value().data());
@@ -497,7 +497,7 @@ void FullWalkPredicate(benchmark::State& state) {
   const auto& predicate = RegexpAcceptorFor();
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     while (it->next()) {
       if (bool(irs::Accept(predicate, it->value()))) {
@@ -560,10 +560,9 @@ void WhereProbeWalk(benchmark::State& state) {
   std::vector<irs::bitset::word_t> set(words, ~irs::bitset::word_t{0});
   size_t produced = 0;
   for (auto _ : state) {
-    auto it = field.iterator(irs::SeekMode::NORMAL);
+    auto it = field.iterator();
     size_t n = 0;
     while (it->next()) {
-      it->read();
       std::vector<irs::ScoreAdapter> itrs;
       itrs.emplace_back(it->postings(irs::IndexFeatures::None));
       itrs.emplace_back(irs::memory::make_managed<irs::BitsetDocIterator>(
@@ -630,8 +629,7 @@ void FullWalkFilteredIterator(benchmark::State& state) {
   size_t produced = 0;
   for (auto _ : state) {
     irs::FilteredTermIterator it{
-      field.iterator(irs::SeekMode::NORMAL),
-      irs::MakeTermPredicate([&](irs::bytes_view term) {
+      field.iterator(), irs::MakeTermPredicate([&](irs::bytes_view term) {
         return bool(irs::Accept(predicate, term));
       })};
     size_t n = 0;

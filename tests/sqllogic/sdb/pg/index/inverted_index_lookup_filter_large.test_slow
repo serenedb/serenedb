@@ -1,9 +1,9 @@
 # Lookup-column (non-INCLUDE) filter pushdown at 50k rows: the filter can only
 # run inside the source lookup (DataTable::LookupScan FilterSelection), which
 # forces streaming (AfterLimit) and compacts each 2048-pk batch to survivors --
-# including batches with zero survivors. Top-k over a WAND index with a lookup
-# filter must fall back to streaming and still seed the WAND threshold from
-# the dynamic TOP_N boundary. Expected values are arithmetic over the
+# including batches with zero survivors. Top-k over a score-bound index with a
+# lookup filter must fall back to streaming and still seed the prune threshold
+# from the dynamic TOP_N boundary. Expected values are arithmetic over the
 # construction; top-k is oracle-checked.
 
 hash-threshold 100
@@ -86,7 +86,7 @@ n
 1
 
 
-# --- top-k with a lookup filter (forced streaming + WAND boundary seeding) ---
+# --- top-k with a lookup filter (forced streaming + prune boundary seeding) --
 
 # val BETWEEN 20001 AND 20060 admits 60 docs, 12 per tf tier; k = 24 selects
 # the tf-5 and tf-4 tiers: ids with i % 5 in {4, 3}. The best-scoring docs

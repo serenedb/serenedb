@@ -37,7 +37,7 @@ class ByTermsIterator : public WrappedTermIterator {
  public:
   ByTermsIterator(const TermReader& reader,
                   const ByTermsOptions::search_terms& terms)
-    : WrappedTermIterator{reader.iterator(SeekMode::NORMAL)},
+    : WrappedTermIterator{reader.iterator()},
       _cursor{terms.begin()},
       _end{terms.end()} {}
 

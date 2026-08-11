@@ -109,7 +109,6 @@ struct IvfInfo {
 
 struct ColumnOptions {
   bool skip_validity = false;
-  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   std::optional<IvfInfo> ivf_info;
@@ -118,21 +117,18 @@ struct ColumnOptions {
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;
 
-struct NormColumnOptions {
-  field_id id = field_limits::invalid();
-  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-};
-
-using NormColumnOptionsProvider = std::function<NormColumnOptions(field_id)>;
+using NormColumnIdProvider = std::function<field_id(field_id)>;
 
 // Per-column encoding config the writer consults at flush + merge time. The
 // host supplies one per operation, so a long-lived writer is never coupled to
 // its mutable metadata.
 class IndexFieldOptions {
  public:
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+
   virtual ~IndexFieldOptions() = default;
   virtual ColumnOptions GetColumnOptions(field_id id) const = 0;
-  virtual NormColumnOptions GetNormColumnOptions(field_id id) const = 0;
+  virtual field_id GetNormColumnId(field_id id) const = 0;
 
   // Segment reuse gate: two writes share a segment only if their options are
   // equal (a segment must not mix encodings). Default is pointer identity --
@@ -157,21 +153,23 @@ inline bool CompatibleFieldOptions(const IndexFieldOptions* prev,
 class FunctionFieldOptions final : public IndexFieldOptions {
  public:
   FunctionFieldOptions(ColumnOptionsProvider column_options,
-                       NormColumnOptionsProvider norm_column_options) noexcept
+                       NormColumnIdProvider norm_column_id,
+                       uint32_t row_group_size) noexcept
     : _column_options{std::move(column_options)},
-      _norm_column_options{std::move(norm_column_options)} {}
+      _norm_column_id{std::move(norm_column_id)} {
+    this->row_group_size = row_group_size;
+  }
 
   ColumnOptions GetColumnOptions(field_id id) const final {
     return _column_options ? _column_options(id) : ColumnOptions{};
   }
-  NormColumnOptions GetNormColumnOptions(field_id id) const final {
-    return _norm_column_options ? _norm_column_options(id)
-                                : NormColumnOptions{};
+  field_id GetNormColumnId(field_id id) const final {
+    return _norm_column_id ? _norm_column_id(id) : field_limits::invalid();
   }
 
  private:
   ColumnOptionsProvider _column_options;
-  NormColumnOptionsProvider _norm_column_options;
+  NormColumnIdProvider _norm_column_id;
 };
 
 }  // namespace irs

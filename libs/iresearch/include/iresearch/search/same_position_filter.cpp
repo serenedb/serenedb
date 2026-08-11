@@ -142,8 +142,7 @@ class SamePositionQuery : public QueryBuilder {
       auto* reader = term_state.reader;
       SDB_ASSERT(reader);
 
-      auto docs =
-        reader->Iterator(features, {.cookie = term_state.cookie.get()});
+      auto docs = reader->Iterator(features, {.cookie = &term_state.cookie});
       if (!docs) {
         return DocIterator::empty();
       }
@@ -158,7 +157,7 @@ class SamePositionQuery : public QueryBuilder {
       itrs.emplace_back(std::move(docs));
     }
 
-    // TODO(mbkkt) Implement wand?
+    // TODO(mbkkt) Implement score pruning?
     return MakeConjunction<SamePositionIterator>(
       ScoreMergeType::Noop, {}, static_cast<doc_id_t>(_segment.docs_count()),
       std::move(itrs), std::move(positions));
@@ -213,17 +212,17 @@ QueryBuilder::ptr BySamePosition::PrepareSegment(
     }
 
     // find terms
-    SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
+    SeekTermIterator::ptr term = field->iterator();
 
     if (!term->seek(branch.second)) {
       continue;
     }
 
-    term->read();  // read term attributes
+    const auto& meta = term->cookie();
     if (collector) {
-      collector->Terms()[term_idx].Collect(*term);
+      collector->Terms()[term_idx].Collect(meta);
     }
-    term_states.emplace_back(field, term->cookie());
+    term_states.emplace_back(field, meta);
   }
 
   if (term_states.size() != terms.size()) {

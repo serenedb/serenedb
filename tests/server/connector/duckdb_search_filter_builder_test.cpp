@@ -143,7 +143,7 @@ using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12345},
-    "test_string_verbartim", {}, DEFAULT_ROW_GROUP_SIZE,
+    "test_string_verbartim", {},
     irs::analysis::TokenizerConfig{.config = irs::StringTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
   return {.analyzer = std::move(tokenizer),
@@ -154,7 +154,7 @@ template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
   static catalog::Tokenizer gStringTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12346}, "test_segmentation",
-    {}, DEFAULT_ROW_GROUP_SIZE,
+    {},
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::SegmentationTokenizer::Options{}});
   auto tokenizer = gStringTokenizer.GetTokenizer();
@@ -175,7 +175,6 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
   static catalog::Tokenizer gNgramTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12347}, "test_ngram", {},
-    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
   auto tokenizer = gNgramTokenizer.GetTokenizer();
   return {.analyzer = std::move(tokenizer),
@@ -191,7 +190,6 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
   };
   static catalog::Tokenizer gWildcardTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12348}, "test_wildcard", {},
-    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
   auto tokenizer = gWildcardTokenizer.GetTokenizer();
   return {
@@ -204,7 +202,6 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
 [[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(uint64_t) {
   static catalog::Tokenizer gGeoTokenizer(
     catalog::Permissions{}, ObjectId{0}, ObjectId{12349}, "test_geojson", {},
-    DEFAULT_ROW_GROUP_SIZE,
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonAnalyzer::Options{}});
   auto tokenizer = gGeoTokenizer.GetTokenizer();

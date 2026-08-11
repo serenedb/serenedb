@@ -23,6 +23,7 @@ set(iresearch-tests_sources
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
+    ./formats/posting_alloc_test.cpp
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
@@ -60,8 +61,8 @@ set(iresearch-tests_sources
     ./search/bitset_doc_iterator_test.cpp
     ./search/sort_tests.cpp
     ./search/tfidf_test.cpp
-    ./search/wand_test.cpp
-    ./search/wand_norm_merge_test.cpp
+    ./search/score_prune_test.cpp
+    ./search/score_prune_norm_merge_test.cpp
     ./search/bm25_test.cpp
     ./search/raw_tf_test.cpp
     ./search/lm_test.cpp
@@ -92,7 +93,7 @@ set(iresearch-tests_sources
     ./search/vector_similarity_query_test.cpp
     ./search/block_scoring_test.cpp
     ./search/boost_query_test.cpp
-    ./search/wand_scoring_test.cpp
+    ./search/score_prune_scoring_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/wkb_parser_test.cpp
     ./utils/automaton_test.cpp

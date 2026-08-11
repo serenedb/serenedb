@@ -24,8 +24,8 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "basics/containers/flat_hash_map.h"
 #include "basics/shared.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
@@ -64,7 +64,7 @@ class LimitedSampleSelector : private util::Noncopyable {
   // Collect the term just appended to state->terms at the given offset.
   // terms - segment term-iterator positioned at that term.
   void collect(MultiTermState& state, uint32_t offset,
-               const SeekTermIterator& terms, const Key& key) {
+               const TermIterator& terms, const Key& key) {
     if (!_heap.Capacity()) {
       return;  // nothing scored; the entry stays unscored (optimization)
     }
@@ -108,7 +108,7 @@ class LimitedSampleSelector : private util::Noncopyable {
         terms.emplace_back();
       }
       const uint32_t idx = it->second;
-      terms[idx].Collect(*entry.cookie);
+      terms[idx].Collect(entry.cookie);
       entry.stat_offset = idx;
     }
 
@@ -158,16 +158,7 @@ class SampledMultiTermVisitor {
     : _collector{collector}, _state{state} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& reader,
-               SeekTermIterator& terms) {
-    // get term metadata
-    auto* meta = irs::get<TermMeta>(terms);
-
-    // NOTE: we can't use reference to 'docs_count' here, like
-    // 'const auto& docs_count = meta ? meta->docs_count : NO_DOCS;'
-    // since not gcc4.9 nor msvc2015-2019 can handle this correctly
-    // probably due to broken optimization
-    _docs_count = meta ? &meta->docs_count : &_no_docs;
-
+               TermIterator& terms) {
     _state.Prepare(&reader);
 
     _terms = &terms;
@@ -176,14 +167,10 @@ class SampledMultiTermVisitor {
 
   // FIXME can incorporate boost into collecting logic
   bool Visit(score_t boost) {
-    SDB_ASSERT(_docs_count && _terms);
-    _terms->read();
-    const uint32_t docs_count = *_docs_count;
-    _state.Push(MultiTermState::Entry{
-      .cookie = _terms->cookie(),
-      .docs_count = docs_count,
-      .boost = boost,
-    });
+    SDB_ASSERT(_terms);
+    const auto& meta = _terms->cookie();
+    const uint32_t docs_count = meta.docs_count;
+    _state.Push(meta, boost);
 
     if (_collector) {
       _collector->collect(_state, _state.TermsSize() - 1, *_terms,
@@ -194,11 +181,9 @@ class SampledMultiTermVisitor {
   }
 
  private:
-  const decltype(TermMeta::docs_count) _no_docs = 0;
   LimitedSampleSelector<Key>* _collector;
   MultiTermState& _state;
-  SeekTermIterator* _terms = nullptr;
-  const decltype(TermMeta::docs_count)* _docs_count = nullptr;
+  TermIterator* _terms = nullptr;
   uint32_t _offset = 0;
 };
 

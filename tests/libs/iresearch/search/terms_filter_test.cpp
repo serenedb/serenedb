@@ -560,7 +560,7 @@ std::vector<irs::bstring> DrainTerms(irs::TermIterator& it) {
 std::vector<irs::bstring> AcceptedTerms(const irs::TermReader& reader,
                                         const irs::TermPredicate& pred) {
   std::vector<irs::bstring> terms;
-  auto it = reader.iterator(irs::SeekMode::NORMAL);
+  auto it = reader.iterator();
   while (it->next()) {
     if (pred.Accepts(it->value())) {
       terms.emplace_back(it->value());

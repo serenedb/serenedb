@@ -71,7 +71,7 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
 
   size_t term_idx = 0;
   size_t count_terms = 0;
-  auto term = field->iterator(SeekMode::NORMAL);
+  auto term = field->iterator();
   for (const auto& ngram : ngrams) {
     auto& term_state = state.terms.emplace_back();
     std::vector<TermCollector>* part = nullptr;
@@ -82,11 +82,10 @@ QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
       }
     }
     if (term->seek(ngram)) {
-      term->read();
-      if (part) {
-        part->front().Collect(*term);
-      }
       term_state = term->cookie();
+      if (part) {
+        part->front().Collect(term_state);
+      }
       ++count_terms;
     }
 

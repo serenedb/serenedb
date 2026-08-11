@@ -22,7 +22,7 @@
 
 #include <memory>
 
-#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/types.hpp"
@@ -43,7 +43,7 @@ struct VectorState {
 
   const TermReader* reader = nullptr;
   const ColumnReader* vector_column = nullptr;
-  ManagedVector<SeekCookie::ptr> cookies;
+  ManagedVector<PostingMeta> cookies;
   CostAttr::Type estimation = 0;
 
   VectorQuantization quant = VectorQuantization::None;

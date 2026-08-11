@@ -56,7 +56,7 @@ class DataChunk;
 }  // namespace duckdb
 namespace sdb::connector {
 
-class SearchRemoveFilterBase;
+class SearchRemoveFilter;
 
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(irs::field_id)>;
@@ -280,7 +280,7 @@ class SearchSinkDeleteBaseImpl {
 
  protected:
   irs::IndexWriter::Transaction& _trx;
-  std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
+  std::shared_ptr<SearchRemoveFilter> _remove_filter;
 };
 
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,

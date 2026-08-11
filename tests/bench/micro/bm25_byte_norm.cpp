@@ -47,10 +47,10 @@
 // real `ScoreFunction`, so every entry point is an indirect call the compiler
 // cannot devirtualize or fuse across documents, and the trip count reaches each
 // kernel exactly the way `Bm25Score` gets it: `ScoreBlock`/`ScorePostingBlock`
-// propagate the constant into a force-inlined `ScoreImpl`, while `Score(res, n)`
-// passes a runtime count. `num`, `norm_const` and `norm_length` are per-query
-// members seeded through the benchmark state, so none of them folds into an
-// immediate.
+// propagate the constant into a force-inlined `ScoreImpl`, while `Score(res,
+// n)` passes a runtime count. `num`, `norm_const` and `norm_length` are
+// per-query members seeded through the benchmark state, so none of them folds
+// into an immediate.
 //
 // `freq` and `norm` are the block buffers `ColumnArgsFetcher` refills in place
 // (kPostingBlock entries, pointers fixed for the life of the scorer), so the
@@ -96,7 +96,8 @@ uint8_t IntToByte4(uint32_t i) noexcept {
   const int shift = std::max(0, bits - 4);
   const uint32_t encoded = static_cast<uint32_t>(shift << 4) |
                            static_cast<uint32_t>((v >> shift) & 0x0F);
-  return static_cast<uint8_t>(kNumFreeValues + std::min<uint32_t>(encoded, 231));
+  return static_cast<uint8_t>(kNumFreeValues +
+                              std::min<uint32_t>(encoded, 231));
 }
 
 uint32_t Byte4ToInt(uint8_t b) noexcept {
@@ -376,7 +377,13 @@ enum class Variant {
 
 // The four shapes bm25.cpp is called with. Sum is the disjunction path
 // (`ScoreSumBlock`), Noop the single-iterator one.
-enum class Shape { Single, Block32, SumBlock32, PostingBlock128, Runtime };
+enum class Shape {
+  Single,
+  Block32,
+  SumBlock32,
+  PostingBlock128,
+  Runtime,
+};
 
 struct Harness {
   Block block;
@@ -408,8 +415,8 @@ Harness MakeHarness(Variant v, int64_t seed) {
 
   switch (v) {
     case Variant::FullNorm:
-      h.fn = irs::ScoreFunction::Make<FullNormScore<int32_t, int32_t>>(p,
-                                                                      h.block);
+      h.fn =
+        irs::ScoreFunction::Make<FullNormScore<int32_t, int32_t>>(p, h.block);
       break;
     case Variant::FullNormU32:
       h.fn =
@@ -474,16 +481,18 @@ void Bm(benchmark::State& state) {
 
 }  // namespace
 
-#define REGISTER_ONE(variant, shape, arg) \
-  BENCHMARK(Bm<Variant::variant, Shape::shape>)->Arg(arg)->Name(#variant "/" #shape)
+#define REGISTER_ONE(variant, shape, arg)       \
+  BENCHMARK(Bm<Variant::variant, Shape::shape>) \
+    ->Arg(arg)                                  \
+    ->Name(#variant "/" #shape)
 
-#define REGISTER(shape, arg)                 \
-  REGISTER_ONE(FullNorm, shape, arg);        \
-  REGISTER_ONE(FullNormU32, shape, arg);     \
-  REGISTER_ONE(FullNormNorm, shape, arg);    \
-  REGISTER_ONE(FullNormFreq, shape, arg);    \
-  REGISTER_ONE(ByteC1, shape, arg);          \
-  REGISTER_ONE(ByteInv, shape, arg);         \
+#define REGISTER(shape, arg)              \
+  REGISTER_ONE(FullNorm, shape, arg);     \
+  REGISTER_ONE(FullNormU32, shape, arg);  \
+  REGISTER_ONE(FullNormNorm, shape, arg); \
+  REGISTER_ONE(FullNormFreq, shape, arg); \
+  REGISTER_ONE(ByteC1, shape, arg);       \
+  REGISTER_ONE(ByteInv, shape, arg);      \
   REGISTER_ONE(ByteInvSplit, shape, arg)
 
 REGISTER(Single, 1);

@@ -148,7 +148,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
     irs::All filter;
     constexpr size_t k = 5;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -184,7 +184,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
     irs::All filter;
     constexpr size_t k = 1000;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -219,7 +219,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
       irs::ViewCast<irs::byte_type>(std::string_view("nonexistent_term_xyz"));
     constexpr size_t k = 10;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -248,7 +248,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
     irs::All filter;
     constexpr size_t k = 10;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -308,7 +308,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
     irs::All filter;
     constexpr size_t k = 5;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -343,7 +343,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
       irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
     constexpr size_t k = 3;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -385,7 +385,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
     }
     constexpr size_t k = 5;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -417,7 +417,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
     irs::All filter;
     constexpr size_t k = 1;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -450,7 +450,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
     irs::All filter;
     constexpr size_t k = 3;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -490,7 +490,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
     irs::All filter;
     constexpr size_t k = 5;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -511,7 +511,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
     irs::All filter;
     constexpr size_t k = 10;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
@@ -549,7 +549,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
     irs::All filter;
     constexpr size_t k = 5;
 
-    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> results(k);
     size_t count =
       irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 

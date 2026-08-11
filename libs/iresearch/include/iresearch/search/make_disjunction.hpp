@@ -32,7 +32,7 @@ namespace irs {
 
 // Returns disjunction iterator created from the specified sub iterators
 template<typename Disjunction, typename... Args>
-DocIterator::ptr MakeDisjunction(WandContext ctx, doc_id_t docs_count,
+DocIterator::ptr MakeDisjunction(bool score_prune, doc_id_t docs_count,
                                  typename Disjunction::Adapters&& itrs,
                                  Args&&... args) {
   const auto size = itrs.size();
@@ -47,7 +47,7 @@ DocIterator::ptr MakeDisjunction(WandContext ctx, doc_id_t docs_count,
     if constexpr (std::is_void_v<UnaryDisjunction>) {
       return std::move(itrs.front());
     } else {
-      SDB_ASSERT(!ctx.Enabled());
+      SDB_ASSERT(!score_prune);
       return memory::make_managed<UnaryDisjunction>(std::move(itrs.front()));
     }
   }
@@ -76,7 +76,7 @@ DocIterator::ptr MakeDisjunction(WandContext ctx, doc_id_t docs_count,
 
 // Returns weak conjunction iterator created from the specified sub iterators
 template<typename WeakConjunction, typename... Args>
-DocIterator::ptr MakeWeakDisjunction(WandContext ctx, doc_id_t docs_count,
+DocIterator::ptr MakeWeakDisjunction(bool score_prune, doc_id_t docs_count,
                                      typename WeakConjunction::Adapters&& itrs,
                                      size_t min_match, Args&&... args) {
   // This case must be handled by a caller, we're unable to process it here
@@ -92,13 +92,13 @@ DocIterator::ptr MakeWeakDisjunction(WandContext ctx, doc_id_t docs_count,
   if (1 == min_match) {
     // Pure disjunction
     using Disjunction = typename RebindIterator<WeakConjunction>::Disjunction;
-    return MakeDisjunction<Disjunction>(ctx, docs_count, std::move(itrs),
-                                        std::forward<Args>(args)...);
+    return MakeDisjunction<Disjunction>(
+      score_prune, docs_count, std::move(itrs), std::forward<Args>(args)...);
   }
 
   if (min_match == size) {
     // Pure conjunction
-    return MakeConjunction(WeakConjunction::kMergeType, ctx, docs_count,
+    return MakeConjunction(WeakConjunction::kMergeType, score_prune, docs_count,
                            std::move(itrs));
   }
 

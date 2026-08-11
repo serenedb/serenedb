@@ -154,7 +154,7 @@ class AttrProviderChangeAttr final : public Attribute {
 };
 
 // Denotes a position of a value associated with a document.
-// Also used for doc_id_t passing to WandWriter
+// Also used for doc_id_t passing to ScoreBoundWriter
 struct ValueIndex final : Attribute {
   static_assert(std::is_same_v<doc_id_t, uint32_t>);
   static_assert(doc_limits::invalid() == 0);

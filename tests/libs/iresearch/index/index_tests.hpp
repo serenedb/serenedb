@@ -51,9 +51,9 @@ irs::IndexReaderOptions CsDefaultReaderOptions();
 // `db` is mandatory at IndexWriter::Make. Fixtures that build their own
 // IndexWriterOptions (e.g. to set a custom scorer) often leave `db` unset;
 // fill it from the shared CsDb() so they keep working. Also fills
-// `norm_column_options` from the shared monotonic allocator when the caller
+// `norm_column_id` from the shared monotonic allocator when the caller
 // didn't set one -- with a cs writer present, a Norm-featured field requires
-// a norm_column_options callback (FieldsData::emplace asserts it).
+// a norm_column_id callback (FieldsData::emplace asserts it).
 irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts);
 
 class DirectoryMock : public irs::Directory {
@@ -219,9 +219,9 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void AssertSnapshotEquality(const irs::IndexWriter& writer);
 
   void assert_index(irs::IndexFeatures features, size_t skip = 0,
-                    irs::automaton_table_matcher* matcher = nullptr) const {
+                    const irs::RegexpAcceptor* acceptor = nullptr) const {
     tests::AssertIndex(open_reader().GetImpl(), index(), features, skip,
-                       matcher);
+                       acceptor);
   }
 
   void SetUp() final {

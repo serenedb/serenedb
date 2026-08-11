@@ -29,27 +29,17 @@
 
 namespace {
 
-struct TermMetaBench : irs::TermMeta {
-  TermMetaBench(uint32_t docs_count = 0, uint32_t freq = 0) noexcept {
+struct PostingMetaBench : irs::PostingMeta {
+  PostingMetaBench(uint32_t docs_count = 0, uint32_t freq = 0) noexcept {
     this->docs_count = docs_count;
     this->freq = freq;
   }
 };
 
-}  // namespace
-namespace irs {
-
-// use base irs::TermMeta type for ancestors
-template<>
-struct Type<TermMetaBench> : Type<TermMeta> {};
-
-}  // namespace irs
-namespace {
-
 template<typename T>
 class SeekTermIterator : public irs::SeekTermIterator {
  public:
-  using iterator_type = const std::tuple<irs::bytes_view, TermMetaBench, T>*;
+  using iterator_type = const std::tuple<irs::bytes_view, PostingMetaBench, T>*;
 
   SeekTermIterator(iterator_type begin, size_t count)
     : _begin(begin), _end(begin + count), _cookie_ptr(begin) {}
@@ -60,15 +50,10 @@ class SeekTermIterator : public irs::SeekTermIterator {
 
   bool seek(irs::bytes_view) final { return false; }
 
-  irs::SeekCookie::ptr cookie() const final {
-    return std::make_unique<SeekPtr>(_cookie_ptr);
-  }
+  const irs::PostingMeta& cookie() const final { return _meta; }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-    if (type == irs::Type<decltype(_meta)>::id()) {
-      return &_meta;
-    }
-    return nullptr;
+    return type == irs::Type<irs::TermAttr>::id() ? &_value : nullptr;
   }
 
   bool next() noexcept final {
@@ -76,34 +61,22 @@ class SeekTermIterator : public irs::SeekTermIterator {
       return false;
     }
 
-    _value = std::get<0>(*_begin);
+    _value.value = std::get<0>(*_begin);
     _cookie_ptr = _begin;
     _meta = std::get<1>(*_begin);
     ++_begin;
     return true;
   }
 
-  irs::bytes_view value() const noexcept final { return _value; }
-
-  void read() final {}
+  irs::bytes_view value() const noexcept final { return _value.value; }
 
   irs::DocIterator::ptr postings(irs::IndexFeatures /*features*/) const final {
     return irs::DocIterator::empty();
   }
 
-  struct SeekPtr final : irs::SeekCookie {
-    explicit SeekPtr(iterator_type ptr) noexcept : ptr(ptr) {}
-
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-      return nullptr;
-    }
-
-    iterator_type ptr;
-  };
-
  private:
-  TermMetaBench _meta;
-  irs::bytes_view _value;
+  PostingMetaBench _meta;
+  irs::TermAttr _value;
   iterator_type _begin;
   iterator_type _end;
   iterator_type _cookie_ptr;
@@ -133,7 +106,7 @@ struct State {
   struct SegmentState {
     const irs::TermReader* field;
     uint32_t docs_count;
-    std::vector<const std::pair<std::string_view, TermMetaBench>*> cookies;
+    std::vector<const std::pair<std::string_view, PostingMetaBench>*> cookies;
   };
 
   std::map<const irs::SubReader*, SegmentState> segments;
@@ -145,7 +118,7 @@ void BmTopTermCollector(benchmark::State& state) {
   irs::EmptyTermReader term_reader(42);
   SubReader segment(100);
 
-  std::vector<std::tuple<irs::bytes_view, TermMetaBench, int>> terms(
+  std::vector<std::tuple<irs::bytes_view, PostingMetaBench, int>> terms(
     state.range(0));
   for (auto& term : terms) {
     auto& key = std::get<2>(term) = ::rand();

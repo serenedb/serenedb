@@ -21,15 +21,11 @@
 #include "mixed_boolean_filter.hpp"
 
 #include "iresearch/search/boolean_query.hpp"
+#include "iresearch/search/term_filter.hpp"
 
 namespace irs {
 namespace {
 
-// After optimization the required/optional slots are no longer guaranteed to be
-// And/Or: SingleChildRule collapses a single-clause boolean into its child and
-// ByTermsRule merges an Or of terms into ByTerms. Treat each slot as an opaque
-// filter and only special-case an Or to keep its clauses as separate optional
-// scoring contributions.
 bool SideEmpty(const Filter& side) noexcept {
   const auto tid = side.type();
   if (tid == irs::Type<Empty>::id()) {
@@ -44,6 +40,18 @@ bool SideEmpty(const Filter& side) noexcept {
 const Or* AsOr(const Filter& side) noexcept {
   return side.type() == irs::Type<Or>::id() ? &sdb::basics::downCast<Or>(side)
                                             : nullptr;
+}
+
+const ByTerms* AsSplittableByTerms(const Filter& side) noexcept {
+  if (side.type() != irs::Type<ByTerms>::id()) {
+    return nullptr;
+  }
+  const auto& terms = sdb::basics::downCast<ByTerms>(side);
+  const auto& options = terms.options();
+  if (options.min_match > 1 || options.merge_type != ScoreMergeType::Sum) {
+    return nullptr;
+  }
+  return &terms;
 }
 
 }  // namespace
@@ -63,6 +71,11 @@ PrepareCollector::ptr MixedBooleanFilter::MakeCollector(
   if (const auto* opt_or = AsOr(*opt)) {
     for (const auto& clause : *opt_or) {
       compound->Add(clause->MakeCollector(scorer));
+    }
+  } else if (const auto* opt_terms = AsSplittableByTerms(*opt)) {
+    for (size_t i = 0, count = opt_terms->options().terms.size(); i != count;
+         ++i) {
+      compound->Add(std::make_unique<ByTermsCollector>(scorer, 1));
     }
   } else {
     compound->Add(opt->MakeCollector(scorer));
@@ -100,6 +113,18 @@ QueryBuilder::ptr MixedBooleanFilter::PrepareSegment(
     opt_queries.reserve(opt_or->size());
     for (const auto& clause : *opt_or) {
       add_clause(*clause, opt_or->Boost());
+    }
+  } else if (const auto* opt_terms = AsSplittableByTerms(*opt)) {
+    const auto& terms = opt_terms->options().terms;
+    const auto field = opt_terms->field_id();
+    const auto boost = ctx.boost * opt_terms->Boost();
+    opt_queries.reserve(terms.size());
+    for (const auto& term : terms) {
+      PrepareContext child = ctx;
+      child.boost = boost * term.boost;
+      child.collector = compound ? &compound->Child(idx++) : nullptr;
+      opt_queries.emplace_back(
+        ByTerm::PrepareSegment(segment, child, field, term.term));
     }
   } else {
     add_clause(*opt, kNoBoost);

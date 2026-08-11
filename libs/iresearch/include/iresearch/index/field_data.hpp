@@ -55,8 +55,7 @@ class FieldData : util::Noncopyable {
  public:
   FieldData(field_id id, byte_block_pool::inserter& byte_writer,
             int_block_pool::inserter& int_writer, IndexFeatures index_features,
-            ColWriter* col_writer = nullptr,
-            NormColumnOptions norm_options = {});
+            ColWriter* col_writer, field_id norm_id, uint32_t row_group_size);
 
   doc_id_t doc() const noexcept { return _last_doc; }
 
@@ -104,7 +103,7 @@ class FieldData : util::Noncopyable {
   }
 
   ColWriter* _col_writer = nullptr;
-  uint32_t _norm_row_group_size = 0;
+  uint32_t _row_group_size = 0;
   mutable NormColumnWriter* _norm_writer = nullptr;
   mutable FieldMeta _meta;
   Postings _terms;

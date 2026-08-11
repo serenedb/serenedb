@@ -106,29 +106,35 @@ CREATE TEXT SEARCH DICTIONARY js_norm(
     accent = false,
     frequency = true,
     position = true,
-    norm = true,
-    norm_row_group_size = 256
+    norm = true
 );
 
 
+# The norm grid is the index's one `row_group_size`, so a dictionary has no
+# norm-specific size to set.
 query error
 CREATE TEXT SEARCH DICTIONARY bad_norm(
     template = 'text',
+    frequency = true,
     norm = true,
-    norm_row_group_size = 0
+    norm_row_group_size = 256
 );
 ----
-db error: ERROR: "norm_row_group_size" must be a positive integer
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
+HINT: Use WITH (HELP) to see available options
 
 
+# The option is gone whatever it is written next to: it used to require
+# `norm = true`, so both shapes that used to be rejected for that reason are
+# now rejected for the same one reason.
 query error
 CREATE TEXT SEARCH DICTIONARY bad_norm(
     template = 'text',
     norm_row_group_size = 256
 );
 ----
-db error: ERROR: norm_row_group_size requires norm = true
-HINT: Norm column row-group size for indexes that bind this dictionary with norm = true.
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
+HINT: Use WITH (HELP) to see available options
 
 
 query error
@@ -138,8 +144,21 @@ CREATE TEXT SEARCH DICTIONARY bad_norm(
     norm_row_group_size = 256
 );
 ----
-db error: ERROR: norm_row_group_size requires norm = true
-HINT: Norm column row-group size for indexes that bind this dictionary with norm = true.
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
+HINT: Use WITH (HELP) to see available options
+
+
+# A value that used to be rejected on its own account is rejected by name now.
+query error
+CREATE TEXT SEARCH DICTIONARY bad_norm(
+    template = 'text',
+    frequency = true,
+    norm = true,
+    norm_row_group_size = 0
+);
+----
+db error: ERROR: CREATE TEXT SEARCH DICTIONARY: option "norm_row_group_size" not recognized
+HINT: Use WITH (HELP) to see available options
 
 
 statement ok

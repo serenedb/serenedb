@@ -231,7 +231,7 @@ class ColFilterChain {
 // narrowing the selection during the read via per-block zonemap skip + codec
 // ColumnSegment::Filter (ColumnReader::GatherFilter) -- exactly like
 // RowGroup::Scan. Because it IS a DocIterator, every consumer works unchanged:
-// count() (count-only), Collect() (top-k, feeding NthPartitionScoreCollector),
+// count() (count-only), Collect() (top-k, feeding LoserScoreCollector),
 // and EmitScoredDocs()/EmitDocs() (streaming). So `.col` table filters apply to
 // count-only, top-k and streaming through one wrapper.
 class TableFilterDocIterator : public irs::DocIterator {

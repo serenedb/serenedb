@@ -92,7 +92,7 @@ n
 
 
 # Per-column row_group_size is not a thing: block boundaries must be uniform
-# across the columnstore (norm columns keep their own norm_row_group_size).
+# across the columnstore, norm columns included.
 statement error
 CREATE INDEX mxb_bad_idx ON mxb
     USING inverted(id, body mxb_en)

@@ -59,7 +59,7 @@ struct FilterVisitor {
   /// @brief makes preparations for a visitor
   //////////////////////////////////////////////////////////////////////////////
   virtual void Prepare(const SubReader& segment, const TermReader& field,
-                       SeekTermIterator& terms) = 0;
+                       TermIterator& terms) = 0;
 
   //////////////////////////////////////////////////////////////////////////////
   /// @brief applies actions to a current term iterator

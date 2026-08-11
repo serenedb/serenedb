@@ -33,26 +33,27 @@ class EmptyTermReader final : public irs::TermReader {
   constexpr explicit EmptyTermReader(uint64_t docs_count) noexcept
     : _docs_count{docs_count} {}
 
-  SeekTermIterator::ptr iterator(SeekMode) const noexcept final {
+  SeekTermIterator::ptr iterator() const noexcept final {
     return SeekTermIterator::empty();
   }
 
-  SeekTermIterator::ptr iterator(
-    const automaton_table_matcher&) const noexcept final {
+  SeekTermIterator::ptr iterator(const LevenshteinAcceptor&) const final {
     return SeekTermIterator::empty();
   }
 
-  size_t BitUnion(const cookie_provider&, size_t*) const noexcept final {
-    return 0;
+  SeekTermIterator::ptr iterator(const RegexpAcceptor&) const final {
+    return SeekTermIterator::empty();
   }
 
-  void read_documents(bytes_view, Acceptor acceptor) const noexcept final {}
+  PostingMeta Lookup(bytes_view) const noexcept final { return {}; }
 
-  TermMeta term(bytes_view) const noexcept final { return {}; }
+  void ReadDocs(bytes_view, Acceptor acceptor) const noexcept final {}
+
+  size_t BitUnion(CookieProvider, uint64_t*) const noexcept final { return 0; }
 
   DocIterator::ptr Iterator(IndexFeatures features,
                             std::span<const PostingCookie> cookies,
-                            WandContext options, size_t min_match,
+                            bool score_prune, size_t min_match,
                             ScoreMergeType type) const final {
     return DocIterator::empty();
   }
@@ -69,13 +70,10 @@ class EmptyTermReader final : public irs::TermReader {
   // total number of documents
   uint64_t docs_count() const noexcept final { return _docs_count; }
 
-  // least significant term
-  bytes_view(min)() const noexcept final { return {}; }
+  bytes_view min() const noexcept final { return {}; }
+  bytes_view max() const noexcept final { return {}; }
 
-  // most significant term
-  bytes_view(max)() const noexcept final { return {}; }
-
-  bool has_scorer(byte_type) const noexcept final { return false; }
+  bool HasScoreBounds() const noexcept final { return false; }
 
  private:
   uint64_t _docs_count;

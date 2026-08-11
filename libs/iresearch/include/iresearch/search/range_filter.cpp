@@ -31,7 +31,6 @@
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/term_iterator.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 
@@ -56,37 +55,44 @@ RangeKind Classify(const ByRangeOptions::range_type& rng) noexcept {
   return RangeKind::Range;
 }
 
-class ByRangeIterator : public WrappedTermIterator {
- public:
-  ByRangeIterator(const TermReader& reader,
-                  const ByRangeFilterOptions::range_type& range)
-    : WrappedTermIterator{reader.iterator(SeekMode::NORMAL)}, _range{&range} {}
-
-  bool next() final {
-    bool res = false;
-    if (_started) {
-      res = _impl->next();
-    } else {
-      _started = true;
-      switch (_range->min_type) {
-        case BoundType::Unbounded:
-          res = _impl->next();
-          break;
-        case BoundType::Inclusive:
-          res = seek_min<true>(*_impl, _range->min);
-          break;
-        case BoundType::Exclusive:
-          res = seek_min<false>(*_impl, _range->min);
-          break;
-      }
-    }
-    return res && RangeMaxAcceptor{_range}(_impl->value());
-  }
-
- private:
-  const ByRangeFilterOptions::range_type* _range;
-  bool _started{false};
+struct RangeBounds {
+  bstring lower;
+  bstring upper;
 };
+
+RangeBounds MakeBounds(const ByRangeFilterOptions::range_type& range) {
+  if (range.max_type == BoundType::Exclusive && range.max.empty()) {
+    return {AfterKey({}), AfterKey({})};
+  }
+  RangeBounds bounds;
+  switch (range.min_type) {
+    case BoundType::Unbounded:
+      break;
+    case BoundType::Inclusive:
+      bounds.lower = range.min;
+      break;
+    case BoundType::Exclusive:
+      bounds.lower = AfterKey(range.min);
+      break;
+  }
+  switch (range.max_type) {
+    case BoundType::Unbounded:
+      break;
+    case BoundType::Inclusive:
+      bounds.upper = AfterKey(range.max);
+      break;
+    case BoundType::Exclusive:
+      bounds.upper = range.max;
+      break;
+  }
+  return bounds;
+}
+
+BoundedTermIterator RangeIterator(
+  const TermReader& reader, const ByRangeFilterOptions::range_type& range) {
+  const auto bounds = MakeBounds(range);
+  return BoundedTermIterator{reader.iterator(), bounds.lower, bounds.upper};
+}
 
 }  // namespace
 
@@ -134,7 +140,7 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   }
   SampledMultiTermVisitor mtv{collector ? &collector->Limited() : nullptr,
                               query->State()};
-  ByRangeIterator terms{*reader, rng};
+  auto terms = RangeIterator(*reader, rng);
   if (terms.next()) {
     mtv.Prepare(segment, *reader, terms.GetImpl());
     VisitTerms(terms, mtv);
@@ -152,7 +158,7 @@ PrepareCollector::ptr ByRange::MakeCollector(const Scorer* scorer) const {
 
 void ByRange::visit(const SubReader& segment, const TermReader& reader,
                     const ByRangeOptions& options, FilterVisitor& visitor) {
-  ByRangeIterator terms{reader, options.range};
+  auto terms = RangeIterator(reader, options.range);
   if (!terms.next()) {
     return;
   }
@@ -166,7 +172,9 @@ TermPredicate::ptr ByRange::CompileTermPredicate() const {
 }
 
 TermIterator::ptr ByRange::CompileTermIterator(const TermReader& reader) const {
-  return memory::make_managed<ByRangeIterator>(reader, options().range);
+  const auto bounds = MakeBounds(options().range);
+  return memory::make_managed<BoundedTermIterator>(reader.iterator(),
+                                                   bounds.lower, bounds.upper);
 }
 
 }  // namespace irs

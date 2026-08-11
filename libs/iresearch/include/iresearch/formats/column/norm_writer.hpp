@@ -40,17 +40,21 @@ class NormColumnWriter;
 
 struct NormRowGroupMeta {
   uint8_t byte_size = 0;
-  uint32_t row_count = 0;
   uint32_t max = 0;
   uint64_t sum = 0;
   uint64_t non_zero_count = 0;
   uint64_t file_offset = 0;
 };
 
+struct NormColumnMeta {
+  uint32_t row_group_size = 0;
+  uint64_t row_count = 0;
+  std::vector<NormRowGroupMeta> row_groups;
+};
+
 void SerializeNormColumn(duckdb::Serializer& s, const NormColumnWriter& nw);
-std::vector<NormRowGroupMeta> DeserializeNormMetas(duckdb::Deserializer& d,
-                                                   field_id id,
-                                                   uint64_t footer_offset);
+NormColumnMeta DeserializeNormMetas(duckdb::Deserializer& d, field_id id,
+                                    uint64_t footer_offset);
 
 class NormColumnWriter final {
  public:
@@ -76,6 +80,8 @@ class NormColumnWriter final {
   field_id Id() const noexcept { return _id; }
 
   uint64_t RowCount() const noexcept;
+
+  uint32_t RowGroupSize() const noexcept { return _row_group_size; }
 
   const auto& Pointers() const noexcept { return _pointers; }
 

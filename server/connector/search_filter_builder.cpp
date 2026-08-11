@@ -21,6 +21,7 @@
 #include "search_filter_builder.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -58,7 +59,6 @@
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/types.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
@@ -209,7 +209,10 @@ absl::Status SetupTermFilter(irs::ByTerm& filter,
       "Unsupported type for term filter: ", static_cast<int>(type_id)));
   }
 
-  *filter.mutable_field_id() = PickPerKindFieldId(column_info, type_id);
+  *filter.mutable_field_id() =
+    type_id == duckdb::LogicalTypeId::BOOLEAN
+      ? PickBoolFieldId(column_info, value.GetValue<bool>())
+      : PickPerKindFieldId(column_info, type_id);
   return absl::OkStatus();
 }
 
@@ -227,6 +230,22 @@ ComparisonOp InvertComparisonOp(ComparisonOp op) {
       return ComparisonOp::Ge;
     case ComparisonOp::None:
       return ComparisonOp::None;
+  }
+  SDB_UNREACHABLE();
+}
+
+bool BoolBoundAccepts(ComparisonOp op, bool value, bool bound) {
+  switch (op) {
+    case ComparisonOp::Le:
+      return value <= bound;
+    case ComparisonOp::Lt:
+      return value < bound;
+    case ComparisonOp::Ge:
+      return value >= bound;
+    case ComparisonOp::Gt:
+      return value > bound;
+    case ComparisonOp::None:
+      break;
   }
   SDB_UNREACHABLE();
 }
@@ -362,6 +381,30 @@ irs::ByTerm& AddNullMarkerTerm(irs::BooleanFilter& parent,
   auto& term = AddFilter<irs::ByTerm>(parent);
   FillNullMarker(term, null_field_id);
   return term;
+}
+
+void AddBoolValueSet(irs::BooleanFilter& parent, const FilterContext& ctx,
+                     const SearchColumnInfo& info, bool accept_false,
+                     bool accept_true) {
+  const auto fill = [&info](irs::ByTerm& term, bool value) {
+    *term.mutable_field_id() = PickBoolFieldId(info, value);
+    term.mutable_options()->term.assign(
+      irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(value)));
+  };
+  if (!accept_false && !accept_true) {
+    AddMaybeNegated<irs::Empty>(parent, ctx, info);
+    return;
+  }
+  if (accept_false && accept_true) {
+    auto& group = AddMaybeNegated<irs::Or>(parent, ctx, info);
+    group.boost(ctx.boost);
+    fill(AddFilter<irs::ByTerm>(group), false);
+    fill(AddFilter<irs::ByTerm>(group), true);
+    return;
+  }
+  auto& term = AddMaybeNegated<irs::ByTerm>(parent, ctx, info);
+  term.boost(ctx.boost);
+  fill(term, accept_true);
 }
 
 void AddNegated(irs::BooleanFilter& parent, const SearchColumnInfo& info,
@@ -588,11 +631,47 @@ absl::Status FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
   return absl::OkStatus();
 }
 
+bool TryJsonNullPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,
+                          const duckdb::Expression& left_expr,
+                          const duckdb::Expression& right_expr,
+                          bool not_equal) {
+  if (left_expr.GetExpressionClass() !=
+      duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return false;
+  }
+  const auto& func = left_expr.Cast<duckdb::BoundFunctionExpression>();
+  if (func.Function().GetName().GetIdentifierName() != "json_type" ||
+      func.GetChildren().size() != 1) {
+    return false;
+  }
+  const auto* const_val = TryGetConstant(right_expr);
+  if (!const_val || const_val->IsNull() ||
+      const_val->type().id() != duckdb::LogicalTypeId::VARCHAR ||
+      !absl::EqualsIgnoreCase(duckdb::StringValue::Get(*const_val), "null")) {
+    return false;
+  }
+  const auto* column_info = FindColumnInfoForExpr(ctx, *func.GetChildren()[0]);
+  if (!column_info ||
+      !irs::field_limits::valid(column_info->json_null_field_id)) {
+    return false;
+  }
+  auto& term_filter = (ctx.negated != not_equal)
+                        ? NegateScoped<irs::ByTerm>(filter, *column_info)
+                        : AddFilter<irs::ByTerm>(filter);
+  term_filter.boost(ctx.boost);
+  FillNullMarker(term_filter, column_info->json_null_field_id);
+  return true;
+}
+
 template<bool GenericVersion>
 absl::Status FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                           const duckdb::Expression& left_expr,
                           const duckdb::Expression& right_expr,
                           bool not_equal) {
+  if (TryJsonNullPredicate(filter, ctx, left_expr, right_expr, not_equal)) {
+    return absl::OkStatus();
+  }
+
   // ST_Distance_Centroid(field, centroid) = / != distance  --  rewrite to
   // range.
   if constexpr (GenericVersion) {
@@ -726,11 +805,12 @@ absl::Status FromComparison(irs::BooleanFilter& filter,
     range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     setup_base_filter(range_filter).assign(AsRawBytes(*const_val));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    auto& range_filter = AddFilter<irs::ByRange>(filter);
-    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
-    setup_base_filter(range_filter)
-      .assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(const_val->GetValue<bool>())));
+    const bool bound = const_val->GetValue<bool>();
+    auto plain_ctx = ctx;
+    plain_ctx.negated = false;
+    AddBoolValueSet(filter, plain_ctx, *column_info,
+                    BoolBoundAccepts(op, false, bound),
+                    BoolBoundAccepts(op, true, bound));
   } else if (IsNumericTypeId(type_id)) {
     auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
     range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
@@ -840,6 +920,16 @@ absl::Status FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   if (!IsFilterableType(type_id)) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
+  }
+
+  if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
+    bool accept_false = false;
+    bool accept_true = false;
+    for (const auto* value : values) {
+      (value->GetValue<bool>() ? accept_true : accept_false) = true;
+    }
+    AddBoolValueSet(filter, ctx, *column_info, accept_false, accept_true);
+    return absl::OkStatus();
   }
 
   auto& terms_filter = AddMaybeNegated<irs::ByTerms>(filter, ctx, *column_info);

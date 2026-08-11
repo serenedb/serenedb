@@ -27,6 +27,7 @@
 #include "basics/noncopyable.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/utils/fstext/fst_states_map.hpp"
+#include "iresearch/utils/fstext/fst_string_weight.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {

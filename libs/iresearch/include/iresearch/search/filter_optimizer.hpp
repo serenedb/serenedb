@@ -29,6 +29,8 @@
 #include <string_view>
 #include <utility>
 
+#include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "iresearch/search/filter.hpp"
 
 namespace irs {

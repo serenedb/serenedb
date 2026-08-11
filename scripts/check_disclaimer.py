@@ -9,7 +9,6 @@ EXCEPTIONS = {
     "libs/iresearch/include/iresearch/parser/lucene_parser.hpp",
     "libs/iresearch/include/iresearch/parser/lucene_lexer.cpp",
     "libs/iresearch/include/iresearch/parser/lucene_parser.cpp",
-    "libs/iresearch/include/iresearch/utils/fstext/fst_draw.hpp",
     "libs/basics/wyhash.h",
     "server/pg/protocol.h",
     "server/pg/functions/interval.cpp",

@@ -1,0 +1,130 @@
+hash-threshold 100
+
+# ---------------------------------------------------------------------------
+# Verify that score-bound metadata survives index compaction. A review pass on
+# `merge_writer.cpp` flagged that `Flush` builds a `FlushState` with
+# `norms = nullptr` (the new field on `FlushState` was added for the initial
+# flush; merge never sets it). If true, `PostingsWriterBase::PrepareWriters`
+# early-returns and `_valid_writer` stays null, so no score-bound metadata is
+# written for merged segments. BM25 top-K queries on those segments would
+# silently fall back to a full posting walk.
+#
+# Test shape:
+#   1. Build a score-prune-enabled inverted index across TWO segments (insert,
+#      VACUUM, insert, VACUUM).
+#   2. Pre-merge: arm `irs::PruningIterator` fault -- query trips, proving
+#      both initial-flush segments wrote score bounds.
+#   3. VACUUM (COMPACT_TABLE) <table> -- merges into one
+#      segment via MergeWriter::Flush.
+#   4. Post-merge: arm `irs::PruningIterator` fault -- if score bounds are in
+#      the merged segment, the fault trips again. If not, the query
+#      returns clean rows and we have a regression.
+#
+# Lives under recovery/ because `sdb_faults` requires SDB_FAULT_INJECTION=On
+# (same reasoning as inverted_index_score_prune_faults.test).
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_prune(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE prune_cons (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX prune_cons_idx ON prune_cons USING inverted(id, body en_prune)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+# Segment 1: 100 rows.
+statement ok
+INSERT INTO prune_cons SELECT i, CASE i % 5
+    WHEN 0 THEN 'fox quick brown'
+    WHEN 1 THEN 'fox lazy dog'
+    WHEN 2 THEN 'cat sleeping in box'
+    WHEN 3 THEN 'rabbit and fox'
+    ELSE        'rare_token bird sings'
+  END
+  FROM generate_series(1, 100) AS s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) prune_cons;
+
+
+# Segment 2: 100 more rows under a disjoint pk range.
+statement ok
+INSERT INTO prune_cons SELECT i, CASE i % 5
+    WHEN 0 THEN 'fox quick brown'
+    WHEN 1 THEN 'fox lazy dog'
+    WHEN 2 THEN 'cat sleeping in box'
+    WHEN 3 THEN 'rabbit and fox'
+    ELSE        'rare_token bird sings'
+  END
+  FROM generate_series(1000, 1099) AS s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) prune_cons;
+
+
+# === Pre-merge sanity: pruning fires on the initial-flush segments. ===
+
+statement ok
+SET sdb_faults = 'irs::PruningIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM prune_cons_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(prune_cons_idx.tableoid) DESC LIMIT 3;
+
+
+statement ok
+SET sdb_faults = '-irs::PruningIterator';
+
+
+# === Force compaction into one merged segment. ===
+
+statement ok
+VACUUM (COMPACT_TABLE) prune_cons;
+
+
+# Correctness sanity: the merged segment returns the right docs.
+# 'fox' appears in buckets 0, 1, 3 -- 60 per 100-doc batch x 2 batches = 120.
+query
+SELECT COUNT(*) FROM (
+  SELECT id FROM prune_cons_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(prune_cons_idx.tableoid) DESC LIMIT 100
+) x;
+----
+count
+100
+
+
+# === Post-merge: did the merged segment write score bounds? ===
+# If yes, the fault trips. If no, the query returns clean rows.
+
+statement ok
+SET sdb_faults = 'irs::PruningIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM prune_cons_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(prune_cons_idx.tableoid) DESC LIMIT 3;
+
+
+statement ok
+SET sdb_faults = '-irs::PruningIterator';

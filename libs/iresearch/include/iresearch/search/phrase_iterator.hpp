@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <limits>
 #include <memory>
 
 #include "basics/empty.hpp"
@@ -168,8 +169,8 @@ struct TermPositionTraits<FixedTermPosition<Offs>> {
 // - NextPosition(const Iterator& it)
 //  Calculates next position to seek for current follower (it)
 //
-// - Match(PosAttr::value_t seek, PosAttr::value_t sought, const TermInterval& interval)
-//   Determines if sought is a valid match given seek and interval. Separated
+// - Match(PosAttr::value_t seek, PosAttr::value_t sought, const Iterator& it)
+//   Determines if sought is a valid match given seek and it. Separated
 //   from AdvanceIterators as Match in variadic phrase is determined in separate
 //   code.
 //
@@ -195,7 +196,8 @@ class SinglePositionStrategy {
   using Traits = TermPositionTraits<Value>;
   using PositionImpl = Traits::PositionImpl;
 
-  SinglePositionStrategy(Iterator& it, PositionImpl& lead_position)
+  SinglePositionStrategy(Iterator& it, PositionImpl& lead_position,
+                         bool = false)
     : _lead_it{it}, _lead_pos{lead_position} {}
 
   void NotifyNextLead(const Iterator&) noexcept {
@@ -209,7 +211,7 @@ class SinglePositionStrategy {
   }
 
   static bool Match(PosAttr::value_t seek, PosAttr::value_t sought,
-                    const TermInterval&) noexcept {
+                    const Iterator&) noexcept {
     return seek == sought;
   }
 
@@ -242,8 +244,9 @@ class IntervalPositionStrategy {
   using Traits = TermPositionTraits<Value>;
   using PositionImpl = Traits::PositionImpl;
 
-  IntervalPositionStrategy(Iterator& lead, PositionImpl& lead_position)
-    : _lead_it{lead}, _lead_pos{lead_position} {}
+  IntervalPositionStrategy(Iterator& lead, PositionImpl& lead_position,
+                           bool reversed = false)
+    : _lead_it{lead}, _lead_pos{lead_position}, _reversed{reversed} {}
 
   void NotifyNextLead(const Iterator& end) noexcept {
     SDB_ASSERT(pos_limits::valid(_lead_pos.value()));
@@ -264,20 +267,17 @@ class IntervalPositionStrategy {
   }
 
   PosAttr::value_t NextPosition(const Iterator& it) {
-    return _base_position + Traits::Interval(*it).offs_min + _interval_delta;
+    return Window(it).low + _interval_delta;
   }
 
-  bool Match(PosAttr::value_t seek, PosAttr::value_t sought,
-             const TermInterval& interval) const noexcept {
-    SDB_ASSERT(sought >= seek);
-    SDB_ASSERT(_interval_delta <= (interval.offs_max - interval.offs_min));
-    return sought - seek <=
-           interval.offs_max - interval.offs_min - _interval_delta;
+  bool Match(PosAttr::value_t, PosAttr::value_t sought,
+             const Iterator& it) const noexcept {
+    return sought <= Window(it).high;
   }
 
   bool AdvanceIterators(bool match, PosAttr::value_t sought,
                         const Iterator& end, Iterator& it) {
-    const auto& interval = Traits::Interval(*it);
+    const auto fail_it = it;
     _interval_delta = 0;
     if (match) {
       ++it;
@@ -305,26 +305,17 @@ class IntervalPositionStrategy {
       _base_position = prev_base_it == _lead_it
                          ? _lead_pos.value()
                          : Traits::Position(*prev_base_it);
-      const auto& current_interval = Traits::Interval(*it);
-      if (current_interval.offs_max != current_interval.offs_min) {
-        SDB_ASSERT(sought - interval.lead_offset +
-                     current_interval.lead_offset >
-                   current_interval.offs_min + _base_position);
-        _interval_delta = sought - interval.lead_offset +
-                          current_interval.lead_offset -
-                          current_interval.offs_min - _base_position;
-        if (_interval_delta + current_interval.offs_min <=
-            current_interval.offs_max) {
-          // found potentially still valid interval  - try to re-start
-          // from here. It is still a "match" as we've found valid interval.
-          return true;
-        }
+      const auto window = Window(it);
+      const auto want = Reach(sought, it, fail_it);
+      if (want <= window.low || want > window.high) {
+        continue;
       }
+      _interval_delta = want - window.low;
+      return true;
     }
     // Reached lead. Move it to closest reasonable position and try to re-start.
-    SDB_ASSERT(sought >= interval.lead_offset);
-    SDB_ASSERT(_lead_pos.value() < (sought - interval.lead_offset));
-    _lead_pos.seek(sought - interval.lead_offset);
+    const auto bound = _permutations ? 0 : Reach(sought, _lead_it, fail_it);
+    _lead_pos.seek(std::max(bound, _lead_pos.value() + 1));
     return false;
   }
 
@@ -346,13 +337,11 @@ class IntervalPositionStrategy {
       _base_position = prev_base_it == _lead_it
                          ? _lead_pos.value()
                          : Traits::Position(*prev_base_it);
-      SDB_ASSERT(current_position >=
-                 _base_position + Traits::Interval(*it).offs_min);
-      if (current_position < _base_position + Traits::Interval(*it).offs_max) {
+      const auto window = Window(it);
+      if (current_position < window.high) {
         _need_reset = true;
         // Force "it" to move at least one step forward.
-        _interval_delta = current_position - _base_position -
-                          Traits::Interval(*it).offs_min + 1;
+        _interval_delta = current_position - window.low + 1;
         _permutations = true;
         return true;
       }
@@ -370,10 +359,45 @@ class IntervalPositionStrategy {
   }
 
  private:
+  struct Range {
+    PosAttr::value_t low;
+    PosAttr::value_t high;
+  };
+
+  const TermInterval& Gap(const Iterator& it) const noexcept {
+    return Traits::Interval(_reversed ? *(it - 1) : *it);
+  }
+
+  Range Window(const Iterator& it) const noexcept {
+    const auto& gap = Gap(it);
+    if (_reversed) {
+      return {_base_position > gap.offs_max ? _base_position - gap.offs_max
+                                            : pos_limits::min(),
+              _base_position > gap.offs_min ? _base_position - gap.offs_min
+                                            : pos_limits::invalid()};
+    }
+    return {_base_position + gap.offs_min, _base_position + gap.offs_max};
+  }
+
+  PosAttr::value_t Reach(PosAttr::value_t sought, Iterator from,
+                         Iterator to) const noexcept {
+    if (_reversed) {
+      PosAttr::value_t span = 0;
+      for (auto it = from + 1; it <= to; ++it) {
+        span += Gap(it).offs_min;
+      }
+      return sought + span;
+    }
+    SDB_ASSERT(sought >= Traits::Interval(*to).lead_offset);
+    return sought - Traits::Interval(*to).lead_offset +
+           Traits::Interval(*from).lead_offset;
+  }
+
   Iterator& _lead_it;
   PositionImpl& _lead_pos;
   PosAttr::value_t _base_position{pos_limits::eof()};
   PosAttr::value_t _interval_delta{0};
+  bool _reversed{false};
   bool _permutations{false};
   bool _need_reset{false};
 };
@@ -397,14 +421,37 @@ class FixedPhraseFrequency {
     // lead offset is always 0
     SDB_ASSERT(_pos.front().second.offs_min == 0);
     SDB_ASSERT(_pos.front().second.offs_max == 0);
+    if constexpr (HasIntervals) {
+      uint64_t scale = 1;
+      for (const auto& slot : _pos) {
+        scale *= slot.second.offs_max - slot.second.offs_min + 1;
+        if (scale >= std::numeric_limits<uint32_t>::max()) {
+          scale = std::numeric_limits<uint32_t>::max();
+          break;
+        }
+      }
+      _freq_scale = static_cast<uint32_t>(scale);
+    }
   }
 
+  template<bool Ordered = false>
   IRS_FORCE_INLINE bool Match() {
-    _phrase_freq = NextPosition();
+    _phrase_freq = NextPosition<Ordered>();
     return _phrase_freq != 0;
   }
 
   uint32_t GetFreq() const noexcept { return _phrase_freq; }
+
+  uint32_t DocFreqBound() {
+    OrderByDocFreq();
+    const auto freq = _pos.front().first->DocFreq();
+    if constexpr (HasIntervals) {
+      const uint64_t bound = uint64_t{freq} * _freq_scale;
+      return static_cast<uint32_t>(
+        std::min<uint64_t>(bound, std::numeric_limits<uint32_t>::max()));
+    }
+    return freq;
+  }
 
  private:
   friend class PhrasePosition<FixedPhraseFrequency>;
@@ -417,20 +464,25 @@ class FixedPhraseFrequency {
     return {&start->start, &end->end};
   }
 
+  template<bool Ordered = false>
   IRS_FORCE_INLINE uint32_t NextPosition() {
     if constexpr (HasIntervals || Offs) {
-      return NextPositionGeneric();
+      return NextPositionGeneric<Ordered>();
     } else {
-      return NextPositionOptimized();
+      return NextPositionOptimized<Ordered>();
     }
   }
 
+  template<bool Ordered = false>
   uint32_t NextPositionGeneric() {
+    if constexpr (!Ordered) {
+      OrderByDocFreq();
+    }
     uint32_t phrase_freq = 0;
     auto& lead = *_pos.front().first;
     lead.next();
     auto lead_it = std::begin(_pos);
-    ExecutionStrategy strategy{lead_it, lead};
+    ExecutionStrategy strategy{lead_it, lead, _reversed};
     SDB_ASSERT(_pos.size() > 1);
 
     for (auto end = std::end(_pos); !pos_limits::eof(lead.value());) {
@@ -462,7 +514,7 @@ class FixedPhraseFrequency {
           }
         }
         match = strategy.AdvanceIterators(
-          strategy.Match(term_position, sought, it->second), sought, end, it);
+          strategy.Match(term_position, sought, it), sought, end, it);
 
         if constexpr (HasFreq) {
           if (it == end && match) {
@@ -489,12 +541,28 @@ class FixedPhraseFrequency {
     return phrase_freq;
   }
 
+ private:
+  void OrderByDocFreq() {
+    if constexpr (Offs) {
+    } else if constexpr (HasIntervals) {
+      if (_pos.back().first->DocFreq() < _pos.front().first->DocFreq()) {
+        absl::c_reverse(_pos);
+        _reversed = !_reversed;
+      }
+    } else {
+      absl::c_sort(_pos, [](const auto& l, const auto& r) {
+        return l.first->DocFreq() < r.first->DocFreq();
+      });
+    }
+  }
+
+  template<bool Ordered = false>
   uint32_t NextPositionOptimized() {
+    if constexpr (!Ordered) {
+      OrderByDocFreq();
+    }
     auto begin = _pos.begin();
     auto end = _pos.end();
-    std::sort(begin, end, [](const auto& l, const auto& r) {
-      return l.first->DocFreq() < r.first->DocFreq();
-    });
 
     const auto new_lead_offset = begin->second.lead_offset;
     auto& lead = *begin->first;
@@ -534,6 +602,10 @@ class FixedPhraseFrequency {
   Positions _pos;
   // freqency of the phrase in a document
   uint32_t _phrase_freq = 0;
+  // most phrase occurrences one lead position can carry
+  uint32_t _freq_scale = 1;
+  // _pos currently holds the phrase back to front
+  bool _reversed = false;
 };
 
 // Adapter to use DocIterator with positions for disjunction
@@ -618,7 +690,7 @@ class VariadicPhraseFrequency {
     ExecutionSrategy& strategy;
     PosAttr::value_t term_position{pos_limits::eof()};
     PosAttr::value_t min_sought{pos_limits::eof()};
-    TermInterval* interval{nullptr};
+    typename Positions::iterator slot{};
     const uint32_t* end{};  // end match offset
     score_t boost{};
     bool match{false};
@@ -647,8 +719,7 @@ class VariadicPhraseFrequency {
     if (sought < match.min_sought) {
       match.min_sought = sought;
     }
-    SDB_ASSERT(match.interval);
-    if (!match.strategy.Match(match.term_position, sought, *match.interval)) {
+    if (!match.strategy.Match(match.term_position, sought, match.slot)) {
       return true;
     }
 
@@ -698,7 +769,7 @@ class VariadicPhraseFrequency {
       }
 
       for (auto it = lead_it + 1; it != end;) {
-        match.interval = &it->second;
+        match.slot = it;
         match.term_position = strategy.NextPosition(it);
 
         if (!pos_limits::valid(match.term_position)) {
@@ -934,9 +1005,7 @@ class VariadicPhraseFrequencyOverlapped {
   uint32_t _lead_freq = 0;  // number of matched lead iterators
 };
 
-// implementation is optimized for frequency based similarity measures
-// for generic implementation see a03025accd8b84a5f8ecaaba7412fc92a1636be3
-template<typename Conjunction, typename Frequency>
+template<typename Conjunction, typename Frequency, bool Prune = false>
 class PhraseIterator : public DocIterator {
  public:
   using TermPosition = typename Frequency::TermPosition;
@@ -1038,6 +1107,11 @@ class PhraseIterator : public DocIterator {
     if (type == irs::Type<CostAttr>::id()) {
       return _cost;
     }
+    if constexpr (Prune) {
+      if (type == irs::Type<ScoreThresholdAttr>::id()) {
+        return &_threshold;
+      }
+    }
     if constexpr (Frequency::kHasBoost) {
       if (type == irs::Type<BoostBlockAttr>::id()) {
         return &_collected_boosts;
@@ -1055,6 +1129,35 @@ class PhraseIterator : public DocIterator {
       return _freq.GetMutable(type);
     } else {
       return nullptr;
+    }
+  }
+
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& c) final {
+    if constexpr (Prune) {
+      auto* const freq = _collected_freqs.value;
+      ResolveScoreCollector(c, [&](auto& collector) IRS_FORCE_INLINE {
+        for (auto doc = _approx.advance(); !doc_limits::eof(doc);
+             doc = _approx.advance()) {
+          const auto bound = _freq.DocFreqBound();
+          freq[0] = bound;
+          fetcher.Fetch(doc);
+
+          auto score = scorer.Score();
+          if (score <= _threshold.value || !_freq.template Match<true>()) {
+            continue;
+          }
+          if (const auto real = _freq.GetFreq(); real != bound) {
+            SDB_ASSERT(real < bound);
+            freq[0] = real;
+            score = scorer.Score();
+          }
+          collector.Add(score, doc);
+        }
+        _doc = doc_limits::eof();
+      });
+    } else {
+      DocIterator::CollectImpl(*this, scorer, fetcher, c);
     }
   }
 
@@ -1103,12 +1206,16 @@ class PhraseIterator : public DocIterator {
     }
   }
 
-  IRS_DOC_ITERATOR_DEFAULTS
+  IRS_DOC_ITERATOR_FILL_BLOCK
+  IRS_DOC_ITERATOR_COUNT
+  IRS_DOC_ITERATOR_EMIT_DOCS
+  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
 
  private:
   const byte_type* _stats = nullptr;
   score_t _boost = kNoBoost;
   FieldProperties _field;
+  [[no_unique_address]] utils::Need<Prune, ScoreThresholdAttr> _threshold;
 
   // first approximation (conjunction over all words in a phrase)
   Conjunction _approx;

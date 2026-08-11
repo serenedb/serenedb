@@ -34,17 +34,9 @@ struct SegmentMetaWriterImpl : public SegmentMetaWriter {
   static constexpr std::string_view kFormatExt = "sm";
   static constexpr std::string_view kFormatName = "iresearch_10_segment_meta";
 
-  static constexpr int32_t kFormatMin = 0;
-  static constexpr int32_t kFormatMax = 0;
-
-  explicit SegmentMetaWriterImpl(int32_t version) noexcept : _version(version) {
-    SDB_ASSERT(_version >= kFormatMin && version <= kFormatMax);
-  }
+  static constexpr int32_t kFormatVersion = 0;
 
   void write(Directory& dir, std::string& filename, SegmentMeta& meta) final;
-
- private:
-  int32_t _version;
 };
 
 template<>
@@ -101,7 +93,7 @@ inline void SegmentMetaWriterImpl::write(Directory& dir, std::string& meta_file,
   SDB_ASSERT(meta.docs_mask_size <= meta.byte_size);
   const auto size_without_mask = meta.byte_size - meta.docs_mask_size;
 
-  format_utils::WriteHeader(*out, kFormatName, _version);
+  format_utils::WriteHeader(*out, kFormatName, kFormatVersion);
   WriteStr(*out, meta.name);
   out->WriteV64(meta.version);
   out->WriteV32(meta.live_docs_count);

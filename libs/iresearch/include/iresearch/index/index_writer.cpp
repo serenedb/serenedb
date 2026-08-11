@@ -1138,7 +1138,7 @@ IndexWriter::IndexWriter(
 
   _topk_scorer = _committed_reader->Options().scorer;
   if (_topk_scorer) {
-    _wand_features |= _topk_scorer->GetIndexFeatures();
+    _score_bound_features |= _topk_scorer->GetIndexFeatures();
   }
 
   _flush_context.store(_flush_contexts.data());
@@ -1270,9 +1270,9 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     options.comparator, options.meta_payload_provider, std::move(reader));
   writer->_db = options.db;
   // Wrap the provider callbacks into the fallback options (tests).
-  if (options.column_options || options.norm_column_options) {
+  if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
-      options.column_options, options.norm_column_options);
+      options.column_options, options.norm_column_id, options.row_group_size);
   }
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
@@ -1700,7 +1700,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // The merge passes its own view; a segment write installs its owning override
   // later via SetFieldOptions, so non-owning here.
   return {
-    .scorers_features = _wand_features,
+    .scorers_features = _score_bound_features,
     .scorer = _topk_scorer,
     .comparator = _comparator,
     .resource_manager = compaction ? *_dir.ResourceManager().compactions

@@ -215,7 +215,7 @@ struct GeoState {
 
   const ColumnReader* stored_field{};
   const TermReader* reader{};
-  ManagedVector<SeekCookie::ptr> states;
+  ManagedVector<PostingMeta> states;
 };
 
 // Compiled GeoFilter
@@ -249,8 +249,7 @@ class GeoQuery : public QueryBuilder {
     itrs.reserve(_state.states.size());
 
     for (auto& entry : _state.states) {
-      SDB_ASSERT(entry);
-      auto it = field->Iterator(IndexFeatures::None, {.cookie = entry.get()});
+      auto it = field->Iterator(IndexFeatures::None, {.cookie = &entry});
       if (!it || doc_limits::eof(it->value())) [[unlikely]] {
         continue;
       }
@@ -535,7 +534,7 @@ GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
   if (!stored_field) {
     return state;
   }
-  auto terms = reader->iterator(SeekMode::NORMAL);
+  auto terms = reader->iterator();
   if (!terms) [[unlikely]] {
     return state;
   }
@@ -546,14 +545,13 @@ GeoState PrepareState(const SubReader& segment, const PrepareContext& ctx,
     collector.Field().Collect(*reader);
   }
 
-  ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
+  ManagedVector<PostingMeta> term_states{{ctx.memory}};
   term_states.reserve(sorted_terms.size());
 
   for (const auto term : sorted_terms) {
     if (!terms->seek(ViewCast<byte_type>(term))) {
       continue;
     }
-    terms->read();
     term_states.emplace_back(terms->cookie());
   }
 

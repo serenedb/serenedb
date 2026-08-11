@@ -560,13 +560,15 @@ bool OrAcceptorFusionRule::RenderWildcard(std::string& out,
   };
   for (size_t i = 0; i < pattern.size(); ++i) {
     switch (pattern[i]) {
+      // `.` is `[^\n]` unless `(?s)` says otherwise, and the wildcard dialect
+      // puts no such hole in what `%` and `_` stand for.
       case '%':
         flush();
-        absl::StrAppend(&out, ".*");
+        absl::StrAppend(&out, "(?s:.)*");
         break;
       case '_':
         flush();
-        absl::StrAppend(&out, ".");
+        absl::StrAppend(&out, "(?s:.)");
         break;
       case '\\':
         if (++i == pattern.size()) {
@@ -591,7 +593,7 @@ bool OrAcceptorFusionRule::Render(std::string& out, const Filter& child) {
   }
   if (type == Type<ByPrefix>::id()) {
     RenderQuoted(out, sdb::basics::downCast<ByPrefix>(child).options().term);
-    absl::StrAppend(&out, ".*");
+    absl::StrAppend(&out, "(?s:.)*");
     return true;
   }
   if (type == Type<ByWildcard>::id()) {

@@ -1,25 +1,25 @@
 hash-threshold 100
 
 # ---------------------------------------------------------------------------
-# WAND optimization correctness on inverted indexes.
+# Score-prune optimization correctness on inverted indexes.
 #
-# WAND fires only when:
+# Pruning fires only when:
 #   * the index has WITH (optimize_top_k = '<scorer-expr>')
 #   * the query is `WHERE <filter> ORDER BY <scorer>(idx.tableoid) DESC LIMIT k`
 #   * the index's `optimize_top_k` scorer matches the ORDER BY scorer
-#   * the filter compiles to an iterator that exposes per-block max-impact:
+#   * the filter compiles to an iterator that exposes per-block score bounds:
 #       - single Term  (`body @@ ts_phrase('x')` with one token)
 #       - ByTerms      (`body @@ ts_any(['a','b'])` -- disjunction over terms)
 #
 # Two passes:
 #   * Small dataset -> EXPLAIN matches a deterministic plan with /
 #     without `, optimized`.
-#   * 50k-row dataset -> WAND vs non-WAND indexes return identical top-K
+#   * 50k-row dataset -> score-bound and plain indexes return identical top-K
 #     results, proving the pruning preserves ranking.
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en_wand(
+CREATE TEXT SEARCH DICTIONARY en_prune(
     template = 'text',
     locale = 'en_US.UTF-8',
     case = 'none',
@@ -36,42 +36,42 @@ CREATE TEXT SEARCH DICTIONARY en_wand(
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TABLE wand_small (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_small (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement count 1
-INSERT INTO wand_small VALUES (1, 'fox quick');
+INSERT INTO prune_small VALUES (1, 'fox quick');
 
 
 statement count 1
-INSERT INTO wand_small VALUES (2, 'fox lazy dog');
+INSERT INTO prune_small VALUES (2, 'fox lazy dog');
 
 
 statement count 1
-INSERT INTO wand_small VALUES (3, 'lazy dog');
+INSERT INTO prune_small VALUES (3, 'lazy dog');
 
 
 statement count 1
-INSERT INTO wand_small VALUES (4, 'fox runs');
+INSERT INTO prune_small VALUES (4, 'fox runs');
 
 
 statement count 1
-INSERT INTO wand_small VALUES (5, 'rabbit fox');
+INSERT INTO prune_small VALUES (5, 'rabbit fox');
 
 
 statement ok
-CREATE INDEX wand_small_idx ON wand_small USING inverted(id, body en_wand)
+CREATE INDEX prune_small_idx ON prune_small USING inverted(id, body en_prune)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) wand_small;
+VACUUM (REFRESH_TABLE) prune_small;
 
 
-# Term-only filter + matching scorer + LIMIT -> WAND engages.
+# Term-only filter + matching scorer + LIMIT -> pruning engages.
 
 query
-EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wand_small_idx.tableoid) DESC LIMIT 3;
+EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
@@ -80,7 +80,7 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wand_small_idx                  │
+│ Index: prune_small_idx                 │
 │ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
@@ -95,10 +95,10 @@ QUERY PLAN
 ╰────────────────────────────────────────╯
 
 
-# Term disjunction (ByTerms iterator) -> WAND engages.
+# Term disjunction (ByTerms iterator) -> pruning engages.
 
 query
-EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_any(['fox', 'rabbit']) ORDER BY BM25(wand_small_idx.tableoid) DESC LIMIT 3;
+EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_any(['fox', 'rabbit']) ORDER BY BM25(prune_small_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
@@ -107,7 +107,7 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wand_small_idx                  │
+│ Index: prune_small_idx                 │
 │ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Terms ─────────────────╮            │
@@ -123,10 +123,10 @@ QUERY PLAN
 ╰────────────────────────────────────────╯
 
 
-# No LIMIT -> no TopK pull-up at all -> WAND can't engage.
+# No LIMIT -> no TopK pull-up at all -> pruning can't engage.
 
 query
-EXPLAIN SELECT id, BM25(wand_small_idx.tableoid) AS s FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY s DESC;
+EXPLAIN SELECT id, BM25(prune_small_idx.tableoid) AS s FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY s DESC;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────╮
@@ -134,7 +134,7 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wand_small_idx                  │
+│ Index: prune_small_idx                 │
 │ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
@@ -148,10 +148,10 @@ QUERY PLAN
 ╰────────────────────────────────────────╯
 
 
-# ASC ordering -> score_top_k rule only matches DESC; WAND does NOT engage.
+# ASC ordering -> score_top_k rule only matches DESC; pruning does NOT engage.
 
 query
-EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wand_small_idx.tableoid) ASC LIMIT 3;
+EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(prune_small_idx.tableoid) ASC LIMIT 3;
 ----
 QUERY PLAN
 ╭─ TOP_N ─────────────────────────────────────────────────╮
@@ -160,7 +160,7 @@ QUERY PLAN
 │ ~1 row                                                  │
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
-│ Index: wand_small_idx                                   │
+│ Index: prune_small_idx                                  │
 │ Lookup: table                                           │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
@@ -175,12 +175,12 @@ QUERY PLAN
 ╰─────────────────────────────────────────────────────────╯
 
 
-# Mismatched scorer: index is BM25-WAND, ORDER BY uses TFIDF. Top-K still
-# pulls up but `WandEnabled()` is false (topk_scorer != scorer), so no
-# `, optimized` suffix.
+# Mismatched scorer: index carries BM25 score bounds, ORDER BY uses TFIDF.
+# Top-K still pulls up but `score_prune` is false
+# (topk_scorer != scorer), so no `, optimized` suffix.
 
 query
-EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(wand_small_idx.tableoid) DESC LIMIT 3;
+EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(prune_small_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
@@ -189,7 +189,7 @@ QUERY PLAN
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: wand_small_idx                  │
+│ Index: prune_small_idx                 │
 │ Lookup: table                          │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
@@ -205,16 +205,16 @@ QUERY PLAN
 
 
 # ---------------------------------------------------------------------------
-# 50k-row dataset -- prove WAND-on and WAND-off return identical top-K.
+# 50k-row dataset -- prove pruning-on and pruning-off return identical top-K.
 #
 # Vocabulary cycles 10 sentences so term frequencies vary:
-#   'fox'        appears in 7 of 10 buckets (~35k docs)  -- WAND-friendly
+#   'fox'        appears in 7 of 10 buckets (~35k docs)  -- prune-friendly
 #   'lazy'       appears in 2 of 10 buckets (~10k docs)
 #   'rare_token' appears in 1 of 10 buckets (~5k docs)
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TABLE wand_big (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_big (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement ok
@@ -222,7 +222,7 @@ CREATE TABLE plain_big (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement ok
-INSERT INTO wand_big SELECT i, CASE i % 10
+INSERT INTO prune_big SELECT i, CASE i % 10
     WHEN 0 THEN 'fox quick brown jumps'
     WHEN 1 THEN 'fox lazy dog under tree'
     WHEN 2 THEN 'cat sleeping in box'
@@ -238,20 +238,20 @@ INSERT INTO wand_big SELECT i, CASE i % 10
 
 
 statement ok
-INSERT INTO plain_big SELECT * FROM wand_big;
+INSERT INTO plain_big SELECT * FROM prune_big;
 
 
 statement ok
-CREATE INDEX wand_big_idx ON wand_big USING inverted(id, body en_wand)
+CREATE INDEX prune_big_idx ON prune_big USING inverted(id, body en_prune)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
-CREATE INDEX plain_big_idx ON plain_big USING inverted(id, body en_wand);
+CREATE INDEX plain_big_idx ON plain_big USING inverted(id, body en_prune);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) wand_big;
+VACUUM (REFRESH_TABLE) prune_big;
 
 
 statement ok
@@ -261,7 +261,7 @@ VACUUM (REFRESH_TABLE) plain_big;
 # Sanity: both indexes match the same population.
 
 query
-SELECT COUNT(*) FROM wand_big_idx WHERE body @@ ts_phrase('fox');
+SELECT COUNT(*) FROM prune_big_idx WHERE body @@ ts_phrase('fox');
 ----
 count
 35000
@@ -274,18 +274,18 @@ count
 35000
 
 
-# === Term-only WAND -- top-K equivalence ===
+# === Term-only pruning -- top-K equivalence ===
 #
-# The key correctness signal: WAND must never drop a document that belongs
+# The key correctness signal: pruning must never drop a document that belongs
 # in the top-K. EXCEPT in both directions catches both false positives and
 # false negatives. Tie-break on id keeps results deterministic when scores
 # tie (every doc in the same vocabulary bucket has the same body, hence
 # the same score).
 
 query
-WITH w AS (SELECT id FROM wand_big_idx
+WITH w AS (SELECT id FROM prune_big_idx
            WHERE body @@ ts_phrase('fox')
-           ORDER BY BM25(wand_big_idx.tableoid) DESC, id
+           ORDER BY BM25(prune_big_idx.tableoid) DESC, id
            LIMIT 100),
      p AS (SELECT id FROM plain_big_idx
            WHERE body @@ ts_phrase('fox')
@@ -297,12 +297,12 @@ count
 0
 
 
-# Reverse direction (anything in plain top-100 must be in wand top-100 too).
+# Reverse direction (anything in plain top-100 must be in pruned top-100 too).
 
 query
-WITH w AS (SELECT id FROM wand_big_idx
+WITH w AS (SELECT id FROM prune_big_idx
            WHERE body @@ ts_phrase('fox')
-           ORDER BY BM25(wand_big_idx.tableoid) DESC, id
+           ORDER BY BM25(prune_big_idx.tableoid) DESC, id
            LIMIT 100),
      p AS (SELECT id FROM plain_big_idx
            WHERE body @@ ts_phrase('fox')
@@ -314,16 +314,16 @@ count
 0
 
 
-# === Term disjunction (ByTerms) WAND -- top-K equivalence ===
+# === Term disjunction (ByTerms) pruning -- top-K equivalence ===
 #
 # `ts_any(['fox','lazy','rare_token'])` resolves to ByTerms over three
-# postings lists with very different lengths (35k / 10k / 5k). WAND has to
+# postings lists with very different lengths (35k / 10k / 5k). Pruning has to
 # carry the heap minimum across term iterators correctly.
 
 query
-WITH w AS (SELECT id FROM wand_big_idx
+WITH w AS (SELECT id FROM prune_big_idx
            WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
-           ORDER BY BM25(wand_big_idx.tableoid) DESC, id
+           ORDER BY BM25(prune_big_idx.tableoid) DESC, id
            LIMIT 100),
      p AS (SELECT id FROM plain_big_idx
            WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
@@ -336,9 +336,9 @@ count
 
 
 query
-WITH w AS (SELECT id FROM wand_big_idx
+WITH w AS (SELECT id FROM prune_big_idx
            WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
-           ORDER BY BM25(wand_big_idx.tableoid) DESC, id
+           ORDER BY BM25(prune_big_idx.tableoid) DESC, id
            LIMIT 100),
      p AS (SELECT id FROM plain_big_idx
            WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
@@ -350,26 +350,26 @@ count
 0
 
 
-# === Non-engaging shapes still correct on the WAND-enabled index ===
+# === Non-engaging shapes still correct on the score-bound index ===
 
-# No LIMIT -- whole result set, ordered. WAND pruning is impossible (no k);
+# No LIMIT -- whole result set, ordered. Pruning is impossible (no k);
 # the scan must produce the full ordered sequence.
 
 query
-SELECT COUNT(*) FROM wand_big_idx
+SELECT COUNT(*) FROM prune_big_idx
 WHERE body @@ ts_phrase('fox')
-  AND BM25(wand_big_idx.tableoid) > 0;
+  AND BM25(prune_big_idx.tableoid) > 0;
 ----
 count
 35000
 
 
-# ASC ordering -- WAND skipped; bottom-K must still be returned correctly.
+# ASC ordering -- pruning skipped; bottom-K must still be returned correctly.
 
 query
-WITH w AS (SELECT id FROM wand_big_idx
+WITH w AS (SELECT id FROM prune_big_idx
            WHERE body @@ ts_phrase('rare_token')
-           ORDER BY BM25(wand_big_idx.tableoid) ASC, id
+           ORDER BY BM25(prune_big_idx.tableoid) ASC, id
            LIMIT 5),
      p AS (SELECT id FROM plain_big_idx
            WHERE body @@ ts_phrase('rare_token')
@@ -381,13 +381,13 @@ count
 0
 
 
-# Mismatched scorer (TFIDF on the BM25-WAND index) -- WAND off, but
+# Mismatched scorer (TFIDF on the BM25 score-bound index) -- pruning off, but
 # ranking under TFIDF must agree with the plain index.
 
 query
-WITH w AS (SELECT id FROM wand_big_idx
+WITH w AS (SELECT id FROM prune_big_idx
            WHERE body @@ ts_phrase('fox')
-           ORDER BY TFIDF(wand_big_idx.tableoid) DESC, id
+           ORDER BY TFIDF(prune_big_idx.tableoid) DESC, id
            LIMIT 50),
      p AS (SELECT id FROM plain_big_idx
            WHERE body @@ ts_phrase('fox')
@@ -398,7 +398,7 @@ SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
 count
 0
 
-# Comprehensive 100k-row WAND-vs-non-WAND coverage across every multi-term
+# Comprehensive 100k-row pruned-vs-plain coverage across every multi-term
 # filter shape (Range / Prefix / Regexp / Levenshtein) lives in the sibling
-# inverted_index_wand.test_slow -- kept out of this file so the cheap
+# inverted_index_score_prune.test_slow -- kept out of this file so the cheap
 # correctness checks above stay fast.

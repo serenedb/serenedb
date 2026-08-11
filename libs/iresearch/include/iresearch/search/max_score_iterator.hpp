@@ -74,9 +74,10 @@ class MaxScoreIterator : public DocIterator {
   }
   doc_id_t seek(doc_id_t target) final { return advance(); }
 
-  // WAND/topk iterator: entered through Collect (top-k) and EmitScoredDocs (a
-  // windowed scored drain, e.g. TableFilterDocIterator::Collect over a filtered
-  // top-k). count()/EmitDocs()/FillBlock() are unscored paths never reached.
+  // Pruning/topk iterator: entered through Collect (top-k) and EmitScoredDocs
+  // (a windowed scored drain, e.g. TableFilterDocIterator::Collect over a
+  // filtered top-k). count()/EmitDocs()/FillBlock() are unscored paths never
+  // reached.
   uint32_t count() final {
     SDB_ASSERT(false);
     return 0;
@@ -210,7 +211,6 @@ class MaxScoreIterator : public DocIterator {
 
         for (auto min = Top(); min < window_max; min = Top()) {
           ScoreAndCollectWindow(collector, min, window_max);
-
           if (std::get<ScoreThresholdAttr>(_attrs).value >= _next_threshold) {
             break;
           }
@@ -226,9 +226,10 @@ class MaxScoreIterator : public DocIterator {
 
  private:
   // Appends (doc, score) pairs produced by the shared window-scoring path into
-  // the caller's parallel arrays -- the AddDocs/AddWindow surface a
+  // the caller's parallel arrays -- the AddDocs/ConsumeWindow surface a
   // ScoreCollector exposes, minus the top-k threshold (EmitScoredDocs emits
-  // every WAND survivor; the downstream collector applies its own threshold).
+  // every pruning survivor; the downstream collector applies its own
+  // threshold).
   struct EmitSink {
     doc_id_t* IRS_RESTRICT docs;
     score_t* IRS_RESTRICT scores;
@@ -242,16 +243,17 @@ class MaxScoreIterator : public DocIterator {
       count += static_cast<uint32_t>(n);
     }
 
-    IRS_FORCE_INLINE void AddWindow(const score_t* IRS_RESTRICT score_window,
-                                    const uint64_t* IRS_RESTRICT mask,
-                                    doc_id_t min, size_t num_blocks,
-                                    bool clear_score) noexcept {
+    IRS_FORCE_INLINE void ConsumeWindow(score_t* IRS_RESTRICT score_window,
+                                        uint64_t* IRS_RESTRICT mask,
+                                        doc_id_t min,
+                                        size_t num_blocks) noexcept {
       for (size_t i = 0; i < num_blocks; ++i) {
         auto word = mask[i];
         if (word == 0) {
           continue;
         }
-        const score_t* IRS_RESTRICT const base = score_window + i * kBlockSize;
+        mask[i] = 0;
+        score_t* IRS_RESTRICT const base = score_window + i * kBlockSize;
         const doc_id_t doc_base = min + static_cast<doc_id_t>(i) * kBlockSize;
         do {
           const doc_id_t bit = std::countr_zero(word);
@@ -260,10 +262,7 @@ class MaxScoreIterator : public DocIterator {
           scores[count] = base[bit];
           ++count;
         } while (word != 0);
-        if (clear_score) {
-          std::memset(const_cast<score_t*>(base), 0,
-                      kBlockSize * sizeof(score_t));
-        }
+        std::memset(base, 0, kBlockSize * sizeof(score_t));
       }
     }
   };
@@ -291,34 +290,47 @@ class MaxScoreIterator : public DocIterator {
     std::push_heap(_first_essential, _itrs_sorted.end(), cmp);
   }
 
-  void ProcessSingleEssential(auto& collector, doc_id_t min, doc_id_t max) {
-    auto* it = *_first_essential;
-    _cand_docs.clear();
-    _cand_scores.clear();
-    it->CollectRange(_cand_docs, _cand_scores, it->scorer, &_fetcher, min, max);
+  template<typename T>
+  struct BlockView {
+    T* base;
+    size_t count;
 
-    if (!_cand_docs.empty()) {
-      if (_has_non_essential) {
-        ProcessNonEssentialFromCandidates(min, max);
-      }
-      if (!_cand_docs.empty()) {
-        collector.AddDocs(_cand_docs.data(), _cand_docs.size(),
-                          _cand_scores.data());
-      }
-    }
+    T* data() const noexcept { return base; }
+    size_t size() const noexcept { return count; }
+    bool empty() const noexcept { return count == 0; }
+    void resize(size_t n) noexcept { count = n; }
+    T& operator[](size_t i) const noexcept { return base[i]; }
+  };
+
+  void ProcessSingleEssential(auto& collector, doc_id_t max) {
+    auto* it = *_first_essential;
+    it->ForEachScoredBlock(
+      it->scorer, &_fetcher, max,
+      [&]<size_t N>(std::span<doc_id_t, N> docs, score_t* scores)
+        IRS_FORCE_INLINE {
+          size_t count = docs.size();
+          if (_has_non_essential) {
+            BlockView<doc_id_t> cand_docs{docs.data(), count};
+            BlockView<score_t> cand_scores{scores, count};
+            ProcessNonEssentialFromCandidates(cand_docs, cand_scores, max);
+            count = cand_docs.count;
+          }
+          if (count != 0) {
+            collector.AddDocs(docs.data(), count, scores);
+          }
+        });
   }
 
   void ScoreAndCollectWindow(auto& collector, doc_id_t min, doc_id_t max) {
-    max = std::min(min + kWindow, max);
-
     if (_num_essential == 1) {
-      ProcessSingleEssential(collector, min, max);
+      ProcessSingleEssential(collector, max);
     } else if (auto top2 = SecondEssentialDoc(); top2 >= min + kWindow / 2) {
       // 2+ essentials but 2nd is far ahead: treat lead as single essential.
       max = std::min(max, top2);
-      ProcessSingleEssential(collector, min, max);
+      ProcessSingleEssential(collector, max);
       UpdateHeapTop();
     } else {
+      max = std::min(min + kWindow, max);
       // Multiple essentials
       FillBlockScoreContext score_ctx{
         .fetcher = &_fetcher,
@@ -333,14 +345,13 @@ class MaxScoreIterator : public DocIterator {
 
       if (_has_non_essential) {
         DrainCandidates(min);
-        ProcessNonEssentialFromCandidates(min, max);
+        ProcessNonEssentialFromCandidates(_cand_docs, _cand_scores, max);
         if (!_cand_docs.empty()) {
           collector.AddDocs(_cand_docs.data(), _cand_docs.size(),
                             _cand_scores.data());
         }
       } else {
-        collector.AddWindow(_scores, _mask, min, kNumBlocks, true);
-        std::memset(_mask, 0, sizeof _mask);
+        collector.ConsumeWindow(_scores, _mask, min, kNumBlocks);
       }
     }
   }
@@ -378,16 +389,17 @@ class MaxScoreIterator : public DocIterator {
 #ifdef __AVX2__
     const auto threshold = _mm256_set1_ps(score_threshold);
     for (; i + 8 <= n; i += 8) {
-      auto vscores = _mm256_loadu_ps(&scores[i]);
-      auto cmp = _mm256_cmp_ps(vscores, threshold, _CMP_GT_OQ);
-      auto mask = static_cast<unsigned>(_mm256_movemask_ps(cmp));
-      while (mask) {
-        const int bit = std::countr_zero(mask);
-        mask = PopBit(mask);
-        docs[out] = docs[i + bit];
-        scores[out] = scores[i + bit];
-        ++out;
-      }
+      const auto vscores = _mm256_loadu_ps(&scores[i]);
+      const auto cmp = _mm256_cmp_ps(vscores, threshold, _CMP_GT_OQ);
+      const auto mask = static_cast<uint32_t>(_mm256_movemask_ps(cmp));
+      const auto control = LeftPackControl(mask);
+      const auto vdocs =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(&docs[i]));
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(&docs[out]),
+                          _mm256_permutevar8x32_epi32(vdocs, control));
+      _mm256_storeu_ps(&scores[out],
+                       _mm256_permutevar8x32_ps(vscores, control));
+      out += static_cast<size_t>(std::popcount(mask));
     }
 #endif
 
@@ -403,8 +415,9 @@ class MaxScoreIterator : public DocIterator {
     scores.resize(out);
   }
 
-  void ProcessNonEssentialFromCandidates(doc_id_t min, doc_id_t max) {
-    _num_candidates += _cand_docs.size();
+  void ProcessNonEssentialFromCandidates(auto& cand_docs, auto& cand_scores,
+                                         doc_id_t max) {
+    _num_candidates += cand_docs.size();
     const score_t threshold = std::get<ScoreThresholdAttr>(_attrs).value;
 
     const auto first_required = _first_required;
@@ -416,13 +429,13 @@ class MaxScoreIterator : public DocIterator {
       const score_t score_threshold = threshold - budget;
 
       if (score_threshold > 0) {
-        FilterCompetitiveHits(_cand_docs, _cand_scores, score_threshold);
-        if (_cand_docs.empty()) {
+        FilterCompetitiveHits(cand_docs, cand_scores, score_threshold);
+        if (cand_docs.empty()) {
           break;
         }
       }
 
-      itr->ScoreCandidates(_cand_docs, _cand_scores, itr->scorer, &_fetcher,
+      itr->ScoreCandidates(cand_docs, cand_scores, itr->scorer, &_fetcher,
                            is_required, max);
     }
   }

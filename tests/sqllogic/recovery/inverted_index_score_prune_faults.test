@@ -1,25 +1,25 @@
 hash-threshold 100
 
 # ---------------------------------------------------------------------------
-# Fault-injection trip-wires for the WAND dispatch in iresearch. EXPLAIN's
-# `, optimized` suffix is a connector-side hint; these probes prove the
-# engine actually picked a WAND-capable iterator at runtime.
+# Fault-injection trip-wires for the score-prune dispatch in iresearch.
+# EXPLAIN's `, optimized` suffix is a connector-side hint; these probes prove
+# the engine actually picked a pruning-capable iterator at runtime.
 #
 # Three nested probes:
-#   irs::WandIterator        -- any WAND dispatch fires.
-#   irs::SingleWandIterator  -- single-cookie path (1 posting list, e.g. a
-#                               bare term filter).
-#   irs::MaxScoreIterator    -- multi-cookie path (Block-Max WAND across
-#                               postings, e.g. ts_any over distinct terms).
+#   irs::PruningIterator        -- any pruning dispatch fires.
+#   irs::SinglePruningIterator  -- single-cookie path (1 posting list, e.g. a
+#                                  bare term filter).
+#   irs::MaxScoreIterator       -- multi-cookie path (MaxScore across
+#                                  postings, e.g. ts_any over distinct terms).
 #
 # Lives under recovery/ because it requires SDB_FAULT_INJECTION=On; the
 # regular sqllogic suite globs `sdb/**/*.test*` and never picks up this
 # directory. Fault-free EXPLAIN + correctness coverage lives at
-# tests/sqllogic/sdb/pg/index/inverted_index_wand.test.
+# tests/sqllogic/sdb/pg/index/inverted_index_score_prune.test.
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en_wand(
+CREATE TEXT SEARCH DICTIONARY en_prune(
     template = 'text',
     locale = 'en_US.UTF-8',
     case = 'none',
@@ -32,7 +32,7 @@ CREATE TEXT SEARCH DICTIONARY en_wand(
 
 
 statement ok
-CREATE TABLE wand_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_docs (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement ok
@@ -40,7 +40,7 @@ CREATE TABLE plain_docs (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement ok
-INSERT INTO wand_docs SELECT i, CASE i % 5
+INSERT INTO prune_docs SELECT i, CASE i % 5
     WHEN 0 THEN 'fox quick brown'
     WHEN 1 THEN 'fox lazy dog'
     WHEN 2 THEN 'cat sleeping in box'
@@ -51,42 +51,42 @@ INSERT INTO wand_docs SELECT i, CASE i % 5
 
 
 statement ok
-INSERT INTO plain_docs SELECT * FROM wand_docs;
+INSERT INTO plain_docs SELECT * FROM prune_docs;
 
 
 statement ok
-CREATE INDEX wand_docs_idx ON wand_docs USING inverted(id, body en_wand)
+CREATE INDEX prune_docs_idx ON prune_docs USING inverted(id, body en_prune)
   WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
-CREATE INDEX plain_docs_idx ON plain_docs USING inverted(id, body en_wand);
+CREATE INDEX plain_docs_idx ON plain_docs USING inverted(id, body en_prune);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) wand_docs;
+VACUUM (REFRESH_TABLE) prune_docs;
 
 
 statement ok
 VACUUM (REFRESH_TABLE) plain_docs;
 
 
-# === Positive: shapes that should engage WAND ===
+# === Positive: shapes that should engage score pruning ===
 
-# Single term -> SingleWandIterator path.
+# Single term -> SinglePruningIterator path.
 
 statement ok
-SET sdb_faults = 'irs::SingleWandIterator';
+SET sdb_faults = 'irs::SinglePruningIterator';
 
 
 statement error db error: ERROR: intentional debug error
-SELECT id FROM wand_docs_idx
+SELECT id FROM prune_docs_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 statement ok
-SET sdb_faults = '-irs::SingleWandIterator';
+SET sdb_faults = '-irs::SinglePruningIterator';
 
 
 # Term disjunction with distinct terms -> MaxScoreIterator path.
@@ -96,41 +96,41 @@ SET sdb_faults = 'irs::MaxScoreIterator';
 
 
 statement error db error: ERROR: intentional debug error
-SELECT id FROM wand_docs_idx
+SELECT id FROM prune_docs_idx
 WHERE body @@ ts_any(['fox', 'rabbit', 'rare_token'])
-ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 statement ok
 SET sdb_faults = '-irs::MaxScoreIterator';
 
 
-# Single-element ts_any collapses to ByTerm -> SingleWandIterator path,
+# Single-element ts_any collapses to ByTerm -> SinglePruningIterator path,
 # NOT MaxScoreIterator (verified by mutual exclusion).
 
 statement ok
-SET sdb_faults = 'irs::SingleWandIterator';
+SET sdb_faults = 'irs::SinglePruningIterator';
 
 
 statement error db error: ERROR: intentional debug error
-SELECT id FROM wand_docs_idx
+SELECT id FROM prune_docs_idx
 WHERE body @@ ts_any(['fox'])
-ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 statement ok
-SET sdb_faults = '-irs::SingleWandIterator';
+SET sdb_faults = '-irs::SinglePruningIterator';
 
 
-# === Negative: shapes that should NOT engage WAND ===
-# Arm `irs::WandIterator` (catches both Single and MaxScore paths) and
+# === Negative: shapes that should NOT engage score pruning ===
+# Arm `irs::PruningIterator` (catches both Single and MaxScore paths) and
 # expect each query to succeed without tripping.
 
 statement ok
-SET sdb_faults = 'irs::WandIterator';
+SET sdb_faults = 'irs::PruningIterator';
 
 
-# Plain (non-WAND) index -- has_wand is false, dispatch falls through.
+# Plain index -- has_score_bounds is false, dispatch falls through.
 
 query
 SELECT COUNT(*) FROM (
@@ -147,22 +147,22 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('fox')
-  ORDER BY BM25(wand_docs_idx.tableoid) ASC LIMIT 3
+  ORDER BY BM25(prune_docs_idx.tableoid) ASC LIMIT 3
 ) x;
 ----
 count
 3
 
 
-# Mismatched scorer type (TFIDF query against BM25-WAND index).
+# Mismatched scorer type (TFIDF query against a BM25 score-bound index).
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('fox')
-  ORDER BY TFIDF(wand_docs_idx.tableoid) DESC LIMIT 3
+  ORDER BY TFIDF(prune_docs_idx.tableoid) DESC LIMIT 3
 ) x;
 ----
 count
@@ -174,9 +174,9 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('fox')
-  ORDER BY BM25(wand_docs_idx.tableoid, 1.5, 0.8) DESC LIMIT 3
+  ORDER BY BM25(prune_docs_idx.tableoid, 1.5, 0.8) DESC LIMIT 3
 ) x;
 ----
 count
@@ -187,9 +187,9 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('fox')
-  ORDER BY id ASC, BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+  ORDER BY id ASC, BM25(prune_docs_idx.tableoid) DESC LIMIT 3
 ) x;
 ----
 count
@@ -200,9 +200,9 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('fox')
-  ORDER BY 2 * BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+  ORDER BY 2 * BM25(prune_docs_idx.tableoid) DESC LIMIT 3
 ) x;
 ----
 count
@@ -210,28 +210,28 @@ count
 
 
 # Multi-token phrase -- compiles to FixedPhraseQuery, which does not thread
-# ctx.wand. (Single-token ts_phrase short-circuits to ByTerm and DOES use
-# WAND -- covered in the positive section above.)
+# ctx.prune. (Single-token ts_phrase short-circuits to ByTerm and DOES prune
+# -- covered in the positive section above.)
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('fox', 'lazy')
-  ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+  ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3
 ) x;
 ----
 count
 3
 
 
-# Boolean with NOT child disables WAND on the And iterator
+# Boolean with NOT child disables pruning on the And iterator
 # (boolean_query.cpp:133).
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('fox') AND NOT (body @@ ts_phrase('lazy'))
-  ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+  ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3
 ) x;
 ----
 count
@@ -242,9 +242,9 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('rare_token')
-  ORDER BY BM25(wand_docs_idx.tableoid) DESC
+  ORDER BY BM25(prune_docs_idx.tableoid) DESC
 ) x;
 ----
 count
@@ -252,26 +252,26 @@ count
 
 
 statement ok
-SET sdb_faults = '-irs::WandIterator';
+SET sdb_faults = '-irs::PruningIterator';
 
 
 # ---------------------------------------------------------------------------
 # `SET sdb_disable_top_k_optimization = true` is a session-level kill switch.
 # When set, the optimizer skips pulling `ORDER BY <scorer> DESC LIMIT k` into
-# the SearchScan, so WAND never engages even on indexes that have wand
-# metadata. Default false (optimization on).
+# the SearchScan, so pruning never engages even on indexes that have score
+# bounds. Default false (optimization on).
 # ---------------------------------------------------------------------------
 
-# Sanity: with the toggle off (default), the WAND fault trips.
+# Sanity: with the toggle off (default), the pruning fault trips.
 
 statement ok
-SET sdb_faults = 'irs::WandIterator';
+SET sdb_faults = 'irs::PruningIterator';
 
 
 statement error db error: ERROR: intentional debug error
-SELECT id FROM wand_docs_idx
+SELECT id FROM prune_docs_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 # Toggle on -- the same query no longer trips the fault.
@@ -282,26 +282,26 @@ SET sdb_disable_top_k_optimization = true;
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wand_docs_idx
+  SELECT id FROM prune_docs_idx
   WHERE body @@ ts_phrase('fox')
-  ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+  ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3
 ) x;
 ----
 count
 3
 
 
-# Toggle off -- WAND re-engages; fault trips again.
+# Toggle off -- pruning re-engages; fault trips again.
 
 statement ok
 SET sdb_disable_top_k_optimization = false;
 
 
 statement error db error: ERROR: intentional debug error
-SELECT id FROM wand_docs_idx
+SELECT id FROM prune_docs_idx
 WHERE body @@ ts_phrase('fox')
-ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+ORDER BY BM25(prune_docs_idx.tableoid) DESC LIMIT 3;
 
 
 statement ok
-SET sdb_faults = '-irs::WandIterator';
+SET sdb_faults = '-irs::PruningIterator';

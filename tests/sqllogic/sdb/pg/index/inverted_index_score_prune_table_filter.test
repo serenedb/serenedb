@@ -1,14 +1,15 @@
 hash-threshold 100
 
 # ---------------------------------------------------------------------------
-# WAND top-k combined with a `.col` table filter.
+# Score-pruned top-k combined with a `.col` table filter.
 #
 # When a top-k scored query (single ORDER BY key) also carries a pushed-down
-# INCLUDE-column filter, the scan stays in WAND top-k mode (`Top: k, optimized`)
-# and wraps the WAND iterator in a TableFilterDocIterator. The collector then
-# drives the WAND iterator through EmitScoredDocs over the filtered survivors:
-#   * single Term  -> SingleWandIterator::EmitScoredDocs
-#   * ByTerms      -> MaxScoreIterator::EmitScoredDocs (disjunction / WAND)
+# INCLUDE-column filter, the scan stays in pruned top-k mode
+# (`Top: k, optimized`) and wraps the pruning iterator in a
+# TableFilterDocIterator. The collector then drives the pruning iterator
+# through EmitScoredDocs over the filtered survivors:
+#   * single Term  -> SinglePruningIterator::EmitScoredDocs
+#   * ByTerms      -> MaxScoreIterator::EmitScoredDocs (disjunction)
 # Both must self-position from a fresh iterator (no external advance() prime).
 # ---------------------------------------------------------------------------
 
@@ -49,7 +50,7 @@ statement ok
 VACUUM (REFRESH_TABLE) wtf;
 
 
-# --- Case 1: single Term (SingleWandIterator) + `.col` filter + top-k --------
+# --- Case 1: single Term (SinglePruningIterator) + `.col` filter + top-k -----
 
 query
 EXPLAIN SELECT n FROM wtf_idx WHERE body @@ ts_phrase('term') AND n > 20 ORDER BY BM25(wtf_idx.tableoid) DESC LIMIT 2;
@@ -122,11 +123,11 @@ n
 
 # --- Case 3: static score floor (Lucene min_score) -------------------------
 # A constant lower bound on the score records a floor. Streaming keeps the
-# filter pushed (per-row enforcement; the floor only seeds the WAND threshold,
-# which skips blocks). Top-k strips it -- with the dynamic TOP_N boundary --
-# from the plan entirely: the collector starts at the floor and enforces it,
-# so no Column Filter remains. Results must be identical with the
-# optimization disabled.
+# filter pushed (per-row enforcement; the floor only seeds the pruning
+# threshold, which skips blocks). Top-k strips it -- with the dynamic TOP_N
+# boundary -- from the plan entirely: the collector starts at the floor and
+# enforces it, so no Column Filter remains. Results must be identical with
+# the optimization disabled.
 
 query
 EXPLAIN SELECT id FROM wtf_idx WHERE body @@ ts_phrase('term') AND BM25(wtf_idx.tableoid) > 2.5 ORDER BY id;

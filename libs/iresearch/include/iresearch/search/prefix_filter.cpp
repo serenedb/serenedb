@@ -31,7 +31,6 @@
 #include "iresearch/search/limited_sample_selector.hpp"
 #include "iresearch/search/multiterm_query.hpp"
 #include "iresearch/search/term_iterator.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 namespace {
@@ -39,7 +38,7 @@ namespace {
 class ByPrefixIterator : public WrappedTermIterator {
  public:
   ByPrefixIterator(const TermReader& reader, bytes_view prefix)
-    : WrappedTermIterator{reader.iterator(SeekMode::NORMAL)}, _prefix{prefix} {}
+    : WrappedTermIterator{reader.iterator()}, _prefix{prefix} {}
 
   bool next() final {
     if (_started) {

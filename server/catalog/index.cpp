@@ -579,7 +579,6 @@ void ApplyIVFOpclass(
   entry.compression = cfg.compression
                         ? duckdb::CompressionType::COMPRESSION_AUTO
                         : duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
-  entry.row_group_size = 0;
   entry.store_values = true;
 }
 
@@ -658,9 +657,6 @@ void FillEntryFromTokenizer(const Tokenizer& dict,
   if (wants_store || wants_norm) {
     entry.synthetic_column = static_cast<irs::field_id>(NextId());
   }
-  if (wants_norm) {
-    entry.norm_row_group_size = dict.GetNormRowGroupSize();
-  }
   if (value_type.IsJSONType() && !IsGeoAnalyzer(analyzer)) {
     EnsureId(entry.bool_field_id);
     EnsureId(entry.numeric_field_id);
@@ -735,7 +731,6 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
   const std::shared_ptr<const Snapshot>& snapshot, InvertedIndexOptions options,
   ExpressionData predicate) {
   SDB_ASSERT(options.row_group_size != 0);
-  SDB_ASSERT(options.norm_row_group_size != 0);
   ValidateInvertedIndexColumns(columns);
 
   InvertedIndex::Entries entries;
@@ -800,12 +795,6 @@ std::shared_ptr<InvertedIndex> CreateInvertedIndex(
                         *snapshot, database_id, schema_name, index_col);
   }
   for (auto& [_, entry] : entries) {
-    if (entry.row_group_size == 0) {
-      entry.row_group_size = options.row_group_size;
-    }
-    if (entry.norm_row_group_size == 0) {
-      entry.norm_row_group_size = options.norm_row_group_size;
-    }
     EnsureId(entry.null_field_id);
   }
   return std::make_shared<InvertedIndex>(

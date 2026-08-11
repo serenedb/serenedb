@@ -57,8 +57,7 @@ struct ExecutionContext {
   IResourceManager& memory = IResourceManager::gNoop;
   const AttributeProvider* ctx = nullptr;
   const DocumentMask* pending_docs_mask = nullptr;
-  // If enabled, wand would use first scorer from scorers
-  WandContext wand{};
+  bool score_prune = false;
   bool top_k_collect = false;
 };
 

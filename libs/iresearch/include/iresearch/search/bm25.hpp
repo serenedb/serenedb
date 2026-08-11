@@ -99,11 +99,11 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
-  WandWriter::ptr prepare_wand_writer(size_t max_levels) const final;
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t max_levels) const final;
 
-  WandSource::ptr prepare_wand_source() const final;
+  ScoreBoundSource::ptr PrepareScoreBoundSource() const final;
 
-  WandType wand_type() const noexcept final;
+  ScoreBoundType GetScoreBoundType() const noexcept final;
 
   bool equals(const Scorer& other) const noexcept final;
 

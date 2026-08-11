@@ -373,7 +373,7 @@ class PreparedFilter {
     return query ? query->Execute(*_exec, *_stats) : irs::DocIterator::empty();
   }
 
-  irs::DocIterator::ptr Execute(size_t i, irs::WandContext wand) const {
+  irs::DocIterator::ptr Execute(size_t i, bool score_prune) const {
     const auto& query = _queries[i];
     if (!query) {
       return irs::DocIterator::empty();
@@ -382,7 +382,7 @@ class PreparedFilter {
       {
         .memory = _exec->memory,
         .ctx = _exec->ctx,
-        .wand = wand,
+        .score_prune = score_prune,
       },
       *_stats);
   }
@@ -476,12 +476,7 @@ class FilterTestCaseBase : public IndexTestBase {
 };
 
 struct EmptyTermReader : irs::Singleton<EmptyTermReader>, irs::TermReader {
-  irs::SeekTermIterator::ptr iterator(irs::SeekMode) const final {
-    return irs::SeekTermIterator::empty();
-  }
-
-  irs::SeekTermIterator::ptr iterator(
-    const irs::automaton_table_matcher&) const final {
+  irs::SeekTermIterator::ptr iterator() const final {
     return irs::SeekTermIterator::empty();
   }
 
@@ -500,18 +495,15 @@ struct EmptyTermReader : irs::Singleton<EmptyTermReader>, irs::TermReader {
   // total number of documents
   uint64_t docs_count() const final { return 0; }
 
-  // less significant term
-  irs::bytes_view(min)() const final { return {}; }
-
-  // most significant term
-  irs::bytes_view(max)() const final { return {}; }
+  irs::bytes_view min() const final { return {}; }
+  irs::bytes_view max() const final { return {}; }
 };
 
 class EmptyFilterVisitor : public irs::FilterVisitor {
  public:
   void Prepare(const irs::SubReader& /*segment*/,
                const irs::TermReader& /*field*/,
-               irs::SeekTermIterator& terms) noexcept final {
+               irs::TermIterator& terms) noexcept final {
     _it = &terms;
     ++_prepare_calls_counter;
   }
@@ -560,7 +552,7 @@ class EmptyFilterVisitor : public irs::FilterVisitor {
   }
 
  private:
-  const irs::SeekTermIterator* _it{};
+  const irs::TermIterator* _it{};
   std::vector<std::pair<irs::bstring, irs::score_t>> _terms;
   size_t _prepare_calls_counter = 0;
   size_t _visit_calls_counter = 0;

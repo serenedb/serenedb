@@ -530,7 +530,7 @@ TEST_P(FormatTestCase, fields_seek_ge) {
 
   // extract all terms
   {
-    auto it = field->iterator(irs::SeekMode::NORMAL);
+    auto it = field->iterator();
     ASSERT_NE(nullptr, it);
 
     size_t i = 0;
@@ -544,7 +544,7 @@ TEST_P(FormatTestCase, fields_seek_ge) {
 
   // seek_ge to every term
   {
-    auto it = field->iterator(irs::SeekMode::NORMAL);
+    auto it = field->iterator();
     ASSERT_NE(nullptr, it);
     for (auto& term : all_terms) {
       ASSERT_EQ(irs::SeekResult::Found, it->seek_ge(term));
@@ -558,7 +558,7 @@ TEST_P(FormatTestCase, fields_seek_ge) {
     auto* term = irs::get<irs::TermAttr>(stream);
     ASSERT_NE(nullptr, term);
 
-    auto it = field->iterator(irs::SeekMode::NORMAL);
+    auto it = field->iterator();
     ASSERT_NE(nullptr, it);
 
     for (size_t begin = 74, end = 7000, step = 2; begin < end; begin += step) {
@@ -592,7 +592,7 @@ TEST_P(FormatTestCase, fields_seek_ge) {
       {192, 192, 187, 86, 0},
       {192, 192, 187, 88, 0}};
 
-    auto it = field->iterator(irs::SeekMode::NORMAL);
+    auto it = field->iterator();
 
     for (auto& term : terms) {
       const irs::bytes_view target(term.data(), term.size());
@@ -626,7 +626,7 @@ TEST_P(FormatTestCase, fields_seek_ge) {
       {208, 192, 188},
     };
 
-    auto it = field->iterator(irs::SeekMode::NORMAL);
+    auto it = field->iterator();
 
     for (auto& term : terms) {
       const irs::bytes_view target(term.data(), term.size());
@@ -828,7 +828,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     // check terms using "next"
     {
       auto expected_term = sorted_terms.begin();
-      auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+      auto term = term_reader->iterator();
       for (; term->next(); ++expected_term) {
         ASSERT_EQ(*expected_term, term->value());
       }
@@ -836,30 +836,21 @@ TEST_P(FormatTestCase, fields_read_write) {
       ASSERT_FALSE(term->next());
     }
 
-    // check terms using single "seek"
+    // check terms using single lookup
     {
       auto expected_sorted_term = sorted_terms.begin();
       for (auto end = sorted_terms.end(); expected_sorted_term != end;
            ++expected_sorted_term) {
-        auto term = term_reader->iterator(irs::SeekMode::RandomOnly);
-        ASSERT_NE(nullptr, term);
-        auto* meta = irs::get<irs::TermMeta>(*term);
-        ASSERT_NE(nullptr, meta);
-        ASSERT_TRUE(term->seek(*expected_sorted_term));
-        ASSERT_EQ(*expected_sorted_term, term->value());
-        ASSERT_NO_THROW(term->read());
-        ASSERT_FALSE(term->next());
-        ASSERT_EQ(*expected_sorted_term, term->value());
-        ASSERT_THROW(term->seek_ge(*expected_sorted_term), irs::NotSupported);
-        auto cookie = term->cookie();
-        ASSERT_NE(nullptr, cookie);
-        {
-          auto* meta_from_cookie = irs::get<irs::TermMeta>(*cookie);
-          ASSERT_NE(nullptr, meta_from_cookie);
-          ASSERT_EQ(meta->docs_count, meta_from_cookie->docs_count);
-          ASSERT_EQ(meta->freq, meta_from_cookie->freq);
-        }
+        // A term that exists has postings, so a non-zero `docs_count` is both
+        // the record and the found/absent answer.
+        ASSERT_GT(term_reader->Lookup(*expected_sorted_term).docs_count, 0);
       }
+      irs::bstring above_max{term_reader->max()};
+      above_max += irs::byte_type{0xFF};
+      ASSERT_EQ(0, term_reader->Lookup(above_max).docs_count);
+      ASSERT_EQ(
+        0,
+        term_reader->Lookup(irs::kEmptyStringView<irs::byte_type>).docs_count);
     }
 
     // check terms using single "seek"
@@ -867,7 +858,7 @@ TEST_P(FormatTestCase, fields_read_write) {
       auto expected_sorted_term = sorted_terms.begin();
       for (auto end = sorted_terms.end(); expected_sorted_term != end;
            ++expected_sorted_term) {
-        auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+        auto term = term_reader->iterator();
         ASSERT_TRUE(term->seek(*expected_sorted_term));
         ASSERT_EQ(*expected_sorted_term, term->value());
       }
@@ -876,7 +867,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     // check sorted terms using multiple "seek"s on single iterator
     {
       auto expected_term = sorted_terms.begin();
-      auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+      auto term = term_reader->iterator();
       for (auto end = sorted_terms.end(); expected_term != end;
            ++expected_term) {
         ASSERT_TRUE(term->seek(*expected_term));
@@ -891,7 +882,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     // iterator
     {
       auto expected_term = sorted_terms.rbegin();
-      auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+      auto term = term_reader->iterator();
       for (auto end = sorted_terms.rend(); expected_term != end;
            ++expected_term) {
         ASSERT_TRUE(term->seek(*expected_term));
@@ -905,7 +896,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     // check unsorted terms using multiple "seek"s on single iterator
     {
       auto expected_term = unsorted_terms.begin();
-      auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+      auto term = term_reader->iterator();
       for (auto end = unsorted_terms.end(); expected_term != end;
            ++expected_term) {
         ASSERT_TRUE(term->seek(*expected_term));
@@ -924,7 +915,7 @@ TEST_P(FormatTestCase, fields_read_write) {
         {"abcabzit", "abcabsit"},
         {"abcabelit", "abcabelit"}};
 
-      auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+      auto term = term_reader->iterator();
       for (const auto& [seek_term, expected_term] : kTerms) {
         ASSERT_EQ(seek_term == expected_term,
                   term->seek(irs::ViewCast<irs::byte_type>(seek_term)));
@@ -937,7 +928,7 @@ TEST_P(FormatTestCase, fields_read_write) {
       (void)1;  // format work-around
       // with state
       {
-        auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+        auto term = term_reader->iterator();
         ASSERT_FALSE(term->seek(irs::bytes_view{}));
         ASSERT_EQ((term_reader->min)(), term->value());
         ASSERT_EQ(irs::SeekResult::NotFound, term->seek_ge(irs::bytes_view{}));
@@ -946,13 +937,13 @@ TEST_P(FormatTestCase, fields_read_write) {
 
       // without state
       {
-        auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+        auto term = term_reader->iterator();
         ASSERT_FALSE(term->seek(irs::bytes_view{}));
         ASSERT_EQ((term_reader->min)(), term->value());
       }
 
       {
-        auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+        auto term = term_reader->iterator();
         ASSERT_EQ(irs::SeekResult::NotFound, term->seek_ge(irs::bytes_view{}));
         ASSERT_EQ((term_reader->min)(), term->value());
       }
@@ -982,7 +973,7 @@ TEST_P(FormatTestCase, fields_read_write) {
 
       /* seek exactly to term */
       {
-        auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+        auto term = term_reader->iterator();
         ASSERT_FALSE(term->seek(seek_term));
         /* we on the BLOCK "abab" */
         ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("abab")),
@@ -994,7 +985,7 @@ TEST_P(FormatTestCase, fields_read_write) {
 
       /* seek to term which is equal or greater than current */
       {
-        auto term = term_reader->iterator(irs::SeekMode::NORMAL);
+        auto term = term_reader->iterator();
         ASSERT_EQ(irs::SeekResult::NotFound, term->seek_ge(seek_term));
         ASSERT_EQ(seek_result, term->value());
 
@@ -1277,7 +1268,7 @@ TEST_P(FormatTestCase, format_utils_header_footer) {
       expected_checksum = dup->Checksum(dup->Length() - sizeof(int64_t));
     }
 
-    ASSERT_EQ(42, irs::format_utils::CheckHeader(*stream, "test", 41, 43));
+    irs::format_utils::CheckHeader(*stream, "test", 42);
     ASSERT_EQ(expected_checksum,
               irs::format_utils::CheckFooter(*stream, expected_checksum));
   }
@@ -1285,21 +1276,21 @@ TEST_P(FormatTestCase, format_utils_header_footer) {
   {
     auto stream = dir().open("file", irs::IOAdvice::NORMAL);
     ASSERT_NE(nullptr, stream);
-    ASSERT_EQ(42, irs::format_utils::CheckHeader(*stream, "test", 41, 43));
+    irs::format_utils::CheckHeader(*stream, "test", 42);
     ASSERT_THROW(irs::format_utils::CheckFooter(*stream, 0), irs::IndexError);
   }
 
   {
     auto stream = dir().open("file", irs::IOAdvice::NORMAL);
     ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "invalid", 41, 43),
+    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "invalid", 42),
                  irs::IndexError);
   }
 
   {
     auto stream = dir().open("file", irs::IOAdvice::NORMAL);
     ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "test", 43, 43),
+    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "test", 43),
                  irs::IndexError);
   }
 
@@ -1311,7 +1302,7 @@ TEST_P(FormatTestCase, format_utils_header_footer) {
   {
     auto stream = dir().open("empty_file", irs::IOAdvice::NORMAL);
     ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "invalid", 41, 43),
+    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "invalid", 42),
                  irs::IndexError);
   }
 }
@@ -1539,7 +1530,7 @@ TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
 
     auto terms = segment.field(tests::FieldIdFor("same"));
     ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
     size_t hits = 0;

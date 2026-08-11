@@ -264,9 +264,9 @@ kostya
 2
 
 
-# ---- Shapes from recovery/inverted_index_wand_faults.test, pinned at plan ----
-# level: neither may pull the limit into the scan (no "Top:" in the scan box,
-# so no WAND top-k engages).
+# ---- Shapes from recovery/inverted_index_score_prune_faults.test, pinned at --
+# plan level: neither may pull the limit into the scan (no "Top:" in the scan
+# box, so no pruned top-k engages).
 
 # Scorer wrapped in arithmetic: a derived expression is not a scan order key.
 query

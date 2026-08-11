@@ -136,7 +136,6 @@ std::vector<std::string> RenderInvertedIndexOptions(
     rendered.push_back(absl::StrCat(name, "=", value));
   };
   add(kRowGroupSizeSetting, options.row_group_size);
-  add(kNormRowGroupSizeSetting, options.norm_row_group_size);
   add(kRefreshIntervalSetting, options.refresh_interval_ms);
   add(kCompactionIntervalSetting, options.compaction_interval_ms);
   add(kCleanupIntervalStepSetting, options.cleanup_interval_step);

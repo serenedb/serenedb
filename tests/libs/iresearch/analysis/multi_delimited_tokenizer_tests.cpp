@@ -265,6 +265,75 @@ TEST_F(MultiDelimitedTokenizerTests, trick_matching_1) {
   ASSERT_FALSE(stream->next());
 }
 
+// A delimiter that occurs strictly inside another delimiter's path, without
+// being its prefix: walking "xab" follows real edges x, a, b of "xabc" and
+// passes over "ab", which ends at the third byte.
+TEST_F(MultiDelimitedTokenizerTests, delimiter_inside_another_path) {
+  auto stream =
+    MultiDelimitedTokenizer::Make({.delimiters = {"ab"_b, "xabc"_b}});
+
+  ASSERT_TRUE(stream->reset("1xab2"));
+
+  auto* term = irs::get<irs::TermAttr>(*stream);
+
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ("1x", irs::ViewCast<char>(term->value));
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ("2", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream->next());
+}
+
+// The same disagreement further from the root, and with the inner delimiter
+// reachable only after the outer one's path has been partly walked.
+TEST_F(MultiDelimitedTokenizerTests, delimiter_inside_another_path_deep) {
+  auto stream =
+    MultiDelimitedTokenizer::Make({.delimiters = {"cd"_b, "abcde"_b}});
+
+  ASSERT_TRUE(stream->reset("xabcdy"));
+
+  auto* term = irs::get<irs::TermAttr>(*stream);
+
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ("xab", irs::ViewCast<char>(term->value));
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ("y", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream->next());
+}
+
+// Two delimiters ending on the same byte: the one that started earlier wins, so
+// the shorter suffix must not pre-empt it.
+TEST_F(MultiDelimitedTokenizerTests, delimiters_ending_together_leftmost_wins) {
+  auto stream =
+    MultiDelimitedTokenizer::Make({.delimiters = {"bc"_b, "abc"_b}});
+
+  ASSERT_TRUE(stream->reset("1abc2"));
+
+  auto* term = irs::get<irs::TermAttr>(*stream);
+
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ("1", irs::ViewCast<char>(term->value));
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ("2", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream->next());
+}
+
+// A chain where each delimiter is a suffix of the next; the longest, which
+// started first, is the match.
+TEST_F(MultiDelimitedTokenizerTests, delimiter_chain_of_suffixes) {
+  auto stream =
+    MultiDelimitedTokenizer::Make({.delimiters = {"c"_b, "bc"_b, "abc"_b}});
+
+  ASSERT_TRUE(stream->reset("zabcz"));
+
+  auto* term = irs::get<irs::TermAttr>(*stream);
+
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ("z", irs::ViewCast<char>(term->value));
+  ASSERT_TRUE(stream->next());
+  ASSERT_EQ("z", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream->next());
+}
+
 TEST_F(MultiDelimitedTokenizerTests, construct) {
   // happy path -- two distinct delimiters.
   {

@@ -22,9 +22,11 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include "basics/memory.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
-#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "pg/sql_exception_macro.h"
 
@@ -60,7 +62,7 @@ class DataInput;
 class IndexInput;
 struct PostingsWriter;
 struct Scorer;
-struct WandWriter;
+struct ScoreBoundWriter;
 
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
@@ -79,22 +81,6 @@ struct SegmentWriterOptions {
   const IndexFieldOptions* field_options = nullptr;
 };
 
-// Represents metadata associated with the term
-struct TermMeta : Attribute {
-  static constexpr std::string_view type_name() noexcept { return "term_meta"; }
-
-  void clear() noexcept {
-    docs_count = 0;
-    freq = 0;
-  }
-
-  // How many documents a particular term contains
-  uint32_t docs_count = 0;
-
-  // How many times a particular term occur in documents
-  uint32_t freq = 0;
-};
-
 struct TermPayloadWriter {
   virtual ~TermPayloadWriter() = default;
 
@@ -110,7 +96,7 @@ struct PostingsWriter {
   using ptr = std::unique_ptr<PostingsWriter>;
 
   struct FieldStats {
-    bool has_wand;
+    bool has_score_bounds;
     doc_id_t docs_count;
   };
 
@@ -119,40 +105,33 @@ struct PostingsWriter {
   virtual void Prepare(IndexOutput& out, const FlushState& state) = 0;
   virtual void BeginField(const FieldProperties& meta) = 0;
   virtual void SetTermPayloadWriter(TermPayloadWriter*) {}
-  virtual void Write(DocIterator& docs, TermMeta& meta) = 0;
+  virtual void Write(DocIterator& docs, PostingMeta& meta) = 0;
   virtual void BeginBlock() = 0;
-  virtual void Encode(BufferedOutput& out, const TermMeta& state) = 0;
+  virtual void Encode(BufferedOutput& out, const PostingMeta& state) = 0;
   virtual FieldStats EndField() = 0;
   virtual void End() = 0;
 };
 
 struct BasicTermReader : public AttributeProvider {
-  virtual TermIterator::ptr iterator() const = 0;
+  virtual TermOnlyIterator::ptr iterator() const = 0;
 
   virtual field_id id() const = 0;
 
   virtual FieldProperties properties() const = 0;
 
-  // Returns the least significant term
-  virtual bytes_view(min)() const = 0;
-
-  // Returns the most significant term
-  virtual bytes_view(max)() const = 0;
+  virtual bytes_view min() const = 0;
+  virtual bytes_view max() const = 0;
 
   virtual TermPayloadWriter* PayloadWriter() const { return nullptr; }
 };
 
-struct IteratorFieldOptions : WandContext {
-  explicit IteratorFieldOptions(bool has_wand) : has_wand{has_wand} {}
-
-  IteratorFieldOptions(WandContext options, bool has_wand)
-    : WandContext{options}, has_wand{has_wand} {}
-
-  bool has_wand;
+struct IteratorFieldOptions {
+  bool score_prune = false;
+  bool has_score_bounds = false;
 };
 
 struct PostingCookie {
-  const SeekCookie* cookie = nullptr;
+  const PostingMeta* cookie = nullptr;
   const byte_type* stats = nullptr;
   score_t boost = kNoBoost;
   FieldProperties field;
@@ -160,7 +139,7 @@ struct PostingCookie {
 
 struct PostingsReader {
   using ptr = std::unique_ptr<PostingsReader>;
-  using term_provider_f = std::function<const TermMeta*()>;
+  using TermProvider = absl::FunctionRef<const PostingMeta*()>;
 
   virtual ~PostingsReader() = default;
 
@@ -175,7 +154,7 @@ struct PostingsReader {
   // attributes.
   // Returns number of bytes read from in.
   virtual size_t decode(const byte_type* in, IndexFeatures features,
-                        TermMeta& state) = 0;
+                        PostingMeta& state) = 0;
 
   // Evaluates a union of all docs denoted by attribute supplied via a
   // speciified 'provider'. Each doc is represented by a bit in a
@@ -183,9 +162,8 @@ struct PostingsReader {
   // Returns a number of bits set.
   // It's up to the caller to allocate enough space for a bitset.
   // This API is experimental.
-  virtual size_t BitUnion(IndexFeatures field_features,
-                          const term_provider_f& provider, size_t* set,
-                          bool has_wand) = 0;
+  virtual size_t BitUnion(IndexFeatures field_features, TermProvider provider,
+                          uint64_t* set, bool has_score_bounds) = 0;
 
   virtual DocIterator::ptr Iterator(IndexFeatures field_features,
                                     IndexFeatures required_features,
@@ -206,30 +184,28 @@ struct PostingsReader {
   }
 };
 
-// Expected usage pattern of SeekTermIterator
-enum class SeekMode : uint32_t {
-  /// Default mode, e.g. multiple consequent seeks are expected
-  NORMAL = 0,
-
-  // Only random exact seeks are supported
-  RandomOnly,
-};
-
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
-  using cookie_provider = std::function<const SeekCookie*()>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
+  using CookieProvider = absl::FunctionRef<const PostingMeta*()>;
 
-  // `mode` argument defines seek mode for term iterator
   // Returns an iterator over terms for a field.
-  virtual SeekTermIterator::ptr iterator(SeekMode mode) const = 0;
+  virtual SeekTermIterator::ptr iterator() const = 0;
 
-  // Read 'count' number of documents containing 'term' to 'docs'
-  // Returns number of read documents
-  virtual void read_documents(bytes_view term, Acceptor acceptor) const = 0;
+  // Feeds `acceptor` the documents containing `term`, stopping when it returns
+  // false. Bounds-checks against the field's term range first, and answers a
+  // df == 1 term straight from its record -- which is why a primary-key probe
+  // goes through here rather than building a term iterator and a postings
+  // iterator per key.
+  virtual void ReadDocs(bytes_view term, Acceptor acceptor) const = 0;
 
-  // Returns term metadata for a given 'term'
-  virtual TermMeta term(bytes_view term) const = 0;
+  // The record of `term`; `docs_count == 0` when the field does not hold it,
+  // which no record of a real term has -- a term is in the dictionary because
+  // some document contains it. Bounds-checks against the field's term range
+  // first and walks the dictionary on the stack, so an exact-match probe costs
+  // no iterator at all -- which is what an exact-match filter wants, since it
+  // has nowhere to walk to afterwards.
+  virtual PostingMeta Lookup(bytes_view term) const = 0;
 
   // Returns an intersection of a specified automaton and term reader.
   virtual SeekTermIterator::ptr iterator(
@@ -241,17 +217,16 @@ struct TermReader : public AttributeProvider {
   // A number of bits set.
   // It's up to the caller to allocate enough space for a bitset.
   // This API is experimental.
-  virtual size_t BitUnion(const cookie_provider& provider,
-                          size_t* bitset) const = 0;
+  virtual size_t BitUnion(CookieProvider provider, uint64_t* bitset) const = 0;
 
   virtual DocIterator::ptr Iterator(
     IndexFeatures features, std::span<const PostingCookie> cookies,
-    WandContext options = {}, size_t min_match = 1,
+    bool score_prune = false, size_t min_match = 1,
     ScoreMergeType type = ScoreMergeType::Noop) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures features, const PostingCookie& cookie,
-                            WandContext options = {}) const {
-    return Iterator(features, {&cookie, 1}, options);
+                            bool score_prune = false) const {
+    return Iterator(features, {&cookie, 1}, score_prune);
   }
 
   virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
@@ -266,13 +241,13 @@ struct TermReader : public AttributeProvider {
   virtual uint64_t docs_count() const = 0;
 
   // Returns the least significant term.
-  virtual bytes_view(min)() const = 0;
+  virtual bytes_view min() const = 0;
 
   // Returns the most significant term.
-  virtual bytes_view(max)() const = 0;
+  virtual bytes_view max() const = 0;
 
-  // Returns true if scorer denoted by the is supported by the field.
-  virtual bool has_scorer(uint8_t index) const = 0;
+  // Returns true if the field has per-block score bounds persisted.
+  virtual bool HasScoreBounds() const = 0;
 };
 
 struct SegmentMetaWriter : memory::Managed {
@@ -334,7 +309,7 @@ struct FlushState {
   Directory* const dir{};
   // In-flight norm reader source (SegmentWriter during initial flush,
   // null during merge). Posting writers consult it to read per-doc norms
-  // for Wand metadata while the segment is still being written.
+  // for score bounds while the segment is still being written.
   const NormProvider* norms{};
   const std::string_view name;  // segment name
   ScorerPtr scorer = nullptr;

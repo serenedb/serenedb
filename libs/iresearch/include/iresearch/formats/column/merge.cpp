@@ -130,6 +130,10 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     }
     return *slot;
   };
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  if (field_options) {
+    row_group_size = field_options->row_group_size;
+  }
   for (const auto& [field_id_v, first_col] : ordered_cols) {
     const auto opts = field_options
                         ? field_options->GetColumnOptions(field_id_v)
@@ -137,7 +141,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
-                        opts.row_group_size, opts.compression, false);
+                        row_group_size, opts.compression, false);
     if (opts.ivf_info) {
       output.AttachIVF(field_id_v, *opts.ivf_info);
     }

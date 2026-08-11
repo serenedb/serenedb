@@ -39,31 +39,23 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
     : _state{state}, _field_stats{field_stats}, _term_stats{term_stats} {}
 
   void Prepare(const SubReader& /*segment*/, const TermReader& field,
-               SeekTermIterator& terms) noexcept final {
+               TermIterator& terms) noexcept final {
     if (_field_stats) {
       _field_stats->Collect(field);
     }
     _state.Prepare(&field);
 
     _terms = &terms;
-
-    auto* meta = irs::get<TermMeta>(terms);
-    _docs_count = meta ? &meta->docs_count : &_no_docs;
   }
 
   bool Visit(score_t boost) final {
     SDB_ASSERT(_terms);
-    _terms->read();
+    const auto& meta = _terms->cookie();
     if (_term_stats) {
-      (*_term_stats)[_stat_index].Collect(*_terms);
+      (*_term_stats)[_stat_index].Collect(meta);
     }
 
-    _state.Push(typename State::Entry{
-      .cookie = _terms->cookie(),
-      .docs_count = *_docs_count,
-      .boost = boost,
-      .stat_offset = _stat_index,
-    });
+    _state.Push(meta, boost, _stat_index);
     return true;
   }
 
@@ -73,10 +65,8 @@ class AllTermsVisitor : public FilterVisitor, util::Noncopyable {
   State& _state;
   FieldCollector* _field_stats;
   ByTermsCollector::TermsData* _term_stats;
-  SeekTermIterator* _terms{};
-  const uint32_t* _docs_count{};
+  TermIterator* _terms{};
   uint32_t _stat_index = 0;
-  const decltype(TermMeta::docs_count) _no_docs = 0;
 };
 
 }  // namespace irs

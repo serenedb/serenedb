@@ -39,14 +39,17 @@ constexpr int32_t kFormatMagic = 0x3fd76c17;
 constexpr int32_t kFooterMagic = -kFormatMagic;
 constexpr uint32_t kFooterLen = 2 * sizeof(int32_t) + sizeof(int64_t);
 
+void WriteHeader(IndexOutput& out, std::string_view format);
+
 void WriteHeader(IndexOutput& out, std::string_view format, int32_t ver);
 
 void WriteFooter(IndexOutput& out);
 
 size_t HeaderLength(std::string_view format) noexcept;
 
-int32_t CheckHeader(DataInput& in, std::string_view format, int32_t min_ver,
-                    int32_t max_ver);
+void CheckHeader(DataInput& in, std::string_view format);
+
+void CheckHeader(DataInput& in, std::string_view format, int32_t ver);
 
 inline int64_t ReadChecksum(IndexInput& in) {
   in.Seek(in.Length() - kFooterLen);
@@ -69,7 +72,7 @@ int64_t Checksum(const IndexInput& in);
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,
                    const FlushState& state, std::string_view ext,
-                   std::string_view format, const int32_t version);
+                   std::string_view format);
 
 }  // namespace format_utils
 

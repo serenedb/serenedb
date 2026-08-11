@@ -51,9 +51,9 @@ irs::IndexReaderOptions CsDefaultReaderOptions();
 // `db` is mandatory at IndexWriter::Make. Fixtures that build their own
 // IndexWriterOptions (e.g. to set a custom scorer) often leave `db` unset;
 // fill it from the shared CsDb() so they keep working. Also fills
-// `norm_column_options` from the shared monotonic allocator when the caller
+// `norm_column_id` from the shared monotonic allocator when the caller
 // didn't set one -- with a cs writer present, a Norm-featured field requires
-// a norm_column_options callback (FieldsData::emplace asserts it).
+// a norm_column_id callback (FieldsData::emplace asserts it).
 irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts);
 
 class DirectoryMock : public irs::Directory {

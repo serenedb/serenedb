@@ -46,7 +46,7 @@ struct TermDictMeta {
   uint64_t doc_count{};
   uint64_t total_doc_freq{};
   uint64_t total_term_freq{};
-  bool has_wand{false};
+  bool has_score_bounds{false};
   uint64_t body_offset{};
   field_id norm{field_limits::invalid()};
 };

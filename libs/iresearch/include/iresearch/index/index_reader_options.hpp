@@ -31,20 +31,11 @@ class DatabaseInstance;
 
 namespace irs {
 
-// Scorers allowed to be used in conjunction with wanderator.
+// The scorer a score-bound-pruning iterator ranks by.
 using ScorerPtr = const Scorer*;
 
-struct WandContext {
-  bool Enabled() const noexcept { return wand_enabled; }
-
-  // Index of the wand data in the IndexWriter to use for optimization.
-  // Optimization is turned off by default.
-  bool wand_enabled = false;
-  bool strict = false;
-};
-
 struct IndexReaderOptions {
-  ScorerPtr scorer = nullptr;  // A list of topk scorers
+  ScorerPtr scorer = nullptr;
   duckdb::DatabaseInstance* db = nullptr;
   bool index = true;  // Open inverted index
 };

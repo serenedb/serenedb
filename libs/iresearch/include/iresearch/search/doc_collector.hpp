@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 
@@ -39,12 +40,10 @@
 
 namespace irs {
 
-constexpr size_t BlockSize(size_t k) noexcept { return 2 * k; }
-
 inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
                                      const Filter& filter, const Scorer& scorer,
                                      size_t k, std::span<ScoreDoc> hits) {
-  SDB_ASSERT(BlockSize(k) == hits.size());
+  SDB_ASSERT(k == hits.size());
 
   auto prepare_collector = filter.MakeCollector(&scorer);
   std::vector<QueryBuilder::ptr> queries;
@@ -56,7 +55,7 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
   const auto stats = prepare_collector->Finish(IResourceManager::gNoop);
 
   score_t score_threshold = std::numeric_limits<score_t>::min();
-  NthPartitionScoreCollector collector{score_threshold, k, hits};
+  LoserScoreCollector collector{score_threshold, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {
@@ -86,9 +85,9 @@ inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
 }
 
 inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
-                            const Scorer& scorer, size_t k, WandContext wand,
+                            const Scorer& scorer, size_t k, bool score_prune,
                             std::span<ScoreDoc> hits) {
-  SDB_ASSERT(BlockSize(k) == hits.size());
+  SDB_ASSERT(k == hits.size());
 
   auto prepare_collector = filter.MakeCollector(&scorer);
   std::vector<QueryBuilder::ptr> queries;
@@ -100,7 +99,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   const auto stats = prepare_collector->Finish(IResourceManager::gNoop);
 
   score_t score_threshold = std::numeric_limits<score_t>::min();
-  NthPartitionScoreCollector collector{score_threshold, k, hits};
+  LoserScoreCollector collector{score_threshold, hits};
   ColumnArgsFetcher fetcher;
   uint32_t seg_idx = 0;
   for (auto& segment : reader) {
@@ -112,7 +111,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
       continue;
     }
 
-    auto it = query->Execute({.wand = wand}, stats);
+    auto it = query->Execute({.score_prune = score_prune}, stats);
 
     auto score_func = it->PrepareScore({
       .scorer = &scorer,

@@ -30,7 +30,7 @@ namespace irs {
 
 class BitsetDocIterator : public DocIterator, private util::Noncopyable {
  public:
-  using word_t = size_t;
+  using word_t = uint64_t;
 
   BitsetDocIterator(const word_t* begin, const word_t* end) noexcept;
 
@@ -46,7 +46,8 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
                                       FillBlockScoreContext score,
                                       FillBlockMatchContext match) final;
 
-  IRS_DOC_ITERATOR_EMIT_DEFAULTS
+  IRS_DOC_ITERATOR_EMIT_DOCS
+  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
 
  protected:
   explicit BitsetDocIterator(CostAttr::Type cost) noexcept

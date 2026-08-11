@@ -116,8 +116,6 @@ class AutomatonTermIterator : public SeekTermIterator {
     return _it->postings(features);
   }
 
-  void read() final { _it->read(); }
-
   bool next() final {
     bool next = _it->next();
 
@@ -146,7 +144,7 @@ class AutomatonTermIterator : public SeekTermIterator {
     return SeekResult::Found == seek_ge(target);
   }
 
-  SeekCookie::ptr cookie() const final { return _it->cookie(); }
+  const PostingMeta& cookie() const final { return _it->cookie(); }
 
  private:
   bool Accept() { return Match(_matcher, *_value); }

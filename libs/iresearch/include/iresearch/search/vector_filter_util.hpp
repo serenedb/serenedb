@@ -27,10 +27,10 @@
 #include <vector>
 
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/formats/formats_attributes.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/states/vector_state.hpp"
@@ -50,15 +50,10 @@ struct VectorFilterOptions {
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
 };
 
-template<typename TermIterator>
-bool SeekClusterTerm(TermIterator& terms, uint32_t cluster_id,
-                     std::span<byte_type, kCentroidTermWidth> term_buf) {
+inline bool SeekClusterTerm(auto& terms, uint32_t cluster_id,
+                            std::span<byte_type, kCentroidTermWidth> term_buf) {
   EncodeCentroidTerm(cluster_id, term_buf.data());
-  if (!terms.seek(bytes_view{term_buf.data(), term_buf.size()})) {
-    return false;
-  }
-  terms.read();
-  return true;
+  return terms.seek(bytes_view{term_buf.data(), term_buf.size()});
 }
 
 inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
@@ -141,11 +136,10 @@ inline bool PrepareVectorState(const SubReader& segment,
     return false;
   }
 
-  auto terms = postings->iterator(SeekMode::NORMAL);
+  auto terms = postings->iterator();
   if (!terms) {
     return false;
   }
-  const auto* term_meta = irs::get<TermMeta>(*terms);
 
   state.reader = postings;
   state.vector_column = segment.Column(column_id);
@@ -167,19 +161,17 @@ inline bool PrepareVectorState(const SubReader& segment,
     if (!SeekClusterTerm(*terms, fine_ids[i], term_buf)) {
       continue;
     }
-    if (term_meta) {
-      const auto* impl = static_cast<const TermMetaImpl*>(term_meta);
-      estimation += term_meta->docs_count;
-      state.pay_starts.push_back(impl->pay_start);
-      state.pay_lanes.push_back(static_cast<uint32_t>(impl->pos_offset));
-      state.cluster_counts.push_back(term_meta->docs_count);
-    }
+    const auto& meta = terms->cookie();
+    estimation += meta.docs_count;
+    state.pay_starts.push_back(meta.pay_start);
+    state.pay_lanes.push_back(meta.pos_offset);
+    state.cluster_counts.push_back(meta.docs_count);
     if (needs_centroids) {
       const float* cen = probed_centroids.data() + i * d;
       state.cluster_centroids.insert(state.cluster_centroids.end(), cen,
                                      cen + d);
     }
-    state.cookies.emplace_back(terms->cookie());
+    state.cookies.emplace_back(meta);
   }
   state.estimation = estimation;
 

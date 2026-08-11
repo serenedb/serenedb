@@ -207,6 +207,7 @@ int main(int argc, char* argv[]) {
   sdb::app::AppServer::parseOptions(argc, argv);
   auto& engine = sdb::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
+  server::query::ConfigureExtensionsConfig(engine.instance());
   server::query::RegisterServerExtensions(engine.instance());
 
   sdb::app::InitProcess(argv[0]);

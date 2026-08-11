@@ -243,12 +243,13 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // parallelism by one and make `threads`/`cpu_threads` resolve to N-1 internal
   // workers; zero makes the count exact and `threads=1` a true single worker.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
+}
+
+void ConfigureExtensionsConfig(duckdb::DatabaseInstance& db) {
   // serened is a long-running server: reuse remote connections (GCS/S3
-  // reads, iceberg REST) instead of a TLS handshake per request. Stashed
-  // as an unrecognized option until httpfs registers the setting; a
-  // session or global SET still turns it off.
-  config.SetOptionByName("httpfs_connection_caching",
-                         duckdb::Value::BOOLEAN(true));
+  // reads, iceberg REST) instead of a TLS handshake per request.
+  duckdb::DBConfig::GetConfig(db).SetOptionByName(
+    "httpfs_connection_caching", duckdb::Value::BOOLEAN(true));
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {

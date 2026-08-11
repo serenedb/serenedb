@@ -248,8 +248,8 @@ duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
                  duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
   result.emplace(duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn{"", duckdb::LogicalType::BOOLEAN});
-  if (_fast_path && _inverted_index->GetOptions().pk_column ==
-                      catalog::PkColumnKind::Has) {
+  if (_fast_path &&
+      _inverted_index->GetOptions().pk_column == catalog::PkColumnKind::Has) {
     result.emplace(
       kColumnIdentifierGeneratedPk,
       duckdb::TableColumn{"generated_pk", _fast_path->GeneratedPkType()});

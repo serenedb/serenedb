@@ -63,9 +63,8 @@ class DuckDBEntryCache {
 
   // Called by SereneDBSchemaEntry::Scan
   void ScanEntries(duckdb::CatalogType type, duckdb::ClientContext& context,
-                   duckdb::Catalog& catalog,
-                   duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
-                   std::string_view schema_name,
+                   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+                   ObjectId db_id, std::string_view schema_name,
                    const std::function<void(duckdb::CatalogEntry&)>& callback,
                    const catalog::Snapshot& snapshot);
 

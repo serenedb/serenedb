@@ -168,4 +168,5 @@ class SearchRemovePrefixFilter final : public irs::Filter,
   mutable std::string _key_scratch;
   mutable std::vector<Entry> _entries;
 };
+
 }  // namespace sdb::connector

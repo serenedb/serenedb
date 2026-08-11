@@ -613,8 +613,8 @@ DuckDBEntryCache::CachedEntry DuckDBEntryCache::BuildEntry(
   ObjectId database, std::string_view schema, std::string_view name,
   const catalog::Snapshot& snapshot) {
   std::shared_ptr<const catalog::Object> object;
-  auto built = BuildEntryObject(type, context, catalog, entry, database,
-                                schema, name, snapshot, object);
+  auto built = BuildEntryObject(type, context, catalog, entry, database, schema,
+                                name, snapshot, object);
   return CachedEntry{std::move(built), std::move(object)};
 }
 

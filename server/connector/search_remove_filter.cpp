@@ -135,7 +135,6 @@ irs::doc_id_t SearchRemoveFilter::advance() {
   }
 }
 
-
 SearchRemovePrefixFilter::SearchRemovePrefixFilter(irs::field_id pk_field_id)
   : _pk_field_id{pk_field_id} {}
 

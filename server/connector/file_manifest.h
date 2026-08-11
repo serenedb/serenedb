@@ -164,8 +164,7 @@ class IcebergObserve {
   // `stored_version` is the manifest's indexed snapshot id; the sequence
   // baseline resolves from the table metadata by it.
   IcebergObserve(duckdb::IcebergMultiFileList& list,
-                 const duckdb::MultiFileBindData& bind,
-                 int64_t stored_version);
+                 const duckdb::MultiFileBindData& bind, int64_t stored_version);
 
   void Fill(const duckdb::OpenFileInfo&, search::FileManifestEntry&) const {}
 
@@ -223,8 +222,7 @@ struct StatObserve {
 
   static bool Same(const search::FileManifestEntry& entry,
                    const search::FileManifestEntry& live) {
-    return entry.etag == live.etag &&
-           entry.mtime_micros == live.mtime_micros;
+    return entry.etag == live.etag && entry.mtime_micros == live.mtime_micros;
   }
 
   static bool TryMask(size_t, const search::FileManifestEntry&,

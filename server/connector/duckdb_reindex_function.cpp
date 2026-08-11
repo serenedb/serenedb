@@ -680,8 +680,7 @@ std::shared_ptr<SearchRemovePrefixFilter> BuildMaskRemove(
 // listing holds unchanged files -- only uniqueness matters. `file_base`
 // returns the base for the pass statement.
 std::shared_ptr<search::FileManifest> BuildNextManifest(
-  const search::FileManifest& manifest, FileDiff& files,
-  uint64_t& file_base) {
+  const search::FileManifest& manifest, FileDiff& files, uint64_t& file_base) {
   auto manifest_next = std::make_shared<search::FileManifest>();
   manifest_next->entries.reserve(manifest.entries.size() + files.scan.size());
   containers::FlatHashSet<uint64_t> dead_ids{files.del_files.begin(),

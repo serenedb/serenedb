@@ -16,8 +16,10 @@ RUN \
   rm /tmp/install.tar.gz && \
   # numactl: NUMA optimization for multi-socket systems
   # postgresql-client: psql for debugging, pg_isready for health checks
+  # ca-certificates: root store for outbound TLS (attaching a remote
+  #   ClickHouse/Postgres over TLS fails without it)
   apt-get update && \
-  apt-get install -y --no-install-recommends numactl postgresql-client && \
+  apt-get install -y --no-install-recommends numactl postgresql-client ca-certificates && \
   # Create non-root user for running serened
   groupadd -r serenedb && \
   useradd -r -g serenedb -d /var/lib/serenedb -s /usr/sbin/nologin serenedb && \

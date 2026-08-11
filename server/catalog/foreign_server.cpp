@@ -236,6 +236,28 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
     return {};
   }
 
+  if (storage == kIcebergStorage) {
+    // Stock iceberg reads a secret for credentials only: the warehouse and
+    // the catalog options ride inline in the ATTACH statement.
+    const auto keys = server.OptionKeys();
+    const auto values = server.OptionValues();
+    std::string warehouse;
+    std::string options;
+    for (size_t i = 0; i < keys.size(); ++i) {
+      const auto lower = absl::AsciiStrToLower(keys[i]);
+      auto [name, value] = CanonicalOption(storage, lower, values[i]);
+      if (name == "warehouse") {
+        warehouse = value.ToString();
+        continue;
+      }
+      absl::StrAppend(&options, ", ", QuoteSqlIdentifier(name), " ",
+                      value.ToSQLString());
+    }
+    return absl::StrCat(
+      "ATTACH ", duckdb::KeywordHelper::WriteQuoted(warehouse, '\''), " AS ",
+      QuoteSqlIdentifier(server.GetName()), " (TYPE ", storage, options, ")");
+  }
+
   auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
     std::vector<std::string>{}, duckdb::Identifier{storage}, "config",
     duckdb::Identifier{secret_name});

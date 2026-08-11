@@ -1541,9 +1541,9 @@ class TermIteratorBase : public SeekTermIterator {
     if (it) {
       it->LoadData(field_meta, _posting_meta, *_postings);
     }
-    return _postings->Iterator(field_meta.index_features, features,
-                               {.cookie = &_posting_meta},
-                               IteratorFieldOptions{_field->HasScoreBounds()});
+    return _postings->Iterator(
+      field_meta.index_features, features, {.cookie = &_posting_meta},
+      IteratorFieldOptions{.has_score_bounds = _field->HasScoreBounds()});
   }
 
   void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
@@ -1970,9 +1970,9 @@ class SingleTermLookup : public SeekTermIterator {
   const PostingMeta& cookie() const final { return _meta; }
 
   DocIterator::ptr postings(IndexFeatures features) const final {
-    return _postings->Iterator(_field->meta().index_features, features,
-                               {.cookie = &_meta},
-                               IteratorFieldOptions{_field->HasScoreBounds()});
+    return _postings->Iterator(
+      _field->meta().index_features, features, {.cookie = &_meta},
+      IteratorFieldOptions{.has_score_bounds = _field->HasScoreBounds()});
   }
 
   const PostingMeta& Meta() const noexcept { return _meta; }

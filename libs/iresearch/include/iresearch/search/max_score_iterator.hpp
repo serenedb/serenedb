@@ -68,11 +68,17 @@ class MaxScoreIterator : public DocIterator {
     });
   }
 
-  doc_id_t advance() final {
-    SDB_ASSERT(false);
-    return _doc;
+  doc_id_t advance() final { return seek(_doc + 1); }
+
+  doc_id_t seek(doc_id_t target) final {
+    doc_id_t doc{};
+    score_t score{};
+    ScoreFunction func;
+    if (EmitScoredDocs(&doc, &score, target + 1, func, nullptr, target) == 0) {
+      return _doc = doc_limits::eof();
+    }
+    return _doc = doc;
   }
-  doc_id_t seek(doc_id_t target) final { return advance(); }
 
   // Pruning/topk iterator: entered through Collect (top-k) and EmitScoredDocs
   // (a windowed scored drain, e.g. TableFilterDocIterator::Collect over a

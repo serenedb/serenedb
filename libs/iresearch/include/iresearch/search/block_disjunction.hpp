@@ -459,9 +459,19 @@ class BlockDisjunction : public DocIterator {
   uint32_t count() final {
     uint32_t count = 0;
 
-    while (RefillImpl()) {
-      for (const auto word : _mask) {
-        count += std::popcount(word);
+    if constexpr (!kHasScore && !Traits::kMinMatch) {
+      Reset();
+      while (RefillImpl<false>()) {
+        for (auto& word : _mask) {
+          count += std::popcount(word);
+          word = 0;
+        }
+      }
+    } else {
+      while (RefillImpl()) {
+        for (const auto word : _mask) {
+          count += std::popcount(word);
+        }
       }
     }
 

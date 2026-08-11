@@ -248,11 +248,6 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
   auto read_leaf = [&]<size_t N>(uint32_t len, doc_id_t prev) IRS_FORCE_INLINE {
     const auto leaf =
       FieldTraits::ReadTailForFill(len, doc_in, enc_buf, docs, prev);
-    if constexpr (FieldTraits::Frequency()) {
-      if (len == doc_limits::kBlockSize) {
-        FieldTraits::SkipBlock(doc_in);
-      }
-    }
     if (leaf.IsRun()) {
       const uint64_t first = uint64_t{prev} + 1;
       SetBitRange(words, first, first + len);
@@ -265,6 +260,11 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
         const size_t offset = data[i];
         SetBit(words[offset / kBits], offset % kBits);
       });
+    }
+    if constexpr (FieldTraits::Frequency()) {
+      if (len == doc_limits::kBlockSize) {
+        FieldTraits::SkipBlock(doc_in);
+      }
     }
     return leaf.max;
   };

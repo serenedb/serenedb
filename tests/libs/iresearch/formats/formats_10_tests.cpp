@@ -177,7 +177,7 @@ class Format10TestCase : public tests::FormatTestCase {
 
           auto actual = reader->Iterator(field.index_features, features,
                                          {.cookie = &read_meta},
-                                         irs::IteratorFieldOptions{false});
+                                         irs::IteratorFieldOptions{});
           ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
 
           TestPostings expected(docs, field.index_features);
@@ -209,7 +209,7 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           auto it = reader->Iterator(
             field.index_features, irs::IndexFeatures::None,
-            {.cookie = &read_meta}, irs::IteratorFieldOptions{false});
+            {.cookie = &read_meta}, irs::IteratorFieldOptions{});
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(!irs::doc_limits::eof(it->advance()));
           ASSERT_EQ(docs.front().first, it->value());
@@ -234,7 +234,7 @@ class Format10TestCase : public tests::FormatTestCase {
             TestPostings expected(docs, field.index_features);
             auto it = reader->Iterator(field.index_features, features,
                                        {.cookie = &read_meta},
-                                       irs::IteratorFieldOptions{false});
+                                       irs::IteratorFieldOptions{});
             ASSERT_FALSE(irs::doc_limits::valid(it->value()));
             ASSERT_EQ(doc->first, it->seek(doc->first));
 
@@ -256,7 +256,7 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           auto it = reader->Iterator(
             field.index_features, irs::IndexFeatures::None,
-            {.cookie = &read_meta}, irs::IteratorFieldOptions{false});
+            {.cookie = &read_meta}, irs::IteratorFieldOptions{});
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_FALSE(
             irs::doc_limits::valid(it->seek(irs::doc_limits::invalid())));
@@ -268,7 +268,7 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           auto it = reader->Iterator(
             field.index_features, irs::IndexFeatures::None,
-            {.cookie = &read_meta}, irs::IteratorFieldOptions{false});
+            {.cookie = &read_meta}, irs::IteratorFieldOptions{});
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
           ASSERT_FALSE(!irs::doc_limits::eof(it->advance()));
@@ -396,9 +396,9 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
-                                 {.cookie = &read_meta},
-                                 irs::IteratorFieldOptions{false});
+      auto it =
+        reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                         {.cookie = &read_meta}, irs::IteratorFieldOptions{});
       for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
         ASSERT_EQ(docs0[i++].first, it->value());
       }
@@ -420,9 +420,9 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
-                                 {.cookie = &read_meta},
-                                 irs::IteratorFieldOptions{false});
+      auto it =
+        reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                         {.cookie = &read_meta}, irs::IteratorFieldOptions{});
       for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
         ASSERT_EQ(docs1[i++].first, it->value());
       }
@@ -533,9 +533,9 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
-                                 {.cookie = &read_meta},
-                                 irs::IteratorFieldOptions{false});
+      auto it =
+        reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                         {.cookie = &read_meta}, irs::IteratorFieldOptions{});
       for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
         ASSERT_EQ(docs0[i++].first, it->value());
       }
@@ -556,9 +556,9 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
-                                 {.cookie = &read_meta},
-                                 irs::IteratorFieldOptions{false});
+      auto it =
+        reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                         {.cookie = &read_meta}, irs::IteratorFieldOptions{});
       for (size_t i = 0; !irs::doc_limits::eof(it->advance());) {
         ASSERT_EQ(docs1[i++].first, it->value());
       }
@@ -1026,7 +1026,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
              i += std::max<size_t>(1, docs.size() / 10)) {
           auto actual = reader->Iterator(field.index_features, features,
                                          {.cookie = &read_meta},
-                                         irs::IteratorFieldOptions{false});
+                                         irs::IteratorFieldOptions{});
           ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
 
           const auto& doc = docs[i];

@@ -407,7 +407,7 @@ irs::DocIterator::ptr Format15TestCase::GetPruningIterator(
   const bool field_has_freq =
     irs::IndexFeatures::None != (field_features & irs::IndexFeatures::Freq);
   EXPECT_EQ((field_features & features), features);
-  irs::IteratorFieldOptions options(field_has_freq);
+  irs::IteratorFieldOptions options{.has_score_bounds = field_has_freq};
   if (iterator_has_freq) {
     options.score_prune = true;
   }

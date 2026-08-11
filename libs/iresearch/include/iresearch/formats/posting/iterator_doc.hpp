@@ -164,6 +164,9 @@ class PostingIteratorBase : public DocIterator {
       }
       _doc = doc;
       _left_in_leaf = left_in_leaf;
+      if constexpr (IteratorTraits::Frequency()) {
+        std::get<FreqBlockAttr>(_attrs).value = _freq_block;
+      }
       return n;
     }
   }

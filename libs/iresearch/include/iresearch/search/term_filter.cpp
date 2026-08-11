@@ -23,6 +23,7 @@
 #include "term_filter.hpp"
 
 #include <tuple>
+#include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -52,14 +53,13 @@ class ByTermIterator : public TermIterator {
     return _reader->Iterator(features, PostingCookie{.cookie = &_meta});
   }
 
-  bool next() final { return false; }
-
-  bool Empty() { return _meta.docs_count == 0; }
+  bool next() final { return std::exchange(_found, false); }
 
  private:
   const TermReader* _reader;
   const PostingMeta _meta;
   TermAttr _term;
+  bool _found{_meta.docs_count != 0};
 };
 
 }  // namespace
@@ -67,7 +67,7 @@ class ByTermIterator : public TermIterator {
 void ByTerm::Visit(const SubReader& segment, const TermReader& field,
                    const ByTermOptions& options, FilterVisitor& visitor) {
   ByTermIterator term{field, options.term};
-  if (term.Empty()) {
+  if (!term.next()) {
     return;
   }
   visitor.Prepare(segment, field, term);

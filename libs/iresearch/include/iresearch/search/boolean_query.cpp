@@ -142,7 +142,8 @@ DocIterator::ptr ExclusionQuery::Execute(const ExecutionContext& old,
   auto incl = _include->Execute(
     old, has_children ? stats.Child(0) : StatsBuffer::Empty());
 
-  const ExecutionContext& ctx = old;
+  ExecutionContext ctx{old};
+  ctx.score_prune = false;
 
   ScoreAdapters excl_itrs;
   excl_itrs.reserve(_excludes.size());

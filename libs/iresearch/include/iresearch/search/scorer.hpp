@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <limits>
 #include <optional>
 
 #include "basics/math_utils.hpp"
@@ -47,6 +48,8 @@ inline constexpr score_t kNoBoost{1.f};
 inline IRS_FORCE_INLINE score_t TermCountToScore(uint32_t count) noexcept {
   return static_cast<score_t>(static_cast<int32_t>(count));
 }
+
+inline constexpr uint32_t kMaxFreq = std::numeric_limits<int32_t>::max();
 
 // Caller writes value, iterator reads at block boundaries to skip
 // blocks whose max score is below the threshold.

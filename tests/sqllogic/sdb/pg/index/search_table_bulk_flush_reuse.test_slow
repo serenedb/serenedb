@@ -1,0 +1,87 @@
+# Regression guard for the search-table BULK-insert path's explicit segment
+# flush composing with transaction REUSE.
+#
+# A bulk (parallel) INSERT fans out into one iresearch transaction per worker;
+# each is Flush()ed on its worker thread at Combine, then handed to the
+# SearchTableTransaction. A later serial INSERT/UPDATE/DELETE in the SAME
+# explicit SQL transaction reuses that (now-flushed) transaction tail via
+# EnsureSerialSearchTransaction. This asserts inserting/removing AFTER the
+# Combine flush stays correct (auto-flush-mid-insert is iresearch's own path;
+# THIS covers our explicit tail flush, a newer invariant).
+#
+# ".test_slow" because triggering the bulk path needs a genuinely parallel
+# source scan: >1 iresearch/DuckDB row group (122880 rows each), so the source
+# must be a base table with >122880 rows -- generate_series is single-threaded
+# and would take the serial path. SET threads forces parallelism regardless of
+# the runner's core count.
+
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE TABLE bulk_src (pk BIGINT, x BIGINT);
+
+# 200000 rows -> 2 row groups -> the INSERT ... SELECT scan parallelizes -> BULK.
+statement ok
+INSERT INTO bulk_src SELECT i, i FROM generate_series(1, 200000) g(i);
+
+statement ok
+CREATE TABLE bt (pk BIGINT PRIMARY KEY, x BIGINT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+# Pre-existing committed rows: the in-txn DELETE below must match visible rows
+# (search tables have no read-your-own-writes, so a DELETE can't see the
+# same-transaction bulk inserts).
+statement ok
+INSERT INTO bt VALUES (-1, -1), (-2, -2), (-3, -3);
+
+statement ok
+VACUUM (REFRESH_TABLE) bt;
+
+# One explicit transaction: BULK insert (appends flushed per-thread transactions)
+# then a serial INSERT and a serial DELETE -- both reuse the flushed tail.
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO bt SELECT pk, x FROM bulk_src;
+
+statement ok
+INSERT INTO bt VALUES (1000001, 1), (1000002, 2);
+
+statement ok
+DELETE FROM bt WHERE pk IN (-1, -2);
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) bt;
+
+# 3 pre-existing + 200000 bulk + 2 serial-insert - 2 serial-delete = 200003.
+query
+SELECT count(*) FROM bt;
+----
+count
+200003
+
+# The serial DELETE removed the two pre-existing rows it targeted.
+query
+SELECT count(*) FROM bt WHERE pk IN (-1, -2);
+----
+count
+0
+
+# The untargeted pre-existing row survives.
+query
+SELECT count(*) FROM bt WHERE pk = -3;
+----
+count
+1
+
+# The serial INSERT's rows landed.
+query
+SELECT count(*) FROM bt WHERE pk IN (1000001, 1000002);
+----
+count
+2

@@ -392,24 +392,17 @@ bool IcebergObserve::ExtractMaskRows(size_t listing_idx, DeleteMask& mask) {
   }
   switch (data->type) {
     case duckdb::IcebergDeleteType::POSITIONAL_DELETE: {
-      const auto& by_seq =
+      // Like the DV arm: remove the WHOLE current row set. Rows the index
+      // already dropped match nothing -- pure re-pay, never wrong -- and
+      // the file-scoped watermark already proved something new arrived.
+      const auto& rows =
         static_cast<const duckdb::IcebergPositionalDeleteData&>(*data)
-          .rows_by_sequence;
-      size_t dead = 0;
-      for (const auto& [seq, bucket] : by_seq) {
-        if (static_cast<uint64_t>(seq) > _sequence_number) {
-          dead += bucket.size();
-        }
-      }
-      if (dead == 0) {
+          .invalid_rows;
+      if (rows.empty()) {
         return false;
       }
-      mask.rows.reserve(dead);
-      for (const auto& [seq, bucket] : by_seq) {
-        if (static_cast<uint64_t>(seq) > _sequence_number) {
-          mask.rows.insert(mask.rows.end(), bucket.begin(), bucket.end());
-        }
-      }
+      mask.rows.assign(rows.begin(), rows.end());
+      absl::c_sort(mask.rows);
     } break;
     case duckdb::IcebergDeleteType::DELETION_VECTOR: {
       // A DV replaces its predecessor wholesale, and the manifest keeps no

@@ -40,11 +40,6 @@ RUN \
          /usr/share/doc/* /usr/share/man/* /usr/share/info/* \
          /usr/share/locale/* /usr/share/i18n/* /root/.cache /tmp/*
 
-# The bundled OpenSSL resolves its default verify paths at build time, which do
-# not match Ubuntu's store, so point it at the installed bundle explicitly.
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
-    SSL_CERT_DIR=/etc/ssl/certs
-
 VOLUME ["/var/lib/serenedb"]
 EXPOSE 7890
 

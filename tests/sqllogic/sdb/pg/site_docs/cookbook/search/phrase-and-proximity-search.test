@@ -162,3 +162,107 @@ SELECT ts_lexize('basic_dict', 'Biggest Blockbuster');
 ----
 ts_lexize
 {biggest,blockbuster}
+
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ ts_phrase('group children')
+ORDER BY id;
+----
+id	title
+
+# DOCS_TEST: example_011
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ ts_phrase('group children', slop := 1)
+ORDER BY id;
+----
+id	title
+4	Jurassic Park
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ ts_phrase('zion machine', slop := 3)
+ORDER BY id;
+----
+id	title
+2	The Matrix Reloaded
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ ts_phrase('zion machine', slop := 5)
+ORDER BY id;
+----
+id	title
+2	The Matrix Reloaded
+3	The Matrix Revolutions
+
+# DOCS_TEST: example_014
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ ts_phrase('spacecraft alien', slop := 2)
+ORDER BY id;
+----
+id	title
+7	Star Trek: The Motion Picture
+
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ ts_phrase('group children')::slop(1)
+ORDER BY id;
+----
+id	title
+4	Jurassic Park
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ to_tsquery('"group children"~1')
+ORDER BY id;
+----
+id	title
+4	Jurassic Park
+
+# DOCS_TEST: example_017
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, title
+FROM movies_idx
+WHERE description @@ ts_phrase('group', 1, 'children', slop := 0)
+ORDER BY id;
+----
+id	title
+4	Jurassic Park

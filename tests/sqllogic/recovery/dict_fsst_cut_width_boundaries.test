@@ -1,0 +1,109 @@
+# dict_fsst cut sizing: the never-encoded selection-width bump at MORE boundaries, with NULLs, with a
+# benign bump, and at default row groups.
+#
+# dict_fsst_cut_small_dict_width pins one boundary (127 -> 128 entries, 7 -> 8 bits, ~292k rows).
+# The jump scales inversely with the width -- the narrower the selection, the wider the segment and
+# the bigger the one-row re-price -- so this covers:
+#   b4to5      15 -> 16 entries at ~515k rows, a ~64KB jump (the corpus trace's exact shape)
+#   b7to8_null the 127 -> 128 boundary with NULLs mixed through: NULL rows widen the segment but add
+#              no entry, so the bump arrives at the same entry count with a different row mix
+#   benign     63 -> 64 entries bumping mid-segment where the wider layout still fits: the guard must
+#              NOT cut there (the flush trigger is checked, not the bump itself)
+#   ctrl_dflt  the overflowing shape at DEFAULT row groups: segments never grow wide enough for the
+#              jump to clear the block, so this must pass on any build -- it pins that the guard does
+#              not change behaviour where the hole was unreachable
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfwb_wide.db' AS dfwb (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfwb_dflt.db' AS dfwd (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+CREATE TABLE dfwb.b4to5 AS
+  SELECT ord, CASE WHEN ord < 515000 THEN 'b' || lpad((ord % 15)::VARCHAR, 2, '0')
+                   ELSE 'b' || lpad((ord % 16)::VARCHAR, 2, '0') END AS s
+  FROM range(520000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfwb.b7to8_null AS
+  SELECT ord, CASE WHEN ord % 10 = 3 THEN NULL
+                   WHEN ord < 292000 THEN 'w' || lpad((ord % 127)::VARCHAR, 3, '0')
+                   ELSE 'w' || lpad((ord % 128)::VARCHAR, 3, '0') END AS s
+  FROM range(310000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfwb.benign AS
+  SELECT ord, CASE WHEN ord < 150000 THEN 'n' || lpad((ord % 63)::VARCHAR, 2, '0')
+                   ELSE 'n' || lpad((ord % 64)::VARCHAR, 2, '0') END AS s
+  FROM range(200000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfwd.ctrl_dflt AS
+  SELECT ord, CASE WHEN ord < 292000 THEN 'w' || lpad((ord % 127)::VARCHAR, 3, '0')
+                   ELSE 'w' || lpad((ord % 128)::VARCHAR, 3, '0') END AS s
+  FROM range(300000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfwb;
+
+
+statement ok
+CHECKPOINT dfwd;
+
+
+query
+SELECT 'b4to5' AS shape, count(*) AS n, count(DISTINCT s) AS dn,
+       bool_and(s = CASE WHEN ord < 515000 THEN 'b' || lpad((ord % 15)::VARCHAR, 2, '0') ELSE 'b' || lpad((ord % 16)::VARCHAR, 2, '0') END) AS rows_match
+  FROM dfwb.b4to5
+UNION ALL SELECT 'b7to8_null', count(*), count(DISTINCT s),
+       bool_and(s IS NOT DISTINCT FROM CASE WHEN ord % 10 = 3 THEN NULL WHEN ord < 292000 THEN 'w' || lpad((ord % 127)::VARCHAR, 3, '0') ELSE 'w' || lpad((ord % 128)::VARCHAR, 3, '0') END)
+  FROM dfwb.b7to8_null
+UNION ALL SELECT 'benign', count(*), count(DISTINCT s),
+       bool_and(s = CASE WHEN ord < 150000 THEN 'n' || lpad((ord % 63)::VARCHAR, 2, '0') ELSE 'n' || lpad((ord % 64)::VARCHAR, 2, '0') END)
+  FROM dfwb.benign
+UNION ALL SELECT 'ctrl_dflt', count(*), count(DISTINCT s),
+       bool_and(s = CASE WHEN ord < 292000 THEN 'w' || lpad((ord % 127)::VARCHAR, 3, '0') ELSE 'w' || lpad((ord % 128)::VARCHAR, 3, '0') END)
+  FROM dfwd.ctrl_dflt
+ORDER BY shape;
+----
+shape	n	dn	rows_match
+b4to5	520000	16	t
+b7to8_null	310000	128	t
+benign	200000	64	t
+ctrl_dflt	300000	128	t
+
+
+# NULL count survives the bump-and-cut intact
+query
+SELECT count(*) AS nulls FROM dfwb.b7to8_null WHERE s IS NULL;
+----
+nulls
+31000
+
+
+# the benign bump must NOT have forced a cut: the wider layout still fit, so the whole 200k rows
+# land in ONE segment (a cut here means the guard fires on the bump itself instead of the trigger)
+query
+SELECT count(*) AS segs FROM pragma_storage_info('dfwb.benign', include_segment_info=true)
+ WHERE column_name='s' AND segment_type='VARCHAR';
+----
+segs
+1
+
+
+statement ok
+DETACH dfwb;
+
+
+statement ok
+DETACH dfwd;

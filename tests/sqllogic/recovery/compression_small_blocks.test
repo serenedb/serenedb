@@ -1,0 +1,219 @@
+# The combination axes the other compression tests do NOT cover: non-default BLOCK_SIZE, BLOB
+# through dict_fsst, values larger than the whole block, integer-family codec eligibility, and the
+# recompression path (UPDATE/DELETE then a second CHECKPOINT re-runs the same cut machinery over a
+# changed dictionary).
+#
+# Every boundary constant in the cut logic is relative to block_size, so a 16KB block re-arms every
+# near-block subtlety at 16x the frequency: the flip shape here crosses a segment boundary every
+# ~1,300 rows instead of every ~33,000. Two block-size-specific facts get pinned rather than
+# assumed:
+#   - the never-encoded width-bump geometry CHANGES at small blocks: ROW_HEADROOM (4KB) is a
+#     quarter of the block, so only the narrowest widths (2 -> 3 bit) can still jump the gap;
+#   - integer bitpacking (every width, HUGEINT and DECIMAL included) declines 16KB blocks entirely
+#     and falls back to Uncompressed; at the default block size all of them bitpack.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/csb16.db' AS c16 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', BLOCK_SIZE 16384, ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/csb256.db' AS c256 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+# uniqueness flips every ~1,300 rows: at 16KB blocks each cycle spans a segment boundary, so the
+# flip, the cut and the re-price fire dozens of times per checkpoint instead of once
+statement ok
+CREATE TABLE c16.flip16 AS
+  SELECT ord, CASE WHEN ord % 1300 < 1200 THEN 'u' || md5(ord::VARCHAR)
+              ELSE 'dup' || ((ord // 1300) % 7)::VARCHAR END AS v
+  FROM range(60000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT c16;
+
+
+# BLOB through the same machinery: prefix-heavy digests, flips included
+statement ok
+CREATE TABLE c16.blob16 AS
+  SELECT ord, (CASE WHEN ord % 900 < 800 THEN 'sensor/' || md5(ord::VARCHAR)
+               ELSE 'sensor/dup' END)::BLOB AS v
+  FROM range(40000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT c16;
+
+
+# values LARGER than the whole 16KB block: the overflow-string path under dict_fsst pressure
+statement ok
+CREATE TABLE c16.overblock AS
+  SELECT ord, CASE WHEN ord % 5000 = 2500 THEN repeat('B', 60000) || ord::VARCHAR
+              ELSE 'row' || md5(ord::VARCHAR) END AS v
+  FROM range(20000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT c16;
+
+
+# the never-encoded width bump at the only boundary that can still clear a 16KB block: 3 distinct
+# values ride a 2-bit selection to ~49k rows, then the 4th value forces 3 bits on every row
+statement ok
+CREATE TABLE c16.width2to3 AS
+  SELECT ord, CASE WHEN ord < 49000 THEN 'k' || (ord % 3)::VARCHAR
+              ELSE 'k' || (ord % 4)::VARCHAR END AS v
+  FROM range(52000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT c16;
+
+
+statement ok
+SET force_compression='bitpacking';
+
+
+# integer family eligibility, both block sizes; ord doubles as the value so verification is trivial
+statement ok
+CREATE TABLE c16.ints16 AS
+  SELECT ord, (ord % 100)::TINYINT AS t1, (ord % 30000)::SMALLINT AS t2, ord::INTEGER AS t4,
+         ord::BIGINT * 1000 AS t8, ord::HUGEINT * 100000000000000 AS t16,
+         (ord * 0.001)::DECIMAL(18,3) AS dec18
+  FROM range(50000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT c16;
+
+
+statement ok
+CREATE TABLE c256.ints256 AS
+  SELECT ord, (ord % 100)::TINYINT AS t1, (ord % 30000)::SMALLINT AS t2, ord::INTEGER AS t4,
+         ord::BIGINT * 1000 AS t8, ord::HUGEINT * 100000000000000 AS t16,
+         (ord * 0.001)::DECIMAL(18,3) AS dec18
+  FROM range(300000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT c256;
+
+
+statement ok
+SET force_compression='dict_fsst';
+
+
+# the recompression path: a near-block dict_fsst table whose dictionary is then CHANGED in place --
+# UPDATE swaps 20% of values for new ones, DELETE punches holes, and the second/third CHECKPOINT
+# re-runs the full cut machinery over the survivors
+statement ok
+CREATE TABLE c256.recompress AS
+  SELECT ord, 'c' || lpad((ord // 8)::VARCHAR, 7, '0') || chr(31) || substr(md5(ord::VARCHAR), 1, 12) AS v
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT c256;
+
+
+statement ok
+UPDATE c256.recompress SET v = 'UPD' || md5((ord * 31)::VARCHAR) WHERE ord % 5 = 0;
+
+
+statement ok
+CHECKPOINT c256;
+
+
+statement ok
+DELETE FROM c256.recompress WHERE ord % 10 = 3;
+
+
+statement ok
+CHECKPOINT c256;
+
+
+statement ok
+SET force_compression='auto';
+
+
+# every shape round-trips by value against its generator (post-UPDATE/DELETE generators included)
+query
+SELECT 'blob16' AS shape, count(*) AS n,
+       bool_and(v = (CASE WHEN ord % 900 < 800 THEN 'sensor/' || md5(ord::VARCHAR) ELSE 'sensor/dup' END)::BLOB) AS rows_match
+  FROM c16.blob16
+UNION ALL SELECT 'flip16', count(*),
+       bool_and(v = CASE WHEN ord % 1300 < 1200 THEN 'u' || md5(ord::VARCHAR) ELSE 'dup' || ((ord // 1300) % 7)::VARCHAR END)
+  FROM c16.flip16
+UNION ALL SELECT 'ints16', count(*),
+       bool_and(t1 = (ord % 100)::TINYINT AND t2 = (ord % 30000)::SMALLINT AND t4 = ord::INTEGER
+            AND t8 = ord::BIGINT * 1000 AND t16 = ord::HUGEINT * 100000000000000 AND dec18 = (ord * 0.001)::DECIMAL(18,3))
+  FROM c16.ints16
+UNION ALL SELECT 'ints256', count(*),
+       bool_and(t1 = (ord % 100)::TINYINT AND t2 = (ord % 30000)::SMALLINT AND t4 = ord::INTEGER
+            AND t8 = ord::BIGINT * 1000 AND t16 = ord::HUGEINT * 100000000000000 AND dec18 = (ord * 0.001)::DECIMAL(18,3))
+  FROM c256.ints256
+UNION ALL SELECT 'overblock', count(*),
+       bool_and(v = CASE WHEN ord % 5000 = 2500 THEN repeat('B', 60000) || ord::VARCHAR ELSE 'row' || md5(ord::VARCHAR) END)
+  FROM c16.overblock
+UNION ALL SELECT 'recompress', count(*),
+       bool_and(v = CASE WHEN ord % 5 = 0 THEN 'UPD' || md5((ord * 31)::VARCHAR)
+                    ELSE 'c' || lpad((ord // 8)::VARCHAR, 7, '0') || chr(31) || substr(md5(ord::VARCHAR), 1, 12) END)
+  FROM c256.recompress
+UNION ALL SELECT 'width2to3', count(*),
+       bool_and(v = CASE WHEN ord < 49000 THEN 'k' || (ord % 3)::VARCHAR ELSE 'k' || (ord % 4)::VARCHAR END)
+  FROM c16.width2to3
+ORDER BY shape;
+----
+shape	n	rows_match
+blob16	40000	t
+flip16	60000	t
+ints16	50000	t
+ints256	300000	t
+overblock	20000	t
+recompress	31140	t
+width2to3	52000	t
+
+
+# post-DELETE bookkeeping: exactly the ord % 10 = 3 rows are gone and no others
+query
+SELECT count(*) AS deleted_gone FROM c256.recompress WHERE ord % 10 = 3;
+----
+deleted_gone
+0
+
+
+# codec placement pinned per combination. flip/blob really reached DICT_FSST at 16KB; the 60KB
+# values survived alongside it; every integer width including HUGEINT and DECIMAL bitpacks at the
+# default block size and declines 16KB blocks. If any of these engine behaviours changes, this
+# flips and says so rather than letting the coverage silently mean something else.
+query
+SELECT 'flip16_dict_fsst' AS combo, (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('c16.flip16', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR') AS ok
+UNION ALL SELECT 'blob16_dict_fsst', (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('c16.blob16', include_segment_info=true) WHERE column_name='v' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'bigint_bitpacks_256k', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('c256.ints256', include_segment_info=true) WHERE column_name='t8' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'bigint_declines_16k', (SELECT bool_or(compression = 'Uncompressed') AND NOT bool_or(compression = 'BitPacking') FROM pragma_storage_info('c16.ints16', include_segment_info=true) WHERE column_name='t8' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'hugeint_bitpacks_256k', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('c256.ints256', include_segment_info=true) WHERE column_name='t16' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'decimal_bitpacks_256k', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('c256.ints256', include_segment_info=true) WHERE column_name='dec18' AND segment_type NOT IN ('VALIDITY'))
+ORDER BY combo;
+----
+combo	ok
+bigint_bitpacks_256k	t
+bigint_declines_16k	t
+blob16_dict_fsst	t
+decimal_bitpacks_256k	t
+flip16_dict_fsst	t
+hugeint_bitpacks_256k	t
+
+
+statement ok
+DETACH c16;
+
+
+statement ok
+DETACH c256;

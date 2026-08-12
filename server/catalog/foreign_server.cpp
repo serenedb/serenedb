@@ -236,16 +236,22 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
     return {};
   }
 
+  const auto keys = server.OptionKeys();
+  const auto values = server.OptionValues();
+  std::vector<std::pair<std::string, duckdb::Value>> opts;
+  opts.reserve(keys.size());
+  for (size_t i = 0; i < keys.size(); ++i) {
+    const auto lower = absl::AsciiStrToLower(keys[i]);
+    auto [name, value] = CanonicalOption(storage, lower, values[i]);
+    opts.emplace_back(name, std::move(value));
+  }
+
   if (storage == kIcebergStorage) {
     // Stock iceberg reads a secret for credentials only: the warehouse and
     // the catalog options ride inline in the ATTACH statement.
-    const auto keys = server.OptionKeys();
-    const auto values = server.OptionValues();
     std::string warehouse;
     std::string options;
-    for (size_t i = 0; i < keys.size(); ++i) {
-      const auto lower = absl::AsciiStrToLower(keys[i]);
-      auto [name, value] = CanonicalOption(storage, lower, values[i]);
+    for (auto& [name, value] : opts) {
       if (name == "warehouse") {
         warehouse = value.ToString();
         continue;
@@ -261,11 +267,7 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
   auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
     std::vector<std::string>{}, duckdb::Identifier{storage}, "config",
     duckdb::Identifier{secret_name});
-  const auto keys = server.OptionKeys();
-  const auto values = server.OptionValues();
-  for (size_t i = 0; i < keys.size(); ++i) {
-    const auto lower = absl::AsciiStrToLower(keys[i]);
-    auto [name, value] = CanonicalOption(storage, lower, values[i]);
+  for (auto& [name, value] : opts) {
     const duckdb::Identifier key{name};
     secret->secret_map[key] = std::move(value);
     secret->redact_keys.insert(key);

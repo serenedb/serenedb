@@ -50,9 +50,9 @@ IRS_FORCE_INLINE void DocLenImpl(
   for (scores_size_t i = 0; i != n; ++i) {
     const auto r = [&] IRS_FORCE_INLINE {
       if constexpr (HasBoost) {
-        return boost[i] * base_boost * static_cast<score_t>(norm[i]);
+        return boost[i] * base_boost * TermCountToScore(norm[i]);
       } else {
-        return base_boost * static_cast<score_t>(norm[i]);
+        return base_boost * TermCountToScore(norm[i]);
       }
     }();
     Merge<MergeType>(res[i], r);

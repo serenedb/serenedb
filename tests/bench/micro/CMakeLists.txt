@@ -10,6 +10,7 @@ function(add_bench FILE_NAME)
     add_dependencies(serenedb-bench-micro ${NAME})
 endfunction()
 
+add_bench(bm25_byte_norm)
 add_bench(crc32c)
 add_bench(function)
 add_bench(hash_map)
@@ -76,6 +77,21 @@ target_include_directories(
 target_compile_options(
     serenedb-bench-micro-sloppy_phrase_vs_disjunction
     PRIVATE -fno-lto
+)
+
+# Same relaxed FP search/bm25.cpp is built with, otherwise the kernels here
+# aren't the ones we ship.
+target_compile_options(
+    serenedb-bench-micro-bm25_byte_norm
+    PRIVATE
+        -fapprox-func
+        -fno-math-errno
+        -fassociative-math
+        -freciprocal-math
+        -fno-signed-zeros
+        -fno-trapping-math
+        -fno-rounding-math
+        -ffp-contract=fast
 )
 target_link_options(
     serenedb-bench-micro-sloppy_phrase_vs_disjunction

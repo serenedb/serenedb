@@ -49,7 +49,6 @@ constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
 
 // score(doc, term) = boost * log(1 + ((1 - lambda) * tf / dl) /
 //                                    (lambda * collection_prob))
-// With zero-norm guard: if dl == 0 we treat the doc as unmatched (score 0)
 template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void LmJmImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
@@ -58,13 +57,11 @@ IRS_FORCE_INLINE void LmJmImpl(
   score_t denom_inv, score_t const_boost) noexcept {
   // num = 1 - lambda, denom_inv = 1 / (lambda * collection_prob)
   for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = static_cast<score_t>(freq[i]);
-    const score_t dl = static_cast<score_t>(norm[i]);
-    score_t r = 0.f;
-    if (dl > 0.f) {
-      const score_t ratio = (num * tf / dl) * denom_inv;
-      r = std::log1p(ratio);
-    }
+    const score_t tf = TermCountToScore(freq[i]);
+    SDB_ASSERT(norm[i] != 0);
+    const score_t dl = TermCountToScore(norm[i]);
+    const score_t ratio = (num * tf / dl) * denom_inv;
+    score_t r = std::log1p(ratio);
     if constexpr (HasBoost) {
       r *= const_boost * boost[i];
     } else {

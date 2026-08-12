@@ -425,8 +425,8 @@ class FixedPhraseFrequency {
       uint64_t scale = 1;
       for (const auto& slot : _pos) {
         scale *= slot.second.offs_max - slot.second.offs_min + 1;
-        if (scale >= std::numeric_limits<uint32_t>::max()) {
-          scale = std::numeric_limits<uint32_t>::max();
+        if (scale >= kMaxFreq) {
+          scale = kMaxFreq;
           break;
         }
       }
@@ -446,9 +446,15 @@ class FixedPhraseFrequency {
     OrderByDocFreq();
     const auto freq = _pos.front().first->DocFreq();
     if constexpr (HasIntervals) {
-      const uint64_t bound = uint64_t{freq} * _freq_scale;
-      return static_cast<uint32_t>(
-        std::min<uint64_t>(bound, std::numeric_limits<uint32_t>::max()));
+      uint64_t by_window = uint64_t{freq} * _freq_scale;
+      uint64_t by_occurrence = 1;
+      for (const auto& slot : _pos) {
+        by_occurrence *= slot.first->DocFreq();
+        if (by_occurrence >= by_window) {
+          return static_cast<uint32_t>(std::min<uint64_t>(by_window, kMaxFreq));
+        }
+      }
+      return static_cast<uint32_t>(std::min<uint64_t>(by_occurrence, kMaxFreq));
     }
     return freq;
   }
@@ -869,7 +875,8 @@ class VariadicPhraseFrequencyOverlapped {
     if constexpr (HasBoost) {
       if (_lead_freq) {
         _phrase_boost =
-          (_phrase_boost + (_lead_boost / _lead_freq)) / _phrase_size;
+          (_phrase_boost + (_lead_boost / TermCountToScore(_lead_freq))) /
+          _phrase_size;
       }
     }
 

@@ -134,7 +134,7 @@ class FreqNormProducer : public AttributeProvider {
   static constexpr bool kNorm = kBm25 || kDivNorm || kMinNorm != 0;
 
   static constexpr score_t kMinAvgDL = 1.f;
-  static constexpr score_t kMaxAvgDL = 4294967296.f;
+  static constexpr score_t kMaxAvgDL = 2147483648.f;
 
   // TODO(mbkkt) For known avg_dl we can precompute (1 - b) * avg_dl
   // For kAvgDL we need to precompute with _avg_dl
@@ -166,8 +166,8 @@ class FreqNormProducer : public AttributeProvider {
     // tf_2 * (1 - b + b * dl_1 / avg_dl)
     // 5. multiply on avg_dl TODO(mbkkt) this step could give worse precision
     const auto x = (1.f - b) * avg_dl;
-    const auto lhs = tf_1 * (x + b * dl_2);
-    const auto rhs = tf_2 * (x + b * dl_1);
+    const auto lhs = TermCountToScore(tf_1) * (x + b * TermCountToScore(dl_2));
+    const auto rhs = TermCountToScore(tf_2) * (x + b * TermCountToScore(dl_1));
     return lhs <=> rhs;
   }
 
@@ -175,7 +175,7 @@ class FreqNormProducer : public AttributeProvider {
   struct Entry {
     uint32_t freq{1};
     [[no_unique_address]] utils::Need<kNorm, uint32_t> norm{
-      std::numeric_limits<uint32_t>::max()};
+      std::numeric_limits<int32_t>::max()};
   };
 
   IRS_FORCE_INLINE void Produce(const Entry& from, Entry& to) noexcept {

@@ -373,7 +373,7 @@ class BlockDisjunction : public DocIterator {
     }
     uint32_t n = 0;
     out[n++] = doc;
-    const uint32_t wide_limit = max - min - kBlockSize;
+    const uint32_t capacity = max - min;
     for (;;) {
       const auto base = _doc_base;
       if (base >= max) {
@@ -388,7 +388,7 @@ class BlockDisjunction : public DocIterator {
         }
         break;
       }
-      if (n <= wide_limit) [[likely]] {
+      if (n + kBlockSize <= capacity) [[likely]] {
         n = static_cast<uint32_t>(MaterializeWord(base, _cur, out + n) - out);
         _cur = 0;
       } else {

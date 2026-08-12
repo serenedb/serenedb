@@ -78,8 +78,8 @@ IRS_FORCE_INLINE void DFIImpl(
   // 1 / ln(2) -- log2(x) = ln(x) * kInvLn2
   constexpr score_t kInvLn2 = 1.4426950408889634f;
   for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = static_cast<score_t>(freq[i]);
-    const score_t dl = static_cast<score_t>(norm[i]);
+    const score_t tf = TermCountToScore(freq[i]);
+    const score_t dl = TermCountToScore(norm[i]);
     const score_t expected = ratio * dl;
     score_t r = 0.f;
     if (tf > expected && expected > 0.f) {

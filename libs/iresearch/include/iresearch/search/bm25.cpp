@@ -81,7 +81,7 @@ IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, scores_size_t n,
         return num;
       }
     }();
-    const auto r = c0 - c0 / (1.f + static_cast<score_t>(freq[i]) / c1);
+    const auto r = c0 - c0 / (1.f + TermCountToScore(freq[i]) / c1);
     Merge<MergeType>(res[i], r);
   }
 }
@@ -102,8 +102,8 @@ IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
         return num;
       }
     }();
-    const score_t c1 = norm_const + norm_length * static_cast<score_t>(norm[i]);
-    const auto r = c0 - c0 * c1 / (c1 + static_cast<score_t>(freq[i]));
+    const score_t c1 = norm_const + norm_length * TermCountToScore(norm[i]);
+    const auto r = c0 - c0 * c1 / (c1 + TermCountToScore(freq[i]));
     Merge<MergeType>(res[i], r);
   }
 }

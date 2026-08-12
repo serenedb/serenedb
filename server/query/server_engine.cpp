@@ -248,8 +248,8 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 void ConfigureExtensionsConfig(duckdb::DatabaseInstance& db) {
   // serened is a long-running server: reuse remote connections (GCS/S3
   // reads, iceberg REST) instead of a TLS handshake per request.
-  duckdb::DBConfig::GetConfig(db).SetOptionByName(
-    "httpfs_connection_caching", duckdb::Value::BOOLEAN(true));
+  duckdb::DBConfig::GetConfig(db).SetOptionByName("httpfs_connection_caching",
+                                                  duckdb::Value::BOOLEAN(true));
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {

@@ -124,8 +124,7 @@ inline void AppendPKValue(std::string& key,
       auto val = duckdb::UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx];
       auto base = key.size();
       basics::StrAppend(key, sizeof(uint64_t));
-      absl::big_endian::Store64(key.data() + base,
-                                val ^ (uint64_t{1} << 63));
+      absl::big_endian::Store64(key.data() + base, val ^ (uint64_t{1} << 63));
     } break;
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ: {

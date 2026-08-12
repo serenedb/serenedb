@@ -129,7 +129,8 @@ class SearchSinkInsertBaseImpl {
                            PkPolicy pk_policy = {});
 
   void InitImpl(size_t batch_size, const PkChunk& pk = {},
-                bool* commit_on_flush = nullptr);
+                bool* commit_on_flush = nullptr,
+                uint64_t flush_commit_tick = irs::writer_limits::kMaxTick);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);

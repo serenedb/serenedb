@@ -50,6 +50,7 @@
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/search/all_filter.hpp>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
@@ -729,27 +730,31 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     mask_removes = BuildMaskRemove(observe.del_masks);
   }
 
-  if (files.scan.empty()) {
-    // Removes-only tick: no pass, apply and publish directly -- REINDEX
-    // returning means the deletions are visible.
-    if (file_removes || mask_removes) {
-      auto trx = storage.GetTransaction();
-      if (file_removes) {
-        trx.Remove(std::move(file_removes));
-      }
-      if (mask_removes) {
-        trx.Remove(std::move(mask_removes));
-      }
-      // Queries land in [commit - queries, commit): reserve one more tick
-      // so the lowest sits strictly above the last published tick.
-      if (!trx.Commit(
-            search::TickDomain::Instance().Advance(trx.GetQueries() + 1))) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                        ERR_MSG("REINDEX delta of \"", target.name,
-                                "\": failed to commit the removes"));
-      }
+  // The removes commit first as their own transaction; the pass's docs land
+  // above them (the pass transactions pull domain ticks). A crash between
+  // the two loses the removed rows until the next tick: the manifest
+  // version only moves at the end, so the tick re-runs the delta.
+  if (file_removes || mask_removes) {
+    auto trx = storage.GetTransaction();
+    if (file_removes) {
+      trx.Remove(std::move(file_removes));
     }
-    SDB_IF_FAILURE("crash_before_delta_publish") { SDB_IMMEDIATE_ABORT(); }
+    if (mask_removes) {
+      trx.Remove(std::move(mask_removes));
+    }
+    // Queries land in [commit - queries, commit): reserve one more tick
+    // so the lowest sits strictly above the last published tick.
+    if (!trx.Commit(
+          search::TickDomain::Instance().Advance(trx.GetQueries() + 1))) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("REINDEX delta of \"", target.name,
+                              "\": failed to commit the removes"));
+    }
+  }
+
+  if (files.scan.empty()) {
+    // Removes-only tick: no pass, publish directly -- REINDEX returning
+    // means the deletions are visible.
     storage.SetFileManifest(std::move(manifest_next));
     auto code = search::RefreshResult::Undefined;
     if (auto refreshed = storage.RefreshUnsafe(/*wait=*/true, nullptr, code);
@@ -764,16 +769,11 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
 
   // Scan road: ONE statement for the whole scan set, bound against the
   // REAL view (the bind hook narrows the leaf's file list, so the reader
-  // still applies every delete flavor). The pass fills the live index
-  // through uncommitted transactions; the removes ride the statement, and
-  // Finalize commits everything -- removes below the pass's docs, then
-  // manifest_next -- in one publish. A died pass never committed anything:
-  // the still-mismatched version relaunches the tick.
+  // still applies every delete flavor). The pass commits like an ordinary
+  // CREATE INDEX; Finalize publishes manifest_next.
   PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
   info->source_index = target.index->GetId();
-  info->file_removes = std::move(file_removes);
-  info->mask_removes = std::move(mask_removes);
   info->delta_file_base = file_base;
   info->delta_files.reserve(files.scan.size());
   for (const auto& file : files.scan) {
@@ -785,12 +785,20 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   pass_conn.RunPass(target, std::move(info), "delta");
 }
 
-// The plain CREATE INDEX pipeline over the live index, nothing committed
-// mid-pass; Finalize commits a remove-all below the pass's docs, so the
-// old docs serve until the publish and a died rebuild never committed
-// anything -- the version mismatch relaunches.
+// A committed remove-all, then the plain CREATE INDEX pipeline over the
+// live index -- the pass's docs commit above the remove. Readers see an
+// empty index until the pass lands; a died rebuild leaves it empty and
+// the version mismatch relaunches.
 void RunFullRebuild(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
-                    const ReindexTarget& target) {
+                    const ReindexTarget& target,
+                    search::InvertedIndexStorage& storage) {
+  auto trx = storage.GetTransaction();
+  trx.Remove(std::make_shared<irs::All>());
+  if (!trx.Commit(search::TickDomain::Instance().Advance(2))) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("REINDEX of \"", target.name,
+                            "\": failed to commit the remove-all"));
+  }
   PassConnection pass_conn{context, conn_ctx, target};
   auto info = duckdb::make_uniq<SereneDBCreateIndexInfo>();
   info->source_index = target.index->GetId();
@@ -832,7 +840,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};
   }
-  RunFullRebuild(context, conn_ctx, target);
+  RunFullRebuild(context, conn_ctx, target, storage);
   return {ReindexAction::Rebuild, files.added, files.changed, files.removed,
           static_cast<int64_t>(src.files.size())};
 }
@@ -865,7 +873,7 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
   }
   // No manifest (external-pk index) or no observable source: full rebuild.
   if (!src) {
-    RunFullRebuild(context, conn_ctx, target);
+    RunFullRebuild(context, conn_ctx, target, *storage);
     return {};
   }
   if (src->version && src->version == manifest->version) {
@@ -879,7 +887,7 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {
       // The indexed snapshot left the table's history: deletes may have
       // been UNDONE, invisible to any seq diff. Only a rebuild converges.
-      RunFullRebuild(context, conn_ctx, target);
+      RunFullRebuild(context, conn_ctx, target, *storage);
       return {ReindexAction::Rebuild, 0, 0, 0,
               static_cast<int64_t>(src->files.size())};
     }

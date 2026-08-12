@@ -37,7 +37,6 @@
 #include <duckdb/parser/expression/lambda_expression.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/storage/data_table.hpp>
-#include <iresearch/search/all_filter.hpp>
 
 #include "basics/assert.h"
 #include "basics/debugging.h"
@@ -114,17 +113,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::shared_ptr<search::InvertedIndexStorage> index_storage;
   std::shared_ptr<const catalog::Snapshot> snapshot_for_providers;
   std::shared_ptr<catalog::Index> index_for_providers;
-
-  // A reindex pass's per-thread transactions, parked UNCOMMITTED by
-  // Combine (slot per local sink, like uncommitted_min_rowids): Finalize
-  // commits them above the driver's removes -- one publish, and a died
-  // pass never committed anything.
-  std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> pass_trxs;
-  std::atomic<size_t> parked_trxs{0};
-  // The removes' tick, reserved BEFORE the pass pulls any doc tick (a
-  // rotation mid-pass pulls real ticks): a rescan reuses the removed
-  // file ids, so the removes must sit below every pass doc.
-  uint64_t removes_tick = 0;
 
   pg::ProgressMetrics* progress = nullptr;
 
@@ -291,8 +279,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->created = true;
     state->finalized = true;
     state->index_storage = target->GetData();
-    state->pass_trxs.resize(
-      duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
     state->pk_term = target->GetOptions().pk_term;
     state->pk_column = target->GetOptions().pk_column;
     state->generated_pk_type = Info().generated_pk_type;
@@ -301,13 +287,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         ? PkShape::Struct
         : PkShape::Single;
     state->file_manifest = Info().manifest;
-    const uint64_t remove_queries = (IsRebuildPass() ? 1 : 0) +
-                                    (Info().file_removes ? 1 : 0) +
-                                    (Info().mask_removes ? 1 : 0);
-    if (remove_queries) {
-      state->removes_tick =
-        search::TickDomain::Instance().Advance(remove_queries + 1);
-    }
     return finish_state(std::move(snapshot), std::move(target));
   }
 
@@ -761,10 +740,15 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
     pk.keys = key_views;
   }
-  // Reindex passes never auto-commit: their transactions stash whole and
-  // commit at Finalize.
+  // View-backed indexes tick on the domain for EVERYTHING (create docs,
+  // pass docs, removes, eq deletes): one clock, every commit above all
+  // prior ones. Table-backed creates keep the writer's private plateau so
+  // concurrent DML removes always apply over the backfill.
+  const auto flush_commit_tick =
+    TableOrNull() ? irs::writer_limits::kMaxTick
+                  : search::TickDomain::Instance().Advance(1);
   bool committed = false;
-  writer->InitImpl(num_rows, pk, IsReindexPass() ? nullptr : &committed);
+  writer->InitImpl(num_rows, pk, &committed, flush_commit_tick);
 
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
@@ -811,20 +795,15 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   duckdb::OperatorSinkCombineInput& input) const {
   if (auto* lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state)) {
     lstate->writer.reset();
-    if (IsReindexPass()) {
-      // Park this thread's transaction UNCOMMITTED; Finalize commits them
-      // all above the removes.
-      auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
-      const auto slot =
-        gstate.parked_trxs.fetch_add(1, std::memory_order_relaxed);
-      SDB_ASSERT(slot < gstate.pass_trxs.size());
-      gstate.pass_trxs[slot] = std::move(lstate->search_trx);
-      return duckdb::SinkCombineResultType::FINISHED;
-    }
     // Flush this thread's tail segment here (in parallel Combines) rather than
     // leaving it for the single-threaded Finalize refresh to write.
     const bool committed =
-      lstate->search_trx ? lstate->search_trx->FlushAndCommit() : false;
+      lstate->search_trx
+        ? (TableOrNull()
+             ? lstate->search_trx->FlushAndCommit()
+             : lstate->search_trx->FlushAndCommit(
+                 search::TickDomain::Instance().Advance(1)))
+        : false;
     lstate->search_trx.reset();
     if (committed) {
       // The final commit went through: nothing pending here anymore, drop
@@ -877,55 +856,10 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
                   gstate.index_name, "'"));
       }
     }
-    SDB_IF_FAILURE("crash_before_rebuild_publish") {
-      if (IsRebuildPass()) {
-        SDB_IMMEDIATE_ABORT();
-      }
-    }
-    SDB_IF_FAILURE("crash_before_delta_publish") {
-      if (IsDeltaPass()) {
-        SDB_IMMEDIATE_ABORT();
-      }
-    }
-    if (IsReindexPass()) {
-      const auto& info = Info();
-      auto trx = inverted_storage.GetTransaction();
-      if (IsRebuildPass()) {
-        trx.Remove(std::make_shared<irs::All>());
-      }
-      if (info.file_removes) {
-        trx.Remove(info.file_removes);
-      }
-      if (info.mask_removes) {
-        trx.Remove(info.mask_removes);
-      }
-      if (trx.GetQueries()) {
-        SDB_ASSERT(gstate.removes_tick);
-      }
-      if (trx.GetQueries() && !trx.Commit(gstate.removes_tick)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                        ERR_MSG("REINDEX of '", gstate.index_name,
-                                "': failed to commit the removes"));
-      }
-      for (auto& pass_trx : gstate.pass_trxs) {
-        if (pass_trx &&
-            !pass_trx->Commit(search::TickDomain::Instance().Advance(1))) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                          ERR_MSG("REINDEX of '", gstate.index_name,
-                                  "': failed to commit a pass transaction"));
-        }
-      }
-      gstate.pass_trxs.clear();
-    }
     if (gstate.file_manifest) {
       inverted_storage.SetFileManifest(gstate.file_manifest);
     }
     inverted_storage.Refresh();
-    SDB_IF_FAILURE("crash_after_rebuild_publish") {
-      if (IsRebuildPass()) {
-        SDB_IMMEDIATE_ABORT();
-      }
-    }
     SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
     inverted_storage.FinishCreation();
   }

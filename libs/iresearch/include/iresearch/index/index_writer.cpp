@@ -714,7 +714,8 @@ void IndexWriter::Transaction::Abort() noexcept {
 }
 
 void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
-                                             bool* commit_on_flush) {
+                                             bool* commit_on_flush,
+                                             uint64_t flush_commit_tick) {
   SDB_ASSERT(Valid());
   while (_active.Segment() == nullptr) {  // lazy init
     _active = _writer->GetSegmentContext();
@@ -762,12 +763,13 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
     }
     if (commit_on_flush) {
       SDB_ASSERT(_queries == 0);
-      if (!Commit()) {
+      if (flush_commit_tick == writer_limits::kMaxTick ? !Commit()
+                                                       : !Commit(flush_commit_tick)) {
         throw IllegalState{"commit-on-flush failed"};
       }
       *commit_on_flush = true;
       SDB_WAIT_ON_FAILURE("pause_create_index_between_batches");
-      UpdateSegment(disable_flush, commit_on_flush);
+      UpdateSegment(disable_flush, commit_on_flush, flush_commit_tick);
       return;
     }
   }

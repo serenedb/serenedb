@@ -36,7 +36,6 @@
 namespace sdb::connector {
 
 class SereneDBSchemaEntry;
-class SearchRemovePrefixFilter;
 
 struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
   SereneDBCreateIndexInfo() = default;
@@ -56,11 +55,6 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
   uint64_t delta_file_base = 0;
 
   std::shared_ptr<const search::FileManifest> manifest;
-
-  // Delta's kind 1/2 removes, applied at Finalize atomically with the
-  // imported docs.
-  std::shared_ptr<SearchRemovePrefixFilter> file_removes;
-  std::shared_ptr<SearchRemovePrefixFilter> mask_removes;
 
   std::optional<catalog::PkSpec> fast_path_pk_spec;
   duckdb::LogicalType generated_pk_type;
@@ -88,8 +82,6 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
     result->delta_files = delta_files;
     result->delta_file_base = delta_file_base;
     result->manifest = manifest;
-    result->file_removes = file_removes;
-    result->mask_removes = mask_removes;
     result->fast_path_pk_spec = fast_path_pk_spec;
     result->generated_pk_type = generated_pk_type;
     result->kept_positions = kept_positions;
@@ -109,11 +101,11 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
 //   On error:           destructor drops the index (rollback)
 //
 // REINDEX passes (`SereneDBCreateIndexInfo::Pass()`) fill the EXISTING
-// index: no catalog object is touched, the per-thread transactions park
-// UNCOMMITTED at Combine, and Finalize commits everything -- the removes
-// (all docs for a rebuild, the statement's kind 1/2 for a delta) below the
-// pass's batches -- into ONE publish with the new manifest. A died pass
-// never committed anything, and the version mismatch relaunches.
+// index like a plain CREATE INDEX: no catalog object is touched, the
+// driver commits the removes before the pass, the sinks commit their
+// docs above them (domain ticks), and Finalize publishes the new
+// manifest. A died pass leaves the version mismatched, so the next tick
+// relaunches.
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:
   // `relation` is the SereneDB-catalog object the index is built on: either

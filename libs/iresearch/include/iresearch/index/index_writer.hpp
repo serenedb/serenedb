@@ -393,8 +393,9 @@ class IndexWriter : private util::Noncopyable {
     // The changes are not visible until commit()
     // Transaction should be valid
     Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
-                    bool* commit_on_flush = nullptr) {
-      UpdateSegment(disable_flush, commit_on_flush);
+                    bool* commit_on_flush = nullptr,
+                    uint64_t flush_commit_tick = writer_limits::kMaxTick) {
+      UpdateSegment(disable_flush, commit_on_flush, flush_commit_tick);
       return {*_active.Segment(), SegmentWriter::DocContext{_queries},
               batch_size};
     }
@@ -467,6 +468,13 @@ class IndexWriter : private util::Noncopyable {
       return Commit();
     }
 
+    bool FlushAndCommit(uint64_t tick) noexcept {
+      if (auto* segment = _active.Segment()) {
+        segment->Flush();
+      }
+      return Commit(tick);
+    }
+
     bool Commit(uint64_t last_tick) noexcept {
       auto* segment = _active.Segment();
       if (segment == nullptr) {
@@ -509,7 +517,8 @@ class IndexWriter : private util::Noncopyable {
     // refresh segment if required (guarded by FlushContext::context_mutex_)
     // is is thread-safe to use ctx_/segment_ while holding 'flush_context_ptr'
     // since active 'flush_context' will not change and hence no reload required
-    void UpdateSegment(bool disable_flush, bool* commit_on_flush);
+    void UpdateSegment(bool disable_flush, bool* commit_on_flush,
+                       uint64_t flush_commit_tick = writer_limits::kMaxTick);
 
     IndexWriter* _writer{nullptr};
     // the segment_context used for storing changes (lazy-initialized)

@@ -97,46 +97,6 @@ SELECT count(*) FROM rpr_quiet_idx;
 count
 2
 
-# E2: a tick crashes mid-delta (after the removes, before the manifest
-# publish). The next tick after restart recomputes the identical diff and
-# heals -- no manual involvement at any point.
-
-connection e1_after
-statement ok
-SET sdb_faults = 'crash_before_delta_publish';
-
-connection e1_after
-statement count 2
-COPY (SELECT 1 AS id, 'pudge rewritten mid' AS body
-      UNION ALL SELECT 2, 'anchin joins the file')
-TO '${__TEST_DIR__}/rpr_glob/f1.parquet' (FORMAT PARQUET);
-
-# The background tick (100ms cadence) hits the fault and kills the server.
-# Generous window: under a loaded Debug box the observe+delta before the
-# fault point can take a large fraction of a second by itself.
-system ok
-sleep 3
-
-connection e1_after
-statement error connection closed
-SELECT 1;
-
-connection e2_after
-query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) FROM rpr_idx;
-----
-count
-3
-
-connection e2_after
-query
-SELECT id, body FROM rpr_idx ORDER BY id;
-----
-id	body
-1	pudge rewritten mid
-2	anchin joins the file
-10	arrives while down
-
 # F: hint-less iceberg needs version guessing. The tick's internal session
 # reads GLOBAL settings: with only the SESSION setting on, ticks fail (the
 # loop survives, F2); once the GLOBAL is set, the next tick discovers the

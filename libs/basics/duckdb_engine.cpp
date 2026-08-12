@@ -88,6 +88,11 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
   // rejects them as unrecognized
   duckdb::DBConfig::GetConfig(*_db->instance)
     .SetOptionByName("httpfs_connection_caching", duckdb::Value::BOOLEAN(true));
+  // Attached iceberg tables read CURRENT metadata: the default txn-start
+  // time travel errors out any catalog enumeration that walks a table
+  // created after the reader's transaction began.
+  duckdb::DBConfig::GetConfig(*_db->instance)
+    .SetOptionByName("iceberg_use_metadata_log", duckdb::Value::BOOLEAN(false));
 
   auto& manager = _db->instance->GetLogManager();
 

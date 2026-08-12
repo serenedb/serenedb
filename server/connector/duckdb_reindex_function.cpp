@@ -171,6 +171,7 @@ class PassConnection {
         nullptr)} {
     SereneDBClientState::Register(*_conn.context, _ctx);
     _conn.context->session_user = caller.user();
+    _conn.context->config.user_settings = context.config.user_settings;
   }
   ~PassConnection() {
     _ctx->ConsumeNotices(

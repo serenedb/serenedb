@@ -143,27 +143,9 @@ SELECT count(*) FROM rpr_ice_idx;
 count
 3
 
-# A manual session REINDEX is NOT enough for a scan delta: the pass runs
-# on an internal connection that reads GLOBAL settings only (one rule with
-# the tick), and this snapshot's global delete forces a rescan pass.
-connection e2_after
-statement error version-hint
-CALL serenedb_reindex('rpr_ice_idx');
-
-connection e2_after
-query
-SELECT count(*) FROM rpr_ice_idx;
-----
-count
-3
-
-# ...and F1: with the GLOBAL set, the manual run lands v2 and the loop
-# handles the next snapshot by itself (v3 = the equality delete +
-# same-snapshot re-insert).
-connection e2_after
-statement ok
-SET GLOBAL unsafe_enable_version_guessing TO true;
-
+# A manual REINDEX runs its passes with the CALLER's session settings, so
+# the session-scope guessing is enough to land v2 -- unlike the tick, which
+# has no caller and stays gated on the GLOBAL.
 connection e2_after
 statement ok
 CALL serenedb_reindex('rpr_ice_idx');
@@ -174,6 +156,12 @@ SELECT count(*) FROM rpr_ice_idx;
 ----
 count
 2
+
+# ...and F1: with the GLOBAL set, the loop handles the next snapshot by
+# itself (v3 = the equality delete + same-snapshot re-insert).
+connection e2_after
+statement ok
+SET GLOBAL unsafe_enable_version_guessing TO true;
 
 connection e2_after
 system ok

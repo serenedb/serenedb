@@ -23,7 +23,7 @@ statement ok
 SET s3_use_ssl=false;
 
 statement ok
-SET GLOBAL unsafe_enable_version_guessing=true;
+SET unsafe_enable_version_guessing=true;
 
 statement ok
 DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};

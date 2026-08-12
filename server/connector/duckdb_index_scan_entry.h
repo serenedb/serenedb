@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
@@ -108,8 +110,8 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
  public:
   ViewInvertedIndexScanEntry(
-    duckdb::ClientContext& context, duckdb::Catalog& catalog,
-    duckdb::SchemaCatalogEntry& schema, duckdb::CreateTableInfo& info,
+    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+    duckdb::CreateTableInfo& info,
     std::shared_ptr<const catalog::PgSqlView> sdb_view,
     std::vector<size_t> indexed_col_indices,
     std::shared_ptr<const catalog::InvertedIndex> inverted_index);
@@ -128,11 +130,13 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
   duckdb::column_t RowIdentityColumnId() const final;
 
  private:
+  std::optional<ViewFastPath> EnsureFastPath(
+    duckdb::ClientContext& context) const;
+
   std::shared_ptr<const catalog::PgSqlView> _sdb_view;
-  // Resolved once at construction (a parse-tree walk plus catalog entry
-  // lookups -- the source bind happens at scan time) and immutable after:
-  // GetVirtualColumns types generated_pk from it, GetScanFunction reuses it.
-  std::optional<ViewFastPath> _fast_path;
+  // TODO: remove after catalog rewrite
+  mutable absl::Mutex _fast_path_lock;
+  mutable std::optional<ViewFastPath> _fast_path;
 };
 
 class SecondaryIndexScanEntry : public SereneDBIndexScanEntry {

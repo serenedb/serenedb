@@ -172,8 +172,8 @@ duckdb::virtual_column_map_t TableInvertedIndexScanEntry::GetVirtualColumns()
 }
 
 ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
-  duckdb::ClientContext& context, duckdb::Catalog& catalog,
-  duckdb::SchemaCatalogEntry& schema, duckdb::CreateTableInfo& info,
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info,
   std::shared_ptr<const catalog::PgSqlView> sdb_view,
   std::vector<size_t> indexed_col_indices,
   std::shared_ptr<const catalog::InvertedIndex> inverted_index)
@@ -183,8 +183,26 @@ ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
     _sdb_view(std::move(sdb_view)) {
   SDB_ASSERT(_sdb_view);
   _relation = _sdb_view.get();
-  _fast_path = ResolveViewFastPath(context, *_sdb_view,
-                                   _inverted_index->GetOptions().key_columns);
+}
+
+std::optional<ViewFastPath> ViewInvertedIndexScanEntry::EnsureFastPath(
+  duckdb::ClientContext& context) const {
+  {
+    absl::MutexLock lock{&_fast_path_lock};
+    if (_fast_path) {
+      return _fast_path;
+    }
+  }
+  auto fp = ResolveViewFastPath(context, *_sdb_view,
+                                _inverted_index->GetOptions().key_columns);
+  if (!fp) {
+    return std::nullopt;
+  }
+  absl::MutexLock lock{&_fast_path_lock};
+  if (!_fast_path) {
+    _fast_path = std::move(fp);
+  }
+  return _fast_path;
 }
 
 duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
@@ -204,7 +222,7 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
   data->table_entry = this;
   data->entry_kind = ScanEntryKind::InvertedIndex;
   data->inverted_index = _inverted_index;
-  data->fast_path = _fast_path;
+  data->fast_path = EnsureFastPath(context);
   if (data->fast_path) {
     data->lookup_label = FormatLookupLabel(*data->fast_path);
     data->lookup_supports_filters = data->fast_path->supports_filters;
@@ -248,11 +266,16 @@ duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
                  duckdb::TableColumn{"tableoid", duckdb::LogicalType::BIGINT});
   result.emplace(duckdb::COLUMN_IDENTIFIER_EMPTY,
                  duckdb::TableColumn{"", duckdb::LogicalType::BOOLEAN});
-  if (_fast_path &&
-      _inverted_index->GetOptions().pk_column == catalog::PkColumnKind::Has) {
-    result.emplace(
-      kColumnIdentifierGeneratedPk,
-      duckdb::TableColumn{"generated_pk", _fast_path->GeneratedPkType()});
+  if (_inverted_index->GetOptions().pk_column == catalog::PkColumnKind::Has) {
+    duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
+    {
+      absl::MutexLock lock{&_fast_path_lock};
+      if (_fast_path) {
+        pk_type = _fast_path->GeneratedPkType();
+      }
+    }
+    result.emplace(kColumnIdentifierGeneratedPk,
+                   duckdb::TableColumn{"generated_pk", std::move(pk_type)});
   }
   return result;
 }

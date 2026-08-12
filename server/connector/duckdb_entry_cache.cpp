@@ -378,8 +378,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
         return nullptr;
       }
       return duckdb::make_uniq<ViewInvertedIndexScanEntry>(
-        context, catalog, schema, *info, std::move(view),
-        std::move(indexed_col_indices), std::move(inverted_index_ptr));
+        catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
+        std::move(inverted_index_ptr));
     }
     // Plain (secondary) indexes on views no longer exist; CREATE INDEX
     // rejects them at bind time.
@@ -493,31 +493,24 @@ void DuckDBEntryCache::ScanEntries(
     if (missing.empty()) {
       return;
     }
-    // Build OUTSIDE the lock (like EnsureEntry): entry construction can
-    // re-enter the catalog -- a view index resolves its fast path through
-    // Catalog::GetEntry -> EnsureSchema -- and building under _lock
-    // deadlocks against itself.
-    std::vector<std::pair<const T*, CachedEntry>> built;
-    built.reserve(missing.size());
-    for (const auto* p : missing) {
-      auto b = BuildEntry(type, context, catalog, entry, database, schema,
-                          p->GetName(), snapshot);
-      if (b.entry) {
-        built.emplace_back(p, std::move(b));
-      }
-    }
-    if (built.empty()) {
-      return;
-    }
     std::unique_lock lock{_lock};
     auto& sc = _databases[database]
                  .schemas.try_emplace(schema, catalog, schema)
                  .first->second;
     auto& map = sc.MapForType(type);
-    for (auto& [p, b] : built) {
-      // A racing scan may have inserted meanwhile; its entry wins.
-      auto it = map.try_emplace(p->GetName(), std::move(b)).first;
-      if (ScanTypeAcceptsEntry(type, it->second.entry->type)) {
+    for (const auto* p : missing) {
+      auto it = map.try_emplace(p->GetName()).first;
+      irs::Finally drop_if_null = [&] noexcept {
+        if (!it->second.entry) {
+          map.erase(it);
+        }
+      };
+      if (!it->second.entry) {
+        it->second = BuildEntry(type, context, catalog, sc.entry, database,
+                                schema, p->GetName(), snapshot);
+      }
+      if (it->second.entry &&
+          ScanTypeAcceptsEntry(type, it->second.entry->type)) {
         callback(*it->second.entry);
       }
     }

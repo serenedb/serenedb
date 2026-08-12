@@ -134,6 +134,7 @@ POSTGRES_CONTAINER_NAME=""
 POSTGRES_LOG_FILE=""
 CLICKHOUSE_CONTAINER_NAME=""
 CLICKHOUSE_LOG_FILE=""
+CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:24.8"
 TEST_NETWORK=""
 cancel_pid=""
 
@@ -226,6 +227,33 @@ cleanup_clickhouse() {
 	if [[ -n "$CLICKHOUSE_CONTAINER_NAME" ]]; then
 		local name="$CLICKHOUSE_CONTAINER_NAME"
 		CLICKHOUSE_CONTAINER_NAME=""
+		# A container that died mid-suite is deregistered from docker's embedded
+		# DNS, so every later test fails its ATTACH in ~4ms with EAI_AGAIN
+		# ("Temporary failure in name resolution") -- a symptom that names neither
+		# clickhouse nor the death. Report the fate before discarding it.
+		local state
+		state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' \
+			"$name" 2>/dev/null | tr -d '\n')
+		[[ -n "$state" ]] || state="gone (container no longer exists)"
+		if [[ "$state" != running* ]]; then
+			echo "ERROR: clickhouse container did not survive the run ($state)." >&2
+			echo "       Tests after it died fail with 'Temporary failure in name resolution'." >&2
+			# The container carries no memory limit, so a host OOM kill reports
+			# oom=false and exit=137 (SIGKILL) is the only signature. dmesg is
+			# unreadable from inside the tests container (dmesg_restrict), so read
+			# the host ring buffer through a throwaway container holding CAP_SYSLOG.
+			# Reuses the clickhouse image, already pulled, so this never fetches.
+			local oom_lines
+			oom_lines=$(docker run --rm --cap-add SYSLOG --entrypoint dmesg \
+				"$CLICKHOUSE_IMAGE" 2>/dev/null |
+				grep -iE 'out of memory|oom[-_]kill' | tail -20)
+			if [[ -n "$oom_lines" ]]; then
+				echo "       Host OOM killer activity:" >&2
+				echo "$oom_lines" | sed 's/^/         /' >&2
+			else
+				echo "       No host OOM killer activity in dmesg." >&2
+			fi
+		fi
 		if [[ -n "$CLICKHOUSE_LOG_FILE" ]]; then
 			echo "Saving clickhouse logs to ${CLICKHOUSE_LOG_FILE}..."
 			docker logs "$name" >"${CLICKHOUSE_LOG_FILE}" 2>&1 || true
@@ -601,7 +629,7 @@ launch_clickhouse() {
 		--name "$CLICKHOUSE_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-e CLICKHOUSE_SKIP_USER_SETUP=1 \
-		clickhouse/clickhouse-server:24.8
+		"$CLICKHOUSE_IMAGE"
 
 	echo "Waiting for clickhouse to be ready..."
 	for i in $(seq 1 60); do

@@ -393,9 +393,8 @@ class IndexWriter : private util::Noncopyable {
     // The changes are not visible until commit()
     // Transaction should be valid
     Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
-                    bool* commit_on_flush = nullptr,
-                    uint64_t flush_commit_tick = writer_limits::kMaxTick) {
-      UpdateSegment(disable_flush, commit_on_flush, flush_commit_tick);
+                    bool* commit_on_flush = nullptr) {
+      UpdateSegment(disable_flush, commit_on_flush);
       return {*_active.Segment(), SegmentWriter::DocContext{_queries},
               batch_size};
     }
@@ -453,9 +452,22 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return true;
       }
+      if (_tick_source) {
+        // Reserve one extra tick so first_tick (= last - queries) lands
+        // strictly above every previously committed tick.
+        return CommitImpl(_tick_source(_queries + 1));
+      }
       const auto first_tick =
         _writer->_tick.fetch_add(_queries, std::memory_order_relaxed);
       return CommitImpl(first_tick + _queries);
+    }
+
+    // Every commit of this transaction (including the commit-on-flush road)
+    // reserves its ticks through `source` (called with the range size,
+    // returns the LAST tick of the reserved range) fresh at commit time,
+    // instead of the writer's private counter.
+    void SetTickSource(std::function<uint64_t(uint64_t)> source) noexcept {
+      _tick_source = std::move(source);
     }
 
     // Like Commit(), but writes the active segment in the calling thread first
@@ -517,8 +529,7 @@ class IndexWriter : private util::Noncopyable {
     // refresh segment if required (guarded by FlushContext::context_mutex_)
     // is is thread-safe to use ctx_/segment_ while holding 'flush_context_ptr'
     // since active 'flush_context' will not change and hence no reload required
-    void UpdateSegment(bool disable_flush, bool* commit_on_flush,
-                       uint64_t flush_commit_tick = writer_limits::kMaxTick);
+    void UpdateSegment(bool disable_flush, bool* commit_on_flush);
 
     IndexWriter* _writer{nullptr};
     // the segment_context used for storing changes (lazy-initialized)
@@ -526,6 +537,7 @@ class IndexWriter : private util::Noncopyable {
     // We can use active_.Segment()->queries_.size() for same purpose
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
+    std::function<uint64_t(uint64_t)> _tick_source;
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);

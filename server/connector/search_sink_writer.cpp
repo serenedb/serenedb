@@ -579,14 +579,12 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
-                                        bool* commit_on_flush,
-                                        uint64_t flush_commit_tick) {
+                                        bool* commit_on_flush) {
   SDB_ASSERT(batch_size > 0);
   if (_document) {
     _document.reset();
   }
-  _document.emplace(
-    _trx.Insert(false, batch_size, commit_on_flush, flush_commit_tick));
+  _document.emplace(_trx.Insert(false, batch_size, commit_on_flush));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
   // at the flushed segment while the terms land in the fresh one.

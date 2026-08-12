@@ -736,16 +736,16 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   // version only moves at the end, so the tick re-runs the delta.
   if (file_removes || mask_removes) {
     auto trx = storage.GetTransaction();
+    trx.SetTickSource([](uint64_t count) {
+      return search::TickDomain::Instance().Advance(count);
+    });
     if (file_removes) {
       trx.Remove(std::move(file_removes));
     }
     if (mask_removes) {
       trx.Remove(std::move(mask_removes));
     }
-    // Queries land in [commit - queries, commit): reserve one more tick
-    // so the lowest sits strictly above the last published tick.
-    if (!trx.Commit(
-          search::TickDomain::Instance().Advance(trx.GetQueries() + 1))) {
+    if (!trx.Commit()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("REINDEX delta of \"", target.name,
                               "\": failed to commit the removes"));
@@ -793,8 +793,11 @@ void RunFullRebuild(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
                     const ReindexTarget& target,
                     search::InvertedIndexStorage& storage) {
   auto trx = storage.GetTransaction();
+  trx.SetTickSource([](uint64_t count) {
+    return search::TickDomain::Instance().Advance(count);
+  });
   trx.Remove(std::make_shared<irs::All>());
-  if (!trx.Commit(search::TickDomain::Instance().Advance(2))) {
+  if (!trx.Commit()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("REINDEX of \"", target.name,
                             "\": failed to commit the remove-all"));

@@ -633,6 +633,15 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
     inverted_storage.GetTransaction());
   lstate->search_trx->SetFieldOptions(
     basics::downCast<const catalog::InvertedIndex>(gstate.index_for_providers));
+  if (!TableOrNull()) {
+    // View-backed indexes tick on the domain for EVERYTHING (create docs,
+    // pass docs, removes, eq deletes): one clock, every commit fresh and
+    // above all prior ones. Table-backed creates keep the writer's private
+    // plateau so concurrent DML removes always apply over the backfill.
+    lstate->search_trx->SetTickSource([](uint64_t count) {
+      return search::TickDomain::Instance().Advance(count);
+    });
+  }
 
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
@@ -740,15 +749,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
     pk.keys = key_views;
   }
-  // View-backed indexes tick on the domain for EVERYTHING (create docs,
-  // pass docs, removes, eq deletes): one clock, every commit above all
-  // prior ones. Table-backed creates keep the writer's private plateau so
-  // concurrent DML removes always apply over the backfill.
-  const auto flush_commit_tick =
-    TableOrNull() ? irs::writer_limits::kMaxTick
-                  : search::TickDomain::Instance().Advance(1);
   bool committed = false;
-  writer->InitImpl(num_rows, pk, &committed, flush_commit_tick);
+  writer->InitImpl(num_rows, pk, &committed);
 
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
@@ -798,12 +800,7 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
     // Flush this thread's tail segment here (in parallel Combines) rather than
     // leaving it for the single-threaded Finalize refresh to write.
     const bool committed =
-      lstate->search_trx
-        ? (TableOrNull()
-             ? lstate->search_trx->FlushAndCommit()
-             : lstate->search_trx->FlushAndCommit(
-                 search::TickDomain::Instance().Advance(1)))
-        : false;
+      lstate->search_trx ? lstate->search_trx->FlushAndCommit() : false;
     lstate->search_trx.reset();
     if (committed) {
       // The final commit went through: nothing pending here anymore, drop

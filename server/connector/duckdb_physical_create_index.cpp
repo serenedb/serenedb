@@ -742,8 +742,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
           auto& key = row_keys.emplace_back();
-          primary_key::AppendUnsigned(key,
-                                      files[file_fmt.sel->get_index(row)]);
+          primary_key::AppendUnsigned(key, files[file_fmt.sel->get_index(row)]);
           primary_key::AppendSigned(key, rows[row_fmt.sel->get_index(row)]);
           key_views.emplace_back(key);
         }

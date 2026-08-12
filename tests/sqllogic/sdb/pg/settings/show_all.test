@@ -277,7 +277,7 @@ s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 a
 s3_uploader_thread_limit	50	S3 Uploader global thread limit
 s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
 s3_url_style	vhost	S3 URL style
-s3_use_ssl	<slt:ignore>	S3 use SSL
+s3_use_ssl	on	S3 use SSL
 s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
 scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
@@ -613,7 +613,7 @@ s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 a
 s3_uploader_thread_limit	50	S3 Uploader global thread limit
 s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
 s3_url_style	vhost	S3 URL style
-s3_use_ssl	<slt:ignore>	S3 use SSL
+s3_use_ssl	on	S3 use SSL
 s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
 scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries

@@ -16,19 +16,6 @@ CREATE OR REPLACE SECRET minio_${__DATABASE__} (
   SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
 );
 
-# Background ticks run on an internal session: they read GLOBAL settings,
-# not this session's -- the endpoint config must be global for the loop to
-# reach the object store (the same contract as version guessing on
-# hint-less iceberg). The extended protocol runs statements inside an
-# implicit transaction where globals cannot be set; the simple-engine run
-# (always first on a shared server) plants the value for both.
-skipif pg-wire-extended
-statement ok
-SET GLOBAL s3_use_ssl=false;
-
-statement ok
-SET s3_use_ssl=false;
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY rvps3_en(
     template = 'text',

@@ -35,12 +35,6 @@ namespace sdb::server::query {
 // duckdb::DuckDB ctor.
 void ConfigureServerDBConfig(duckdb::DBConfig& config);
 
-// Server defaults for EXTENSION settings. These need the live instance
-// (extension options register at load, and the pre-construct validation
-// rejects them as unrecognized): a value stashes until its extension
-// autoloads; a session or global SET still wins.
-void ConfigureExtensionsConfig(duckdb::DatabaseInstance& db);
-
 // Post-construct fill on a live DatabaseInstance: every connector
 // function/cast/optimiser registration, the SereneDBCreateIndexPlan
 // index-type loop, the SereneDBCopyFileSystem subsystem install, and the

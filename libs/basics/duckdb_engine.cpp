@@ -84,6 +84,11 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
+  // Extension settings register at load, and the pre-construct validation
+  // rejects them as unrecognized
+  duckdb::DBConfig::GetConfig(*_db->instance)
+    .SetOptionByName("httpfs_connection_caching", duckdb::Value::BOOLEAN(true));
+
   auto& manager = _db->instance->GetLogManager();
 
   duckdb::LogConfig cfg;

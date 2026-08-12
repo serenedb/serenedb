@@ -340,4 +340,3 @@ DETACH DATABASE iceberg_${__DATABASE__};
 
 statement ok
 DROP PERSISTENT SECRET iceberg_${__DATABASE__};
-

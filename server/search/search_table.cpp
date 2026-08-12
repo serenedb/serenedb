@@ -175,37 +175,29 @@ class MergedFieldOptions final : public irs::IndexFieldOptions {
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final {
     const auto it = _entries->find(id);
     if (it == _entries->end()) {
-      return {};  // not a merged-config field -> writer baseline (non-zero rgs)
+      return {};  // not a merged-config field -> writer baseline
     }
     const auto& entry = it->second;
-    irs::ColumnOptions opts;
-    if (entry.row_group_size != 0) {
-      opts.row_group_size = entry.row_group_size;
-    }
-    opts.compression = entry.compression;
-    opts.hyperloglog = entry.hyperloglog;
-    // An IVF entry keys the merged config by its column id (the value column),
-    // not a per-index term field, so this attaches the ANN index to that
-    // column.
-    opts.ivf_info = catalog::IvfInfoForEntry(id, entry);
-    return opts;
+    return {
+      .compression = entry.compression,
+      // An IVF entry keys the merged config by its column id (the value
+      // column), not a per-index term field, so this attaches the ANN index to
+      // that column.
+      .ivf_info = catalog::IvfInfoForEntry(id, entry),
+      .hyperloglog = entry.hyperloglog,
+    };
   }
 
-  irs::NormColumnOptions GetNormColumnOptions(irs::field_id id) const final {
+  irs::field_id GetNormColumnId(irs::field_id id) const final {
     const auto it = _entries->find(id);
     SDB_ASSERT(it != _entries->end(),
-               "MergedFieldOptions::GetNormColumnOptions: unknown id ", id);
+               "MergedFieldOptions::GetNormColumnId: unknown id ", id);
     const auto& entry = it->second;
     SDB_ASSERT(irs::field_limits::valid(entry.synthetic_column),
-               "MergedFieldOptions::GetNormColumnOptions: no norm reservation "
-               "for id ",
+               "MergedFieldOptions::GetNormColumnId: no norm reservation for "
+               "id ",
                id);
-    irs::NormColumnOptions opts;
-    opts.id = entry.synthetic_column;
-    if (entry.norm_row_group_size != 0) {
-      opts.row_group_size = entry.norm_row_group_size;
-    }
-    return opts;
+    return entry.synthetic_column;
   }
 
  private:

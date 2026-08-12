@@ -491,6 +491,9 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildEqWhere(
     }
     auto values_ref = duckdb::make_uniq<duckdb::ColumnDataRef>(
       std::move(collection), std::move(names));
+    // The subquery's star expansion qualifies columns by the binding alias;
+    // an anonymous ref has none and the binder throws.
+    values_ref->alias = duckdb::Identifier{"eq_delete_rows"};
     auto select_node = duckdb::make_uniq<duckdb::SelectNode>();
     select_node->select_list.push_back(
       duckdb::make_uniq<duckdb::StarExpression>());
@@ -870,7 +873,7 @@ ReindexOutcome RunReindex(duckdb::ClientContext& context,
     // manifest version). Most periodic ticks land here.
     return {ReindexAction::UpToDate, 0, 0, 0, 0};
   }
-  src->files = src->list->GetAllFiles();
+  src->files = ListSourceFiles(*src->list);
   if (src->iceberg_list) {
     if (manifest->version && src->version &&
         !SnapshotIsAncestor(*src->iceberg_list, manifest->version)) {

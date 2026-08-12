@@ -902,34 +902,47 @@ namespace {
 
 // A delta pass keeps the leaf's FULL file list (iceberg keeps its delete
 // state) and narrows the scan with a pushed `file_index IN (...)` filter:
-// the reader skips every other file pre-open. A scan file's manifest id is
-// `delta_file_base + listing ordinal`, so the pk projection is plain
-// `file_index + base`. If the listing moved between the tick's diff and
-// this bind (ordinal mismatch), the pass aborts and the next tick retries
-// on the fresh listing.
+// the reader skips every other file pre-open. The listing order is not
+// bind-stable (iceberg manifests can enumerate differently), so the delta
+// entries' manifest ids are re-stamped here to `base + ordinal` of THIS
+// listing -- the pk projection `file_index + base` then matches by
+// construction. A delta path missing from the listing means the source
+// moved since the tick's diff: abort, the next tick retries.
 duckdb::vector<duckdb::Value> ComputeDeltaOrdinals(
-  duckdb::MultiFileBindData& mfbd, const SereneDBCreateIndexInfo& info) {
+  duckdb::MultiFileBindData& mfbd, SereneDBCreateIndexInfo& info) {
   containers::FlatHashMap<std::string_view, uint64_t> id_by_path;
   id_by_path.reserve(info.manifest->entries.size());
   for (const auto& [id, entry] : info.manifest->entries) {
     id_by_path.emplace(entry.path, id);
   }
-  const auto files = mfbd.file_list->GetAllFiles();
+  const auto files = ListSourceFiles(*mfbd.file_list);
   duckdb::vector<duckdb::Value> ordinals;
   ordinals.reserve(info.delta_files.size());
+  auto manifest = std::make_shared<search::FileManifest>(*info.manifest);
+  std::vector<search::FileManifestEntry> delta_entries;
+  delta_entries.reserve(info.delta_files.size());
   for (uint64_t i = 0; i < files.size(); ++i) {
     const auto it = id_by_path.find(files[i].path);
     if (it == id_by_path.end() || it->second < info.delta_file_base) {
       continue;
     }
-    if (it->second != info.delta_file_base + i) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OBJECT_IN_USE),
-        ERR_MSG("REINDEX delta: the source listing moved during the pass; "
-                "retried on the next tick"));
-    }
+    auto node = manifest->entries.extract(it->second);
+    SDB_ASSERT(!node.empty());
+    node.mapped().file_id = info.delta_file_base + i;
+    delta_entries.push_back(std::move(node.mapped()));
     ordinals.push_back(duckdb::Value::UBIGINT(i));
   }
+  if (ordinals.size() != info.delta_files.size()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("REINDEX delta: the source listing moved during the pass; "
+              "retried on the next tick"));
+  }
+  for (auto& entry : delta_entries) {
+    const auto id = entry.file_id;
+    manifest->entries.insert_or_assign(id, std::move(entry));
+  }
+  info.manifest = std::move(manifest);
   // First-file stats don't describe the narrowed scan; without this the
   // optimizer folds partial-index predicates from them.
   mfbd.initial_reader.reset();

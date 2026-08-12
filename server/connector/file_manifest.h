@@ -126,6 +126,9 @@ void FillFileIdentity(duckdb::ClientContext& context,
                       const duckdb::OpenFileInfo& file,
                       search::FileManifestEntry& entry);
 
+duckdb::vector<duckdb::OpenFileInfo> ListSourceFiles(
+  const duckdb::MultiFileList& list);
+
 search::FileManifest CaptureManifest(duckdb::ClientContext& context,
                                      duckdb::MultiFileBindData& bind);
 

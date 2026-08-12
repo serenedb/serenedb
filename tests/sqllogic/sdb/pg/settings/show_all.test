@@ -277,7 +277,7 @@ s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 a
 s3_uploader_thread_limit	50	S3 Uploader global thread limit
 s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
 s3_url_style	vhost	S3 URL style
-s3_use_ssl	on	S3 use SSL
+s3_use_ssl	<slt:ignore>	S3 use SSL
 s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
 scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
@@ -312,7 +312,7 @@ threads	<slt:ignore>	The number of total threads used by the system.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
-unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
+unsafe_enable_version_guessing	<slt:ignore>	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 unsafe_iceberg_ignore_sort_order	off	Allow INSERT/UPDATE on iceberg tables that declare a sort order, without applying that sort order to the written data. The Iceberg spec permits this (writers are not required to honour a declared sort order, and readers do not assume files are sorted), but skipping the sort may reduce later file-pruning effectiveness and compression.
 user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
@@ -613,7 +613,7 @@ s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 a
 s3_uploader_thread_limit	50	S3 Uploader global thread limit
 s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
 s3_url_style	vhost	S3 URL style
-s3_use_ssl	on	S3 use SSL
+s3_use_ssl	<slt:ignore>	S3 use SSL
 s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
 scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
@@ -648,7 +648,7 @@ threads	<slt:ignore>	The number of total threads used by the system.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*'])
 transaction_isolation	read committed	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
-unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
+unsafe_enable_version_guessing	<slt:ignore>	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 unsafe_iceberg_ignore_sort_order	off	Allow INSERT/UPDATE on iceberg tables that declare a sort order, without applying that sort order to the written data. The Iceberg spec permits this (writers are not required to honour a declared sort order, and readers do not assume files are sorted), but skipping the sort may reduce later file-pruning effectiveness and compression.
 user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 username	<slt:ignore>	The username to use. Ignored for legacy compatibility.

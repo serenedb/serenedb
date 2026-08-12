@@ -212,9 +212,20 @@ void FillFileIdentity(duckdb::ClientContext& context,
   }
 }
 
+duckdb::vector<duckdb::OpenFileInfo> ListSourceFiles(
+  const duckdb::MultiFileList& list) {
+  // Files() drives the lazy expansion; GetAllFiles returns only the
+  // already-expanded prefix (a fresh iceberg bind stops at two files).
+  duckdb::vector<duckdb::OpenFileInfo> files;
+  for (const auto& file : list.Files()) {
+    files.push_back(file);
+  }
+  return files;
+}
+
 search::FileManifest CaptureManifest(duckdb::ClientContext& context,
                                      duckdb::MultiFileBindData& bind) {
-  auto files = bind.file_list->GetAllFiles();
+  auto files = ListSourceFiles(*bind.file_list);
   search::FileManifest manifest;
   manifest.entries.reserve(files.size());
   auto* iceberg_list =

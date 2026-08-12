@@ -35,7 +35,7 @@ namespace irs {
 namespace {
 
 // Represents an iterator with no documents
-struct EmptyDocIterator : ResettableDocIterator {
+struct EmptyDocIterator : DocIterator {
   EmptyDocIterator() { _doc = doc_limits::eof(); }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -51,8 +51,6 @@ struct EmptyDocIterator : ResettableDocIterator {
   doc_id_t LazySeek(doc_id_t /*target*/) noexcept final {
     return doc_limits::eof();
   }
-
-  void reset() noexcept final {}
 
   uint32_t count() final { return 0; }
 
@@ -90,8 +88,6 @@ struct EmptySeekTermIterator : SeekTermIterator {
     return DocIterator::empty();
   }
 
-  void read() noexcept final {}
-
   bool next() noexcept final { return false; }
 
   Attribute* GetMutable(TypeInfo::type_id /*type*/) noexcept final {
@@ -104,7 +100,7 @@ struct EmptySeekTermIterator : SeekTermIterator {
 
   bool seek(bytes_view /*value*/) noexcept final { return false; }
 
-  SeekCookie::ptr cookie() const noexcept final { return nullptr; }
+  const PostingMeta& cookie() const noexcept final { return kNoPosting; }
 };
 
 EmptySeekTermIterator gEmptySeekIterator;

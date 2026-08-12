@@ -57,8 +57,8 @@ IRS_FORCE_INLINE void IndriImpl(
   score_t const_boost) noexcept {
   // mu_p = mu * collection_prob
   for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = static_cast<score_t>(freq[i]);
-    const score_t dl = static_cast<score_t>(norm[i]);
+    const score_t tf = TermCountToScore(freq[i]);
+    const score_t dl = TermCountToScore(norm[i]);
     score_t r = std::log((tf + mu_p) / (dl + mu));
     if constexpr (HasBoost) {
       r *= const_boost * boost[i];

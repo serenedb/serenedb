@@ -52,8 +52,7 @@ IndexInput::ptr OpenAndCheckHeader(const Directory& dir,
   if (!in) {
     throw IoError{absl::StrCat("Failed to open index file, path: ", filename)};
   }
-  format_utils::CheckHeader(*in, kIdxFormatName, kIdxFormatVersion,
-                            kIdxFormatVersion);
+  format_utils::CheckHeader(*in, kIdxFormatName, kIdxFormatVersion);
   return in;
 }
 
@@ -133,7 +132,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         meta.doc_count = obj.ReadProperty<uint64_t>(3, "doc_count");
         meta.total_doc_freq = obj.ReadProperty<uint64_t>(4, "total_doc_freq");
         meta.total_term_freq = obj.ReadProperty<uint64_t>(5, "total_term_freq");
-        meta.has_wand = obj.ReadProperty<bool>(6, "has_wand");
+        meta.has_score_bounds = obj.ReadProperty<bool>(6, "has_score_bounds");
         meta.body_offset = obj.ReadProperty<uint64_t>(7, "body_offset");
         meta.norm = obj.ReadProperty<uint64_t>(8, "norm");
         _impl->term_dicts.emplace_back(id, std::move(meta));

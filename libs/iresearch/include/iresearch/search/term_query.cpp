@@ -23,7 +23,6 @@
 #include "term_query.hpp"
 
 #include "basics/memory.hpp"
-#include "iresearch/formats/formats_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
@@ -31,20 +30,19 @@
 
 namespace irs {
 
-TermQuery::TermQuery(const SubReader& segment, TermState&& state, score_t boost)
-  : QueryBuilder{segment}, _state{std::move(state)}, _boost{boost} {}
+TermQuery::TermQuery(const SubReader& segment, const TermReader* reader,
+                     const PostingMeta& cookie, score_t boost)
+  : QueryBuilder{segment}, _state{reader, cookie}, _boost{boost} {}
 
 DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx,
                                     const StatsBuffer& stats) const {
   const auto& segment = _segment;
 
-  if (!_state.cookie) [[unlikely]] {  // Invalid state
+  if (_state.cookie.docs_count == 0) [[unlikely]] {
     return DocIterator::empty();
   }
 
-  if (!stats.HasScorer() &&
-      segment.docs_count() ==
-        sdb::basics::downCast<CookieImpl>(*_state.cookie).meta.docs_count)
+  if (!stats.HasScorer() && segment.docs_count() == _state.cookie.docs_count)
     [[unlikely]] {
     return memory::make_managed<AllIterator>(segment.docs_count(), nullptr,
                                              kNoBoost);
@@ -57,12 +55,12 @@ DocIterator::ptr TermQuery::Execute(const ExecutionContext& ctx,
   const auto features = GetFeatures(stats.GetScorer());
   auto it = reader->Iterator(features,
                              {
-                               .cookie = _state.cookie.get(),
+                               .cookie = &_state.cookie,
                                .stats = stats.GetStats().data(),
                                .boost = _boost,
                                .field = reader->meta(),
                              },
-                             ctx.wand);
+                             ctx.score_prune && stats.HasScorer());
   if (!it) {
     return DocIterator::empty();
   }

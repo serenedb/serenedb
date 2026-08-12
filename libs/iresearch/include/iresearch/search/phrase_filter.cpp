@@ -42,6 +42,8 @@
 #include "iresearch/search/top_terms_selector.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
 #include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/regexp_utils.hpp"
+#include "iresearch/utils/wildcard_utils.hpp"
 #include "pg/sql_exception_macro.h"
 
 namespace irs {
@@ -89,7 +91,7 @@ struct TopTermsVisitor final : FilterVisitor {
   explicit TopTermsVisitor(size_t size) : _impl{size} { SDB_ASSERT(size); }
 
   void Prepare(const SubReader& segment, const TermReader& field,
-               SeekTermIterator& terms) final {
+               TermIterator& terms) final {
     _impl.Prepare(segment, field, terms);
   }
 
@@ -168,7 +170,7 @@ class PhraseTermVisitor final : public FilterVisitor,
     : _phrase_states(phrase_states) {}
 
   void Prepare(const SubReader& segment, const TermReader& field,
-               SeekTermIterator& terms) noexcept final {
+               TermIterator& terms) noexcept final {
     _segment = &segment;
     _reader = &field;
     _terms = &terms;
@@ -177,17 +179,18 @@ class PhraseTermVisitor final : public FilterVisitor,
 
   bool Visit(score_t boost) final {
     SDB_ASSERT(_terms && _segment && _reader);
-    _terms->read();
 
     // disallow negative boost
     boost = std::max(0.f, boost);
+
+    const auto& meta = _terms->cookie();
 
     // Only if it has scorer
     if (_part) {
       if (_term_offset >= _part->size()) {
         _part->emplace_back();
       }
-      (*_part)[_term_offset].Collect(*_terms);
+      (*_part)[_term_offset].Collect(meta);
       ++_term_offset;
       _volatile_boost |= (boost != kNoBoost);
     }
@@ -196,7 +199,7 @@ class PhraseTermVisitor final : public FilterVisitor,
       const auto term = _terms->value();
       _visited_terms->emplace_back(term.data(), term.size());
     }
-    _phrase_states.emplace_back(_terms->cookie(), boost);
+    _phrase_states.emplace_back(meta, boost);
     return true;
   }
 
@@ -221,7 +224,7 @@ class PhraseTermVisitor final : public FilterVisitor,
   PhraseStates& _phrase_states;
   std::vector<TermCollector>* _part = nullptr;
   std::vector<bstring>* _visited_terms = nullptr;
-  SeekTermIterator* _terms = nullptr;
+  TermIterator* _terms = nullptr;
   size_t _term_offset = 0;
   bool _found = false;
   bool _volatile_boost = false;
@@ -566,9 +569,9 @@ bool ByPhraseOptions::LowerParts() {
           opts.term = term;
           return opts;
         },
-        [lim](bytes_view term) -> phrase_part {
+        [lim](bytes_view prefix) -> phrase_part {
           ByPrefixOptions opts;
-          opts.term = term;
+          opts.term = prefix;
           opts.scored_terms_limit = lim;
           return opts;
         },

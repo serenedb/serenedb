@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -41,7 +42,7 @@ struct TermBoost : Attribute {
 class WrappedTermIterator : public TermIterator {
  public:
   bytes_view value() const noexcept final { return _impl->value(); }
-  void read() final { _impl->read(); }
+  const PostingMeta& cookie() const final { return _impl->cookie(); }
   DocIterator::ptr postings(IndexFeatures features) const final {
     return _impl->postings(features);
   }
@@ -77,7 +78,7 @@ class FilteredTermIterator : public TermIterator {
     return false;
   }
   bytes_view value() const noexcept final { return _inner->value(); }
-  void read() final { _inner->read(); }
+  const PostingMeta& cookie() const final { return _inner->cookie(); }
   DocIterator::ptr postings(IndexFeatures features) const final {
     return _inner->postings(features);
   }

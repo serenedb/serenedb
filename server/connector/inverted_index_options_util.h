@@ -39,7 +39,7 @@ namespace sdb::connector {
 // option or a RESET stores it), so an explicit 0 from the user is rejected
 // everywhere by ValidateInvertedIndexOptionValue.
 
-inline constexpr std::array<std::string_view, 8> kAlterableInvertedOptions = {
+inline constexpr auto kAlterableInvertedOptions = std::to_array({
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
@@ -48,11 +48,10 @@ inline constexpr std::array<std::string_view, 8> kAlterableInvertedOptions = {
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
-};
+});
 
-inline constexpr std::array<std::string_view, 10> kNumericInvertedOptions = {
+inline constexpr auto kNumericInvertedOptions = std::to_array({
   kRowGroupSizeSetting,
-  kNormRowGroupSizeSetting,
   kRefreshIntervalSetting,
   kCompactionIntervalSetting,
   kCleanupIntervalStepSetting,
@@ -61,7 +60,7 @@ inline constexpr std::array<std::string_view, 10> kNumericInvertedOptions = {
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
-};
+});
 
 // Everything CREATE INDEX ... WITH accepts: the numeric options plus the
 // create-time-only string options.
@@ -77,12 +76,14 @@ inline constexpr auto kCreateInvertedOptions = [] {
 }();
 
 inline bool IsUint32InvertedOption(std::string_view name) {
-  constexpr std::array<std::string_view, 7> kUint32Options = {
-    kRowGroupSizeSetting,          kNormRowGroupSizeSetting,
-    kRefreshIntervalSetting,       kCompactionIntervalSetting,
-    kCleanupIntervalStepSetting,   kSegmentDocsMaxSetting,
+  static constexpr auto kUint32Options = std::to_array({
+    kRowGroupSizeSetting,
+    kRefreshIntervalSetting,
+    kCompactionIntervalSetting,
+    kCleanupIntervalStepSetting,
+    kSegmentDocsMaxSetting,
     kCompactionMaxSegmentsSetting,
-  };
+  });
   return absl::c_contains(kUint32Options, name);
 }
 
@@ -91,12 +92,12 @@ inline bool IsUint32InvertedOption(std::string_view name) {
 // cleanup step) of 0 disables that background task -- the established idiom
 // deterministic tests rely on.
 inline bool IsZeroAllowedInvertedOption(std::string_view name) {
-  constexpr std::array<std::string_view, 4> kZeroAllowed = {
+  static constexpr auto kZeroAllowed = std::to_array({
     kSegmentDocsMaxSetting,
     kRefreshIntervalSetting,
     kCompactionIntervalSetting,
     kCleanupIntervalStepSetting,
-  };
+  });
   return absl::c_contains(kZeroAllowed, name);
 }
 

@@ -1,0 +1,262 @@
+# NaN in the dbl column doubles as the regression test for serenedb/duckdb#60's RLE fix: one NaN
+# used to hang CHECKPOINT forever (RLE's flat run scan never advances past a value that is not
+# equal to itself, and every codec's analyze runs on the auto path -- forcing any codec masks it).
+#
+# The last coverable classes: codec-hostile SPECIAL VALUES (NaN/Inf/-0.0, INT64 extremes
+# under bitpacking's frame-of-reference, INT128 decimals, the 12/13-byte string_t inline boundary,
+# BOOLEAN), the AUTO-checkpoint write path (compression triggered by WAL size with nobody calling
+# CHECKPOINT), OPTIMISTIC writes (one transaction big enough to spill row groups before COMMIT,
+# plus its ROLLBACK twin), CONCURRENT writers, and the READ side of plus-compressed segments
+# (point lookups by rowid, selective filters over zone maps, projection subsets) -- everything
+# else verifies via full scans only.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/cep.db' AS ce (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+# --- special values, auto codec choice pinned per column ---
+
+statement ok
+CREATE TABLE ce.specials AS
+  SELECT ord,
+         CASE WHEN ord % 50000 = 100 THEN 'nan'::DOUBLE
+              WHEN ord % 50000 = 200 THEN 'inf'::DOUBLE
+              WHEN ord % 50000 = 300 THEN '-inf'::DOUBLE
+              WHEN ord % 50000 = 400 THEN -0.0
+              ELSE round(ord * 0.01, 2) END AS dbl,
+         CASE WHEN ord = 150000 THEN -9223372036854775807 - 1
+              WHEN ord = 250000 THEN 9223372036854775807
+              ELSE (ord - 200000)::BIGINT END AS big,
+         (ord::HUGEINT - 200000)::DECIMAL(38,10) / 7 AS dec38,
+         CASE WHEN ord % 2 = 0 THEN 'i' || lpad((ord % 90000)::VARCHAR, 11, '0')
+              ELSE 'i' || lpad((ord % 90000)::VARCHAR, 12, '0') END AS s1213,
+         ord % 3 = 0 AS flag,
+         CASE WHEN ord % 50000 = 500 THEN 'nan'::REAL ELSE ((ord % 1000) * 0.25)::REAL END AS flt
+  FROM range(400000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT ce;
+
+
+query
+SELECT count(*) AS n,
+       bool_and(dbl IS NOT DISTINCT FROM CASE WHEN ord % 50000 = 100 THEN 'nan'::DOUBLE WHEN ord % 50000 = 200 THEN 'inf'::DOUBLE WHEN ord % 50000 = 300 THEN '-inf'::DOUBLE WHEN ord % 50000 = 400 THEN -0.0 ELSE round(ord * 0.01, 2) END) AS dbl_ok,
+       bool_and(big = CASE WHEN ord = 150000 THEN -9223372036854775807 - 1 WHEN ord = 250000 THEN 9223372036854775807 ELSE (ord - 200000)::BIGINT END) AS big_ok,
+       bool_and(dec38 = (ord::HUGEINT - 200000)::DECIMAL(38,10) / 7) AS dec38_ok,
+       bool_and(s1213 = CASE WHEN ord % 2 = 0 THEN 'i' || lpad((ord % 90000)::VARCHAR, 11, '0') ELSE 'i' || lpad((ord % 90000)::VARCHAR, 12, '0') END) AS s1213_ok,
+       bool_and(flag = (ord % 3 = 0)) AS flag_ok,
+       bool_and(flt IS NOT DISTINCT FROM CASE WHEN ord % 50000 = 500 THEN 'nan'::REAL ELSE ((ord % 1000) * 0.25)::REAL END) AS flt_ok,
+       count(*) FILTER (isnan(dbl)) AS nans,
+       count(*) FILTER (isnan(flt)) AS fnans
+  FROM ce.specials;
+----
+n	dbl_ok	big_ok	dec38_ok	s1213_ok	flag_ok	flt_ok	nans	fnans
+400000	t	t	t	t	t	t	8	8
+
+
+# the inline-boundary strings landed in dict_fsst. INT64_MIN/MAX spikes do NOT de-bitpack the
+# column: bitpacking chooses widths per 2048-value group, so only the spike's group degrades --
+# the deliberate contrast with UUID, where one outlier costs the whole row group its codec
+query
+SELECT 's1213_dict_fsst' AS combo, (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='s1213' AND segment_type='VARCHAR') AS ok
+UNION ALL SELECT 'flag_bitpacks', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='flag' AND segment_type='BOOLEAN')
+UNION ALL SELECT 'big_extremes_still_bitpack', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='big' AND segment_type NOT IN ('VALIDITY'))
+ORDER BY combo;
+----
+combo	ok
+big_extremes_still_bitpack	t
+flag_bitpacks	t
+s1213_dict_fsst	t
+
+
+# --- optimistic write: one transaction spills multiple row groups before COMMIT; rollback twin ---
+
+statement ok
+CREATE TABLE ce.opti (ord BIGINT, v VARCHAR);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ce.opti
+  SELECT ord, 'o/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR)
+  FROM range(500000) t(ord) ORDER BY ord;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM ce.opti;
+----
+n
+0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ce.opti
+  SELECT ord, 'o/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR)
+  FROM range(500000) t(ord) ORDER BY ord;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CHECKPOINT ce;
+
+
+query
+SELECT count(*) AS n, bool_and(v = 'o/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR)) AS rows_match,
+       (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('ce.opti', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR') AS dict_fsst
+  FROM ce.opti;
+----
+n	rows_match	dict_fsst
+500000	t	t
+
+
+# --- concurrent writers: two connections interleave into one table, then compress ---
+
+statement ok
+CREATE TABLE ce.conc (ord BIGINT, v VARCHAR);
+
+
+connection writer1
+statement ok
+INSERT INTO ce.conc SELECT ord, 'w1/' || md5(ord::VARCHAR) FROM range(0, 60000) t(ord);
+
+
+connection writer2
+statement ok
+INSERT INTO ce.conc SELECT ord, 'w2/' || md5(ord::VARCHAR) FROM range(60000, 120000) t(ord);
+
+
+connection writer1
+statement ok
+INSERT INTO ce.conc SELECT ord, 'w1/' || md5(ord::VARCHAR) FROM range(120000, 180000) t(ord);
+
+
+connection writer2
+statement ok
+INSERT INTO ce.conc SELECT ord, 'w2/' || md5(ord::VARCHAR) FROM range(180000, 240000) t(ord);
+
+
+statement ok
+CHECKPOINT ce;
+
+
+query
+SELECT count(*) AS n,
+       bool_and(v = CASE WHEN (ord // 60000) % 2 = 0 THEN 'w1/' || md5(ord::VARCHAR) ELSE 'w2/' || md5(ord::VARCHAR) END) AS rows_match,
+       count(DISTINCT ord) AS dn
+  FROM ce.conc;
+----
+n	rows_match	dn
+240000	t	240000
+
+
+# --- the read side of plus-compressed segments: point lookups, zone-map filters, projections ---
+
+statement ok
+CREATE TABLE ce.readside AS
+  SELECT ord, 'c' || lpad((ord // 8)::VARCHAR, 7, '0') || chr(31) || substr(md5(ord::VARCHAR), 1, 12) AS v
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT ce;
+
+
+# the shape commits a plus mode, so these reads decompress cleaved segments
+query
+SELECT bool_or(segment_info LIKE '%PLUS%') AS has_plus
+  FROM pragma_storage_info('ce.readside', include_segment_info=true)
+ WHERE column_name='v' AND segment_type='VARCHAR';
+----
+has_plus
+t
+
+
+# scattered point lookups by rowid
+query
+SELECT rowid, v = 'c' || lpad((ord // 8)::VARCHAR, 7, '0') || chr(31) || substr(md5(ord::VARCHAR), 1, 12) AS m
+  FROM ce.readside WHERE rowid IN (0, 4999, 17300, 33999, 34599) ORDER BY rowid;
+----
+rowid	m
+0	t
+4999	t
+17300	t
+33999	t
+34599	t
+
+
+# a selective range over the sorted prefix (zone-map territory) and a projection that touches only
+# the compressed column
+query
+SELECT count(*) AS n, min(v) LIKE 'c0002000%' AS lo_ok, max(v) LIKE 'c0002499%' AS hi_ok
+  FROM ce.readside
+ WHERE v >= 'c0002000' AND v < 'c0002500';
+----
+n	lo_ok	hi_ok
+4000	t	t
+
+
+statement ok
+DETACH ce;
+
+
+# --- the auto-checkpoint path: WAL crosses the threshold, compression runs with no CHECKPOINT ---
+
+statement ok
+SET wal_autocheckpoint='512KB';
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/cep_auto.db' AS ca (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+CREATE TABLE ca.autockpt (ord BIGINT, v VARCHAR);
+
+
+statement ok
+INSERT INTO ca.autockpt SELECT ord, 'a/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR) FROM range(0, 60000) t(ord);
+
+
+statement ok
+INSERT INTO ca.autockpt SELECT ord, 'a/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR) FROM range(60000, 120000) t(ord);
+
+
+statement ok
+INSERT INTO ca.autockpt SELECT ord, 'a/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR) FROM range(120000, 180000) t(ord);
+
+
+statement ok
+SET wal_autocheckpoint='16.0 MiB';
+
+
+# the WAL crossed 512KB several times over, so segments exist WITHOUT any manual CHECKPOINT, and
+# every row still round-trips
+query
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('ca.autockpt', include_segment_info=true) WHERE column_name='v' AND compression='DICT_FSST') AS auto_compressed,
+       (SELECT count(*) FROM ca.autockpt) AS n,
+       (SELECT bool_and(v = 'a/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR)) FROM ca.autockpt) AS rows_match;
+----
+auto_compressed	n	rows_match
+t	180000	t
+
+
+statement ok
+DETACH ca;

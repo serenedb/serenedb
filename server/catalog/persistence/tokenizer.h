@@ -33,7 +33,6 @@ struct TokenizerData {
   std::string name;
   irs::analysis::TokenizerConfig config;
   search::Features features;
-  uint32_t norm_row_group_size = 0;
   Permissions perm;
 };
 

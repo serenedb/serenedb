@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <limits>
 #include <optional>
 
 #include "basics/math_utils.hpp"
@@ -44,6 +45,12 @@ class ColumnArgsFetcher;
 // Represents no boost value.
 inline constexpr score_t kNoBoost{1.f};
 
+inline IRS_FORCE_INLINE score_t TermCountToScore(uint32_t count) noexcept {
+  return static_cast<score_t>(static_cast<int32_t>(count));
+}
+
+inline constexpr uint32_t kMaxFreq = std::numeric_limits<int32_t>::max();
+
 // Caller writes value, iterator reads at block boundaries to skip
 // blocks whose max score is below the threshold.
 struct ScoreThresholdAttr final : Attribute {
@@ -58,18 +65,18 @@ struct Scorer;
 struct FieldCollector;
 struct TermCollector;
 
-struct WandSource : AttributeProvider {
-  using ptr = std::unique_ptr<WandSource>;
+struct ScoreBoundSource : AttributeProvider {
+  using ptr = std::unique_ptr<ScoreBoundSource>;
 
   virtual void Read(DataInput& in, size_t size) = 0;
 };
 
-struct WandWriter {
-  using ptr = std::unique_ptr<WandWriter>;
+struct ScoreBoundWriter {
+  using ptr = std::unique_ptr<ScoreBoundWriter>;
 
   static constexpr byte_type kMaxSize = 127;
 
-  virtual ~WandWriter() = default;
+  virtual ~ScoreBoundWriter() = default;
 
   virtual bool Prepare(const NormProvider& norms, const FieldProperties& field,
                        const AttributeProvider& attrs) = 0;
@@ -109,25 +116,28 @@ struct Scorer {
 
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
 
-  // Create an object to be used for writing wand entries to the skip list.
+  // Create an object to be used for writing score bounds to the skip list.
   // max_levels - max number of levels in the skip list
-  virtual WandWriter::ptr prepare_wand_writer(size_t max_levels) const = 0;
+  virtual ScoreBoundWriter::ptr PrepareScoreBoundWriter(
+    size_t max_levels) const = 0;
 
-  virtual WandSource::ptr prepare_wand_source() const = 0;
+  virtual ScoreBoundSource::ptr PrepareScoreBoundSource() const = 0;
 
-  enum class WandType : uint8_t {
+  enum class ScoreBoundType : uint8_t {
     None = 0,
     DivNorm = 1,
     MaxFreq = 2,
     MinNorm = 3,
   };
 
-  virtual WandType wand_type() const noexcept { return WandType::None; }
+  virtual ScoreBoundType GetScoreBoundType() const noexcept {
+    return ScoreBoundType::None;
+  }
 
   // 0 -- not compatible
   // x -- degree of compatibility
   // 255 -- compatible, same types
-  static uint8_t compatible(WandType lhs, WandType rhs) noexcept;
+  static uint8_t compatible(ScoreBoundType lhs, ScoreBoundType rhs) noexcept;
 
   // Number of bytes required to store stats (already aligned).
   virtual size_t stats_size() const = 0;
@@ -158,9 +168,13 @@ class ScorerBase : public Scorer {
   static_assert(std::is_void_v<StatsType> ||
                 std::is_trivially_constructible_v<StatsType>);
 
-  WandWriter::ptr prepare_wand_writer(size_t) const override { return nullptr; }
+  ScoreBoundWriter::ptr PrepareScoreBoundWriter(size_t) const override {
+    return nullptr;
+  }
 
-  WandSource::ptr prepare_wand_source() const override { return nullptr; }
+  ScoreBoundSource::ptr PrepareScoreBoundSource() const override {
+    return nullptr;
+  }
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<Impl>::id();

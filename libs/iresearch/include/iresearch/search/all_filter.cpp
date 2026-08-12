@@ -24,7 +24,6 @@
 
 #include "all_iterator.hpp"
 #include "iresearch/search/automaton_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 
 namespace irs {
 
@@ -62,7 +61,7 @@ PrepareCollector::ptr All::MakeCollector(const Scorer* scorer) const {
 }
 
 TermIterator::ptr All::CompileTermIterator(const TermReader& reader) const {
-  auto it = reader.iterator(SeekMode::NORMAL);
+  auto it = reader.iterator();
   SDB_ASSERT(it);
   return it;
 }

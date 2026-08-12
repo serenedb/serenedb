@@ -45,8 +45,8 @@ class MockTermReader final : public irs::BasicTermReader {
   irs::Attribute* GetMutable(irs::TypeInfo::type_id /*type*/) noexcept final {
     return nullptr;
   }
-  irs::TermIterator::ptr iterator() const final {
-    return irs::memory::to_managed<irs::TermIterator>(_it);
+  irs::TermOnlyIterator::ptr iterator() const final {
+    return irs::memory::to_managed<irs::TermOnlyIterator>(_it);
   }
   const irs::FieldMeta& meta() const { return _meta; }
   irs::field_id id() const final { return meta().id; }
@@ -206,12 +206,14 @@ class FormatTestCase : public IndexTestBase {
 
     irs::bytes_view value() const noexcept final { return _val; }
 
+    // Every term in this source carries the same doc list, so its record is
+    // the same too.
+    const irs::PostingMeta& cookie() const noexcept final { return _meta; }
+
     irs::DocIterator::ptr postings(
       irs::IndexFeatures /*features*/) const final {
       return irs::memory::make_managed<FormatTestCase::TestPostings>(_docs);
     }
-
-    void read() final {}
 
     irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
       return nullptr;
@@ -219,6 +221,7 @@ class FormatTestCase : public IndexTestBase {
 
    private:
     irs::bytes_view _val;
+    irs::PostingMeta _meta;
     docs_type _docs;
     It _next;
     It _end;

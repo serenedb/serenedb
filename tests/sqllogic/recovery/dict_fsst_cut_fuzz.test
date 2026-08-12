@@ -1,0 +1,103 @@
+# Deterministic fuzz for the dict_fsst CUT machinery. dict_fsst_plus_fuzz stresses the encoder's
+# round-trip on adversarial bytes; this stresses the near-block sizing: every table is built to cross
+# several block boundaries while the properties the cut has to track -- cardinality, uniqueness,
+# NULLs, value length, prefix structure -- change mid-segment on hash-driven schedules the test
+# writer did not hand-place. The large row group keeps segments wide, where the re-prices are
+# biggest. Everything is a pure function of ord, so failures replay exactly and every row is
+# verified against the expression that generated it.
+#
+# ramp_card   distinct count doubles every 60k rows (4 -> 512): a selection-width bump lands in
+#             every regime, early and late
+# flip_blocks alternating ~35k-row blocks of all-unique and low-cardinality values: the uniqueness
+#             flip and its rewind fire repeatedly at hash-chosen offsets
+# holes_len   12% NULLs, 6% empties, hash-driven lengths 1..~90 with rare ~800-char spikes: length
+#             width bumps under a dictionary full of holes
+# mixed_all   all of it at once, plus shared prefixes so the cleaved candidates stay in play
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfz_fuzz.db' AS dfz (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+
+
+statement ok
+CREATE TABLE dfz.ramp_card AS
+  SELECT ord, 'r' || (hash(ord) % (4 * (1 << LEAST(ord // 60000, 7)::INT)))::VARCHAR AS s
+  FROM range(500000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfz.flip_blocks AS
+  SELECT ord, CASE WHEN (ord // 35000) % 2 = 0 THEN 'u' || md5(ord::VARCHAR)
+                   ELSE 'd' || (hash(ord) % 97)::VARCHAR END AS s
+  FROM range(420000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfz.holes_len AS
+  SELECT ord, CASE WHEN hash(ord * 3) % 100 < 12 THEN NULL
+                   WHEN hash(ord * 3) % 100 < 18 THEN ''
+                   WHEN hash(ord * 5) % 1000 = 7 THEN repeat('L', 800) || (ord % 71)::VARCHAR
+                   ELSE repeat('x', 1 + (hash(ord * 7) % 90)::INT) || (ord % 331)::VARCHAR END AS s
+  FROM range(400000) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfz.mixed_all AS
+  SELECT ord, CASE WHEN hash(ord * 11) % 100 < 10 THEN NULL
+                   WHEN (ord // 40000) % 3 = 0 THEN 'p/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR)
+                   WHEN (ord // 40000) % 3 = 1 THEN 'p/' || (hash(ord) % (16 * (1 + ord // 90000)))::VARCHAR
+                   ELSE 'q/' || substr(md5((ord % 50000)::VARCHAR), 1, 1 + (hash(ord * 13) % 24)::INT) END AS s
+  FROM range(450000) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfz;
+
+
+# every row of every shape verified against its generator
+query
+SELECT 'flip_blocks' AS shape, count(*) AS n,
+       bool_and(s = CASE WHEN (ord // 35000) % 2 = 0 THEN 'u' || md5(ord::VARCHAR) ELSE 'd' || (hash(ord) % 97)::VARCHAR END) AS rows_match
+  FROM dfz.flip_blocks
+UNION ALL SELECT 'holes_len', count(*),
+       bool_and(s IS NOT DISTINCT FROM CASE WHEN hash(ord * 3) % 100 < 12 THEN NULL WHEN hash(ord * 3) % 100 < 18 THEN '' WHEN hash(ord * 5) % 1000 = 7 THEN repeat('L', 800) || (ord % 71)::VARCHAR ELSE repeat('x', 1 + (hash(ord * 7) % 90)::INT) || (ord % 331)::VARCHAR END)
+  FROM dfz.holes_len
+UNION ALL SELECT 'mixed_all', count(*),
+       bool_and(s IS NOT DISTINCT FROM CASE WHEN hash(ord * 11) % 100 < 10 THEN NULL WHEN (ord // 40000) % 3 = 0 THEN 'p/' || lpad((ord // 8)::VARCHAR, 7, '0') || '/' || md5(ord::VARCHAR) WHEN (ord // 40000) % 3 = 1 THEN 'p/' || (hash(ord) % (16 * (1 + ord // 90000)))::VARCHAR ELSE 'q/' || substr(md5((ord % 50000)::VARCHAR), 1, 1 + (hash(ord * 13) % 24)::INT) END)
+  FROM dfz.mixed_all
+UNION ALL SELECT 'ramp_card', count(*),
+       bool_and(s = 'r' || (hash(ord) % (4 * (1 << LEAST(ord // 60000, 7)::INT)))::VARCHAR)
+  FROM dfz.ramp_card
+ORDER BY shape;
+----
+shape	n	rows_match
+flip_blocks	420000	t
+holes_len	400000	t
+mixed_all	450000	t
+ramp_card	500000	t
+
+
+# aggregate invariants that catch silent row loss or duplication even if bytes happened to match
+query
+SELECT (SELECT count(*) FROM dfz.holes_len WHERE s IS NULL) AS hl_nulls,
+       (SELECT count(*) FROM dfz.holes_len WHERE s = '') AS hl_empties,
+       (SELECT count(DISTINCT s) FROM dfz.ramp_card) AS rc_distinct,
+       (SELECT max(length(s)) FROM dfz.holes_len) AS hl_maxlen;
+----
+hl_nulls	hl_empties	rc_distinct	hl_maxlen
+48237	23891	512	802
+
+
+# the shapes really exercised dict_fsst, and the cleaved modes stayed in play where prefixes exist
+query
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfz.ramp_card', include_segment_info=true) WHERE column_name='s' AND compression='DICT_FSST') AS rc_dict_fsst,
+       (SELECT bool_or(segment_info LIKE '%PLUS%') FROM pragma_storage_info('dfz.mixed_all', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS ma_has_plus;
+----
+rc_dict_fsst	ma_has_plus
+t	t
+
+
+statement ok
+DETACH dfz;

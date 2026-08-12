@@ -86,11 +86,11 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
     bool normalize);
   ~IvfTermReader() final;
 
-  TermIterator::ptr iterator() const final;
+  TermOnlyIterator::ptr iterator() const final;
   field_id id() const final { return _meta.id; }
   FieldProperties properties() const final { return _meta; }
-  bytes_view(min)() const final { return _min; }
-  bytes_view(max)() const final { return _max; }
+  bytes_view min() const final { return _min; }
+  bytes_view max() const final { return _max; }
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
   TermPayloadWriter* PayloadWriter() const final {

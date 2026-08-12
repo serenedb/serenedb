@@ -45,7 +45,7 @@ class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
         const auto* field = segment.field(field_id);
         ASSERT_NE(nullptr, field);
 
-        auto expected_terms = field->iterator(irs::SeekMode::NORMAL);
+        auto expected_terms = field->iterator();
         ASSERT_NE(nullptr, expected_terms);
         auto actual_terms = field->iterator(matcher);
         ASSERT_NE(nullptr, actual_terms);

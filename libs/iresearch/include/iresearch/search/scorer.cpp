@@ -33,36 +33,38 @@
 
 namespace irs {
 
-uint8_t Scorer::compatible(WandType index, WandType query) noexcept {
-  auto bin_case = [](WandType index, WandType query) noexcept -> uint8_t {
+uint8_t Scorer::compatible(ScoreBoundType index,
+                           ScoreBoundType query) noexcept {
+  auto bin_case = [](ScoreBoundType index,
+                     ScoreBoundType query) noexcept -> uint8_t {
     return (static_cast<uint8_t>(index) * 8) + static_cast<uint8_t>(query);
   };
   switch (bin_case(index, query)) {
-    // no needed wand data
-    case bin_case(WandType::None, WandType::None):
-    case bin_case(WandType::None, WandType::DivNorm):
-    case bin_case(WandType::None, WandType::MaxFreq):
-    case bin_case(WandType::None, WandType::MinNorm):
-    case bin_case(WandType::DivNorm, WandType::None):
-    case bin_case(WandType::MaxFreq, WandType::None):
-    case bin_case(WandType::MinNorm, WandType::None):
+    // no score bounds needed
+    case bin_case(ScoreBoundType::None, ScoreBoundType::None):
+    case bin_case(ScoreBoundType::None, ScoreBoundType::DivNorm):
+    case bin_case(ScoreBoundType::None, ScoreBoundType::MaxFreq):
+    case bin_case(ScoreBoundType::None, ScoreBoundType::MinNorm):
+    case bin_case(ScoreBoundType::DivNorm, ScoreBoundType::None):
+    case bin_case(ScoreBoundType::MaxFreq, ScoreBoundType::None):
+    case bin_case(ScoreBoundType::MinNorm, ScoreBoundType::None):
       SDB_ASSERT(false);
       [[fallthrough]];
     // DivNorm very precise and is not compatible with other types
-    case bin_case(WandType::DivNorm, WandType::MaxFreq):
-    case bin_case(WandType::DivNorm, WandType::MinNorm):
+    case bin_case(ScoreBoundType::DivNorm, ScoreBoundType::MaxFreq):
+    case bin_case(ScoreBoundType::DivNorm, ScoreBoundType::MinNorm):
       return 0;
     // MaxFreq suitable for any other type
-    case bin_case(WandType::MaxFreq, WandType::DivNorm):
-    case bin_case(WandType::MaxFreq, WandType::MinNorm):
+    case bin_case(ScoreBoundType::MaxFreq, ScoreBoundType::DivNorm):
+    case bin_case(ScoreBoundType::MaxFreq, ScoreBoundType::MinNorm):
     // MinNorm suitable for any score
-    case bin_case(WandType::MinNorm, WandType::MaxFreq):
+    case bin_case(ScoreBoundType::MinNorm, ScoreBoundType::MaxFreq):
       return 1;
-    case bin_case(WandType::MinNorm, WandType::DivNorm):
+    case bin_case(ScoreBoundType::MinNorm, ScoreBoundType::DivNorm):
       return 2;
-    case bin_case(WandType::DivNorm, WandType::DivNorm):
-    case bin_case(WandType::MaxFreq, WandType::MaxFreq):
-    case bin_case(WandType::MinNorm, WandType::MinNorm):
+    case bin_case(ScoreBoundType::DivNorm, ScoreBoundType::DivNorm):
+    case bin_case(ScoreBoundType::MaxFreq, ScoreBoundType::MaxFreq):
+    case bin_case(ScoreBoundType::MinNorm, ScoreBoundType::MinNorm):
       return std::numeric_limits<uint8_t>::max();
   }
   return 0;

@@ -19,8 +19,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <absl/strings/str_replace.h>
+#include <absl/strings/str_split.h>
 #include <simdjson.h>
 #include <zlib.h>
 
@@ -488,7 +491,6 @@ void BuildIndex(const std::string& corpus_path,
     .compaction_interval_ms = 5000,
     .compaction_threads = 0,
     .compact_all = true,
-    .norm_row_group_size = 10'000'000,
   };
 
   bench::IndexBuilder builder{index_dir.string(), builder_options, config};
@@ -797,6 +799,174 @@ class LoadTest : public TestBase {
 
 TEST_F(LoadTest, WikiSmall) { RunAndValidate("wiki_small"); }
 
+// Scores a document from first principles: the sum of the contributions of the
+// query terms that document contains. Holds one iterator per term and seeks
+// them forward, so a query costs `terms` iterators and nothing corpus-sized --
+// "the" matches 4M documents and still only the documents under test are ever
+// scored. Documents must be requested in ascending order per segment.
+class TermScoreOracle {
+ public:
+  TermScoreOracle(const irs::IndexReader& reader, const irs::Scorer& scorer,
+                  std::span<const std::string> terms, size_t segment_idx,
+                  const irs::SubReader& segment) {
+    _terms.reserve(terms.size());
+    for (const auto& term : terms) {
+      auto& t = _terms.emplace_back();
+      *t.filter.mutable_field_id() = bench::kTextFieldId;
+      t.filter.mutable_options()->term =
+        irs::ViewCast<irs::byte_type>(std::string_view{term});
+      t.prepared =
+        std::make_unique<tests::PreparedFilter>(t.filter, reader, &scorer);
+      t.it = t.prepared->Execute(segment_idx);
+      if (!t.it) {
+        continue;
+      }
+      t.score = t.it->PrepareScore({
+        .scorer = &scorer,
+        .segment = &segment,
+        .fetcher = &t.fetcher,
+      });
+    }
+  }
+
+  irs::score_t ScoreOf(irs::doc_id_t doc) {
+    irs::score_t total = 0;
+    for (auto& t : _terms) {
+      if (!t.it || irs::doc_limits::eof(t.it->value())) {
+        continue;
+      }
+      if (t.it->value() < doc && t.it->seek(doc) != doc) {
+        continue;
+      }
+      if (t.it->value() != doc) {
+        continue;
+      }
+      t.fetcher.Fetch(doc);
+      t.it->FetchScoreArgs(0);
+      total += t.score.Score();
+    }
+    return total;
+  }
+
+ private:
+  struct Term {
+    irs::ByTerm filter;
+    std::unique_ptr<tests::PreparedFilter> prepared;
+    irs::DocIterator::ptr it;
+    irs::ColumnArgsFetcher fetcher;
+    irs::ScoreFunction score;
+  };
+
+  std::vector<Term> _terms;
+};
+
+// Every scored document must carry the sum of the contributions of the query
+// terms it contains -- whatever the query's shape and however the engine
+// reached it. Checked across query shapes (AND / OR / MUST+SHOULD / negated)
+// and across the three retrieval modes, because they drive the iterators
+// differently: TOP_100_COUNT walks every match, TOP_100 prunes, and the
+// pruned path reaches a scored disjunction through `seek` rather than by
+// advancing it -- the access path that scored documents with whatever score
+// arguments happened to be fetched last.
+TEST_F(LoadTest, ScoreAccuracyAcrossQueryShapes) {
+  constexpr size_t kTopK = 100;
+
+  const auto& reader = gExecutor->GetReader();
+  auto scorer_ptr = irs::BM25::Make(irs::BM25::Options{});
+  ASSERT_TRUE(scorer_ptr);
+  const auto& scorer = *scorer_ptr;
+
+  auto queries =
+    LoadQueries(resource("iresearch-load") / "wiki_small" / "queries.json");
+  ASSERT_FALSE(queries.empty());
+
+  // Terms that can contribute score: plain and `+`, never `-` (excluded
+  // documents contribute nothing).
+  const auto scoring_terms = [](std::string_view query) {
+    std::vector<std::string> out;
+    for (auto part : absl::StrSplit(query, ' ', absl::SkipEmpty())) {
+      if (part.starts_with('-')) {
+        continue;
+      }
+      part.remove_prefix(part.starts_with('+') ? 1 : 0);
+      out.emplace_back(part);
+    }
+    return out;
+  };
+
+  // Phrases are positional, not a sum over terms, so the oracle does not model
+  // them.
+  const auto skippable = [](std::string_view q) {
+    return q.find('"') != std::string_view::npos || q.starts_with('~');
+  };
+
+  size_t eligible_queries = 0;
+  size_t checked_queries = 0;
+
+  for (const auto& q : queries) {
+    if (skippable(q.query)) {
+      continue;
+    }
+    const auto terms = scoring_terms(q.query);
+    if (terms.empty()) {
+      continue;
+    }
+    ++eligible_queries;
+
+    for (const bool pruned : {true, false}) {
+      SCOPED_TRACE(testing::Message()
+                   << "query=\"" << q.query
+                   << "\" mode=" << (pruned ? "TOP_100" : "TOP_100_COUNT"));
+
+      if (pruned) {
+        gExecutor->ExecuteTopK(kTopK, q.query);
+      } else {
+        gExecutor->ExecuteTopKWithCount(kTopK, q.query);
+      }
+
+      // Group by segment and sort by doc: the oracle seeks forward only.
+      // Every query in the set matches something, so an empty result is itself
+      // a failure rather than a reason to check nothing.
+      std::vector<irs::ScoreDoc> hits{gExecutor->GetResults().begin(),
+                                      gExecutor->GetResults().end()};
+      ASSERT_FALSE(hits.empty()) << "query returned no documents";
+      absl::c_sort(hits, [](const irs::ScoreDoc& a, const irs::ScoreDoc& b) {
+        return std::tie(a.segment_idx, a.doc) < std::tie(b.segment_idx, b.doc);
+      });
+
+      size_t segment_idx = 0;
+      std::optional<TermScoreOracle> oracle;
+      uint32_t oracle_segment = std::numeric_limits<uint32_t>::max();
+
+      for (const auto& [score, doc, segment] : hits) {
+        if (segment != oracle_segment) {
+          segment_idx = 0;
+          for (auto& sub : reader) {
+            if (segment_idx == segment) {
+              oracle.emplace(reader, scorer, terms, segment_idx, sub);
+              break;
+            }
+            ++segment_idx;
+          }
+          oracle_segment = segment;
+        }
+        ASSERT_TRUE(oracle.has_value());
+
+        const auto expected = oracle->ScoreOf(doc);
+        EXPECT_FLOAT_EQ(score, expected)
+          << "segment=" << segment << " doc=" << doc;
+      }
+      ++checked_queries;
+    }
+  }
+
+  // The query set is checked in, so coverage is a fixed number: 795 of the
+  // 1096 queries carry a term to score (the other 301 are phrases), and each
+  // is checked in both modes.
+  EXPECT_EQ(eligible_queries, 795);
+  EXPECT_EQ(checked_queries, 795 * 2);
+}
+
 TEST_F(LoadTest, DisjunctionScoreAccuracy) {
   const auto& reader = gExecutor->GetReader();
   auto scorer_ptr = irs::BM25::Make(irs::BM25::Options{});
@@ -906,7 +1076,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
     // 2) Compare via Collect (ExecuteTopKWithCount)
     {
       static constexpr size_t kCount = 100;
-      std::vector<irs::ScoreDoc> hits(irs::BlockSize(kCount));
+      std::vector<irs::ScoreDoc> hits(kCount);
       const auto count = irs::ExecuteTopKWithCount(reader, *filter, scorer,
                                                    kCount, std::span{hits});
 
@@ -924,13 +1094,12 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
       }
     }
 
-    // 3) Compare via ExecuteTopK (WAND path)
+    // 3) Compare via ExecuteTopK (score pruning path)
     // Scores may differ at ULP level due to different FP accumulation order.
     {
       static constexpr size_t kCount = 100;
-      std::vector<irs::ScoreDoc> hits(irs::BlockSize(kCount));
-      irs::ExecuteTopK(reader, *filter, scorer, kCount, {.wand_enabled = true},
-                       std::span{hits});
+      std::vector<irs::ScoreDoc> hits(kCount);
+      irs::ExecuteTopK(reader, *filter, scorer, kCount, true, std::span{hits});
 
       absl::c_sort(hits, cmp);
 
@@ -938,7 +1107,7 @@ TEST_F(LoadTest, DisjunctionScoreAccuracy) {
 
       for (size_t i = 0; i < result_count; ++i) {
         EXPECT_FLOAT_EQ(hits[i].score, ref_top[i].score)
-          << "WAND: rank " << i << " score mismatch doc " << hits[i].doc;
+          << "Pruned: rank " << i << " score mismatch doc " << hits[i].doc;
       }
     }
   }

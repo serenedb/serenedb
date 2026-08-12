@@ -39,12 +39,12 @@
 namespace irs {
 
 template<typename Producer>
-class WandWriterImpl final : public WandWriter {
+class ScoreBoundWriterImpl final : public ScoreBoundWriter {
   using EntryType = typename Producer::Entry;
 
  public:
   template<typename... Args>
-  WandWriterImpl(size_t max_levels, Args&&... args)
+  ScoreBoundWriterImpl(size_t max_levels, Args&&... args)
     : _producer{std::forward<Args>(args)...} {
     SDB_ASSERT(max_levels != 0);
     _levels.resize(max_levels + 1);
@@ -103,38 +103,38 @@ class WandWriterImpl final : public WandWriter {
   [[no_unique_address]] Producer _producer;
 };
 
-enum WandTag : uint32_t {
+enum ScoreBoundTag : uint32_t {
   // What was written?
-  kWandTagFreq = 0U,
-  kWandTagNorm = 1U << 0U,
+  kScoreBoundFreq = 1U << 0U,
+  kScoreBoundNorm = 1U << 1U,
   // How to Produce best Entry?
   // Produce max freq
-  kWandTagMaxFreq = 1U << 1U,
+  kScoreBoundMaxFreq = 1U << 2U,
   // Produce max freq, min norm, but norm >= freq
-  kWandTagMinNorm = 1U << 2U,
+  kScoreBoundMinNorm = 1U << 3U,
   // Produce max freq/norm
-  kWandTagDivNorm = 1U << 3U,
+  kScoreBoundDivNorm = 1U << 4U,
   // Produce best freq, norm for BM25 with specified b -- (0...1)
-  kWandTagBM25 = 1U << 5U,
+  kScoreBoundBM25 = 1U << 5U,
   // Produce best freq, norm for BM25 with specified b -- (0...1) and avg_dl
-  kWandTagAvgDL = 1U << 6U,
+  kScoreBoundAvgDL = 1U << 6U,
 };
 
 template<uint32_t Tag>
 class FreqNormProducer : public AttributeProvider {
-  static_assert((Tag & kWandTagFreq) == 0);
-  static_assert((Tag & kWandTagNorm) == 0);
+  static_assert((Tag & kScoreBoundFreq) == 0);
+  static_assert((Tag & kScoreBoundNorm) == 0);
 
-  static constexpr bool kAvgDL = (Tag & kWandTagAvgDL) != 0;
-  static constexpr bool kBm25 = kAvgDL || (Tag & kWandTagBM25) != 0;
-  static constexpr bool kDivNorm = (Tag & kWandTagDivNorm) != 0;
-  static constexpr bool kMinNorm = (Tag & kWandTagMinNorm) != 0;
-  static constexpr bool kMaxFreq = kMinNorm || (Tag & kWandTagMaxFreq) != 0;
+  static constexpr bool kAvgDL = (Tag & kScoreBoundAvgDL) != 0;
+  static constexpr bool kBm25 = kAvgDL || (Tag & kScoreBoundBM25) != 0;
+  static constexpr bool kDivNorm = (Tag & kScoreBoundDivNorm) != 0;
+  static constexpr bool kMinNorm = (Tag & kScoreBoundMinNorm) != 0;
+  static constexpr bool kMaxFreq = kMinNorm || (Tag & kScoreBoundMaxFreq) != 0;
 
   static constexpr bool kNorm = kBm25 || kDivNorm || kMinNorm != 0;
 
   static constexpr score_t kMinAvgDL = 1.f;
-  static constexpr score_t kMaxAvgDL = 4294967296.f;
+  static constexpr score_t kMaxAvgDL = 2147483648.f;
 
   // TODO(mbkkt) For known avg_dl we can precompute (1 - b) * avg_dl
   // For kAvgDL we need to precompute with _avg_dl
@@ -166,8 +166,8 @@ class FreqNormProducer : public AttributeProvider {
     // tf_2 * (1 - b + b * dl_1 / avg_dl)
     // 5. multiply on avg_dl TODO(mbkkt) this step could give worse precision
     const auto x = (1.f - b) * avg_dl;
-    const auto lhs = tf_1 * (x + b * dl_2);
-    const auto rhs = tf_2 * (x + b * dl_1);
+    const auto lhs = TermCountToScore(tf_1) * (x + b * TermCountToScore(dl_2));
+    const auto rhs = TermCountToScore(tf_2) * (x + b * TermCountToScore(dl_1));
     return lhs <=> rhs;
   }
 
@@ -175,7 +175,7 @@ class FreqNormProducer : public AttributeProvider {
   struct Entry {
     uint32_t freq{1};
     [[no_unique_address]] utils::Need<kNorm, uint32_t> norm{
-      std::numeric_limits<uint32_t>::max()};
+      std::numeric_limits<int32_t>::max()};
   };
 
   IRS_FORCE_INLINE void Produce(const Entry& from, Entry& to) noexcept {
@@ -338,17 +338,18 @@ class FreqNormProducer : public AttributeProvider {
 };
 
 template<uint32_t Tag>
-using FreqNormWriter = WandWriterImpl<FreqNormProducer<Tag>>;
+using FreqNormWriter = ScoreBoundWriterImpl<FreqNormProducer<Tag>>;
 
 template<uint32_t Tag>
-class FreqNormSource final : public WandSource {
-  static_assert((Tag & kWandTagMaxFreq) == 0);
-  static_assert((Tag & kWandTagMinNorm) == 0);
-  static_assert((Tag & kWandTagDivNorm) == 0);
-  static_assert((Tag & kWandTagBM25) == 0);
-  static_assert((Tag & kWandTagAvgDL) == 0);
+class FreqNormSource final : public ScoreBoundSource {
+  static_assert((Tag & kScoreBoundMaxFreq) == 0);
+  static_assert((Tag & kScoreBoundMinNorm) == 0);
+  static_assert((Tag & kScoreBoundDivNorm) == 0);
+  static_assert((Tag & kScoreBoundBM25) == 0);
+  static_assert((Tag & kScoreBoundAvgDL) == 0);
+  static_assert((Tag & kScoreBoundFreq) != 0);
 
-  static constexpr bool kNorm = (Tag & kWandTagNorm) != 0;
+  static constexpr bool kNorm = (Tag & kScoreBoundNorm) != 0;
 
  public:
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {

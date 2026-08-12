@@ -667,7 +667,7 @@ QUERY PLAN
 # SearchScan stored-offsets path (separate code from the standalone
 # in-memory mini-segment cases below).
 
-# ts_like -> MultiTermQuery -> SeekCookie entry
+# ts_like -> MultiTermQuery -> PostingMeta entry
 query
 SELECT id, ts_offsets(body)
 FROM offsets_test_idx
@@ -678,7 +678,7 @@ id	ts_offsets
 1	{0,5}
 3	{0,5}
 
-# ts_levenshtein -> MultiTermQuery -> SeekCookie entry
+# ts_levenshtein -> MultiTermQuery -> PostingMeta entry
 query
 SELECT id, ts_offsets(body)
 FROM offsets_test_idx
@@ -689,7 +689,7 @@ id	ts_offsets
 1	{0,5}
 3	{0,5}
 
-# ts_regexp -> MultiTermQuery -> SeekCookie entry
+# ts_regexp -> MultiTermQuery -> PostingMeta entry
 query
 SELECT id, ts_offsets(body)
 FROM offsets_test_idx
@@ -736,7 +736,7 @@ id	ts_offsets
 # --- Per-FilterEntry variant with non-default OFFSETS limit ---
 # Row 4 has 12 fox tokens so the limit is observable per row.
 
-# ts_like + limit=1 -> SeekCookie entry, cap reduces row 4 to one pair
+# ts_like + limit=1 -> PostingMeta entry, cap reduces row 4 to one pair
 query
 SELECT id, ts_offsets(body, 1)
 FROM offsets_test_idx
@@ -748,7 +748,7 @@ id	ts_offsets
 2	{0,3}
 4	{0,3}
 
-# ts_levenshtein + limit=2 -> SeekCookie entry
+# ts_levenshtein + limit=2 -> PostingMeta entry
 query
 SELECT id, ts_offsets(body, 2)
 FROM offsets_test_idx
@@ -760,7 +760,7 @@ id	ts_offsets
 2	{0,3}
 4	{0,3,4,7}
 
-# ts_regexp + limit=5 -> SeekCookie entry
+# ts_regexp + limit=5 -> PostingMeta entry
 query
 SELECT id, ts_offsets(body, 5)
 FROM offsets_test_idx
@@ -810,7 +810,7 @@ id	ts_offsets
 # Sentinel-explicit form of the default no-cap behavior; row 4 should
 # emit every hit for each variant.
 
-# ts_like + limit=0 -> SeekCookie entry, full row-4 hit set
+# ts_like + limit=0 -> PostingMeta entry, full row-4 hit set
 query
 SELECT id, ts_offsets(body, 0)
 FROM offsets_test_idx

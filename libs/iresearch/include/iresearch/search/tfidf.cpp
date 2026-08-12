@@ -33,7 +33,7 @@
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/posting/wand_writer.hpp"
+#include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
@@ -58,7 +58,7 @@ constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
 
 IRS_FORCE_INLINE score_t TfIdf(uint32_t freq, score_t idf) noexcept {
   // TODO(gnusi): do we need sqrt?
-  return std::sqrt(static_cast<score_t>(freq)) * idf;
+  return std::sqrt(TermCountToScore(freq)) * idf;
 }
 
 template<ScoreMergeType MergeType, bool HasNorm, bool HasBoost>
@@ -71,9 +71,9 @@ IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, scores_size_t n,
     const auto r = [&] IRS_FORCE_INLINE {
       if constexpr (HasNorm && HasBoost) {
         return boost[i] * TfIdf(freq[i], idf) /
-               std::sqrt(static_cast<score_t>(norm[i]));
+               std::sqrt(TermCountToScore(norm[i]));
       } else if constexpr (HasNorm) {
-        return TfIdf(freq[i], idf) / std::sqrt(static_cast<score_t>(norm[i]));
+        return TfIdf(freq[i], idf) / std::sqrt(TermCountToScore(norm[i]));
       } else if constexpr (HasBoost) {
         return boost[i] * TfIdf(freq[i], idf);
       } else {
@@ -190,28 +190,29 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
   });
 }
 
-WandWriter::ptr TFIDF::prepare_wand_writer(size_t max_levels) const {
+ScoreBoundWriter::ptr TFIDF::PrepareScoreBoundWriter(size_t max_levels) const {
   if (_normalize) {
     // idf * sqrt(tf) / sqrt(dl)
     // sqrt(tf) / sqrt(dl)
     // tf / dl
-    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
+    return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
   }
-  return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels);
+  return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
 }
 
-WandSource::ptr TFIDF::prepare_wand_source() const {
+ScoreBoundSource::ptr TFIDF::PrepareScoreBoundSource() const {
   if (_normalize) {
-    return std::make_unique<FreqNormSource<kWandTagNorm>>();
+    return std::make_unique<
+      FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
   }
-  return std::make_unique<FreqNormSource<kWandTagFreq>>();
+  return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
 }
 
-Scorer::WandType TFIDF::wand_type() const noexcept {
+Scorer::ScoreBoundType TFIDF::GetScoreBoundType() const noexcept {
   if (_normalize) {
-    return WandType::DivNorm;
+    return ScoreBoundType::DivNorm;
   }
-  return WandType::MaxFreq;
+  return ScoreBoundType::MaxFreq;
 }
 
 bool TFIDF::equals(const Scorer& other) const noexcept {

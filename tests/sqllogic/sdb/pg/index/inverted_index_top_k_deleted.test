@@ -1,0 +1,128 @@
+hash-threshold 100
+
+# ---------------------------------------------------------------------------
+# Regression for #1022: a multi-term top-k query over a segment that has
+# deletes used to spin forever.
+#
+# `optimize_top_k` builds a pruning iterator for a multi-term filter, and that
+# iterator answers only `Collect` and `EmitScoredDocs` -- its `advance()` is a
+# stub. A segment with deletes wraps whatever it gets in `MaskDocIterator`,
+# which filters by calling `advance()` until it lands on a live document, so
+# the two composed into a loop that never moved off a deleted document. Release
+# builds spun at 100% CPU indefinitely and blocked checkpoints behind the
+# reader; dev builds hit the stub's assert.
+#
+# All three ingredients are needed: `optimize_top_k` (no pruning iterator
+# without it), more than one term (a single term takes `SinglePruningIterator`,
+# which does implement `advance`), and at least one deleted row.
+#
+# `MultiTermQuery::Execute` now drops pruning for a segment that has a document
+# mask, so such a segment answers through the plain iterator.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_topk_del(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE topk_del (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement count 8
+INSERT INTO topk_del VALUES
+  (1, 'cat red alpha apple'),
+  (2, 'dog blue beta pear'),
+  (3, 'fox green gamma plum'),
+  (4, 'cat yellow delta fig'),
+  (5, 'dog purple epsilon date'),
+  (6, 'fox red zeta mango'),
+  (7, 'cat blue eta apple'),
+  (8, 'dog green alpha pear');
+
+
+statement ok
+CREATE INDEX topk_del_idx ON topk_del USING inverted(id, body en_topk_del)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) topk_del;
+
+
+# Before any delete: the pruning iterator runs, nothing wraps it.
+
+query
+SELECT id FROM topk_del_idx
+WHERE body @@ 'cat red alpha apple dog blue'
+ORDER BY BM25(topk_del_idx.tableoid) DESC, id
+LIMIT 3;
+----
+id
+1
+7
+2
+
+
+statement count 1
+DELETE FROM topk_del WHERE id = 3;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) topk_del;
+
+
+# The segment now has a mask. Byte identical to the query above, and before the
+# fix this never returned.
+
+query
+SELECT id FROM topk_del_idx
+WHERE body @@ 'cat red alpha apple dog blue'
+ORDER BY BM25(topk_del_idx.tableoid) DESC, id
+LIMIT 3;
+----
+id
+1
+7
+2
+
+
+# The deleted row stays out of a multi-term top-k.
+
+query
+SELECT count(*) FROM topk_del_idx
+WHERE body @@ 'fox green gamma plum' AND id = 3;
+----
+count
+0
+
+
+# Deleting one of the rows the query returns moves the next one up, so the scan
+# is really walking the mask rather than short-circuiting.
+
+statement count 1
+DELETE FROM topk_del WHERE id = 1;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) topk_del;
+
+
+query
+SELECT id FROM topk_del_idx
+WHERE body @@ 'cat red alpha apple dog blue'
+ORDER BY BM25(topk_del_idx.tableoid) DESC, id
+LIMIT 3;
+----
+id
+7
+2
+8

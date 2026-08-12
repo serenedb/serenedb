@@ -234,22 +234,22 @@ FROM tp_idx
 WHERE body @@ ts_starts_with('ax') OR body @@ ts_starts_with('ban')
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ─────────────────╮
-│ Groups: #0                      │
-│ ~4 rows                         │
-╰────────────────┬────────────────╯
-╭─ IRESEARCH_SCAN ────────────────╮
-│ Index: tp_idx                   │
-│ Index Filter:                   │
-│ ╭─ Automaton ─────────────────╮ │
-│ │ Field: body(string)         │ │
-│ │ Pattern: (?:ax.*)|(?:ban.*) │ │
-│ ╰─────────────────────────────╯ │
-│ TsDict: body                    │
-│ Projections:                    │
-│ sdb_inverted_index_term$body    │
-│ ~8 rows                         │
-╰─────────────────────────────────╯
+╭─ HASH_GROUP_BY ───────────────────────────╮
+│ Groups: #0                                │
+│ ~4 rows                                   │
+╰─────────────────────┬─────────────────────╯
+╭─ IRESEARCH_SCAN ────┴─────────────────────╮
+│ Index: tp_idx                             │
+│ Index Filter:                             │
+│ ╭─ Automaton ───────────────────────────╮ │
+│ │ Field: body(string)                   │ │
+│ │ Pattern: (?:ax(?s:.)*)|(?:ban(?s:.)*) │ │
+│ ╰───────────────────────────────────────╯ │
+│ TsDict: body                              │
+│ Projections:                              │
+│ sdb_inverted_index_term$body              │
+│ ~8 rows                                   │
+╰───────────────────────────────────────────╯
 
 # Negation claims into the tree: SQL NOT and the TSQUERY !! prefix both
 # lower to an exclusion checked per term.
@@ -419,21 +419,22 @@ EXPLAIN SELECT unnest(ts_dict_agg(cat)) AS term FROM tp_idx
 WHERE cat LIKE 'ap%' OR cat = 'banana' OR cat LIKE '%cado'
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ─────────────────────────────╮
-│ Groups: #0                                  │
-│ ~0 rows                                     │
-╰──────────────────────┬──────────────────────╯
-╭─ IRESEARCH_SCAN ─────┴──────────────────────╮
-│ Index: tp_idx                               │
-│ Index Filter:                               │
-│ ╭─ Automaton ─────────────────────────────╮ │
-│ │ Field: cat(string)                      │ │
-│ │ Pattern: (?:ap.*)|(?:banana)|(?:.*cado) │ │
-│ ╰─────────────────────────────────────────╯ │
-│ TsDict: cat                                 │
-│ Projections: sdb_inverted_index_term$cat    │
-│ ~1 row                                      │
-╰─────────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ──────────────────────────────╮
+│ Groups: #0                                   │
+│ ~0 rows                                      │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: tp_idx                                │
+│ Index Filter:                                │
+│ ╭─ Automaton ──────────────────────────────╮ │
+│ │ Field: cat(string)                       │ │
+│ │ Pattern:                                 │ │
+│ │ (?:ap(?s:.)*)|(?:banana)|(?:(?s:.)*cado) │ │
+│ ╰──────────────────────────────────────────╯ │
+│ TsDict: cat                                  │
+│ Projections: sdb_inverted_index_term$cat     │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
 
 # Nested OR parenthesization converges to the same fused automaton.
 query T

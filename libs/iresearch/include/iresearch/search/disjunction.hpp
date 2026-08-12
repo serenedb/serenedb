@@ -187,7 +187,10 @@ class BasicDisjunction : public CompoundDocIterator<Adapter> {
     }
   }
 
-  IRS_DOC_ITERATOR_DEFAULTS_NO_COUNT
+  IRS_DOC_ITERATOR_FILL_BLOCK
+  IRS_DOC_ITERATOR_COLLECT
+  IRS_DOC_ITERATOR_EMIT_DOCS
+  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
 
  private:
   struct ResolveOverloadTag {};
@@ -596,7 +599,6 @@ struct RebindIterator<Disjunction<Adapter>> {
   using Unary = UnaryDisjunction<Adapter>;
   using Basic = BasicDisjunction<Adapter>;
   using Small = SmallDisjunction<Adapter>;
-  using Wand = void;
 };
 
 struct CostAdapter : ScoreAdapter {

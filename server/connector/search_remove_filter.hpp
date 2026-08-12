@@ -30,10 +30,17 @@ namespace sdb::connector {
 // something that never match user created fields id.
 constexpr inline std::string_view kPkFieldName{"\x00", 1};
 
-class SearchRemoveFilterBase : public irs::Filter, public irs::DocIterator {
+class SearchRemoveFilter : public irs::Filter, public irs::DocIterator {
  public:
-  explicit SearchRemoveFilterBase(irs::field_id pk_field_id) noexcept
-    : _pk_field_id{pk_field_id} {}
+  SearchRemoveFilter(size_t batch_size, irs::field_id pk_field_id)
+    : _pk_field_id{pk_field_id} {
+    _pks.reserve(batch_size);
+  }
+
+  void reset() {
+    _pos = 0;
+    _pks.clear();
+  }
 
   bool Empty() const noexcept { return _pks.empty(); }
 
@@ -45,9 +52,8 @@ class SearchRemoveFilterBase : public irs::Filter, public irs::DocIterator {
   irs::DocIterator::ptr MakeIterator(const irs::SubReader& segment,
                                      const irs::ExecutionContext& ctx) const;
 
- protected:
   irs::TypeInfo::type_id type() const noexcept final {
-    return irs::Type<SearchRemoveFilterBase>::id();
+    return irs::Type<SearchRemoveFilter>::id();
   }
 
   irs::QueryBuilder::ptr PrepareSegment(
@@ -57,13 +63,17 @@ class SearchRemoveFilterBase : public irs::Filter, public irs::DocIterator {
     return nullptr;
   }
 
+  irs::doc_id_t advance() final;
+
   irs::doc_id_t seek(irs::doc_id_t) noexcept final {
     SDB_ASSERT(false);
     return _doc = irs::doc_limits::eof();
   }
 
+  IRS_DOC_ITERATOR_DEFAULTS
+
+ private:
   const irs::field_id _pk_field_id;
-  mutable const irs::SubReader* _segment{};
   mutable const irs::DocumentMask* _pending_mask{};
   mutable const irs::DocumentMask* _segment_mask{};
   mutable const irs::TermReader* _pk_field{};
@@ -73,23 +83,6 @@ class SearchRemoveFilterBase : public irs::Filter, public irs::DocIterator {
   // query execution but this allocations must survive until IndexWriter Commit.
   // See Issue cluster #37
   mutable std::vector<irs::bstring> _pks;
-};
-
-class SearchRemoveFilter final : public SearchRemoveFilterBase {
- public:
-  SearchRemoveFilter(size_t batch_size, irs::field_id pk_field_id)
-    : SearchRemoveFilterBase{pk_field_id} {
-    _pks.reserve(batch_size);
-  }
-
-  void reset() {
-    _pos = 0;
-    _pks.clear();
-  }
-
-  irs::doc_id_t advance() final;
-
-  IRS_DOC_ITERATOR_DEFAULTS
 };
 
 }  // namespace sdb::connector

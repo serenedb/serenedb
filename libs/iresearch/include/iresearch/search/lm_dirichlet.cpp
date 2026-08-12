@@ -59,8 +59,8 @@ IRS_FORCE_INLINE void LmDirImpl(
   //       = log(1 + tf * mu_p_inv) - log1p(dl / mu)
   // clamp to 0
   for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = static_cast<score_t>(freq[i]);
-    const score_t dl = static_cast<score_t>(norm[i]);
+    const score_t tf = TermCountToScore(freq[i]);
+    const score_t dl = TermCountToScore(norm[i]);
     const score_t weight = std::log1p(tf * mu_p_inv);
     const score_t doc_norm = std::log1p(dl / mu);  // = -log(mu/(dl+mu))
     score_t r = weight - doc_norm;

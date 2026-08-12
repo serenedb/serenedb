@@ -1,0 +1,114 @@
+hash-threshold 100
+
+# ---------------------------------------------------------------------------
+# A document's BM25 score is a function of the document and the query words.
+# Restricting *which* rows come back must not change *how* the survivors score
+# -- a hybrid search fuses a lexical score with a vector one and relies on it.
+#
+# It did change. A multi-term `@@` builds a disjunction, and a disjunction has
+# two ways of being scored: the windowed one, driven from `iterators.hpp`, which
+# fetches a block's column arguments before scoring it, and a per-document one,
+# reached only when the disjunction is a child of a conjunction. The per-
+# document path fetched nothing, so every sub scored against whichever
+# document's norm happened to be loaded last. With BM25 that is a document
+# length belonging to some other document, the denominator blows up and the
+# score collapses to float noise around zero -- silently, and only when the
+# text match was ANDed with something.
+#
+# Single-term children never showed it: a posting iterator is scored directly,
+# not through the disjunction.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_and_score(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE and_score (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement count 6
+INSERT INTO and_score VALUES
+  (1, 'cat red alpha apple'),
+  (2, 'dog blue beta pear'),
+  (3, 'cat blue gamma plum'),
+  (4, 'fox red delta fig'),
+  (5, 'cat red epsilon date'),
+  (6, 'dog green zeta mango');
+
+
+statement ok
+CREATE INDEX and_score_idx ON and_score USING inverted(id, body en_and_score);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) and_score;
+
+
+# A multi-term match, scored on its own. This is the reference value.
+
+query
+SELECT id, BM25(and_score_idx.tableoid) FROM and_score_idx
+WHERE body @@ 'cat red' AND (id % 100) = 1;
+----
+id	bm25
+1	1.3862944
+
+
+# The same document and the same words, with the restriction pushed into the
+# index filter instead of left as a column filter. Before the fix this was
+# 4.8e-07: the same row, ranked by a number that had lost the query.
+
+query
+SELECT id, BM25(and_score_idx.tableoid) FROM and_score_idx
+WHERE body @@ 'cat red' AND id = 1;
+----
+id	bm25
+1	1.3862944
+
+
+# Three terms, so the disjunction has three subs rather than two -- the failure
+# scaled with the number of terms, which is how it was mistaken for noise.
+
+query
+SELECT id, BM25(and_score_idx.tableoid) FROM and_score_idx
+WHERE body @@ 'cat red alpha' AND id = 1;
+----
+id	bm25
+1	2.9267392
+
+
+# A conjunction sums its children. A single-term child always worked, so this
+# pins that the multi-term child now contributes its own score rather than
+# nothing: 1.3862944 + 0.6931472.
+
+query
+SELECT id, BM25(and_score_idx.tableoid) FROM and_score_idx
+WHERE body @@ 'cat red' AND body @@ 'cat' AND id = 1;
+----
+id	bm25
+1	2.0794415
+
+
+# Ranking is restored, not just the numbers: document 1 matches both words,
+# document 4 only 'red', and an ANDed restriction must not reorder them.
+
+query
+SELECT id FROM and_score_idx
+WHERE body @@ 'cat red' AND id < 100
+ORDER BY BM25(and_score_idx.tableoid) DESC, id
+LIMIT 3;
+----
+id
+1
+5
+3

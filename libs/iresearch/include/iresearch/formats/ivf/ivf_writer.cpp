@@ -205,7 +205,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   return result;
 }
 
-class IvfTermIterator final : public TermIterator {
+class IvfTermIterator final : public TermOnlyIterator {
  public:
   static constexpr size_t kWidth = kCentroidTermWidth;
 
@@ -231,8 +231,6 @@ class IvfTermIterator final : public TermIterator {
     _cur = _next++;
     return true;
   }
-
-  void read() noexcept final {}
 
   DocIterator::ptr postings(IndexFeatures /*features*/) const final {
     const doc_id_t* p = _cluster_docs.data() + _cluster_offsets[_cur];
@@ -340,9 +338,9 @@ IvfTermReader::IvfTermReader(
 
 IvfTermReader::~IvfTermReader() = default;
 
-TermIterator::ptr IvfTermReader::iterator() const {
+TermOnlyIterator::ptr IvfTermReader::iterator() const {
   _it = std::make_unique<IvfTermIterator>(_cluster_docs, _cluster_offsets);
-  return memory::to_managed<TermIterator>(*_it);
+  return memory::to_managed<TermOnlyIterator>(*_it);
 }
 
 void IvfTermReader::WriteTermPayload(IndexOutput& out,

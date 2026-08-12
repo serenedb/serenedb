@@ -78,8 +78,6 @@ EntryConfigSerialized PackConfig(const InvertedIndexEntryInfo& entry) {
     .features = entry.features,
     .ivf_config = entry.ivf_config,
     .synthetic_column = entry.synthetic_column,
-    .row_group_size = entry.row_group_size,
-    .norm_row_group_size = entry.norm_row_group_size,
     .null_field_id = entry.null_field_id,
     .bool_field_id = entry.bool_field_id,
     .numeric_field_id = entry.numeric_field_id,
@@ -115,13 +113,11 @@ std::shared_ptr<InvertedIndex> UnpackEntries(
                                 .text_dictionary = cfg.text_dictionary,
                                 .features = cfg.features,
                                 .synthetic_column = cfg.synthetic_column,
-                                .norm_row_group_size = cfg.norm_row_group_size,
                                 .store_values = cfg.store_values,
                                 .indexed_term_dict = cfg.indexed_term_dict,
                                 .hyperloglog = cfg.hyperloglog,
                                 .compression = cfg.compression,
                                 .ivf_config = std::move(cfg.ivf_config),
-                                .row_group_size = cfg.row_group_size,
                                 .null_field_id = cfg.null_field_id,
                                 .bool_field_id = cfg.bool_field_id,
                                 .numeric_field_id = cfg.numeric_field_id,
@@ -215,17 +211,11 @@ void InvertedIndex::BumpTickServerForEntryIds() {
     UpdateTickServer(kv.second);
   }
   for (const auto& [field_id, entry] : _entries) {
-    if (irs::field_limits::valid(entry.synthetic_column)) {
-      UpdateTickServer(entry.synthetic_column);
-    }
-    if (irs::field_limits::valid(entry.null_field_id)) {
-      UpdateTickServer(entry.null_field_id);
-    }
-    if (irs::field_limits::valid(entry.bool_field_id)) {
-      UpdateTickServer(entry.bool_field_id);
-    }
-    if (irs::field_limits::valid(entry.numeric_field_id)) {
-      UpdateTickServer(entry.numeric_field_id);
+    for (const auto id : {entry.synthetic_column, entry.null_field_id,
+                          entry.bool_field_id, entry.numeric_field_id}) {
+      if (irs::field_limits::valid(id)) {
+        UpdateTickServer(id);
+      }
     }
   }
 }
@@ -493,40 +483,29 @@ std::optional<irs::IvfInfo> InvertedIndex::GetIvfInfo(
 irs::ColumnOptions InvertedIndex::GetColumnOptions(irs::field_id id) const {
   if (const auto* entry = FindEntry(id)) {
     return {
-      .row_group_size = entry->row_group_size,
       .compression = entry->compression,
       .ivf_info = GetIvfInfo(id),
       .hyperloglog = entry->hyperloglog,
     };
   }
   if (static_cast<Column::Id>(id) == Column::kGeneratedPKId) {
-    return {
-      .skip_validity = true,
-      .row_group_size = _options.row_group_size,
-    };
+    return {.skip_validity = true};
   }
   const auto lookup = LookupField(id);
   SDB_ASSERT(lookup.entry, "GetColumnOptions: unknown column id ", id);
   SDB_ASSERT(!lookup.entry->features.HasFeatures(irs::IndexFeatures::Norm),
              "GetColumnOptions: norm-role synthetic id ", id);
-  return {
-    .skip_validity = true,
-    .row_group_size = _options.row_group_size,
-  };
+  return {.skip_validity = true};
 }
 
-irs::NormColumnOptions InvertedIndex::GetNormColumnOptions(
-  irs::field_id id) const {
+irs::field_id InvertedIndex::GetNormColumnId(irs::field_id id) const {
   const auto* entry = FindEntry(id);
-  SDB_ASSERT(entry != nullptr, "GetNormColumnOptions: unknown id ", id);
+  SDB_ASSERT(entry != nullptr, "GetNormColumnId: unknown id ", id);
   SDB_ASSERT(irs::field_limits::valid(entry->synthetic_column),
-             "GetNormColumnOptions: no catalog reservation; id ", id);
+             "GetNormColumnId: no catalog reservation; id ", id);
   SDB_ASSERT(entry->features.HasFeatures(irs::IndexFeatures::Norm),
-             "GetNormColumnOptions: catalog features lack Norm; id ", id);
-  return {
-    .id = entry->synthetic_column,
-    .row_group_size = entry->norm_row_group_size,
-  };
+             "GetNormColumnId: catalog features lack Norm; id ", id);
+  return entry->synthetic_column;
 }
 
 containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {

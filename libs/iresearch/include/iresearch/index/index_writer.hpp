@@ -160,15 +160,15 @@ struct IndexWriterOptions : public SegmentOptions {
   // Comparator defines physical order of documents in each segment
   // produced by an index_writer.
   // empty == use default system sorting order
-  const Comparer* comparator{nullptr};
+  const Comparer* comparator = nullptr;
 
   // Number of free segments cached in the segment pool for reuse
   // 0 == do not cache any segments, i.e. always create new segments
-  size_t segment_pool_size{128};  // arbitrary size
+  size_t segment_pool_size = 128;  // arbitrary size
 
   // Acquire an exclusive lock on the repository to guard against index
   // corruption from multiple index_writers
-  bool lock_repository{true};
+  bool lock_repository = true;
 
   // Enables the typed .col on segments allocated by this writer.
   // Lifetime of `*db` must extend until IndexWriter shutdown.
@@ -179,7 +179,8 @@ struct IndexWriterOptions : public SegmentOptions {
   // the serenedb host overrides per write (SetFieldOptions) and per merge
   // (Compact).
   ColumnOptionsProvider column_options;
-  NormColumnOptionsProvider norm_column_options;
+  NormColumnIdProvider norm_column_id;
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
 
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
@@ -1003,7 +1004,8 @@ class IndexWriter : private util::Noncopyable {
   // Abort transaction
   void Abort() noexcept;
 
-  IndexFeatures _wand_features{};  // Set of features required for wand
+  // Set of features required for score bounds
+  IndexFeatures _score_bound_features{};
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
   // Fallback options (FunctionFieldOptions wrapping the provider callbacks),

@@ -67,20 +67,11 @@ struct AggregatedStatsVisitor : util::Noncopyable {
     state.Prepare(&field);
   }
 
-  void operator()(SeekCookie::ptr& cookie) const {
+  void operator()(const PostingMeta& cookie) const {
     if (term_stat) {
-      term_stat->Collect(*cookie);
+      term_stat->Collect(cookie);
     }
-    uint32_t docs_count = 0;
-    if (auto* meta = irs::get<TermMeta>(*cookie)) {
-      docs_count = meta->docs_count;
-    }
-    state.Push(MultiTermState::Entry{
-      .cookie = std::move(cookie),
-      .docs_count = docs_count,
-      .boost = boost,
-      .stat_offset = 0,
-    });
+    state.Push(cookie, boost, 0);
   }
 
   MultiTermState& state;

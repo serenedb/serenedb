@@ -27,6 +27,7 @@
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <bit>
 
 #include "basics/assert.h"
@@ -35,7 +36,7 @@
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "basics/system-compiler.h"
-#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score_function.hpp"
@@ -67,7 +68,7 @@ struct FillBlockMatchContext {
 class ScoreCollector {
  public:
   enum class Tag {
-    NthPartition,
+    Loser,
     Generic,
   };
 
@@ -75,8 +76,8 @@ class ScoreCollector {
 
   virtual void Add(score_t score, doc_id_t doc) = 0;
 
-  virtual void AddWindow(const score_t* scores, const uint64_t* mask,
-                         doc_id_t min, size_t num_blocks, bool clear_score) = 0;
+  virtual void ConsumeWindow(score_t* scores, uint64_t* mask, doc_id_t min,
+                             size_t num_blocks) = 0;
 
   virtual void AddDocs(const doc_id_t* docs, size_t count,
                        const score_t* scores) = 0;
@@ -100,52 +101,49 @@ struct ScoreDoc {
 
 // TODO(mbkkt) Try to make it autovectorized,
 // otherwise try to use xsimd/neon specific intrinsics
-class NthPartitionScoreCollector final : public ScoreCollector {
+template<typename Derived>
+class ScoreCollectorBase : public ScoreCollector {
  public:
-  explicit NthPartitionScoreCollector(score_t& score_threshold, size_t k,
-                                      std::span<ScoreDoc> hits) noexcept
-    : ScoreCollector{Tag::NthPartition},
-      _score_threshold{&score_threshold},
-      _hits_it{hits.data()},
-      _hits_begin{hits.data()},
-      _hits_pivot{hits.data() + k},
-      _hits_end{hits.data() + hits.size()} {
-    SDB_ASSERT(2 * k == hits.size());
-  }
-
   void SetScoreThreshold(score_t& score_threshold) noexcept {
     SDB_ASSERT(score_threshold <= *_score_threshold);
     score_threshold = *_score_threshold;
     _score_threshold = &score_threshold;
   }
 
-  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
-    ++_count;
-    TryPush(score, doc);
+  // The one place the threshold moves, and it only ever rises. Two things
+  // raise it and neither knows about the other: this collector's own k-th
+  // whenever it has k hits, and the scan seeding a segment with the best k-th
+  // any worker has published. The hits are not dropped at that seed, so hits
+  // accepted under the older threshold stay in and the next k-th can be below
+  // the seeded value -- routing every raise through here is what keeps that
+  // lower k-th from writing the threshold back down. SetScoreThreshold
+  // asserts on it.
+  IRS_FORCE_INLINE void RaiseScoreThreshold(score_t score_threshold) noexcept {
+    *_score_threshold = std::max(*_score_threshold, score_threshold);
   }
 
   void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
 
-  IRS_FORCE_INLINE size_t AcceptedCount() const noexcept {
-    return _hits_it - _hits_begin;
-  }
-
   IRS_FORCE_INLINE uint64_t TotalMatches() const noexcept { return _count; }
 
-  IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
-                                  doc_id_t min, size_t num_blocks,
-                                  bool clear_score) noexcept final {
-#ifdef __AVX2__
-    auto threshold = _mm256_set1_ps(*_score_threshold);
-#endif
+  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept final {
+    ++_count;
+    TryPush(*_score_threshold, score, doc);
+  }
+
+  IRS_FORCE_INLINE void ConsumeWindow(score_t* scores, uint64_t* mask,
+                                      doc_id_t min,
+                                      size_t num_blocks) noexcept final {
+    score_t threshold = *_score_threshold;
     for (size_t i = 0; i < num_blocks; ++i) {
       auto word = mask[i];
       if (word == 0) [[likely]] {
         continue;
       }
+      mask[i] = 0;
 
       _count += std::popcount(word);
-      const score_t* IRS_RESTRICT const score_base =
+      auto* IRS_RESTRICT const score_base =
         scores + i * BitsRequired<uint64_t>();
 #ifdef __AVX2__
       word &= GetScoreMask(score_base, threshold);
@@ -155,109 +153,166 @@ class NthPartitionScoreCollector final : public ScoreCollector {
       while (word != 0) {
         const doc_id_t bit = std::countr_zero(word);
         word = PopBit(word);
-#ifdef __AVX2__
-        if (Push(score_base[bit], doc_base + bit)) {
-          threshold = _mm256_set1_ps(*_score_threshold);
-          word &= GetScoreMask(score_base, threshold);
-        }
-#else
-        TryPush(score_base[bit], doc_base + bit);
-#endif
+        TryPush(threshold, score_base[bit], doc_base + bit);
       }
 
-      if (clear_score) {
-        std::memset(const_cast<score_t*>(score_base), 0,
-                    BitsRequired<uint64_t>() * sizeof(score_t));
-      }
+      std::memset(score_base, 0, BitsRequired<uint64_t>() * sizeof(score_t));
     }
+    *_score_threshold = threshold;
   }
 
   IRS_FORCE_INLINE void AddDocs(const doc_id_t* docs, size_t count,
                                 const score_t* scores) noexcept final {
     _count += count;
+    score_t threshold = *_score_threshold;
     size_t i = 0;
-
 #ifdef __AVX2__
-    auto threshold = _mm256_set1_ps(*_score_threshold);
     for (; i + 8 <= count; i += 8) {
-      auto scores_vec = _mm256_loadu_ps(scores + i);
-      auto cmp = _mm256_cmp_ps(scores_vec, threshold, kCmpPred);
-      auto pass = static_cast<unsigned>(_mm256_movemask_ps(cmp));
-
-      while (pass) {
+      auto pass = static_cast<unsigned>(_mm256_movemask_ps(_mm256_cmp_ps(
+        _mm256_loadu_ps(scores + i), _mm256_set1_ps(threshold), kCmpPred)));
+      while (pass != 0) {
         const int bit = std::countr_zero(pass);
         pass = PopBit(pass);
-        const score_t score = scores[i + bit];
-        if (Push(score, docs[i + bit])) {
-          threshold = _mm256_set1_ps(*_score_threshold);
-          cmp = _mm256_cmp_ps(scores_vec, threshold, kCmpPred);
-          pass &= static_cast<unsigned>(_mm256_movemask_ps(cmp));
-        }
+        TryPush(threshold, scores[i + bit], docs[i + bit]);
       }
     }
 #endif
-
     for (; i < count; ++i) {
-      TryPush(scores[i], docs[i]);
+      TryPush(threshold, scores[i], docs[i]);
     }
+    *_score_threshold = threshold;
   }
+
+ protected:
+  ScoreCollectorBase(Tag tag, score_t& score_threshold) noexcept
+    : ScoreCollector{tag}, _score_threshold{&score_threshold} {}
+
+  uint64_t _count = 0;
+  uint32_t _current_segment = 0;
+  score_t* IRS_RESTRICT _score_threshold;
 
  private:
-  IRS_FORCE_INLINE bool Accept(score_t score) const noexcept {
-    return score > *_score_threshold;
+  IRS_FORCE_INLINE Derived& Self() noexcept {
+    return static_cast<Derived&>(*this);
   }
 
-  IRS_FORCE_INLINE void TryPush(score_t score, doc_id_t doc) noexcept {
-    if (Accept(score)) {
-      Push(score, doc);
+  IRS_FORCE_INLINE void TryPush(score_t& threshold, score_t score,
+                                doc_id_t doc) noexcept {
+    if (score > threshold) {
+      Self().Push(threshold, score, doc);
     }
-  }
-
-  IRS_FORCE_INLINE bool Push(score_t score, doc_id_t doc) noexcept {
-    SDB_ASSERT(Accept(score));
-    *_hits_it = {score, doc, _current_segment};
-    ++_hits_it;
-    if (_hits_it != _hits_end) {
-      return false;
-    }
-    _hits_it = _hits_pivot;
-    std::nth_element(
-      _hits_begin, _hits_pivot, _hits_end,
-      [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
-    *_score_threshold = _hits_pivot->score;
-    return true;
   }
 
 #ifdef __AVX2__
   static constexpr int kCmpPred = _CMP_GT_OQ;
 
-  IRS_FORCE_INLINE uint64_t GetScoreMask(const score_t* IRS_RESTRICT scores,
-                                         __m256 threshold) const noexcept {
+  IRS_FORCE_INLINE static uint64_t GetScoreMask(
+    const score_t* IRS_RESTRICT scores, score_t threshold) noexcept {
+    const auto v = _mm256_set1_ps(threshold);
     uint64_t mask = 0;
     for (int i = 0; i < 64; i += 8) {
       const uint64_t bits = _mm256_movemask_ps(
-        _mm256_cmp_ps(_mm256_loadu_ps(scores + i), threshold, kCmpPred));
+        _mm256_cmp_ps(_mm256_loadu_ps(scores + i), v, kCmpPred));
       mask |= bits << i;
     }
     return mask;
   }
 #endif
+};
 
-  uint64_t _count = 0;
-  uint32_t _current_segment = 0;
-  score_t* IRS_RESTRICT _score_threshold = nullptr;
-  ScoreDoc* IRS_RESTRICT _hits_it;
-  ScoreDoc* IRS_RESTRICT const _hits_begin;
-  ScoreDoc* IRS_RESTRICT const _hits_pivot;
-  ScoreDoc* IRS_RESTRICT const _hits_end;
+class LoserScoreCollector final
+  : public ScoreCollectorBase<LoserScoreCollector> {
+  using Base = ScoreCollectorBase<LoserScoreCollector>;
+  friend Base;
+
+ public:
+  LoserScoreCollector(score_t& score_threshold, std::span<ScoreDoc> hits)
+    : Base{Tag::Loser, score_threshold},
+      _hits{hits.data()},
+      _k{hits.size()},
+      _tree(hits.size()) {
+    SDB_ASSERT(!hits.empty());
+  }
+
+  IRS_FORCE_INLINE size_t AcceptedCount() const noexcept { return _size; }
+
+ private:
+  struct Node {
+    score_t score;
+    uint32_t leaf;
+  };
+
+  static constexpr uint32_t kNone = std::numeric_limits<uint32_t>::max();
+
+  IRS_FORCE_INLINE size_t Match(uint32_t leaf) const noexcept {
+    return (_k + leaf) >> 1;
+  }
+
+  void Build() noexcept {
+    Node* IRS_RESTRICT const tree = _tree.data();
+    for (size_t i = 1; i < _k; ++i) {
+      tree[i].leaf = kNone;
+    }
+    for (uint32_t leaf = 0; leaf != _k; ++leaf) {
+      Node cur{_hits[leaf].score, leaf};
+      for (size_t node = Match(leaf); node != 0; node >>= 1) {
+        Node& slot = tree[node];
+        if (slot.leaf == kNone) {
+          slot = cur;
+          cur.leaf = kNone;
+          break;
+        }
+        if (slot.score < cur.score) {
+          std::swap(slot, cur);
+        }
+      }
+      if (cur.leaf != kNone) {
+        _root = cur;
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE void Replace(ScoreDoc hit) noexcept {
+    Node* IRS_RESTRICT const tree = _tree.data();
+    const uint32_t leaf = _root.leaf;
+    _hits[leaf] = hit;
+    Node cur{hit.score, leaf};
+    for (size_t node = Match(leaf); node != 0; node >>= 1) {
+      const Node loser = tree[node];
+      const bool win = loser.score < cur.score;
+      tree[node] = win ? cur : loser;
+      cur = win ? loser : cur;
+    }
+    _root = cur;
+  }
+
+  IRS_FORCE_INLINE void Push(score_t& threshold, score_t score,
+                             doc_id_t doc) noexcept {
+    if (_size != _k) [[unlikely]] {
+      _hits[_size++] = {score, doc, _current_segment};
+      if (_size != _k) {
+        return;
+      }
+      Build();
+    } else {
+      Replace({score, doc, _current_segment});
+    }
+    threshold = std::max(threshold, _root.score);
+  }
+
+  ScoreDoc* IRS_RESTRICT _hits;
+  size_t _k;
+  std::vector<Node> _tree;
+  size_t _size = 0;
+  Node _root{};
 };
 
 template<typename F>
 IRS_FORCE_INLINE auto ResolveScoreCollector(ScoreCollector& collector, F&& f) {
   switch (collector.GetTag()) {
-    case ScoreCollector::Tag::NthPartition:
+    case ScoreCollector::Tag::Loser:
       return std::forward<F>(f)(
-        sdb::basics::downCast<NthPartitionScoreCollector>(collector));
+        sdb::basics::downCast<LoserScoreCollector>(collector));
     case ScoreCollector::Tag::Generic:
       return std::forward<F>(f)(collector);
     default:
@@ -356,18 +411,11 @@ struct DocIterator : AttributeProvider {
     return count;
   }
 
-  // `self.S::advance()` is a qualified (non-virtual) call, so when `self` is
-  // the concrete iterator (from a derived override) advance() inlines instead
-  // of dispatching -- the whole point of the *Impl(*this) devirtualisation.
   template<typename S>
   IRS_FORCE_INLINE static uint32_t EmitDocsImpl(S& self, doc_id_t* out,
                                                 doc_id_t min, doc_id_t max) {
     uint32_t n = 0;
-    auto doc = self.value();
-    while (doc < min) {  // value() may be behind the window (or unpositioned)
-      doc = self.S::advance();
-    }
-    for (; doc < max; doc = self.S::advance()) {
+    for (auto doc = self.S::seek(min); doc < max; doc = self.S::advance()) {
       out[n++] = doc;
     }
     return n;
@@ -378,23 +426,29 @@ struct DocIterator : AttributeProvider {
     S& self, doc_id_t* out, score_t* scores, doc_id_t max,
     const ScoreFunction& scorer, ColumnArgsFetcher* fetcher, doc_id_t min) {
     uint32_t n = 0;
-    auto doc = self.value();
-    while (doc < min) {  // value() may be behind the window; skip up to min
-      doc = self.S::advance();
-    }
-    while (doc < max) {
+    auto doc = self.S::seek(min);
+    while (true) {
       const uint32_t start = n;
-      for (; n - start != kScoreBlock && doc < max; ++n) {
-        out[n] = doc;
-        self.S::FetchScoreArgs(n - start);
+      for (scores_size_t i = 0; i != kScoreBlock; ++i) {
+        if (doc >= max) [[unlikely]] {
+          if (i != 0) {
+            if (fetcher) {
+              fetcher->Fetch(std::span<const doc_id_t>{out + start, i});
+            }
+            scorer.Score(scores + start, i);
+          }
+          return n;
+        }
+        out[n++] = doc;
+        self.S::FetchScoreArgs(i);
         doc = self.S::advance();
       }
-      if (fetcher != nullptr) {
-        fetcher->Fetch(std::span<const doc_id_t>{out + start, n - start});
+      if (fetcher) {
+        fetcher->FetchScoreBlock(
+          std::span<const doc_id_t, kScoreBlock>{out + start, kScoreBlock});
       }
-      scorer.Score(scores + start, n - start);
+      scorer.ScoreBlock(scores + start);
     }
-    return n;
   }
 
   template<typename S>
@@ -420,7 +474,7 @@ struct DocIterator : AttributeProvider {
           docs[i] = doc;
           self.S::FetchScoreArgs(i);
         }
-        fetcher.Fetch(docs);
+        fetcher.FetchScoreBlock(docs);
         scorer.ScoreBlock(scores.data());
         collector.AddDocs(docs.data(), kScoreBlock, scores.data());
       }
@@ -513,43 +567,32 @@ struct DocIterator : AttributeProvider {
   }
 };
 
-#define IRS_DOC_ITERATOR_DEFAULTS                                              \
-  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }        \
-                                                                               \
-  void Collect(const irs::ScoreFunction& scorer,                               \
-               irs::ColumnArgsFetcher& fetcher,                                \
-               irs::ScoreCollector& collector) final {                         \
-    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector);          \
-  }                                                                            \
-                                                                               \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
-  }                                                                            \
-                                                                               \
-  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
-                          irs::doc_id_t max, const irs::ScoreFunction& scorer, \
-                          irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitScoredDocsImpl(*this, out, scores, max,       \
-                                                scorer, fetcher, min);         \
-  }                                                                            \
-                                                                               \
-  std::pair<irs::doc_id_t, bool> FillBlock(                                    \
-    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                      \
-    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)        \
-    final {                                                                    \
-    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score,       \
-                                           match);                             \
+#define IRS_DOC_ITERATOR_FILL_BLOCK                                      \
+  std::pair<irs::doc_id_t, bool> FillBlock(                              \
+    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                \
+    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)  \
+    final {                                                              \
+    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score, \
+                                           match);                       \
   }
 
-// EmitDocs/EmitScoredDocs only, for subclasses that already define bespoke
-// count/Collect/FillBlock.
-#define IRS_DOC_ITERATOR_EMIT_DEFAULTS                                         \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
-  }                                                                            \
+#define IRS_DOC_ITERATOR_COUNT \
+  uint32_t count() final { return irs::DocIterator::CountImpl(*this); }
+
+#define IRS_DOC_ITERATOR_COLLECT                                      \
+  void Collect(const irs::ScoreFunction& scorer,                      \
+               irs::ColumnArgsFetcher& fetcher,                       \
+               irs::ScoreCollector& collector) final {                \
+    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector); \
+  }
+
+#define IRS_DOC_ITERATOR_EMIT_DOCS                                            \
+  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max) \
+    final {                                                                   \
+    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);              \
+  }
+
+#define IRS_DOC_ITERATOR_EMIT_SCORED_DOCS                                      \
   uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
                           irs::doc_id_t max, const irs::ScoreFunction& scorer, \
                           irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
@@ -558,54 +601,36 @@ struct DocIterator : AttributeProvider {
                                                 scorer, fetcher, min);         \
   }
 
-// Everything except count(), for subclasses with a bespoke count() but default
-// Collect/FillBlock/EmitDocs/EmitScoredDocs.
-#define IRS_DOC_ITERATOR_DEFAULTS_NO_COUNT                                     \
-  void Collect(const irs::ScoreFunction& scorer,                               \
-               irs::ColumnArgsFetcher& fetcher,                                \
-               irs::ScoreCollector& collector) final {                         \
-    irs::DocIterator::CollectImpl(*this, scorer, fetcher, collector);          \
-  }                                                                            \
-                                                                               \
-  uint32_t EmitDocs(irs::doc_id_t* out, irs::doc_id_t min, irs::doc_id_t max)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitDocsImpl(*this, out, min, max);               \
-  }                                                                            \
-                                                                               \
-  uint32_t EmitScoredDocs(irs::doc_id_t* out, irs::score_t* scores,            \
-                          irs::doc_id_t max, const irs::ScoreFunction& scorer, \
-                          irs::ColumnArgsFetcher* fetcher, irs::doc_id_t min)  \
-    final {                                                                    \
-    return irs::DocIterator::EmitScoredDocsImpl(*this, out, scores, max,       \
-                                                scorer, fetcher, min);         \
-  }                                                                            \
-                                                                               \
-  std::pair<irs::doc_id_t, bool> FillBlock(                                    \
-    irs::doc_id_t min, irs::doc_id_t max, uint64_t* mask,                      \
-    irs::FillBlockScoreContext score, irs::FillBlockMatchContext match)        \
-    final {                                                                    \
-    return irs::DocIterator::FillBlockImpl(*this, min, max, mask, score,       \
-                                           match);                             \
-  }
+#define IRS_DOC_ITERATOR_DEFAULTS \
+  IRS_DOC_ITERATOR_FILL_BLOCK     \
+  IRS_DOC_ITERATOR_COUNT          \
+  IRS_DOC_ITERATOR_COLLECT        \
+  IRS_DOC_ITERATOR_EMIT_DOCS      \
+  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
 
-// Same as `DocIterator` but also support `reset()` operation
-struct ResettableDocIterator : DocIterator {
-  using ptr = memory::managed_ptr<ResettableDocIterator>;
-
-  // Reset iterator to initial state
-  virtual void reset() = 0;
-};
-
-struct TermIterator : Iterator<bytes_view, AttributeProvider> {
-  using ptr = memory::managed_ptr<TermIterator>;
-
-  // Read term attributes
-  virtual void read() = 0;
+// What a field writer reads: each term hands over its posting list whole,
+// which is what `PostingsWriter::Write` consumes. The write-side walk never
+// asks what a term's postings cost, so it owes no record -- a separate
+// contract rather than a mode of `TermIterator`.
+struct TermOnlyIterator : Iterator<bytes_view, AttributeProvider> {
+  using ptr = memory::managed_ptr<TermOnlyIterator>;
 
   // Return iterator over the associated posting list with the requested
   // features.
   [[nodiscard]] virtual DocIterator::ptr postings(
     IndexFeatures features) const = 0;
+};
+
+struct TermIterator : TermOnlyIterator {
+  using ptr = memory::managed_ptr<TermIterator>;
+
+  // Where the current term's postings live and how big they are. Decoding
+  // happens here, once, so statistics collection and posting-list construction
+  // share one parse of the entry. Answers the term the iterator stands on, so
+  // it is called per term -- a pointer kept across a move reports the term it
+  // was taken on. The reference is the iterator's own storage and dies with the
+  // next move; copy to keep it.
+  [[nodiscard]] virtual const PostingMeta& cookie() const = 0;
 };
 
 // Represents a result of seek operation
@@ -630,14 +655,15 @@ struct SeekTermIterator : TermIterator {
   // one. Returns seek result.
   virtual SeekResult seek_ge(bytes_view value) = 0;
 
-  // Position iterator at a value that is not less than the specified
-  // one. Returns `true` on success, `false` otherwise.
-  // Caller isn't allowed to read iterator value in case if this method
-  // returned `false`.
+  // Position iterator at `value` exactly. Returns `true` when the dictionary
+  // holds it, `false` otherwise -- and on `false` the iterator is left wherever
+  // answering took it, so its value must not be read.
+  //
+  // Not `seek_ge` plus a comparison: a miss is answered as soon as the block
+  // that would hold the key says it has no terms, where `seek_ge` still has to
+  // read the block after it to have somewhere to stand. Every exact-match
+  // filter goes through here for that reason.
   virtual bool seek(bytes_view value) = 0;
-
-  // Returns seek cookie of the current term value.
-  [[nodiscard]] virtual SeekCookie::ptr cookie() const = 0;
 };
 
 // Position iterator to the specified target and returns current value

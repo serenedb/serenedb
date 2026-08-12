@@ -23,7 +23,9 @@
 #include "term_filter.hpp"
 
 #include <tuple>
+#include <utility>
 
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/filter_visitor.hpp"
@@ -32,27 +34,43 @@
 namespace irs {
 namespace {
 
-class ByTermIterator : public WrappedTermIterator {
+class ByTermIterator : public TermIterator {
  public:
   ByTermIterator(const TermReader& reader, bytes_view term)
-    : WrappedTermIterator{reader.iterator(SeekMode::RandomOnly)},
-      _found{_impl->seek(term)} {}
+    : _reader{&reader}, _meta{reader.Lookup(term)} {
+    _term.value = term;
+  }
+
+  bytes_view value() const noexcept final { return _term.value; }
+
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    return id == irs::Type<TermAttr>::id() ? &_term : nullptr;
+  }
+
+  const PostingMeta& cookie() const final { return _meta; }
+
+  DocIterator::ptr postings(IndexFeatures features) const final {
+    return _reader->Iterator(features, PostingCookie{.cookie = &_meta});
+  }
 
   bool next() final { return std::exchange(_found, false); }
 
  private:
-  bool _found;
+  const TermReader* _reader;
+  const PostingMeta _meta;
+  TermAttr _term;
+  bool _found{_meta.docs_count != 0};
 };
 
 }  // namespace
 
 void ByTerm::Visit(const SubReader& segment, const TermReader& field,
                    const ByTermOptions& options, FilterVisitor& visitor) {
-  auto terms = field.iterator(SeekMode::RandomOnly);
-  if (!terms || !terms->seek(options.term)) {
+  ByTermIterator term{field, options.term};
+  if (!term.next()) {
     return;
   }
-  visitor.Prepare(segment, field, *terms);
+  visitor.Prepare(segment, field, term);
   std::ignore = visitor.Visit(kNoBoost);
 }
 
@@ -64,23 +82,19 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
   if (!reader) {
     // field absent in this segment: a boost-carrying empty query so the boost
     // is still observable and consistent with the multi-term path
-    return memory::make_tracked<TermQuery>(
-      ctx.memory, segment, TermState{nullptr, nullptr}, ctx.boost);
+    return memory::make_tracked<TermQuery>(ctx.memory, segment, nullptr,
+                                           kNoPosting, ctx.boost);
   }
-  auto terms = reader->iterator(SeekMode::RandomOnly);
-  if (terms && !terms->seek(term)) {
-    terms = nullptr;
-  }
+  const auto meta = reader->Lookup(term);
   if (ctx.collector) {
     auto& collector = sdb::basics::downCast<ByTermsCollector>(*ctx.collector);
     SDB_ASSERT(collector.Terms().size() == 1);
     collector.Field().Collect(*reader);
-    if (terms) {
-      collector.Terms()[0].Collect(*terms);
+    if (meta.docs_count != 0) {
+      collector.Terms()[0].Collect(meta);
     }
   }
-  TermState state{reader, terms ? terms->cookie() : nullptr};
-  return memory::make_tracked<TermQuery>(ctx.memory, segment, std::move(state),
+  return memory::make_tracked<TermQuery>(ctx.memory, segment, reader, meta,
                                          ctx.boost);
 }
 

@@ -1,0 +1,127 @@
+# dict_fsst cut sizing: the bits(max_enc_len) bump, isolated from the all-unique flip.
+#
+# The string-lengths region is dict_count entries wide, so ONE longer value widens it for every entry
+# in the dictionary at once. Like the uniqueness flip this is a whole-segment re-price that
+# NearBlock's byte accumulator cannot see coming (the long row adds its own bytes and nothing else),
+# so NearBlock watches the width for a change instead of waiting for the next byte gap.
+#
+# Every shape here stays all-unique from first row to last, so the uniqueness term can never fire and
+# the width term is the only thing that can catch the re-price. Drop it and these are the tests that
+# fail.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfw_width.db' AS dfw (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfw_width_native.db' AS dfwn (TYPE duckdb);
+
+
+# one width step, taken late: short all-unique values, then a single long one near the boundary
+statement ok
+CREATE TABLE dfw.one_step AS
+  SELECT ord, CASE WHEN ord = 33000 THEN repeat('L', 160) ELSE substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+# a staircase: several width steps, each crossing a bitpacking boundary (7 -> 8 -> 9 -> 10 bits)
+statement ok
+CREATE TABLE dfw.staircase AS
+  SELECT ord,
+         CASE WHEN ord = 20000 THEN repeat('a', 130)
+              WHEN ord = 24000 THEN repeat('b', 260)
+              WHEN ord = 28000 THEN repeat('c', 520)
+              WHEN ord = 32000 THEN repeat('d', 1040)
+              ELSE substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+# the widest value FIRST, so the width never moves again -- the control: same data, no late re-price
+statement ok
+CREATE TABLE dfw.wide_first AS
+  SELECT ord, CASE WHEN ord = 0 THEN repeat('L', 160) ELSE substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+# steadily growing lengths, so the width steps many times across the segment
+statement ok
+CREATE TABLE dfw.growing AS
+  SELECT ord, repeat('x', 8 + (ord // 400))||substr(md5(ord::VARCHAR),1,12) AS s
+  FROM range(20000) t(ord) ORDER BY ord;
+
+
+# both re-prices at once: a width bump AND the uniqueness flip on the same segment
+statement ok
+CREATE TABLE dfw.width_and_flip AS
+  SELECT ord,
+         CASE WHEN ord = 32000 THEN repeat('L', 160)
+              WHEN ord >= 33000 THEN substr(md5('0'),1,12)
+              ELSE substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfwn.one_step AS
+  SELECT ord, CASE WHEN ord = 33000 THEN repeat('L', 160) ELSE substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfwn.staircase AS
+  SELECT ord,
+         CASE WHEN ord = 20000 THEN repeat('a', 130)
+              WHEN ord = 24000 THEN repeat('b', 260)
+              WHEN ord = 28000 THEN repeat('c', 520)
+              WHEN ord = 32000 THEN repeat('d', 1040)
+              ELSE substr(md5(ord::VARCHAR),1,12) END AS s
+  FROM range(34600) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfw;
+
+
+statement ok
+CHECKPOINT dfwn;
+
+
+query
+SELECT 'own_one_step' AS shape, count(*) AS n, bool_and(s = CASE WHEN ord = 33000 THEN repeat('L',160) ELSE substr(md5(ord::VARCHAR),1,12) END) AS rows_match FROM dfw.one_step
+UNION ALL SELECT 'own_staircase', count(*), bool_and(s = CASE WHEN ord = 20000 THEN repeat('a',130) WHEN ord = 24000 THEN repeat('b',260) WHEN ord = 28000 THEN repeat('c',520) WHEN ord = 32000 THEN repeat('d',1040) ELSE substr(md5(ord::VARCHAR),1,12) END) FROM dfw.staircase
+UNION ALL SELECT 'own_wide_first', count(*), bool_and(s = CASE WHEN ord = 0 THEN repeat('L',160) ELSE substr(md5(ord::VARCHAR),1,12) END) FROM dfw.wide_first
+UNION ALL SELECT 'own_growing', count(*), bool_and(s = repeat('x', 8 + (ord // 400))||substr(md5(ord::VARCHAR),1,12)) FROM dfw.growing
+UNION ALL SELECT 'own_width_and_flip', count(*), bool_and(s = CASE WHEN ord = 32000 THEN repeat('L',160) WHEN ord >= 33000 THEN substr(md5('0'),1,12) ELSE substr(md5(ord::VARCHAR),1,12) END) FROM dfw.width_and_flip
+UNION ALL SELECT 'nat_one_step', count(*), bool_and(s = CASE WHEN ord = 33000 THEN repeat('L',160) ELSE substr(md5(ord::VARCHAR),1,12) END) FROM dfwn.one_step
+UNION ALL SELECT 'nat_staircase', count(*), bool_and(s = CASE WHEN ord = 20000 THEN repeat('a',130) WHEN ord = 24000 THEN repeat('b',260) WHEN ord = 28000 THEN repeat('c',520) WHEN ord = 32000 THEN repeat('d',1040) ELSE substr(md5(ord::VARCHAR),1,12) END) FROM dfwn.staircase
+ORDER BY shape;
+----
+shape	n	rows_match
+nat_one_step	34600	t
+nat_staircase	34600	t
+own_growing	20000	t
+own_one_step	34600	t
+own_staircase	34600	t
+own_wide_first	34600	t
+own_width_and_flip	34600	t
+
+
+# the long values are intact at full length, which is what proves the widened region was written and
+# read back at the new width rather than truncated to the old one
+query
+SELECT (SELECT max(length(s)) FROM dfw.one_step) AS own_max_len,
+       (SELECT max(length(s)) FROM dfw.staircase) AS own_staircase_max,
+       (SELECT max(length(s)) FROM dfwn.staircase) AS nat_staircase_max;
+----
+own_max_len	own_staircase_max	nat_staircase_max
+160	1040	1040
+
+
+statement ok
+DETACH dfw;
+
+
+statement ok
+DETACH dfwn;

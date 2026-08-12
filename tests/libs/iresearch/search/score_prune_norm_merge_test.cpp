@@ -18,17 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Norm + BM25 wand round-trip tests across all the corner cases the
+// Norm + BM25 score-prune round-trip tests across all the corner cases the
 // search-benchmark-game flagged. The minimal scenario passed; this file
 // adds the shapes the bench is likely actually hitting:
-//   * multi-row-group norm columns (small `norm_row_group_size`),
+//   * multi-row-group norm columns (small `row_group_size`),
 //   * RGs with mixed byte_size on the same column,
 //   * mismatched per-source byte widths during compaction,
 //   * removals before compaction (mask-filter on the norm merge),
 //   * multiple norm-bearing fields in one segment.
 //
-// Each test exercises: write -> read-norm -> BM25 wand vs no-wand -> ...
-// optional compact -> read-norm -> BM25 wand vs no-wand.
+// Each test exercises: write -> read-norm -> BM25 pruned vs unpruned -> ...
+// optional compact -> read-norm -> BM25 pruned vs unpruned.
 
 #include <gtest/gtest.h>
 
@@ -59,7 +59,7 @@ constexpr std::string_view kTerm = "x";
 class MixedAnalyzer : public irs::analysis::TypedAnalyzer<MixedAnalyzer> {
  public:
   static constexpr std::string_view type_name() noexcept {
-    return "WandNormMergeAnalyzer";
+    return "ScorePruneNormMergeAnalyzer";
   }
 
   explicit MixedAnalyzer(size_t target_count, size_t filler_count = 0,
@@ -165,19 +165,18 @@ auto MakeByTerm(irs::field_id field, std::string_view value) {
   return filter;
 }
 
-class WandNormMergeCase : public tests::IndexTestBase {
+class ScorePruneNormMergeCase : public tests::IndexTestBase {
  protected:
-  // Customise `norm_row_group_size` per test so we can force multi-RG
-  // shapes without needing 100K docs.
+  // Norms share the columnstore-wide `row_group_size`, so shrinking that is
+  // how a test forces multi-RG shapes without needing 100K docs.
   irs::IndexWriterOptions MakeOpts(irs::Scorer* scorer,
                                    uint32_t norm_rgs = 122880) {
     auto opts = irs::tests::DefaultWriterOptions();
     opts.reader_options.scorer = scorer;
-    opts.norm_column_options =
-      [norm_rgs, next = std::make_shared<std::atomic<irs::field_id>>(0)](
-        irs::field_id) -> irs::NormColumnOptions {
-      return {.id = next->fetch_add(1, std::memory_order_relaxed),
-              .row_group_size = norm_rgs};
+    opts.row_group_size = norm_rgs;
+    opts.norm_column_id = [next = std::make_shared<std::atomic<irs::field_id>>(
+                             0)](irs::field_id) -> irs::field_id {
+      return next->fetch_add(1, std::memory_order_relaxed);
     };
     return opts;
   }
@@ -242,8 +241,8 @@ class WandNormMergeCase : public tests::IndexTestBase {
     }
   }
 
-  // Run BM25 ExecuteTopK twice and assert wand == no-wand. Returns the
-  // wand-off baseline so callers can diff across snapshots.
+  // Run BM25 ExecuteTopK twice and assert pruned == unpruned. Returns the
+  // pruning-off baseline so callers can diff across snapshots.
   std::vector<irs::ScoreDoc> RunBM25(const irs::DirectoryReader& reader,
                                      const irs::Scorer& scorer,
                                      irs::field_id field, size_t k) {
@@ -251,13 +250,11 @@ class WandNormMergeCase : public tests::IndexTestBase {
     *filter.mutable_field_id() = field;
     filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(kTerm);
 
-    std::vector<irs::ScoreDoc> hits_no_wand(irs::BlockSize(k));
-    std::vector<irs::ScoreDoc> hits_wand(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> hits_unpruned(k);
+    std::vector<irs::ScoreDoc> hits_pruned(k);
 
-    irs::ExecuteTopK(reader, filter, scorer, k,
-                     irs::WandContext{.wand_enabled = false}, hits_no_wand);
-    irs::ExecuteTopK(reader, filter, scorer, k,
-                     irs::WandContext{.wand_enabled = true}, hits_wand);
+    irs::ExecuteTopK(reader, filter, scorer, k, false, hits_unpruned);
+    irs::ExecuteTopK(reader, filter, scorer, k, true, hits_pruned);
 
     auto canon = [](std::vector<irs::ScoreDoc>& v) {
       std::sort(v.begin(), v.end(),
@@ -271,13 +268,14 @@ class WandNormMergeCase : public tests::IndexTestBase {
                   return a.doc < b.doc;
                 });
     };
-    canon(hits_wand);
-    canon(hits_no_wand);
+    canon(hits_pruned);
+    canon(hits_unpruned);
 
-    EXPECT_EQ(hits_no_wand, hits_wand)
-      << "wand returned different top-K than non-wand on field=" << field;
+    EXPECT_EQ(hits_unpruned, hits_pruned)
+      << "pruning returned a different top-K than the baseline on field="
+      << field;
 
-    return hits_no_wand;
+    return hits_unpruned;
   }
 
   // Sort-and-extract just the scores (segment-id-independent) so we can
@@ -297,10 +295,10 @@ class WandNormMergeCase : public tests::IndexTestBase {
 };
 
 // -------------------------------------------------------------------------
-// Simplest baseline: a single BM25 wand round-trip across compact. Kept as
-// a regression guard at the smallest end of the surface.
+// Simplest baseline: a single BM25 score-prune round-trip across compact.
+// Kept as a regression guard at the smallest end of the surface.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, BasicBM25WandRoundTripAcrossCompact) {
+TEST_P(ScorePruneNormMergeCase, BasicBM25PruneRoundTripAcrossCompact) {
   static constexpr uint32_t kCountsA[] = {1, 2, 3, 4};
   static constexpr uint32_t kCountsB[] = {5, 6, 7, 8};
 
@@ -357,7 +355,7 @@ TEST_P(WandNormMergeCase, BasicBM25WandRoundTripAcrossCompact) {
 // calls in the norm writer; each RG may pick a different byte_size based
 // on its local max. Reader's Get must walk to the right RG.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormMultiRgInOneSegment) {
+TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   static constexpr size_t kRgSize = 4;
   static constexpr uint32_t kCounts[] = {1, 2, 3, 4,  // RG 0
                                          5, 6, 7, 8,  // RG 1
@@ -404,7 +402,7 @@ TEST_P(WandNormMergeCase, NormMultiRgInOneSegment) {
 // norm column built from per-source byte spans; if the merge mishandles
 // RG boundaries or row offsets, per-doc Get(row) returns stale data.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormMultiRgAcrossMerge) {
+TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
   static constexpr size_t kRgSize = 3;
   static constexpr uint32_t kA[] = {1, 2, 3, 4, 5};       // 5 docs => 2 RGs
   static constexpr uint32_t kB[] = {6, 7, 8, 9, 10, 11};  // 6 docs => 2 RGs
@@ -458,7 +456,7 @@ TEST_P(WandNormMergeCase, NormMultiRgAcrossMerge) {
 // fit in uint8, the other with values requiring uint16). The merged
 // column should still read back each doc's original value.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormMixedByteWidthsMerge) {
+TEST_P(ScorePruneNormMergeCase, NormMixedByteWidthsMerge) {
   // segment A: all <= 255 -> byte_size=1 per RG.
   static constexpr uint32_t kA[] = {10, 50, 100, 200};
   // segment B: max > 255 -> byte_size=2.
@@ -510,7 +508,7 @@ TEST_P(WandNormMergeCase, NormMixedByteWidthsMerge) {
 // merged column. If the mask path mis-counts bytes, post-merge norms
 // shift by the wrong offset.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormMergeWithMask) {
+TEST_P(ScorePruneNormMergeCase, NormMergeWithMask) {
   static constexpr uint32_t kA[] = {1, 2, 3, 4, 5};
   static constexpr uint32_t kB[] = {6, 7, 8};
 
@@ -565,10 +563,10 @@ TEST_P(WandNormMergeCase, NormMergeWithMask) {
 
 // -------------------------------------------------------------------------
 // Two norm-bearing fields ("body" and "body2") in the same segment. The
-// per-field norm_id allocator inside `norm_column_options` must produce
+// per-field norm_id allocator inside `norm_column_id` must produce
 // disjoint ids; norm reads must be by id, not by field name.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormTwoFieldsAcrossMerge) {
+TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
   static constexpr uint32_t kBodyA[] = {1, 2, 3};
   static constexpr uint32_t kBody2A[] = {10, 20, 30};
   static constexpr uint32_t kBodyB[] = {4, 5};
@@ -632,7 +630,7 @@ TEST_P(WandNormMergeCase, NormTwoFieldsAcrossMerge) {
 // per-source NormColumnReader cache) gets confused with more than 2
 // sources, this is where it surfaces.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormMultiSegmentCompact) {
+TEST_P(ScorePruneNormMergeCase, NormMultiSegmentCompact) {
   static constexpr size_t kSegments = 16;
   static constexpr size_t kDocsPerSeg = 5;
 
@@ -704,7 +702,7 @@ TEST_P(WandNormMergeCase, NormMultiSegmentCompact) {
 // 16 sources, multi-RG per source, AND cross-byte-width: the combination
 // the bench actually drives.
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
+TEST_P(ScorePruneNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
   static constexpr size_t kSegments = 16;
   static constexpr size_t kDocsPerSeg = 7;  // multi-RG with RG=3
   static constexpr size_t kRgSize = 3;
@@ -771,7 +769,7 @@ TEST_P(WandNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
 // actually be hit. Per-doc tf("x") cycles 1..5 (so docs that match the
 // query have varying freq), and dl cycles independently (5..35 tokens).
 // -------------------------------------------------------------------------
-TEST_P(WandNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
+TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
   static constexpr size_t kSegments = 16;
   static constexpr size_t kDocsPerSeg = 5;
   static constexpr size_t kTfMod = 5;  // tf cycles 1..5
@@ -850,7 +848,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs),
                      ::testing::Values(tests::FormatInfo{"1_5simd"}));
-INSTANTIATE_TEST_SUITE_P(WandNormMergeTest, WandNormMergeCase, kTestValues,
-                         WandNormMergeCase::to_string);
+INSTANTIATE_TEST_SUITE_P(ScorePruneNormMergeTest, ScorePruneNormMergeCase,
+                         kTestValues, ScorePruneNormMergeCase::to_string);
 
 }  // namespace

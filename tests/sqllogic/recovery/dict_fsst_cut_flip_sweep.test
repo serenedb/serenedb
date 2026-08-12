@@ -1,0 +1,124 @@
+# dict_fsst cut sizing: losing all-unique at many different distances from the block.
+#
+# While every row in a segment is unique the plain layout is FSST_ONLY, which stores no selection
+# buffer -- row i IS entry i. The first row that adds no entry forces DICT_FSST, which must
+# materialise a bitpacked row->entry index for every row already in the segment: tens of KB
+# appearing from a row that contributes about 2 bytes to NearBlock's growth accumulator. Two kinds
+# of row do that, and both are covered here: a DUPLICATE and a NULL.
+#
+# dict_fsst_unique_flip_block_overflow.test pins one unique count (33,000). This sweeps the count
+# across the whole window where the flip can land near a block boundary, so the coverage does not
+# depend on one hand-tuned constant staying valid -- if the block size or the encoding changes, some
+# column of this sweep still lands on the boundary.
+
+control substitution on
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfs_flip.db' AS dfs (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/dfs_flip_native.db' AS dfsn (TYPE duckdb);
+
+
+# u unique rows, then 1,600 duplicates of one value. The flip lands at row u.
+statement ok
+CREATE TABLE dfs.dup29 AS SELECT ord, CASE WHEN ord < 29000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END AS s FROM range(30600) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfs.dup31 AS SELECT ord, CASE WHEN ord < 31000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END AS s FROM range(32600) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfs.dup33 AS SELECT ord, CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END AS s FROM range(34600) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfs.dup35 AS SELECT ord, CASE WHEN ord < 35000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END AS s FROM range(36600) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfs.dup37 AS SELECT ord, CASE WHEN ord < 37000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END AS s FROM range(38600) t(ord) ORDER BY ord;
+
+
+# a NULL ends all-unique exactly as a duplicate does: it adds no entry either
+statement ok
+CREATE TABLE dfs.null33 AS SELECT ord, CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR),1,12) ELSE NULL END AS s FROM range(34600) t(ord) ORDER BY ord;
+
+
+# a single NULL mid-run, so all-unique dies with the segment still far from the block
+statement ok
+CREATE TABLE dfs.null1 AS SELECT ord, CASE WHEN ord = 16000 THEN NULL ELSE substr(md5(ord::VARCHAR),1,12) END AS s FROM range(34600) t(ord) ORDER BY ord;
+
+
+# same flip on the NATIVE modes: a default attach leaves allow_plus false, so committed starts at
+# PLAIN and every cut runs CutPlain/WriteNative -- the path the original abort came from
+statement ok
+CREATE TABLE dfsn.dup33 AS SELECT ord, CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END AS s FROM range(34600) t(ord) ORDER BY ord;
+
+
+statement ok
+CREATE TABLE dfsn.null33 AS SELECT ord, CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR),1,12) ELSE NULL END AS s FROM range(34600) t(ord) ORDER BY ord;
+
+
+statement ok
+CHECKPOINT dfs;
+
+
+statement ok
+CHECKPOINT dfsn;
+
+
+# every row round-trips byte-exact, on both storage versions and for both kinds of flip
+query
+SELECT 'own_dup29' AS shape, count(*) AS n, bool_and(s IS NOT DISTINCT FROM CASE WHEN ord < 29000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END) AS rows_match FROM dfs.dup29
+UNION ALL SELECT 'own_dup31', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord < 31000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END) FROM dfs.dup31
+UNION ALL SELECT 'own_dup33', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END) FROM dfs.dup33
+UNION ALL SELECT 'own_dup35', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord < 35000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END) FROM dfs.dup35
+UNION ALL SELECT 'own_dup37', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord < 37000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END) FROM dfs.dup37
+UNION ALL SELECT 'own_null33', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR),1,12) ELSE NULL END) FROM dfs.null33
+UNION ALL SELECT 'own_null1', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord = 16000 THEN NULL ELSE substr(md5(ord::VARCHAR),1,12) END) FROM dfs.null1
+UNION ALL SELECT 'nat_dup33', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR),1,12) ELSE substr(md5('0'),1,12) END) FROM dfsn.dup33
+UNION ALL SELECT 'nat_null33', count(*), bool_and(s IS NOT DISTINCT FROM CASE WHEN ord < 33000 THEN substr(md5(ord::VARCHAR),1,12) ELSE NULL END) FROM dfsn.null33
+ORDER BY shape;
+----
+shape	n	rows_match
+nat_dup33	34600	t
+nat_null33	34600	t
+own_dup29	30600	t
+own_dup31	32600	t
+own_dup33	34600	t
+own_dup35	36600	t
+own_dup37	38600	t
+own_null1	34600	t
+own_null33	34600	t
+
+
+# NULL counts survive the flip intact (the selection buffer that appears at the flip is what encodes
+# them, so an off-by-one there shows up here and nowhere else)
+query
+SELECT (SELECT count(*) FROM dfs.null33 WHERE s IS NULL) AS own_nulls,
+       (SELECT count(*) FROM dfs.null1 WHERE s IS NULL) AS own_one_null,
+       (SELECT count(*) FROM dfsn.null33 WHERE s IS NULL) AS nat_nulls;
+----
+own_nulls	own_one_null	nat_nulls
+1600	1	1600
+
+
+# the sweep really did land in dict_fsst on both storage versions
+query
+SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfs.dup33', include_segment_info=true) WHERE column_name='s' AND compression='DICT_FSST') AS own_dict_fsst,
+       (SELECT count(*) > 0 FROM pragma_storage_info('dfsn.dup33', include_segment_info=true) WHERE column_name='s' AND compression='DICT_FSST') AS nat_dict_fsst;
+----
+own_dict_fsst	nat_dict_fsst
+t	t
+
+
+statement ok
+DETACH dfs;
+
+
+statement ok
+DETACH dfsn;

@@ -245,7 +245,21 @@ class BoostIterator : public DocIterator {
     }
   }
 
-  IRS_DOC_ITERATOR_DEFAULTS
+  uint32_t count() final {
+    const auto n = _req.count();
+    _doc = _req.value();
+    return n;
+  }
+
+  uint32_t EmitDocs(doc_id_t* out, doc_id_t min, doc_id_t max) final {
+    const auto n = _req.EmitDocs(out, min, max);
+    _doc = _req.value();
+    return n;
+  }
+
+  IRS_DOC_ITERATOR_FILL_BLOCK
+  IRS_DOC_ITERATOR_COLLECT
+  IRS_DOC_ITERATOR_EMIT_SCORED_DOCS
 
  private:
   RequiredAdapter _req;

@@ -34,7 +34,7 @@
 #include "basics/empty.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/posting/wand_writer.hpp"
+#include "iresearch/formats/posting/score_bound_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
@@ -81,7 +81,7 @@ IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, scores_size_t n,
         return num;
       }
     }();
-    const auto r = c0 - c0 / (1.f + static_cast<score_t>(freq[i]) / c1);
+    const auto r = c0 - c0 / (1.f + TermCountToScore(freq[i]) / c1);
     Merge<MergeType>(res[i], r);
   }
 }
@@ -102,8 +102,8 @@ IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
         return num;
       }
     }();
-    const score_t c1 = norm_const + norm_length * static_cast<score_t>(norm[i]);
-    const auto r = c0 - c0 * c1 / (c1 + static_cast<score_t>(freq[i]));
+    const score_t c1 = norm_const + norm_length * TermCountToScore(norm[i]);
+    const auto r = c0 - c0 * c1 / (c1 + TermCountToScore(freq[i]));
     Merge<MergeType>(res[i], r);
   }
 }
@@ -364,12 +364,12 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   });
 }
 
-WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
+ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter(size_t max_levels) const {
   if (IsBM1()) {
     return {};
   }
   if (IsBM15()) {
-    return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels);
+    return std::make_unique<FreqNormWriter<kScoreBoundMaxFreq>>(max_levels);
   }
   if (IsBM11()) {
     // idf * (k + 1) * tf / (k * (1 - b + b * dl / avg_dl) + tf)
@@ -381,41 +381,41 @@ WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
     // x / (k * ((1 - b) / dl + b / avg_dl) + x)
     // b == 1
     // x / (k / avg_dl + x)
-    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
+    return std::make_unique<FreqNormWriter<kScoreBoundDivNorm>>(max_levels);
   }
   if (_approximate) {
     // It's not precise if we have more than 1 segment.
     // But search is distributed and we don't compute cluster wide avg_dl,
-    // so it's better to use this instead of kWandTagBM25.
-    // But if we want precise wand info, we need to return kWandTagBM25 here.
-    return std::make_unique<FreqNormWriter<kWandTagAvgDL>>(max_levels, _b);
+    // so it's better to use this instead of kScoreBoundBM25.
+    // But if we want precise bounds, we need to return kScoreBoundBM25 here.
+    return std::make_unique<FreqNormWriter<kScoreBoundAvgDL>>(max_levels, _b);
   }
   // It's precise for any numbers of segments, even for distributed case.
   // In other words for this we don't need to know avg_dl in ahead.
-  return std::make_unique<FreqNormWriter<kWandTagBM25>>(max_levels, _b);
+  return std::make_unique<FreqNormWriter<kScoreBoundBM25>>(max_levels, _b);
 }
 
-WandSource::ptr BM25::prepare_wand_source() const {
+ScoreBoundSource::ptr BM25::PrepareScoreBoundSource() const {
   if (IsBM1()) {
     return {};
   }
   if (IsBM15()) {
-    return std::make_unique<FreqNormSource<kWandTagFreq>>();
+    return std::make_unique<FreqNormSource<kScoreBoundFreq>>();
   }
-  return std::make_unique<FreqNormSource<kWandTagNorm>>();
+  return std::make_unique<FreqNormSource<kScoreBoundFreq | kScoreBoundNorm>>();
 }
 
-Scorer::WandType BM25::wand_type() const noexcept {
+Scorer::ScoreBoundType BM25::GetScoreBoundType() const noexcept {
   if (IsBM1()) {
-    return WandType::None;
+    return ScoreBoundType::None;
   }
   if (IsBM15()) {
-    return WandType::MaxFreq;
+    return ScoreBoundType::MaxFreq;
   }
   if (IsBM11()) {
-    return WandType::DivNorm;
+    return ScoreBoundType::DivNorm;
   }
-  return WandType::MinNorm;
+  return ScoreBoundType::MinNorm;
 }
 
 bool BM25::equals(const Scorer& other) const noexcept {

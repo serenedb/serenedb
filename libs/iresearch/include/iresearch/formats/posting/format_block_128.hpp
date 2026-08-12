@@ -28,6 +28,7 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/system-compiler.h"
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -101,6 +102,11 @@ struct FormatTraits128 {
       }
 
       if (all_same) {
+        if (delta_max == 1) {
+          best_encoding = de_delta_all_equal_to_1;
+          best_size = 0;
+          return;
+        }
         switch (ByteSize0124(delta_max)) {
           case 1:
             best_encoding = de_delta_all_same_08;
@@ -160,6 +166,9 @@ struct FormatTraits128 {
         static_assert(std::endian::native == std::endian::little);
         out.WriteData(reinterpret_cast<byte_type*>(in), best_size);
       } break;
+
+      case de_delta_all_equal_to_1:
+        break;
 
       case de_delta_all_same_08: {
         SDB_ASSERT(delta_max <= std::numeric_limits<byte_type>::max());
@@ -271,6 +280,11 @@ struct FormatTraits128 {
       }
 
       if (all_same) {
+        if (max == 1) {
+          best_encoding = e_all_equal_to_1;
+          best_size = 0;
+          return;
+        }
         switch (ByteSize0124(max)) {
           case 0:
           case 1:
@@ -314,6 +328,9 @@ struct FormatTraits128 {
         static_assert(std::endian::native == std::endian::little);
         out.WriteData(reinterpret_cast<byte_type*>(in), best_size);
       } break;
+
+      case e_all_equal_to_1:
+        break;
 
       case e_all_same_08: {
         SDB_ASSERT(max <= std::numeric_limits<byte_type>::max());
@@ -378,69 +395,66 @@ struct FormatTraits128 {
     }
   }
 
-#ifdef __AVX2__
-  struct alignas(16) BitsetByteEntry {
-    uint8_t count;
-    uint8_t positions[8];
+  struct FillLeaf {
+    enum class Kind : uint8_t {
+      Docs,
+      Bitset,
+      Run,
+    };
+
+    const uint64_t* bitset;
+    uint32_t words;
+    doc_id_t max;
+    Kind kind;
+
+    bool Maskable() const noexcept { return kind != Kind::Docs; }
+    bool IsRun() const noexcept { return kind == Kind::Run; }
+    bool IsBitset() const noexcept { return kind == Kind::Bitset; }
   };
 
-  static constexpr std::array<BitsetByteEntry, 256> kBitsetByteTable = [] {
-    std::array<BitsetByteEntry, 256> t{};
-    for (uint32_t b = 0; b != 256; ++b) {
-      t[b].count = 0;
-      std::fill_n(t[b].positions, 8, 0);
-      for (uint32_t i = 0; i != 8; ++i) {
-        if (b & (1 << i)) {
-          t[b].positions[t[b].count++] = i;
-        }
-      }
-    }
-    return t;
-  }();
-#endif
+  IRS_FORCE_INLINE static uint32_t MaskLeaf(FillLeaf leaf, uint32_t prev,
+                                            uint32_t len, doc_id_t min,
+                                            doc_id_t max,
+                                            uint64_t* IRS_RESTRICT mask,
+                                            uint32_t* IRS_RESTRICT docs_end) {
+    SDB_ASSERT(leaf.Maskable());
+    SDB_ASSERT(min <= prev && prev < max);
+    constexpr auto kBits = BitsRequired<uint64_t>();
+    const uint64_t first = prev - min;
 
-  IRS_FORCE_INLINE static void MaterializeBitset(
-    uint32_t prev, const byte_type* IRS_RESTRICT data, uint32_t words,
-    uint32_t* IRS_RESTRICT begin, uint32_t len) {
-    const auto* const bitset = reinterpret_cast<const uint64_t*>(data);
-    auto* end = begin;
-#ifdef __AVX2__
-    if (len == doc_limits::kBlockSize) {
-      for (uint32_t i = 0; i != words; ++i) {
-        const auto word = bitset[i];
-        if (word == 0) {
-          continue;
-        }
-        const uint8_t* word_bytes = reinterpret_cast<const uint8_t*>(&word);
-        for (uint32_t b = 0; b != 8; ++b) {
-          const auto& e = kBitsetByteTable[word_bytes[b]];
-          const __m256i base_vec =
-            _mm256_set1_epi32(prev + i * BitsRequired<uint64_t>() + b * 8);
-          const __m128i pos8 =
-            _mm_loadl_epi64(reinterpret_cast<const __m128i*>(e.positions));
-          const __m256i result =
-            _mm256_add_epi32(base_vec, _mm256_cvtepi8_epi32(pos8));
-          _mm256_storeu_si256(reinterpret_cast<__m256i*>(end), result);
-          end += e.count;
-        }
+    if (leaf.IsRun()) {
+      if (leaf.max < max) {
+        SetBitRange(mask, first + 1, first + 1 + len);
+        return 0;
       }
-    } else {
-#endif
-      for (uint32_t i = 0; i != words; ++i) {
-        auto word = bitset[i];
-        if (word == 0) {
-          continue;
-        }
-        const auto offset = prev + i * BitsRequired<uint64_t>();
-        do {
-          *end++ = offset + std::countr_zero(word);
-          word = PopBit(word);
-        } while (word != 0);
+      const auto inside = max - prev - 1;
+      if (inside != 0) {
+        SetBitRange(mask, first + 1, first + 1 + inside);
       }
-#ifdef __AVX2__
+      const auto live = len - inside;
+      FillSameDelta(docs_end - live, live, max - 1, 1);
+      return live;
     }
-#endif
-    SDB_ASSERT(begin + len == end);
+
+    const auto* const bitset = leaf.bitset;
+    if (leaf.max < max) {
+      OrBitsetAt(mask, first, bitset, leaf.words);
+      return 0;
+    }
+    const auto limit = max - prev;
+    const auto split = (limit - 1) / kBits;
+    const auto keep = ~uint64_t{0} >> (kBits - 1 - (limit - 1) % kBits);
+    OrBitsetAt(mask, first, bitset, split + 1, bitset[split] & keep);
+
+    const auto rest = bitset[split] & ~keep;
+    auto live = static_cast<uint32_t>(std::popcount(rest));
+    for (auto i = split + 1; i != leaf.words; ++i) {
+      live += static_cast<uint32_t>(std::popcount(bitset[i]));
+    }
+    SDB_ASSERT(live != 0 && live <= len);
+    MaterializeBitsetFrom(prev, bitset, split, rest, leaf.words,
+                          docs_end - live);
+    return live;
   }
 
   template<typename InputType>
@@ -450,16 +464,22 @@ struct FormatTraits128 {
   }
 
   template<typename InputType>
-  IRS_FORCE_INLINE static std::pair<const byte_type*, uint32_t> ReadTailForFill(
-    uint32_t len, InputType& in, uint32_t* buf, uint32_t* out, uint32_t prev) {
+  IRS_FORCE_INLINE static FillLeaf ReadTailForFill(uint32_t len, InputType& in,
+                                                   uint32_t* buf, uint32_t* out,
+                                                   uint32_t prev) {
     const auto raw_type = in.ReadByte();
     if (raw_type == de_for_bitset) {
       const auto words = in.ReadByte();
-      const auto bytes = words * sizeof(uint64_t);
-      return {ReadDataImpl(bytes, in, buf), words};
+      const auto* const bitset = reinterpret_cast<const uint64_t*>(
+        ReadDataImpl(words * sizeof(uint64_t), in, buf));
+      return {bitset, words, BitsetMax(prev, bitset, words),
+              FillLeaf::Kind::Bitset};
+    }
+    if (raw_type == de_delta_all_equal_to_1) {
+      return {nullptr, 0, prev + len, FillLeaf::Kind::Run};
     }
     ReadTailDelta(raw_type, len, in, buf, out, prev);
-    return {nullptr, 0};
+    return {nullptr, 0, out[doc_limits::kBlockSize - 1], FillLeaf::Kind::Docs};
   }
 
   template<typename InputType>
@@ -487,6 +507,10 @@ struct FormatTraits128 {
         static_assert(std::endian::native == std::endian::little);
       } break;
 
+      case de_delta_all_equal_to_1: {
+        FillSameDelta(begin, len, prev, 1);
+      } break;
+
       case de_delta_all_same_08: {
         FillSameDelta(begin, len, prev, in.ReadByte());
       } break;
@@ -499,9 +523,9 @@ struct FormatTraits128 {
 
       case de_for_bitset: {
         const auto words = in.ReadByte();
-        const auto bytes = words * sizeof(uint64_t);
-        const auto* const data = ReadDataImpl(bytes, in, buf);
-        MaterializeBitset(prev, data, words, begin, len);
+        const auto* const bitset = reinterpret_cast<const uint64_t*>(
+          ReadDataImpl(words * sizeof(uint64_t), in, buf));
+        MaterializeBitset(prev, bitset, words, begin, len);
       } break;
 
       case de_streamvbyte1234: {
@@ -576,6 +600,10 @@ struct FormatTraits128 {
         in.ReadData(reinterpret_cast<byte_type*>(begin),
                     len * sizeof(uint32_t));
         static_assert(std::endian::native == std::endian::little);
+      } break;
+
+      case e_all_equal_to_1: {
+        FillSame(begin, len, 1);
       } break;
 
       case e_all_same_08: {
@@ -654,8 +682,7 @@ struct FormatTraits128 {
 
     de_values = 0,
 
-    // TODO: Maybe de_delta_all_equal_to_1?
-    // I think this is quite popular.
+    de_delta_all_equal_to_1,
 
     de_delta_all_same_08,
     de_delta_all_same_16,
@@ -675,7 +702,7 @@ struct FormatTraits128 {
     // This can speedup delta compute.
 
     // de_delta_bitpack_00,  // delta != 0
-    // de_delta_bitpack_01,  // covered by de_delta_all_same_08
+    // de_delta_bitpack_01,  // covered by de_delta_all_equal_to_1
     de_delta_bitpack_02,
     de_delta_bitpack_03,
     de_delta_bitpack_04,
@@ -724,8 +751,7 @@ struct FormatTraits128 {
 
     e_values = 0,
 
-    // TODO: Maybe e_all_equal_to_1?
-    // I think they're quite popular for freqs/posititions
+    e_all_equal_to_1,
 
     e_all_same_08,
     e_all_same_16,
@@ -733,7 +759,7 @@ struct FormatTraits128 {
 
     e_streamvbyte1234,
 
-    // e_bitpack_00,  // covered by e_all_same_08
+    // e_bitpack_00,  // covered by e_all_equal_to_1
     e_bitpack_01,
     e_bitpack_02,
     e_bitpack_03,
@@ -771,6 +797,38 @@ struct FormatTraits128 {
   };
 
  private:
+  IRS_FORCE_INLINE static doc_id_t BitsetMax(
+    uint32_t prev, const uint64_t* IRS_RESTRICT bitset,
+    uint32_t words) noexcept {
+    SDB_ASSERT(words != 0);
+    SDB_ASSERT(bitset[words - 1] != 0);
+    return prev + words * BitsRequired<uint64_t>() - 1 -
+           std::countl_zero(bitset[words - 1]);
+  }
+
+  IRS_FORCE_INLINE static uint32_t* MaterializeBitsetFrom(
+    uint32_t prev, const uint64_t* IRS_RESTRICT bitset, uint32_t first_word,
+    uint64_t first_mask, uint32_t words, uint32_t* IRS_RESTRICT out) {
+    SDB_ASSERT(first_word < words);
+    constexpr auto kBits = BitsRequired<uint64_t>();
+    auto word = first_mask;
+    for (auto i = first_word;;) {
+      out = MaterializeWord(prev + i * kBits, word, out);
+      if (++i == words) {
+        return out;
+      }
+      word = bitset[i];
+    }
+  }
+
+  IRS_FORCE_INLINE static void MaterializeBitset(
+    uint32_t prev, const uint64_t* IRS_RESTRICT bitset, uint32_t words,
+    uint32_t* IRS_RESTRICT out, [[maybe_unused]] uint32_t len) {
+    [[maybe_unused]] const auto* const end =
+      MaterializeBitsetFrom(prev, bitset, 0, bitset[0], words, out);
+    SDB_ASSERT(out + len == end);
+  }
+
   // TODO: Should always return true
   static constexpr bool SupportIfBlock(uint32_t len) {
     return len == doc_limits::kBlockSize;
@@ -900,6 +958,9 @@ struct FormatTraits128 {
     switch (type) {
       case e_values:
         return len * sizeof(uint32_t);
+
+      case e_all_equal_to_1:
+        return 0;
 
       case e_all_same_08:
         return 1;

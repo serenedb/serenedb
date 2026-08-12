@@ -46,9 +46,9 @@ IRS_FORCE_INLINE void RawTfImpl(
   for (scores_size_t i = 0; i != n; ++i) {
     const auto r = [&] IRS_FORCE_INLINE {
       if constexpr (HasBoost) {
-        return boost[i] * num * static_cast<score_t>(freq[i]);
+        return boost[i] * num * TermCountToScore(freq[i]);
       } else {
-        return num * static_cast<score_t>(freq[i]);
+        return num * TermCountToScore(freq[i]);
       }
     }();
     Merge<MergeType>(res[i], r);

@@ -26,12 +26,6 @@ duckdb-iceberg always writes attributable deletes.
           snapshot 4 = partition-a-scoped equality delete on id=1
           snapshot 5 = equality delete on the non-indexed `part` column
           -> the translation-refusal (rescan fallback) rung
-  dv/     unpartitioned, 1 data file of 5 rows, format-version 3 from
-          snapshot 2 on; snapshot 2 = a deletion vector on positions {1,3},
-          snapshot 3 = the accumulated superset {0,1,3} (the applied-chunk
-          diff rung), snapshot 4 = the SAME set re-registered under a fresh
-          sequence number (the cardinality-skip rung), snapshot 5 = the
-          superset {0,1,2,3} (the build-time-captured-chunks diff rung)
 
 The fixture is NOT checked in: scripts/ensure_iceberg_fixture.sh generates
 it before test runs that need it, in a throwaway python container
@@ -50,11 +44,9 @@ import copy
 import json
 import os
 import shutil
-import struct
 import sys
 import time
 import uuid
-import zlib
 
 import fastavro
 import pyarrow as pa
@@ -84,87 +76,6 @@ def write_avro(path, schema, records):
         fastavro.writer(f, schema, records)
 
 
-DV_MAGIC = b"\xd1\xd3\x39\x64"
-PUFFIN_MAGIC = b"PFA1"
-
-
-def roaring_portable(values):
-    """Portable-serialized 32-bit roaring bitmap, no-run format (cookie
-    12346): u32 cookie, u32 container count, per container u16 high key +
-    u16 cardinality-1, u32 byte offsets, then the containers (sorted u16
-    array below 4097 values, 8KB bitset above). Matches croaring readSafe."""
-    containers = {}
-    for v in sorted(set(values)):
-        containers.setdefault(v >> 16, []).append(v & 0xFFFF)
-    keys = sorted(containers)
-    out = struct.pack("<II", 12346, len(keys))
-    for k in keys:
-        out += struct.pack("<HH", k, len(containers[k]) - 1)
-    offset = len(out) + 4 * len(keys)
-    offsets = b""
-    blobs = b""
-    for k in keys:
-        vals = containers[k]
-        offsets += struct.pack("<I", offset)
-        if len(vals) <= 4096:
-            blob = struct.pack(f"<{len(vals)}H", *vals)
-        else:
-            bits = bytearray(8192)
-            for v in vals:
-                bits[v >> 3] |= 1 << (v & 7)
-            blob = bytes(bits)
-        blobs += blob
-        offset += len(blob)
-    return out + offsets + blobs
-
-
-def dv_blob(positions):
-    """iceberg deletion-vector-v1 blob: BE u32 length, DV magic, LE i64
-    bucket count, per bucket LE i32 high key + portable roaring of the lows,
-    BE u32 crc32 over magic..buckets."""
-    buckets = {}
-    for p in positions:
-        buckets.setdefault(p >> 32, []).append(p & 0xFFFFFFFF)
-    body = DV_MAGIC + struct.pack("<q", len(buckets))
-    for high in sorted(buckets):
-        body += struct.pack("<i", high) + roaring_portable(buckets[high])
-    return struct.pack(">I", len(body)) + body + struct.pack(">I", zlib.crc32(body))
-
-
-def puffin_file(blob, referenced_data_file, cardinality):
-    """A one-blob puffin container: leading magic, the blob at offset 4,
-    footer (magic + JSON payload + LE i32 payload size + u32 flags=0 +
-    magic)."""
-    footer = json.dumps({"blobs": [{
-        "type": "deletion-vector-v1",
-        "fields": [],
-        "snapshot-id": -1,
-        "sequence-number": -1,
-        "offset": 4,
-        "length": len(blob),
-        "properties": {"referenced-data-file": referenced_data_file,
-                       "cardinality": str(cardinality)},
-    }]}).encode()
-    return (PUFFIN_MAGIC + blob + PUFFIN_MAGIC + footer
-            + struct.pack("<i", len(footer)) + struct.pack("<I", 0)
-            + PUFFIN_MAGIC)
-
-
-def ensure_dv_fields(entry_schema):
-    """The v3 DV manifest columns (referenced_data_file, content_offset,
-    content_size_in_bytes) are absent from pyiceberg's v2 manifest schema:
-    splice them in as optional fields with their spec field ids."""
-    df_field = next(f for f in entry_schema["fields"] if f["name"] == "data_file")
-    record = df_field["type"]
-    have = {f["name"] for f in record["fields"]}
-    for name, typ, fid in (("referenced_data_file", "string", 143),
-                           ("content_offset", "long", 144),
-                           ("content_size_in_bytes", "long", 145)):
-        if name not in have:
-            record["fields"].append({"name": name, "type": ["null", typ],
-                                     "field-id": fid, "default": None})
-
-
 def data_files_of(table):
     files = []
     snap = table.current_snapshot()
@@ -190,14 +101,7 @@ def craft_snapshot(table_dir, table, deletes, appends, version, drop_manifests):
                                   pin=False stays unattributable;
       {equality: {col: value}, partition}  an equality delete file on the
                                   named columns (field ids from the table
-                                  schema);
-      {dv: {target, positions}, partition}  a v3 deletion vector (puffin)
-                                  on data_files_of(table)[target] -- flips
-                                  the table to format-version 3. A file's
-                                  next DV REPLACES its previous one: pass
-                                  the earlier snapshot's returned manifest
-                                  path in drop_manifests, or the reader sees
-                                  two DVs for one file and errors.
+                                  schema).
     appends = [{col: value}] rows written as ONE new data file in the SAME
     snapshot -- its data sequence number equals the deletes', the strict
     comparison every applicability rule uses (the CDC upsert shape).
@@ -221,9 +125,6 @@ def craft_snapshot(table_dir, table, deletes, appends, version, drop_manifests):
     template_manifest = local_path(list_records[0]["manifest_path"])
     entry_schema, template_entries = read_avro(template_manifest)
 
-    if any("dv" in spec for spec in deletes):
-        ensure_dv_fields(entry_schema)
-        meta["format-version"] = 3
     dropped = {os.path.basename(p) for p in drop_manifests}
     list_records = [r for r in list_records
                     if os.path.basename(r["manifest_path"]) not in dropped]
@@ -293,19 +194,6 @@ def craft_snapshot(table_dir, table, deletes, appends, version, drop_manifests):
             entry = make_entry(delete_parquet, 2, row_count, spec["partition"])
             assert "equality_ids" in entry["data_file"], "manifest schema lacks equality_ids"
             entry["data_file"]["equality_ids"] = ids
-        elif "dv" in spec:
-            dead_file = data_files_of(table)[spec["dv"]["target"]]
-            positions = spec["dv"]["positions"]
-            blob = dv_blob(positions)
-            puffin_path = os.path.join(data_dir, f"delete-{version:02d}{i:03d}.puffin")
-            with open(puffin_path, "wb") as f:
-                f.write(puffin_file(blob, dead_file["file_path"], len(positions)))
-            entry = make_entry(puffin_path, 1, len(positions), spec["partition"])
-            df = entry["data_file"]
-            df["file_format"] = "PUFFIN"
-            df["referenced_data_file"] = dead_file["file_path"]
-            df["content_offset"] = 4
-            df["content_size_in_bytes"] = len(blob)
         else:
             if "positions" in spec:
                 # Bulk positional delete against the target-th data file.
@@ -505,35 +393,8 @@ def main():
         part_dir, part,
         [{"equality": {"part": "b"}, "partition": {"part": "b"}}], [], 5, set())
 
-    dv = catalog.create_table("ns.dv", pa.schema([
-        pa.field("id", pa.int64()), pa.field("body", pa.string())]))
-    dv.append(pa.table({"id": [1, 2, 3, 4, 5],
-                        "body": ["pudge goes mid", "anchin reads manga",
-                                 "vedernikoff pins snapshots",
-                                 "pudge farms jungle",
-                                 "techies plants mines"]}))
-    dv = catalog.load_table("ns.dv")
-    dv_dir = os.path.join(WORK, "wh", "ns", "dv")
-    # v2: a deletion vector kills positions 1,3 (ids 2,4); v3: the
-    # accumulated SUPERSET adds position 0 (id 1) -- the applied-chunk diff
-    # rung; v4: the same set re-registered under a fresh sequence number (a
-    # rewrite) -- the cardinality-skip rung. Each DV replaces the previous
-    # one's manifest, as real writers do.
-    m2 = craft_snapshot(dv_dir, dv,
-                        [{"dv": {"target": 0, "positions": [1, 3]},
-                          "partition": {}}], [], 2, set())
-    m3 = craft_snapshot(dv_dir, dv,
-                        [{"dv": {"target": 0, "positions": [0, 1, 3]},
-                          "partition": {}}], [], 3, {m2})
-    m4 = craft_snapshot(dv_dir, dv,
-                        [{"dv": {"target": 0, "positions": [0, 1, 3]},
-                          "partition": {}}], [], 4, {m3})
-    craft_snapshot(dv_dir, dv,
-                   [{"dv": {"target": 0, "positions": [0, 1, 2, 3]},
-                     "partition": {}}], [], 5, {m4})
-
     shutil.rmtree(OUT, ignore_errors=True)
-    for name in ("plain", "part", "dv"):
+    for name in ("plain", "part"):
         src = os.path.join(WORK, "wh", "ns", name)
         dst = os.path.join(OUT, name)
         os.makedirs(dst)

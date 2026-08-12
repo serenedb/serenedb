@@ -255,6 +255,12 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 launch_s3() {
+	# Preset connection env (the recovery compose provides MinIO as a
+	# sibling service): nothing to launch.
+	if [[ -n "${MINIO_HOST:-}" ]]; then
+		echo "MinIO provided by the environment (host=$MINIO_HOST, port=$MINIO_PORT)."
+		return
+	fi
 	PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	MINIO_CONTAINER_NAME="${PREFIX}-serenedb-test-minio-$$"
 	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/${MINIO_CONTAINER_NAME}.log"
@@ -376,6 +382,10 @@ PYEOF
 # parquet/avro files have to live on storage both the catalog (writes) and
 # serened (reads) can reach -- so MinIO is required.
 launch_iceberg_rest() {
+	if [[ -n "${ICEBERG_REST_URL:-}" ]]; then
+		echo "iceberg-rest provided by the environment (${ICEBERG_REST_URL})."
+		return
+	fi
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	ICEBERG_REST_CONTAINER_NAME="${prefix}-serenedb-test-iceberg-rest-$$"

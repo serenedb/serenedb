@@ -30,8 +30,12 @@ export RESOURCES="/serenedb/resources"
 
 # The local iceberg fixture is generated, not checked in; the tests
 # container cannot generate it (see launch_external in run.sh), so
-# generate here on the host before compose starts.
-"$WORKSPACE/scripts/ensure_iceberg_fixture.sh"
+# generate here on the host before compose starts. Without it every
+# iceberg-fixture test dangles -- fail the run, don't limp on.
+if ! "$WORKSPACE/scripts/ensure_iceberg_fixture.sh"; then
+	echo "Error: iceberg fixture generation failed" >&2
+	exit 1
+fi
 
 if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"

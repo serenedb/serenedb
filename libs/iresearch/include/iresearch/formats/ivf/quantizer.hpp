@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -99,7 +100,37 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
 };
 
 constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {
-  return quant == VectorQuantization::PQ || quant == VectorQuantization::RaBitQ;
+  return quant == VectorQuantization::PQ ||
+         quant == VectorQuantization::RaBitQ ||
+         quant == VectorQuantization::TQ || quant == VectorQuantization::TQMse;
+}
+
+inline constexpr uint32_t kPanoramaMinDim = 64;
+inline constexpr uint32_t kPanoramaLevelWidth = 32;
+inline constexpr size_t kPanoramaBatchSize = 128;
+inline constexpr size_t kPanoramaBodyAlign = 64;
+inline constexpr size_t kPcaMinRows = 1024;
+inline constexpr size_t kPcaTrainRows = 4096;
+
+constexpr uint32_t PanoramaLevels(uint32_t d) noexcept {
+  return (d + kPanoramaLevelWidth - 1) / kPanoramaLevelWidth;
+}
+
+constexpr uint32_t PanoramaRecordSize(uint32_t d, uint32_t n_levels) noexcept {
+  return (d + (n_levels != 0 ? n_levels + 1 : 0)) *
+         static_cast<uint32_t>(sizeof(float));
+}
+
+inline constexpr float PanoramaNoPrune(VectorMetric metric) noexcept {
+  return metric == VectorMetric::L2Sqr ? std::numeric_limits<float>::max()
+                                       : std::numeric_limits<float>::lowest();
+}
+
+inline float PanoramaThreshold(score_t score, VectorMetric metric) noexcept {
+  return std::nextafter(metric == VectorMetric::L2Sqr ? -score : score,
+                        metric == VectorMetric::L2Sqr
+                          ? std::numeric_limits<float>::max()
+                          : std::numeric_limits<float>::lowest());
 }
 
 bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;

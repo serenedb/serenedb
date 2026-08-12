@@ -1498,3 +1498,334 @@ TEST(rabitq_quantizer_test, shared_groups_match_solo_clusters_multibit) {
                                       VectorMetric::L2Sqr, kRaggedSizes, pts,
                                       cen, query);
 }
+
+namespace {
+
+struct TqParam {
+  VectorQuantization quant;
+  uint32_t nb_bits;
+  VectorMetric metric;
+};
+
+std::string TqName(const ::testing::TestParamInfo<TqParam>& info) {
+  const std::string q =
+    info.param.quant == VectorQuantization::TQ ? "tq" : "tqmse";
+  const std::string m = info.param.metric == VectorMetric::L2Sqr    ? "l2"
+                        : info.param.metric == VectorMetric::Cosine ? "cosine"
+                                                                    : "ip";
+  return q + "_" + std::to_string(info.param.nb_bits) + "_" + m;
+}
+
+constexpr TqParam kTqParams[] = {
+  {VectorQuantization::TQ, 2, VectorMetric::L2Sqr},
+  {VectorQuantization::TQ, 3, VectorMetric::L2Sqr},
+  {VectorQuantization::TQ, 5, VectorMetric::L2Sqr},
+  {VectorQuantization::TQ, 3, VectorMetric::InnerProduct},
+  {VectorQuantization::TQ, 5, VectorMetric::InnerProduct},
+  {VectorQuantization::TQ, 3, VectorMetric::Cosine},
+  {VectorQuantization::TQMse, 1, VectorMetric::L2Sqr},
+  {VectorQuantization::TQMse, 2, VectorMetric::L2Sqr},
+  {VectorQuantization::TQMse, 4, VectorMetric::L2Sqr},
+  {VectorQuantization::TQMse, 2, VectorMetric::InnerProduct},
+  {VectorQuantization::TQMse, 4, VectorMetric::InnerProduct},
+  {VectorQuantization::TQMse, 4, VectorMetric::Cosine},
+};
+
+std::unique_ptr<QuantizerWriter> MakeTq(const TqParam& p, uint32_t d,
+                                        const std::vector<float>& centroid) {
+  auto w = MakeQuantizerWriter(p.quant, d, p.metric, /*pq_m=*/0,
+                               /*pq_niter=*/0, p.nb_bits);
+  EXPECT_NE(w, nullptr);
+  if (w != nullptr) {
+    EXPECT_EQ(w->Kind(), p.quant);
+    EXPECT_EQ(w->BlockSetting().group_size, kFastScanBbs);
+    w->SetClusterCentroid(centroid.data());
+  }
+  return w;
+}
+
+// TurboQuant writes one flat record per document, so a cluster's payload is
+// exactly n * record_size -- there is no trailing group to pad.
+std::vector<score_t> TqScores(const TqParam& p, uint32_t d,
+                              const std::vector<float>& centroid,
+                              const std::vector<float>& points,
+                              const std::vector<float>& query, size_t pad = 0) {
+  const size_t n = points.size() / d;
+  auto writer = MakeTq(p, d, centroid);
+  EXPECT_NE(writer, nullptr);
+
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t pay_start = 0;
+  {
+    MemoryIndexOutput out{file};
+    for (size_t i = 0; i < pad; ++i) {
+      out.WriteByte(0xA5);
+    }
+    pay_start = out.Position();
+    EncodeCluster(*writer, out, points.data(), n);
+    out.Flush();
+    const PayloadBlockSetting setting = writer->BlockSetting();
+    EXPECT_EQ(out.Position() - pay_start,
+              setting.RecordCount(n) * size_t{setting.record_size});
+  }
+
+  const bstring blob = SerializeStats(*writer);
+  auto stats = MakeQuantizerStats(p.quant, d, blob, p.metric);
+  EXPECT_NE(stats, nullptr);
+  EXPECT_EQ(stats->Kind(), p.quant);
+  auto codebook = stats->MakeCodebook(query);
+  EXPECT_NE(codebook, nullptr);
+
+  ClusterScorer scorer{codebook, file, pay_start, n, centroid.data()};
+  return scorer.All();
+}
+
+}  // namespace
+
+class turboquant_test : public ::testing::TestWithParam<TqParam> {};
+
+INSTANTIATE_TEST_SUITE_P(turboquant, turboquant_test,
+                         ::testing::ValuesIn(kTqParams), TqName);
+
+// A document sitting exactly on its centroid has a zero residual, so the only
+// thing left in the estimate is the exact query-to-centroid term. Any error in
+// the residual scale, the centroid subtraction or the metric assembly shows up
+// here as a non-zero offset.
+TEST_P(turboquant_test, centroid_point_scores_exactly) {
+  const TqParam p = GetParam();
+  constexpr uint32_t d = 16;
+
+  std::vector<float> centroid(d);
+  for (uint32_t j = 0; j < d; ++j) {
+    centroid[j] = 0.35f - 0.05f * static_cast<float>(j);
+  }
+  std::vector<float> query = MakeSpread(d, 1, 91);
+  if (p.metric == VectorMetric::Cosine) {
+    NormalizeRows(centroid.data(), 1, d);
+    NormalizeRows(query.data(), 1, d);
+  }
+
+  const auto scores = TqScores(p, d, centroid, centroid, query);
+  ASSERT_EQ(scores.size(), 1);
+
+  ResolveEnum<VectorMetric>(p.metric, [&]<VectorMetric M> {
+    const score_t want = ComputeDistance<EffectiveQuantMetric(M)>(
+      query.data(), centroid.data(), static_cast<uint16_t>(d));
+    EXPECT_NEAR(scores[0], want, ScoreTol(want));
+  });
+}
+
+// Every residual points the same way, so the direction error is identical for
+// all documents and the ranking is decided purely by the stored norms. This
+// must hold at every bit width -- it is the regression test for dropping the
+// per-record norm.
+TEST_P(turboquant_test, collinear_residuals_rank_by_norm) {
+  const TqParam p = GetParam();
+  constexpr uint32_t d = 16;
+  constexpr size_t n = 8;
+
+  std::vector<float> dir = MakeSpread(d, 1, 93);
+  NormalizeRows(dir.data(), 1, d);
+  const std::vector<float> centroid(d, 0.125f);
+
+  std::vector<float> points(n * d);
+  for (size_t i = 0; i < n; ++i) {
+    const float t = 0.5f + 0.75f * static_cast<float>(i);
+    for (uint32_t j = 0; j < d; ++j) {
+      points[i * d + j] = centroid[j] + t * dir[j];
+    }
+  }
+  std::vector<float> query(d);
+  for (uint32_t j = 0; j < d; ++j) {
+    query[j] = centroid[j] - 3.f * dir[j];
+  }
+
+  const auto scores = TqScores(p, d, centroid, points, query);
+  ASSERT_EQ(scores.size(), n);
+
+  ResolveEnum<VectorMetric>(p.metric, [&]<VectorMetric M> {
+    std::vector<score_t> want(n);
+    for (size_t i = 0; i < n; ++i) {
+      want[i] = ComputeDistance<EffectiveQuantMetric(M)>(
+        query.data(), points.data() + i * d, static_cast<uint16_t>(d));
+    }
+    for (size_t i = 1; i < n; ++i) {
+      ASSERT_NE(want[i], want[i - 1]) << "fixture must separate the documents";
+      EXPECT_EQ(scores[i] > scores[i - 1], want[i] > want[i - 1])
+        << "pair " << i - 1 << "," << i;
+    }
+  });
+}
+
+// .pay records are handed to the reader straight out of the mapped file at an
+// arbitrary byte offset, so nothing in the scoring path may assume alignment.
+TEST_P(turboquant_test, unaligned_payload_scores_identically) {
+  const TqParam p = GetParam();
+  constexpr uint32_t d = 24;
+  constexpr size_t n = 12;
+
+  const std::vector<float> centroid(d, -0.2f);
+  std::vector<float> points = MakeSpread(d, n, 95);
+  std::vector<float> query = MakeSpread(d, 1, 97);
+  if (p.metric == VectorMetric::Cosine) {
+    NormalizeRows(points.data(), n, d);
+    NormalizeRows(query.data(), 1, d);
+  }
+
+  const auto aligned = TqScores(p, d, centroid, points, query, /*pad=*/0);
+  for (size_t pad = 1; pad <= 3; ++pad) {
+    const auto shifted = TqScores(p, d, centroid, points, query, pad);
+    ASSERT_EQ(aligned.size(), shifted.size());
+    for (size_t i = 0; i < n; ++i) {
+      EXPECT_EQ(aligned[i], shifted[i]) << "pad " << pad << " doc " << i;
+    }
+  }
+}
+
+TEST_P(turboquant_test, chunked_encode_is_bit_exact) {
+  const TqParam p = GetParam();
+  constexpr uint32_t d = 16;
+  constexpr size_t n = 56;
+
+  const std::vector<float> centroid(d, 0.1f);
+  const auto points = MakeSpread(d, n, 99);
+  const auto make = [&] { return MakeTq(p, d, centroid); };
+
+  const size_t chunks[] = {3, 5, 1, 32, 15};
+  ExpectBlockSplitIsTransparent(make, d, points, chunks);
+}
+
+TEST_P(turboquant_test, shared_groups_match_solo_clusters) {
+  const TqParam p = GetParam();
+  constexpr uint32_t d = 16;
+
+  const auto pts = MakeSpread(d, kRaggedTotal, 101);
+  const auto cen = RaggedCentroids(d);
+  const auto query = MakeSpread(d, 1, 103);
+  const auto make = [&] {
+    return MakeQuantizerWriter(p.quant, d, p.metric, /*pq_m=*/0,
+                               /*pq_niter=*/0, p.nb_bits);
+  };
+  ExpectSharedGroupsMatchSoloClusters(make, p.quant, d, p.metric, kRaggedSizes,
+                                      pts, cen, query);
+}
+
+TEST_P(turboquant_test, groups_are_self_contained) {
+  const TqParam p = GetParam();
+  constexpr uint32_t d = 16;
+
+  const auto pts = MakeSpread(d, 3 * kFastScanBbs, 109);
+  const std::vector<float> cen(d, 0.15f);
+  const auto make = [&] { return MakeTq(p, d, cen); };
+  ExpectGroupsAreSelfContained(make, d, pts, kFastScanBbs);
+}
+
+TEST(turboquant_quantizer_test, all_supported_bits_construct) {
+  constexpr uint32_t d = 32;
+  for (const uint32_t bits : {2U, 3U, 5U}) {
+    EXPECT_NE(MakeQuantizerWriter(VectorQuantization::TQ, d,
+                                  VectorMetric::L2Sqr, 0, 0, bits),
+              nullptr)
+      << "tq " << bits;
+  }
+  for (const uint32_t bits : {1U, 2U, 4U}) {
+    EXPECT_NE(MakeQuantizerWriter(VectorQuantization::TQMse, d,
+                                  VectorMetric::L2Sqr, 0, 0, bits),
+              nullptr)
+      << "tqmse " << bits;
+  }
+}
+
+// Training is data-independent, so two writers built from the same parameters
+// must agree byte for byte without ever seeing a vector.
+TEST(turboquant_quantizer_test, stats_are_data_independent) {
+  constexpr uint32_t d = 64;
+  auto a = MakeQuantizerWriter(VectorQuantization::TQ, d, VectorMetric::L2Sqr,
+                               0, 0, 3);
+  auto b = MakeQuantizerWriter(VectorQuantization::TQ, d, VectorMetric::L2Sqr,
+                               0, 0, 3);
+  ASSERT_NE(a, nullptr);
+  ASSERT_NE(b, nullptr);
+  EXPECT_EQ(a->TrainSamples(1'000'000), 0);
+  EXPECT_EQ(SerializeStats(*a), SerializeStats(*b));
+}
+
+TEST(turboquant_quantizer_test, ranking_agrees_with_exact_l2) {
+  constexpr uint32_t d = 128;
+  constexpr size_t n = 64;
+  const std::vector<float> centroid(d, 0.05f);
+  const auto points = MakeSpread(d, n, 105);
+  const auto query = MakeSpread(d, 1, 107);
+
+  std::vector<score_t> want(n);
+  for (size_t i = 0; i < n; ++i) {
+    want[i] = ComputeDistance<VectorMetric::L2Sqr>(
+      query.data(), points.data() + i * d, static_cast<uint16_t>(d));
+  }
+  const size_t best = std::max_element(want.begin(), want.end()) - want.begin();
+
+  const TqParam p{VectorQuantization::TQ, 5, VectorMetric::L2Sqr};
+  const auto got = TqScores(p, d, centroid, points, query);
+  ASSERT_EQ(got.size(), n);
+  const size_t got_best =
+    std::max_element(got.begin(), got.end()) - got.begin();
+  EXPECT_EQ(best, got_best);
+}
+
+// The QJL pass is skipped for a whole group when no lane can clear the
+// incoming threshold. Skipped lanes keep their MSE-only estimate, which the
+// bound proves is below the threshold -- so every score that DOES clear the
+// threshold must be bit-identical to an unpruned scan.
+TEST_P(turboquant_test, gate_preserves_scores_above_threshold) {
+  const TqParam p = GetParam();
+  constexpr uint32_t d = 64;
+  constexpr size_t n = 4 * kFastScanBbs;
+
+  const std::vector<float> centroid(d, 0.05f);
+  std::vector<float> points = MakeSpread(d, n, 111);
+  std::vector<float> query = MakeSpread(d, 1, 113);
+  if (p.metric == VectorMetric::Cosine) {
+    NormalizeRows(points.data(), n, d);
+    NormalizeRows(query.data(), 1, d);
+  }
+
+  auto writer = MakeTq(p, d, centroid);
+  ASSERT_NE(writer, nullptr);
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t pay_start = 0;
+  {
+    MemoryIndexOutput out{file};
+    pay_start = out.Position();
+    EncodeCluster(*writer, out, points.data(), n);
+    out.Flush();
+  }
+  const bstring blob = SerializeStats(*writer);
+  auto stats = MakeQuantizerStats(p.quant, d, blob, p.metric);
+  ASSERT_NE(stats, nullptr);
+  auto codebook = stats->MakeCodebook(query);
+  ASSERT_NE(codebook, nullptr);
+
+  ClusterScorer open{codebook, file, pay_start, n, centroid.data()};
+  const auto unpruned = open.All();
+  ASSERT_EQ(unpruned.size(), n);
+
+  auto sorted = unpruned;
+  std::sort(sorted.begin(), sorted.end());
+  const score_t threshold = sorted[sorted.size() / 2];
+
+  ClusterScorer gated{codebook, file, pay_start, n, centroid.data()};
+  const auto pruned = gated.All(threshold);
+  ASSERT_EQ(pruned.size(), n);
+
+  size_t survivors = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (unpruned[i] > threshold) {
+      ++survivors;
+      EXPECT_EQ(unpruned[i], pruned[i]) << "doc " << i;
+    }
+    EXPECT_LE(pruned[i], unpruned[i] + ScoreTol(unpruned[i])) << "doc " << i;
+  }
+  EXPECT_GT(survivors, 0);
+}

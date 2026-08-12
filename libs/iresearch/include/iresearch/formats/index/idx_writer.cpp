@@ -167,6 +167,11 @@ void IdxWriter::Commit() {
         obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
         obj.WriteProperty<uint64_t>(4, "stats_byte_size",
                                     e.meta.stats_byte_size);
+        // field id 5 is retired, never reuse it
+        obj.WritePropertyWithDefault<uint64_t>(6, "rot_offset",
+                                               e.meta.rot_offset, 0);
+        obj.WritePropertyWithDefault<uint64_t>(7, "rot_byte_size",
+                                               e.meta.rot_byte_size, 0);
       });
     });
   serializer.End();

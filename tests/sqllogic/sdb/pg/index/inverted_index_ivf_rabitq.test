@@ -400,13 +400,13 @@ db error: ERROR: Column 'emb': ivf quantization supports only metric 'l2', 'ip',
 statement error
 CREATE INDEX rabitq_bad_bits_range ON rabitq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'rabitq', rabitq_bits = 10));
 ----
-db error: ERROR: Column 'emb': ivf option 'rabitq_bits' (10) must be between 1 and 9
+db error: ERROR: Column 'emb': ivf option 'rabitq_bits' (10) must be between 1 and 9 for quant 'rabitq'
 
 
 statement error
 CREATE INDEX rabitq_bad_bits_wrong_quant ON rabitq_bad USING inverted(pk, emb ivf (metric = 'l2', quant = 'sq8', rabitq_bits = 4));
 ----
-db error: ERROR: Column 'emb': ivf option 'rabitq_bits' is only valid with quant 'rabitq'
+db error: ERROR: Column 'emb': ivf option 'rabitq_bits' is only valid with quant 'rabitq', 'tq' or 'tqmse'
 
 
 # ===========================================================================

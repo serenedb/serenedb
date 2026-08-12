@@ -150,11 +150,20 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name)
         const auto stats_offset = obj.ReadProperty<uint64_t>(3, "stats_offset");
         const auto stats_byte_size =
           obj.ReadProperty<uint64_t>(4, "stats_byte_size");
+        const auto rot_offset =
+          obj.ReadPropertyWithDefault<uint64_t>(6, "rot_offset");
+        const auto rot_byte_size =
+          obj.ReadPropertyWithDefault<uint64_t>(7, "rot_byte_size");
 
         auto body = _impl->in->Dup();
         body->Seek(tree_offset);
-        auto entry = CentroidsTree::Deserialize(*body, tree_byte_size);
+        auto entry =
+          CentroidsTree::Deserialize(*body, tree_byte_size, rot_byte_size != 0);
         entry.SetQuantStatsLocation(stats_offset, stats_byte_size);
+        if (rot_byte_size != 0) {
+          body->Seek(rot_offset);
+          entry.ReadRotation(*body, rot_byte_size);
+        }
 
         const size_t idx = _impl->ivf_entries.size();
         _impl->ivf_entries.emplace_back(id, std::move(entry));

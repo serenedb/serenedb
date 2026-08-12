@@ -133,12 +133,16 @@ inline bool PrepareVectorState(const SubReader& segment,
     return false;
   }
   const bool needs_centroids = QuantizerNeedsCentroid(opts.quant);
+  // The writer only rotates when the write-time quantizer wants no centroids. A
+  // query-time quantizer that disagrees would read through an empty buffer.
+  if (needs_centroids && ivf->Rotated()) {
+    return false;
+  }
 
   std::vector<uint32_t> fine_ids;
   std::vector<float> probed_centroids;
   ivf->Search(query, *idx_in, nprobe, fine_ids,
-              needs_centroids ? &probed_centroids : nullptr,
-              max_search_fanout);
+              needs_centroids ? &probed_centroids : nullptr, max_search_fanout);
   if (fine_ids.empty()) {
     return false;
   }

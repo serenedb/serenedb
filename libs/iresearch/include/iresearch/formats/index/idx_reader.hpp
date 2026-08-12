@@ -56,6 +56,8 @@ struct IvfCentroidMeta {
   uint64_t tree_byte_size = 0;
   uint64_t stats_offset = 0;
   uint64_t stats_byte_size = 0;
+  uint64_t rot_offset = 0;
+  uint64_t rot_byte_size = 0;
 };
 
 inline constexpr std::string_view kIdxFormatExt = "idx";

@@ -121,14 +121,17 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const auto shape =
     ResolveIvfTreeShape(rows, d, qw != nullptr ? qw->ScanCostBytes() : 0,
                         _info.posting_size, _info.max_centroids);
-
+  const bool rotate = !needs_centroid && PanoramaApplies(_info.metric, d);
   auto centroids = CentroidsBuilder::Create(
     vector_column, ctx, rows, _info.metric, d,
     CentroidsBuildParams{
       .posting_size = shape.posting_size,
       .max_centroids = shape.max_centroids,
       .sample_factor = _info.sample_factor,
-      .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
+      .min_train_sample = rotate
+                            ? std::max<uint64_t>(kPcaTrainRows, uint64_t{8} * d)
+                            : (needs_centroid ? kMinCentroidTrainSample : 0),
+      .rotate = rotate,
     });
   const size_t n_clusters = centroids.NumClusters();
 
@@ -447,6 +450,14 @@ void IvfWriter::FlushTree() {
   }
   auto& out = _idx->BlocksOut();
   const auto tree_span = _result.data.centroids.Serialize(out);
+  const auto rotation = _result.data.centroids.Rotation();
+  SDB_ASSERT(rotation.empty() == (_result.data.centroids.NLevels() == 0));
+  const uint64_t rot_offset = rotation.empty() ? 0 : out.Position();
+  if (!rotation.empty()) {
+    out.WriteData(reinterpret_cast<const byte_type*>(rotation.data()),
+                  rotation.size() * sizeof(float));
+  }
+  const uint64_t rot_byte_size = rotation.size() * sizeof(float);
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
   const uint64_t stats_byte_size = out.Position() - stats_offset;
@@ -454,7 +465,9 @@ void IvfWriter::FlushTree() {
                IvfCentroidMeta{.tree_offset = tree_span.offset,
                                .tree_byte_size = tree_span.byte_size,
                                .stats_offset = stats_offset,
-                               .stats_byte_size = stats_byte_size});
+                               .stats_byte_size = stats_byte_size,
+                               .rot_offset = rot_offset,
+                               .rot_byte_size = rot_byte_size});
 }
 
 const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,

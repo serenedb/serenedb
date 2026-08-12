@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -31,6 +32,11 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/vector.hpp"
+
+namespace faiss {
+
+struct PCAMatrix;
+}
 
 namespace irs {
 
@@ -70,75 +76,32 @@ struct CentroidsNode {
   struct Candidate {
     float dist;
     size_t id;
-    std::vector<float> centroid;
+    std::span<const float> centroid;
   };
 
   static std::vector<CentroidsNode> Deserialize(IndexInput& in, size_t level,
                                                 size_t d,
                                                 std::span<const size_t> starts,
-                                                std::span<const size_t> sizes);
-  void Serialize(IndexOutput& out) const;
+                                                std::span<const size_t> sizes,
+                                                size_t n_levels);
 
   static std::vector<CentroidsNodeView> ReadLayer(
     IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
-    std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total);
-
-  template<VectorMetric Metric>
-  static void Search(std::span<const float> query, IndexInput& in,
-                     uint32_t fanout, bool want_centroids, size_t level,
-                     std::span<const CentroidsNodeView> nodes,
-                     size_t layer_base, size_t layer_total,
-                     std::vector<Candidate>& leaves) {
-    SDB_ASSERT(!nodes.empty());
-    const uint16_t d = query.size();
-    const float* q = query.data();
-
-    struct Scored {
-      float dist;
-      size_t start;
-      size_t count;
-    };
-    std::vector<size_t> starts, sizes;
-    std::vector<Scored> scored;
-    for (const auto& node : nodes) {
-      scored.clear();
-      for (size_t i = 0; i < node.size; ++i) {
-        const auto centroid = node.centroids.subspan(i * d, d);
-        const float dist = ComputeDistance<Metric>(q, centroid.data(), d);
-        const bool is_leaf =
-          level == 0 || node.child_offsets[i + 1] == node.child_offsets[i];
-        if (is_leaf) {
-          auto& cand = leaves.emplace_back(dist, layer_base + node.base + i);
-          if (want_centroids) {
-            cand.centroid.assign(centroid.begin(), centroid.end());
-          }
-        } else {
-          scored.push_back({dist, node.child_offsets[i],
-                            node.child_offsets[i + 1] - node.child_offsets[i]});
-        }
-      }
-      const auto k = std::min<size_t>(fanout, scored.size());
-      const auto mid = scored.begin() + k;
-      std::ranges::nth_element(scored, mid, std::greater{}, &Scored::dist);
-      std::ranges::sort(scored.begin(), mid, std::greater{}, &Scored::dist);
-      for (auto it = scored.begin(); it != mid; ++it) {
-        starts.emplace_back(it->start);
-        sizes.emplace_back(it->count);
-      }
-    }
-    if (level == 0 || starts.empty()) {
-      return;
-    }
-    LayerBuffers bufs;
-    size_t n_total = 0;
-    auto next =
-      CentroidsNode::ReadLayer(in, level - 1, d, starts, sizes, bufs, n_total);
-    Search<Metric>(query, in, fanout, want_centroids, level - 1, next,
-                   layer_base + layer_total, n_total, leaves);
-  }
+    std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total,
+    size_t n_levels);
 };
 
 class CentroidsBuilder;
+
+// Panorama pruning effectiveness, in (entry, level) slices: how many a full
+// scan would touch versus how many the descent actually touched, split by
+// whether the node sits at the leaf layer or above it.
+struct CentroidsSearchStats {
+  uint64_t leaf_slices = 0;
+  uint64_t leaf_slices_scanned = 0;
+  uint64_t node_slices = 0;
+  uint64_t node_slices_scanned = 0;
+};
 
 class CentroidsTree {
  public:
@@ -154,11 +117,15 @@ class CentroidsTree {
   CentroidsTree& operator=(const CentroidsTree&) = delete;
   CentroidsTree& operator=(CentroidsTree&&) = default;
 
-  static CentroidsTree Deserialize(IndexInput& in, uint64_t byte_size);
+  static CentroidsTree Deserialize(IndexInput& in, uint64_t byte_size,
+                                   bool panorama);
+
+  void ReadRotation(IndexInput& in, uint64_t byte_size);
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
               std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
-              uint32_t max_search_fanout) const;
+              uint32_t max_search_fanout, bool prune = true,
+              CentroidsSearchStats* out_stats = nullptr) const;
 
   uint32_t EffectiveFanout(uint32_t nprobe,
                            uint32_t max_search_fanout) const noexcept;
@@ -166,6 +133,7 @@ class CentroidsTree {
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }
   bool Empty() const noexcept { return _head.d == 0; }
+  bool Rotated() const noexcept { return _n_levels != 0; }
   size_t Levels() const noexcept { return _root.level + 1; }
   size_t RootSize() const noexcept { return _root.size; }
 
@@ -182,6 +150,8 @@ class CentroidsTree {
   size_t _next_level_offset;
   uint64_t _stats_offset = 0;
   uint64_t _stats_byte_size = 0;
+  uint32_t _n_levels = 0;
+  std::vector<float> _rotation;
 };
 
 struct CentroidsSpan {
@@ -199,6 +169,7 @@ struct CentroidsBuildParams {
   size_t max_centroids = 0;
   double sample_factor = 0;
   uint64_t min_train_sample = 0;
+  bool rotate = false;
 };
 
 class CentroidsBuilder {
@@ -230,13 +201,17 @@ class CentroidsBuilder {
 
   size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
 
+  uint32_t NLevels() const noexcept { return _n_levels; }
+
+  std::span<const float> Rotation() const noexcept;
+
  private:
   static CentroidsBuilder BuildFromSample(std::vector<float> sample, uint32_t d,
                                           VectorMetric metric, size_t leaf_size,
-                                          size_t max_fanout);
+                                          size_t max_centroids, bool rotate);
 
   void BuildTree(std::vector<float> sample, size_t leaf_size,
-                 size_t max_fanout);
+                 size_t max_centroids, bool rotate);
 
   void AssignCentroidsImpl(
     size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,
@@ -245,9 +220,11 @@ class CentroidsBuilder {
 
   std::vector<Node> _nodes;
   std::vector<size_t> _row_bases;
+  std::shared_ptr<const faiss::PCAMatrix> _rotation;
   VectorMetric _metric = VectorMetric::L2Sqr;
   uint32_t _d = 0;
   size_t _n_rows = 0;
+  uint32_t _n_levels = 0;
 };
 
 }  // namespace irs

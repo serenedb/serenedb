@@ -38,6 +38,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
@@ -52,13 +53,27 @@ constexpr uint32_t kDefaultMaxFanout = 16;
 // CentroidsBuilder::Serialize does: nodes coarsest-first, each layer's
 // centroids followed by its child_offsets (size+1, absolute) unless it is the
 // leaf layer.
+// Legacy row-major layout only: a rotated tree writes level-major bodies.
+void WriteNode(IndexOutput& out, const CentroidsNode& node) {
+  out.WriteU64(node.size);
+  if (node.size != 0) {
+    out.WriteData(reinterpret_cast<const byte_type*>(node.centroids.data()),
+                  node.size * node.d * sizeof(float));
+  }
+  if (node.level > 0) {
+    ASSERT_EQ(node.child_offsets.size(), node.size + 1);
+    out.WriteData(reinterpret_cast<const byte_type*>(node.child_offsets.data()),
+                  (node.size + 1) * sizeof(size_t));
+  }
+}
+
 uint64_t WriteTree(IndexOutput& out, VectorMetric metric, uint32_t d,
                    std::span<const CentroidsNode> nodes) {
   const uint64_t offset = out.Position();
   IVFHeader{.metric = metric, .d = d}.Serialize(out);
   out.WriteU64(nodes.front().level);
   for (const auto& node : nodes) {
-    node.Serialize(out);
+    WriteNode(out, node);
   }
   return offset;
 }
@@ -161,7 +176,7 @@ size_t BuiltRootSize(const CentroidsBuilder& builder) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  return CentroidsTree::Deserialize(in, byte_size).RootSize();
+  return CentroidsTree::Deserialize(in, byte_size, false).RootSize();
 }
 
 void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
@@ -191,7 +206,7 @@ void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
 
   for (size_t q = 0; q < n; ++q) {
     const std::span<const float> query{data.data() + q * d, d};
@@ -274,7 +289,7 @@ TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
 
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
 
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
@@ -313,7 +328,7 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
 
   for (size_t j = 0; j < n; ++j) {
     ASSERT_EQ(gathered[j].size(), d);
@@ -361,7 +376,7 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
 
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
 
   // Query near the early leaf (root row 0) -> its global id 0.
   {
@@ -449,7 +464,7 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
   const std::span<const float> q{data.data(), d};
   std::vector<uint32_t> ids;
   tree.Search(q, in, /*nprobe=*/1, ids, nullptr, kDefaultMaxFanout);
@@ -537,7 +552,7 @@ TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
 
   for (size_t i = 0; i < n; ++i) {
     const std::span<const float> q{data.data() + i * d, d};
@@ -620,7 +635,7 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
   EXPECT_GE(tree.Levels(), 3u);
   EXPECT_LE(tree.RootSize(), 4u);
 
@@ -665,7 +680,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
 
   // Enumerate every leaf id + centroid via an all-covering probe.
   std::vector<uint32_t> leaf_ids;
@@ -764,7 +779,7 @@ TEST(centroids_node_test, fanout_caps_children_per_node) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
   ASSERT_EQ(tree.Levels(), 3u);
 
   const std::vector<float> q{4.9f};
@@ -804,7 +819,7 @@ TEST(centroids_node_test, fanout_floored_at_root_of_nprobe) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
   ASSERT_EQ(tree.Levels(), 3u);
 
   // Two expansion steps: w^2 >= nprobe. Exact integer roots must not round up.
@@ -856,7 +871,7 @@ TEST(centroids_node_test, two_layer_tree_floors_at_nprobe) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
   ASSERT_EQ(tree.Levels(), 2u);
 
   EXPECT_EQ(tree.EffectiveFanout(/*nprobe=*/1000, /*max_search_fanout=*/1),
@@ -893,7 +908,7 @@ TEST(centroids_builder_test, wider_fanout_does_not_lower_recall) {
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
   ASSERT_GE(tree.Levels(), 3u);
 
   // Enumerate every leaf id + centroid with a fanout wide enough to be
@@ -1243,7 +1258,7 @@ TEST(centroids_builder_test,
   }
   MemoryIndexInput in{file};
   in.Seek(offset);
-  auto tree = CentroidsTree::Deserialize(in, byte_size);
+  auto tree = CentroidsTree::Deserialize(in, byte_size, false);
 
   size_t matches = 0;
   for (size_t i = 0; i < n; ++i) {
@@ -1305,7 +1320,7 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_centroids) {
     }
     MemoryIndexInput in{file};
     in.Seek(offset);
-    auto tree = CentroidsTree::Deserialize(in, byte_size);
+    auto tree = CentroidsTree::Deserialize(in, byte_size, false);
     return std::pair{tree.Levels(), tree.RootSize()};
   };
 
@@ -1318,6 +1333,311 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_centroids) {
   EXPECT_LE(root_lo, 8u);
   EXPECT_GE(levels_lo, 2u);
   EXPECT_GE(levels_lo, levels_hi);
+}
+
+// Serializes a builder and reopens it the way IdxReader does: tree blob, then
+// the rotation blob, whose presence is the only panorama signal.
+struct PanoramaTree {
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  std::optional<CentroidsTree> tree;
+  std::optional<MemoryIndexInput> in;
+};
+
+void OpenPanoramaTree(PanoramaTree& out, const CentroidsBuilder& builder) {
+  uint64_t offset = 0;
+  uint64_t byte_size = 0;
+  uint64_t rot_offset = 0;
+  const auto rotation = builder.Rotation();
+  {
+    MemoryIndexOutput sink{out.file};
+    const auto span = builder.Serialize(sink);
+    offset = span.offset;
+    byte_size = span.byte_size;
+    rot_offset = sink.Position();
+    if (!rotation.empty()) {
+      sink.WriteData(reinterpret_cast<const byte_type*>(rotation.data()),
+                     rotation.size() * sizeof(float));
+    }
+    sink.Flush();
+  }
+  out.in.emplace(out.file);
+  out.in->Seek(offset);
+  out.tree.emplace(
+    CentroidsTree::Deserialize(*out.in, byte_size, !rotation.empty()));
+  if (!rotation.empty()) {
+    out.in->Seek(rot_offset);
+    out.tree->ReadRotation(*out.in, rotation.size() * sizeof(float));
+  }
+}
+
+CentroidsBuilder BuildRotated(std::span<const float> data, uint32_t d,
+                              VectorMetric metric, size_t posting_size,
+                              size_t max_centroids = 0) {
+  const CentroidsBuildParams params{.posting_size = posting_size,
+                                    .max_centroids = max_centroids,
+                                    .rotate = true};
+  return CentroidsBuilder::CreateFromSample(
+    std::vector<float>{data.begin(), data.end()}, d, metric, params);
+}
+
+class panorama_centroids_test : public ::testing::TestWithParam<VectorMetric> {
+};
+
+// The exactness guard: pruning must return the identical top-nprobe list that
+// the same rotated tree returns with the gate disabled. Compared against the
+// unpruned *rotated* path, not the scalar one -- faiss accumulates L2 as
+// |c|^2+|q|^2-2<c,q> from stored norms, which cancels differently than
+// sum (q-c)^2 and would make a scalar comparison flaky.
+TEST_P(panorama_centroids_test, prune_matches_unpruned) {
+  constexpr uint32_t d = 128;
+  const auto metric = GetParam();
+  const auto data = MakeAnisotropic(d, /*n=*/4096, /*seed=*/7);
+
+  auto builder = BuildRotated(data, d, metric, /*posting_size=*/8);
+  ASSERT_NE(builder.NLevels(), 0u) << "panorama layout must be enabled";
+  ASSERT_FALSE(builder.Rotation().empty());
+  ASSERT_GT(builder.NumClusters(), 128u) << "need clusters > one batch";
+
+  PanoramaTree opened;
+  OpenPanoramaTree(opened, builder);
+  auto& tree = *opened.tree;
+
+  for (const uint32_t nprobe : {1u, 8u, 64u}) {
+    for (size_t q = 0; q < 16; ++q) {
+      const std::span<const float> query{data.data() + q * d, d};
+      std::vector<uint32_t> pruned, full;
+      tree.Search(query, *opened.in, nprobe, pruned, nullptr, kDefaultMaxFanout,
+                  /*prune=*/true);
+      tree.Search(query, *opened.in, nprobe, full, nullptr, kDefaultMaxFanout,
+                  /*prune=*/false);
+      EXPECT_EQ(pruned, full) << "metric " << static_cast<int>(metric)
+                              << " nprobe " << nprobe << " query " << q;
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(panorama, panorama_centroids_test,
+                         ::testing::Values(VectorMetric::L2Sqr,
+                                           VectorMetric::InnerProduct,
+                                           VectorMetric::Cosine));
+
+// Node row counts that are not multiples of the 128-row batch exercise the
+// short trailing batch, which the postings path never hits (it pads).
+TEST(panorama_centroids_test, ragged_node_sizes_route_consistently) {
+  constexpr uint32_t d = 64;
+  for (const size_t posting_size : {3u, 5u, 17u}) {
+    const auto data = MakeAnisotropic(d, /*n=*/2048, /*seed=*/11);
+    auto builder = BuildRotated(data, d, VectorMetric::L2Sqr, posting_size);
+    ASSERT_NE(builder.NLevels(), 0u) << "posting_size " << posting_size;
+
+    std::vector<float> reordered(data.begin(), data.end());
+    auto assigned =
+      builder.AssignCentroids({reordered.data(), reordered.size()}, d);
+    std::vector<size_t> row_cluster(data.size() / d);
+    for (size_t j = 0; j < row_cluster.size(); ++j) {
+      row_cluster[assigned.perm[j]] = assigned.ids[j];
+    }
+
+    PanoramaTree opened;
+    OpenPanoramaTree(opened, builder);
+    size_t hits = 0;
+    for (size_t q = 0; q < row_cluster.size(); ++q) {
+      std::vector<uint32_t> ids;
+      opened.tree->Search({data.data() + q * d, d}, *opened.in, /*nprobe=*/32,
+                          ids, nullptr, kDefaultMaxFanout);
+      ASSERT_FALSE(ids.empty());
+      hits += std::find(ids.begin(), ids.end(),
+                        static_cast<uint32_t>(row_cluster[q])) != ids.end();
+      if (q < 32) {
+        std::vector<uint32_t> full;
+        opened.tree->Search({data.data() + q * d, d}, *opened.in, /*nprobe=*/32,
+                            full, nullptr, kDefaultMaxFanout,
+                            /*prune=*/false);
+        ASSERT_EQ(ids, full)
+          << "posting_size " << posting_size << " query " << q;
+      }
+    }
+    EXPECT_GT(hits, row_cluster.size() * 9 / 10)
+      << "posting_size " << posting_size;
+  }
+}
+
+// Every batch prunes against the gates its own entries compete in, so a node
+// wider than one batch must prune its later batches against the per-node
+// top-beam gate. Equality with the unpruned run can hold vacuously, so the
+// stats have to show the interior gate firing.
+void ExpectInteriorPruning(uint32_t d, size_t n, size_t posting_size,
+                           VectorMetric metric, size_t min_levels,
+                           size_t max_centroids) {
+  auto data = MakeAnisotropic(d, n, /*seed=*/23);
+  // Spherical clustering on un-normalized vectors degenerates: InnerProduct
+  // otherwise builds a 10-12 level tree whose widest node is under one batch,
+  // so interior pruning could never fire. Normalized input is IP's real case,
+  // and it lands on the same shape Cosine gets.
+  if (metric == VectorMetric::InnerProduct) {
+    NormalizeRows(data.data(), n, d);
+  }
+  auto builder = BuildRotated(data, d, metric, posting_size, max_centroids);
+  ASSERT_NE(builder.NLevels(), 0u);
+
+  PanoramaTree opened;
+  OpenPanoramaTree(opened, builder);
+  auto& tree = *opened.tree;
+  ASSERT_GE(tree.Levels(), min_levels);
+  ASSERT_GT(tree.RootSize(), kPanoramaBatchSize)
+    << "root must span batches, got " << tree.RootSize() << " clusters "
+    << builder.NumClusters() << " levels " << tree.Levels();
+
+  uint64_t slices = 0, scanned = 0;
+  for (const uint32_t nprobe : {1u, 8u, 64u}) {
+    for (size_t q = 0; q < 8; ++q) {
+      const std::span<const float> query{data.data() + q * d, d};
+      std::vector<uint32_t> pruned, full;
+      CentroidsSearchStats stats;
+      tree.Search(query, *opened.in, nprobe, pruned, nullptr, kDefaultMaxFanout,
+                  /*prune=*/true, &stats);
+      tree.Search(query, *opened.in, nprobe, full, nullptr, kDefaultMaxFanout,
+                  /*prune=*/false);
+      ASSERT_EQ(pruned, full) << "metric " << static_cast<int>(metric)
+                              << " nprobe " << nprobe << " query " << q;
+      slices += stats.node_slices;
+      scanned += stats.node_slices_scanned;
+    }
+  }
+  EXPECT_GT(slices, 0u);
+  EXPECT_LT(scanned, slices) << "interior gate never pruned a slice";
+}
+
+TEST(panorama_centroids_test, interior_nodes_prune) {
+  for (const auto metric : {VectorMetric::L2Sqr, VectorMetric::InnerProduct,
+                            VectorMetric::Cosine}) {
+    // max_centroids pins the pre-adaptive fanout cap: without it the builder
+    // gives posting_size=1 one flat layer of 20000 leaves and there is no
+    // interior work left to prune.
+    ExpectInteriorPruning(/*d=*/64, /*n=*/8192, /*posting_size=*/8, metric,
+                          /*min_levels=*/2, /*max_centroids=*/1024);
+  }
+}
+
+// posting_size=2 leaves k-means groups ragged enough that a node carries both
+// leaf and interior entries, which is what exercises the score-space min of the
+// two bounds. The split within a node is data-dependent and not directly
+// observable from outside, so only the depth is asserted.
+TEST(panorama_centroids_test, mixed_nodes_prune) {
+  ExpectInteriorPruning(/*d=*/64, /*n=*/40000, /*posting_size=*/2,
+                        VectorMetric::L2Sqr, /*min_levels=*/3,
+                        /*max_centroids=*/1024);
+}
+
+// A wide tree -- max_fanout raised until one layer holds everything -- is the
+// shape panorama pays off most on, and the only one where the root itself is at
+// level 0: every entry is a leaf, so the whole scan is one node's batches with
+// the leaf gate tightening across them and no interior bound in play.
+TEST(panorama_centroids_test, wide_single_layer_root_prunes) {
+  constexpr uint32_t d = 128;
+  const auto data = MakeAnisotropic(d, /*n=*/2048, /*seed=*/29);
+  const CentroidsBuildParams params{
+    .posting_size = 1, .max_centroids = 4096, .rotate = true};
+  auto builder =
+    CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
+  ASSERT_NE(builder.NLevels(), 0u);
+
+  PanoramaTree opened;
+  OpenPanoramaTree(opened, builder);
+  auto& tree = *opened.tree;
+  ASSERT_EQ(tree.Levels(), 1u) << "max_fanout must collapse the tree";
+  ASSERT_GT(tree.RootSize(), kPanoramaBatchSize)
+    << "root must span batches, got " << tree.RootSize() << " clusters "
+    << builder.NumClusters() << " levels " << tree.Levels();
+
+  uint64_t slices = 0, scanned = 0;
+  for (const uint32_t nprobe : {1u, 8u, 64u}) {
+    for (size_t q = 0; q < 8; ++q) {
+      std::vector<uint32_t> pruned, full;
+      CentroidsSearchStats stats;
+      tree.Search({data.data() + q * d, d}, *opened.in, nprobe, pruned, nullptr,
+                  kDefaultMaxFanout, /*prune=*/true, &stats);
+      tree.Search({data.data() + q * d, d}, *opened.in, nprobe, full, nullptr,
+                  kDefaultMaxFanout, /*prune=*/false);
+      ASSERT_EQ(pruned, full) << "nprobe " << nprobe << " query " << q;
+      slices += stats.leaf_slices;
+      scanned += stats.leaf_slices_scanned;
+      EXPECT_EQ(stats.node_slices, 0u) << "a level-0 root has no interior work";
+    }
+  }
+  EXPECT_LT(scanned, slices / 2) << "a wide node should prune most slices";
+}
+
+// ByRadius passes nprobe = UINT32_MAX. Neither gate can fill there, so both
+// stay off: no allocation on k (a reserve(nprobe) is a ~16GB request), no
+// push_heap per entry, and no pruning -- the result has to match an exhaustive
+// finite probe.
+TEST(panorama_centroids_test, radius_nprobe_returns_every_leaf) {
+  constexpr uint32_t d = 64;
+  const auto data = MakeAnisotropic(d, /*n=*/2048, /*seed=*/13);
+  auto builder = BuildRotated(data, d, VectorMetric::L2Sqr, /*posting_size=*/8);
+  ASSERT_NE(builder.NLevels(), 0u);
+
+  PanoramaTree opened;
+  OpenPanoramaTree(opened, builder);
+  const std::span<const float> query{data.data(), d};
+
+  // Every call needs the same search fanout, or the descent itself differs and
+  // the comparison stops being about pruning: EffectiveFanout derives the beam
+  // from nprobe, and these three deliberately disagree on nprobe.
+  const auto all = static_cast<uint32_t>(builder.NumClusters());
+  std::vector<uint32_t> radius, exhaustive, unpruned;
+  opened.tree->Search(query, *opened.in, std::numeric_limits<uint32_t>::max(),
+                      radius, nullptr, all);
+  opened.tree->Search(query, *opened.in, all, exhaustive, nullptr, all);
+  opened.tree->Search(query, *opened.in, std::numeric_limits<uint32_t>::max(),
+                      unpruned, nullptr, all, /*prune=*/false);
+  EXPECT_FALSE(radius.empty());
+  EXPECT_EQ(radius, exhaustive);
+  EXPECT_EQ(radius, unpruned);
+}
+
+// Every decline path must fall back to the byte-identical scalar layout.
+TEST(panorama_centroids_test, declines_below_the_gate) {
+  const auto scalar_bytes = [](uint32_t d, VectorMetric metric, size_t n,
+                               bool rotate) {
+    const auto data = MakeAnisotropic(d, n, /*seed=*/17);
+    const CentroidsBuildParams params{.posting_size = 8, .rotate = rotate};
+    auto builder = CentroidsBuilder::CreateFromSample(data, d, metric, params);
+    SimpleMemoryAccounter memory;
+    MemoryFile file{memory};
+    uint64_t byte_size = 0;
+    {
+      MemoryIndexOutput out{file};
+      byte_size = builder.Serialize(out).byte_size;
+      out.Flush();
+    }
+    EXPECT_EQ(builder.Rotation().empty(), builder.NLevels() == 0)
+      << "the rotation is the only panorama signal on disk";
+    return std::tuple{builder.NLevels(), builder.Rotation().size(), byte_size};
+  };
+
+  // L1 is excluded, and so is d below kPanoramaMinDim.
+  const auto [l1_levels, l1_rot, l1_size] =
+    scalar_bytes(128, VectorMetric::L1, 2048, true);
+  EXPECT_EQ(l1_levels, 0u);
+  EXPECT_EQ(l1_rot, 0u);
+  const auto [narrow_levels, narrow_rot, narrow_size] =
+    scalar_bytes(32, VectorMetric::L2Sqr, 2048, true);
+  EXPECT_EQ(narrow_levels, 0u);
+  EXPECT_EQ(narrow_rot, 0u);
+
+  // A tree with too few centroids for pruning to fire stays scalar, and its
+  // bytes match a build that never asked to rotate.
+  const auto [tiny_levels, tiny_rot, tiny_size] =
+    scalar_bytes(128, VectorMetric::L2Sqr, 256, true);
+  const auto [plain_levels, plain_rot, plain_size] =
+    scalar_bytes(128, VectorMetric::L2Sqr, 256, false);
+  EXPECT_EQ(tiny_levels, 0u);
+  EXPECT_EQ(tiny_rot, 0u);
+  EXPECT_EQ(tiny_size, plain_size);
+  EXPECT_EQ(plain_levels, 0u);
 }
 
 }  // namespace

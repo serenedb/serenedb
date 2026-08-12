@@ -172,7 +172,7 @@ DocIterator::ptr MultiTermQuery::Execute(const ExecutionContext& ctx,
         .boost = entry.boost * _boost,
         .field = reader->meta(),
       },
-      score_prune);
+      false);
     if (!docs) [[unlikely]] {
       continue;
     }

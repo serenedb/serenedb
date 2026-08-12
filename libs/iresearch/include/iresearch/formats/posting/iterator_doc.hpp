@@ -723,6 +723,9 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
   // but still sits in _docs just before the leftover range
   SDB_ASSERT(this->_left_in_leaf < kPostingBlock);
   if constexpr (!IteratorTraits::Position()) {
+    if (this->value() >= max) [[unlikely]] {
+      return std::pair{this->_doc, true};
+    }
     if (!score.score || score.score->IsDefault()) {
       score.merge_type = ScoreMergeType::Noop;
     }
@@ -730,37 +733,36 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
     return ResolveBool(match.matches, [&]<bool TrackMatch> {
       return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
         bool empty = true;
+        doc_id_t last = *(std::end(this->_docs) - 1);
 
         // leftover from previous call
         {
-          auto count = this->_left_in_leaf;
-
-          if (*(std::end(this->_docs) - count - 1) == this->value()) {
-            ++count;
+          SDB_ASSERT(*(std::end(this->_docs) - this->_left_in_leaf - 1) ==
+                     this->value());
+          const auto count = this->_left_in_leaf + 1;
+          if (last >= max) {
+            this->_left_in_leaf = count;
+            goto fill_block_tail;
           }
-
-          if (count > 0) {
-            if (*(std::end(this->_docs) - 1) >= max) {
-              this->_left_in_leaf = count;
-              goto fill_block_tail;
-            }
-            empty &= this->template ProcessBatch<MergeType, TrackMatch>(
-              std::span<const doc_id_t>{std::end(this->_docs) - count, count},
-              min, doc_mask, score, match);
+          if (count == kPostingBlock) {
+            goto fill_block_full;
           }
+          empty &= this->template ProcessBatch<MergeType, TrackMatch>(
+            std::span<const doc_id_t>{std::end(this->_docs) - count, count},
+            min, doc_mask, score, match);
         }
 
         // full blocks only
         for (;;) {
-          if (this->_left_in_list == 0) [[unlikely]] {
-            this->_left_in_leaf = 0;
-            goto fill_block_done;
-          }
           if constexpr (!TrackMatch && MergeType == ScoreMergeType::Noop) {
+            if (this->_left_in_list == 0) [[unlikely]] {
+              this->_left_in_leaf = 0;
+              goto fill_block_done;
+            }
             SDB_ASSERT(!IteratorTraits::Frequency());
             const auto tail =
               std::min(this->_left_in_list, doc_limits::kBlockSize);
-            const auto base = *(std::end(this->_docs) - 1);
+            const auto base = last;
             SDB_ASSERT(base >= min);
             const auto leaf = IteratorTraits::ReadTailForFill(
               tail, GetDocIn(), this->_enc_buf, this->_docs, base);
@@ -774,19 +776,33 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, HasScoreBounds,
               SkipLeafFreqs(tail);
               if (live == 0) {
                 *(std::end(this->_docs) - 1) = leaf.max;
+                last = leaf.max;
                 continue;
               }
               this->_left_in_leaf = live;
               goto fill_block_done;
             }
             SkipLeafFreqs(tail);
+            last = leaf.max;
+            if (last >= max || tail != doc_limits::kBlockSize) {
+              goto fill_block_tail;
+            }
           } else {
-            ReadLeaf(*(std::end(this->_docs) - 1));
+            if (this->_left_in_list < doc_limits::kBlockSize) [[unlikely]] {
+              if (this->_left_in_list == 0) {
+                this->_left_in_leaf = 0;
+                goto fill_block_done;
+              }
+              ReadTail(last);
+              goto fill_block_tail;
+            }
+            ReadBlock(last);
+            last = this->_max_in_leaf;
+            if (last >= max) {
+              goto fill_block_tail;
+            }
           }
-          if (*(std::end(this->_docs) - 1) >= max ||
-              this->_left_in_leaf != kPostingBlock) {
-            goto fill_block_tail;
-          }
+        fill_block_full:
           empty &= this->template ProcessBatch<MergeType, TrackMatch>(
             std::span<const doc_id_t, kPostingBlock>{std::begin(this->_docs),
                                                      kPostingBlock},

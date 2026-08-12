@@ -121,12 +121,11 @@ inline void AppendPKValue(std::string& key,
     case duckdb::LogicalTypeId::UBIGINT: {
       // Same bytes as the signed arm (the writers cast to int64 and flip):
       // file ids stay below the sign bit, so order is preserved.
-      auto val = static_cast<int64_t>(
-        duckdb::UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx]);
+      auto val = duckdb::UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx];
       auto base = key.size();
-      basics::StrAppend(key, sizeof(int64_t));
-      absl::big_endian::Store64(key.data() + base, val);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
+      basics::StrAppend(key, sizeof(uint64_t));
+      absl::big_endian::Store64(key.data() + base,
+                                val ^ (uint64_t{1} << 63));
     } break;
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ: {

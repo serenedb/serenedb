@@ -121,6 +121,10 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   // pass never committed anything.
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> pass_trxs;
   std::atomic<size_t> parked_trxs{0};
+  // The removes' tick, reserved BEFORE the pass pulls any doc tick (a
+  // rotation mid-pass pulls real ticks): a rescan reuses the removed
+  // file ids, so the removes must sit below every pass doc.
+  uint64_t removes_tick = 0;
 
   pg::ProgressMetrics* progress = nullptr;
 
@@ -297,6 +301,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         ? PkShape::Struct
         : PkShape::Single;
     state->file_manifest = Info().manifest;
+    const uint64_t remove_queries = (IsRebuildPass() ? 1 : 0) +
+                                    (Info().file_removes ? 1 : 0) +
+                                    (Info().mask_removes ? 1 : 0);
+    if (remove_queries) {
+      state->removes_tick =
+        search::TickDomain::Instance().Advance(remove_queries + 1);
+    }
     return finish_state(std::move(snapshot), std::move(target));
   }
 
@@ -888,8 +899,10 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
       if (info.mask_removes) {
         trx.Remove(info.mask_removes);
       }
-      if (!trx.Commit(
-            search::TickDomain::Instance().Advance(trx.GetQueries() + 1))) {
+      if (trx.GetQueries()) {
+        SDB_ASSERT(gstate.removes_tick);
+      }
+      if (trx.GetQueries() && !trx.Commit(gstate.removes_tick)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                         ERR_MSG("REINDEX of '", gstate.index_name,
                                 "': failed to commit the removes"));

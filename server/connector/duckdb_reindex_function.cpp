@@ -1036,16 +1036,9 @@ absl::Status RunReindexTick(duckdb::DatabaseInstance& db, ObjectId index_id) {
       }
     };
 
-    const auto outcome = RunReindex(
-      *conn.context, std::string{index->GetName()},
-      std::string{schema->GetName()}, std::string{database->GetName()});
-    if (outcome.action != ReindexAction::UpToDate) {
-      SDB_INFO(SEARCH, "periodic reindex of index '", index->GetName(),
-               "': ", ActionName(outcome.action), ", files added ",
-               outcome.files_added, ", changed ", outcome.files_changed,
-               ", removed ", outcome.files_removed, ", rescanned ",
-               outcome.files_rescanned);
-    }
+    RunReindex(*conn.context, std::string{index->GetName()},
+               std::string{schema->GetName()},
+               std::string{database->GetName()});
     return absl::OkStatus();
   } catch (const SqlException& ex) {
     if (ex.error().errcode == ERRCODE_OBJECT_IN_USE ||

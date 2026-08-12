@@ -341,5 +341,3 @@ DETACH DATABASE iceberg_${__DATABASE__};
 statement ok
 DROP PERSISTENT SECRET iceberg_${__DATABASE__};
 
-statement ok
-RESET GLOBAL unsafe_enable_version_guessing;

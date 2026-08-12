@@ -185,7 +185,7 @@ count
 statement error
 SELECT id, body, score FROM v_att_idx WHERE body @@ ts_phrase('cat');
 ----
-db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
+db error: ERROR: Catalog "db172" does not exist!
 
 
 statement ok

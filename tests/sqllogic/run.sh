@@ -710,17 +710,12 @@ launch_external() {
 	shopt -s globstar
 	local pattern test_files f
 	local needs_s3=false needs_iceberg=false needs_ollama=false needs_postgres=false needs_clickhouse=false needs_azure=false
-	local needs_iceberg_fixture=false
 	local -a misnamed=()
 	for pattern in "${tests[@]}"; do
 		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
 		[[ -n "$test_files" ]] || continue
 		while IFS= read -r f; do
 			[[ -n "$f" ]] || continue
-			# The local iceberg fixture is generated, not checked in.
-			if grep -q "resources/tests/iceberg" "$f" 2>/dev/null; then
-				needs_iceberg_fixture=true
-			fi
 			case "$f" in
 			# A test that boots a docker-backed service (MinIO, iceberg-rest,
 			# ollama, postgres) MUST be .test_slow so --fast runs -- e.g. the
@@ -767,9 +762,6 @@ launch_external() {
 	# In compose mode run.sh executes inside the tests container, which can
 	# neither see the workspace nor docker-mount its paths (the socket is
 	# the host daemon's) -- run_in_docker.sh generates on the host instead.
-	if [[ "$needs_iceberg_fixture" == "true" && -z "${COMPOSE_NETWORK:-}" ]]; then
-		"${SCRIPT_DIR}/../../scripts/ensure_iceberg_fixture.sh"
-	fi
 	if [[ "$needs_s3" == "true" ]]; then
 		launch_s3
 	fi

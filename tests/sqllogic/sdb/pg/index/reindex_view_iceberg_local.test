@@ -371,7 +371,7 @@ up_to_date
 # zero-file delta and reports up_to_date -- before the restamp arm this was
 # a full rebuild.
 system ok
-python3 -c "import json; p='$__TEST_DIR__/reil_plain/metadata'; m=json.load(open(p+'/v7.metadata.json')); c=[s for s in m['snapshots'] if s['snapshot-id']==m['current-snapshot-id']][0]; n=dict(c); n['snapshot-id']=c['snapshot-id']+1; n['sequence-number']=m['last-sequence-number']+1; n['parent-snapshot-id']=c['snapshot-id']; m['snapshots'].append(n); m['current-snapshot-id']=n['snapshot-id']; m['last-sequence-number']=n['sequence-number']; m.setdefault('snapshot-log',[]).append({'snapshot-id': n['snapshot-id'], 'timestamp-ms': c.get('timestamp-ms',0)+1}); json.dump(m, open(p+'/v8.metadata.json','w'))" && echo -n 8 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+echo -n 8 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
 
 query
 SELECT action FROM serenedb_reindex('reil_plain_idx');

@@ -522,5 +522,3 @@ DETACH DATABASE mx_${__DATABASE__};
 statement ok
 DROP PERSISTENT SECRET mx_${__DATABASE__};
 
-statement ok
-RESET GLOBAL unsafe_enable_version_guessing;

@@ -1,9 +1,10 @@
 #!/bin/bash
-# Generates resources/tests/iceberg on demand (the fixture is not checked
-# in). Idempotent and concurrency-safe: a stamp inside the fixture skips
+# Regenerates resources/tests/iceberg (the fixture IS checked in -- rerun
+# this after changing gen_iceberg_fixture.py and commit the result).
+# Idempotent and concurrency-safe: a stamp inside the fixture skips
 # regeneration until gen_iceberg_fixture.py changes, and an flock
-# serializes parallel test runners. Runs in a throwaway python container,
-# so the host needs nothing but docker.
+# serializes parallel runs. Runs in a throwaway python container, so the
+# host needs nothing but docker.
 set -euo pipefail
 
 REPO=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)

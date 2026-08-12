@@ -396,6 +396,27 @@ def craft_snapshot(table_dir, table, deletes, appends, version, drop_manifests):
     return manifest_path
 
 
+def noop_snapshot(table_dir, src_version, out_version):
+    """A new snapshot id over the same files: the restamp/no-op tick shape."""
+    meta_dir = os.path.join(table_dir, "metadata")
+    with open(os.path.join(meta_dir, f"v{src_version}.metadata.json")) as f:
+        meta = json.load(f)
+    cur = [s for s in meta["snapshots"]
+           if s["snapshot-id"] == meta["current-snapshot-id"]][0]
+    new = dict(cur)
+    new["snapshot-id"] = cur["snapshot-id"] + 1
+    new["sequence-number"] = meta["last-sequence-number"] + 1
+    new["parent-snapshot-id"] = cur["snapshot-id"]
+    meta["snapshots"].append(new)
+    meta["current-snapshot-id"] = new["snapshot-id"]
+    meta["last-sequence-number"] = new["sequence-number"]
+    meta.setdefault("snapshot-log", []).append(
+        {"snapshot-id": new["snapshot-id"],
+         "timestamp-ms": cur.get("timestamp-ms", 0) + 1})
+    with open(os.path.join(meta_dir, f"v{out_version}.metadata.json"), "w") as f:
+        json.dump(meta, f)
+
+
 def main():
     shutil.rmtree(WORK, ignore_errors=True)
     os.makedirs(WORK)
@@ -442,6 +463,11 @@ def main():
                    [{"equality": {"body": ["io farms safely",
                                            "kunkka lands torrent"]},
                      "partition": {}}], [], 7, set())
+    # v8 = a no-op snapshot over v7 (the restamp rung); v9 = the same shape
+    # over v5 (the periodic no-op tick) -- the hint picks them directly, the
+    # numbering gap is legal.
+    noop_snapshot(plain_dir, 7, 8)
+    noop_snapshot(plain_dir, 5, 9)
 
     from pyiceberg.partitioning import PartitionSpec, PartitionField
     from pyiceberg.transforms import IdentityTransform

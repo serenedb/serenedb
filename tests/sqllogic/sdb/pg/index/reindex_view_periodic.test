@@ -445,7 +445,7 @@ id	body
 # B8: a no-op snapshot (new id, identical files) restamps through the tick;
 # content stays put and the loop keeps running.
 system ok
-python3 -c "import json; p='$__TEST_DIR__/rvp_plain/metadata'; m=json.load(open(p+'/v5.metadata.json')); c=[s for s in m['snapshots'] if s['snapshot-id']==m['current-snapshot-id']][0]; n=dict(c); n['snapshot-id']=c['snapshot-id']+1; n['sequence-number']=m['last-sequence-number']+1; n['parent-snapshot-id']=c['snapshot-id']; m['snapshots'].append(n); m['current-snapshot-id']=n['snapshot-id']; m['last-sequence-number']=n['sequence-number']; m.setdefault('snapshot-log',[]).append({'snapshot-id': n['snapshot-id'], 'timestamp-ms': c.get('timestamp-ms',0)+1}); json.dump(m, open(p+'/v6.metadata.json','w'))" && echo -n 6 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+echo -n 9 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
 
 system ok
 sleep 0.8

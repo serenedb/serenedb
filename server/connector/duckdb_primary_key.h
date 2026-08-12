@@ -68,12 +68,11 @@ inline std::vector<PKColumn> PkTermColumns(size_t col_idx,
   return columns;
 }
 
-// The glob view-index pk term is (file, row) as two sortable signed halves;
-// the file half alone is the whole-file prefix (unsigned file ids ride as
-// the same 8 bytes with the top bit flipped).
+// The glob view-index pk term is the raw unsigned file half plus the
+// sortable signed row half; the file half alone is the whole-file prefix.
 inline std::string PkFilePrefix(uint64_t file_id) {
   std::string key;
-  primary_key::AppendSigned(key, static_cast<int64_t>(file_id));
+  primary_key::AppendUnsigned(key, file_id);
   return key;
 }
 

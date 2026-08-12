@@ -123,10 +123,8 @@ std::pair<std::string_view, duckdb::Value> CanonicalOption(
       if (eq == std::string_view::npos) {
         continue;
       }
-      keys.emplace_back(
-        std::string{absl::StripAsciiWhitespace(pair.substr(0, eq))});
-      values.emplace_back(
-        std::string{absl::StripAsciiWhitespace(pair.substr(eq + 1))});
+      keys.emplace_back(absl::StripAsciiWhitespace(pair.substr(0, eq)));
+      values.emplace_back(absl::StripAsciiWhitespace(pair.substr(eq + 1)));
     }
     return {key, duckdb::Value::MAP(duckdb::LogicalType::VARCHAR,
                                     duckdb::LogicalType::VARCHAR,

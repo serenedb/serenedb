@@ -13,7 +13,7 @@ control substitution on
 # observe computes, so the next reindex is up_to_date.
 
 system ok
-cp -r resources/tests/iceberg/plain $__TEST_DIR__/reil_plain && cp -r resources/tests/iceberg/part $__TEST_DIR__/reil_part && echo -n 1 > $__TEST_DIR__/reil_plain/metadata/version-hint.text && echo -n 1 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v1 $__TEST_DIR__/reil_plain && ln -sfn ${RESOURCES}/tests/iceberg/part_v1 $__TEST_DIR__/reil_part
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY reil_en(
@@ -60,7 +60,7 @@ up_to_date
 
 # Advance both tables to the delete snapshot.
 system ok
-echo -n 2 > $__TEST_DIR__/reil_plain/metadata/version-hint.text && echo -n 2 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v2 $__TEST_DIR__/reil_plain && ln -sfn ${RESOURCES}/tests/iceberg/part_v2 $__TEST_DIR__/reil_part
 
 # Partition rung: only partition a's two files (of four) count as changed;
 # the rescan goes through the iceberg reader, which applies the delete.
@@ -142,7 +142,7 @@ count
 # because the delete's sequence number is not strictly above the new
 # file's, the re-inserted row survives (the CDC upsert shape).
 system ok
-echo -n 3 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v3 $__TEST_DIR__/reil_plain
 
 query
 SELECT * FROM serenedb_reindex('reil_plain_idx');
@@ -217,7 +217,7 @@ up_to_date
 # accumulation shape: the files snapshot 3 covered translate only THIS
 # delete the second time around (the seq bound skips the applied one).
 system ok
-echo -n 4 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v4 $__TEST_DIR__/reil_plain
 
 query
 SELECT * FROM serenedb_reindex('reil_plain_idx');
@@ -289,7 +289,7 @@ up_to_date
 # the rows evaluate through the index's own SQL scan (body compared by its
 # RAW source value) and only the matching pks remove. Nothing rescans.
 system ok
-echo -n 5 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v5 $__TEST_DIR__/reil_plain
 
 query
 SELECT * FROM serenedb_reindex('reil_plain_idx');
@@ -327,7 +327,7 @@ id	body
 # Snapshot 6: three fresh rows (the same-snapshot id=999 delete matches
 # nothing -- restamp fodder).
 system ok
-echo -n 6 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v6 $__TEST_DIR__/reil_plain
 
 query
 SELECT * FROM serenedb_reindex('reil_plain_idx');
@@ -345,7 +345,7 @@ count
 # column -- the multi-row (OR) shape through the scan road; both rows die,
 # the third survivor stays.
 system ok
-echo -n 7 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v7 $__TEST_DIR__/reil_plain
 
 query
 SELECT * FROM serenedb_reindex('reil_plain_idx');
@@ -371,7 +371,7 @@ up_to_date
 # zero-file delta and reports up_to_date -- before the restamp arm this was
 # a full rebuild.
 system ok
-echo -n 8 > $__TEST_DIR__/reil_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v8 $__TEST_DIR__/reil_plain
 
 query
 SELECT action FROM serenedb_reindex('reil_plain_idx');
@@ -399,7 +399,7 @@ up_to_date
 # pinned file keeps its docs and masks its dead row -- before the per-file
 # gate, the partition-scoped delete disabled masks for the whole listing.
 system ok
-echo -n 3 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/part_v3 $__TEST_DIR__/reil_part
 
 query
 SELECT * FROM serenedb_reindex('reil_part_idx');
@@ -424,7 +424,7 @@ up_to_date
 # a. Only partition a's files translate the remove query; partition b's
 # fingerprints never move.
 system ok
-echo -n 4 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/part_v4 $__TEST_DIR__/reil_part
 
 query
 SELECT * FROM serenedb_reindex('reil_part_idx');
@@ -460,7 +460,7 @@ CREATE INDEX reil_part_proj_idx ON reil_part_proj_v USING inverted(id, body reil
 # from the source for the covered files' rows and removes the matches --
 # far cheaper than rebuilding the files' docs.
 system ok
-echo -n 5 > $__TEST_DIR__/reil_part/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/part_v5 $__TEST_DIR__/reil_part
 
 query
 SELECT * FROM serenedb_reindex('reil_part_idx');

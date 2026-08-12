@@ -33,11 +33,6 @@ export RESOURCES="/serenedb/resources"
 # generate here on the host before compose starts.
 "$WORKSPACE/scripts/ensure_iceberg_fixture.sh"
 
-# Pre-create the fixture bind's host mountpoint: it nests inside the
-# /sqllogic bind, and a missing nested mountpoint would be created by the
-# docker daemon as root, breaking the next checkout's cleanup.
-mkdir -p "$SQLLOGIC_DIR/resources/tests/iceberg"
-
 if ! test -f "$WORKSPACE/docker.env"; then
 	touch "$WORKSPACE/docker.env"
 fi

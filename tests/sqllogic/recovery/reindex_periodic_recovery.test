@@ -104,7 +104,7 @@ count
 
 connection e2_after
 system ok
-cp -r ../../resources/tests/iceberg/plain $__TEST_DIR__/rpr_ice && rm $__TEST_DIR__/rpr_ice/metadata/version-hint.text 2>/dev/null; mkdir -p $__TEST_DIR__/rpr_ice_hold && mv $__TEST_DIR__/rpr_ice/metadata/v[2-9].metadata.json $__TEST_DIR__/rpr_ice_hold/
+ln -sfn ${RESOURCES}/tests/iceberg/plain_nohint_v1 $__TEST_DIR__/rpr_ice
 
 connection e2_after
 statement ok
@@ -130,7 +130,7 @@ count
 # bind the hint-less table, the loop stays alive, content stays put.
 connection e2_after
 system ok
-mv $__TEST_DIR__/rpr_ice_hold/v2.metadata.json $__TEST_DIR__/rpr_ice/metadata/
+ln -sfn ${RESOURCES}/tests/iceberg/plain_nohint_v2 $__TEST_DIR__/rpr_ice
 
 connection e2_after
 system ok
@@ -165,7 +165,7 @@ SET GLOBAL unsafe_enable_version_guessing TO true;
 
 connection e2_after
 system ok
-mv $__TEST_DIR__/rpr_ice_hold/v3.metadata.json $__TEST_DIR__/rpr_ice/metadata/
+ln -sfn ${RESOURCES}/tests/iceberg/plain_nohint_v3 $__TEST_DIR__/rpr_ice
 
 connection e2_after
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION

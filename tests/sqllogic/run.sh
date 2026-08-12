@@ -720,7 +720,7 @@ launch_external() {
 			# The local iceberg fixture is generated, not checked in. Inside
 			# compose the tests container gets it via a read-only mount,
 			# generated on the host by run_in_docker.sh.
-			if grep -q "resources/tests/iceberg" "$f" 2>/dev/null; then
+			if grep -q "RESOURCES}/tests/iceberg" "$f" 2>/dev/null; then
 				needs_iceberg_fixture=true
 			fi
 			case "$f" in

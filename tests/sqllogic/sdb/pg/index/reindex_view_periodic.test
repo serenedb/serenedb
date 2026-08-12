@@ -360,7 +360,7 @@ DROP VIEW rvp_c4_v CASCADE;
 # part/ v3 = pinned positional delete (mask road).
 
 system ok
-cp -r resources/tests/iceberg/plain $__TEST_DIR__/rvp_plain && cp -r resources/tests/iceberg/part $__TEST_DIR__/rvp_part && echo -n 1 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text && echo -n 1 > $__TEST_DIR__/rvp_part/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v1 $__TEST_DIR__/rvp_plain && ln -sfn ${RESOURCES}/tests/iceberg/part_v1 $__TEST_DIR__/rvp_part
 
 statement ok
 CREATE VIEW rvp_ice_v AS SELECT * FROM iceberg_scan(
@@ -387,7 +387,7 @@ count
 
 # Positional delete snapshot (rescan road).
 system ok
-echo -n 2 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v2 $__TEST_DIR__/rvp_plain
 
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('anchin');
@@ -397,7 +397,7 @@ count
 
 # B6: equality delete -> query road; the same-snapshot re-insert survives.
 system ok
-echo -n 3 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v3 $__TEST_DIR__/rvp_plain
 
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('reborn');
@@ -413,7 +413,7 @@ count
 
 # NULL-value equality delete (IS NULL through the null marker).
 system ok
-echo -n 4 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v4 $__TEST_DIR__/rvp_plain
 
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('invisible');
@@ -425,7 +425,7 @@ count
 # tick's scan road evaluates the rows over the source values and still
 # converges.
 system ok
-echo -n 5 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v5 $__TEST_DIR__/rvp_plain
 
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM rvp_ice_idx WHERE body @@ ts_phrase('pins');
@@ -445,7 +445,7 @@ id	body
 # B8: a no-op snapshot (new id, identical files) restamps through the tick;
 # content stays put and the loop keeps running.
 system ok
-echo -n 9 > $__TEST_DIR__/rvp_plain/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/plain_v9 $__TEST_DIR__/rvp_plain
 
 system ok
 sleep 0.8
@@ -465,7 +465,7 @@ statement ok
 CREATE INDEX rvp_part_idx ON rvp_part_v USING inverted(id, body rvp_en) WITH (reindex_interval=100);
 
 system ok
-echo -n 2 > $__TEST_DIR__/rvp_part/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/part_v2 $__TEST_DIR__/rvp_part
 
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM rvp_part_idx WHERE body @@ ts_phrase('anchin');
@@ -474,7 +474,7 @@ count
 0
 
 system ok
-echo -n 3 > $__TEST_DIR__/rvp_part/metadata/version-hint.text
+ln -sfn ${RESOURCES}/tests/iceberg/part_v3 $__TEST_DIR__/rvp_part
 
 query ok retry 40 backoff 250ms
 SELECT count(*) FROM rvp_part_idx;

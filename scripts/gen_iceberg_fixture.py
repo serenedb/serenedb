@@ -394,12 +394,33 @@ def main():
         [{"equality": {"part": "b"}, "partition": {"part": "b"}}], [], 5, set())
 
     shutil.rmtree(OUT, ignore_errors=True)
-    for name in ("plain", "part"):
-        src = os.path.join(WORK, "wh", "ns", name)
+
+    # One directory per (table, version): tests flip versions by re-pointing
+    # a $__TEST_DIR__ symlink at the next variant instead of copying the
+    # table and rewriting its hint. nohint variants keep only the metadata
+    # jsons up to N for the version-guessing rungs.
+    def emit(name, table, hint, max_meta_json):
+        src = os.path.join(WORK, "wh", "ns", table)
         dst = os.path.join(OUT, name)
         os.makedirs(dst)
         shutil.copytree(os.path.join(src, "data"), os.path.join(dst, "data"))
-        shutil.copytree(os.path.join(src, "metadata"), os.path.join(dst, "metadata"))
+        meta_dst = os.path.join(dst, "metadata")
+        shutil.copytree(os.path.join(src, "metadata"), meta_dst)
+        if hint is not None:
+            with open(os.path.join(meta_dst, "version-hint.text"), "w") as f:
+                f.write(str(hint))
+        if max_meta_json is not None:
+            for entry in os.listdir(meta_dst):
+                if (entry.startswith("v") and entry.endswith(".metadata.json")
+                        and int(entry[1:-len(".metadata.json")]) > max_meta_json):
+                    os.remove(os.path.join(meta_dst, entry))
+
+    for n in range(1, 10):
+        emit(f"plain_v{n}", "plain", n, None)
+    for n in range(1, 6):
+        emit(f"part_v{n}", "part", n, None)
+    for n in range(1, 4):
+        emit(f"plain_nohint_v{n}", "plain", None, n)
     print("fixture written to", OUT)
 
 

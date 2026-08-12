@@ -44,6 +44,7 @@ services:
     environment:
       - BUILD_DIR
       - RESOURCES
+      - COMPOSE_NETWORK=${COMPOSE_PROJECT_NAME}_test-network
       - WORKSPACE=/serenedb
       - HOME=/serenedb
       - LOG_DIR=/var/log/serenedb

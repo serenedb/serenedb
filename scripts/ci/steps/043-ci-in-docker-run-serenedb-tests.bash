@@ -1,6 +1,11 @@
 #!/bin/bash
 
 # Run unit tests
+
+# The gtest cache binds inside the /serenedb bind: pre-create the nested
+# host mountpoint or the docker daemon creates it root-owned.
+mkdir -p "${WORKSPACE}/.cache"
+
 if ! docker run --rm \
 	--user "$(id -u):$(id -g)" \
 	-e HOME=/serenedb \

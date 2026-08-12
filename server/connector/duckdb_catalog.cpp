@@ -1025,6 +1025,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     }
     if (fp && leaf_get) {
       view_fast_path = std::move(fp);
+      EnableIcebergSort(leaf_get->bind_data.get());
       std::optional<duckdb::vector<duckdb::Value>> delta_ordinals;
       if (reindex_pass &&
           reindex_pass->Pass() == SereneDBCreateIndexInfo::ReindexPass::Delta) {
@@ -1131,9 +1132,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         }
       };
       thread_pk_through(thread_pk_through, *leaf_parent_chain_root);
-      if (leaf_get->bind_data) {
-        EnableIcebergSort(leaf_get->bind_data.get());
-      }
 
       if (IsFilePkSpec(view_fast_path->pk_spec) && !delta_pass) {
         SDB_ASSERT(leaf_get->bind_data);

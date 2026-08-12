@@ -179,15 +179,6 @@ jobs:
           echo "DEBUG_SYMBOLS=false"      >> $GITHUB_ENV
           git config --global --add safe.directory '*'
 
-      # Containers occasionally leave root-owned files in the workspace
-      # (daemon-created bind mountpoints, lock files); checkout's clean
-      # cannot touch those. Reclaim ownership the same way they appeared:
-      # from a container.
-      - name: Reclaim workspace ownership
-        run: |
-          docker run --rm -v "${WORKSPACE}:/w" "${BUILD_IMAGE}" \
-            chown -R "$(id -u):$(id -g)" /w
-
       - name: Checkout
         uses: actions/checkout@v7
         with:

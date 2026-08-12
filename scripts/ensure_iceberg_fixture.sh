@@ -10,9 +10,10 @@ REPO=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 GEN="$REPO/scripts/gen_iceberg_fixture.py"
 OUT="$REPO/resources/tests/iceberg"
 STAMP="$OUT/.generated"
-LOCK="$REPO/.cache/iceberg-fixture.lock"
+# NOT under .cache: the gtest-cache bind of 042/043 makes the daemon create
+# a root-owned .cache on the host, unwritable for us.
+LOCK="$REPO/resources/tests/iceberg-fixture.lock"
 
-mkdir -p "$REPO/.cache"
 exec 9>"$LOCK"
 flock 9
 

@@ -40,6 +40,14 @@ void AppendSigned(std::string& key, T value) {
 }
 
 template<typename T>
+void AppendUnsigned(std::string& key, T value) {
+  SDB_ASSERT(std::is_unsigned_v<T>);
+  const auto base_size = key.size();
+  basics::StrAppend(key, sizeof(T));
+  absl::big_endian::Store(key.data() + base_size, value);
+}
+
+template<typename T>
 T ReadSigned(std::string_view buf) {
   SDB_ASSERT(std::is_signed_v<T>,
              "Cannot correctly read unsigned value due to sign bit flipping");

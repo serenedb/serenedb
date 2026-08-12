@@ -54,15 +54,17 @@ class DuckDBEntryCache {
   };
 
   // Called by SereneDBSchemaEntry::LookupEntry.
-  EntryLookup EnsureEntry(duckdb::CatalogType type, duckdb::Catalog& catalog,
+  EntryLookup EnsureEntry(duckdb::CatalogType type,
+                          duckdb::ClientContext& context,
+                          duckdb::Catalog& catalog,
                           duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
                           std::string_view schema_name, std::string_view name,
                           const catalog::Snapshot& snapshot);
 
   // Called by SereneDBSchemaEntry::Scan
-  void ScanEntries(duckdb::CatalogType type, duckdb::Catalog& catalog,
-                   duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
-                   std::string_view schema_name,
+  void ScanEntries(duckdb::CatalogType type, duckdb::ClientContext& context,
+                   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+                   ObjectId db_id, std::string_view schema_name,
                    const std::function<void(duckdb::CatalogEntry&)>& callback,
                    const catalog::Snapshot& snapshot);
 
@@ -74,7 +76,9 @@ class DuckDBEntryCache {
     std::shared_ptr<const catalog::Object> object;
   };
 
-  CachedEntry BuildEntry(duckdb::CatalogType type, duckdb::Catalog& catalog,
+  CachedEntry BuildEntry(duckdb::CatalogType type,
+                         duckdb::ClientContext& context,
+                         duckdb::Catalog& catalog,
                          duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
                          std::string_view schema_name, std::string_view name,
                          const catalog::Snapshot& snapshot);
@@ -82,9 +86,9 @@ class DuckDBEntryCache {
   // Builds the DuckDB entry and, when it wraps one of our catalog objects,
   // sets `object` to the ACL-bearing object behind it.
   duckdb::unique_ptr<duckdb::CatalogEntry> BuildEntryObject(
-    duckdb::CatalogType type, duckdb::Catalog& catalog,
-    duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
-    std::string_view schema_name, std::string_view name,
+    duckdb::CatalogType type, duckdb::ClientContext& context,
+    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+    ObjectId db_id, std::string_view schema_name, std::string_view name,
     const catalog::Snapshot& snapshot,
     std::shared_ptr<const catalog::Object>& object);
 
@@ -97,8 +101,9 @@ class DuckDBEntryCache {
   // (SELECT * FROM idx_name). The CatalogType requested is TABLE_ENTRY but
   // the resolved relation is an Index -- we wrap it as a scannable entry.
   duckdb::unique_ptr<duckdb::CatalogEntry> BuildIndexScanEntry(
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    ObjectId db_id, std::string_view schema_name, std::string_view name,
+    duckdb::ClientContext& context, duckdb::Catalog& catalog,
+    duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
+    std::string_view schema_name, std::string_view name,
     const catalog::Index& index, const catalog::Snapshot& snapshot);
 
   struct SchemaCache {

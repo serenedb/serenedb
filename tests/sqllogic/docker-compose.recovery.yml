@@ -19,10 +19,70 @@ services:
       timeout: 5s
       retries: 45
 
+  # recovery/*_catalog_iceberg* need MinIO + an Iceberg REST catalog: same
+  # no-docker-socket reasoning as clickhouse above. run.sh's launchers skip
+  # when the connection env below is preset.
+  minio:
+    image: minio/minio:latest
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data
+    healthcheck:
+      test:
+        - CMD
+        - mc
+        - alias
+        - set
+        - local
+        - http://127.0.0.1:9000
+        - minioadmin
+        - minioadmin
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  minio-init:
+    image: minio/minio:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - mc alias set local http://minio:9000 minioadmin minioadmin && mc mb -p local/testbucket
+
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_REGION=us-east-1
+      - CATALOG_WAREHOUSE=s3://testbucket/warehouse/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+      - CATALOG_S3_PATH__STYLE__ACCESS=true
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -sf
+        - http://127.0.0.1:8181/v1/config?warehouse=demo
+      interval: 2s
+      timeout: 5s
+      retries: 45
+
   tests:
     image: ${BUILD_IMAGE}
     depends_on:
       clickhouse:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      iceberg-rest:
         condition: service_healthy
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     security_opt:
@@ -56,5 +116,12 @@ services:
       - CHHOST=clickhouse
       - CHPORT=9000
       - CHUSER=default
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=testbucket
+      - ICEBERG_REST_URL=http://iceberg-rest:8181
+      - ICEBERG_WAREHOUSE=demo
     working_dir: /sqllogic
     command: ./run_recovery_tests.sh --runner /sqllogictest-rs

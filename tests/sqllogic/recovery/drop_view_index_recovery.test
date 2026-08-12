@@ -1,0 +1,76 @@
+control substitution on
+
+# DROP VIEW cascades to its view-backed inverted indexes (AutoDrop, like a
+# table's indexes on DROP TABLE): the index definition and its iresearch
+# directory are reclaimed, and a restart must neither resurrect the index
+# nor collide when the same names are recreated.
+
+statement count 4
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 3, 'pudge plays again'
+      UNION ALL SELECT 4, 'vedernikoff drops views')
+TO '${__TEST_DIR__}/drop_view_idx.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY drop_view_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW drop_view_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/drop_view_idx.parquet');
+
+statement ok
+CREATE INDEX drop_view_idx ON drop_view_v USING inverted(id, body drop_view_en);
+
+query
+SELECT count(*) FROM drop_view_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(*) FROM drop_view_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+1
+
+statement ok
+DROP VIEW drop_view_v;
+
+# The index went with the view.
+query
+SELECT count(*) FROM pg_class WHERE relname = 'drop_view_idx';
+----
+count
+0
+
+# Across a restart the index must stay gone (no orphaned definition row gets
+# resurrected), and recreating the same names must work cleanly.
+connection after_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname = 'drop_view_idx';
+----
+count
+0
+
+connection after_drop
+statement ok
+CREATE VIEW drop_view_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/drop_view_idx.parquet');
+
+connection after_drop
+statement ok
+CREATE INDEX drop_view_idx ON drop_view_v USING inverted(id, body drop_view_en);
+
+connection after_drop
+query
+SELECT count(*) FROM drop_view_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2

@@ -452,9 +452,22 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return true;
       }
+      if (_tick_source) {
+        // Reserve one extra tick so first_tick (= last - queries) lands
+        // strictly above every previously committed tick.
+        return CommitImpl(_tick_source(_queries + 1));
+      }
       const auto first_tick =
         _writer->_tick.fetch_add(_queries, std::memory_order_relaxed);
       return CommitImpl(first_tick + _queries);
+    }
+
+    // Every commit of this transaction (including the commit-on-flush road)
+    // reserves its ticks through `source` (called with the range size,
+    // returns the LAST tick of the reserved range) fresh at commit time,
+    // instead of the writer's private counter.
+    void SetTickSource(std::function<uint64_t(uint64_t)> source) noexcept {
+      _tick_source = std::move(source);
     }
 
     // Like Commit(), but writes the active segment in the calling thread first
@@ -465,6 +478,13 @@ class IndexWriter : private util::Noncopyable {
         segment->Flush();
       }
       return Commit();
+    }
+
+    bool FlushAndCommit(uint64_t tick) noexcept {
+      if (auto* segment = _active.Segment()) {
+        segment->Flush();
+      }
+      return Commit(tick);
     }
 
     bool Commit(uint64_t last_tick) noexcept {
@@ -517,6 +537,7 @@ class IndexWriter : private util::Noncopyable {
     // We can use active_.Segment()->queries_.size() for same purpose
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
+    std::function<uint64_t(uint64_t)> _tick_source;
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);

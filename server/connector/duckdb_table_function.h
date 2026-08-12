@@ -335,6 +335,9 @@ uint32_t ReadBoundedIntSetting(duckdb::ClientContext& context,
                                std::string_view name, int32_t min_inclusive,
                                uint32_t default_value);
 
+std::optional<duckdb::LogicalType> GeneratedPkTypeOf(
+  const SereneDBScanBindData& bind);
+
 duckdb::TableFunction CreateIResearchScanFunction();
 
 void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db);

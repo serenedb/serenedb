@@ -35,8 +35,8 @@ class ConnectionContext;
 namespace sdb::network::pg {
 
 class WireSinkContext;
-}
 
+}  // namespace sdb::network::pg
 namespace sdb::connector {
 
 inline constexpr const char* kSereneDBClientStateKey = "serenedb";

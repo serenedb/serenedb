@@ -1,0 +1,175 @@
+control substitution on
+
+# Periodic reindex across restarts. The interval option is persisted
+# index state: a restarted server must resume the loop by itself (E1), a
+# crash INSIDE a background tick must heal on the next tick after restart
+# (E2), and an index without the option must stay quiet after a restart
+# (E3, the negative control).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rpr_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+system ok
+mkdir -p $__TEST_DIR__/rpr_glob $__TEST_DIR__/rpr_quiet $__TEST_DIR__/rpr_pending
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/rpr_glob/f1.parquet' (FORMAT PARQUET);
+
+statement count 1
+COPY (SELECT 10 AS id, 'arrives while down' AS body)
+TO '${__TEST_DIR__}/rpr_pending/f2.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rpr_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_glob/f*.parquet');
+
+statement ok
+CREATE INDEX rpr_idx ON rpr_v USING inverted(id, body rpr_en) WITH (reindex_interval=100);
+
+# E3 companion: same source, NO interval option.
+statement count 1
+COPY (SELECT 1 AS id, 'quiet base' AS body)
+TO '${__TEST_DIR__}/rpr_quiet/f1.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rpr_quiet_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rpr_quiet/f*.parquet');
+
+statement ok
+CREATE INDEX rpr_quiet_idx ON rpr_quiet_v USING inverted(id, body rpr_en);
+
+query
+SELECT count(*) FROM rpr_idx;
+----
+count
+1
+
+# E1: restart with the option set; the change lands while the server is
+# down; the resumed loop applies it with no manual REINDEX.
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+system ok
+mv $__TEST_DIR__/rpr_pending/f2.parquet $__TEST_DIR__/rpr_glob/f2.parquet && cp $__TEST_DIR__/rpr_quiet/f1.parquet $__TEST_DIR__/rpr_quiet/f2.parquet
+
+connection e1_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rpr_idx;
+----
+count
+2
+
+connection e1_after
+query
+SELECT id FROM rpr_idx WHERE body @@ ts_phrase('down');
+----
+id
+10
+
+# E3: the optionless index did NOT tick after the restart -- the file added
+# while down stays invisible until a manual REINDEX.
+connection e1_after
+query
+SELECT count(*) FROM rpr_quiet_idx;
+----
+count
+1
+
+connection e1_after
+statement ok
+CALL serenedb_reindex('rpr_quiet_idx');
+
+connection e1_after
+query
+SELECT count(*) FROM rpr_quiet_idx;
+----
+count
+2
+
+# F: hint-less iceberg needs version guessing. The tick's internal session
+# reads GLOBAL settings: with only the SESSION setting on, ticks fail (the
+# loop survives, F2); once the GLOBAL is set, the next tick discovers the
+# new snapshot and converges (F1).
+
+connection e2_after
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/plain_nohint_v1 $__TEST_DIR__/rpr_ice
+
+connection e2_after
+statement ok
+SET unsafe_enable_version_guessing=true;
+
+connection e2_after
+statement ok
+CREATE VIEW rpr_ice_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/rpr_ice', allow_moved_paths=true);
+
+connection e2_after
+statement ok
+CREATE INDEX rpr_ice_idx ON rpr_ice_v USING inverted(id, body rpr_en) WITH (reindex_interval=100);
+
+connection e2_after
+query
+SELECT count(*) FROM rpr_ice_idx;
+----
+count
+3
+
+# F2: the delete snapshot appears, but the GLOBAL is unset -- ticks fail to
+# bind the hint-less table, the loop stays alive, content stays put.
+connection e2_after
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/plain_nohint_v2 $__TEST_DIR__/rpr_ice
+
+connection e2_after
+system ok
+sleep 1.2
+
+connection e2_after
+query
+SELECT count(*) FROM rpr_ice_idx;
+----
+count
+3
+
+# A manual REINDEX runs its passes with the CALLER's session settings, so
+# the session-scope guessing is enough to land v2 -- unlike the tick, which
+# has no caller and stays gated on the GLOBAL.
+connection e2_after
+statement ok
+CALL serenedb_reindex('rpr_ice_idx');
+
+connection e2_after
+query
+SELECT count(*) FROM rpr_ice_idx;
+----
+count
+2
+
+# ...and F1: with the GLOBAL set, the loop handles the next snapshot by
+# itself (v3 = the equality delete + same-snapshot re-insert).
+connection e2_after
+statement ok
+SET GLOBAL unsafe_enable_version_guessing TO true;
+
+connection e2_after
+system ok
+ln -sfn ${RESOURCES}/tests/iceberg/plain_nohint_v3 $__TEST_DIR__/rpr_ice
+
+connection e2_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM rpr_ice_idx WHERE body @@ ts_phrase('reborn');
+----
+count
+1

@@ -721,7 +721,7 @@ launch_external() {
 			# symlink ${RESOURCES}/tests/iceberg/<table>_vN and serened
 			# resolves the target; under compose run_in_docker.sh generates
 			# it on the host before the containers start.
-			if grep -q "RESOURCES}/tests/iceberg" "$f" 2>/dev/null; then
+			if grep -qF '${RESOURCES}/tests/iceberg' "$f" 2>/dev/null; then
 				needs_iceberg_fixture=true
 			fi
 			case "$f" in

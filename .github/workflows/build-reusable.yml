@@ -179,6 +179,17 @@ jobs:
           echo "DEBUG_SYMBOLS=false"      >> $GITHUB_ENV
           git config --global --add safe.directory '*'
 
+      # The docker daemon creates missing nested bind mountpoints as root
+      # (the sqllogic fixture bind under tests/sqllogic); checkout's clean
+      # cannot remove those. Remove them the same way they appeared: from a
+      # container.
+      - name: Clean container-created files
+        run: |
+          if [ -e "${WORKSPACE}/tests/sqllogic/resources" ]; then
+            docker run --rm -v "${WORKSPACE}:/w" "${BUILD_IMAGE}" \
+              rm -rf /w/tests/sqllogic/resources
+          fi
+
       - name: Checkout
         uses: actions/checkout@v7
         with:

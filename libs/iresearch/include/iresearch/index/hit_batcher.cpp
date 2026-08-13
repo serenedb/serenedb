@@ -277,6 +277,7 @@ void HitBatcher::ScatterGroup() {
   const auto hits = _len - _group;
   const uint64_t anchor = Row(_group);
   const auto span = static_cast<duckdb::idx_t>(Row(_len - 1) - anchor + 1);
+  _sel.Initialize(_sel_data);
   for (duckdb::idx_t i = 0; i < hits; ++i) {
     _sel.set_index(i, Row(_group + i) - anchor);
   }
@@ -403,6 +404,7 @@ HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
   if (_ready == Pending::Dense) {
     const uint64_t anchor = Row(0);
     const auto span = static_cast<duckdb::idx_t>(Row(_batch - 1) - anchor + 1);
+    _sel.Initialize(_sel_data);
     for (duckdb::idx_t i = 0; i < _batch; ++i) {
       _sel.set_index(i, Row(i) - anchor);
     }

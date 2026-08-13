@@ -1,3 +1,5 @@
+control substitution on
+
 # DOCS_TEST: setup
 
 # DOCS_TEST_BODY
@@ -88,3 +90,64 @@ query error
 SELECT id, body FROM u_docs_idx WHERE body @@ ts_phrase('quick');
 ----
 db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
+
+
+# DOCS_TEST: reindex_setup
+
+# DOCS_TEST_BODY
+
+statement count 2
+COPY (SELECT 1 AS id, 'error timeout connecting to shard' AS message
+      UNION ALL SELECT 2, 'checkpoint completed')
+TO '${__TEST_DIR__}/app_logs_1.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW app_logs AS
+    SELECT * FROM read_parquet('${__TEST_DIR__}/app_logs_*.parquet');
+
+statement ok
+CREATE INDEX app_logs_idx ON app_logs USING inverted (id, message view_en);
+
+# DOCS_TEST: reindex_manual
+
+# DOCS_TEST_BODY
+
+statement count 1
+COPY (SELECT 3 AS id, 'error disk full on node-7' AS message)
+TO '${__TEST_DIR__}/app_logs_2.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('app_logs_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT count(*) FROM app_logs_idx WHERE message @@ ts_phrase('error');
+----
+count
+2
+
+# DOCS_TEST: reindex_up_to_date
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM serenedb_reindex('app_logs_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+# DOCS_TEST: reindex_interval
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX app_logs_auto_idx ON app_logs USING inverted (id, message view_en)
+WITH (reindex_interval = 5000);
+
+statement ok
+ALTER INDEX app_logs_auto_idx SET (reindex_interval = 60000);
+
+statement ok
+ALTER INDEX app_logs_auto_idx SET (reindex_interval = 0);

@@ -116,11 +116,8 @@ statement count 1
 COPY (SELECT 3 AS id, 'error disk full on node-7' AS message)
 TO '${__TEST_DIR__}/app_logs_2.parquet' (FORMAT PARQUET);
 
-query
-SELECT * FROM serenedb_reindex('app_logs_idx');
-----
-action	files_added	files_changed	files_removed	files_rescanned
-delta	1	0	0	0
+statement ok
+REINDEX INDEX app_logs_idx;
 
 query
 SELECT count(*) FROM app_logs_idx WHERE message @@ ts_phrase('error');

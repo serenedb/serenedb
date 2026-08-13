@@ -137,6 +137,7 @@ std::vector<std::string> RenderInvertedIndexOptions(
   };
   add(kRowGroupSizeSetting, options.row_group_size);
   add(kRefreshIntervalSetting, options.refresh_interval_ms);
+  add(kReindexIntervalSetting, options.reindex_interval_ms);
   add(kCompactionIntervalSetting, options.compaction_interval_ms);
   add(kCleanupIntervalStepSetting, options.cleanup_interval_step);
   add(kSegmentMemoryMaxSetting, options.segment_memory_max);

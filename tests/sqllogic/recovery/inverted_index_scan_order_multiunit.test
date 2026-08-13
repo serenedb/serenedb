@@ -94,3 +94,8 @@ rk
 200000
 199999
 199998
+
+
+onlyif serenedb
+statement ok
+RESET threads

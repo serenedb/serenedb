@@ -20,8 +20,11 @@
 
 #include "catalog/foreign_server.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
+#include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -53,21 +56,24 @@ using persistence::ForeignServerData;
 
 constexpr std::string_view kClickHouseStorage = "clickhouse";
 constexpr std::string_view kPostgresStorage = "postgres";
+constexpr std::string_view kIcebergStorage = "iceberg";
+
+constexpr std::pair<std::string_view, std::string_view> kFdwStorage[] = {
+  {"clickhouse_fdw", kClickHouseStorage},
+  {"postgres_fdw", kPostgresStorage},
+  {"iceberg_fdw", kIcebergStorage},
+};
 
 std::string_view StorageTypeForFdw(std::string_view fdw) {
-  if (fdw == "clickhouse_fdw") {
-    return kClickHouseStorage;
-  }
-  if (fdw == "postgres_fdw") {
-    return kPostgresStorage;
-  }
-  return {};
+  const auto* it = absl::c_find_if(
+    kFdwStorage, [&](const auto& entry) { return entry.first == fdw; });
+  return it == std::end(kFdwStorage) ? std::string_view{} : it->second;
 }
 
-// The attached catalog types a foreign server can own -- each connector's
-// Catalog::GetCatalogType() returns exactly the storage type above.
 bool IsForeignServerStorage(std::string_view catalog_type) {
-  return catalog_type == kClickHouseStorage || catalog_type == kPostgresStorage;
+  return absl::c_any_of(kFdwStorage, [&](const auto& entry) {
+    return entry.second == catalog_type;
+  });
 }
 
 // The attachment holding `name`, but only when a foreign server owns it. The
@@ -85,28 +91,46 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> LookupAttachment(
   return attached;
 }
 
-std::string_view CanonicalOptionKey(std::string_view storage,
-                                    std::string_view key) {
+// Canonical (key, value) of a CREATE SERVER option for the storage's
+// ATTACH: synonym keys map to the connector's native name, and iceberg's
+// extra_http_headers value converts from the flat 'k=v[,k=v]' option
+// string to the MAP the connector defines the option as.
+std::pair<std::string_view, duckdb::Value> CanonicalOption(
+  std::string_view storage, std::string_view key, const std::string& value) {
   if (key == "hostname") {
-    return "host";
+    return {"host", duckdb::Value(value)};
   }
   if (key == "username") {
-    return "user";
+    return {"user", duckdb::Value(value)};
   }
   if (key == "passwd") {
-    return "password";
+    return {"password", duckdb::Value(value)};
   }
   if (storage == "clickhouse") {
     if (key == "dbname" || key == "db") {
-      return "database";
+      return {"database", duckdb::Value(value)};
     }
     if (key == "ssl") {
-      return "secure";
+      return {"secure", duckdb::Value(value)};
     }
   } else if (storage == "postgres" && key == "database") {
-    return "dbname";
+    return {"dbname", duckdb::Value(value)};
+  } else if (storage == kIcebergStorage && key == "extra_http_headers") {
+    duckdb::vector<duckdb::Value> keys;
+    duckdb::vector<duckdb::Value> values;
+    for (const auto pair : absl::StrSplit(value, ',', absl::SkipEmpty())) {
+      const auto eq = pair.find('=');
+      if (eq == std::string_view::npos) {
+        continue;
+      }
+      keys.emplace_back(absl::StripAsciiWhitespace(pair.substr(0, eq)));
+      values.emplace_back(absl::StripAsciiWhitespace(pair.substr(eq + 1)));
+    }
+    return {key, duckdb::Value::MAP(duckdb::LogicalType::VARCHAR,
+                                    duckdb::LogicalType::VARCHAR,
+                                    std::move(keys), std::move(values))};
   }
-  return key;
+  return {key, duckdb::Value(value)};
 }
 
 std::string MakeForeignServerSecretName(const ForeignServer& server) {
@@ -142,6 +166,13 @@ uint64_t ForeignServerAttachmentId(std::string_view server_name) {
 
 bool IsSupportedFdw(std::string_view fdw_name) {
   return !StorageTypeForFdw(fdw_name).empty();
+}
+
+std::string SupportedFdwList() {
+  return absl::StrJoin(kFdwStorage, ", ",
+                       [](std::string* out, const auto& entry) {
+                         absl::StrAppend(out, entry.first);
+                       });
 }
 
 std::string QuoteSqlIdentifier(std::string_view name) {
@@ -203,15 +234,40 @@ static std::string PrepareForeignServerAttach(duckdb::ClientContext& context,
     return {};
   }
 
+  const auto keys = server.OptionKeys();
+  const auto values = server.OptionValues();
+  std::vector<std::pair<std::string, duckdb::Value>> opts;
+  opts.reserve(keys.size());
+  for (size_t i = 0; i < keys.size(); ++i) {
+    const auto lower = absl::AsciiStrToLower(keys[i]);
+    auto [name, value] = CanonicalOption(storage, lower, values[i]);
+    opts.emplace_back(name, std::move(value));
+  }
+
+  if (storage == kIcebergStorage) {
+    // Stock iceberg reads a secret for credentials only: the warehouse and
+    // the catalog options ride inline in the ATTACH statement.
+    std::string warehouse;
+    std::string options;
+    for (auto& [name, value] : opts) {
+      if (name == "warehouse") {
+        warehouse = value.ToString();
+        continue;
+      }
+      absl::StrAppend(&options, ", ", QuoteSqlIdentifier(name), " ",
+                      value.ToSQLString());
+    }
+    return absl::StrCat(
+      "ATTACH ", duckdb::KeywordHelper::WriteQuoted(warehouse, '\''), " AS ",
+      QuoteSqlIdentifier(server.GetName()), " (TYPE ", storage, options, ")");
+  }
+
   auto secret = duckdb::make_uniq<duckdb::KeyValueSecret>(
     std::vector<std::string>{}, duckdb::Identifier{storage}, "config",
     duckdb::Identifier{secret_name});
-  const auto keys = server.OptionKeys();
-  const auto values = server.OptionValues();
-  for (size_t i = 0; i < keys.size(); ++i) {
-    const duckdb::Identifier key{
-      CanonicalOptionKey(storage, absl::AsciiStrToLower(keys[i]))};
-    secret->secret_map[key] = duckdb::Value(values[i]);
+  for (auto& [name, value] : opts) {
+    const duckdb::Identifier key{name};
+    secret->secret_map[key] = std::move(value);
     secret->redact_keys.insert(key);
   }
 

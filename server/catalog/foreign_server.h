@@ -85,9 +85,11 @@ struct ForeignServerAttachment {
   uint64_t attachment_id = 0;
 };
 
-// True when the FDW name maps to a connector storage type (clickhouse_fdw or
-// postgres_fdw).
+// True when the FDW name maps to a connector storage type.
 bool IsSupportedFdw(std::string_view fdw_name);
+
+// The supported FDW names, comma-separated -- for error hints.
+std::string SupportedFdwList();
 
 // The outcome of RunForeignServerAttach: the FDW is not one we implement, the
 // attach succeeded, or the connector rejected it (Failed carries the message).

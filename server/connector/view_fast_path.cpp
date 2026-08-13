@@ -47,11 +47,12 @@
 #include <duckdb/planner/tableref/bound_at_clause.hpp>
 #include <ranges>
 
+#include "basics/system-compiler.h"
 #include "catalog/store/store.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/duckdb_table_entry.h"
-#include "core/metadata/snapshot/iceberg_snapshot.hpp"
+#include "connector/pg_logical_types.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "planning/iceberg_multi_file_list.hpp"
@@ -175,7 +176,8 @@ const RegistryEntry* LookupRegistry(std::string_view function_name) {
 
 bool LooksLikeGlob(std::string_view path) noexcept {
   return path.find('*') != std::string_view::npos ||
-         path.find('?') != std::string_view::npos;
+         path.find('?') != std::string_view::npos ||
+         path.find('[') != std::string_view::npos;
 }
 
 duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
@@ -246,6 +248,18 @@ std::vector<ExternalKeyColumn> FindKeyColumns(
   return cols;
 }
 
+// The stored pk column's type for an ExternalColumnKey index: the key
+// columns packed in resolution order, each field under its own column name.
+duckdb::LogicalType ExternalKeyStructType(
+  std::span<const ExternalKeyColumn> keys) {
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  fields.reserve(keys.size());
+  for (const auto& key : keys) {
+    fields.emplace_back(key.name, key.type);
+  }
+  return duckdb::LogicalType::STRUCT(std::move(fields));
+}
+
 }  // namespace
 
 std::vector<std::string> KeyColumnsFromOptions(
@@ -286,11 +300,14 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     return std::nullopt;
   }
   // DISTINCT would collapse base rows -- we'd lose dedupe at materialisation.
+  bool has_limit = false;
   for (const auto& mod : select_node.modifiers) {
     switch (mod->type) {
       case duckdb::ResultModifierType::ORDER_MODIFIER:
+        break;
       case duckdb::ResultModifierType::LIMIT_MODIFIER:
       case duckdb::ResultModifierType::LEGACY_LIMIT_PERCENT_MODIFIER:
+        has_limit = true;
         break;
       default:
         return std::nullopt;
@@ -354,6 +371,7 @@ std::optional<ViewFastPath> ResolveViewFastPath(
       out.projection_columns = std::move(projection_columns);
       out.pk_spec = registry_entry->glob_pk_spec;
       out.supports_filters = registry_entry->supports_filters;
+      out.supports_delta = catalog::IsGlobPK(out.pk_spec) && !has_limit;
       return out;
     }
     if (cat_type == "duckdb") {
@@ -586,7 +604,28 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   out.projection_columns = std::move(projection_columns);
   out.pk_spec = out.is_glob ? entry->glob_pk_spec : entry->single_pk_spec;
   out.supports_filters = entry->supports_filters;
+  out.supports_delta = catalog::IsGlobPK(out.pk_spec) &&
+                       !out.named_params.contains("union_by_name") &&
+                       !has_limit;
   return out;
+}
+
+duckdb::LogicalType ViewFastPath::GeneratedPkType() const {
+  switch (pk_spec) {
+    case catalog::PkSpec::FileIndexPlusRowNumber:
+    case catalog::PkSpec::FileIndexPlusOffset:
+    case catalog::PkSpec::FileIndexPlusDuckDBRowId:
+      return FileIndexRowNumberStructType();
+    case catalog::PkSpec::FileRowNumber:
+    case catalog::PkSpec::FileOffset:
+    case catalog::PkSpec::DuckDBRowId:
+      return duckdb::LogicalType::BIGINT;
+    case catalog::PkSpec::ExternalPostgresCtid:
+      return pg::CTID();
+    case catalog::PkSpec::ExternalColumnKey:
+      return ExternalKeyStructType(key_columns);
+  }
+  SDB_UNREACHABLE();
 }
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
@@ -711,23 +750,6 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   }
 
   return bind_data;
-}
-
-int64_t ExtractIcebergSnapshotId(duckdb::FunctionData& bind_data) noexcept {
-  auto* multi_bd = dynamic_cast<duckdb::MultiFileBindData*>(&bind_data);
-  if (!multi_bd || !multi_bd->file_list) {
-    return 0;
-  }
-  auto* iceberg_list =
-    dynamic_cast<duckdb::IcebergMultiFileList*>(multi_bd->file_list.get());
-  if (!iceberg_list) {
-    return 0;
-  }
-  const auto& snapshot_info = iceberg_list->GetSnapshot();
-  if (!snapshot_info.snapshot) {
-    return 0;
-  }
-  return snapshot_info.snapshot->snapshot_id;
 }
 
 std::string FormatLookupLabel(const ViewFastPath& fp) {

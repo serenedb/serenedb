@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_physical_search_delete.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <memory>
 #include <shared_mutex>
@@ -27,10 +29,12 @@
 #include <vector>
 
 #include "catalog/identifiers/object_id.h"
+#include "catalog/inverted_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_primary_key.h"
+#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
@@ -56,18 +60,33 @@ struct SearchDeleteSourceState : duckdb::GlobalSourceState {
 
 SereneDBSearchDelete::SereneDBSearchDelete(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
+  std::shared_ptr<const catalog::InvertedIndex> index,
   std::vector<duckdb::idx_t> pk_col_indices,
   duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
     _table(std::move(table)),
-    _pk_col_indices(std::move(pk_col_indices)) {}
+    _index(std::move(index)),
+    _pk_col_indices(std::move(pk_col_indices)) {
+  SDB_ASSERT(!_table != !_index);
+}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchDeleteGlobalState>();
-  auto& conn_ctx = GetSereneDBContext(context);
+
+  if (_index) {
+    // Index road: PlanDelete admitted the target only on an internal
+    // connection (the refresh's own pass). The recipe follows the
+    // generated_pk column's declared shape -- a STRUCT's children or the
+    // scalar itself; the index's connection-registered transaction is
+    // created with the first chunk.
+    SDB_ASSERT(_pk_col_indices.size() == 1);
+    state->pk_columns = duckdb_primary_key::PkTermColumns(
+      _pk_col_indices[0], children[0].get().types[_pk_col_indices[0]]);
+    return state;
+  }
 
   state->table_id = _table->GetId();
 
@@ -81,11 +100,11 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   for (size_t i = 0; i < _pk_col_indices.size(); ++i) {
     duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
     if (i < pk_col_ids.size()) {
-      for (const auto& col : columns) {
-        if (col.GetId() == pk_col_ids[i]) {
-          pk_type = col.type;
-          break;
-        }
+      const auto it = absl::c_find_if(columns, [&](const catalog::Column& col) {
+        return col.GetId() == pk_col_ids[i];
+      });
+      if (it != columns.end()) {
+        pk_type = it->type;
       }
     }
     state->pk_columns.push_back(duckdb_primary_key::PKColumn{
@@ -94,51 +113,55 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
     });
   }
 
-  state->sdb_txn = &conn_ctx;
+  state->sdb_txn = &GetSereneDBContext(context);
   return state;
 }
 
 duckdb::SinkResultType SereneDBSearchDelete::Sink(
-  duckdb::ExecutionContext& /*context*/, duckdb::DataChunk& chunk,
+  duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchDeleteGlobalState>();
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-    gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
-
-  // The removal term is the bare PK, encoded exactly as the insert wrote it
-  // (Create -> AppendPKValue). For a no-PK table the rowid column holds the
-  // generated PK (materialised by the scan), so the same encoding matches.
-  SearchSinkDeleteBaseImpl remover{trx};
-  remover.InitImpl(num_rows);
 
   std::vector<duckdb::UnifiedVectorFormat> pk_formats;
   duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
 
+  // The removal term is rebuilt exactly as the insert wrote it, through the
+  // same recipe (Create over gstate.pk_columns): a no-PK table's rowid
+  // column holds the generated PK, a view index's (file, row) struct rides
+  // PKColumn.struct_child.
+  auto& trx =
+    _index ? GetSereneDBContext(context.client).EnsureIndexTransaction(_index)
+           : gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
+               gstate.search_table,
+               [&] { return gstate.search_table->GetTransaction(); });
+
+  SearchSinkDeleteBaseImpl remover{trx};
+  remover.InitImpl(num_rows);
+
   std::vector<std::string> wal_pks;
-  wal_pks.reserve(num_rows);
+  if (_table) {
+    wal_pks.reserve(num_rows);
+  }
   std::string pk;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     pk.clear();
     duckdb_primary_key::Create(pk_formats, gstate.pk_columns, row, pk);
     remover.DeleteRowImpl(pk);  // live iresearch removal
-    wal_pks.emplace_back(pk);   // WAL delete payload
+    if (_table) {
+      wal_pks.emplace_back(pk);  // WAL delete payload
+    }
   }
   remover.FinishImpl();  // hands the removal filter to the trx
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
+  if (_table) {
+    gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
+  }
 
   gstate.delete_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
-}
-
-duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
-  duckdb::Pipeline& /*pipeline*/, duckdb::Event& /*event*/,
-  duckdb::ClientContext& context,
-  duckdb::OperatorSinkFinalizeInput& /*input*/) const {
-  return duckdb::SinkFinalizeType::READY;
 }
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>

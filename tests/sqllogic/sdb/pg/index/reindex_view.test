@@ -1,0 +1,595 @@
+control substitution on
+
+hash-threshold 100
+
+# REINDEX (refresh) of view-backed inverted indexes: serenedb_reindex()
+# rebuilds the index from the current source state and atomically swaps the
+# result in. Until it is called the index stays static (pinned by the
+# inverted_index_view*.test siblings); after it returns, all read classes
+# reflect the new source.
+
+statement count 4
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 3, 'pudge plays again'
+      UNION ALL SELECT 4, 'vedernikoff writes designs')
+TO '${__TEST_DIR__}/reindex_single.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY reindex_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW reindex_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/reindex_single.parquet');
+
+statement ok
+CREATE INDEX reindex_idx ON reindex_v USING inverted(id, body reindex_en);
+
+query
+SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+# Rewrite the source file wholesale: the index is static, so counts stay at
+# the indexed state. (Materialisation through stale positional keys against
+# rewritten bytes is undefined by design until the manifest read path lands
+# -- only the count staleness is asserted here.)
+statement count 5
+COPY (SELECT 10 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 11, 'pudge farms jungle'
+      UNION ALL SELECT 12, 'anchin reads manga'
+      UNION ALL SELECT 13, 'pudge plays again'
+      UNION ALL SELECT 14, 'vedernikoff reviews the swap')
+TO '${__TEST_DIR__}/reindex_single.parquet' (FORMAT PARQUET);
+
+query
+SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+statement ok
+CALL serenedb_reindex('reindex_idx');
+
+query
+SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+query
+SELECT id, body FROM reindex_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+10	pudge goes mid
+11	pudge farms jungle
+13	pudge plays again
+
+query
+SELECT id FROM reindex_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+id
+14
+
+# REINDEX against an unchanged source detects it via the manifest
+# fingerprints and is a no-op.
+query
+SELECT * FROM serenedb_reindex('reindex_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+query
+SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+# The statement forms lower to the same pragma; CONCURRENTLY is accepted and
+# always-on (the rebuild never blocks readers in either spelling).
+statement ok
+CREATE TABLE reindex_oid_t AS SELECT oid FROM pg_class WHERE relname = 'reindex_idx';
+
+statement ok
+REINDEX INDEX reindex_idx;
+
+statement ok
+REINDEX INDEX CONCURRENTLY reindex_idx;
+
+query
+SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+# The rebuild swaps storage generations under the SAME catalog object: no
+# temp sibling ever exists and the index keeps its oid across rebuilds.
+query
+SELECT count(*) FROM pg_class p, reindex_oid_t t WHERE p.relname = 'reindex_idx' AND p.oid = t.oid;
+----
+count
+1
+
+statement ok
+DROP TABLE reindex_oid_t;
+
+
+# Glob: new files joining the glob become visible after REINDEX.
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 7, 'vedernikoff reviews glob')
+TO '${__TEST_DIR__}/reindex_glob_a.parquet' (FORMAT PARQUET);
+
+statement count 2
+COPY (SELECT 3 AS id, 'pudge plays again' AS body
+      UNION ALL SELECT 4, 'techies plants mines')
+TO '${__TEST_DIR__}/reindex_glob_b.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW reindex_glob_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/reindex_glob_*.parquet');
+
+statement ok
+CREATE INDEX reindex_glob_idx ON reindex_glob_v USING inverted(id, body reindex_en);
+
+query
+SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+statement count 3
+COPY (SELECT 5 AS id, 'pudge buys blink' AS body
+      UNION ALL SELECT 6, 'anchin watches replay'
+      UNION ALL SELECT 8, 'vedernikoff ships delta')
+TO '${__TEST_DIR__}/reindex_glob_c.parquet' (FORMAT PARQUET);
+
+query
+SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+1
+
+# The observe step sees exactly one new file in the glob; the refresh runs
+# as a delta: only the new file is scanned, docs of the untouched files stay
+# in place (their materialisation below proves the file_id keys survived).
+query
+SELECT * FROM serenedb_reindex('reindex_glob_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+# A delta creates NO catalog object: no sibling, no new oid -- the synthesized
+# statement's temp name is a bind-time placeholder only.
+query
+SELECT count(*) FROM pg_class WHERE relname LIKE '%reindex_d%';
+----
+count
+0
+
+query
+SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+query
+SELECT id, body FROM reindex_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+5	pudge buys blink
+
+query
+SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# Rewriting one glob file in place runs as a delta too: its old docs die with
+# the old file_id, the rescan lands under a fresh one.
+statement count 2
+COPY (SELECT 3 AS id, 'pudge plays support' AS body
+      UNION ALL SELECT 9, 'vedernikoff rewrites files')
+TO '${__TEST_DIR__}/reindex_glob_b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('reindex_glob_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT id, body FROM reindex_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays support
+5	pudge buys blink
+
+query
+SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+3
+
+# EVERY doc of the rewritten file died with its file_id -- not just the first
+# posting (SearchRemoveAllFilter vs the unique-PK remove).
+query
+SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('mines');
+----
+count
+0
+
+query
+SELECT count(*) FROM reindex_glob_idx;
+----
+count
+8
+
+query
+SELECT * FROM serenedb_reindex('reindex_glob_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+# A file leaving the glob runs as a delta too: every doc it contributed is
+# removed wholesale, the untouched files' docs stay in place.
+system ok
+rm $__TEST_DIR__/reindex_glob_b.parquet
+
+query
+SELECT * FROM serenedb_reindex('reindex_glob_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	0	1	0
+
+query
+SELECT count(*) FROM reindex_glob_idx;
+----
+count
+6
+
+query
+SELECT id, body FROM reindex_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+5	pudge buys blink
+
+query
+SELECT count(*) FROM reindex_glob_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+
+# Generic view (no fast path): REINDEX re-runs the whole bound plan. CREATE
+# OR REPLACE VIEW with the same shape is picked up by the rebuild.
+
+statement ok
+CREATE VIEW reindex_union_v AS
+  SELECT 1 AS id, 'pudge goes mid' AS body
+  UNION ALL SELECT 2, 'anchin reads manga'
+  UNION ALL SELECT 3, 'vedernikoff reads code';
+
+statement ok
+CREATE INDEX reindex_union_idx ON reindex_union_v USING inverted(id, body reindex_en);
+
+query
+SELECT count(*) FROM reindex_union_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+statement ok
+CREATE OR REPLACE VIEW reindex_union_v AS
+  SELECT 1 AS id, 'pudge goes mid' AS body
+  UNION ALL SELECT 2, 'pudge reads manga'
+  UNION ALL SELECT 3, 'pudge plays again'
+  UNION ALL SELECT 4, 'vedernikoff plays support';
+
+query
+SELECT count(*) FROM reindex_union_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+statement ok
+CALL serenedb_reindex('reindex_union_idx');
+
+query
+SELECT count(*) FROM reindex_union_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+
+# Errors.
+
+statement error
+CALL serenedb_reindex('no_such_idx');
+----
+db error: ERROR: index "no_such_idx" does not exist
+
+
+statement ok
+BEGIN;
+
+statement ok
+CALL serenedb_reindex('reindex_idx');
+
+statement ok
+ROLLBACK;
+
+statement ok
+CREATE TABLE reindex_base_t (id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX reindex_table_idx ON reindex_base_t USING inverted(body reindex_en);
+
+statement error
+CALL serenedb_reindex('reindex_table_idx');
+----
+db error: ERROR: REINDEX is only supported for view-backed inverted indexes
+
+
+# No name suffix is reserved: rebuilds happen inside the index's own storage.
+statement ok
+CREATE INDEX oops__reindex ON reindex_v USING inverted(body reindex_en);
+
+statement ok
+DROP INDEX oops__reindex;
+
+
+# DROP VIEW cascades to its inverted indexes (the index is auto-dropped like
+# a table's indexes on DROP TABLE).
+
+statement ok
+CREATE VIEW reindex_drop_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/reindex_single.parquet');
+
+statement ok
+CREATE INDEX reindex_drop_idx ON reindex_drop_v USING inverted(body reindex_en);
+
+query
+SELECT count(*) FROM reindex_drop_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+statement ok
+DROP VIEW reindex_drop_v;
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'reindex_drop_idx';
+----
+count
+0
+
+
+# Partial index (WHERE): the synthesized REINDEX statement carries no WHERE
+# clause -- rebuild and delta passes re-apply the persisted predicate at the
+# sink, so refreshed docs keep respecting it.
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 101, 'pudge overflows the predicate')
+TO '${__TEST_DIR__}/reindex_part_a.parquet' (FORMAT PARQUET);
+
+statement count 2
+COPY (SELECT 3 AS id, 'vedernikoff files reviews' AS body
+      UNION ALL SELECT 102, 'vedernikoff overflows too')
+TO '${__TEST_DIR__}/reindex_part_b.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW reindex_part_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/reindex_part_*.parquet');
+
+statement ok
+CREATE INDEX reindex_part_idx ON reindex_part_v USING inverted(id, body reindex_en) WHERE id < 100;
+
+query
+SELECT count(*) FROM reindex_part_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+query
+SELECT count(*) FROM reindex_part_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+1
+
+# A new file joining the glob refreshes as a delta; its out-of-predicate rows
+# must not leak in through the plan-less delta pass.
+statement count 3
+COPY (SELECT 5 AS id, 'pudge buys blink' AS body
+      UNION ALL SELECT 6, 'vedernikoff lands the delta'
+      UNION ALL SELECT 103, 'pudge overflows again')
+TO '${__TEST_DIR__}/reindex_part_c.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('reindex_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM reindex_part_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+5	pudge buys blink
+
+query
+SELECT count(*) FROM reindex_part_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# Rewriting two of the three files: the delta rescans both, again with the
+# predicate applied at the sink.
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 7, 'pudge rebuilds partially'
+      UNION ALL SELECT 104, 'pudge overflows the rebuild')
+TO '${__TEST_DIR__}/reindex_part_a.parquet' (FORMAT PARQUET);
+
+statement count 2
+COPY (SELECT 8 AS id, 'vedernikoff confirms the rebuild' AS body
+      UNION ALL SELECT 105, 'anchin overflows quietly')
+TO '${__TEST_DIR__}/reindex_part_b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('reindex_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	2
+
+query
+SELECT id, body FROM reindex_part_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+5	pudge buys blink
+7	pudge rebuilds partially
+
+query
+SELECT count(*) FROM reindex_part_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# The stale-statistics fold: when every id the ORIGINAL first file holds
+# satisfies the predicate, the pre-narrowing reader's column stats would
+# prove the WHERE "always true" and the optimizer would DELETE the pass's
+# filter -- out-of-predicate rows leaked in through delta passes (the rungs
+# above never caught it: their first file carries id=101, whose stats block
+# the fold). The pass drops the stale reader now.
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge fits the predicate' AS body)
+TO '${__TEST_DIR__}/reindex_fold_a.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW reindex_fold_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/reindex_fold_*.parquet');
+
+statement ok
+CREATE INDEX reindex_fold_idx ON reindex_fold_v USING inverted(id, body reindex_en) WHERE id < 100;
+
+statement count 2
+COPY (SELECT 2 AS id, 'pudge stays in' AS body
+      UNION ALL SELECT 200, 'pudge leaks without the fix')
+TO '${__TEST_DIR__}/reindex_fold_b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('reindex_fold_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id FROM reindex_fold_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+2
+
+
+# COMMENT ON INDEX survives the recreate-and-switch (the clone carries it).
+
+statement ok
+COMMENT ON INDEX reindex_idx IS 'vedernikoff approves';
+
+statement count 2
+COPY (SELECT 20 AS id, 'pudge comments code' AS body
+      UNION ALL SELECT 21, 'vedernikoff keeps notes')
+TO '${__TEST_DIR__}/reindex_single.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('reindex_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	1	0	1
+
+query
+SELECT comment FROM duckdb_indexes() WHERE index_name = 'reindex_idx';
+----
+comment
+vedernikoff approves
+
+query
+SELECT count(*) FROM reindex_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+1
+
+# Multi-file covered segment: both files of the initial build die in the
+# SAME refresh that adds a replacement -- the covered proof enumerates the
+# segment's files (one seek each, all dead) and the writer masks the
+# segment as a unit instead of walking its terms.
+system ok
+mkdir -p $__TEST_DIR__/reindex_cov
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge holds top' AS body
+      UNION ALL SELECT 2, 'anchin holds mid')
+TO '${__TEST_DIR__}/reindex_cov/f1.parquet' (FORMAT PARQUET);
+
+statement count 2
+COPY (SELECT 3 AS id, 'techies holds bot' AS body
+      UNION ALL SELECT 4, 'vedernikoff holds review')
+TO '${__TEST_DIR__}/reindex_cov/f2.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW reindex_cov_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/reindex_cov/*.parquet');
+
+statement ok
+CREATE INDEX reindex_cov_idx ON reindex_cov_v USING inverted(id, body reindex_en);
+
+query
+SELECT count(*) FROM reindex_cov_idx;
+----
+count
+4
+
+system ok
+rm $__TEST_DIR__/reindex_cov/f1.parquet $__TEST_DIR__/reindex_cov/f2.parquet
+
+statement count 1
+COPY (SELECT 5 AS id, 'io survives the sweep' AS body)
+TO '${__TEST_DIR__}/reindex_cov/f3.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('reindex_cov_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	2	0
+
+query
+SELECT id, body FROM reindex_cov_idx ORDER BY id;
+----
+id	body
+5	io survives the sweep
+
+query
+SELECT action FROM serenedb_reindex('reindex_cov_idx');
+----
+action
+up_to_date

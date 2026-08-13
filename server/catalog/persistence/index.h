@@ -50,6 +50,7 @@ struct InvertedIndexOptions {
   uint32_t refresh_interval_ms = 1000;
   uint32_t compaction_interval_ms = 1000;
   uint32_t cleanup_interval_step = 1;
+  uint32_t reindex_interval_ms = 0;
   uint64_t segment_memory_max = uint64_t{256} << 20;
   uint32_t segment_docs_max = 0;
   uint32_t compaction_max_segments = 10;

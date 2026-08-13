@@ -3,9 +3,9 @@ control substitution on
 hash-threshold 100
 
 # PK storage modes for inverted indexes: fast-path views store the PK as a
-# typed columnstore column (BIGINT / STRUCT(hi, lo)) with no PK terms;
-# store_pk = 'none' stores no PK at all; tables keep the PK term + a BIGINT
-# rowid column.
+# typed columnstore column (BIGINT / STRUCT(hi, lo)); glob views also index
+# each row's (file, row) pk term for REFRESH's removes; store_pk = 'none'
+# stores no PK at all; tables keep the PK term + a BIGINT rowid column.
 
 statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
@@ -39,6 +39,16 @@ id	body
 1	pudge goes mid
 3	pudge plays again
 
+# The PK column is queryable by name; a single-file view stores the scalar
+# row number.
+query
+SELECT generated_pk, id FROM spk_idx ORDER BY id;
+----
+generated_pk	id
+0	1
+1	2
+2	3
+
 statement ok
 CREATE INDEX spk_np ON spk_v USING inverted(body store_pk_en, id included()) WITH (store_pk = false);
 
@@ -61,6 +71,14 @@ statement error
 SELECT body FROM spk_np WHERE body @@ ts_phrase('pudge');
 ----
 db error: ERROR: inverted index "spk_np" was created WITH (store_pk = 'none'), so it does not store row PKs and hits cannot be mapped back to source rows; select only INCLUDE'd columns, counts or scores through this index
+
+
+# store_pk = 'none' declares no PK column at all.
+statement error
+SELECT generated_pk FROM spk_np;
+----
+db error: ERROR: Referenced column "generated_pk" not found in FROM clause!
+Candidate bindings: "body"
 
 
 # Views without fast-path row addressing (e.g. GROUP BY) store no PK either.
@@ -106,6 +124,16 @@ id	body
 10	pudge goes mid
 20	pudge plays again
 
+# Glob PK struct halves are addressable by name.
+query
+SELECT (generated_pk).file_index, (generated_pk).row_number, id FROM spk_glob_idx ORDER BY id;
+----
+file_index	row_number	id
+0	0	10
+0	1	11
+1	0	20
+1	1	21
+
 # Explicit two-part encoding on the glob view.
 statement ok
 CREATE INDEX spk_glob_ii ON spk_glob_v USING inverted(body store_pk_en, id included()) WITH (store_pk = 'i64i64');
@@ -128,6 +156,23 @@ CREATE INDEX spk_glob_bad2 ON spk_glob_v USING inverted(body store_pk_en) WITH (
 ----
 db error: ERROR: store_pk must be one of none/auto/i64/i64i64 (or true/false), got 'i256'
 
+
+# A bracket character class is glob syntax too: [12] alone (no * or ?)
+# must still classify the view as a glob, so the pk is the two-part struct.
+statement ok
+CREATE VIEW spk_glob_cc_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/store_pk_g[12].parquet');
+
+statement ok
+CREATE INDEX spk_glob_cc_idx ON spk_glob_cc_v USING inverted(id, body store_pk_en);
+
+query
+SELECT (generated_pk).file_index, (generated_pk).row_number, id FROM spk_glob_cc_idx ORDER BY id;
+----
+file_index	row_number	id
+0	0	10
+0	1	11
+1	0	20
+1	1	21
 
 # Tables may skip the PK entirely; INSERT still works, but DELETE/UPDATE
 # cannot maintain such an index.

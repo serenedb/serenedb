@@ -1,0 +1,69 @@
+# Regression: HitBatcher::_sel is a reused member initialized once to
+# STANDARD_VECTOR_SIZE, but ColumnSegment::FilterSelection repoints it at the
+# filter executor's own result buffer, whose capacity is only the filtered
+# window's hit count. BeginSegment does not restored it and it asserted,
+# `threads = 1` forces both segments onto one worker's batcher reproducing the issue; 
+
+onlyif serenedb
+statement ok
+SET threads = 1
+
+
+onlyif serenedb
+statement ok
+CREATE TEXT SEARCH DICTIONARY cf_en
+  (template = 'delimiter', delimiter = ' ', frequency = true, position = true)
+
+
+onlyif serenedb
+statement ok
+CREATE TABLE cf (id INT PRIMARY KEY, body TEXT, g INT)
+
+
+# g is INCLUDE-only (no posting list), so a filter on it is a `.col` column
+# filter rather than an index term. compaction_interval = 0 keeps the two
+# segments below from being consolidated into one.
+onlyif serenedb
+statement ok
+CREATE INDEX cf_idx ON cf USING inverted (id, body cf_en) INCLUDE (g)
+  WITH (compaction_interval = 0)
+
+
+# Segment 1: g straddles the predicate, so the filter narrows the window and
+# leaves _sel pointing at the executor's capacity-2 buffer.
+onlyif serenedb
+statement ok
+INSERT INTO cf VALUES (1, 'alpha', 50), (2, 'alpha', 150)
+
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) cf
+
+
+# Segment 2: every g < 100, so the zonemap answers the filter and it is dropped
+# for this segment -- no filters, and the unguarded write path.
+onlyif serenedb
+statement ok
+INSERT INTO cf VALUES (3, 'alpha', 1), (4, 'alpha', 2), (5, 'alpha', 3)
+
+
+onlyif serenedb
+statement ok
+VACUUM (REFRESH_TABLE) cf
+
+
+onlyif serenedb
+query
+SELECT id, g FROM cf_idx WHERE body @@ 'alpha' AND g < 100 ORDER BY id;
+----
+id	g
+1	50
+3	1
+4	2
+5	3
+
+
+onlyif serenedb
+statement ok
+RESET threads

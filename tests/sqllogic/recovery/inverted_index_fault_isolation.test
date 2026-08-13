@@ -40,6 +40,7 @@ CREATE TABLE doc (
 
 statement ok
 CREATE INDEX doc_idx ON doc USING inverted(pk, body en) INCLUDE (label, tag)
+  WITH (refresh_interval = 0, compaction_interval = 0)
 
 
 statement ok

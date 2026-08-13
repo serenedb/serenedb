@@ -568,7 +568,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       auto& next = _skip_levels[level];
       // Store previous step on the same level
       CopyState<IteratorTraits>(*_prev, next);
-      ReadState<FieldTraits>(next, in);
+      ReadState<FieldTraits, IteratorTraits>(next, in);
       SkipScoreBounds(in);
     }
 

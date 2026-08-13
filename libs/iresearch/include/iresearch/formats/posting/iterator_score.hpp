@@ -227,7 +227,7 @@ class SinglePruningIterator : public DocIterator {
     IRS_FORCE_INLINE void Read(size_t level, InputType& in) {
       auto& next = _skip_levels[level];
       CopyState<IteratorTraits>(_prev_skip, next);
-      ReadState<FieldTraits>(next, in);
+      ReadState<FieldTraits, IteratorTraits>(next, in);
       if (_skip_bounds_below && next.doc < _skip_bounds_below) [[unlikely]] {
         SkipScoreBounds(in);
       } else {

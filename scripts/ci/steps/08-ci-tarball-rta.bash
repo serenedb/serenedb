@@ -16,6 +16,11 @@ fi
 echo "=== Tarball RTA: $(basename "$TARBALL") ==="
 mkdir -p "${WORKSPACE}/out/logs"
 
+# The tests container cannot generate the iceberg fixture (no workspace,
+# host-owned docker socket) -- generate it here and serve it through the
+# serenedb container's /workspace mount (see RESOURCES in the compose).
+"${WORKSPACE}/scripts/ensure_iceberg_fixture.sh"
+
 export TARBALL_NAME="$(basename "$TARBALL")"
 export DOCKER_UID="$(id -u)"
 export DOCKER_GID="$(id -g)"

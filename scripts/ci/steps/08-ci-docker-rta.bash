@@ -15,6 +15,11 @@ fi
 echo "=== Docker RTA: ${DOCKER_TEST_IMAGE} ==="
 mkdir -p "${WORKSPACE}/out/logs"
 
+# The tests container cannot generate the iceberg fixture (no workspace,
+# host-owned docker socket) -- generate it here and serve it through the
+# serenedb container's /workspace mount (see RESOURCES in the compose).
+"${WORKSPACE}/scripts/ensure_iceberg_fixture.sh"
+
 export DOCKER_UID="$(id -u)"
 export DOCKER_GID="$(id -g)"
 export CARGO_TARGET_CACHE="${CARGO_TARGET_CACHE:-${HOME}/.cache/serenedb-cargo-target}"

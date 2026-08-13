@@ -71,6 +71,9 @@ services:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
+      # Server-visible path of the workspace resources: fixture symlinks
+      # planted in /test-tmp resolve through the server's /workspace mount.
+      - RESOURCES=/workspace/resources
       - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
     networks:

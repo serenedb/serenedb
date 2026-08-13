@@ -18,6 +18,9 @@ services:
     environment:
       - POSTGRES_PASSWORD=postgres
     volumes:
+      # Read-only view of the workspace so fixture symlinks under /test-tmp
+      # (targets like /workspace/resources/tests/iceberg/...) resolve.
+      - "${WORKSPACE}:/workspace:ro"
       - "sdb-test-tmp:/test-tmp"
     networks:
       - rta-network
@@ -54,6 +57,9 @@ services:
       - HOME=/sqllogic
       - TMPDIR=/test-tmp
       - SLT_TEST_DIR_SHARED=1
+      # Server-visible path of the workspace resources: fixture symlinks
+      # planted in /test-tmp resolve through the server's /workspace mount.
+      - RESOURCES=/workspace/resources
       - CARGO_HOME=/cargo-home
       - CARGO_TARGET_DIR=/cargo-target
     networks:

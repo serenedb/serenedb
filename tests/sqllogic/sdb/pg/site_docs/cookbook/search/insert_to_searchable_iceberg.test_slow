@@ -1,0 +1,416 @@
+control substitution on
+
+# Cookbook: search over an Iceberg table, insert -> searchable. The doc shows
+# a hosted REST catalog (BigLake shapes); the body runs the same pipeline
+# against the local iceberg-rest + MinIO the harness launches. A second part
+# runs the same lifecycle over a plain parquet glob.
+
+# DOCS_TEST: example_secret
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET chunks_store (
+#|     TYPE S3,
+#|     KEY_ID '⟨access key⟩',
+#|     SECRET '⟨secret key⟩',
+#|     REGION '⟨us-east-1⟩',
+#|     SCOPE 's3://⟨bucket⟩/⟨warehouse prefix⟩/'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET its_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+# DOCS_TEST: example_server
+
+# DOCS_TEST_RAW
+#| CREATE SERVER chunks_catalog FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse '⟨warehouse⟩',
+#|     endpoint '⟨https://your-rest-catalog/iceberg/v1/restcatalog⟩',
+#|     authorization_type '⟨oauth2⟩', token '⟨...⟩',
+#|     max_table_staleness '10 minutes'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SERVER its_srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+  warehouse '${ICEBERG_WAREHOUSE}',
+  endpoint '${ICEBERG_REST_URL}',
+  authorization_type 'none',
+  max_table_staleness '10 minutes'
+);
+
+# DOCS_TEST: example_table
+
+# DOCS_TEST_RAW
+#| CREATE SCHEMA chunks_catalog.docs;
+#|
+#| CREATE TABLE chunks_catalog.docs.chunks (
+#|     entity_id INTEGER,
+#|     source_name TEXT,
+#|     page_number INTEGER,
+#|     uri TEXT,
+#|     body TEXT,
+#|     emb FLOAT[]
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SCHEMA its_srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+CREATE TABLE its_srv_${__DATABASE__}.${__DATABASE__}.chunks (
+  entity_id INTEGER,
+  source_name TEXT,
+  page_number INTEGER,
+  uri TEXT,
+  body TEXT,
+  emb FLOAT[]
+);
+
+# DOCS_TEST: example_index
+
+# DOCS_TEST_RAW
+#| CREATE TEXT SEARCH DICTIONARY en (
+#|     template = 'text',
+#|     locale = 'en_US.UTF-8',
+#|     stemming = true,
+#|     frequency = true,
+#|     position = true
+#| );
+#|
+#| CREATE VIEW chunks_v AS
+#|     SELECT entity_id, source_name, page_number, uri, body,
+#|            emb::FLOAT[3072] AS emb
+#|     FROM chunks_catalog.docs.chunks;
+#|
+#| CREATE INDEX chunks_idx ON chunks_v USING inverted(
+#|     entity_id, source_name, page_number,
+#|     body en,
+#|     emb ivf (metric = 'cosine'));
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY its_en (
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    stemming = true,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW chunks_v AS
+  SELECT entity_id, source_name, page_number, uri, body,
+         emb::FLOAT[4] AS emb
+  FROM its_srv_${__DATABASE__}.${__DATABASE__}.chunks;
+
+statement ok
+CREATE INDEX chunks_idx ON chunks_v USING inverted(
+  entity_id, source_name, page_number,
+  body its_en,
+  emb ivf (metric = 'cosine'));
+
+# DOCS_TEST: example_barrier
+
+# DOCS_TEST_RAW
+#| INSERT INTO chunks_catalog.docs.chunks VALUES (...);
+#|
+#| REINDEX INDEX chunks_idx;
+#| -- returns only when everything committed before it is searchable
+
+# DOCS_TEST_BODY
+
+statement count 3
+INSERT INTO its_srv_${__DATABASE__}.${__DATABASE__}.chunks VALUES
+  (7, 'report.pdf', 1, 's3://docs/report.pdf#p1',
+   'carbon emissions grow with scope 3 accounting', [0.9, 0.1, 0.0, 0.1]),
+  (7, 'report.pdf', 2, 's3://docs/report.pdf#p2',
+   'renewable capacity doubles under the new plan', [0.1, 0.9, 0.1, 0.0]),
+  (8, 'notes.pdf', 1, 's3://docs/notes.pdf#p1',
+   'scope 3 emissions of the supply chain', [0.8, 0.2, 0.1, 0.0]);
+
+statement ok
+REINDEX INDEX chunks_idx;
+
+# DOCS_TEST: example_barrier_check
+
+query
+SELECT entity_id, source_name, page_number, body
+FROM chunks_idx
+ORDER BY entity_id, source_name, page_number;
+----
+entity_id	source_name	page_number	body
+7	report.pdf	1	carbon emissions grow with scope 3 accounting
+7	report.pdf	2	renewable capacity doubles under the new plan
+8	notes.pdf	1	scope 3 emissions of the supply chain
+
+# DOCS_TEST: example_add
+
+# DOCS_TEST_RAW
+#| INSERT INTO chunks_catalog.docs.chunks VALUES (...);
+#|
+#| REINDEX INDEX chunks_idx;
+
+# DOCS_TEST_BODY
+
+statement count 2
+INSERT INTO its_srv_${__DATABASE__}.${__DATABASE__}.chunks VALUES
+  (8, 'notes.pdf', 2, 's3://docs/notes.pdf#p2',
+   'audit trail for renewable certificates', [0.2, 0.8, 0.0, 0.1]),
+  (9, 'memo.pdf', 1, 's3://docs/memo.pdf#p1',
+   'carbon capture pilots start next quarter', [0.7, 0.1, 0.2, 0.0]);
+
+statement ok
+REINDEX INDEX chunks_idx;
+
+# DOCS_TEST: example_add_check
+
+query
+SELECT entity_id, source_name, page_number, body
+FROM chunks_idx
+ORDER BY entity_id, source_name, page_number;
+----
+entity_id	source_name	page_number	body
+7	report.pdf	1	carbon emissions grow with scope 3 accounting
+7	report.pdf	2	renewable capacity doubles under the new plan
+8	notes.pdf	1	scope 3 emissions of the supply chain
+8	notes.pdf	2	audit trail for renewable certificates
+9	memo.pdf	1	carbon capture pilots start next quarter
+
+# DOCS_TEST: example_semantic
+
+# DOCS_TEST_RAW
+#| SELECT source_name, page_number, body
+#| FROM chunks_idx
+#| WHERE entity_id = ⟨tenant⟩
+#| ORDER BY emb <=> ⟨query vector⟩ LIMIT 5;
+
+# DOCS_TEST_BODY
+
+query
+SELECT source_name, page_number, body
+FROM chunks_idx
+WHERE entity_id = 7
+ORDER BY emb <=> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 1;
+----
+source_name	page_number	body
+report.pdf	1	carbon emissions grow with scope 3 accounting
+
+# DOCS_TEST: example_hybrid
+
+# DOCS_TEST_RAW
+#| SELECT source_name, page_number, body
+#| FROM chunks_idx
+#| WHERE entity_id = ⟨tenant⟩ AND body @@ ts_phrase('scope 3')
+#| ORDER BY emb <=> ⟨query vector⟩ LIMIT 5;
+
+# DOCS_TEST_BODY
+
+query
+SELECT source_name, page_number, body
+FROM chunks_idx
+WHERE entity_id = 7 AND body @@ ts_phrase('scope 3')
+ORDER BY emb <=> [1.0, 0.0, 0.0, 0.0]::FLOAT[4] LIMIT 5;
+----
+source_name	page_number	body
+report.pdf	1	carbon emissions grow with scope 3 accounting
+
+# DOCS_TEST: example_materialize
+
+# DOCS_TEST_RAW
+#| SELECT source_name, uri, body
+#| FROM chunks_idx
+#| WHERE entity_id = ⟨tenant⟩ AND body @@ ts_phrase('carbon emissions')
+#| LIMIT 5;
+
+# DOCS_TEST_BODY
+
+query
+SELECT source_name, uri, body
+FROM chunks_idx
+WHERE entity_id = 7 AND body @@ ts_phrase('carbon emissions')
+LIMIT 5;
+----
+source_name	uri	body
+report.pdf	s3://docs/report.pdf#p1	carbon emissions grow with scope 3 accounting
+
+# DOCS_TEST: example_update
+
+# DOCS_TEST_RAW
+#| UPDATE chunks_catalog.docs.chunks
+#| SET body = '⟨new text⟩'
+#| WHERE source_name = '⟨name⟩' AND page_number = ⟨n⟩;
+#|
+#| REINDEX INDEX chunks_idx;
+
+# DOCS_TEST_BODY
+
+statement ok
+UPDATE its_srv_${__DATABASE__}.${__DATABASE__}.chunks
+SET body = 'carbon capture pilots delayed to next year'
+WHERE source_name = 'memo.pdf' AND page_number = 1;
+
+statement ok
+REINDEX INDEX chunks_idx;
+
+# DOCS_TEST: example_update_check
+
+query
+SELECT entity_id, source_name, page_number, body
+FROM chunks_idx
+WHERE body @@ ts_phrase('carbon capture')
+ORDER BY entity_id, source_name, page_number;
+----
+entity_id	source_name	page_number	body
+9	memo.pdf	1	carbon capture pilots delayed to next year
+
+# DOCS_TEST: example_delete
+
+# DOCS_TEST_RAW
+#| DELETE FROM chunks_catalog.docs.chunks WHERE source_name = '⟨name⟩';
+#|
+#| REINDEX INDEX chunks_idx;
+
+# DOCS_TEST_BODY
+
+statement ok
+DELETE FROM its_srv_${__DATABASE__}.${__DATABASE__}.chunks
+WHERE source_name = 'notes.pdf';
+
+statement ok
+REINDEX INDEX chunks_idx;
+
+# DOCS_TEST: example_delete_check
+
+query
+SELECT entity_id, source_name, page_number, body
+FROM chunks_idx
+ORDER BY entity_id, source_name, page_number;
+----
+entity_id	source_name	page_number	body
+7	report.pdf	1	carbon emissions grow with scope 3 accounting
+7	report.pdf	2	renewable capacity doubles under the new plan
+9	memo.pdf	1	carbon capture pilots delayed to next year
+
+# DOCS_TEST: example_interval
+
+statement ok
+ALTER INDEX chunks_idx SET (reindex_interval = 60000);
+
+statement ok
+ALTER INDEX chunks_idx SET (reindex_interval = 0);
+
+statement ok
+DROP VIEW chunks_v CASCADE;
+
+statement ok
+DROP TABLE its_srv_${__DATABASE__}.${__DATABASE__}.chunks;
+
+statement ok
+DROP SCHEMA its_srv_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+DROP SERVER its_srv_${__DATABASE__};
+
+statement ok
+DROP PERSISTENT SECRET its_${__DATABASE__};
+
+# The same lifecycle over a plain parquet glob: no catalog at all, files in
+# a directory (local or S3).
+
+# DOCS_TEST: example_glob_setup
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 1 AS id, 'pallets arrive at the northern dock' AS body)
+#|     TO '⟨dir⟩/batch1.parquet' (FORMAT parquet);
+#|
+#| CREATE VIEW events_v AS SELECT * FROM read_parquet('⟨dir⟩/*.parquet');
+#|
+#| CREATE INDEX events_idx ON events_v USING inverted(id, body en);
+
+# DOCS_TEST_BODY
+
+system ok
+mkdir -p $__TEST_DIR__/events
+
+statement count 1
+COPY (SELECT 1 AS id, 'pallets arrive at the northern dock' AS body)
+TO '${__TEST_DIR__}/events/batch1.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW events_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/events/*.parquet');
+
+statement ok
+CREATE INDEX events_idx ON events_v USING inverted(id, body its_en);
+
+# DOCS_TEST: example_glob_add
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 2 AS id, 'customs cleared the second shipment' AS body)
+#|     TO '⟨dir⟩/batch2.parquet' (FORMAT parquet);
+#|
+#| REINDEX INDEX events_idx;
+
+# DOCS_TEST_BODY
+
+statement count 1
+COPY (SELECT 2 AS id, 'customs cleared the second shipment' AS body)
+TO '${__TEST_DIR__}/events/batch2.parquet' (FORMAT parquet);
+
+statement ok
+REINDEX INDEX events_idx;
+
+# DOCS_TEST: example_glob_add_check
+
+query
+SELECT id, body FROM events_idx ORDER BY id;
+----
+id	body
+1	pallets arrive at the northern dock
+2	customs cleared the second shipment
+
+# DOCS_TEST: example_glob_remove
+
+# DOCS_TEST_RAW
+#| rm ⟨dir⟩/batch1.parquet
+
+# DOCS_TEST_BODY
+
+system ok
+rm $__TEST_DIR__/events/batch1.parquet
+
+# DOCS_TEST: example_glob_remove_reindex
+
+# DOCS_TEST_RAW
+#| REINDEX INDEX events_idx;
+
+# DOCS_TEST_BODY
+
+statement ok
+REINDEX INDEX events_idx;
+
+# DOCS_TEST: example_glob_remove_check
+
+query
+SELECT id, body FROM events_idx ORDER BY id;
+----
+id	body
+2	customs cleared the second shipment
+
+statement ok
+DROP VIEW events_v CASCADE;

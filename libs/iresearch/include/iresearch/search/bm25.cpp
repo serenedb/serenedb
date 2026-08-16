@@ -62,7 +62,7 @@ IRS_FORCE_INLINE void Bm1Boost(score_t* IRS_RESTRICT res, scores_size_t n,
                                const score_t* IRS_RESTRICT boost,
                                score_t num) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
-    res[i] = boost[i] * num;
+    Merge<MergeType>(res[i], boost[i] * num);
   }
 }
 
@@ -108,7 +108,6 @@ IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
   }
 }
 
-template<bool HasFilterBoost>
 struct Bm1Score : public ScoreOperator {
   Bm1Score(score_t k, score_t boost, const BM25Stats& stats,
            const score_t* fb) noexcept
@@ -117,11 +116,7 @@ struct Bm1Score : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    if constexpr (HasFilterBoost) {
-      Bm1Boost<MergeType>(res, n, filter_boost, num);
-    } else {
-      std::memset(res, 0, sizeof(score_t) * n);
-    }
+    Bm1Boost<MergeType>(res, n, filter_boost, num);
   }
 
   score_t Score() const noexcept final {
@@ -154,10 +149,8 @@ struct Bm1Score : public ScoreOperator {
     ScoreImpl(res, kPostingBlock);
   }
 
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
-  [[no_unique_address]] utils::Need<HasFilterBoost, score_t>
-    num;  // partially precomputed numerator : boost * (k + 1) * idf
+  const score_t* filter_boost;
+  score_t num;  // partially precomputed numerator : boost * (k + 1) * idf
 };
 
 template<bool HasFilterBoost>
@@ -331,8 +324,12 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
 
   return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
     if (IsBM1()) {
-      return ScoreFunction::Make<Bm1Score<HasBoost>>(_k, ctx.boost, *stats,
-                                                     filter_boost);
+      if constexpr (HasBoost) {
+        return ScoreFunction::Make<Bm1Score>(_k, ctx.boost, *stats,
+                                             filter_boost);
+      } else {
+        return ScoreFunction::Constant(ctx.boost * (_k + 1) * stats->idf);
+      }
     }
 
     if (IsBM15()) {

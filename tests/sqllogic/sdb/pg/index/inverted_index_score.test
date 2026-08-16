@@ -1682,5 +1682,79 @@ statement ok
 DROP TABLE idf_tk;
 
 
+# ============================================================================
+# bm25(k1 = 0) -- the IDF-only (BM1) mode. Term frequency and the length
+# norm both drop out of the formula, so every document matching a term
+# scores exactly that term's IDF.
+# ============================================================================
+
+statement ok
+CREATE TABLE bm1_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX bm1_idx ON bm1_docs USING inverted(id, body en)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bm1_docs VALUES
+    (1, 'alpha alpha alpha beta'), (2, 'alpha gamma'),
+    (3, 'beta'), (4, 'delta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bm1_docs;
+
+
+# 'alpha' occurs in 2 of the 4 documents, so its IDF is
+# log1p(2.5 / 2.5) = ln 2. Doc 1 carries the term three times and doc 2
+# once; IDF-only scores them identically.
+query
+SELECT id, round(BM25(bm1_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+FROM bm1_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id	score
+1	0.693147
+2	0.693147
+
+
+# Default BM25 over the same two documents does weigh term frequency.
+query
+SELECT id, round(BM25(bm1_idx.tableoid)::DOUBLE, 6) AS score
+FROM bm1_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id	score
+1	0.897014
+2	0.693147
+
+
+# A rarer term carries a higher IDF: 'gamma' occurs in 1 of 4 documents,
+# log1p(3.5 / 1.5) = ln 10/3.
+query
+SELECT id, round(BM25(bm1_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+FROM bm1_idx WHERE body @@ ts_phrase('gamma') ORDER BY id;
+----
+id	score
+2	1.203973
+
+
+# The in-scan top-k collects IDF-only hits like any other.
+query
+SELECT id, score FROM (
+  SELECT id, round(BM25(bm1_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+  FROM bm1_idx WHERE body @@ ts_phrase('beta')
+  ORDER BY BM25(bm1_idx.tableoid, 0, 0.75) DESC LIMIT 5
+) t ORDER BY id;
+----
+id	score
+1	0.693147
+3	0.693147
+
+
+statement ok
+DROP TABLE bm1_docs;
+
+
 statement ok
 SET disabled_optimizers = '';

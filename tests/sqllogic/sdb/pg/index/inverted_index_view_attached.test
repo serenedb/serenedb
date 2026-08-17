@@ -174,6 +174,16 @@ id	body	score
 statement ok
 DETACH db172;
 
+# DETACH is no serenedb-catalog mutation, so the cached index entry (and
+# its attach-time fast path) would survive; any catalog mutation rebuilds
+# it against the CURRENT attach state, making the error deterministic --
+# parallel suites churn the snapshot at arbitrary points otherwise.
+statement ok
+CREATE TABLE att_bump(a INT);
+
+statement ok
+DROP TABLE att_bump;
+
 
 query
 SELECT count(*) FROM v_att_idx WHERE body @@ ts_phrase('cat');
@@ -190,6 +200,12 @@ db error: ERROR: materialising real columns from this view-backed inverted index
 
 statement ok
 ATTACH '${__TEST_DIR__}/db172.duckdb' AS db172;
+
+statement ok
+CREATE TABLE att_bump(a INT);
+
+statement ok
+DROP TABLE att_bump;
 
 
 query

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
@@ -29,6 +31,7 @@
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/view_fast_path.h"
 
 namespace sdb::connector {
 
@@ -52,6 +55,11 @@ class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
 
 class InvertedIndexScanEntry : public SereneDBIndexScanEntry {
  public:
+  const std::shared_ptr<const catalog::InvertedIndex>& GetInvertedIndex()
+    const noexcept {
+    return _inverted_index;
+  }
+
   duckdb::vector<duckdb::ColumnSegmentInfo> GetColumnSegmentInfo(
     const duckdb::QueryContext& context,
     const duckdb::ColumnSegmentInfoScanOptions& options) final;
@@ -122,7 +130,13 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
   duckdb::column_t RowIdentityColumnId() const final;
 
  private:
+  std::optional<ViewFastPath> EnsureFastPath(
+    duckdb::ClientContext& context) const;
+
   std::shared_ptr<const catalog::PgSqlView> _sdb_view;
+  // TODO: remove after catalog rewrite
+  mutable absl::Mutex _fast_path_lock;
+  mutable std::optional<ViewFastPath> _fast_path;
 };
 
 class SecondaryIndexScanEntry : public SereneDBIndexScanEntry {

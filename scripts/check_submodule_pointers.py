@@ -24,8 +24,11 @@ import sys
 import urllib.error
 import urllib.request
 
+VERSION_BRANCH = re.compile(r"^v20\d{2}\.\d{2}\.\d{2}$")
+
 CHECKED = {
-    "third_party/duckdb": re.compile(r"^v20\d{2}\.\d{2}\.\d{2}$"),
+    "third_party/duckdb": VERSION_BRANCH,
+    "third_party/duckdb_iceberg": VERSION_BRANCH,
 }
 
 

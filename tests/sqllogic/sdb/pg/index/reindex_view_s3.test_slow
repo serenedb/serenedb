@@ -1,0 +1,209 @@
+control substitution on
+
+# REFRESH over S3: fingerprints come from the S3 listing (size/mtime/etag),
+# the delta's per-file rescans and the read path's file_id->path lookups all
+# open s3:// objects through the same virtual filesystem + secret as the
+# original CREATE INDEX.
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+statement ok
+SET s3_use_ssl=false;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY reindex_s3_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# Single S3 file: manifest-backed up_to_date, rewrite -> rebuild.
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 3, 'vedernikoff signs off s3')
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_single.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW reindex_s3_v AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_single.parquet');
+
+statement ok
+CREATE INDEX reindex_s3_idx ON reindex_s3_v USING inverted(id, body reindex_s3_en);
+
+query
+SELECT count(*) FROM reindex_s3_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+query
+SELECT * FROM serenedb_reindex('reindex_s3_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 4
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'pudge farms jungle'
+      UNION ALL SELECT 3, 'anchin reads manga'
+      UNION ALL SELECT 4, 'vedernikoff rewrites objects')
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_single.parquet' (FORMAT parquet);
+
+query
+SELECT count(*) FROM reindex_s3_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+query
+SELECT * FROM serenedb_reindex('reindex_s3_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	1	0	1
+
+query
+SELECT count(*) FROM reindex_s3_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT id FROM reindex_s3_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+id
+4
+
+
+# S3 glob: appends run as a delta; unchanged objects' docs stay put and still
+# materialize through their manifest-pinned s3 paths.
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 7, 'vedernikoff reviews the glob')
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_a.parquet' (FORMAT parquet);
+
+statement count 2
+COPY (SELECT 3 AS id, 'pudge plays again' AS body
+      UNION ALL SELECT 4, 'techies plants mines')
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_b.parquet' (FORMAT parquet);
+
+statement ok
+CREATE VIEW reindex_s3_glob_v AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_glob_*.parquet');
+
+statement ok
+CREATE INDEX reindex_s3_glob_idx ON reindex_s3_glob_v USING inverted(id, body reindex_s3_en);
+
+query
+SELECT count(*) FROM reindex_s3_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+statement count 3
+COPY (SELECT 5 AS id, 'pudge buys blink' AS body
+      UNION ALL SELECT 6, 'anchin watches replay'
+      UNION ALL SELECT 8, 'vedernikoff ships s3 deltas')
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_c.parquet' (FORMAT parquet);
+
+query
+SELECT count(*) FROM reindex_s3_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT * FROM serenedb_reindex('reindex_s3_glob_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM reindex_s3_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+5	pudge buys blink
+
+query
+SELECT count(*) FROM reindex_s3_glob_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+# Rewriting one object in place: its etag changes, the refresh runs as a
+# delta, old docs die with the old file_id.
+
+statement count 2
+COPY (SELECT 3 AS id, 'pudge plays support' AS body
+      UNION ALL SELECT 9, 'vedernikoff rotates objects')
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_b.parquet' (FORMAT parquet);
+
+query
+SELECT * FROM serenedb_reindex('reindex_s3_glob_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT id, body FROM reindex_s3_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays support
+5	pudge buys blink
+
+query
+SELECT count(*) FROM reindex_s3_glob_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+3
+
+query
+SELECT count(*) FROM reindex_s3_glob_idx WHERE body @@ ts_phrase('mines');
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('reindex_s3_glob_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+REINDEX INDEX reindex_s3_glob_idx;
+
+query
+SELECT count(*) FROM reindex_s3_glob_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+3
+
+
+statement ok
+DROP VIEW reindex_s3_v;
+
+statement ok
+DROP VIEW reindex_s3_glob_v;
+
+statement ok
+DROP SECRET minio_${__DATABASE__};

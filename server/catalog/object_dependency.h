@@ -325,6 +325,7 @@ struct TableDependency : DependencyMixin<TableDependency, RelationDependency> {
 
 struct ViewDependency : DependencyMixin<ViewDependency, RelationDependency> {
   static constexpr std::array kEdges = {
+    Edge<ViewDependency>{&ViewDependency::indexes, CascadeVerb::AutoDrop},
     Edge<ViewDependency>{&ViewDependency::views, CascadeVerb::CascadeView},
     Edge<ViewDependency>{&ViewDependency::functions,
                          CascadeVerb::CascadeFunction},

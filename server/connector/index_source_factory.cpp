@@ -56,11 +56,14 @@ std::unique_ptr<IndexSource> MakeIndexSource(
     // Copy: the bind data outlives this execution, and the snapshot pin below
     // is per-execution state.
     auto fp = *vbd.fast_path;
-    // Re-bind must target the same manifest as CREATE INDEX did.
-    if (vbd.inverted_index) {
-      if (auto storage = vbd.inverted_index->GetData()) {
-        fp.pinned_iceberg_snapshot_id = storage->GetIcebergSnapshotId();
-      }
+    // Re-bind must target the same source version these docs were built
+    // from: the pin travels with the pinned snapshot's manifest, so a
+    // refresh mid-query cannot skew this read. No manifest = an external-pk
+    // view index, which has no pin to carry.
+    SDB_ASSERT(bind_data.snapshot);
+    if (bind_data.snapshot->file_manifest) {
+      fp.pinned_iceberg_snapshot_id =
+        bind_data.snapshot->file_manifest->version;
     }
     if (fp.catalog_ref && fp.pk_spec == catalog::PkSpec::DuckDBRowId) {
       return std::make_unique<ViewTableIndexSource>(
@@ -75,7 +78,7 @@ std::unique_ptr<IndexSource> MakeIndexSource(
     if (catalog::IsGlobPK(fp.pk_spec)) {
       return std::make_unique<ViewFileGlobIndexSource>(
         context, std::move(fp), projected_columns, projected_types,
-        bind_column_ids, pushed_filters);
+        bind_column_ids, pushed_filters, bind_data.snapshot->file_manifest);
     }
     return std::make_unique<ViewFileSingleFileIndexSource>(
       context, std::move(fp), projected_columns, projected_types,

@@ -350,7 +350,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
-  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
+  duckdb::ClientContext& context, duckdb::Catalog& catalog,
+  duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
   std::string_view schema_name, std::string_view name,
   const catalog::Index& index, const catalog::Snapshot& snapshot) {
   auto relation_obj = snapshot.GetObject(index.GetRelationId());
@@ -414,8 +415,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
 }
 
 DuckDBEntryCache::EntryLookup DuckDBEntryCache::EnsureEntry(
-  duckdb::CatalogType type, duckdb::Catalog& catalog,
-  duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
+  duckdb::CatalogType type, duckdb::ClientContext& context,
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
   std::string_view schema_name, std::string_view name,
   const catalog::Snapshot& snapshot) {
   {
@@ -433,8 +434,8 @@ DuckDBEntryCache::EntryLookup DuckDBEntryCache::EnsureEntry(
     }
   }
 
-  auto built =
-    BuildEntry(type, catalog, schema, db_id, schema_name, name, snapshot);
+  auto built = BuildEntry(type, context, catalog, schema, db_id, schema_name,
+                          name, snapshot);
   if (!built.entry) {
     return {};
   }
@@ -449,8 +450,9 @@ DuckDBEntryCache::EntryLookup DuckDBEntryCache::EnsureEntry(
 }
 
 void DuckDBEntryCache::ScanEntries(
-  duckdb::CatalogType type, duckdb::Catalog& catalog,
-  duckdb::SchemaCatalogEntry& entry, ObjectId database, std::string_view schema,
+  duckdb::CatalogType type, duckdb::ClientContext& context,
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& entry,
+  ObjectId database, std::string_view schema,
   const std::function<void(duckdb::CatalogEntry&)>& callback,
   const catalog::Snapshot& snapshot) {
   // Visit-based scan: the fast path (everything cached) is lock-free apart
@@ -504,8 +506,8 @@ void DuckDBEntryCache::ScanEntries(
         }
       };
       if (!it->second.entry) {
-        it->second = BuildEntry(type, catalog, sc.entry, database, schema,
-                                p->GetName(), snapshot);
+        it->second = BuildEntry(type, context, catalog, sc.entry, database,
+                                schema, p->GetName(), snapshot);
       }
       if (it->second.entry &&
           ScanTypeAcceptsEntry(type, it->second.entry->type)) {
@@ -606,19 +608,21 @@ void DuckDBEntryCache::ScanEntries(
 }
 
 DuckDBEntryCache::CachedEntry DuckDBEntryCache::BuildEntry(
-  duckdb::CatalogType type, duckdb::Catalog& catalog,
-  duckdb::SchemaCatalogEntry& entry, ObjectId database, std::string_view schema,
-  std::string_view name, const catalog::Snapshot& snapshot) {
+  duckdb::CatalogType type, duckdb::ClientContext& context,
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& entry,
+  ObjectId database, std::string_view schema, std::string_view name,
+  const catalog::Snapshot& snapshot) {
   std::shared_ptr<const catalog::Object> object;
-  auto built = BuildEntryObject(type, catalog, entry, database, schema, name,
-                                snapshot, object);
+  auto built = BuildEntryObject(type, context, catalog, entry, database, schema,
+                                name, snapshot, object);
   return CachedEntry{std::move(built), std::move(object)};
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntryObject(
-  duckdb::CatalogType type, duckdb::Catalog& catalog,
-  duckdb::SchemaCatalogEntry& entry, ObjectId database, std::string_view schema,
-  std::string_view name, const catalog::Snapshot& snapshot,
+  duckdb::CatalogType type, duckdb::ClientContext& context,
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& entry,
+  ObjectId database, std::string_view schema, std::string_view name,
+  const catalog::Snapshot& snapshot,
   std::shared_ptr<const catalog::Object>& object) {
   bool system = IsSystemSchema(schema);
   bool info_schema = schema == StaticStrings::kInformationSchema;
@@ -686,8 +690,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntryObject(
             // Index-as-table (SELECT * FROM index_name)
             const auto& index =
               basics::downCast<const catalog::Index>(*relation);
-            return BuildIndexScanEntry(catalog, entry, database, schema, name,
-                                       index, snapshot);
+            return BuildIndexScanEntry(context, catalog, entry, database,
+                                       schema, name, index, snapshot);
           }
           if (type != INDEX_ENTRY) {
             return nullptr;

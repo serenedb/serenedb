@@ -490,6 +490,21 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      kReindexIntervalSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "Periodic reindex interval (ms) for newly created VIEW-backed "
+        "inverted indexes: every tick runs the ordinary REINDEX road "
+        "(up_to_date / delta / rebuild) as the index owner. Per-index "
+        "WITH (reindex_interval = ...) overrides; ALTER INDEX SET "
+        "retunes a live loop. 0 disables the task. Hint-less iceberg "
+        "sources refresh from the background only when the GLOBAL "
+        "unsafe_enable_version_guessing is set. Default: 0.",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       kCompactionIntervalSetting,
       {
         LogicalTypeId::UINTEGER,

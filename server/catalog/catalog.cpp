@@ -1792,15 +1792,13 @@ void Snapshot::ApplyDropPlan(PendingDrops& pending_drops, ObjectId db_id,
     if (!idx) {
       continue;
     }
-    auto table_id = idx->GetRelationId();
-    auto table = GetObject<Table>(table_id);
-    if (!table) {
-      continue;
-    }
-    auto task =
-      CreateIndexDrop(pending_drops, db_id, table->GetParentId(), table_id, idx,
-                      /*is_root=*/true);
-    UnregisterObject(std::move(idx), table_id);
+    // The relation may be a table or a view (view-backed inverted indexes);
+    // the index itself carries both ids we need.
+    auto relation_id = idx->GetRelationId();
+    auto task = CreateIndexDrop(pending_drops, db_id, idx->GetParentId(),
+                                relation_id, idx,
+                                /*is_root=*/true);
+    UnregisterObject(std::move(idx), relation_id);
     DropTask::Schedule(std::move(task)).Detach();
   }
 }
@@ -3029,7 +3027,7 @@ bool Catalog::CreateForeignServer(const AccessContext& ax, ObjectId database_id,
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("foreign-data wrapper \"", foreign_server->GetFdwName(),
               "\" is not supported"),
-      ERR_HINT("Use clickhouse_fdw or postgres_fdw."));
+      ERR_HINT("Use one of: ", SupportedFdwList(), "."));
   }
   if (_snapshot->GetForeignServer(database_id, foreign_server->GetName())) {
     if (if_not_exists) {
@@ -3796,6 +3794,14 @@ void Catalog::AlterInvertedIndexOptions(
   auto& index = basics::downCast<InvertedIndex>(*obj);
   auto options = index.GetOptions();
   mutate(options);
+  if (options.reindex_interval_ms) {
+    const auto relation = _snapshot->GetObject(index.GetRelationId());
+    if (!relation || relation->GetType() != ObjectType::View) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("option \"reindex_interval\" only applies to "
+                              "view-backed inverted indexes"));
+    }
+  }
   auto updated = std::static_pointer_cast<InvertedIndex>(index.Clone());
   updated->ReplaceOptions(std::move(options));
 

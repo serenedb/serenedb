@@ -21,15 +21,17 @@
 #include "connector/duckdb_physical_search_delete.h"
 
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <memory>
 #include <shared_mutex>
 #include <string>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/primary_key.hpp"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/inverted_index.h"
 #include "catalog/table.h"
-#include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
@@ -55,69 +57,105 @@ struct SearchDeleteSourceState : duckdb::GlobalSourceState {
 
 SereneDBSearchDelete::SereneDBSearchDelete(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
+  std::shared_ptr<const catalog::InvertedIndex> index,
   std::vector<duckdb::idx_t> pk_col_indices,
   duckdb::idx_t estimated_cardinality)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
     _table(std::move(table)),
-    _pk_col_indices(std::move(pk_col_indices)) {}
+    _index(std::move(index)),
+    _pk_col_indices(std::move(pk_col_indices)) {
+  SDB_ASSERT(!_table != !_index);
+}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchDeleteGlobalState>();
-  auto& conn_ctx = GetSereneDBContext(context);
+  SDB_ASSERT(_pk_col_indices.size() == 1);
+
+  if (_index) {
+    // Index road: the index's transaction is registered with the connection
+    // and created lazily in Sink (EnsureIndexTransaction); no table state.
+    return state;
+  }
 
   state->table_id = _table->GetId();
-
   state->search_table = _table->GetData();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
-
-  SDB_ASSERT(_pk_col_indices.size() == 1);
-  state->sdb_txn = &conn_ctx;
+  state->sdb_txn = &GetSereneDBContext(context);
   return state;
 }
 
 duckdb::SinkResultType SereneDBSearchDelete::Sink(
-  duckdb::ExecutionContext& /*context*/, duckdb::DataChunk& chunk,
+  duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchDeleteGlobalState>();
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-    gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
+
+  auto& trx =
+    _index ? GetSereneDBContext(context.client).EnsureIndexTransaction(_index)
+           : gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
+               gstate.search_table,
+               [&] { return gstate.search_table->GetTransaction(); });
 
   SearchSinkDeleteBaseImpl remover{trx};
   remover.InitImpl(num_rows);
 
-  duckdb::UnifiedVectorFormat gen_pk;
-  chunk.data[_pk_col_indices[0]].ToUnifiedFormat(num_rows, gen_pk);
-  const auto* gen_pk_data =
-    duckdb::UnifiedVectorFormat::GetData<int64_t>(gen_pk);
-
   std::vector<std::string> wal_pks;
-  wal_pks.reserve(num_rows);
-  std::string pk;
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    pk.clear();
-    primary_key::AppendSigned(pk, gen_pk_data[gen_pk.sel->get_index(row)]);
-    remover.DeleteRowImpl(pk);  // live iresearch removal
-    wal_pks.emplace_back(pk);   // WAL delete payload
+  if (_table) {
+    wal_pks.reserve(num_rows);
   }
-  remover.FinishImpl();  // hands the removal filter to the trx
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
+
+  // Rebuild each removal term exactly as the writer wrote it
+  // (duckdb_physical_create_index.cpp): a scalar generated PK is the sortable
+  // signed rowid; a view-index (file, row) struct is the raw unsigned file half
+  // plus the sortable signed row half.
+  auto& pk_col = chunk.data[_pk_col_indices[0]];
+  std::string pk;
+  if (pk_col.GetType().id() == duckdb::LogicalTypeId::STRUCT) {
+    auto& entries = duckdb::StructVector::GetEntries(pk_col);
+    SDB_ASSERT(entries.size() == 2);
+    duckdb::UnifiedVectorFormat file_fmt;
+    duckdb::UnifiedVectorFormat row_fmt;
+    entries[0].ToUnifiedFormat(num_rows, file_fmt);
+    entries[1].ToUnifiedFormat(num_rows, row_fmt);
+    const auto* files = duckdb::UnifiedVectorFormat::GetData<uint64_t>(file_fmt);
+    const auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      pk.clear();
+      primary_key::AppendUnsigned(pk, files[file_fmt.sel->get_index(row)]);
+      primary_key::AppendSigned(pk, rows[row_fmt.sel->get_index(row)]);
+      remover.DeleteRowImpl(pk);
+      if (_table) {
+        wal_pks.emplace_back(pk);
+      }
+    }
+  } else {
+    duckdb::UnifiedVectorFormat gen_pk;
+    pk_col.ToUnifiedFormat(num_rows, gen_pk);
+    const auto* gen_pk_data =
+      duckdb::UnifiedVectorFormat::GetData<int64_t>(gen_pk);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      pk.clear();
+      primary_key::AppendSigned(pk, gen_pk_data[gen_pk.sel->get_index(row)]);
+      remover.DeleteRowImpl(pk);
+      if (_table) {
+        wal_pks.emplace_back(pk);
+      }
+    }
+  }
+
+  remover.FinishImpl();
+  if (_table) {
+    gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
+  }
 
   gstate.delete_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
-}
-
-duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
-  duckdb::Pipeline& /*pipeline*/, duckdb::Event& /*event*/,
-  duckdb::ClientContext& context,
-  duckdb::OperatorSinkFinalizeInput& /*input*/) const {
-  return duckdb::SinkFinalizeType::READY;
 }
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>

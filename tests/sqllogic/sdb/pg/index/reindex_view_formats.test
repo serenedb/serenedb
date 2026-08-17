@@ -1,0 +1,243 @@
+control substitution on
+
+hash-threshold 100
+
+# REFRESH per source format: csv and json globs run the same delta engine as
+# parquet (byte-offset row identity forces whole-file rescans, which is what
+# the delta does anyway); an attached duckdb source has no partition identity
+# and rebuilds.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY refmt_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# CSV glob: add a file -> delta; rewrite a file -> delta.
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'vedernikoff reads csv')
+TO '${__TEST_DIR__}/refmt_a.csv' (FORMAT CSV, HEADER);
+
+statement count 2
+COPY (SELECT 3 AS id, 'pudge plays again' AS body
+      UNION ALL SELECT 4, 'anchin reads manga')
+TO '${__TEST_DIR__}/refmt_b.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW refmt_csv_v AS SELECT * FROM read_csv('${__TEST_DIR__}/refmt_*.csv');
+
+statement ok
+CREATE INDEX refmt_csv_idx ON refmt_csv_v USING inverted(id, body refmt_en);
+
+query
+SELECT count(*) FROM refmt_csv_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+statement count 2
+COPY (SELECT 5 AS id, 'pudge buys blink' AS body
+      UNION ALL SELECT 6, 'vedernikoff ships csv delta')
+TO '${__TEST_DIR__}/refmt_c.csv' (FORMAT CSV, HEADER);
+
+query
+SELECT * FROM serenedb_reindex('refmt_csv_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM refmt_csv_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+5	pudge buys blink
+
+statement count 2
+COPY (SELECT 3 AS id, 'pudge plays support' AS body
+      UNION ALL SELECT 7, 'vedernikoff rewrites csv')
+TO '${__TEST_DIR__}/refmt_b.csv' (FORMAT CSV, HEADER);
+
+query
+SELECT * FROM serenedb_reindex('refmt_csv_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT count(*) FROM refmt_csv_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+3
+
+query
+SELECT * FROM serenedb_reindex('refmt_csv_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+
+# JSON (ndjson) glob: same delta contract.
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'vedernikoff reads json')
+TO '${__TEST_DIR__}/refmt_j1.json' (FORMAT JSON);
+
+statement count 2
+COPY (SELECT 3 AS id, 'pudge plays again' AS body
+      UNION ALL SELECT 4, 'anchin reads manga')
+TO '${__TEST_DIR__}/refmt_j2.json' (FORMAT JSON);
+
+statement ok
+CREATE VIEW refmt_json_v AS SELECT * FROM read_json('${__TEST_DIR__}/refmt_j*.json');
+
+statement ok
+CREATE INDEX refmt_json_idx ON refmt_json_v USING inverted(id, body refmt_en);
+
+query
+SELECT count(*) FROM refmt_json_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+statement count 2
+COPY (SELECT 5 AS id, 'pudge buys blink' AS body
+      UNION ALL SELECT 6, 'vedernikoff ships json delta')
+TO '${__TEST_DIR__}/refmt_j3.json' (FORMAT JSON);
+
+query
+SELECT * FROM serenedb_reindex('refmt_json_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, body FROM refmt_json_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+5	pudge buys blink
+
+query
+SELECT count(*) FROM refmt_json_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+2
+
+
+# Single csv file: manifest-backed up_to_date, changes rebuild (delta is a
+# glob concept; one changed file IS the whole source).
+
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'vedernikoff checks singles')
+TO '${__TEST_DIR__}/refmt_single.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW refmt_single_v AS SELECT * FROM read_csv('${__TEST_DIR__}/refmt_single.csv');
+
+statement ok
+CREATE INDEX refmt_single_idx ON refmt_single_v USING inverted(id, body refmt_en);
+
+query
+SELECT * FROM serenedb_reindex('refmt_single_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'pudge farms jungle'
+      UNION ALL SELECT 3, 'vedernikoff rewrote the single')
+TO '${__TEST_DIR__}/refmt_single.csv' (FORMAT CSV, HEADER);
+
+query
+SELECT * FROM serenedb_reindex('refmt_single_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	1	0	1
+
+query
+SELECT count(*) FROM refmt_single_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+
+# Attached duckdb source: no partition identity -> refresh is a rebuild, and
+# it picks up source DML.
+
+statement ok
+DETACH DATABASE IF EXISTS refmt_ext;
+
+statement ok
+ATTACH '${__TEST_DIR__}/refmt_ext.duckdb' AS refmt_ext;
+
+statement ok
+CREATE OR REPLACE TABLE refmt_ext.t (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO refmt_ext.t VALUES
+  (1, 'pudge goes mid'),
+  (2, 'anchin reads manga'),
+  (3, 'vedernikoff attaches ducks');
+
+statement ok
+CREATE VIEW refmt_ext_v AS SELECT * FROM refmt_ext.t;
+
+statement ok
+CREATE INDEX refmt_ext_idx ON refmt_ext_v USING inverted(id, body refmt_en);
+
+query
+SELECT count(*) FROM refmt_ext_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+statement ok
+INSERT INTO refmt_ext.t VALUES (4, 'pudge farms jungle');
+
+statement ok
+DELETE FROM refmt_ext.t WHERE id = 2;
+
+query
+SELECT count(*) FROM refmt_ext_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+1
+
+query
+SELECT * FROM serenedb_reindex('refmt_ext_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+rebuild	0	0	0	0
+
+query
+SELECT count(*) FROM refmt_ext_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+# The source DELETE took: the rebuilt index no longer counts the dead row.
+query
+SELECT count(*) FROM refmt_ext_idx WHERE body @@ ts_phrase('anchin');
+----
+count
+0
+
+query
+SELECT count(*) FROM refmt_ext_idx WHERE body @@ ts_phrase('vedernikoff');
+----
+count
+1

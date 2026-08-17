@@ -255,23 +255,33 @@ yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
   co_return {};
 }
 
-}  // namespace
+// One tick's verdict for the interval loops' failure-stretch accounting.
+enum class LoopTick {
+  kProgress,  // reset the stretch
+  kIdle,      // grow the stretch
+  kNeutral,   // keep the stretch
+};
 
-template<class Storage>
-yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
+// The scaffolding RefreshLoop and ReindexLoop share: lock-or-exit,
+// interval+stretch delay (kDisabledPoll while the interval is 0), the stop
+// gates, the executor hop and the stretch accounting. `tick` runs on the
+// executor and locks the target itself (so a long tick does not have to pin
+// the storage).
+template<class Storage, class GetIntervalMs, class Tick>
+yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
+                              std::string_view name,
+                              GetIntervalMs get_interval_ms, Tick tick) {
   auto& s = BackgroundScheduler::instance();
-  size_t cleanup_count = 0;
   int stretch = 0;
   try {
     for (;;) {
       auto idx = weak.lock();
       if (!idx) {
-        SDB_TRACE(SEARCH, "maintenance target is deleted, ending refresh loop");
+        SDB_TRACE(SEARCH, "maintenance target is deleted, ending ", name,
+                  " loop");
         break;
       }
-      const auto& settings = idx->GetTasksSettings();
-      const auto interval = ToDuration(settings.refresh_interval_msec);
-      const auto cleanup_step = settings.cleanup_interval_step;
+      const auto interval = ToDuration(get_interval_ms(*idx));
       const bool enabled = interval > Clock::duration::zero();
       idx.reset();
 
@@ -282,16 +292,54 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
         break;
       }
       if (!enabled) {
+        stretch = 0;
         continue;
       }
-
-      idx = weak.lock();
-      if (!idx) {
+      if (weak.expired()) {
         break;
       }
 
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
 
+      co_await yaclib::On(s.executor());
+      if (ShouldStop()) {
+        break;
+      }
+      switch (tick(weak)) {
+        case LoopTick::kProgress:
+          stretch = 0;
+          break;
+        case LoopTick::kIdle:
+          stretch = std::min(kMaxRefreshStretch,
+                             stretch == 0 ? 1 : stretch + stretch / 2 + 1);
+          break;
+        case LoopTick::kNeutral:
+          break;
+      }
+    }
+  } catch (const yaclib::ResultError<yaclib::StopError>&) {
+    // The executor was stopped (serened shutting down) while the loop awaited a
+    // timer -- a clean termination signal, not an error.
+    SDB_TRACE(SEARCH, name, " loop stopped");
+  } catch (const std::exception& ex) {
+    SDB_ERROR(SEARCH, name, " loop terminated by exception: ", ex.what());
+  }
+  co_return {};
+}
+
+}  // namespace
+
+template<class Storage>
+yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
+  return IntervalLoop(
+    std::move(weak), "refresh",
+    [](Storage& idx) { return idx.GetTasksSettings().refresh_interval_msec; },
+    [cleanup_count = size_t{0}](const std::weak_ptr<Storage>& target) mutable {
+      auto idx = target.lock();
+      if (!idx) {
+        return LoopTick::kNeutral;
+      }
+      const auto cleanup_step = idx->GetTasksSettings().cleanup_interval_step;
       const bool stale = idx->StalePressure() >= kStalePressureCleanup;
       const bool periodic = cleanup_step && ++cleanup_count >= cleanup_step;
       const bool run_cleanup = stale || periodic;
@@ -299,35 +347,18 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
         cleanup_count = 0;
         idx->ClearStalePressure();
       }
-
-      co_await yaclib::On(s.executor());
-      if (ShouldStop()) {
-        break;
-      }
       RefreshResult code = RefreshResult::Undefined;
       DoRefresh(*idx, run_cleanup, code);
-
       switch (code) {
         case RefreshResult::Done:
-          stretch = 0;
           idx->NudgeCompaction();
-          break;
+          return LoopTick::kProgress;
         case RefreshResult::NoChanges:
-          stretch = std::min(kMaxRefreshStretch,
-                             stretch == 0 ? 1 : stretch + stretch / 2 + 1);
-          break;
+          return LoopTick::kIdle;
         default:
-          break;
+          return LoopTick::kNeutral;
       }
-    }
-  } catch (const yaclib::ResultError<yaclib::StopError>&) {
-    // The executor was stopped (serened shutting down) while the loop awaited a
-    // timer -- a clean termination signal, not an error.
-    SDB_TRACE(SEARCH, "refresh loop stopped");
-  } catch (const std::exception& ex) {
-    SDB_ERROR(SEARCH, "refresh loop terminated by exception: ", ex.what());
-  }
-  co_return {};
+    });
 }
 
 template<class Storage>
@@ -416,5 +447,47 @@ template yaclib::Future<> CompactionCoordinator(
   std::weak_ptr<InvertedIndexStorage>);
 template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
 template yaclib::Future<> CompactionCoordinator(std::weak_ptr<SearchTable>);
+
+namespace {
+
+// Installed once by the connector (RegisterServerExtensions) during the
+// single-threaded boot, strictly before any storage starts its loops.
+ReindexRunner g_reindex_runner;
+
+}  // namespace
+
+void SetReindexRunner(ReindexRunner runner) {
+  g_reindex_runner = std::move(runner);
+}
+
+yaclib::Future<> ReindexLoop(std::weak_ptr<InvertedIndexStorage> weak) {
+  return IntervalLoop(
+    std::move(weak), "reindex",
+    [](InvertedIndexStorage& idx) {
+      return idx.GetTasksSettings().reindex_interval_msec;
+    },
+    [](const std::weak_ptr<InvertedIndexStorage>& target) {
+      if (!g_reindex_runner) {
+        return LoopTick::kNeutral;
+      }
+      ObjectId id;
+      {
+        // The runner resolves the index by id through the catalog: don't pin
+        // the storage across a potentially long tick.
+        auto idx = target.lock();
+        if (!idx) {
+          return LoopTick::kNeutral;
+        }
+        id = idx->GetId();
+      }
+      const auto status = g_reindex_runner(id);
+      if (status.ok()) {
+        return LoopTick::kProgress;
+      }
+      SDB_WARN(SEARCH, "periodic reindex of Search index '", id.id(),
+               "' failed: ", status.message());
+      return LoopTick::kIdle;
+    });
+}
 
 }  // namespace sdb::search

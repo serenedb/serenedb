@@ -123,7 +123,8 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
     duckdb::UnifiedVectorFormat row_fmt;
     entries[0].ToUnifiedFormat(num_rows, file_fmt);
     entries[1].ToUnifiedFormat(num_rows, row_fmt);
-    const auto* files = duckdb::UnifiedVectorFormat::GetData<uint64_t>(file_fmt);
+    const auto* files =
+      duckdb::UnifiedVectorFormat::GetData<uint64_t>(file_fmt);
     const auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       pk.clear();

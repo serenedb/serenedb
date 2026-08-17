@@ -296,23 +296,28 @@ class IntervalPositionStrategy {
       _base_position = sought;
       return true;
     }
-
-    while (it != _lead_it + 1) {
-      --it;
-      // let`s adjust prev iterator pos  - so it will try to seek to
-      // "correct" position for our current position
+    
+    Traits::ResetPos(*it);
+    --it;
+    PosAttr::value_t current_position = pos_limits::eof();
+    while (it != _lead_it) {
       auto prev_base_it = (it - 1);
+      current_position = Traits::Position(*it);
       _base_position = prev_base_it == _lead_it
                          ? _lead_pos.value()
                          : Traits::Position(*prev_base_it);
       const auto window = Window(it);
-      const auto want = Reach(sought, it, fail_it);
-      if (want <= window.low || want > window.high) {
-        continue;
+      if (current_position < window.high) {
+        _need_reset = true;
+        // Force "it" to move at least one step forward.
+        _interval_delta = current_position - window.low + 1;
+        _permutations = true;
+        return true;
       }
-      _interval_delta = want - window.low;
-      return true;
+      Traits::ResetPos(*it);
+      --it;
     }
+
     // Reached lead. Move it to closest reasonable position and try to re-start.
     const auto bound = _permutations ? 0 : Reach(sought, _lead_it, fail_it);
     _lead_pos.seek(std::max(bound, _lead_pos.value() + 1));

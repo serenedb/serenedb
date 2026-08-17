@@ -22,6 +22,7 @@
 
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/dfi.hpp>
+#include <iresearch/search/idf.hpp>
 #include <iresearch/search/indri_dirichlet.hpp>
 #include <iresearch/search/lm_dirichlet.hpp>
 #include <iresearch/search/lm_jelinek_mercer.hpp>
@@ -48,9 +49,10 @@ struct ScorerOptions {
   using RawBoost = irs::RawBoost::Options;
   using RawTf = irs::RawTF::Options;
   using RawDL = irs::RawDL::Options;
+  using Idf = irs::IDF::Options;
 
   using Params = std::variant<Bm25, Tfidf, LmJm, LmDirichlet, IndriDirichlet,
-                              Dfi, RawBoost, RawTf, RawDL>;
+                              Dfi, RawBoost, RawTf, RawDL, Idf>;
 
   Params params;
 

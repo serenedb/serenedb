@@ -156,6 +156,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
     {S::RawBoost::Owner::type_name(), {}},
     {S::RawTf::Owner::type_name(), {}},
     {S::RawDL::Owner::type_name(), {}},
+    {S::Idf::Owner::type_name(), {}},
   };
   for (const auto& [name, params] : scorers) {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};

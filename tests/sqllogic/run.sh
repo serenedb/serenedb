@@ -246,6 +246,16 @@ cleanup_clickhouse() {
 		if [[ "$state" != running* ]]; then
 			echo "ERROR: clickhouse container did not survive the run ($state)." >&2
 			echo "       Tests after it died fail with 'Temporary failure in name resolution'." >&2
+			# The healthcheck keeps probing for the container's whole life and its
+			# log survives the death, so the last passing probe bounds when
+			# clickhouse stopped answering -- line it up against the first failing
+			# test and against the OOM timestamps below.
+			local last_ok
+			last_ok=$(docker inspect \
+				-f '{{range .State.Health.Log}}{{if eq .ExitCode 0}}{{.End}}{{"\n"}}{{end}}{{end}}' \
+				"$name" 2>/dev/null | sed '/^$/d' | tail -1 | cut -d. -f1)
+			[[ -n "$last_ok" ]] &&
+				echo "       Last healthy at ${last_ok}; it stopped answering after that." >&2
 			# The container carries no memory limit, so a host OOM kill reports
 			# oom=false and exit=137 (SIGKILL) is the only signature. dmesg is
 			# unreadable from inside the tests container (dmesg_restrict), so read
@@ -669,6 +679,11 @@ launch_clickhouse() {
 		--name "$CLICKHOUSE_CONTAINER_NAME" \
 		"${network_args[@]}" \
 		-e CLICKHOUSE_SKIP_USER_SETUP=1 \
+		--health-cmd 'clickhouse-client --query "SELECT 1"' \
+		--health-interval 5s \
+		--health-timeout 3s \
+		--health-retries 3 \
+		--health-start-period 60s \
 		"$CLICKHOUSE_IMAGE"
 
 	echo "Waiting for clickhouse to be ready..."

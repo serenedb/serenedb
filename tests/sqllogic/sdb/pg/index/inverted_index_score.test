@@ -1756,5 +1756,56 @@ statement ok
 DROP TABLE bm1_docs;
 
 
+# IDF-only reads neither the frequency nor the norm, so it asks for no index
+# features and scores a keyword column indexed without a dictionary -- where
+# default BM25 has no frequency to work with and scores 0.
+
+statement ok
+CREATE TABLE bm1_kw (id INTEGER PRIMARY KEY, tag VARCHAR);
+
+
+statement ok
+CREATE INDEX bm1_kw_idx ON bm1_kw USING inverted(id, tag)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bm1_kw VALUES (1, 'red'), (2, 'red'), (3, 'blue'), (4, 'green');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bm1_kw;
+
+
+query
+SELECT id, round(BM25(bm1_kw_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+FROM bm1_kw_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id	score
+1	0.693147
+2	0.693147
+
+
+query
+SELECT id, round(BM25(bm1_kw_idx.tableoid)::DOUBLE, 6) AS score
+FROM bm1_kw_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id	score
+1	0
+2	0
+
+
+query
+SELECT id, round(BM25(bm1_kw_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+FROM bm1_kw_idx WHERE tag @@ 'blue' ORDER BY id;
+----
+id	score
+3	1.203973
+
+
+statement ok
+DROP TABLE bm1_kw;
+
+
 statement ok
 SET disabled_optimizers = '';

@@ -335,7 +335,7 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
   auto impl = irs::BM25::Make(irs::BM25::Options{.k1 = 0.f});
   ASSERT_NE(nullptr, impl);
   ASSERT_TRUE(dynamic_cast<irs::BM25&>(*impl).IsBM1());
-  ASSERT_EQ(irs::IndexFeatures::Freq, impl->GetIndexFeatures());
+  ASSERT_EQ(irs::IndexFeatures::None, impl->GetIndexFeatures());
 
   auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index->size());

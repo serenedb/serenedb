@@ -20,11 +20,6 @@
 
 #include "iresearch/formats/column/read_context.hpp"
 
-#ifdef __linux__
-#include <sys/mman.h>
-#include <unistd.h>
-#endif
-
 #include <absl/base/internal/endian.h>
 
 #include <duckdb/common/vector/string_vector.hpp>
@@ -51,17 +46,6 @@ class ColMapping final : public duckdb::MemoryMappedFile {
   }
   void Close() final {}
 };
-
-void AdviseWillNeed(const duckdb::MemoryMappedFile& mapping, uint64_t offset,
-                    uint64_t size) {
-#ifdef __linux__
-  static const auto kPage = static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
-  const auto base = reinterpret_cast<uintptr_t>(mapping.GetData(offset, size));
-  const auto aligned = base & ~(kPage - 1);
-  ::madvise(reinterpret_cast<void*>(aligned), size + (base - aligned),
-            MADV_WILLNEED);
-#endif
-}
 
 }  // namespace
 
@@ -177,7 +161,6 @@ void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
   if (_mapping && offset % 8 == 0 &&
       offset + block.Size() <= _mapping->Size()) {
     block.Read(context, *_mapping, offset);
-    AdviseWillNeed(*_mapping, offset, size);
     return;
   }
   _in->ReadData(offset, block.InternalBuffer(), size);

@@ -52,7 +52,8 @@
 // Compares, per (d, n):
 //   - Scalar{NoGate,Gate}   the current centroids.hpp loop over ComputeDistance
 //   - PanoA_*               level-major 128-row batches through faiss
-//                           Panorama::progressive_filter_batch (what postings do)
+//                           Panorama::progressive_filter_batch (what postings
+//                           do)
 //   - PanoB_*               row-major centroids + a separate suffix-norm array,
 //                           bounded per centroid with per-level early exit, so
 //                           the top-k gate tightens every centroid instead of
@@ -63,17 +64,19 @@
 //                           rotation is paid per query, not per node
 //
 // Reading the table:
-//   - PanoA_NoGate answers "is the level-major layout alone ever slower than the
+//   - PanoA_NoGate answers "is the level-major layout alone ever slower than
+//   the
 //     scalar row-major loop".
 //   - PanoC_Dense / TreeC are that layout scored densely, with none of the
 //     active-set machinery, which is the cheap fallback a level-major node does
-//     have: each (row, level) slice is contiguous, so a full distance is n_levels
-//     dot products. Measured verdict: with a cold gate (nodes=1) it beats
-//     PanoA_Warm by 15-42% for n <= 128, which is why a small-node fast path looks
-//     attractive -- but once the gate carries across nodes it loses by 1.4-11.5x
-//     at every n down to 16, because a warm gate prunes a 16-row node just as hard
-//     (dims_frac 0.04-0.32 at nodes=64). So there is no node size at which
-//     skipping the pruning machinery pays, and the scan keeps one path.
+//     have: each (row, level) slice is contiguous, so a full distance is
+//     n_levels dot products. Measured verdict: with a cold gate (nodes=1) it
+//     beats PanoA_Warm by 15-42% for n <= 128, which is why a small-node fast
+//     path looks attractive -- but once the gate carries across nodes it loses
+//     by 1.4-11.5x at every n down to 16, because a warm gate prunes a 16-row
+//     node just as hard (dims_frac 0.04-0.32 at nodes=64). So there is no node
+//     size at which skipping the pruning machinery pays, and the scan keeps one
+//     path.
 //   - PanoA_WarmRotated / PanoB_WarmRotated answer "at what n does one rotation
 //     amortize", i.e. n_min(d). Rotation grows d^2 while the saving grows d, so
 //     n_min rises with d: wide vectors prune better per centroid but are harder
@@ -84,13 +87,14 @@
 //   - TreeA_Carry vs TreeA prices carrying the pruning threshold across nodes.
 //
 // Caveats that must not be misread as results:
-//   - Rows with n <= beam cannot prune at all (the k-th best is the worst seen),
-//     so those rows are pure layout comparisons and dims_frac reads 1.0. This is
-//     why beam is a registered dimension.
+//   - Rows with n <= beam cannot prune at all (the k-th best is the worst
+//   seen),
+//     so those rows are pure layout comparisons and dims_frac reads 1.0. This
+//     is why beam is a registered dimension.
 //   - The scalar L2 kernel computes sum (x-y)^2 (sub + FMA per dim) while
 //     Panorama computes |y|^2 + |q|^2 - 2<q,y> from precomputed norms (one FMA
-//     per dim), so PanoA can beat scalar on L2 for reasons unrelated to pruning.
-//     The IP arms have no such asymmetry.
+//     per dim), so PanoA can beat scalar on L2 for reasons unrelated to
+//     pruning. The IP arms have no such asymmetry.
 //   - The rotated arms charge a real RotateQuery + compute_query_cum_sums per
 //     scan but discard the result and score with the unrotated query, so the
 //     cost is faithful while `best` stays comparable across every arm.
@@ -195,8 +199,8 @@ void FillDataset(Dataset& ds, int kind, uint32_t d, size_t n) {
   std::vector<float> raw;
   switch (kind) {
     case 1: {
-      const size_t train = std::max(
-        total, std::max<size_t>(kPcaTrainRows, size_t{8} * d));
+      const size_t train =
+        std::max(total, std::max<size_t>(kPcaTrainRows, size_t{8} * d));
       raw = MakePanoramaData(d, train, kSeed);
       auto pca = irs::TrainPcaRotation(raw.data(), train, d);
       std::vector<float> rotated(total * d);
@@ -275,9 +279,9 @@ constexpr faiss::MetricType kFaissMetric =
                                 : faiss::METRIC_INNER_PRODUCT;
 
 template<irs::VectorMetric M>
-using FaissC = std::conditional_t<kFaissMetric<M> == faiss::METRIC_L2,
-                                  faiss::CMax<float, int64_t>,
-                                  faiss::CMin<float, int64_t>>;
+using FaissC =
+  std::conditional_t<kFaissMetric<M> == faiss::METRIC_L2,
+                     faiss::CMax<float, int64_t>, faiss::CMin<float, int64_t>>;
 
 template<irs::VectorMetric M>
 constexpr float NoPruneFaiss() noexcept {
@@ -339,13 +343,14 @@ LayoutA BuildLayoutA(const float* rows, size_t nodes, size_t n, uint32_t d,
       const size_t len = pad ? bs : live;
       faiss::Panorama pano{size_t{d} * sizeof(float), levels, len};
       std::fill(stage.begin(), stage.end(), 0.f);
-      std::memcpy(stage.data(), src + off * d, live * size_t{d} * sizeof(float));
+      std::memcpy(stage.data(), src + off * d,
+                  live * size_t{d} * sizeof(float));
       float* cums = out.buf.data() + cursor;
       float* codes = cums + len * (levels + 1);
       pano.compute_cumulative_sums(cums, 0, len, stage.data());
-      pano.copy_codes_to_level_layout(reinterpret_cast<uint8_t*>(codes), 0, len,
-                                      reinterpret_cast<const uint8_t*>(
-                                        stage.data()));
+      pano.copy_codes_to_level_layout(
+        reinterpret_cast<uint8_t*>(codes), 0, len,
+        reinterpret_cast<const uint8_t*>(stage.data()));
       out.nodes[node].push_back({cursor, len, off});
       out.max_len = std::max(out.max_len, len);
       cursor += len * stride;
@@ -363,7 +368,11 @@ std::vector<float> BuildSuffixNorms(const float* rows, size_t n, uint32_t d) {
   return cums;
 }
 
-enum class Gate { None, Warm, Oracle };
+enum class Gate {
+  None,
+  Warm,
+  Oracle,
+};
 
 class PanoramaFixture : public benchmark::Fixture {
  public:
@@ -394,8 +403,7 @@ class PanoramaFixture : public benchmark::Fixture {
                : LayoutA{};
     suffix = BuildSuffixNorms(ds->rows.data(), nodes * n, d);
 
-    const size_t scratch =
-      std::max({bs, layout.max_len, padded.max_len});
+    const size_t scratch = std::max({bs, layout.max_len, padded.max_len});
     active.assign(scratch, 0);
     byteset.assign(scratch, 0);
     exact.assign(scratch, 0.f);
@@ -472,13 +480,14 @@ void ReportScan(benchmark::State& state, const PanoramaFixture& fx,
                 uint64_t total, uint64_t scanned, uint64_t survivors,
                 float best) {
   state.counters["dims_frac"] =
-    static_cast<double>(scanned) / static_cast<double>(std::max<uint64_t>(1, total));
-  state.counters["vec_s"] = benchmark::Counter(
-    static_cast<double>(fx.nodes * fx.n),
-    benchmark::Counter::kIsIterationInvariantRate);
-  state.counters["survivors"] =
-    static_cast<double>(survivors) /
-    static_cast<double>(std::max<uint64_t>(1, state.iterations() * fx.nodes * fx.n));
+    static_cast<double>(scanned) /
+    static_cast<double>(std::max<uint64_t>(1, total));
+  state.counters["vec_s"] =
+    benchmark::Counter(static_cast<double>(fx.nodes * fx.n),
+                       benchmark::Counter::kIsIterationInvariantRate);
+  state.counters["survivors"] = static_cast<double>(survivors) /
+                                static_cast<double>(std::max<uint64_t>(
+                                  1, state.iterations() * fx.nodes * fx.n));
   state.counters["levels"] = fx.levels;
   state.counters["best"] = best;
 }
@@ -514,8 +523,7 @@ template<irs::VectorMetric M, Gate G, bool Padded, bool Rotate, bool Carry>
 void RunPanoA(benchmark::State& state, PanoramaFixture& fx) {
   const auto& lay = fx.Layout(Padded);
   const size_t code_size = size_t{fx.d} * sizeof(float);
-  const auto* rot =
-    reinterpret_cast<const irs::byte_type*>(fx.rot->data());
+  const auto* rot = reinterpret_cast<const irs::byte_type*>(fx.rot->data());
   const auto rot_pano = MakePanorama(fx.d, fx.bs);
   TopK gate{std::min<size_t>(fx.n, fx.beam)};
   faiss::PanoramaStats stats;
@@ -544,8 +552,8 @@ void RunPanoA(benchmark::State& state, PanoramaFixture& fx) {
         }
         const faiss::Panorama pano{code_size, fx.levels, bd.len};
         const float* cums = lay.buf.data() + bd.off;
-        const auto* codes = reinterpret_cast<const uint8_t*>(
-          cums + bd.len * (fx.levels + 1));
+        const auto* codes =
+          reinterpret_cast<const uint8_t*>(cums + bd.len * (fx.levels + 1));
         const size_t alive =
           pano.template progressive_filter_batch<FaissC<M>, kFaissMetric<M>>(
             codes, cums, fx.ds->query.data(), fx.query_cums.data(), 0, bd.len,
@@ -577,8 +585,7 @@ void RunPanoB(benchmark::State& state, PanoramaFixture& fx) {
   const uint32_t width = MakePanorama(fx.d, 1).level_width_floats;
   const float* q = fx.ds->query.data();
   const float* qc = fx.query_cums.data();
-  const auto* rot =
-    reinterpret_cast<const irs::byte_type*>(fx.rot->data());
+  const auto* rot = reinterpret_cast<const irs::byte_type*>(fx.rot->data());
   const auto rot_pano = MakePanorama(fx.d, fx.bs);
   TopK gate{std::min<size_t>(fx.n, fx.beam)};
   uint64_t scanned = 0;
@@ -651,9 +658,9 @@ void RunPanoB(benchmark::State& state, PanoramaFixture& fx) {
 
 // Design C: the level-major layout scored densely, with none of the active-set
 // machinery -- no prune_kernel, no byteset, no compaction. A full distance is
-// n_levels contiguous dot products, so this is the cheapest correct way to scan a
-// node too small for pruning to pay, and it reuses faiss's own dot kernel so the
-// accumulation is bit-identical to progressive_filter_batch.
+// n_levels contiguous dot products, so this is the cheapest correct way to scan
+// a node too small for pruning to pay, and it reuses faiss's own dot kernel so
+// the accumulation is bit-identical to progressive_filter_batch.
 template<irs::VectorMetric M, bool Rotate>
 void RunPanoC(benchmark::State& state, PanoramaFixture& fx) {
   const auto& lay = fx.Layout(false);
@@ -677,9 +684,8 @@ void RunPanoC(benchmark::State& state, PanoramaFixture& fx) {
         const float* cums = lay.buf.data() + bd.off;
         const float* codes = cums + bd.len * (fx.levels + 1);
         for (size_t i = 0; i < bd.len; ++i) {
-          fx.exact[i] = M == irs::VectorMetric::L2Sqr
-                          ? cums[i] * cums[i] + q_norm
-                          : 0.f;
+          fx.exact[i] =
+            M == irs::VectorMetric::L2Sqr ? cums[i] * cums[i] + q_norm : 0.f;
         }
         for (size_t l = 0; l < fx.levels; ++l) {
           const size_t w = std::min(lw, size_t{fx.d} - l * lw);
@@ -689,8 +695,8 @@ void RunPanoC(benchmark::State& state, PanoramaFixture& fx) {
               fx.dots.data());
           });
           for (size_t i = 0; i < bd.len; ++i) {
-            fx.exact[i] += M == irs::VectorMetric::L2Sqr ? -2.f * fx.dots[i]
-                                                         : fx.dots[i];
+            fx.exact[i] +=
+              M == irs::VectorMetric::L2Sqr ? -2.f * fx.dots[i] : fx.dots[i];
           }
         }
         for (size_t i = 0; i < bd.len; ++i) {
@@ -711,8 +717,7 @@ void RunPanoC(benchmark::State& state, PanoramaFixture& fx) {
 }
 
 void RunRotate(benchmark::State& state, PanoramaFixture& fx, bool with_cums) {
-  const auto* rot =
-    reinterpret_cast<const irs::byte_type*>(fx.rot->data());
+  const auto* rot = reinterpret_cast<const irs::byte_type*>(fx.rot->data());
   const float* q = fx.ds->query.data();
   const auto pano = MakePanorama(fx.d, faiss::Panorama::kDefaultBatchSize);
   for (auto _ : state) {
@@ -729,35 +734,35 @@ void RunRotate(benchmark::State& state, PanoramaFixture& fx, bool with_cums) {
 }
 
 #define PANO_SCALAR(Name, WithGate)                                      \
-  BENCHMARK_DEFINE_F(PanoramaFixture, L2_##Name)(benchmark::State& s) {    \
-    RunScalar<irs::VectorMetric::L2Sqr, WithGate>(s, *this);               \
-  }                                                                        \
-  BENCHMARK_DEFINE_F(PanoramaFixture, IP_##Name)(benchmark::State& s) {    \
-    RunScalar<irs::VectorMetric::InnerProduct, WithGate>(s, *this);        \
+  BENCHMARK_DEFINE_F(PanoramaFixture, L2_##Name)(benchmark::State & s) { \
+    RunScalar<irs::VectorMetric::L2Sqr, WithGate>(s, *this);             \
+  }                                                                      \
+  BENCHMARK_DEFINE_F(PanoramaFixture, IP_##Name)(benchmark::State & s) { \
+    RunScalar<irs::VectorMetric::InnerProduct, WithGate>(s, *this);      \
   }
 
-#define PANO_A(Name, G, Padded, Rotate, Carry)                             \
-  BENCHMARK_DEFINE_F(PanoramaFixture, L2_##Name)(benchmark::State& s) {    \
+#define PANO_A(Name, G, Padded, Rotate, Carry)                              \
+  BENCHMARK_DEFINE_F(PanoramaFixture, L2_##Name)(benchmark::State & s) {    \
     RunPanoA<irs::VectorMetric::L2Sqr, G, Padded, Rotate, Carry>(s, *this); \
-  }                                                                        \
-  BENCHMARK_DEFINE_F(PanoramaFixture, IP_##Name)(benchmark::State& s) {    \
-    RunPanoA<irs::VectorMetric::InnerProduct, G, Padded, Rotate, Carry>(   \
-      s, *this);                                                           \
+  }                                                                         \
+  BENCHMARK_DEFINE_F(PanoramaFixture, IP_##Name)(benchmark::State & s) {    \
+    RunPanoA<irs::VectorMetric::InnerProduct, G, Padded, Rotate, Carry>(    \
+      s, *this);                                                            \
   }
 
 #define PANO_B(Name, G, Rotate, Carry)                                     \
-  BENCHMARK_DEFINE_F(PanoramaFixture, L2_##Name)(benchmark::State& s) {    \
+  BENCHMARK_DEFINE_F(PanoramaFixture, L2_##Name)(benchmark::State & s) {   \
     RunPanoB<irs::VectorMetric::L2Sqr, G, Rotate, Carry>(s, *this);        \
   }                                                                        \
-  BENCHMARK_DEFINE_F(PanoramaFixture, IP_##Name)(benchmark::State& s) {    \
+  BENCHMARK_DEFINE_F(PanoramaFixture, IP_##Name)(benchmark::State & s) {   \
     RunPanoB<irs::VectorMetric::InnerProduct, G, Rotate, Carry>(s, *this); \
   }
 
-#define PANO_C(Name, Rotate)                                            \
-  BENCHMARK_DEFINE_F(PanoramaFixture, L2_##Name)(benchmark::State& s) {  \
+#define PANO_C(Name, Rotate)                                             \
+  BENCHMARK_DEFINE_F(PanoramaFixture, L2_##Name)(benchmark::State & s) { \
     RunPanoC<irs::VectorMetric::L2Sqr, Rotate>(s, *this);                \
-  }                                                                     \
-  BENCHMARK_DEFINE_F(PanoramaFixture, IP_##Name)(benchmark::State& s) {  \
+  }                                                                      \
+  BENCHMARK_DEFINE_F(PanoramaFixture, IP_##Name)(benchmark::State & s) { \
     RunPanoC<irs::VectorMetric::InnerProduct, Rotate>(s, *this);         \
   }
 
@@ -811,9 +816,10 @@ void BigNGrid(benchmark::internal::Benchmark* b) {
   }
 }
 
-// A wide tree: max_fanout raised until a layer is one enormous node, so the whole
-// scan is one node's batches and the gate tightens across them. beam is nprobe
-// here, and the nprobe/n ratio -- not n alone -- is what sets pruning power.
+// A wide tree: max_fanout raised until a layer is one enormous node, so the
+// whole scan is one node's batches and the gate tightens across them. beam is
+// nprobe here, and the nprobe/n ratio -- not n alone -- is what sets pruning
+// power.
 void WideGrid(benchmark::internal::Benchmark* b) {
   for (const int64_t d : {128, 768, 1536}) {
     for (const int64_t n : {1024, 4096, 16384, 65536}) {
@@ -875,24 +881,24 @@ void TreeGrid(benchmark::internal::Benchmark* b) {
   }
 }
 
-#define PANO_REGISTER(Method, Grid)               \
-  BENCHMARK_REGISTER_F(PanoramaFixture, Method)   \
-    ->Apply(Grid)                                 \
+#define PANO_REGISTER(Method, Grid)                       \
+  BENCHMARK_REGISTER_F(PanoramaFixture, Method)           \
+    ->Apply(Grid)                                         \
     ->ArgNames({"d", "n", "bs", "beam", "data", "nodes"}) \
-    ->Unit(benchmark::kNanosecond)                \
+    ->Unit(benchmark::kNanosecond)                        \
     ->MinTime(0.1)
 
 #define PANO_REGISTER_BOTH(Method, Grid) \
   PANO_REGISTER(L2_##Method, Grid);      \
   PANO_REGISTER(IP_##Method, Grid)
 
-#define PANO_REGISTER_SCAN(Grid)              \
-  PANO_REGISTER_BOTH(ScalarNoGate, Grid);     \
-  PANO_REGISTER_BOTH(ScalarGate, Grid);       \
-  PANO_REGISTER_BOTH(PanoA_NoGate, Grid);     \
-  PANO_REGISTER_BOTH(PanoA_Warm, Grid);       \
+#define PANO_REGISTER_SCAN(Grid)               \
+  PANO_REGISTER_BOTH(ScalarNoGate, Grid);      \
+  PANO_REGISTER_BOTH(ScalarGate, Grid);        \
+  PANO_REGISTER_BOTH(PanoA_NoGate, Grid);      \
+  PANO_REGISTER_BOTH(PanoA_Warm, Grid);        \
   PANO_REGISTER_BOTH(PanoA_WarmRotated, Grid); \
-  PANO_REGISTER_BOTH(PanoB_Warm, Grid);       \
+  PANO_REGISTER_BOTH(PanoB_Warm, Grid);        \
   PANO_REGISTER_BOTH(PanoB_WarmRotated, Grid)
 
 PANO_REGISTER_SCAN(CoreGrid);

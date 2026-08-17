@@ -82,33 +82,61 @@ class RawVectorReader {
  public:
   RawVectorReader(const ColumnReader& vector_column,
                   const ColReader& col_reader, uint32_t d)
-    : _read_ctx{col_reader}, _vreader{vector_column, _read_ctx}, _d{d} {}
+    : _read_ctx{col_reader},
+      _vreader{vector_column, _read_ctx},
+      _column{&vector_column},
+      _d{d} {}
 
   void SetQuery(std::span<const float> query, VectorMetric metric) {
     _query.assign(query.begin(), query.end());
     _dist = ResolveScoringDistance(metric);
   }
 
-  void ComputeDistance(doc_id_t doc, score_t boost, score_t& out) {
-    ComputeDistanceRun(doc, 1, boost, std::span<score_t>{&out, 1});
-  }
-
-  void ComputeDistanceRun(doc_id_t first_doc, size_t run, score_t boost,
-                          std::span<score_t> out) {
+  void ComputeDistances(std::span<const doc_id_t> docs,
+                        std::span<score_t> out) {
     SDB_ASSERT(_dist);
-    SDB_ASSERT(out.size() >= run);
+    SDB_ASSERT(out.size() >= docs.size());
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
     const auto d = static_cast<uint16_t>(_d);
-    const float* base = _vreader.ReadDocBatch(first_doc, run);
-    for (size_t k = 0; k < run; ++k) {
-      out[k] =
-        _dist(q, reinterpret_cast<const byte_type*>(base + k * _d), d) * boost;
+    for (size_t i = 0; i < docs.size();) {
+      const size_t run = ConsecutiveRunLength(docs, i);
+      const auto* base = Read(docs[i], run);
+      for (size_t k = 0; k < run; ++k) {
+        out[i + k] = _dist(q, base + k * _d * sizeof(float), d);
+      }
+      i += run;
     }
   }
 
  private:
+  const byte_type* Read(doc_id_t first, size_t count) {
+    const auto* child = _column->Child();
+    SDB_ASSERT(child != nullptr);
+    const uint64_t elem =
+      (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
+    const auto window = child->Locate(elem);
+    const auto& meta = child->DataBlocks()[window.block];
+    const size_t bytes = count * _d * sizeof(float);
+    if (meta.codec->type == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED &&
+        elem + count * _d <= window.end) {
+      const uint64_t offset =
+        meta.file_offset + (elem - window.begin) * sizeof(float);
+      if (const auto* p = _read_ctx.TryReadStable(offset, bytes)) {
+        return reinterpret_cast<const byte_type*>(p);
+      }
+      _buf.resize(bytes);
+      _read_ctx.Read(offset, reinterpret_cast<duckdb::data_ptr_t>(_buf.data()),
+                     bytes);
+      return _buf.data();
+    }
+    return reinterpret_cast<const byte_type*>(
+      _vreader.ReadDocBatch(first, count));
+  }
+
   ReadContext _read_ctx;
   IvfVectorReader _vreader;
+  const ColumnReader* _column;
+  std::vector<byte_type> _buf;
   VectorDistanceFn _dist = nullptr;
   std::vector<float> _query;
   uint32_t _d;
@@ -178,7 +206,7 @@ class RawVectorIterator : public VectorDistanceIterator {
       _cur_dist = .0f;
       return _doc = doc;
     }
-    _reader.ComputeDistance(doc, kNoBoost, _cur_dist);
+    _reader.ComputeDistances({&doc, 1}, {&_cur_dist, 1});
     return _doc = doc;
   }
 
@@ -191,7 +219,7 @@ class RawVectorIterator : public VectorDistanceIterator {
       _cur_dist = .0f;
       return _doc = doc;
     }
-    _reader.ComputeDistance(doc, kNoBoost, _cur_dist);
+    _reader.ComputeDistances({&doc, 1}, {&_cur_dist, 1});
     return _doc = doc;
   }
 
@@ -690,20 +718,14 @@ void RerankExactDistances(const SubReader& segment,
   }
   RawVectorReader reader{vector_column, *col_reader, d};
   reader.SetQuery(query, metric);
-  std::vector<score_t> scratch;
-  size_t i = 0;
-  while (i < hits.size()) {
-    size_t run = 1;
-    while (i + run < hits.size() &&
-           hits[i + run].doc == hits[i + run - 1].doc + 1) {
-      ++run;
-    }
-    scratch.resize(run);
-    reader.ComputeDistanceRun(hits[i].doc, run, kNoBoost, scratch);
-    for (size_t k = 0; k < run; ++k) {
-      hits[i + k].score = scratch[k];
-    }
-    i += run;
+  std::vector<doc_id_t> docs(hits.size());
+  std::vector<score_t> scores(hits.size());
+  for (size_t i = 0; i < hits.size(); ++i) {
+    docs[i] = hits[i].doc;
+  }
+  reader.ComputeDistances(docs, scores);
+  for (size_t i = 0; i < hits.size(); ++i) {
+    hits[i].score = scores[i];
   }
 }
 

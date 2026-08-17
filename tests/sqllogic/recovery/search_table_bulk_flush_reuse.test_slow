@@ -12,8 +12,14 @@
 # ".test_slow" because triggering the bulk path needs a genuinely parallel
 # source scan: >1 iresearch/DuckDB row group (122880 rows each), so the source
 # must be a base table with >122880 rows -- generate_series is single-threaded
-# and would take the serial path. SET threads forces parallelism regardless of
-# the runner's core count.
+# and would take the serial path. SET threads forces the bulk decision
+# deterministically regardless of the runner's core count.
+#
+# Lives in the recovery suite, not the concurrent sdb suite: SET threads is
+# process-wide, so under the parallel runner it resizes the shared task pool
+# while other tests have queries in flight and wedges the run. The recovery
+# harness gives each file its own serened, so this runs isolated; RESET threads
+# at the end restores the default for the sequential-fallback harness.
 
 statement ok
 SET threads = 4;
@@ -85,3 +91,6 @@ SELECT count(*) FROM bt WHERE pk IN (1000001, 1000002);
 ----
 count
 2
+
+statement ok
+RESET threads;

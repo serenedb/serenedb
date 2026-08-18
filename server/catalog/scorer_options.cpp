@@ -75,6 +75,8 @@ std::string ScorerOptions::ToString() const {
         return "raw_tf()";
       } else if constexpr (std::is_same_v<P, RawDL>) {
         return "raw_dl()";
+      } else if constexpr (std::is_same_v<P, Idf>) {
+        return "idf()";
       }
     },
     params);
@@ -190,12 +192,14 @@ std::optional<ScorerOptions> ExtractScorerFromBound(
     scorer.params = S::RawTf{};
   } else if (name == S::RawDL::Owner::type_name()) {
     scorer.params = S::RawDL{};
+  } else if (name == S::Idf::Owner::type_name()) {
+    scorer.params = S::Idf{};
   } else {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("Unknown scorer '", name, "'"),
       ERR_HINT("Expected one of: bm25, tfidf, lm_jm, lm_dirichlet, "
-               "indri_dirichlet, dfi, raw_boost, raw_tf, raw_dl"));
+               "indri_dirichlet, dfi, idf, raw_boost, raw_tf, raw_dl"));
   }
   return scorer;
 }

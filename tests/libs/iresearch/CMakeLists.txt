@@ -64,6 +64,7 @@ set(iresearch-tests_sources
     ./search/score_prune_test.cpp
     ./search/score_prune_norm_merge_test.cpp
     ./search/bm25_test.cpp
+    ./search/idf_test.cpp
     ./search/raw_tf_test.cpp
     ./search/lm_test.cpp
     ./search/indri_dirichlet_test.cpp

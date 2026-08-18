@@ -164,6 +164,7 @@ set(IResearch_core_sources
     ./search/lm_dirichlet.cpp
     ./search/indri_dirichlet.cpp
     ./search/dfi.cpp
+    ./search/idf.cpp
     ./search/raw_boost.cpp
     ./search/raw_tf.cpp
     ./search/raw_dl.cpp

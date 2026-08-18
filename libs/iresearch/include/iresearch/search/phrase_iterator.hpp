@@ -297,7 +297,6 @@ class IntervalPositionStrategy {
       return true;
     }
     
-    Traits::ResetPos(*it);
     --it;
     PosAttr::value_t current_position = pos_limits::eof();
     while (it != _lead_it) {
@@ -314,7 +313,6 @@ class IntervalPositionStrategy {
         _permutations = true;
         return true;
       }
-      Traits::ResetPos(*it);
       --it;
     }
 

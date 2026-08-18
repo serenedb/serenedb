@@ -6200,6 +6200,51 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_FALSE(!irs::doc_limits::eof(disj_docs->advance()));
   }
 
+    {
+    irs::ByPhrase q;
+    *q.mutable_field_id() = kPhraseAnl;
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("konstantin"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("vedernikoff"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("is"));
+    q.mutable_options()->push_back<irs::ByTermOptions>(1, 3).term =
+      irs::ViewCast<irs::byte_type>(std::string_view("intern"));
+
+    tests::sort::CustomSort sort;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](const irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
+    };
+    auto sub = rdr.begin();
+    tests::PreparedFilter prepared{q, rdr, &sort};
+    const auto* column = sub->Column(kName);
+    ASSERT_NE(nullptr, column);
+    irs::tests::BlobPointReader values{*sub, *column};
+    auto docs = prepared.Execute(0);
+
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
+    ASSERT_TRUE(freq);
+    ASSERT_FALSE(irs::get<irs::BoostBlockAttr>(*docs));
+    ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+    auto docs_seek = prepared.Execute(0);
+    ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
+
+    ASSERT_TRUE(!irs::doc_limits::eof(docs->advance()));
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(2, freq->value[0]);
+    ASSERT_EQ(
+      "L", irs::tests::ReadStoredStr<std::string_view>(values, docs->value()));
+    ASSERT_EQ(docs->value(), docs_seek->seek(docs->value()));
+    docs_seek->FetchScoreArgs(0);
+    ASSERT_EQ(freq->value[0],
+              irs::get<irs::FreqBlockAttr>(*docs_seek)->value[0]);
+    ASSERT_TRUE(irs::doc_limits::eof(docs->advance()));
+  }
+
   // mix interval and single
   {
     irs::ByPhrase q;

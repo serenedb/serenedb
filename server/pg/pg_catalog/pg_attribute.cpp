@@ -29,6 +29,7 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/user_type.h"
+#include "catalog/view.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
@@ -159,6 +160,42 @@ void EmitColumnsForTable(const catalog::Table& table,
   }
 }
 
+void EmitColumnsForView(const catalog::PgSqlView& view,
+                        std::vector<PgAttribute>& values) {
+  const auto& info = view.GetInfo();
+
+  for (size_t i = 0; i < info.names.size(); ++i) {
+    auto type_oid = Type2Oid(info.types[i]);
+    auto phys = GetPhysicalInfo(type_oid);
+    const auto& name =
+      i < info.aliases.size() ? info.aliases[i] : info.names[i];
+
+    PgAttribute row{
+      .attrelid = view.GetId().id(),
+      .attname = name.GetIdentifierName(),
+      .atttypid = type_oid,
+      .attlen = phys.attlen,
+      .attnum = static_cast<int16_t>(i + 1),
+      .atttypmod = -1,
+      .attndims = 0,
+      .attbyval = phys.attbyval,
+      .attalign = phys.attalign,
+      .attstorage = phys.attstorage,
+      .attcompression = PgAttribute::Attcompression::None,
+      .attnotnull = false,
+      .atthasdef = false,
+      .atthasmissing = false,
+      .attidentity = PgAttribute::Attidentity::None,
+      .attgenerated = PgAttribute::Attgenerated::None,
+      .attisdropped = false,
+      .attislocal = true,
+      .attinhcount = 0,
+      .attcollation = GetCollationForType(type_oid),
+    };
+    values.push_back(std::move(row));
+  }
+}
+
 void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
                                std::vector<PgAttribute>& values) {
   auto row_type = table.RowType();
@@ -252,6 +289,10 @@ catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
     for (const auto& table :
          catalog->GetTables(GetDatabaseId(), schema->GetName())) {
       EmitColumnsForTable(*table, values);
+    }
+    for (const auto& view :
+         catalog->GetViews(GetDatabaseId(), schema->GetName())) {
+      EmitColumnsForView(*view, values);
     }
     for (const auto& type :
          catalog->GetTypes(GetDatabaseId(), schema->GetName())) {

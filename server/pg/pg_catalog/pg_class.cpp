@@ -196,6 +196,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
     for (const auto& view : catalog.GetViews(database_id, schema->GetName())) {
       auto row = MakeBaseRow(schema_id, *view, view->GetOwner());
       row.relkind = PgClass::Relkind::View;
+      row.relnatts = static_cast<int16_t>(view->GetInfo().names.size());
       row.relacl = {view->GetAcl()};
       values.push_back(std::move(row));
     }

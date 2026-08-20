@@ -296,7 +296,7 @@ class IntervalPositionStrategy {
       _base_position = sought;
       return true;
     }
-    
+
     --it;
     PosAttr::value_t current_position = pos_limits::eof();
     while (it != _lead_it) {

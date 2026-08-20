@@ -6200,7 +6200,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_FALSE(!irs::doc_limits::eof(disj_docs->advance()));
   }
 
-    {
+  {
     irs::ByPhrase q;
     *q.mutable_field_id() = kPhraseAnl;
     q.mutable_options()->push_back<irs::ByTermOptions>().term =

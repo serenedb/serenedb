@@ -1534,5 +1534,278 @@ statement ok
 DROP TABLE prefix_docs;
 
 
+# ============================================================================
+# idf() -- scores by the inverse document frequency of the matched term
+# alone. No term frequency, no length norm, and no index features, so it
+# also scores columns indexed without a dictionary.
+# ============================================================================
+
+statement ok
+CREATE TABLE idf_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX idf_idx ON idf_docs USING inverted(id, body en)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO idf_docs VALUES
+    (1, 'alpha alpha alpha beta'), (2, 'alpha gamma'),
+    (3, 'beta'), (4, 'delta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) idf_docs;
+
+
+# 'alpha' occurs in 2 of the 4 documents, so its IDF is
+# log1p(2.5 / 2.5) = ln 2. Doc 1 carries the term three times and doc 2
+# once, and they score identically.
+query
+SELECT id, round(IDF(idf_idx.tableoid)::DOUBLE, 6) AS score
+FROM idf_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id	score
+1	0.693147
+2	0.693147
+
+
+# Default BM25 over the same two documents does weigh term frequency.
+query
+SELECT id, round(BM25(idf_idx.tableoid)::DOUBLE, 6) AS score
+FROM idf_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id	score
+1	0.897014
+2	0.693147
+
+
+# 'gamma' occurs in 1 of 4 documents: log1p(3.5 / 1.5) = ln 10/3.
+query
+SELECT id, round(IDF(idf_idx.tableoid)::DOUBLE, 6) AS score
+FROM idf_idx WHERE body @@ ts_phrase('gamma') ORDER BY id;
+----
+id	score
+2	1.203973
+
+
+# The in-scan top-k collects IDF hits like any other.
+query
+SELECT id, score FROM (
+  SELECT id, round(IDF(idf_idx.tableoid)::DOUBLE, 6) AS score
+  FROM idf_idx WHERE body @@ ts_phrase('beta')
+  ORDER BY IDF(idf_idx.tableoid) DESC LIMIT 5
+) t ORDER BY id;
+----
+id	score
+1	0.693147
+3	0.693147
+
+
+# One scorer per index scan, same as every other scorer.
+query error
+SELECT id FROM idf_idx WHERE body @@ ts_phrase('alpha')
+  AND IDF(idf_idx.tableoid) > 0
+ORDER BY BM25(idf_idx.tableoid) DESC LIMIT 2;
+----
+db error: ERROR: Only one scorer function is allowed per inverted index
+HINT: Use UNION to combine different score functions for the same inverted index
+
+
+statement ok
+DROP TABLE idf_docs;
+
+
+# A keyword column indexed without a dictionary carries no frequency, and
+# idf() scores it all the same.
+
+statement ok
+CREATE TABLE idf_kw (id INTEGER PRIMARY KEY, tag VARCHAR);
+
+
+statement ok
+CREATE INDEX idf_kw_idx ON idf_kw USING inverted(id, tag)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO idf_kw VALUES (1, 'red'), (2, 'red'), (3, 'blue'), (4, 'green');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) idf_kw;
+
+
+query
+SELECT id, round(IDF(idf_kw_idx.tableoid)::DOUBLE, 6) AS score
+FROM idf_kw_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id	score
+1	0.693147
+2	0.693147
+
+
+statement ok
+DROP TABLE idf_kw;
+
+
+# idf() is also accepted as an index's optimize_top_k scorer.
+
+statement ok
+CREATE TABLE idf_tk (id INTEGER PRIMARY KEY, tag VARCHAR);
+
+
+statement ok
+CREATE INDEX idf_tk_idx ON idf_tk USING inverted(id, tag)
+  WITH (compaction_interval = 0, optimize_top_k = 'idf()');
+
+
+statement ok
+INSERT INTO idf_tk VALUES (1, 'red'), (2, 'red'), (3, 'blue'), (4, 'green');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) idf_tk;
+
+
+query
+SELECT id, round(IDF(idf_tk_idx.tableoid)::DOUBLE, 6) AS score
+FROM idf_tk_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id	score
+1	0.693147
+2	0.693147
+
+
+statement ok
+DROP TABLE idf_tk;
+
+
+# ============================================================================
+# bm25(k1 = 0) -- the IDF-only (BM1) mode. Term frequency and the length
+# norm both drop out of the formula, so every document matching a term
+# scores exactly that term's IDF.
+# ============================================================================
+
+statement ok
+CREATE TABLE bm1_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX bm1_idx ON bm1_docs USING inverted(id, body en)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bm1_docs VALUES
+    (1, 'alpha alpha alpha beta'), (2, 'alpha gamma'),
+    (3, 'beta'), (4, 'delta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bm1_docs;
+
+
+# 'alpha' occurs in 2 of the 4 documents, so its IDF is
+# log1p(2.5 / 2.5) = ln 2. Doc 1 carries the term three times and doc 2
+# once; IDF-only scores them identically.
+query
+SELECT id, round(BM25(bm1_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+FROM bm1_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id	score
+1	0.693147
+2	0.693147
+
+
+# Default BM25 over the same two documents does weigh term frequency.
+query
+SELECT id, round(BM25(bm1_idx.tableoid)::DOUBLE, 6) AS score
+FROM bm1_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id	score
+1	0.897014
+2	0.693147
+
+
+# A rarer term carries a higher IDF: 'gamma' occurs in 1 of 4 documents,
+# log1p(3.5 / 1.5) = ln 10/3.
+query
+SELECT id, round(BM25(bm1_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+FROM bm1_idx WHERE body @@ ts_phrase('gamma') ORDER BY id;
+----
+id	score
+2	1.203973
+
+
+# The in-scan top-k collects IDF-only hits like any other.
+query
+SELECT id, score FROM (
+  SELECT id, round(BM25(bm1_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+  FROM bm1_idx WHERE body @@ ts_phrase('beta')
+  ORDER BY BM25(bm1_idx.tableoid, 0, 0.75) DESC LIMIT 5
+) t ORDER BY id;
+----
+id	score
+1	0.693147
+3	0.693147
+
+
+statement ok
+DROP TABLE bm1_docs;
+
+
+# IDF-only reads neither the frequency nor the norm, so it asks for no index
+# features and scores a keyword column indexed without a dictionary -- where
+# default BM25 has no frequency to work with and scores 0.
+
+statement ok
+CREATE TABLE bm1_kw (id INTEGER PRIMARY KEY, tag VARCHAR);
+
+
+statement ok
+CREATE INDEX bm1_kw_idx ON bm1_kw USING inverted(id, tag)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bm1_kw VALUES (1, 'red'), (2, 'red'), (3, 'blue'), (4, 'green');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bm1_kw;
+
+
+query
+SELECT id, round(BM25(bm1_kw_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+FROM bm1_kw_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id	score
+1	0.693147
+2	0.693147
+
+
+query
+SELECT id, round(BM25(bm1_kw_idx.tableoid)::DOUBLE, 6) AS score
+FROM bm1_kw_idx WHERE tag @@ 'red' ORDER BY id;
+----
+id	score
+1	0
+2	0
+
+
+query
+SELECT id, round(BM25(bm1_kw_idx.tableoid, 0, 0.75)::DOUBLE, 6) AS score
+FROM bm1_kw_idx WHERE tag @@ 'blue' ORDER BY id;
+----
+id	score
+3	1.203973
+
+
+statement ok
+DROP TABLE bm1_kw;
+
+
 statement ok
 SET disabled_optimizers = '';

@@ -470,7 +470,7 @@ bool IsScorerFunctionName(std::string_view name) {
     S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
     S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
     S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
-    S::RawDL::Owner::type_name(),
+    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
   };
   return kScorerNames.contains(name);
 }

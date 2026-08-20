@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,31 +15,43 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "raw_boost.hpp"
+#include "idf.hpp"
 
-#include <absl/container/inlined_vector.h>
+#include <cmath>
 
-#include "basics/shared.hpp"
+#include "basics/assert.h"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/collectors.hpp"
 #include "iresearch/search/volatile_boost_score.hpp"
 
 namespace irs {
 
-ScoreFunction RawBoost::PrepareScorer(const ScoreContext& ctx) const {
+void IDF::collect(byte_type* stats_buf, const FieldCollector* field,
+                  const TermCollector* term) const {
+  const auto docs_with_field = field ? field->docs_with_field : 0;
+  const auto docs_with_term = term ? term->docs_with_term : 0;
+
+  auto* stats = stats_cast(stats_buf);
+  stats->value += static_cast<score_t>(
+    std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
+               (static_cast<double>(docs_with_term) + 0.5)));
+  SDB_ASSERT(stats->value >= 0.f);
+}
+
+ScoreFunction IDF::PrepareScorer(const ScoreContext& ctx) const {
+  const auto* stats = stats_cast(ctx.stats);
+  const auto value = ctx.boost * stats->value;
+
   const auto* volatile_boost = irs::get<BoostBlockAttr>(ctx.doc_attrs);
 
   if (!volatile_boost) {
-    return ScoreFunction::Constant(ctx.boost);
+    return ScoreFunction::Constant(value);
   }
 
-  return ScoreFunction::Make<VolatileBoostScore>(volatile_boost->value,
-                                                 ctx.boost);
+  return ScoreFunction::Make<VolatileBoostScore>(volatile_boost->value, value);
 }
 
 }  // namespace irs

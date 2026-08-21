@@ -708,10 +708,8 @@ class VariadicPhraseFrequency {
   friend class PhrasePosition<VariadicPhraseFrequency>;
 
   struct SubMatchContext {
-    ExecutionSrategy& strategy;
     PosAttr::value_t term_position{pos_limits::eof()};
     PosAttr::value_t min_sought{pos_limits::eof()};
-    typename Positions::iterator slot{};
     Adapter* sought_by{};
     const uint32_t* end{};  // end match offset
     bool match{false};
@@ -750,7 +748,7 @@ class VariadicPhraseFrequency {
     auto lead_it = std::begin(self._pos);
     ExecutionSrategy strategy{lead_it, *lead};
 
-    SubMatchContext match{.strategy = strategy};
+    SubMatchContext match;
 
     auto increase_freq = [&] {
       ++self._phrase_freq;
@@ -773,7 +771,6 @@ class VariadicPhraseFrequency {
       match.match = true;
 
       for (auto it = lead_it + 1; it != end;) {
-        match.slot = it;
         match.term_position = strategy.NextPosition(it);
 
         if (!pos_limits::valid(match.term_position)) {

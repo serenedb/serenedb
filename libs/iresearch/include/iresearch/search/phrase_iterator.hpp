@@ -163,8 +163,7 @@ struct TermPositionTraits<FixedTermPosition<Offs>> {
 // - NotifyNextLead(const Iterator& end)
 //  Should be called each time new valid lead position is taken and new loop
 //  over followers is started. All previous state is discarded. Follower
-//  positions might be resetted if permutations were built to avoid skipping
-//  matches.
+//  positions might be resetted to avoid skipping matches.
 //
 // - NextPosition(const Iterator& it)
 //  Calculates next position to seek for current follower (it)
@@ -253,15 +252,13 @@ class IntervalPositionStrategy {
     SDB_ASSERT(!pos_limits::eof(_lead_pos.value()));
     _base_position = _lead_pos.value();
     _interval_delta = 0;
-    if (_permutations) {
-      // it is a new lead during permutations. Reset all iterators except lead
-      // as we might skipped something during building permutations
+    if (_skipped) {
       // TODO(Dronplane) we can possibly postpone resetting all iterators until
       // they are needed. (_need_reset as a counter?)
       for (auto reset_it = _lead_it + 1; reset_it != end; ++reset_it) {
         Traits::ResetPos(*reset_it);
       }
-      _permutations = false;
+      _skipped = false;
     }
     _need_reset = false;
   }
@@ -282,7 +279,7 @@ class IntervalPositionStrategy {
     if (match) {
       ++it;
       if (_need_reset && it != end) {
-        SDB_ASSERT(_permutations);
+        SDB_ASSERT(_skipped);
         // TODO(Dronplane) we can possibly postpone resetting all iterators
         // until they are needed. (_need_reset as a counter?)
         for (auto reset_it = it; reset_it != end; ++reset_it) {
@@ -297,24 +294,12 @@ class IntervalPositionStrategy {
       return true;
     }
 
-    while (it != _lead_it + 1) {
-      --it;
-      // let`s adjust prev iterator pos  - so it will try to seek to
-      // "correct" position for our current position
-      auto prev_base_it = (it - 1);
-      _base_position = prev_base_it == _lead_it
-                         ? _lead_pos.value()
-                         : Traits::Position(*prev_base_it);
-      const auto window = Window(it);
-      const auto want = Reach(sought, it, fail_it);
-      if (want <= window.low || want > window.high) {
-        continue;
-      }
-      _interval_delta = want - window.low;
+    if (_skipped ? StepBack(it) : SkipBack(sought, fail_it, it)) {
       return true;
     }
+
     // Reached lead. Move it to closest reasonable position and try to re-start.
-    const auto bound = _permutations ? 0 : Reach(sought, _lead_it, fail_it);
+    const auto bound = _skipped ? 0 : Reach(sought, _lead_it, fail_it);
     _lead_pos.seek(std::max(bound, _lead_pos.value() + 1));
     return false;
   }
@@ -323,29 +308,14 @@ class IntervalPositionStrategy {
     // try to achieve next premutation
     SDB_ASSERT(it != _lead_it);
     const auto at_end = it == end;
-    if (!at_end && !_permutations) {
-      // we are not building premutations. So this is bailout due to eof on some
+    if (!at_end && !_skipped) {
+      // nothing was walked past. So this is bailout due to eof on some
       // iterator.
       SDB_ASSERT(pos_limits::eof(Traits::Position(*it)));
       return false;
     }
-    --it;
-    PosAttr::value_t current_position = pos_limits::eof();
-    while (it != _lead_it) {
-      auto prev_base_it = (it - 1);
-      current_position = Traits::Position(*it);
-      _base_position = prev_base_it == _lead_it
-                         ? _lead_pos.value()
-                         : Traits::Position(*prev_base_it);
-      const auto window = Window(it);
-      if (current_position < window.high) {
-        _need_reset = true;
-        // Force "it" to move at least one step forward.
-        _interval_delta = current_position - window.low + 1;
-        _permutations = true;
-        return true;
-      }
-      --it;
+    if (StepBack(it)) {
+      return true;
     }
 
     it = end;
@@ -363,6 +333,47 @@ class IntervalPositionStrategy {
     PosAttr::value_t low;
     PosAttr::value_t high;
   };
+
+  void Rebase(const Iterator& it) {
+    const auto prev_base_it = it - 1;
+    _base_position = prev_base_it == _lead_it ? _lead_pos.value()
+                                              : Traits::Position(*prev_base_it);
+  }
+
+  bool SkipBack(PosAttr::value_t sought, const Iterator& fail_it,
+                Iterator& it) {
+    SDB_ASSERT(!_skipped);
+    while (it != _lead_it + 1) {
+      --it;
+      Rebase(it);
+      const auto window = Window(it);
+      const auto want = Reach(sought, it, fail_it);
+      if (want <= window.low || want > window.high) {
+        continue;
+      }
+      _interval_delta = want - window.low;
+      _skipped = true;
+      return true;
+    }
+    return false;
+  }
+
+  bool StepBack(Iterator& it) {
+    while (it != _lead_it + 1) {
+      --it;
+      const auto current_position = Traits::Position(*it);
+      Rebase(it);
+      const auto window = Window(it);
+      if (current_position < window.high) {
+        _need_reset = true;
+        // Force "it" to move at least one step forward.
+        _interval_delta = current_position - window.low + 1;
+        _skipped = true;
+        return true;
+      }
+    }
+    return false;
+  }
 
   const TermInterval& Gap(const Iterator& it) const noexcept {
     return Traits::Interval(_reversed ? *(it - 1) : *it);
@@ -388,7 +399,8 @@ class IntervalPositionStrategy {
       }
       return sought + span;
     }
-    SDB_ASSERT(sought >= Traits::Interval(*to).lead_offset);
+    SDB_ASSERT(sought + Traits::Interval(*from).lead_offset >=
+               Traits::Interval(*to).lead_offset);
     return sought - Traits::Interval(*to).lead_offset +
            Traits::Interval(*from).lead_offset;
   }
@@ -398,7 +410,7 @@ class IntervalPositionStrategy {
   PosAttr::value_t _base_position{pos_limits::eof()};
   PosAttr::value_t _interval_delta{0};
   bool _reversed{false};
-  bool _permutations{false};
+  bool _skipped{false};
   bool _need_reset{false};
 };
 
@@ -661,9 +673,12 @@ class VariadicPhraseFrequency {
   static constexpr bool kHasBoost = HasBoost;
   static constexpr bool kHasFreq = HasFreq;
 
-  explicit VariadicPhraseFrequency(std::vector<TermPosition>&& pos) noexcept
+  explicit VariadicPhraseFrequency(std::vector<TermPosition>&& pos)
     : _pos{std::move(pos)}, _phrase_size{_pos.size()} {
     SDB_ASSERT(_phrase_size != 0);
+    if constexpr (HasBoost) {
+      _slot_boosts.resize(_phrase_size - 1);
+    }
     // lead offset is always 0
     SDB_ASSERT(_pos.front().second.offs_min == 0);
     SDB_ASSERT(_pos.front().second.offs_max == 0);
@@ -693,12 +708,10 @@ class VariadicPhraseFrequency {
   friend class PhrasePosition<VariadicPhraseFrequency>;
 
   struct SubMatchContext {
-    ExecutionSrategy& strategy;
     PosAttr::value_t term_position{pos_limits::eof()};
     PosAttr::value_t min_sought{pos_limits::eof()};
-    typename Positions::iterator slot{};
+    Adapter* sought_by{};
     const uint32_t* end{};  // end match offset
-    score_t boost{};
     bool match{false};
   };
 
@@ -719,28 +732,11 @@ class VariadicPhraseFrequency {
     auto* p = it_adapter.position;
     p->reset();
     const auto sought = p->seek(match.term_position);
-    if (pos_limits::eof(sought)) {
-      return true;
-    }
     if (sought < match.min_sought) {
       match.min_sought = sought;
+      match.sought_by = &it_adapter;
     }
-    if (!match.strategy.Match(match.term_position, sought, match.slot)) {
-      return true;
-    }
-
-    if constexpr (HasBoost) {
-      match.boost += it_adapter.boost;
-    }
-
-    if constexpr (std::is_same_v<Adapter, VariadicPhraseOffsetAdapter>) {
-      if (it_adapter.offset) {  // FIXME(gnusi): remove condition
-        match.end = &it_adapter.offset->end;
-      }
-    }
-
-    match.match = true;
-    return false;
+    return true;
   }
 
   static bool VisitLead(void* ctx, Adapter& lead_adapter) {
@@ -752,7 +748,7 @@ class VariadicPhraseFrequency {
     auto lead_it = std::begin(self._pos);
     ExecutionSrategy strategy{lead_it, *lead};
 
-    SubMatchContext match{.strategy = strategy};
+    SubMatchContext match;
 
     auto increase_freq = [&] {
       ++self._phrase_freq;
@@ -763,31 +759,41 @@ class VariadicPhraseFrequency {
         self._end = *match.end;
       }
       if constexpr (HasBoost) {
-        self._phrase_boost += match.boost;
+        self._phrase_boost += lead_adapter.boost;
+        for (auto boost : self._slot_boosts) {
+          self._phrase_boost += boost;
+        }
       }
     };
 
     while (!pos_limits::eof(lead->value())) {
       strategy.NotifyNextLead(end);
       match.match = true;
-      if constexpr (HasBoost) {
-        match.boost = lead_adapter.boost;
-      }
 
       for (auto it = lead_it + 1; it != end;) {
-        match.slot = it;
         match.term_position = strategy.NextPosition(it);
 
         if (!pos_limits::valid(match.term_position)) {
           return false;  // invalid for all
         }
 
-        match.match = false;
         match.min_sought = pos_limits::eof();
+        match.sought_by = nullptr;
 
         it->first->visit(&match, VisitFollower);
 
-        if (!match.match) {
+        match.match = !pos_limits::eof(match.min_sought) &&
+                      strategy.Match(match.term_position, match.min_sought, it);
+        if (match.match) {
+          if constexpr (HasBoost) {
+            self._slot_boosts[(it - lead_it) - 1] = match.sought_by->boost;
+          }
+          if constexpr (std::is_same_v<Adapter, VariadicPhraseOffsetAdapter>) {
+            if (match.sought_by->offset) {  // FIXME(gnusi): remove condition
+              match.end = &match.sought_by->offset->end;
+            }
+          }
+        } else {
           if (pos_limits::eof(match.min_sought)) {
             if constexpr (HasFreq) {
               if (!strategy.NextPermutation(it, end)) {
@@ -835,6 +841,8 @@ class VariadicPhraseFrequency {
   const size_t _phrase_size;
   uint32_t _phrase_freq = 0;         // freqency of the phrase in a document
   score_t _phrase_boost = kNoBoost;  // boost of the phrase in a document
+  // boost of the term each follower currently stands on
+  std::vector<score_t> _slot_boosts;
 
   // FIXME(gnusi): refactor
   uint32_t _start{};

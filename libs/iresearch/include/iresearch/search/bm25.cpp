@@ -62,7 +62,7 @@ IRS_FORCE_INLINE void Bm1Boost(score_t* IRS_RESTRICT res, scores_size_t n,
                                const score_t* IRS_RESTRICT boost,
                                score_t num) noexcept {
   for (scores_size_t i = 0; i != n; ++i) {
-    res[i] = boost[i] * num;
+    Merge<MergeType>(res[i], boost[i] * num);
   }
 }
 
@@ -108,7 +108,6 @@ IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
   }
 }
 
-template<bool HasFilterBoost>
 struct Bm1Score : public ScoreOperator {
   Bm1Score(score_t k, score_t boost, const BM25Stats& stats,
            const score_t* fb) noexcept
@@ -117,11 +116,7 @@ struct Bm1Score : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    if constexpr (HasFilterBoost) {
-      Bm1Boost<MergeType>(res, n, filter_boost, num);
-    } else {
-      std::memset(res, 0, sizeof(score_t) * n);
-    }
+    Bm1Boost<MergeType>(res, n, filter_boost, num);
   }
 
   score_t Score() const noexcept final {
@@ -154,10 +149,8 @@ struct Bm1Score : public ScoreOperator {
     ScoreImpl(res, kPostingBlock);
   }
 
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
-    filter_boost;
-  [[no_unique_address]] utils::Need<HasFilterBoost, score_t>
-    num;  // partially precomputed numerator : boost * (k + 1) * idf
+  const score_t* filter_boost;
+  score_t num;  // partially precomputed numerator : boost * (k + 1) * idf
 };
 
 template<bool HasFilterBoost>
@@ -310,6 +303,20 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
 }
 
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
+  auto* filter_boost = [&] {
+    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
+    return attr ? attr->value : nullptr;
+  }();
+
+  if (IsBM1()) {
+    auto* bm1_stats = stats_cast(ctx.stats);
+    if (!filter_boost) {
+      return ScoreFunction::Constant(ctx.boost * (_k + 1) * bm1_stats->idf);
+    }
+    return ScoreFunction::Make<Bm1Score>(_k, ctx.boost, *bm1_stats,
+                                         filter_boost);
+  }
+
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
 
   if (!freq) {
@@ -322,19 +329,9 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Constant(ctx.boost);
   }
 
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<BoostBlockAttr>(ctx.doc_attrs);
-    return attr ? attr->value : nullptr;
-  }();
-
   auto* stats = stats_cast(ctx.stats);
 
   return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    if (IsBM1()) {
-      return ScoreFunction::Make<Bm1Score<HasBoost>>(_k, ctx.boost, *stats,
-                                                     filter_boost);
-    }
-
     if (IsBM15()) {
       return ScoreFunction::Make<Bm15Score<HasBoost>>(_k, ctx.boost, *stats,
                                                       freq, filter_boost);

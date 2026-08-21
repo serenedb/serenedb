@@ -90,6 +90,10 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
                const irs::TermCollector* term) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
+    if (IsBM1()) {
+      return IndexFeatures::None;
+    }
+
     if (NeedsNorm()) {
       return IndexFeatures::Freq | IndexFeatures::Norm;
     }

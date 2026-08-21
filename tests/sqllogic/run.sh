@@ -15,6 +15,14 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 : "${RESOURCES:=$(realpath "$SCRIPT_DIR/../../resources")}"
 export RESOURCES
 
+# Cross-uid container setups (the RTA composes): the server accesses
+# __TEST_DIR__ as a different uid, so everything tests create there --
+# including subdirs made by `system` commands -- must be world-writable.
+# The runner already relaxes __TEST_DIR__ itself under the same flag.
+if [[ -n "${SLT_TEST_DIR_SHARED:-}" ]]; then
+	umask 0
+fi
+
 # Local sanitizer runs: if the built serened is a sanitizer binary and the
 # matching *_OPTIONS var isn't already set, export it (with the local
 # suppressions file) so a serened started from this shell -- or a sanitizer-built

@@ -31,6 +31,7 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/filter_optimizer.hpp"
+#include "iresearch/search/ngram_similarity_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
@@ -296,6 +297,145 @@ TEST_P(Bm25TestCase, test_normalize_features) {
     ASSERT_NE(nullptr, scorer);
     ASSERT_EQ(irs::IndexFeatures::Freq, scorer->GetIndexFeatures());
   }
+}
+
+TEST_P(Bm25TestCase, test_bm1_idf_only) {
+  auto analyzed_json_field_factory =
+    [](tests::Document& doc, const std::string& name,
+       const tests::JsonDocGenerator::JsonValue& data) {
+      typedef TextField<std::string> TextField;
+
+      class StringField : public tests::StringField {
+       public:
+        StringField(const std::string& name, const std::string_view& value)
+          : tests::StringField(name, value) {
+          this->index_features = irs::IndexFeatures::Freq;
+        }
+      };
+
+      if (data.is_string()) {
+        const auto anl_name = std::string(name.c_str()) + "_anl";
+        auto analyzed = std::make_shared<TextField>(anl_name, data.str);
+        analyzed->id = tests::FieldIdFor(anl_name);
+        doc.indexed.push_back(std::move(analyzed));
+
+        auto field = std::make_shared<StringField>(name, data.str);
+        field->id = tests::FieldIdFor(name);
+        doc.insert(std::move(field));
+      }
+    };
+
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                analyzed_json_field_factory);
+    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+                StoreName());
+  }
+
+  auto impl = irs::BM25::Make(irs::BM25::Options{.k1 = 0.f});
+  ASSERT_NE(nullptr, impl);
+  ASSERT_TRUE(dynamic_cast<irs::BM25&>(*impl).IsBM1());
+  ASSERT_EQ(irs::IndexFeatures::None, impl->GetIndexFeatures());
+
+  auto index = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, index->size());
+  auto& segment = *(index.begin());
+
+  MaxMemoryCounter counter;
+  irs::ColumnArgsFetcher fetcher;
+
+  auto collect = [&](const irs::Filter& filter) {
+    std::map<irs::doc_id_t, irs::score_t> scores;
+    tests::PreparedFilter prepared_filter{filter, *index, impl.get(), counter};
+    fetcher.Clear();
+    auto docs = prepared_filter.Execute(0);
+    auto score = docs->PrepareScore({
+      .scorer = impl.get(),
+      .segment = &segment,
+      .fetcher = &fetcher,
+    });
+    while (!irs::doc_limits::eof(docs->advance())) {
+      fetcher.Fetch(docs->value());
+      docs->FetchScoreArgs(0);
+      irs::score_t value{};
+      score.Score(&value, 1);
+      scores.emplace(docs->value(), value);
+    }
+    return scores;
+  };
+
+  auto make_term = [](irs::ByTerm& filter, std::string_view term) {
+    *filter.mutable_field_id() = kPhraseAnl;
+    filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  };
+
+  irs::ByTerm cookies;
+  make_term(cookies, "cookies");
+  irs::ByTerm meringue;
+  make_term(meringue, "meringue");
+
+  const auto cookies_scores = collect(cookies);
+  const auto meringue_scores = collect(meringue);
+  ASSERT_FALSE(cookies_scores.empty());
+  ASSERT_FALSE(meringue_scores.empty());
+
+  for (const auto& [doc, value] : cookies_scores) {
+    ASSERT_GT(value, 0.f);
+    ASSERT_FLOAT_EQ(cookies_scores.begin()->second, value);
+  }
+  for (const auto& [doc, value] : meringue_scores) {
+    ASSERT_GT(value, 0.f);
+    ASSERT_FLOAT_EQ(meringue_scores.begin()->second, value);
+  }
+  if (cookies_scores.size() != meringue_scores.size()) {
+    ASSERT_NE(cookies_scores.begin()->second, meringue_scores.begin()->second);
+  }
+
+  auto make_ngram = [](std::initializer_list<std::string_view> ngrams) {
+    auto filter = std::make_unique<irs::ByNGramSimilarity>();
+    *filter->mutable_field_id() = kPhraseAnl;
+    auto& opts = *filter->mutable_options();
+    for (auto ngram : ngrams) {
+      opts.ngrams.emplace_back(irs::ViewCast<irs::byte_type>(ngram));
+    }
+    opts.threshold = 0.5f;
+    opts.allow_phrase = false;
+    return filter;
+  };
+
+  auto lower = [&](irs::Filter::ptr filter) {
+    irs::Optimize(filter, {.scored = true});
+    return filter;
+  };
+
+  const auto left_scores = collect(*lower(make_ngram({"cookies", "cake"})));
+  const auto right_scores =
+    collect(*lower(make_ngram({"biscuit", "meringue"})));
+  ASSERT_FALSE(left_scores.empty());
+  ASSERT_FALSE(right_scores.empty());
+
+  auto disjunction = std::make_unique<irs::Or>();
+  disjunction->add(make_ngram({"cookies", "cake"}));
+  disjunction->add(make_ngram({"biscuit", "meringue"}));
+  const auto disjunction_scores = collect(*lower(std::move(disjunction)));
+
+  size_t overlapped = 0;
+  for (const auto& [doc, left_value] : left_scores) {
+    const auto right = right_scores.find(doc);
+    if (right == right_scores.end()) {
+      continue;
+    }
+    ASSERT_GT(left_value, 0.f);
+    ASSERT_GT(right->second, 0.f);
+    ++overlapped;
+    const auto merged = disjunction_scores.find(doc);
+    ASSERT_NE(disjunction_scores.end(), merged);
+    ASSERT_FLOAT_EQ(left_value + right->second, merged->second);
+  }
+  ASSERT_GT(overlapped, 0);
+
+  EXPECT_EQ(counter.current, 0);
+  counter.Reset();
 }
 
 TEST_P(Bm25TestCase, test_phrase) {

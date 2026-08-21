@@ -1,0 +1,78 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include "basics/assert.h"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
+
+namespace irs {
+
+class VolatileBoostScore : public ScoreOperator {
+ public:
+  VolatileBoostScore(const score_t* volatile_boost, score_t constant) noexcept
+    : _constant{constant}, _volatile_boost{volatile_boost} {
+    SDB_ASSERT(volatile_boost);
+  }
+
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res, size_t n) const noexcept {
+    for (scores_size_t i = 0; i != n; ++i) {
+      Merge<MergeType>(res[i], _volatile_boost[i] * _constant);
+    }
+  }
+
+  score_t Score() const noexcept final {
+    score_t res{};
+    ScoreImpl(&res, 1);
+    return res;
+  }
+
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
+  }
+
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
+  }
+
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
+  }
+
+ private:
+  score_t _constant;
+  const score_t* _volatile_boost;
+};
+
+}  // namespace irs

@@ -26,6 +26,7 @@
 
 #include "basics/memory.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
+#include "iresearch/formats/posting/skip_column.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "pg/sql_exception_macro.h"
@@ -98,6 +99,14 @@ struct PostingsWriter {
   struct FieldStats {
     bool has_score_bounds;
     doc_id_t docs_count;
+    // Where this field's data starts in ".doc", the base of the `docoff`
+    // column.
+    uint64_t doc_origin;
+    // Where this field's skip columns live in ".skp".
+    uint64_t skip_origin;
+    uint64_t skip_dir;
+    uint64_t skip_count;
+    uint32_t skip_columns;
   };
 
   virtual ~PostingsWriter() = default;
@@ -128,6 +137,9 @@ struct BasicTermReader : public AttributeProvider {
 struct IteratorFieldOptions {
   bool score_prune = false;
   bool has_score_bounds = false;
+  // The field's skip columns, empty when no term in it is long enough to
+  // have any.
+  SkipColumnsView skip;
 };
 
 struct PostingCookie {
@@ -145,6 +157,12 @@ struct PostingsReader {
 
   virtual uint64_t CountMappedMemory() const = 0;
 
+  // Points at `bytes` of the ".skp" stream starting at `off`. Falls back to
+  // reading into `buf` when the stream cannot hand out a pointer, so the
+  // caller must keep `buf` alive as long as the result is used.
+  virtual const byte_type* MapSkip(uint64_t off, size_t bytes,
+                                   ManagedVector<byte_type>& buf) const = 0;
+
   // in - corresponding stream
   // features - the set of features available for segment
   virtual void prepare(DataInput& in, const ReaderState& state,
@@ -154,6 +172,7 @@ struct PostingsReader {
   // attributes.
   // Returns number of bytes read from in.
   virtual size_t decode(const byte_type* in, IndexFeatures features,
+                        PostingDecodeState& decode_state,
                         PostingMeta& state) = 0;
 
   // Evaluates a union of all docs denoted by attribute supplied via a
@@ -163,7 +182,8 @@ struct PostingsReader {
   // It's up to the caller to allocate enough space for a bitset.
   // This API is experimental.
   virtual size_t BitUnion(IndexFeatures field_features, TermProvider provider,
-                          uint64_t* set, bool has_score_bounds) = 0;
+                          uint64_t* set, bool has_score_bounds,
+                          const SkipColumnsView& skip) = 0;
 
   virtual DocIterator::ptr Iterator(IndexFeatures field_features,
                                     IndexFeatures required_features,
@@ -248,6 +268,10 @@ struct TermReader : public AttributeProvider {
 
   // Returns true if the field has per-block score bounds persisted.
   virtual bool HasScoreBounds() const = 0;
+
+  // The field's skip columns, empty when no term in it is long enough to
+  // have any.
+  virtual const SkipColumnsView& Skip() const noexcept = 0;
 };
 
 struct SegmentMetaWriter : memory::Managed {

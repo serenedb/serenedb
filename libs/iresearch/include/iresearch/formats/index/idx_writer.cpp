@@ -154,6 +154,11 @@ void IdxWriter::Commit() {
         obj.WriteProperty<bool>(6, "has_score_bounds", e.meta.has_score_bounds);
         obj.WriteProperty<uint64_t>(7, "body_offset", e.meta.body_offset);
         obj.WriteProperty<uint64_t>(8, "norm", e.meta.norm);
+        obj.WriteProperty<uint64_t>(9, "doc_origin", e.meta.doc_origin);
+        obj.WriteProperty<uint64_t>(10, "skip_origin", e.meta.skip_origin);
+        obj.WriteProperty<uint64_t>(11, "skip_dir", e.meta.skip_dir);
+        obj.WriteProperty<uint64_t>(12, "skip_count", e.meta.skip_count);
+        obj.WriteProperty<uint32_t>(13, "skip_columns", e.meta.skip_columns);
       });
     });
   serializer.WriteList(

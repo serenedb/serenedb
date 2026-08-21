@@ -65,10 +65,22 @@ struct Scorer;
 struct FieldCollector;
 struct TermCollector;
 
+// A score bound as the skip columns store it. Semantically a (freq, norm)
+// pair, but norm is always >= freq and the two move together, so the second
+// column holds their difference and is usually zero.
+struct ScoreBound {
+  uint32_t freq = 1;
+  uint32_t delta = 0;
+};
+
 struct ScoreBoundSource : AttributeProvider {
   using ptr = std::unique_ptr<ScoreBoundSource>;
 
   virtual void Read(DataInput& in, size_t size) = 0;
+
+  // The same bound, taken from the skip columns rather than parsed out of a
+  // stream.
+  virtual void Set(ScoreBound bound) noexcept = 0;
 };
 
 struct ScoreBoundWriter {
@@ -90,6 +102,17 @@ struct ScoreBoundWriter {
 
   virtual byte_type Size(size_t level) const = 0;
   virtual byte_type SizeRoot(size_t level) = 0;
+
+  // Whether `ScoreBound::delta` carries anything, i.e. whether the field
+  // needs a second bound column.
+  virtual bool HasNorm() const noexcept = 0;
+
+  // The bound of the doc block that just ended: folds it into the term's
+  // bound and starts accumulating the next one.
+  virtual ScoreBound Take() noexcept = 0;
+
+  // The term's bound over every block, including the one still open.
+  virtual ScoreBound Root() noexcept = 0;
 };
 
 struct ScoreContext {

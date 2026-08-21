@@ -31,27 +31,50 @@ namespace irs {
 struct PostingMeta {
   void clear() noexcept {
     docs_count = freq = 0;
-    doc_start = pos_start = pay_start = 0;
+    pos_start = pay_start = 0;
     pos_offset = 0;
-    doc_delta = 0;
+    first_entry = 0;
   }
 
   uint32_t docs_count = 0;  // How many documents a particular term contains
   uint32_t freq = 0;  // How many times a particular term occur in documents
-  uint64_t doc_start = 0;  // where this term's postings start in the .doc file
   uint64_t pos_start = 0;  // where this term's postings start in the .pos file
   uint64_t pay_start = 0;  // where this term's postings start in the .pay file
   // Slot of the term's first position inside the block at `pos_start`, so it
   // is bounded by the position block size.
   uint32_t pos_offset = 0;
-  // A delta whose base `docs_count` decides, and the only field of this record
-  // that means two things. A single-document term has no `.doc` data, so it
-  // carries its document as a delta from `doc_limits::min()`; a term long
-  // enough to carry skip data carries where that data starts as a delta from
-  // `doc_start`, which bounds it by the term's own `.doc` footprint rather than
-  // by the file -- `EndTerm` refuses a term that does not fit. For the lengths
-  // in between it is neither written nor read.
-  uint32_t doc_delta = 0;
+
+  // The record carries exactly one of the three below, and `docs_count` says
+  // which:
+  //
+  //   1 doc         `doc` -- the document itself. Such a term has no `.doc`
+  //                 data, and its score bound follows from `freq` and that
+  //                 document.
+  //   <= 128 docs   `doc_start` -- one doc block, whose score bound leads the
+  //                 term's `.doc` data.
+  //   more          `first_entry` -- ordinal of the term's first skip entry.
+  //                 Entry `j` describes doc block `j`, so entry 0 carries
+  //                 `doc_start` and every block's bound is a column.
+  //
+  // Each is monotone only within itself, so each delta codes against the last
+  // term of its own kind -- the running bases live in the decoder, not here.
+  //
+  // `pos_start`, `pos_offset` and `pay_start` are written for every term, so
+  // the position and payload columns can be relative to them.
+  union {
+    doc_id_t doc;
+    uint64_t doc_start;
+    uint64_t first_entry = 0;
+  };
+};
+
+// Running delta bases for `PostingsReader::decode`. The term record's one
+// slot takes three meanings and each is monotone only within itself, so each
+// needs its own base. Kept out of `PostingMeta`, of which there is one per
+// term, and reset alongside it at a block boundary.
+struct PostingDecodeState {
+  uint64_t doc_start = 0;
+  uint64_t first_entry = 0;
 };
 
 // What a query over a term this segment does not have stands on.

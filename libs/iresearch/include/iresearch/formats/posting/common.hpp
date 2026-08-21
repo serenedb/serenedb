@@ -87,19 +87,6 @@ IRS_FORCE_INLINE void ReadState(SkipState& state, Input& in) {
   }
 }
 
-template<typename IteratorTraits>
-IRS_FORCE_INLINE void CopyState(SkipState& to,
-                                const PostingMeta& from) noexcept {
-  to.doc_ptr = from.doc_start;
-  if constexpr (IteratorTraits::Position()) {
-    to.pos_ptr = from.pos_start;
-    if constexpr (IteratorTraits::Offset()) {
-      to.pay_ptr = from.pay_start;
-    }
-    to.pos_offset = from.pos_offset;
-  }
-}
-
 // TODO(mbkkt) Make it overloads
 // Remove to many Readers implementations
 

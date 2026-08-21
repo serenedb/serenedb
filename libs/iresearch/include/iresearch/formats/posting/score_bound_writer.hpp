@@ -59,11 +59,13 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
     for (auto& entry : _levels) {
       entry = {};
     }
+    _open = false;
   }
 
   void Update() noexcept final {
     SDB_ASSERT(!_levels.empty());
     _producer.Produce(_levels.front());
+    _open = true;
   }
 
   void Write(size_t level, MemoryIndexOutput& out) final {
@@ -96,11 +98,47 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
     return Producer::Size(*it);
   }
 
+  bool HasNorm() const noexcept final { return Producer::kHasNorm; }
+
+  ScoreBound Take() noexcept final {
+    auto& block = _levels[kBlock];
+    _producer.Produce(block, _levels[kTerm]);
+    const auto bound = ToBound(block);
+    block = {};
+    _open = false;
+    return bound;
+  }
+
+  ScoreBound Root() noexcept final {
+    if (_open) {
+      _producer.Produce(_levels[kBlock], _levels[kTerm]);
+      _open = false;
+    }
+    return ToBound(_levels[kTerm]);
+  }
+
  private:
+  // The skip columns need exactly two accumulators: the doc block being
+  // filled, and the term's bound over the blocks already taken.
+  static constexpr size_t kBlock = 0;
+  static constexpr size_t kTerm = 1;
+
+  static ScoreBound ToBound(const EntryType& entry) noexcept {
+    ScoreBound bound;
+    bound.freq = entry.freq;
+    if constexpr (Producer::kHasNorm) {
+      SDB_ASSERT(entry.norm >= entry.freq);
+      bound.delta = entry.norm - entry.freq;
+    }
+    return bound;
+  }
+
   // doc_limits::kMaxSkipLevels -- current max skip list levels
   // 1 -- for whole skip list level
   utils::FixedBuffer<EntryType, doc_limits::kMaxSkipLevels + 1> _levels;
   [[no_unique_address]] Producer _producer;
+  // Whether the open block has seen a document since the last `Take`.
+  bool _open{false};
 };
 
 enum ScoreBoundTag : uint32_t {
@@ -132,6 +170,11 @@ class FreqNormProducer : public AttributeProvider {
   static constexpr bool kMaxFreq = kMinNorm || (Tag & kScoreBoundMaxFreq) != 0;
 
   static constexpr bool kNorm = kBm25 || kDivNorm || kMinNorm != 0;
+
+ public:
+  static constexpr bool kHasNorm = kNorm;
+
+ private:
 
   static constexpr score_t kMinAvgDL = 1.f;
   static constexpr score_t kMaxAvgDL = 2147483648.f;
@@ -378,6 +421,13 @@ class FreqNormSource final : public ScoreBoundSource {
     }
     if constexpr (kNorm) {
       _norm.value = norm;
+    }
+  }
+
+  void Set(ScoreBound bound) noexcept final {
+    _freq = bound.freq;
+    if constexpr (kNorm) {
+      _norm.value = bound.freq + bound.delta;
     }
   }
 

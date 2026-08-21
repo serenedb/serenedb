@@ -813,7 +813,9 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
     return;
   }
 
-  const auto [has_score_bounds, doc_count] = _pw->EndField();
+  const auto field_stats = _pw->EndField();
+  const auto has_score_bounds = field_stats.has_score_bounds;
+  const auto doc_count = field_stats.docs_count;
 
   // cause creation of all final blocks
   Push(kEmptyStringView<byte_type>);
@@ -864,6 +866,11 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   meta.total_term_freq = total_term_freq;
   meta.has_score_bounds = has_score_bounds != 0;
   meta.body_offset = body_offset;
+  meta.doc_origin = field_stats.doc_origin;
+  meta.skip_origin = field_stats.skip_origin;
+  meta.skip_dir = field_stats.skip_dir;
+  meta.skip_count = field_stats.skip_count;
+  meta.skip_columns = field_stats.skip_columns;
   meta.norm = props.norm;
   _idx->AddTermDictEntry(id, std::move(meta));
 }
@@ -894,7 +901,19 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
 
+  const SkipColumnsView& Skip() const noexcept final { return _skip; }
+
   void LoadFromMeta(field_id id, const TermDictMeta& meta, DataInput& in);
+
+  // Points `_skip` at the field's directory. Separate from `LoadFromMeta`
+  // because it needs the postings reader that owns ".skp".
+  void MapSkip(const TermDictMeta& meta, const PostingsReader& pr) {
+    _skip.count = meta.skip_count;
+    _skip.origin = meta.skip_origin;
+    _skip.doc_origin = meta.doc_origin;
+    _skip.columns = meta.skip_columns;
+    _skip.dir = pr.MapSkip(meta.skip_dir, _skip.DirBytes(), _skip_buf);
+  }
 
  private:
   FieldMeta _field;
@@ -903,6 +922,10 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   uint64_t _terms_count{};
   uint64_t _doc_count{};
   bool _has_score_bounds{};
+  SkipColumnsView _skip;
+  // Holds the directory only when ".skp" cannot hand out a pointer to it.
+  ManagedVector<byte_type> _skip_buf{
+    ManagedTypedAllocator<byte_type>{IResourceManager::gNoop}};
   FreqAttr _freq;  // total term freq
 };
 
@@ -1115,6 +1138,8 @@ class BlockIterator : util::Noncopyable {
   DataBlock _suffix;  // suffix data block
   DataBlock _stats;   // stats data block
   PostingMeta _state;
+  // Delta bases for `_state`'s one slot, saved and restored with it.
+  PostingDecodeState _decode_state;
   size_t _suffix_length{};  // last matched suffix length
   const byte_type* _suffix_begin{};
   uint64_t _start;      // initial block start pointer
@@ -1478,19 +1503,23 @@ void BlockIterator::LoadData(const FieldMeta& meta, PostingMeta& state,
     return;
   }
 
+  PostingDecodeState decode_state;
   if (0 == _cur_stats_ent) {
     // clear state at the beginning
     state.clear();
   } else {
     state = _state;
+    decode_state = _decode_state;
   }
 
   for (; _cur_stats_ent < _term_count; ++_cur_stats_ent) {
-    _stats.begin += pr.decode(_stats.begin, meta.index_features, state);
+    _stats.begin +=
+      pr.decode(_stats.begin, meta.index_features, decode_state, state);
     _stats.AssertBlockBoundaries();
   }
 
   _state = state;
+  _decode_state = decode_state;
 }
 
 void BlockIterator::Reset() {
@@ -1543,7 +1572,8 @@ class TermIteratorBase : public SeekTermIterator {
     }
     return _postings->Iterator(
       field_meta.index_features, features, {.cookie = &_posting_meta},
-      IteratorFieldOptions{.has_score_bounds = _field->HasScoreBounds()});
+      IteratorFieldOptions{.has_score_bounds = _field->HasScoreBounds(),
+                           .skip = _field->Skip()});
   }
 
   void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
@@ -1972,7 +2002,8 @@ class SingleTermLookup : public SeekTermIterator {
   DocIterator::ptr postings(IndexFeatures features) const final {
     return _postings->Iterator(
       _field->meta().index_features, features, {.cookie = &_meta},
-      IteratorFieldOptions{.has_score_bounds = _field->HasScoreBounds()});
+      IteratorFieldOptions{.has_score_bounds = _field->HasScoreBounds(),
+                           .skip = _field->Skip()});
   }
 
   const PostingMeta& Meta() const noexcept { return _meta; }
@@ -2484,6 +2515,7 @@ class FieldReader::Impl {
                          IndexInput& blocks_in) {
       blocks_in.Seek(meta.body_offset);
       LoadFromMeta(id, meta, blocks_in);
+      MapSkip(meta, *_owner->_pr);
       _fst.reset(FST::Read(blocks_in, _owner->_resource_manager));
       if (!_fst) {
         throw IndexError{
@@ -2526,7 +2558,7 @@ class FieldReader::Impl {
       }
 
       if (const auto& meta = it.cookie(); meta.docs_count == 1) {
-        acceptor(doc_limits::min() + meta.doc_delta);
+        acceptor(meta.doc);
         return;
       }
 
@@ -2550,7 +2582,7 @@ class FieldReader::Impl {
       SDB_ASSERT(_owner != nullptr);
       SDB_ASSERT(_owner->_pr != nullptr);
       return _owner->_pr->BitUnion(meta().index_features, provider, set,
-                                   HasScoreBounds());
+                                   HasScoreBounds(), Skip());
     }
 
     SeekTermIterator::ptr iterator(
@@ -2595,7 +2627,9 @@ class FieldReader::Impl {
       SDB_ASSERT(1 <= min_match);
       SDB_ASSERT(min_match <= cookies.size());
       const IteratorFieldOptions field_options{
-        .score_prune = score_prune, .has_score_bounds = HasScoreBounds()};
+        .score_prune = score_prune,
+        .has_score_bounds = HasScoreBounds(),
+        .skip = Skip()};
 
       return _owner->_pr->Iterator(meta().index_features, features, cookies,
                                    field_options, min_match, type);

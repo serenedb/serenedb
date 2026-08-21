@@ -91,13 +91,33 @@ class PostingsReaderBase : public PostingsReader {
     if (_pay_in != nullptr) {
       bytes += _pay_in->CountMappedMemory();
     }
+    if (_skip_in != nullptr) {
+      bytes += _skip_in->CountMappedMemory();
+    }
     return bytes;
+  }
+
+  const byte_type* MapSkip(uint64_t off, size_t bytes,
+                           ManagedVector<byte_type>& buf) const final {
+    if (bytes == 0) {
+      return nullptr;
+    }
+    SDB_ASSERT(_skip_in);
+    _skip_in->Seek(off);
+    if (const auto* p = _skip_in->ReadVolatile(bytes); p != nullptr)
+      [[likely]] {
+      return p;
+    }
+    buf.resize(bytes);
+    _skip_in->ReadData(buf.data(), bytes);
+    return buf.data();
   }
 
   void prepare(DataInput& in, const ReaderState& state,
                IndexFeatures features) final;
 
   size_t decode(const byte_type* in, IndexFeatures field_features,
+                PostingDecodeState& decode_state,
                 PostingMeta& state) final;
 
   std::unique_ptr<IndexInput> ReopenPayload() const final {
@@ -112,6 +132,7 @@ class PostingsReaderBase : public PostingsReader {
   IndexInput::ptr _doc_in;
   IndexInput::ptr _pos_in;
   IndexInput::ptr _pay_in;
+  IndexInput::ptr _skip_in;
   size_t _block_size;
   doc_id_t _docs_count = 0;
 };
@@ -162,6 +183,10 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
     format_utils::ReadChecksum(*_pay_in);
   }
 
+  PrepareInput(buf, _skip_in, IOAdvice::RANDOM, state,
+               PostingsWriterBase::kSkipExt,
+               PostingsWriterBase::kSkipFormatName);
+
   const uint64_t block_size = in.ReadV32();
 
   if (block_size != _block_size) {
@@ -177,6 +202,7 @@ inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
 
 inline size_t PostingsReaderBase::decode(const byte_type* in,
                                          IndexFeatures features,
+                                         PostingDecodeState& decode_state,
                                          PostingMeta& posting_meta) {
   const auto* p = in;
 
@@ -189,7 +215,6 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
     posting_meta.freq = posting_meta.docs_count + vread<uint32_t>(p);
   }
 
-  posting_meta.doc_start += vread<uint64_t>(p);
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
     posting_meta.pos_start += vread<uint64_t>(p);
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
@@ -201,8 +226,15 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
     posting_meta.pos_offset = *p++;
   }
 
-  if (1 == posting_meta.docs_count || _block_size < posting_meta.docs_count) {
-    posting_meta.doc_delta = vread<uint32_t>(p);
+  // The one slot, read the way `PostingsWriterBase::Encode` wrote it.
+  if (1 == posting_meta.docs_count) {
+    posting_meta.doc = doc_limits::min() + vread<uint32_t>(p);
+  } else if (posting_meta.docs_count <= _block_size) {
+    decode_state.doc_start += vread<uint64_t>(p);
+    posting_meta.doc_start = decode_state.doc_start;
+  } else {
+    decode_state.first_entry += vread<uint64_t>(p);
+    posting_meta.first_entry = decode_state.first_entry;
   }
 
   SDB_ASSERT(p >= in);
@@ -218,7 +250,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   PostingsReaderImpl() noexcept : PostingsReaderBase{doc_limits::kBlockSize} {}
 
   size_t BitUnion(IndexFeatures field, TermProvider provider, uint64_t* set,
-                  bool has_score_bounds) final;
+                  bool has_score_bounds, const SkipColumnsView& skip) final;
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
@@ -283,7 +315,7 @@ void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, doc_id_t* docs,
 template<typename FormatTraits>
 size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   const IndexFeatures field_features, TermProvider provider, uint64_t* set,
-  bool has_score_bounds) {
+  bool has_score_bounds, const SkipColumnsView& skip) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   uint32_t enc_buf[doc_limits::kBlockSize];
   doc_id_t docs[doc_limits::kBlockSize
@@ -304,12 +336,35 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
     throw IoError("failed to reopen document input");
   }
 
+  SkipColumnsReader<IndexInput> cols;
+  const SkipColumnIndex idx{
+    std::max(skip.columns, 2u),
+    IndexFeatures::None != (field_features & IndexFeatures::Pos),
+    IndexFeatures::None != (field_features & IndexFeatures::Offs)};
+  IndexInput::ptr skip_data;
+  if (!skip.Empty()) {
+    SDB_ASSERT(_skip_in);
+    skip_data = _skip_in->Reopen();
+    if (!skip_data) {
+      SDB_ERROR(IRESEARCH, "Failed to reopen skip input");
+      throw IoError("failed to reopen skip input");
+    }
+    cols.Prepare(skip.dir, skip.count, skip.columns, skip.origin, *skip_data);
+  }
+
   size_t count = 0;
   while (const PostingMeta* meta = provider()) {
     const auto& term_state = *meta;
 
     if (term_state.docs_count > 1) {
-      doc_in->Seek(term_state.doc_start);
+      if (term_state.docs_count > doc_limits::kBlockSize) {
+        // A long term keeps no `doc_start`: entry 0 describes doc block 0.
+        SDB_ASSERT(!skip.Empty() && skip_data);
+        doc_in->Seek(skip.doc_origin +
+                     cols.GetOnce(idx.docoff, term_state.first_entry));
+      } else {
+        doc_in->Seek(term_state.doc_start);
+      }
       SDB_ASSERT(!doc_in->IsEOF());
       if (term_state.docs_count < doc_limits::kBlockSize) {
         SkipScoreBounds(has_score_bounds, *doc_in);
@@ -328,7 +383,7 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
 
       count += term_state.docs_count;
     } else {
-      const doc_id_t doc = doc_limits::min() + term_state.doc_delta;
+      const doc_id_t doc = term_state.doc;
       SetBit(set[doc / kBits], doc % kBits);
 
       ++count;
@@ -462,7 +517,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::PruningIterator(
         [&]<bool Root>(const PostingCookie& cookie) {
           auto it = memory::make_managed<
             SinglePruningIterator<FormatTraits, Root, Pos, Offs, InputType>>();
-          it->Prepare(cookie, _doc_in.get());
+          it->Prepare(cookie, options, _doc_in.get(), _skip_in.get());
           return it;
         };
 
@@ -530,12 +585,14 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
             if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
               auto it = memory::make_managed<PostingIteratorImpl<
                 IteratorTraits, FieldTraits, HasScoreBounds, BytesViewInput>>();
-              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              it->Prepare(cookie, options, _doc_in.get(), _pos_in.get(),
+                          _pay_in.get(), _skip_in.get());
               return it;
             } else {
               auto it = memory::make_managed<PostingIteratorImpl<
                 IteratorTraits, FieldTraits, HasScoreBounds, IndexInput>>();
-              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              it->Prepare(cookie, options, _doc_in.get(), _pos_in.get(),
+                          _pay_in.get(), _skip_in.get());
               return it;
             }
           });

@@ -564,8 +564,9 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
     }
     SDB_ASSERT(term_state == std::end(phrase_state->terms));
 
-    return memory::make_managed<
-      VariadicPhraseIterator<Adapter, false, false, HasIntervals>>(
+    return memory::make_managed<PhraseIterator<
+      Conjunction<ScoreAdapter>, PhrasePosition<VariadicPhraseFrequency<
+                                   Adapter, false, false, HasIntervals>>>>(
       static_cast<doc_id_t>(segment.docs_count()), std::move(conj_itrs),
       std::move(positions));
   });

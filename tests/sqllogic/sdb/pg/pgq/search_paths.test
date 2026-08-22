@@ -1,0 +1,214 @@
+# Path-finding combined with search. The index relation exposes the store
+# rowid for table-backed indexes, so ANY SHORTEST and quantifiers run over an
+# index-relation graph directly, with @@ predicates on the path endpoints.
+# BM25 inside a path-finding COLUMNS clause is not wired through the rewrite
+# and yields 0 (pinned below); score paths by joining the match with a scored
+# index-relation subquery instead. Graph: chain a->b->c->d->e plus shortcut
+# a->d. All bios are two tokens, so the BM25 scores are exact.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE sp_person (id BIGINT PRIMARY KEY, name VARCHAR, bio VARCHAR, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX sp_idx ON sp_person USING inverted(id, bio sp_en, emb ivf (metric = 'l2'));
+
+
+statement count 5
+INSERT INTO sp_person VALUES
+  (1, 'a', 'quick fox', [1, 0, 0]::FLOAT[3]),
+  (2, 'b', 'lazy dog', [0, 1, 0]::FLOAT[3]),
+  (3, 'c', 'calm cat', [0, 1, 1]::FLOAT[3]),
+  (4, 'd', 'quick turtle', [0, 0, 1]::FLOAT[3]),
+  (5, 'e', 'quick crow', [1, 1, 1]::FLOAT[3]);
+
+
+statement ok
+CREATE TABLE sp_knows (src BIGINT, dst BIGINT);
+
+
+statement count 5
+INSERT INTO sp_knows VALUES (1, 2), (2, 3), (3, 4), (1, 4), (4, 5);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_person;
+
+
+# EXPLAIN over property-graph DDL is not supported
+statement error
+EXPLAIN CREATE PROPERTY GRAPH sp_g
+  VERTEX TABLES (sp_idx)
+  EDGE TABLES (sp_knows SOURCE KEY (src) REFERENCES sp_idx (id)
+                        DESTINATION KEY (dst) REFERENCES sp_idx (id));
+
+
+statement ok
+CREATE PROPERTY GRAPH sp_g
+  VERTEX TABLES (sp_idx)
+  EDGE TABLES (sp_knows SOURCE KEY (src) REFERENCES sp_idx (id)
+                        DESTINATION KEY (dst) REFERENCES sp_idx (id));
+
+
+statement error
+EXPLAIN CREATE PROPERTY GRAPH sp_gb
+  VERTEX TABLES (sp_person)
+  EDGE TABLES (sp_knows SOURCE KEY (src) REFERENCES sp_person (id)
+                        DESTINATION KEY (dst) REFERENCES sp_person (id));
+
+
+statement ok
+CREATE PROPERTY GRAPH sp_gb
+  VERTEX TABLES (sp_person)
+  EDGE TABLES (sp_knows SOURCE KEY (src) REFERENCES sp_person (id)
+                        DESTINATION KEY (dst) REFERENCES sp_person (id));
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sp_g MATCH p = ANY SHORTEST (a:sp_idx WHERE a.name='a')-[k:sp_knows]->*(b:sp_idx) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# shortest paths over the index-relation graph (rowid-backed CSR)
+query
+SELECT * FROM GRAPH_TABLE (sp_g MATCH p = ANY SHORTEST (a:sp_idx WHERE a.name='a')-[k:sp_knows]->*(b:sp_idx) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+a	0
+b	1
+c	2
+d	1
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sp_g MATCH p = ANY SHORTEST (a:sp_idx WHERE a.bio @@ ts_phrase('fox'))-[k:sp_knows]->*(b:sp_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# full-text predicates on both endpoints of a shortest-path pattern
+query
+SELECT * FROM GRAPH_TABLE (sp_g MATCH p = ANY SHORTEST (a:sp_idx WHERE a.bio @@ ts_phrase('fox'))-[k:sp_knows]->*(b:sp_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+an	bn	len
+a	a	0
+a	d	1
+a	e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sp_g MATCH (a:sp_idx WHERE a.name='a')-[k:sp_knows]->{1,2}(b:sp_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (b.name AS bn)) ORDER BY bn;
+
+
+# bounded quantifier over the index-relation graph with a filtered endpoint
+query
+SELECT * FROM GRAPH_TABLE (sp_g MATCH (a:sp_idx WHERE a.name='a')-[k:sp_knows]->{1,2}(b:sp_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (b.name AS bn)) ORDER BY bn;
+----
+bn
+d
+e
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sp_g MATCH p = ANY SHORTEST (a:sp_idx WHERE a.name='a')-[k:sp_knows]->*(b:sp_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (b.name AS bn, path_length(p) AS len, BM25(b.tableoid) AS s)) ORDER BY bn;
+
+
+# known gap: a scorer in a path-finding COLUMNS clause is not wired through
+# the rewrite and yields 0; join a scored index-relation subquery instead
+query
+SELECT * FROM GRAPH_TABLE (sp_g MATCH p = ANY SHORTEST (a:sp_idx WHERE a.name='a')-[k:sp_knows]->*(b:sp_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (b.name AS bn, path_length(p) AS len, BM25(b.tableoid) AS s)) ORDER BY bn;
+----
+bn	len	s
+a	0	0
+d	1	0
+e	2	0
+
+
+statement ok
+EXPLAIN SELECT gt.bn, gt.len, s.sc FROM GRAPH_TABLE (sp_gb MATCH p = ANY SHORTEST (a:sp_person WHERE a.name='a')-[k:sp_knows]->{1,2}(b:sp_person) COLUMNS (b.name AS bn, b.id AS bid, path_length(p) AS len)) gt JOIN (SELECT id, BM25(sp_idx.tableoid) AS sc FROM sp_idx WHERE bio @@ ts_phrase('quick')) s ON gt.bid = s.id ORDER BY bn;
+
+
+# real scores on paths: join the match with a scored index-relation subquery
+query
+SELECT gt.bn, gt.len, s.sc FROM GRAPH_TABLE (sp_gb MATCH p = ANY SHORTEST (a:sp_person WHERE a.name='a')-[k:sp_knows]->{1,2}(b:sp_person) COLUMNS (b.name AS bn, b.id AS bid, path_length(p) AS len)) gt JOIN (SELECT id, BM25(sp_idx.tableoid) AS sc FROM sp_idx WHERE bio @@ ts_phrase('quick')) s ON gt.bid = s.id ORDER BY bn;
+----
+bn	len	sc
+d	1	0.5389965
+e	2	0.5389965
+
+
+statement ok
+EXPLAIN SELECT gt.bn, gt.len FROM GRAPH_TABLE (sp_gb MATCH p = ANY SHORTEST (a:sp_person WHERE a.name='a')-[k:sp_knows]->*(b:sp_person) COLUMNS (b.name AS bn, b.id AS bid, path_length(p) AS len)) gt JOIN (SELECT id FROM sp_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1) s ON gt.bid = s.id;
+
+
+# shortest path to the vertex nearest the query vector (d, via the shortcut)
+query
+SELECT gt.bn, gt.len FROM GRAPH_TABLE (sp_gb MATCH p = ANY SHORTEST (a:sp_person WHERE a.name='a')-[k:sp_knows]->*(b:sp_person) COLUMNS (b.name AS bn, b.id AS bid, path_length(p) AS len)) gt JOIN (SELECT id FROM sp_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1) s ON gt.bid = s.id;
+----
+bn	len
+d	1
+
+
+statement count 1
+DELETE FROM sp_person WHERE id = 2;
+
+
+statement count 2
+DELETE FROM sp_knows WHERE src = 2 OR dst = 2;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sp_person;
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sp_g MATCH p = ANY SHORTEST (a:sp_idx WHERE a.name='a')-[k:sp_knows]->*(b:sp_idx) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# rowid gaps from deletes: the index-relation CSR stays in bounds
+query
+SELECT * FROM GRAPH_TABLE (sp_g MATCH p = ANY SHORTEST (a:sp_idx WHERE a.name='a')-[k:sp_knows]->*(b:sp_idx) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+a	0
+d	1
+e	2
+
+
+statement error
+EXPLAIN DROP PROPERTY GRAPH sp_g;
+
+
+statement ok
+DROP PROPERTY GRAPH sp_g;
+
+
+statement error
+EXPLAIN DROP PROPERTY GRAPH sp_gb;
+
+
+statement ok
+DROP PROPERTY GRAPH sp_gb;
+
+
+statement ok
+DROP TABLE sp_knows;
+
+
+statement ok
+DROP TABLE sp_person;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sp_en;

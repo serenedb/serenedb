@@ -166,6 +166,7 @@ echo "Pre-building sqllogictest..."
 # few times before giving up instead of failing the whole suite.
 build_exit_code=0
 build_attempts="${SDB_SQLLOGIC_BUILD_ATTEMPTS:-3}"
+[[ "${SDB_SKIP_SQLLOGIC_BUILD:-0}" == "1" ]] && build_attempts=0
 for attempt in $(seq 1 "$build_attempts"); do
 	cargo build --manifest-path "$SQLLOGIC_RUNNER/sqllogictest-bin/Cargo.toml" \
 		--target-dir "$SQLLOGIC_TARGET" --release --quiet

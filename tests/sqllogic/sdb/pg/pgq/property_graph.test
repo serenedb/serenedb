@@ -1,0 +1,147 @@
+# SQL/PGQ via the duckpgq extension: CREATE/DROP PROPERTY GRAPH, GRAPH_TABLE
+# MATCH (fixed patterns, inline WHERE, ANY SHORTEST), metadata persistence in
+# __duckpgq_internal, and cross-connection visibility of a created graph.
+
+# for the pinned EXPLAIN below: these optimizers key on storage-dependent
+# statistics that arrive with the background segment flush, so their output
+# is not stable between a fresh and a reused server
+statement ok
+SET disabled_optimizers = 'compressed_materialization,join_order,statistics_propagation';
+
+
+statement ok
+CREATE TABLE pgq_person (id BIGINT, name VARCHAR);
+
+
+statement count 3
+INSERT INTO pgq_person VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+statement ok
+CREATE TABLE pgq_knows (src BIGINT, dst BIGINT);
+
+
+statement count 3
+INSERT INTO pgq_knows VALUES (1, 2), (2, 3), (1, 3);
+
+
+statement ok
+CREATE PROPERTY GRAPH pgq_g
+  VERTEX TABLES (pgq_person)
+  EDGE TABLES (pgq_knows SOURCE KEY (src) REFERENCES pgq_person (id)
+                         DESTINATION KEY (dst) REFERENCES pgq_person (id));
+
+
+statement error
+CREATE PROPERTY GRAPH pgq_g VERTEX TABLES (pgq_person);
+
+
+# EXPLAIN over CREATE PROPERTY GRAPH is not supported
+statement error
+EXPLAIN CREATE PROPERTY GRAPH pgq_g2 VERTEX TABLES (pgq_person);
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (pgq_g MATCH (a:pgq_person)-[k:pgq_knows]->(b:pgq_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (pgq_g MATCH (a:pgq_person)-[k:pgq_knows]->(b:pgq_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	b
+a	c
+b	c
+
+
+statement ok
+EXPLAIN SELECT an, bn FROM GRAPH_TABLE (pgq_g MATCH (a:pgq_person WHERE a.name <> 'b')-[k:pgq_knows]->(b:pgq_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT an, bn FROM GRAPH_TABLE (pgq_g MATCH (a:pgq_person WHERE a.name <> 'b')-[k:pgq_knows]->(b:pgq_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	b
+a	c
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (pgq_g MATCH p = ANY SHORTEST (a:pgq_person)-[k:pgq_knows]->*(b:pgq_person) COLUMNS (a.name AS an, b.name AS bn, path_length(p) AS len)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (pgq_g MATCH p = ANY SHORTEST (a:pgq_person)-[k:pgq_knows]->*(b:pgq_person) COLUMNS (a.name AS an, b.name AS bn, path_length(p) AS len)) ORDER BY an, bn;
+----
+an	bn	len
+a	a	0
+a	b	1
+a	c	1
+b	b	0
+b	c	1
+c	c	0
+
+
+# the graph definition is persisted, one row per vertex/edge table
+query
+SELECT count(*) AS c FROM __duckpgq_internal WHERE property_graph = 'pgq_g';
+----
+c
+2
+
+
+# the one join-free plan shape: pinned in full; multi-join MATCH plans are
+# checked as `statement ok` only, their physical shape depends on storage
+# statistics (see tests/sqllogic/sdb/pg/explain, which pins no joins either)
+query
+EXPLAIN SELECT * FROM GRAPH_TABLE (pgq_g MATCH (a:pgq_person) COLUMNS (a.name AS an)) ORDER BY an;
+----
+QUERY PLAN
+╭─ ORDER_BY ────────────────────────╮
+│ Order By: unnamed_subquery.an ASC │
+│ ~3 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ SEQ_SCAN ──────┴─────────────────╮
+│ Table: pgq_person                 │
+│ Type: Sequential Scan             │
+│ Projections: name                 │
+│ ~0 rows                           │
+╰───────────────────────────────────╯
+
+
+# a connection opened after CREATE sees the graph
+connection c2 user=postgres
+query
+SELECT * FROM GRAPH_TABLE (pgq_g MATCH (a:pgq_person)-[k:pgq_knows]->(b:pgq_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	b
+a	c
+b	c
+
+
+statement ok
+DROP PROPERTY GRAPH pgq_g;
+
+
+statement error
+SELECT * FROM GRAPH_TABLE (pgq_g MATCH (a:pgq_person) COLUMNS (a.name));
+
+
+statement error
+DROP PROPERTY GRAPH pgq_g;
+
+
+query
+SELECT count(*) AS c FROM __duckpgq_internal;
+----
+c
+0
+
+
+statement ok
+DROP TABLE pgq_knows;
+
+
+statement ok
+DROP TABLE pgq_person;

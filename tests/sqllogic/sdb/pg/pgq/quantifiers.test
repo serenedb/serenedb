@@ -1,0 +1,177 @@
+# Edge-pattern quantifiers on GRAPH_TABLE MATCH: *, +, ?, {n}, {n,m}, {n,},
+# {,m}, {0,m}, a bare bounded quantifier without a search prefix, and the
+# lower > upper error. Graph: chain a->b->c->d->e plus shortcut a->d, so
+# bounds and shortest-path lengths separate (d is 1 hop via the shortcut,
+# 3 hops via the chain). Under ANY SHORTEST the bounds filter the SHORTEST
+# path length: {2,3} excludes d because its shortest path is 1.
+# Each query has an EXPLAIN twin pinning that the rewrite also plans.
+
+statement ok
+CREATE TABLE qt_person (id BIGINT, name VARCHAR);
+
+
+statement count 5
+INSERT INTO qt_person VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');
+
+
+statement ok
+CREATE TABLE qt_knows (src BIGINT, dst BIGINT);
+
+
+statement count 5
+INSERT INTO qt_knows VALUES (1, 2), (2, 3), (3, 4), (4, 5), (1, 4);
+
+
+statement ok
+CREATE PROPERTY GRAPH qt_g
+  VERTEX TABLES (qt_person)
+  EDGE TABLES (qt_knows SOURCE KEY (src) REFERENCES qt_person (id)
+                        DESTINATION KEY (dst) REFERENCES qt_person (id));
+
+
+# * : zero or more, includes the zero-length path to the start vertex
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->*(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+a	0
+b	1
+c	2
+d	1
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->*(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# + : one or more
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->+(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+b	1
+c	2
+d	1
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->+(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# ? : at most one hop; the zero-length path is not produced
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='c')-[k:qt_knows]->?(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+d	1
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='c')-[k:qt_knows]->?(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# {n} : fixed length
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{2}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+c	2
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{2}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# {n,m} : d is excluded, its shortest path (the a->d shortcut) is below the
+# lower bound
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{2,3}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+c	2
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{2,3}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# {n,} : open upper bound
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{1,}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+b	1
+c	2
+d	1
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{1,}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# {,m} : open lower bound includes the zero-length path
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{,2}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+a	0
+b	1
+c	2
+d	1
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{,2}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# {0,m} : explicit zero lower bound, same as {,m}
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{0,2}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+a	0
+b	1
+c	2
+d	1
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{0,2}(b:qt_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+# bounded quantifier without a path variable or search prefix
+query
+SELECT * FROM GRAPH_TABLE (qt_g MATCH (a:qt_person WHERE a.name='a')-[k:qt_knows]->{1,2}(b:qt_person) COLUMNS (b.name AS bn)) ORDER BY bn;
+----
+bn
+b
+c
+d
+e
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (qt_g MATCH (a:qt_person WHERE a.name='a')-[k:qt_knows]->{1,2}(b:qt_person) COLUMNS (b.name AS bn)) ORDER BY bn;
+
+
+statement error
+SELECT * FROM GRAPH_TABLE (qt_g MATCH p = ANY SHORTEST (a:qt_person WHERE a.name='a')-[k:qt_knows]->{3,2}(b:qt_person) COLUMNS (b.name AS bn));
+
+
+statement ok
+DROP PROPERTY GRAPH qt_g;
+
+
+statement ok
+DROP TABLE qt_knows;
+
+
+statement ok
+DROP TABLE qt_person;

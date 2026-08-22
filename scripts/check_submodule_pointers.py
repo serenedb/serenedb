@@ -29,6 +29,7 @@ VERSION_BRANCH = re.compile(r"^v20\d{2}\.\d{2}\.\d{2}$")
 CHECKED = {
     "third_party/duckdb": VERSION_BRANCH,
     "third_party/duckdb_iceberg": VERSION_BRANCH,
+    "third_party/duckpgq": re.compile(r"^serenedb$"),
 }
 
 
@@ -195,9 +196,13 @@ def check(path: str, pattern: re.Pattern, override_sha: str | None) -> bool:
         return True
     main_sha = main_gitlink(path)
     if main_sha is None:
-        print(f"{path}: cannot resolve origin/main gitlink", file=sys.stderr)
-        return False
-    if gitlink == main_sha:
+        # A submodule not on origin/main yet: no ordering to enforce, but the
+        # gitlink must still be reachable from a matching branch.
+        if git("rev-parse", "--verify", "origin/main^{commit}") is None:
+            print(f"{path}: cannot resolve origin/main gitlink", file=sys.stderr)
+            return False
+        main_sha = gitlink
+    elif gitlink == main_sha:
         return True
     url = submodule_url(path)
     if url is None:

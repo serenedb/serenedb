@@ -1,0 +1,52 @@
+control substitution on
+
+
+statement ok
+SET GLOBAL checkpoint_threshold = '10GB';
+
+statement ok
+CREATE TABLE jfr_person (id BIGINT PRIMARY KEY, val BIGINT);
+
+statement ok
+INSERT INTO jfr_person SELECT range, range % 1000 FROM range(100000);
+
+statement ok
+CREATE TABLE jfr_knows (src BIGINT, dst BIGINT);
+
+statement ok
+INSERT INTO jfr_knows SELECT range % 100000, (range * 7 + 13) % 100000 FROM range(1000000);
+
+query
+SELECT count(*) FROM jfr_knows k JOIN jfr_person a ON k.src = a.id;
+----
+count
+1000000
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_replay
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM jfr_person;
+----
+count
+100000
+
+
+query
+SELECT count(*) FROM jfr_knows k JOIN jfr_person a ON k.src = a.id;
+----
+count
+1000000
+
+
+query
+SELECT count(*) FROM jfr_knows k JOIN jfr_person a ON k.src = a.id WHERE k.src < 100;
+----
+count
+1000

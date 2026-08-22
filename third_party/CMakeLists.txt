@@ -748,6 +748,7 @@ set(BUILD_EXTENSIONS
 # these files after the BUILD_EXTENSIONS list is resolved.
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckpgq/extension_config.cmake"
     CACHE STRING
     ""
     FORCE
@@ -760,6 +761,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "R
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckpgq" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 # duckdb's in-tree extensions resolve their includes from directory scope (not from duckdb_static's
@@ -796,6 +798,7 @@ target_link_libraries(
         iceberg_extension
         postgres_scanner_extension
         clickhouse_scanner_extension
+        duckpgq_extension
         autocomplete_extension
         icu_extension
         inet_extension

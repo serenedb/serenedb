@@ -14,7 +14,7 @@ allocator_flush_threshold	134217728B	Peak allocation threshold at which to flush
 allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
 allow_community_extensions	on	Allow to load community built extensions
 allow_extensions_metadata_mismatch	off	Allow to load extensions with not compatible metadata
-allow_parser_override_extension	DEFAULT	Allow extensions to override the current parser
+allow_parser_override_extension	STRICT	Allow extensions to override the current parser
 allow_persistent_secrets	on	Allow the creation of persistent secrets, that are stored and loaded on restarts
 allow_unredacted_secrets	off	Allow printing unredacted secrets
 allow_unsigned_extensions	off	Allow to load extensions with invalid or missing signatures
@@ -350,7 +350,7 @@ allocator_flush_threshold	134217728B	Peak allocation threshold at which to flush
 allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
 allow_community_extensions	on	Allow to load community built extensions
 allow_extensions_metadata_mismatch	off	Allow to load extensions with not compatible metadata
-allow_parser_override_extension	DEFAULT	Allow extensions to override the current parser
+allow_parser_override_extension	STRICT	Allow extensions to override the current parser
 allow_persistent_secrets	on	Allow the creation of persistent secrets, that are stored and loaded on restarts
 allow_unredacted_secrets	off	Allow printing unredacted secrets
 allow_unsigned_extensions	off	Allow to load extensions with invalid or missing signatures

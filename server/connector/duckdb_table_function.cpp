@@ -330,6 +330,14 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(
       return fp->GeneratedPkType();
     }
   }
+  if (bind.IsInvertedIndexEntry() && !bind.IsViewBacked()) {
+    const auto& tbd = bind.As<TableScanBindData>();
+    if (tbd.table && tbd.table->GetEngine() != catalog::TableEngine::Search) {
+      // Table-backed index: the postings carry the store-table rowid, so the
+      // stored pk column decodes to it directly.
+      return duckdb::LogicalType::ROW_TYPE;
+    }
+  }
   return std::nullopt;
 }
 

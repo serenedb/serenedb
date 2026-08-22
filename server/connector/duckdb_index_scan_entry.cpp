@@ -167,8 +167,14 @@ duckdb::vector<duckdb::column_t> TableInvertedIndexScanEntry::GetRowIdColumns()
 
 duckdb::virtual_column_map_t TableInvertedIndexScanEntry::GetVirtualColumns()
   const {
-  return SereneDBTableEntry::BuildVirtualColumns(*_sdb_table,
-                                                 _indexed_col_indices);
+  auto result =
+    SereneDBTableEntry::BuildVirtualColumns(*_sdb_table, _indexed_col_indices);
+  if (_sdb_table->GetEngine() != catalog::TableEngine::Search &&
+      !result.contains(kColumnIdentifierGeneratedPk)) {
+    result.emplace(kColumnIdentifierGeneratedPk,
+                   duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE));
+  }
+  return result;
 }
 
 ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(

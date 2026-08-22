@@ -64,14 +64,11 @@ class SereneDBClientState final : public duckdb::ClientContextState {
     std::shared_ptr<ConnectionContext> connection_ctx)
     : _connection_ctx{std::move(connection_ctx)} {}
 
-  ~SereneDBClientState() final {
-    if (progress_source) {
-      progress_source->Detach();
-      pg::ProgressRegistry::Instance().Unregister(progress_source.get());
-    }
-  }
+  ~SereneDBClientState() final;
 
   ConnectionContext& GetConnectionContext() const { return *_connection_ctx; }
+
+  bool drain_notices_on_destroy = false;
 
   // The connection's row in sdb_progress. Execution paths write the
   // command-specific counters straight into Progress(); the registry snapshots
@@ -139,5 +136,8 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 // Helper to get the ConnectionContext from a DuckDB ClientContext.
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context);
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context);
+
+duckdb::shared_ptr<duckdb::Connection> CreateBlessedInternalConnection(
+  duckdb::ClientContext& parent);
 
 }  // namespace sdb::connector

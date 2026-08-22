@@ -52,6 +52,7 @@
 * [duckdb-azure](https://github.com/duckdb/duckdb-azure)
 * [duckdb-iceberg](https://github.com/duckdb/duckdb-iceberg)
 * [duckdb-postgres](https://github.com/duckdb/postgres_scanner)
+* [duckpgq](https://github.com/cwida/duckpgq-extension)
 * [database-connector](https://github.com/duckdb/database-connector)
 * [Azure SDK for C++](https://github.com/Azure/azure-sdk-for-cpp)
 * [libxml2](https://github.com/gnome/libxml2)

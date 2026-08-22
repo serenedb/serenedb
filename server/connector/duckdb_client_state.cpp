@@ -268,6 +268,34 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   _connection_ctx->OnStatementEnd();
 }
 
+SereneDBClientState::~SereneDBClientState() {
+  if (drain_notices_on_destroy) {
+    _connection_ctx->ConsumeNotices([](auto&) {});
+  }
+  if (progress_source) {
+    progress_source->Detach();
+    pg::ProgressRegistry::Instance().Unregister(progress_source.get());
+  }
+}
+
+duckdb::shared_ptr<duckdb::Connection> CreateBlessedInternalConnection(
+  duckdb::ClientContext& parent) {
+  auto connection = duckdb::make_shared_ptr<duckdb::Connection>(*parent.db);
+  auto* parent_ctx = GetSereneDBContextPtr(parent);
+  if (!parent_ctx) {
+    return connection;
+  }
+  auto ctx = std::make_shared<ConnectionContext>(
+    *connection->context, parent_ctx->user(), parent_ctx->GetRoleId(),
+    parent_ctx->GetDatabase(), parent_ctx->GetDatabaseId(),
+    parent_ctx->GetDatabasePtr(), nullptr, nullptr, /*backend_pid=*/0, nullptr);
+  auto& state = SereneDBClientState::Register(*connection->context, ctx);
+  state.drain_notices_on_destroy = true;
+  connection->context->session_user = parent.session_user;
+  ctx->AcquireCatalogSnapshot();
+  return connection;
+}
+
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);

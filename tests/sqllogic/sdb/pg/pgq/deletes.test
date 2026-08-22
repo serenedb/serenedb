@@ -1,0 +1,99 @@
+# Path-finding over tables with deleted rows. The CSR arrays are indexed by
+# rowid, so they are sized by max(rowid) + 1 rather than count(*): deletes
+# leave rowid gaps (here rowids 0, 3, 4 for three rows), and sizing by count
+# used to write past the end of the vertex array and abort the server.
+
+statement ok
+CREATE TABLE dl_person (id BIGINT PRIMARY KEY, name VARCHAR);
+
+
+statement ok
+CREATE TABLE dl_knows (src BIGINT, dst BIGINT);
+
+
+statement count 5
+INSERT INTO dl_person VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');
+
+
+statement count 4
+INSERT INTO dl_knows VALUES (1, 2), (2, 3), (3, 4), (4, 5);
+
+
+statement count 2
+DELETE FROM dl_person WHERE id IN (2, 3);
+
+
+statement count 3
+DELETE FROM dl_knows WHERE src IN (2, 3) OR dst IN (2, 3);
+
+
+statement count 1
+INSERT INTO dl_knows VALUES (1, 4);
+
+
+# EXPLAIN over property-graph DDL is not supported
+statement error
+EXPLAIN CREATE PROPERTY GRAPH dl_g
+  VERTEX TABLES (dl_person)
+  EDGE TABLES (dl_knows SOURCE KEY (src) REFERENCES dl_person (id)
+                        DESTINATION KEY (dst) REFERENCES dl_person (id));
+
+
+statement ok
+CREATE PROPERTY GRAPH dl_g
+  VERTEX TABLES (dl_person)
+  EDGE TABLES (dl_knows SOURCE KEY (src) REFERENCES dl_person (id)
+                        DESTINATION KEY (dst) REFERENCES dl_person (id));
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (dl_g MATCH (a:dl_person)-[k:dl_knows]->(b:dl_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (dl_g MATCH (a:dl_person)-[k:dl_knows]->(b:dl_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	d
+d	e
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (dl_g MATCH p = ANY SHORTEST (a:dl_person WHERE a.name='a')-[k:dl_knows]->*(b:dl_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (dl_g MATCH p = ANY SHORTEST (a:dl_person WHERE a.name='a')-[k:dl_knows]->*(b:dl_person) COLUMNS (b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+bn	len
+a	0
+d	1
+e	2
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (dl_g MATCH (a:dl_person WHERE a.name='a')-[k:dl_knows]->{1,2}(b:dl_person) COLUMNS (b.name AS bn)) ORDER BY bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (dl_g MATCH (a:dl_person WHERE a.name='a')-[k:dl_knows]->{1,2}(b:dl_person) COLUMNS (b.name AS bn)) ORDER BY bn;
+----
+bn
+d
+e
+
+
+statement error
+EXPLAIN DROP PROPERTY GRAPH dl_g;
+
+
+statement ok
+DROP PROPERTY GRAPH dl_g;
+
+
+statement ok
+DROP TABLE dl_knows;
+
+
+statement ok
+DROP TABLE dl_person;

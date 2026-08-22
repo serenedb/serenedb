@@ -1,0 +1,176 @@
+# PostgreSQL 19 SQL/PGQ surface compatibility: NODE/RELATIONSHIP synonyms,
+# element KEY clauses (validated against the primary key), REFERENCES without
+# a column list (defaults to the vertex table's primary key), LABEL before or
+# after PROPERTIES, DEFAULT LABEL, and label-only / anonymous graph elements.
+
+# for the pinned EXPLAIN below: these optimizers key on storage-dependent
+# statistics that arrive with the background segment flush, so their output
+# is not stable between a fresh and a reused server
+statement ok
+SET disabled_optimizers = 'compressed_materialization,join_order,statistics_propagation';
+
+
+statement ok
+CREATE TABLE pgc_person (id BIGINT PRIMARY KEY, name VARCHAR);
+
+
+statement count 4
+INSERT INTO pgc_person VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd');
+
+
+statement ok
+CREATE TABLE pgc_knows (src BIGINT, dst BIGINT, since INT);
+
+
+statement count 4
+INSERT INTO pgc_knows VALUES (1, 2, 2020), (2, 3, 2021), (1, 3, 2022), (3, 4, 2023);
+
+
+statement ok
+CREATE TABLE pgc_nopk (id BIGINT, name VARCHAR);
+
+
+# NODE / RELATIONSHIP synonyms, element KEY, REFERENCES without a column list
+statement ok
+CREATE PROPERTY GRAPH pgc_g1
+  NODE TABLES (pgc_person KEY (id) LABEL person PROPERTIES (name))
+  RELATIONSHIP TABLES (pgc_knows SOURCE KEY (src) REFERENCES pgc_person
+                                 DESTINATION KEY (dst) REFERENCES pgc_person
+                                 LABEL knows PROPERTIES (since));
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH (a:person)-[k:knows]->(b:person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH (a:person)-[k:knows]->(b:person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	b
+a	c
+b	c
+c	d
+
+
+# anonymous edge with IS label (PG example style), anonymous label-only vertex
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH (a:person)-[IS knows]->(IS person) COLUMNS (a.name AS an)) ORDER BY an;
+
+
+query
+SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH (a:person)-[IS knows]->(IS person) COLUMNS (a.name AS an)) ORDER BY an;
+----
+an
+a
+a
+b
+c
+
+
+# two anonymous elements in one pattern get distinct bindings
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH (IS person)-[IS knows]->(b:person) COLUMNS (b.name AS bn)) ORDER BY bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH (IS person)-[IS knows]->(b:person) COLUMNS (b.name AS bn)) ORDER BY bn;
+----
+bn
+b
+c
+c
+d
+
+
+# anonymous edge with a WHERE clause
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH (a:person)-[IS knows WHERE since >= 2022]->(b:person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH (a:person)-[IS knows WHERE since >= 2022]->(b:person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	c
+c	d
+
+
+# fully anonymous elements are not supported yet
+statement error
+SELECT * FROM GRAPH_TABLE (pgc_g1 MATCH ()-[IS knows]->(b:person) COLUMNS (b.name AS bn));
+----
+db error: ERROR: Graph elements without a label are not supported yet
+
+
+statement ok
+DROP PROPERTY GRAPH pgc_g1;
+
+
+# PROPERTIES before LABEL, and DEFAULT LABEL
+statement ok
+CREATE PROPERTY GRAPH pgc_g2
+  VERTEX TABLES (pgc_person PROPERTIES (name) DEFAULT LABEL)
+  EDGE TABLES (pgc_knows SOURCE KEY (src) REFERENCES pgc_person (id)
+                         DESTINATION KEY (dst) REFERENCES pgc_person (id)
+                         PROPERTIES (since) LABEL knows);
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (pgc_g2 MATCH (a:pgc_person)-[k:knows]->(b:pgc_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (pgc_g2 MATCH (a:pgc_person)-[k:knows]->(b:pgc_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	b
+a	c
+b	c
+c	d
+
+
+statement ok
+DROP PROPERTY GRAPH pgc_g2;
+
+
+# element KEY must match the table's primary key
+statement error
+CREATE PROPERTY GRAPH pgc_bad1
+  VERTEX TABLES (pgc_person KEY (name))
+  EDGE TABLES (pgc_knows SOURCE KEY (src) REFERENCES pgc_person (id)
+                         DESTINATION KEY (dst) REFERENCES pgc_person (id));
+----
+db error: ERROR: KEY (name) does not match the PRIMARY KEY (id) of table pgc_person
+
+
+# element KEY on a table without a primary key
+statement error
+CREATE PROPERTY GRAPH pgc_bad2
+  VERTEX TABLES (pgc_nopk KEY (id))
+  EDGE TABLES (pgc_knows SOURCE KEY (src) REFERENCES pgc_nopk (id)
+                         DESTINATION KEY (dst) REFERENCES pgc_nopk (id));
+----
+db error: ERROR: KEY (id) specified, but table pgc_nopk has no PRIMARY KEY
+
+
+# REFERENCES without a column list requires a primary key on the vertex table
+statement error
+CREATE PROPERTY GRAPH pgc_bad3
+  VERTEX TABLES (pgc_nopk)
+  EDGE TABLES (pgc_knows SOURCE KEY (src) REFERENCES pgc_nopk
+                         DESTINATION KEY (dst) REFERENCES pgc_nopk);
+----
+db error: ERROR: SOURCE KEY ... REFERENCES pgc_nopk without a column list requires the table to have a PRIMARY KEY
+
+
+statement ok
+DROP TABLE pgc_person;
+
+
+statement ok
+DROP TABLE pgc_knows;
+
+
+statement ok
+DROP TABLE pgc_nopk;

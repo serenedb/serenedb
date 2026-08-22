@@ -1,0 +1,187 @@
+# Scorers and vector search through GRAPH_TABLE over an index relation with a
+# text column and an ivf vector column in one inverted index. BM25 binds
+# through the pattern variable (BM25(a.tableoid)) and runs as a scored
+# IRESEARCH_SCAN; ANN top-k composes by joining the match with an
+# ORDER BY <-> LIMIT subquery over the index relation (Top pushed into the
+# scan); a distance range predicate inside a pattern works as a plain filter.
+# All bios are two tokens (dl == avgdl), so the BM25 scores are exact.
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+# for the pinned EXPLAIN below: these optimizers key on storage-dependent
+# statistics that arrive with the background segment flush, so their output
+# is not stable between a fresh and a reused server
+statement ok
+SET disabled_optimizers = 'compressed_materialization,join_order,statistics_propagation';
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sc_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE sc_person (id BIGINT PRIMARY KEY, name VARCHAR, bio VARCHAR, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX sc_idx ON sc_person USING inverted(id, bio sc_en, emb ivf (metric = 'l2'));
+
+
+statement count 3
+INSERT INTO sc_person VALUES
+  (1, 'a', 'quick fox', [1, 0, 0]::FLOAT[3]),
+  (2, 'b', 'lazy dog', [0, 1, 0]::FLOAT[3]),
+  (3, 'c', 'quick turtle', [0, 0, 1]::FLOAT[3]);
+
+
+statement ok
+CREATE TABLE sc_knows (src BIGINT, dst BIGINT);
+
+
+statement count 3
+INSERT INTO sc_knows VALUES (1, 2), (2, 3), (1, 3);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_person;
+
+
+# EXPLAIN over property-graph DDL is not supported
+statement error
+EXPLAIN CREATE PROPERTY GRAPH sc_g
+  VERTEX TABLES (sc_idx)
+  EDGE TABLES (sc_knows SOURCE KEY (src) REFERENCES sc_idx (id)
+                        DESTINATION KEY (dst) REFERENCES sc_idx (id));
+
+
+statement ok
+CREATE PROPERTY GRAPH sc_g
+  VERTEX TABLES (sc_idx)
+  EDGE TABLES (sc_knows SOURCE KEY (src) REFERENCES sc_idx (id)
+                        DESTINATION KEY (dst) REFERENCES sc_idx (id));
+
+
+# BM25 scoped to a pattern variable, scored inside the match
+query
+SELECT * FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx WHERE a.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, BM25(a.tableoid) AS s)) ORDER BY an;
+----
+an	s
+a	0.47000366
+c	0.47000366
+
+
+# join-free: the plan is a scored inverted-index scan
+query
+EXPLAIN SELECT * FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx WHERE a.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, BM25(a.tableoid) AS s)) ORDER BY an;
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────────────────╮
+│ Order By: unnamed_subquery.an ASC      │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ───┴───────────────────╮
+│ Index: sc_idx                          │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ─────────────╮                 │
+│ │ Field: bio(string) │                 │
+│ │ Value: quick       │                 │
+│ ╰────────────────────╯                 │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: name,                     │
+│              sdb_inverted_index_score  │
+│ ~0 rows                                │
+╰────────────────────────────────────────╯
+
+
+# only pattern variables are visible inside COLUMNS
+statement error
+SELECT * FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx WHERE a.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, BM25(sc_idx.tableoid) AS s)) ORDER BY an;
+
+
+statement error
+EXPLAIN SELECT * FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx WHERE a.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, BM25(sc_idx.tableoid) AS s)) ORDER BY an;
+
+
+statement ok
+EXPLAIN SELECT gt.an, s.sc FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx)-[k:sc_knows]->(b:sc_idx) COLUMNS (a.name AS an, b.id AS bid)) gt JOIN (SELECT id, BM25(sc_idx.tableoid) AS sc FROM sc_idx WHERE bio @@ ts_phrase('quick')) s ON gt.bid = s.id ORDER BY an, sc;
+
+
+# BM25 computed over the index relation, joined onto match results
+query
+SELECT gt.an, s.sc FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx)-[k:sc_knows]->(b:sc_idx) COLUMNS (a.name AS an, b.id AS bid)) gt JOIN (SELECT id, BM25(sc_idx.tableoid) AS sc FROM sc_idx WHERE bio @@ ts_phrase('quick')) s ON gt.bid = s.id ORDER BY an, sc;
+----
+an	sc
+a	0.47000366
+b	0.47000366
+
+
+statement ok
+EXPLAIN SELECT gt.an, gt.bn FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx)-[k:sc_knows]->(b:sc_idx) COLUMNS (a.name AS an, b.name AS bn, b.id AS bid)) gt JOIN (SELECT id FROM sc_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1) s ON gt.bid = s.id ORDER BY an;
+
+
+# ANN top-k over the index relation, joined onto the match: edges into the
+# vertex nearest to the query vector
+query
+SELECT gt.an, gt.bn FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx)-[k:sc_knows]->(b:sc_idx) COLUMNS (a.name AS an, b.name AS bn, b.id AS bid)) gt JOIN (SELECT id FROM sc_idx ORDER BY emb <-> [0.0, 0.0, 1.0]::FLOAT[3] LIMIT 1) s ON gt.bid = s.id ORDER BY an;
+----
+an	bn
+a	c
+b	c
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx)-[k:sc_knows]->(b:sc_idx) COLUMNS (a.name AS an, b.name AS bn, b.emb AS bemb)) ORDER BY bemb <-> [0.0, 0.0, 1.0]::FLOAT[3], an LIMIT 2;
+
+
+# vector columns project through COLUMNS; distance ordering over match output
+query
+SELECT * FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx)-[k:sc_knows]->(b:sc_idx) COLUMNS (a.name AS an, b.name AS bn, b.emb AS bemb)) ORDER BY bemb <-> [0.0, 0.0, 1.0]::FLOAT[3], an LIMIT 2;
+----
+an	bn	bemb
+a	c	{0,0,1}
+b	c	{0,0,1}
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx)-[k:sc_knows]->(b:sc_idx WHERE b.emb <-> [0.0, 0.0, 1.0]::FLOAT[3] < 0.5) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an;
+
+
+# distance range predicate inside a pattern (plain filter, not accelerated)
+query
+SELECT * FROM GRAPH_TABLE (sc_g MATCH (a:sc_idx)-[k:sc_knows]->(b:sc_idx WHERE b.emb <-> [0.0, 0.0, 1.0]::FLOAT[3] < 0.5) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an;
+----
+an	bn
+a	c
+b	c
+
+
+statement error
+EXPLAIN DROP PROPERTY GRAPH sc_g;
+
+
+statement ok
+DROP PROPERTY GRAPH sc_g;
+
+
+statement ok
+DROP TABLE sc_knows;
+
+
+statement ok
+DROP TABLE sc_person;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sc_en;

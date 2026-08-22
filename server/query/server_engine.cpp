@@ -30,6 +30,7 @@
 
 #include "basics/number_of_cores.h"
 #include "catalog/store/store.h"
+#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_foreign_server_function.h"
 #include "connector/duckdb_pg_binary_copy.h"
@@ -227,6 +228,8 @@ namespace sdb::server::query {
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
+  config.internal_connection_factory =
+    connector::CreateBlessedInternalConnection;
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset (SET threads=N still wins at

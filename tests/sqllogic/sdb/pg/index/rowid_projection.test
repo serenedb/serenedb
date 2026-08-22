@@ -1,0 +1,78 @@
+# The store-table rowid projects through a table-backed inverted-index scan
+# (postings carry it; the stored pk column decodes to it), plain and under a
+# full-text filter.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rp_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE rp_t (id BIGINT PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE INDEX rp_idx ON rp_t USING inverted(id, body rp_en);
+
+
+statement count 3
+INSERT INTO rp_t VALUES (10, 'quick fox'), (20, 'lazy dog'), (30, 'quick turtle');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rp_t;
+
+
+query
+SELECT rowid, id FROM rp_idx ORDER BY rowid;
+----
+rowid	id
+0	10
+1	20
+2	30
+
+
+query
+SELECT rowid, id FROM rp_idx WHERE body @@ ts_phrase('quick') ORDER BY rowid;
+----
+rowid	id
+0	10
+2	30
+
+
+query
+EXPLAIN SELECT rowid, id FROM rp_idx WHERE body @@ ts_phrase('quick') ORDER BY rowid;
+----
+QUERY PLAN
+╭─ ORDER_BY ─────────────────╮
+│ Order By: rp_idx.rowid ASC │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: rp_idx              │
+│ Lookup: table              │
+│ Index Filter:              │
+│ ╭─ Term ──────────────╮    │
+│ │ Field: body(string) │    │
+│ │ Value: quick        │    │
+│ ╰─────────────────────╯    │
+│ Projections: generated_pk, │
+│              id            │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+
+statement ok
+DROP TABLE rp_t;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rp_en;

@@ -1,0 +1,262 @@
+# GRAPH_TABLE MATCH coverage beyond the basics: multi-hop and reversed
+# patterns, edge properties, WHERE at edge/vertex/graph-table level, multiple
+# comma-separated path patterns, MATCH under CTE/JOIN/CTAS/INSERT (the
+# statement shapes duckpgq rewrites), bounded quantifiers with ANY SHORTEST,
+# and liveness of graph data after CREATE PROPERTY GRAPH.
+
+statement ok
+CREATE TABLE mt_person (id BIGINT, name VARCHAR);
+
+
+statement count 5
+INSERT INTO mt_person VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');
+
+
+statement ok
+CREATE TABLE mt_knows (src BIGINT, dst BIGINT, since INT);
+
+
+statement count 5
+INSERT INTO mt_knows VALUES (1, 2, 2020), (2, 3, 2021), (3, 4, 2022), (1, 4, 2023), (4, 5, 2024);
+
+
+statement ok
+CREATE PROPERTY GRAPH mt_g
+  VERTEX TABLES (mt_person)
+  EDGE TABLES (mt_knows SOURCE KEY (src) REFERENCES mt_person (id)
+                        DESTINATION KEY (dst) REFERENCES mt_person (id));
+
+
+# two-edge path pattern
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k1:mt_knows]->(b:mt_person)-[k2:mt_knows]->(c:mt_person) COLUMNS (a.name AS an, b.name AS bn, c.name AS cn)) ORDER BY an, bn, cn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k1:mt_knows]->(b:mt_person)-[k2:mt_knows]->(c:mt_person) COLUMNS (a.name AS an, b.name AS bn, c.name AS cn)) ORDER BY an, bn, cn;
+----
+an	bn	cn
+a	b	c
+a	d	e
+b	c	d
+c	d	e
+
+
+# reversed edge direction
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)<-[k:mt_knows]-(b:mt_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)<-[k:mt_knows]-(b:mt_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+b	a
+c	b
+d	a
+d	c
+e	d
+
+
+# edge properties are projectable
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, k.since AS since, b.name AS bn)) ORDER BY since;
+
+
+query
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, k.since AS since, b.name AS bn)) ORDER BY since;
+----
+an	since	bn
+a	2020	b
+b	2021	c
+c	2022	d
+a	2023	d
+d	2024	e
+
+
+# WHERE inside the edge pattern
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows WHERE k.since >= 2022]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows WHERE k.since >= 2022]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	d
+c	d
+d	e
+
+
+# WHERE at graph-table level, referencing pattern variables
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) WHERE b.name = 'd' COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an;
+
+
+query
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) WHERE b.name = 'd' COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an;
+----
+an	bn
+a	d
+c	d
+
+
+# comma-separated path patterns sharing a vertex variable
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k1:mt_knows]->(b:mt_person), (a:mt_person)-[k2:mt_knows]->(c:mt_person) WHERE b.name < c.name COLUMNS (a.name AS an, b.name AS bn, c.name AS cn)) ORDER BY an, bn, cn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k1:mt_knows]->(b:mt_person), (a:mt_person)-[k2:mt_knows]->(c:mt_person) WHERE b.name < c.name COLUMNS (a.name AS an, b.name AS bn, c.name AS cn)) ORDER BY an, bn, cn;
+----
+an	bn	cn
+a	b	d
+
+
+# aggregation over match results
+statement ok
+EXPLAIN SELECT an, count(*) AS c FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an)) GROUP BY an ORDER BY an;
+
+
+query
+SELECT an, count(*) AS c FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an)) GROUP BY an ORDER BY an;
+----
+an	c
+a	2
+b	1
+c	1
+d	1
+
+
+# GRAPH_TABLE inside a CTE
+statement ok
+EXPLAIN WITH m AS (SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn))) SELECT an, bn FROM m WHERE an = 'a' ORDER BY bn;
+
+
+query
+WITH m AS (SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn))) SELECT an, bn FROM m WHERE an = 'a' ORDER BY bn;
+----
+an	bn
+a	b
+a	d
+
+
+# GRAPH_TABLE joined with a regular table
+statement ok
+EXPLAIN SELECT p.id, gt.bn FROM mt_person p JOIN GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn)) gt ON p.name = gt.an WHERE p.id <= 2 ORDER BY p.id, gt.bn;
+
+
+query
+SELECT p.id, gt.bn FROM mt_person p JOIN GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn)) gt ON p.name = gt.an WHERE p.id <= 2 ORDER BY p.id, gt.bn;
+----
+id	bn
+1	b
+1	d
+2	c
+
+
+# bounded quantifier under ANY SHORTEST; a->d is the direct edge, not a-b-c-d
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (mt_g MATCH p = ANY SHORTEST (a:mt_person WHERE a.name = 'a')-[k:mt_knows]->{1,3}(b:mt_person) COLUMNS (a.name AS an, b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (mt_g MATCH p = ANY SHORTEST (a:mt_person WHERE a.name = 'a')-[k:mt_knows]->{1,3}(b:mt_person) COLUMNS (a.name AS an, b.name AS bn, path_length(p) AS len)) ORDER BY bn;
+----
+an	bn	len
+a	b	1
+a	c	2
+a	d	1
+a	e	2
+
+
+# CTAS over a match
+statement ok
+EXPLAIN CREATE TABLE mt_pairs AS SELECT an, bn FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn));
+
+
+statement ok
+CREATE TABLE mt_pairs AS SELECT an, bn FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn));
+
+
+query
+SELECT count(*) AS c FROM mt_pairs;
+----
+c
+5
+
+
+# INSERT ... SELECT over a match
+statement ok
+EXPLAIN INSERT INTO mt_pairs SELECT an, bn FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) WHERE a.name = 'a' COLUMNS (a.name AS an, b.name AS bn));
+
+
+statement ok
+INSERT INTO mt_pairs SELECT an, bn FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) WHERE a.name = 'a' COLUMNS (a.name AS an, b.name AS bn));
+
+
+query
+SELECT count(*) AS c FROM mt_pairs;
+----
+c
+7
+
+
+statement ok
+DROP TABLE mt_pairs;
+
+
+# the graph reads live table data: rows added after CREATE PROPERTY GRAPH match
+statement count 1
+INSERT INTO mt_knows VALUES (5, 1, 2025);
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person WHERE a.name = 'e')-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn));
+
+
+query
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person WHERE a.name = 'e')-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an, b.name AS bn));
+----
+an	bn
+e	a
+
+
+statement count 1
+DELETE FROM mt_knows WHERE src = 5;
+
+
+statement ok
+EXPLAIN SELECT count(*) AS c FROM GRAPH_TABLE (mt_g MATCH (a:mt_person WHERE a.name = 'e')-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an));
+
+
+query
+SELECT count(*) AS c FROM GRAPH_TABLE (mt_g MATCH (a:mt_person WHERE a.name = 'e')-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an));
+----
+c
+0
+
+
+statement error
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:nosuchlabel)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an));
+
+
+# a real binder error inside a PGQ statement surfaces as itself, not as
+# duckpgq's internal bind-fallback marker ("use duckpgq_bind instead")
+statement error
+SELECT * FROM GRAPH_TABLE (mt_g MATCH (a:mt_person)-[k:mt_knows]->(b:mt_person) COLUMNS (a.name AS an)) WHERE mt_no_such_fn(an);
+----
+db error: ERROR: Scalar Function with name mt_no_such_fn does not exist!
+Did you mean "month"?
+
+
+statement ok
+DROP PROPERTY GRAPH mt_g;
+
+
+statement ok
+DROP TABLE mt_knows;
+
+
+statement ok
+DROP TABLE mt_person;

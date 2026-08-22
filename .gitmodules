@@ -221,3 +221,7 @@
 	path = third_party/libxml2
 	url = https://github.com/serenedb/libxml2.git
 	shallow = true
+[submodule "third_party/duckpgq"]
+	path = third_party/duckpgq
+	url = https://github.com/serenedb/duckpgq.git
+	shallow = true

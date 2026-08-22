@@ -1,0 +1,214 @@
+# Property graphs over search-indexed tables. The graph is metadata over
+# ordinary tables, so an inverted index on a vertex table is orthogonal to
+# MATCH. Full-text predicates cannot appear on columns that came through the
+# GRAPH_TABLE rewrite of a base-table graph (the @@ acceleration needs a
+# direct inverted-indexed column reference); two compositions work: joining
+# the match with a filter over the index relation, or declaring the graph
+# over the index relation itself, which makes @@ predicates legal inside
+# MATCH patterns and drives the vertex scans through the inverted index.
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+# for the pinned EXPLAIN below: these optimizers key on storage-dependent
+# statistics that arrive with the background segment flush, so their output
+# is not stable between a fresh and a reused server
+statement ok
+SET disabled_optimizers = 'compressed_materialization,join_order,statistics_propagation';
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sg_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE sg_person (id BIGINT PRIMARY KEY, name VARCHAR, bio VARCHAR);
+
+
+statement ok
+CREATE INDEX sg_person_idx ON sg_person USING inverted(id, bio sg_en);
+
+
+statement count 3
+INSERT INTO sg_person VALUES (1, 'a', 'likes quick foxes'), (2, 'b', 'trains lazy dogs'), (3, 'c', 'photographs quick turtles');
+
+
+statement ok
+CREATE TABLE sg_knows (src BIGINT, dst BIGINT);
+
+
+statement count 3
+INSERT INTO sg_knows VALUES (1, 2), (2, 3), (1, 3);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sg_person;
+
+
+# EXPLAIN over property-graph DDL is not supported
+statement error
+EXPLAIN CREATE PROPERTY GRAPH sg_g
+  VERTEX TABLES (sg_person)
+  EDGE TABLES (sg_knows SOURCE KEY (src) REFERENCES sg_person (id)
+                        DESTINATION KEY (dst) REFERENCES sg_person (id));
+
+
+statement ok
+CREATE PROPERTY GRAPH sg_g
+  VERTEX TABLES (sg_person)
+  EDGE TABLES (sg_knows SOURCE KEY (src) REFERENCES sg_person (id)
+                        DESTINATION KEY (dst) REFERENCES sg_person (id));
+
+
+# plain MATCH over the indexed table works like over any table
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sg_g MATCH (a:sg_person)-[k:sg_knows]->(b:sg_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (sg_g MATCH (a:sg_person)-[k:sg_knows]->(b:sg_person) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	b
+a	c
+b	c
+
+
+# search predicate over the index relation joined with the match: edges whose
+# target's bio matches 'quick'
+statement ok
+EXPLAIN SELECT gt.an, gt.bn FROM GRAPH_TABLE (sg_g MATCH (a:sg_person)-[k:sg_knows]->(b:sg_person) COLUMNS (a.name AS an, b.name AS bn, b.id AS bid)) gt JOIN (SELECT id FROM sg_person_idx WHERE bio @@ ts_phrase('quick')) s ON gt.bid = s.id ORDER BY an, bn;
+
+
+query
+SELECT gt.an, gt.bn FROM GRAPH_TABLE (sg_g MATCH (a:sg_person)-[k:sg_knows]->(b:sg_person) COLUMNS (a.name AS an, b.name AS bn, b.id AS bid)) gt JOIN (SELECT id FROM sg_person_idx WHERE bio @@ ts_phrase('quick')) s ON gt.bid = s.id ORDER BY an, bn;
+----
+an	bn
+a	c
+b	c
+
+
+# a full-text predicate on a pattern variable is rejected: the column is no
+# longer a direct inverted-indexed reference after the rewrite
+# the rejection is execution-time: EXPLAIN still plans
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sg_g MATCH (a:sg_person)-[k:sg_knows]->(b:sg_person) WHERE b.bio @@ ts_phrase('quick') COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+statement error
+SELECT * FROM GRAPH_TABLE (sg_g MATCH (a:sg_person)-[k:sg_knows]->(b:sg_person) WHERE b.bio @@ ts_phrase('quick') COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+statement ok
+EXPLAIN SELECT an, bn FROM GRAPH_TABLE (sg_g MATCH (a:sg_person)-[k:sg_knows]->(b:sg_person) COLUMNS (a.name AS an, b.name AS bn, b.bio AS bbio)) WHERE bbio @@ ts_phrase('quick') ORDER BY an, bn;
+
+
+statement error
+SELECT an, bn FROM GRAPH_TABLE (sg_g MATCH (a:sg_person)-[k:sg_knows]->(b:sg_person) COLUMNS (a.name AS an, b.name AS bn, b.bio AS bbio)) WHERE bbio @@ ts_phrase('quick') ORDER BY an, bn;
+
+
+# a graph over the index relation: @@ works natively inside MATCH patterns
+statement error
+EXPLAIN CREATE PROPERTY GRAPH sg_gidx
+  VERTEX TABLES (sg_person_idx)
+  EDGE TABLES (sg_knows SOURCE KEY (src) REFERENCES sg_person_idx (id)
+                        DESTINATION KEY (dst) REFERENCES sg_person_idx (id));
+
+
+statement ok
+CREATE PROPERTY GRAPH sg_gidx
+  VERTEX TABLES (sg_person_idx)
+  EDGE TABLES (sg_knows SOURCE KEY (src) REFERENCES sg_person_idx (id)
+                        DESTINATION KEY (dst) REFERENCES sg_person_idx (id));
+
+
+# join-free single-vertex match over the index relation: the plan shows the
+# term filter running as an inverted-index scan
+query
+SELECT * FROM GRAPH_TABLE (sg_gidx MATCH (a:sg_person_idx WHERE a.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an)) ORDER BY an;
+----
+an
+a
+c
+
+
+query
+EXPLAIN SELECT * FROM GRAPH_TABLE (sg_gidx MATCH (a:sg_person_idx WHERE a.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an)) ORDER BY an;
+----
+QUERY PLAN
+╭─ ORDER_BY ────────────────────────╮
+│ Order By: unnamed_subquery.an ASC │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: sg_person_idx              │
+│ Lookup: table                     │
+│ Index Filter:                     │
+│ ╭─ Term ─────────────╮            │
+│ │ Field: bio(string) │            │
+│ │ Value: quick       │            │
+│ ╰────────────────────╯            │
+│ Projections: name                 │
+│ ~0 rows                           │
+╰───────────────────────────────────╯
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sg_gidx MATCH (a:sg_person_idx)-[k:sg_knows]->(b:sg_person_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+
+
+query
+SELECT * FROM GRAPH_TABLE (sg_gidx MATCH (a:sg_person_idx)-[k:sg_knows]->(b:sg_person_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, b.name AS bn)) ORDER BY an, bn;
+----
+an	bn
+a	c
+b	c
+
+
+statement ok
+EXPLAIN SELECT * FROM GRAPH_TABLE (sg_gidx MATCH (a:sg_person_idx WHERE a.bio @@ ts_phrase('quick'))-[k:sg_knows]->(b:sg_person_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, b.name AS bn));
+
+
+query
+SELECT * FROM GRAPH_TABLE (sg_gidx MATCH (a:sg_person_idx WHERE a.bio @@ ts_phrase('quick'))-[k:sg_knows]->(b:sg_person_idx WHERE b.bio @@ ts_phrase('quick')) COLUMNS (a.name AS an, b.name AS bn));
+----
+an	bn
+a	c
+
+
+statement error
+EXPLAIN DROP PROPERTY GRAPH sg_gidx;
+
+
+statement ok
+DROP PROPERTY GRAPH sg_gidx;
+
+
+statement error
+EXPLAIN DROP PROPERTY GRAPH sg_g;
+
+
+statement ok
+DROP PROPERTY GRAPH sg_g;
+
+
+statement ok
+DROP TABLE sg_knows;
+
+
+statement ok
+DROP TABLE sg_person;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY sg_en;

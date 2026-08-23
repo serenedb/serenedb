@@ -1,0 +1,105 @@
+# Cookbook: connect to a Google BigLake (Lakehouse) Iceberg REST catalog.
+# Every snippet needs live Google Cloud, so all bodies are noops; the RAW
+# blocks are what the site renders.
+
+# DOCS_TEST: example_secret_sa
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET gcp (
+#|     TYPE ICEBERG,
+#|     PROVIDER google,
+#|     CLIENT_EMAIL '⟨engine@my-project.iam.gserviceaccount.com⟩',
+#|     PRIVATE_KEY '⟨-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n⟩',
+#|     PRIVATE_KEY_ID '⟨a1b2c3d4...⟩',
+#|     EXTRA_HTTP_HEADERS MAP {'x-goog-user-project': '⟨my-project⟩'}
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_biglake_001 (i INTEGER);
+
+# DOCS_TEST: example_secret_vm
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET gcp (
+#|     TYPE ICEBERG,
+#|     PROVIDER google,
+#|     EXTRA_HTTP_HEADERS MAP {'x-goog-user-project': '⟨my-project⟩'}
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_biglake_002 (i INTEGER);
+
+# DOCS_TEST: example_secret_adc
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET gcp (
+#|     TYPE ICEBERG,
+#|     OAUTH2_GRANT_TYPE 'refresh_token',
+#|     OAUTH2_SERVER_URI 'https://oauth2.googleapis.com/token',
+#|     CLIENT_ID '⟨client_id from the ADC file⟩',
+#|     CLIENT_SECRET '⟨client_secret from the ADC file⟩',
+#|     REFRESH_TOKEN '⟨refresh_token from the ADC file⟩',
+#|     EXTRA_HTTP_HEADERS MAP {'x-goog-user-project': '⟨my-project⟩'}
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_biglake_003 (i INTEGER);
+
+# DOCS_TEST: example_secret_hmac
+
+# DOCS_TEST_RAW
+#| CREATE PERSISTENT SECRET gcs_data (
+#|     TYPE GCS,
+#|     KEY_ID '⟨GOOG1E...⟩',
+#|     SECRET '⟨hmac secret⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_biglake_004 (i INTEGER);
+
+# DOCS_TEST: example_server
+
+# DOCS_TEST_RAW
+#| CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+#|     warehouse 'bl://projects/⟨my-project⟩/catalogs/⟨my-catalog⟩',
+#|     endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog',
+#|     secret 'gcp',
+#|     access_delegation_mode 'none'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_biglake_005 (i INTEGER);
+
+# DOCS_TEST: example_query
+
+# DOCS_TEST_RAW
+#| SELECT count(*) FROM lake.⟨namespace⟩.⟨table⟩;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_biglake_006 (i INTEGER);
+
+# DOCS_TEST: example_write
+
+# DOCS_TEST_RAW
+#| CREATE SCHEMA lake.analytics;
+#|
+#| CREATE TABLE lake.analytics.events (id INTEGER, payload TEXT);
+#|
+#| INSERT INTO lake.analytics.events VALUES (1, 'hello iceberg');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_noop_biglake_007 (i INTEGER);

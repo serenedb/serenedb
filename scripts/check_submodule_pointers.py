@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Pre-commit hook: validate third_party submodule gitlinks.
 
-For each checked submodule the staged gitlink must
+Every staged submodule gitlink is checked, except the EXCLUDED paths
+(submodules whose remote we do not control and so cannot carry our
+version branches). For each checked submodule the staged gitlink must
   1. be reachable from one of the fork's version branches (vYYYY.MM.DD),
      i.e. the fork-side PR is merged -- not a feature-branch head, and
   2. not be older than origin/main's gitlink: its newest containing
@@ -26,10 +28,21 @@ import urllib.request
 
 VERSION_BRANCH = re.compile(r"^v20\d{2}\.\d{2}\.\d{2}$")
 
-CHECKED = {
-    "third_party/duckdb": VERSION_BRANCH,
-    "third_party/duckdb_iceberg": VERSION_BRANCH,
+EXCLUDED = {
+    "third_party/yaclib",  # upstream remote, no serenedb version branches
 }
+
+
+def checked_paths() -> list[str]:
+    out = git("ls-files", "-s")
+    if out is None:
+        return []
+    paths = []
+    for line in out.splitlines():
+        fields = line.split(None, 3)
+        if len(fields) == 4 and fields[0] == "160000" and fields[3] not in EXCLUDED:
+            paths.append(fields[3])
+    return paths
 
 
 def git(*args: str, cwd: str | None = None) -> str | None:
@@ -189,7 +202,8 @@ def validate_api(
     return result
 
 
-def check(path: str, pattern: re.Pattern, override_sha: str | None) -> bool:
+def check(path: str, override_sha: str | None) -> bool:
+    pattern = VERSION_BRANCH
     gitlink = override_sha or staged_gitlink(path)
     if gitlink is None:
         return True
@@ -238,10 +252,10 @@ parser.add_argument("--path", help="check only this submodule path")
 parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
 args, _ = parser.parse_known_args()
 
-paths = {args.path: CHECKED[args.path]} if args.path else CHECKED
+paths = [args.path] if args.path else checked_paths()
 failed = False
-for path, pattern in paths.items():
-    if not check(path, pattern, args.sha):
+for path in paths:
+    if not check(path, args.sha):
         failed = True
 
 sys.exit(1 if failed else 0)

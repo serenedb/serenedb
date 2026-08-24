@@ -77,29 +77,46 @@ struct StringSpan {
     YYerror = 256,                 /* error  */
     YYUNDEF = 257,                 /* "invalid token"  */
     TERM = 258,                    /* TERM  */
-    PHRASE = 259,                  /* PHRASE  */
-    REGEX = 260,                   /* REGEX  */
-    PREFIX = 261,                  /* PREFIX  */
-    SUFFIX = 262,                  /* SUFFIX  */
-    WILDCARD = 263,                /* WILDCARD  */
-    STAR = 264,                    /* STAR  */
-    NUMBER = 265,                  /* NUMBER  */
-    FLOAT = 266,                   /* FLOAT  */
-    AND = 267,                     /* AND  */
-    OR = 268,                      /* OR  */
-    NOT = 269,                     /* NOT  */
-    TO = 270,                      /* TO  */
-    LPAREN = 271,                  /* LPAREN  */
-    RPAREN = 272,                  /* RPAREN  */
-    LBRACKET = 273,                /* LBRACKET  */
-    RBRACKET = 274,                /* RBRACKET  */
-    LBRACE = 275,                  /* LBRACE  */
-    RBRACE = 276,                  /* RBRACE  */
-    COLON = 277,                   /* COLON  */
-    CARET = 278,                   /* CARET  */
-    TILDE = 279,                   /* TILDE  */
-    PLUS = 280,                    /* PLUS  */
-    MINUS = 281                    /* MINUS  */
+    REGEX = 259,                   /* REGEX  */
+    PREFIX = 260,                  /* PREFIX  */
+    WILDCARD = 261,                /* WILDCARD  */
+    STAR = 262,                    /* STAR  */
+    NUMBER = 263,                  /* NUMBER  */
+    FLOAT = 264,                   /* FLOAT  */
+    GAP = 265,                     /* GAP  */
+    AND = 266,                     /* AND  */
+    OR = 267,                      /* OR  */
+    NOT = 268,                     /* NOT  */
+    TO = 269,                      /* TO  */
+    LPAREN = 270,                  /* LPAREN  */
+    RPAREN = 271,                  /* RPAREN  */
+    LBRACKET = 272,                /* LBRACKET  */
+    RBRACKET = 273,                /* RBRACKET  */
+    LBRACE = 274,                  /* LBRACE  */
+    RBRACE = 275,                  /* RBRACE  */
+    COLON = 276,                   /* COLON  */
+    CARET = 277,                   /* CARET  */
+    PLUS = 278,                    /* PLUS  */
+    MINUS = 279,                   /* MINUS  */
+    AT = 280,                      /* AT  */
+    QUOTE = 281,                   /* QUOTE  */
+    LT = 282,                      /* LT  */
+    LE = 283,                      /* LE  */
+    GT = 284,                      /* GT  */
+    GE = 285,                      /* GE  */
+    EQ = 286,                      /* EQ  */
+    FUZZY = 287,                   /* FUZZY  */
+    FN_NGRAM = 288,                /* FN_NGRAM  */
+    FN_PHRASE = 289,               /* FN_PHRASE  */
+    FN_WILDCARD = 290,             /* FN_WILDCARD  */
+    FN_FUZZY = 291,                /* FN_FUZZY  */
+    FN_OR = 292,                   /* FN_OR  */
+    FN_UNORDERED = 293,            /* FN_UNORDERED  */
+    FN_ATLEAST = 294,              /* FN_ATLEAST  */
+    FN_ORDERED = 295,              /* FN_ORDERED  */
+    FN_MAXGAPS = 296,              /* FN_MAXGAPS  */
+    FN_MAXWIDTH = 297,             /* FN_MAXWIDTH  */
+    FN_OTHER = 298                 /* FN_OTHER  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -111,11 +128,18 @@ union YYSTYPE
 #line 55 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
     StringSpan sv;
-    int num;
+    // A number is a count where one is asked for and a term everywhere else,
+    // so it carries both what it means and what it said.
+    struct { int value; StringSpan text; } num;
+    struct { bool has_value; float value; } fuzzy;
+    // A float is a threshold where one is asked for and a term everywhere
+    // else, the same way a number is.
+    struct { float value; StringSpan text; } flt;
     float fnum;
+    struct { int min; int max; } gap;
     irs::FilterWithBoost* filter;
 
-#line 118 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
+#line 142 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;

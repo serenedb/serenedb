@@ -21,8 +21,10 @@
 #include "executor.h"
 
 #include <absl/strings/str_format.h>
+#include <fast_float/fast_float.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
@@ -62,7 +64,62 @@ size_t HashPairs(size_t hash, const T* docs, const U* scores, size_t size) {
   return hash;
 }
 
+bool StripSuffix(std::string_view& name, std::string_view suffix) {
+  if (!name.ends_with(suffix)) {
+    return false;
+  }
+  name.remove_suffix(suffix.size());
+  return true;
+}
+
 }  // namespace
+
+Command ParseCommand(std::string_view name) {
+  Command cmd{.kind = Kind::Count};
+
+  for (;;) {
+    if (!cmd.report.print && StripSuffix(name, "_print")) {
+      cmd.report.print = true;
+      continue;
+    }
+    if (!cmd.report.hash && StripSuffix(name, "_hash")) {
+      cmd.report.hash = true;
+      continue;
+    }
+    break;
+  }
+
+  if (name == "count") {
+    // A count is a number and nothing else: there are no documents in hand to
+    // checksum or to print.
+    if (cmd.report.hash || cmd.report.print) {
+      return {};
+    }
+    return cmd;
+  }
+  if (name == "docs") {
+    cmd.kind = Kind::Docs;
+    return cmd;
+  }
+  if (name == "scored") {
+    cmd.kind = Kind::Scored;
+    return cmd;
+  }
+
+  cmd.prune = !StripSuffix(name, "_count");
+  if (!name.starts_with("top_")) {
+    return {};
+  }
+  name.remove_prefix(4);
+
+  const auto* const end = name.data() + name.size();
+  const auto [stop, ec] = fast_float::from_chars(name.data(), end, cmd.k);
+  if (ec != std::errc{} || stop != end || cmd.k == 0) {
+    return {};
+  }
+  cmd.kind = Kind::TopK;
+  return cmd;
+}
 
 Executor::Executor(std::string_view path, const BenchConfig& config)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},

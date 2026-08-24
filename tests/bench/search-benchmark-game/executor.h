@@ -28,6 +28,7 @@
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -50,6 +51,30 @@ struct Report {
   bool hash = false;
   bool print = false;
 };
+
+// What a line asks of its query, spelled as `count`, `docs`, `scored` or
+// `top_<N>`. A top-k reads `_count` as "do not prune, take the exact total",
+// and anything that is not a bare count may end in `_hash` for a checksum
+// over what it found and `_print` for all of it -- either, both, in either
+// order. Anything else is `Unsupported`.
+enum class Kind : uint8_t {
+  Unsupported,
+  Count,
+  Docs,
+  Scored,
+  TopK,
+};
+
+struct Command {
+  Kind kind = Kind::Unsupported;
+  Report report;
+  bool prune = true;  // top-k only: `_count` takes the exact total instead
+  uint32_t k = 0;     // top-k only
+};
+
+static_assert(sizeof(Command) == 8);
+
+Command ParseCommand(std::string_view name);
 
 struct EmitResult {
   size_t count = 0;

@@ -20,111 +20,37 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_format.h>
-#include <fast_float/fast_float.h>
 
 #include <cstdio>
-#include <iostream>
+#include <iostream>  // std::cin
 #include <iresearch/search/filter_optimizer.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
-#include <optional>
 #include <string>
-#include <system_error>
 
 #include "basics/duckdb_engine.h"
 #include "executor.h"
 
 namespace {
 
-// What a line asks of its query, spelled as `count`, `docs`, `scored` or
-// `top_<N>`. A top-k reads `_count` as "do not prune, take the exact total",
-// and anything that is not a bare count may end in `_hash` for a checksum
-// over what it found and `_print` for all of it -- either, both, in either
-// order.
-enum class Kind : uint8_t {
-  Count,
-  Docs,
-  Scored,
-  TopK,
-};
-
-struct Command {
-  Kind kind;
-  bench::Report report;
-  size_t k = 0;        // top-k only
-  bool exact = false;  // top-k only: `_count`
-};
-
-constexpr std::string_view kUnsupported = "UNSUPPORTED";
-
-bool StripSuffix(std::string_view& name, std::string_view suffix) {
-  if (!name.ends_with(suffix)) {
-    return false;
-  }
-  name.remove_suffix(suffix.size());
-  return true;
-}
-
-std::optional<Command> ParseCommand(std::string_view name) {
-  Command cmd{.kind = Kind::Count};
-
-  for (;;) {
-    if (!cmd.report.print && StripSuffix(name, "_print")) {
-      cmd.report.print = true;
-      continue;
-    }
-    if (!cmd.report.hash && StripSuffix(name, "_hash")) {
-      cmd.report.hash = true;
-      continue;
-    }
-    break;
-  }
-
-  if (name == "count") {
-    // A count is a number and nothing else: there are no documents in hand to
-    // checksum or to print.
-    return cmd.report.hash || cmd.report.print ? std::nullopt
-                                               : std::optional{cmd};
-  }
-  if (name == "docs") {
-    cmd.kind = Kind::Docs;
-    return cmd;
-  }
-  if (name == "scored") {
-    cmd.kind = Kind::Scored;
-    return cmd;
-  }
-
-  cmd.exact = StripSuffix(name, "_count");
-  if (!name.starts_with("top_")) {
-    return std::nullopt;
-  }
-  name.remove_prefix(4);
-
-  const auto* const end = name.data() + name.size();
-  const auto [stop, ec] = fast_float::from_chars(name.data(), end, cmd.k);
-  if (ec != std::errc{} || stop != end || cmd.k == 0) {
-    return std::nullopt;
-  }
-  cmd.kind = Kind::TopK;
-  return cmd;
-}
-
-size_t ExecuteCommand(bench::Executor& executor, const Command& cmd,
+size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
                       std::string_view query) {
   switch (cmd.kind) {
-    case Kind::Count:
+    case bench::Kind::Unsupported:
+      break;
+    case bench::Kind::Count:
       return executor.ExecuteCount(query);
-    case Kind::Docs: {
+    case bench::Kind::Docs: {
       const auto result = executor.ExecuteEmitDocs(query, cmd.report);
       return cmd.report.hash ? result.hash : result.count;
     }
-    case Kind::Scored: {
+    case bench::Kind::Scored: {
       const auto result = executor.ExecuteEmitScoredDocs(query, cmd.report);
       return cmd.report.hash ? result.hash : result.count;
     }
-    case Kind::TopK: {
-      const auto count = cmd.exact ? executor.ExecuteTopKWithCount(cmd.k, query)
-                                   : executor.ExecuteTopK(cmd.k, query);
+    case bench::Kind::TopK: {
+      const auto count = cmd.prune
+                           ? executor.ExecuteTopK(cmd.k, query)
+                           : executor.ExecuteTopKWithCount(cmd.k, query);
       if (cmd.report.print) {
         executor.PrintResults();
       }
@@ -160,19 +86,19 @@ int main(int argc, const char* argv[]) {
       const auto tab = line.find('\t');
       const auto cmd =
         tab == std::string_view::npos
-          ? std::nullopt
-          : ParseCommand(absl::AsciiStrToLower(line.substr(0, tab)));
-      if (!cmd) {
+          ? bench::Command{}
+          : bench::ParseCommand(absl::AsciiStrToLower(line.substr(0, tab)));
+      if (cmd.kind == bench::Kind::Unsupported) {
         absl::FPrintF(stderr, "unknown command: %s\n", line);
       } else {
         try {
-          count = ExecuteCommand(executor, *cmd, line.substr(tab + 1));
+          count = ExecuteCommand(executor, cmd, line.substr(tab + 1));
         } catch (const std::exception& ex) {
           absl::FPrintF(stderr, "unsupported: %s\n", ex.what());
         }
       }
       if (!count) {
-        absl::PrintF("%s\n", kUnsupported);
+        absl::PrintF("UNSUPPORTED\n");
       } else {
         absl::PrintF("%d\n", count);
       }

@@ -133,7 +133,9 @@ struct ParserContext {
     }
     auto& f = current_root->GetOptional().add<irs::ByTerm>();
     *f.mutable_field_id() = default_field_id;
-    f.mutable_options()->term = std::move(first);
+    // A word the analyzer makes nothing of -- a lone `+` -- is searched for
+    // as it was written rather than as the empty term.
+    f.mutable_options()->term = count != 0 ? std::move(first) : text;
     return f;
   }
 
@@ -262,7 +264,7 @@ struct ParserContext {
     *f.mutable_field_id() = default_field_id;
     SDB_ASSERT(!value.empty() && value.back() == '*');
     value.remove_suffix(1);
-    f.mutable_options()->term = Analyze(value);
+    f.mutable_options()->term = Normalize(value);
     return f;
   }
 
@@ -272,7 +274,7 @@ struct ParserContext {
     // Only the literal head goes through the analyzer -- it would eat the
     // pattern characters.
     const auto wildcard = FindPattern(value);
-    auto pattern = Analyze(value.substr(0, wildcard));
+    auto pattern = Normalize(value.substr(0, wildcard));
     pattern.append(Pattern(value.substr(wildcard)));
     *f.mutable_options() = irs::ByWildcardOptions{std::move(pattern)};
     return f;
@@ -286,14 +288,14 @@ struct ParserContext {
     if (min_val == "*") {
       range.min_type = irs::BoundType::Unbounded;
     } else {
-      range.min = Analyze(min_val);
+      range.min = Normalize(min_val);
       range.min_type =
         inc_min ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
     if (max_val == "*") {
       range.max_type = irs::BoundType::Unbounded;
     } else {
-      range.max = Analyze(max_val);
+      range.max = Normalize(max_val);
       range.max_type =
         inc_max ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
@@ -438,6 +440,23 @@ struct ParserContext {
     return {};
   }
 
+  // What a pattern, a distance or a bound is measured against: Lucene
+  // normalizes that text rather than tokenizing it -- `Analyzer#normalize`.
+  // The analyzer here has no such mode, so its answer is taken where it is
+  // the whole of what it was given, and the text as written where it is not:
+  // a quoted bound holds spaces, and tokenizing would keep only the first
+  // word of it.
+  irs::bstring Normalize(std::string_view word) {
+    auto text = Unescape(word);
+    tokenizer->reset(irs::ViewCast<char>(irs::bytes_view{text}));
+    auto token = irs::get<irs::TermAttr>(*tokenizer);
+    if (!tokenizer->next()) {
+      return text;
+    }
+    irs::bstring first{token->value};
+    return tokenizer->next() ? text : first;
+  }
+
   // Where a part goes: next to the one before it, or as far off as a gap
   // asked. Zero is no gap rather than a gap of zero, which is what the
   // one-argument `push_back` means.
@@ -488,7 +507,7 @@ struct ParserContext {
 
   irs::ByEditDistance& AddFuzzySimilarity(std::string_view value,
                                           float similarity) {
-    return FuzzyFromSimilarity(Analyze(value), similarity);
+    return FuzzyFromSimilarity(Normalize(value), similarity);
   }
 
   irs::ByEditDistance& FuzzyFromSimilarity(irs::bstring value,
@@ -615,7 +634,7 @@ struct ParserContext {
   }
 
   irs::ByEditDistance& AddFuzzy(std::string_view value, int distance) {
-    return AddFuzzyTerm(Analyze(value), distance);
+    return AddFuzzyTerm(Normalize(value), distance);
   }
 };
 

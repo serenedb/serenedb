@@ -54,19 +54,34 @@ void yyerror(sdb::ParserContext& ctx, const char *s);
 
 %union {
     StringSpan sv;
-    int num;
+    // A number is a count where one is asked for and a term everywhere else,
+    // so it carries both what it means and what it said.
+    struct { int value; StringSpan text; } num;
+    struct { bool has_value; float value; } fuzzy;
+    // A float is a threshold where one is asked for and a term everywhere
+    // else, the same way a number is.
+    struct { float value; StringSpan text; } flt;
     float fnum;
+    struct { int min; int max; } gap;
     irs::FilterWithBoost* filter;
 }
 
-%token <sv> TERM PHRASE REGEX PREFIX SUFFIX WILDCARD STAR
+%token <sv> TERM REGEX PREFIX WILDCARD STAR
 %token <num> NUMBER
-%token <fnum> FLOAT
+%token <flt> FLOAT
+%token <gap> GAP
 %token AND OR NOT TO
 %token LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE
-%token COLON CARET TILDE PLUS MINUS
+%token COLON CARET PLUS MINUS AT QUOTE LT LE GT GE EQ
+%token <fuzzy> FUZZY
+%token FN_NGRAM FN_PHRASE FN_WILDCARD FN_FUZZY
+%token FN_OR FN_UNORDERED FN_ATLEAST FN_ORDERED FN_MAXGAPS FN_MAXWIDTH
+%token <sv> FN_OTHER
 
-%type <filter> modified_term base_term range_expr
+%type <filter> term_expr boosted_expr modified_term base_term range_expr
+%type <filter> group phrase
+%type <filter> ngram_expr
+%type <fnum> threshold
 %type <sv> range_bound
 
 %left OR
@@ -95,43 +110,72 @@ mod_clause:
     ;
 
 term_expr:
-    boosted_expr
-    | TERM COLON                    {
-                                      if (ctx.strict_field &&
-                                          std::string_view{$1} !=
-                                              ctx.default_field_name) {
-                                        ctx.error_message =
-                                          "field-prefix in strict-field mode "
-                                          "must match the default field";
+    boosted_expr                    { $$ = $1; }
+    | STAR COLON STAR               { $$ = &ctx.AddAll(); }
+    | field_prefix term_expr        { $$ = $2; }
+    // What Lucene's flexible parser spells `field<5`: a range with one end
+    // left open.
+    | field_name LT range_bound     { $$ = &ctx.AddRange("*", $3, false, false); }
+    | field_name LE range_bound     { $$ = &ctx.AddRange("*", $3, false, true); }
+    | field_name GT range_bound     { $$ = &ctx.AddRange($3, "*", false, false); }
+    | field_name GE range_bound     { $$ = &ctx.AddRange($3, "*", true, false); }
+    ;
+
+field_prefix:
+    field_name COLON
+    | field_name EQ
+    ;
+
+field_name:
+    TERM                            {
+                                      if (!ctx.CheckField($1)) {
                                         YYABORT;
                                       }
                                     }
-      term_expr
     ;
 
 boosted_expr:
-    modified_term
-    | modified_term CARET NUMBER    { $1->boost(static_cast<float>($3)); }
-    | modified_term CARET FLOAT     { $1->boost($3); }
+    modified_term                   { $$ = $1; }
+    | modified_term CARET threshold { $1->boost($3); $$ = $1; }
+    // Lucene takes the two suffixes in either order, and a fuzziness read
+    // after a boost has to reach a term that is already built.
+    | modified_term CARET threshold FUZZY
+                                    { $1->boost($3);
+                                      $$ = &ctx.ApplyFuzzy($1, $4.has_value,
+                                                           $4.value); }
     ;
 
 modified_term:
     base_term                       { $$ = $1; }
-    | TERM TILDE                    { $$ = &ctx.AddFuzzy($1, 2); }
-    | TERM TILDE NUMBER             { $$ = &ctx.AddFuzzy($1, $3); }
-    | PHRASE TILDE                  { $$ = &ctx.AddPhrase($1, 0); }
-    | PHRASE TILDE NUMBER           { $$ = &ctx.AddPhrase($1, $3); }
+    // A distance of two is what a bare `~` means, and a value of one or more
+    // is that many edits where a value below one is Lucene's older
+    // similarity -- `AddFuzzySimilarity` tells them apart the way Lucene does.
+    | TERM FUZZY                    { $$ = $2.has_value
+                                          ? &ctx.AddFuzzySimilarity($1, $2.value)
+                                          : &ctx.AddFuzzy($1, 2); }
+    | phrase FUZZY                  { if ($2.has_value) {
+                                        ctx.SetSlop($1, static_cast<int>($2.value));
+                                      }
+                                      $$ = $1; }
     ;
 
 base_term:
     TERM                            { $$ = &ctx.AddTerm($1); }
-    | PHRASE                        { $$ = &ctx.AddPhrase($1, 0); }
-    | REGEX                         { $$ = &ctx.AddWildcard($1); }
+    | NUMBER                        { $$ = &ctx.AddTerm($1.text); }
+    | FLOAT                         { $$ = &ctx.AddTerm($1.text); }
+    | phrase                        { $$ = $1; }
+    | REGEX                         { $$ = &ctx.AddRegex($1); }
     | PREFIX                        { $$ = &ctx.AddPrefix($1); }
-    | SUFFIX                        { $$ = &ctx.AddWildcard($1); }
     | WILDCARD                      { $$ = &ctx.AddWildcard($1); }
     | range_expr                    { $$ = $1; }
-    | LPAREN                        {
+    | ngram_expr                    { $$ = $1; }
+    | group                         { $$ = $1; }
+    | group AT NUMBER               { ctx.SetMinMatch($1, $3.value); $$ = $1; }
+    | STAR                          { $$ = &ctx.AddFieldExists(); }
+    ;
+
+group:
+    LPAREN                          {
                                       $<filter>$ = ctx.current_root;
                                       ctx.current_root = &ctx.current_root->GetOptional().add<irs::MixedBooleanFilter>();
                                     }
@@ -139,6 +183,101 @@ base_term:
                                       $$ = ctx.current_root;
                                       ctx.current_root = sdb::basics::downCast<irs::MixedBooleanFilter>($<filter>2);
                                     }
+    ;
+
+// A phrase is a list of parts, each of them the same thing a clause outside
+// quotes may be, and a gap says how far apart two of them sit.
+phrase:
+    QUOTE                           { ctx.BeginPhrase(); }
+        phrase_body QUOTE           { $$ = &ctx.EndPhrase(); }
+    ;
+
+phrase_body:
+    phrase_part
+    | phrase_body phrase_part
+    | phrase_body GAP               { ctx.SetGap($2.min, $2.max); }
+        phrase_part
+    ;
+
+phrase_part:
+    TERM                            { ctx.AddPhraseTerm($1); }
+    | PREFIX                        { ctx.AddPhrasePrefix($1); }
+    | WILDCARD                      { ctx.AddPhraseWildcard($1); }
+    | TERM FUZZY                    { ctx.AddPhraseFuzzy(
+                                        $1, $2.has_value
+                                              ? static_cast<int>($2.value)
+                                              : 2); }
+    ;
+
+// An n-gram similarity: how much of a sequence of terms a document has to
+// carry. Lucene has no such filter, so this follows the shape its own
+// extensions take -- a named function over a parenthesized argument list.
+ngram_expr:
+    FN_NGRAM LPAREN threshold       { ctx.BeginNGram($3); }
+        ngram_terms RPAREN          { $$ = &ctx.EndNGram(); }
+    | FN_PHRASE LPAREN              { ctx.BeginPhrase(); }
+        phrase_body RPAREN          { $$ = &ctx.EndPhrase(); }
+    | FN_WILDCARD LPAREN WILDCARD RPAREN  { $$ = &ctx.AddWildcard($3); }
+    | FN_WILDCARD LPAREN PREFIX RPAREN    { $$ = &ctx.AddWildcard($3); }
+    | FN_WILDCARD LPAREN TERM RPAREN      { $$ = &ctx.AddWildcard($3); }
+    | FN_FUZZY LPAREN TERM RPAREN         { $$ = &ctx.AddFuzzy($3, 2); }
+    | FN_FUZZY LPAREN TERM NUMBER RPAREN  { $$ = &ctx.AddFuzzy($3, $4.value); }
+    // Which documents these hold is a question this engine can answer, even
+    // though it has no intervals to compose: a set of terms, joined by how
+    // many of them a document needs and in what order they must lie.
+    | FN_OR LPAREN                  { ctx.BeginFn(); }
+        fn_terms RPAREN             { $$ = &ctx.EndFnAny(); }
+    | FN_UNORDERED LPAREN           { ctx.BeginFn(); }
+        fn_terms RPAREN             { $$ = &ctx.EndFnAll(); }
+    | FN_ATLEAST LPAREN NUMBER      { ctx.BeginFn(); }
+        fn_terms RPAREN             { $$ = &ctx.EndFnAtLeast($3.value); }
+    | FN_ORDERED LPAREN             { ctx.BeginFn(); }
+        fn_terms RPAREN             { $$ = &ctx.EndFnOrdered(); }
+    // A bound on the gaps is a bound on the distance only where there is one
+    // pair to measure; over more of them it bounds their total, which a
+    // phrase cannot say.
+    | FN_MAXGAPS LPAREN NUMBER FN_ORDERED LPAREN { ctx.BeginFn(); }
+        fn_terms RPAREN RPAREN      { $$ = &ctx.EndFnMaxGaps($3.value); }
+    | FN_MAXWIDTH LPAREN NUMBER FN_ORDERED LPAREN { ctx.BeginFn(); }
+        fn_terms RPAREN RPAREN      { $$ = &ctx.EndFnMaxWidth($3.value); }
+    | FN_OTHER LPAREN fn_args RPAREN  { ctx.Unsupported($1); $$ = nullptr; }
+    ;
+
+// What an interval function is applied to, read but not acted on: the
+// argument list is consumed so the message names the function rather than
+// whatever came after it.
+// What an interval function is applied to. Lucene composes these freely;
+// here a term is a source this engine can answer for, and anything else is
+// read so that the refusal can say what it was rather than where it stopped.
+fn_terms:
+    fn_source
+    | fn_terms fn_source
+    ;
+
+fn_source:
+    TERM                            { ctx.AddFnTerm($1); }
+    | PREFIX                        { ctx.AddFnOther("a prefix"); }
+    | WILDCARD                      { ctx.AddFnOther("a wildcard"); }
+    | REGEX                         { ctx.AddFnOther("a regular expression"); }
+    | phrase                        { ctx.AddFnOther("a phrase"); }
+    | ngram_expr                    { ctx.AddFnOther("a function"); }
+    ;
+
+fn_args:
+    /* empty */
+    | fn_args fn_source
+    | fn_args NUMBER
+    | fn_args FLOAT
+    ;
+
+threshold:
+    NUMBER                          { $$ = static_cast<float>($1.value); }
+    | FLOAT                         { $$ = $1.value; }
+    ;
+
+ngram_terms:
+    TERM                            { ctx.AddNGram($1); }
+    | ngram_terms TERM              { ctx.AddNGram($2); }
     ;
 
 range_expr:

@@ -28,6 +28,7 @@
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -43,6 +44,38 @@ struct BenchConfig {
   size_t segment_mem_max = 1 << 28;
 };
 
+// What a query line asks for besides the documents themselves: a checksum
+// over them, every one of them printed, or both -- and by default neither,
+// which leaves only how many there were.
+struct Report {
+  bool hash = false;
+  bool print = false;
+};
+
+// What a line asks of its query, spelled as `count`, `docs`, `scored` or
+// `top_<N>`. A top-k reads `_count` as "do not prune, take the exact total",
+// and anything that is not a bare count may end in `_hash` for a checksum
+// over what it found and `_print` for all of it -- either, both, in either
+// order. Anything else is `Unsupported`.
+enum class Kind : uint8_t {
+  Unsupported,
+  Count,
+  Docs,
+  Scored,
+  TopK,
+};
+
+struct Command {
+  Kind kind = Kind::Unsupported;
+  Report report;
+  bool prune = true;  // top-k only: `_count` takes the exact total instead
+  uint32_t k = 0;     // top-k only
+};
+
+static_assert(sizeof(Command) == 8);
+
+Command ParseCommand(std::string_view name);
+
 struct EmitResult {
   size_t count = 0;
   size_t hash = 0;
@@ -56,9 +89,9 @@ class Executor {
   size_t ExecuteTopKWithCount(size_t k, std::string_view query);
   size_t ExecuteCount(std::string_view query);
   size_t HashResults() const;
-  EmitResult ExecuteEmitDocs(std::string_view query, bool checksum = false);
-  EmitResult ExecuteEmitScoredDocs(std::string_view query,
-                                   bool checksum = false);
+  void PrintResults() const;
+  EmitResult ExecuteEmitDocs(std::string_view query, Report report = {});
+  EmitResult ExecuteEmitScoredDocs(std::string_view query, Report report = {});
 
   const irs::DirectoryReader& GetReader() const { return _reader; }
   auto GetResults(this auto& self) {
@@ -66,7 +99,6 @@ class Executor {
   }
 
   irs::Filter::ptr ParseFilter(std::string_view str);
-  irs::Filter::ptr ParseIntervalPhrase(std::string_view str);
 
  private:
   void ResetResults(size_t k) noexcept {

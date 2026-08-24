@@ -233,7 +233,7 @@ class BlockDisjunction : public DocIterator {
           _match_count = 1;
         }
       } else if constexpr (Traits::kMinMatch) {
-        if (target == value) {
+        if (value == _doc) {
           ++_match_count;
         }
       }

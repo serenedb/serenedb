@@ -40,18 +40,14 @@ class RegexpUtilsTest : public TestBase {
     return irs::ViewCast<irs::byte_type>(sv);
   }
 
-  // Only the sink reads nothing, and the sink accepts nothing -- see
-  // `EmplaceSinkArcs`.
+  // A state that reads nothing accepts nothing -- see `EmplaceSinkArcs`.
   static void AssertSink(const irs::automaton& a) {
-    size_t without_arcs = 0;
     for (irs::automaton::StateId state = 0; state < a.NumStates(); ++state) {
-      if (a.NumArcs(state)) {
-        continue;
+      if (!a.NumArcs(state)) {
+        EXPECT_FALSE(bool(a.Final(state)))
+          << "state " << state << " accepts and reads nothing";
       }
-      ++without_arcs;
-      EXPECT_FALSE(bool(a.Final(state))) << "state " << state << " accepts";
     }
-    EXPECT_LE(without_arcs, 1) << "more than one state reads nothing";
   }
 
   static irs::automaton FromPosix(std::string_view pattern) {

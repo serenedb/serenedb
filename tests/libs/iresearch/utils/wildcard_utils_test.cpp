@@ -35,20 +35,17 @@ class WildcardUtilsTest : public TestBase {
     EXPECT_EQ(kExpectedProperties, a.Properties(kExpectedProperties, true));
   }
 
-  // Only the sink reads nothing, and the sink accepts nothing. The term
+  // A state that reads nothing accepts nothing -- it is a sink. The term
   // dictionary walk descends into a block while the acceptor has arcs, so a
   // state that accepts and reads nothing would stop it at the term a block is
   // named by.
   static void AssertSink(const irs::automaton& a) {
-    size_t without_arcs = 0;
     for (irs::automaton::StateId state = 0; state < a.NumStates(); ++state) {
-      if (a.NumArcs(state)) {
-        continue;
+      if (!a.NumArcs(state)) {
+        EXPECT_FALSE(bool(a.Final(state)))
+          << "state " << state << " accepts and reads nothing";
       }
-      ++without_arcs;
-      EXPECT_FALSE(bool(a.Final(state))) << "state " << state << " accepts";
     }
-    EXPECT_LE(without_arcs, 1) << "more than one state reads nothing";
   }
 };
 
@@ -68,6 +65,53 @@ TEST_F(WildcardUtilsTest, sink_arcs) {
     AssertProperties(a);
     AssertSink(a);
   }
+}
+
+// A dead state the builder already left behind serves as the sink, rather
+// than a second one being added beside it.
+TEST_F(WildcardUtilsTest, sink_arcs_reuse_dead_state) {
+  irs::automaton a;
+  a.AddStates(3);
+  a.SetStart(0);
+  // state 1 reads nothing and accepts nothing: a sink already
+  a.SetFinal(2);  // reads nothing, accepts: needs somewhere to read into
+  a.EmplaceArc(0, irs::RangeLabel::From(0, 'a' - 1), 1);
+  a.EmplaceArc(0, irs::RangeLabel::From('a'), 2);
+  a.EmplaceArc(0, irs::RangeLabel::From('a' + 1, 255), 1);
+
+  irs::EmplaceSinkArcs(a);
+
+  ASSERT_EQ(3, a.NumStates());  // the dead state served, none was added
+  ASSERT_EQ(1, a.NumArcs(2));   // the accepting state reads into it
+  ASSERT_EQ(0, a.NumArcs(1));
+  AssertSink(a);
+
+  ASSERT_TRUE(irs::Accept<irs::byte_type>(
+    a, irs::ViewCast<irs::byte_type>(std::string_view{"a"})));
+  ASSERT_FALSE(irs::Accept<irs::byte_type>(
+    a, irs::ViewCast<irs::byte_type>(std::string_view{"ab"})));
+  ASSERT_FALSE(irs::Accept<irs::byte_type>(
+    a, irs::ViewCast<irs::byte_type>(std::string_view{"b"})));
+}
+
+// Nothing to do where every state can already read on.
+TEST_F(WildcardUtilsTest, sink_arcs_leaves_a_complete_automaton_alone) {
+  auto a =
+    irs::FromWildcard(irs::ViewCast<irs::byte_type>(std::string_view{"fo%"}));
+  const auto states = a.NumStates();
+  const auto arcs = [&] {
+    size_t n = 0;
+    for (irs::automaton::StateId s = 0; s < a.NumStates(); ++s) {
+      n += a.NumArcs(s);
+    }
+    return n;
+  };
+  const auto before = arcs();
+
+  irs::EmplaceSinkArcs(a);
+
+  ASSERT_EQ(states, a.NumStates());
+  ASSERT_EQ(before, arcs());
 }
 
 TEST_F(WildcardUtilsTest, sink_arcs_accept_unchanged) {

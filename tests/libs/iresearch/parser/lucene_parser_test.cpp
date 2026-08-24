@@ -1969,3 +1969,94 @@ TEST_F(LuceneParserTest, MaxGapsOverMoreThanAPairIsRefused) {
 TEST_F(LuceneParserTest, FieldExistenceIsRefused) {
   EXPECT_ANY_THROW(sdb::ParseQuery(ctx, "title:*"));
 }
+
+// Rules the grammar has that nothing else here reaches.
+
+TEST_F(LuceneParserTest, UnicodeEscape) {
+  // `\uXXXX` is the character it names -- Lucene's `discardEscapeChar`
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "caf\\u00e9"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertTerm(OptionalRoot()[0], kFieldId, "caf\xc3\xa9");
+}
+
+TEST_F(LuceneParserTest, EscapeKeepsWhatItProtected) {
+  // the `+` is part of the term rather than an operator, and the analyzer
+  // makes two words of what it protected
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "a\\+b"));
+  ASSERT_TRUE(RequiredRoot().empty());
+  ASSERT_EQ(1, OptionalRoot().size());
+  const auto& parts =
+    sdb::basics::downCast<irs::MixedBooleanFilter>(OptionalRoot()[0])
+      .GetOptional();
+  ASSERT_EQ(2, parts.size());
+  AssertTerm(parts[0], kFieldId, "a");
+  AssertTerm(parts[1], kFieldId, "b");
+}
+
+TEST_F(LuceneParserTest, LoneOperatorIsATerm) {
+  // what was pasted in is searched for, rather than read as an operator with
+  // nothing to apply to
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "alpha + beta"));
+  ASSERT_EQ(3, OptionalRoot().size());
+  AssertTerm(OptionalRoot()[0], kFieldId, "alpha");
+  AssertTerm(OptionalRoot()[1], kFieldId, "+");
+  AssertTerm(OptionalRoot()[2], kFieldId, "beta");
+}
+
+TEST_F(LuceneParserTest, MatchAll) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "*:*"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  EXPECT_EQ(irs::Type<irs::All>::id(), OptionalRoot()[0].type());
+}
+
+TEST_F(LuceneParserTest, RangeWithQuotedBound) {
+  // a quoted bound holds what a bare one cannot: spaces, and the word TO
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "[\"alpha beta\" TO gamma]"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertRange(OptionalRoot()[0], kFieldId, "alpha beta",
+              irs::BoundType::Inclusive, "gamma", irs::BoundType::Inclusive);
+}
+
+TEST_F(LuceneParserTest, FnPhrase) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:phrase(alpha beta)"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  EXPECT_EQ(2, phrase.options().size());
+}
+
+TEST_F(LuceneParserTest, FnWildcard) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:wildcard(al*ha)"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertWildcard(OptionalRoot()[0], kFieldId, "al%ha");
+}
+
+TEST_F(LuceneParserTest, FnFuzzyTerm) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:fuzzyTerm(alpha)"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertFuzzy(OptionalRoot()[0], kFieldId, "alpha", 2);
+}
+
+TEST_F(LuceneParserTest, FnFuzzyTermWithDistance) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:fuzzyTerm(alpha 1)"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertFuzzy(OptionalRoot()[0], kFieldId, "alpha", 1);
+}
+
+TEST_F(LuceneParserTest, FnMaxGapsOverAPair) {
+  // over one pair a gap bound is a distance, which a phrase can say
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:maxgaps(2 fn:ordered(alpha beta))"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  EXPECT_EQ(2, phrase.options().size());
+}
+
+TEST_F(LuceneParserTest, FnMaxWidthOverAPair) {
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "fn:maxwidth(3 fn:ordered(alpha beta))"));
+  ASSERT_EQ(1, OptionalRoot().size());
+  const auto& phrase = sdb::basics::downCast<irs::ByPhrase>(OptionalRoot()[0]);
+  EXPECT_EQ(2, phrase.options().size());
+}
+
+TEST_F(LuceneParserTest, FnMaxWidthTooNarrowIsRefused) {
+  EXPECT_ANY_THROW(sdb::ParseQuery(ctx, "fn:maxwidth(1 fn:ordered(a b))"));
+}

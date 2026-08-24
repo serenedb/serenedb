@@ -6565,12 +6565,10 @@ TEST(block_disjunction_test, min_match_next) {
 // A seek counts the matches on the document it lands on, not on the target it
 // was given. With a target below the first match every sub lands past it, and
 // counting against the target left the count at one -- so the first document
-// of a min-match query was dropped.
-TEST(block_disjunction_test, min_match_seek_before_first_match) {
-  using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
-    irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, false, 1>>;
-
+// of a min-match query was dropped. The same seek serves the read-ahead
+// traits, so both are checked.
+template<typename Disjunction>
+void AssertMinMatchSeekBeforeFirstMatch() {
   std::vector<std::vector<irs::doc_id_t>> docs{
     {5, 9},
     {5, 9},
@@ -6594,6 +6592,24 @@ TEST(block_disjunction_test, min_match_seek_before_first_match) {
     ASSERT_EQ(5, it.advance());
     ASSERT_EQ(2, it.MatchCount());
   }
+}
+
+TEST(block_disjunction_test, min_match_seek_before_first_match) {
+  AssertMinMatchSeekBeforeFirstMatch<irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+    irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, false, 1>>>();
+}
+
+TEST(block_disjunction_test, min_match_seek_before_first_match_readahead) {
+  AssertMinMatchSeekBeforeFirstMatch<irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
+    irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, true, 1>>>();
+}
+
+TEST(block_disjunction_test, min_match_seek_before_first_match_scored) {
+  AssertMinMatchSeekBeforeFirstMatch<irs::BlockDisjunction<
+    irs::ScoreAdapter, irs::ScoreMergeType::Sum,
+    irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, false, 1>>>();
 }
 
 TEST(block_disjunction_test, min_match_next_two_blocks) {

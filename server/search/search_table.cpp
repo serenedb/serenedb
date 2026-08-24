@@ -72,15 +72,6 @@ std::filesystem::path SearchTable::GetWalPath(ObjectId db_id) {
   return path;
 }
 
-std::filesystem::path SearchTable::GetChunkDir(ObjectId db_id,
-                                               ObjectId table_id) {
-  SDB_ASSERT(table_id.isSet());
-  auto path = GetWalPath(db_id);
-  path /= "chunks";
-  path /= std::to_string(table_id.id());
-  return path;
-}
-
 absl::Status SearchTable::DropIndexDir(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id) {
   auto path = GetPath(db_id, schema_id, table_id);
@@ -95,14 +86,9 @@ absl::Status SearchTable::DropIndexDir(ObjectId db_id, ObjectId schema_id,
 }
 
 absl::Status SearchTable::DropWalShard(ObjectId db_id, ObjectId table_id) {
-  auto chunk_dir = GetChunkDir(db_id, table_id);
-  std::error_code ec;
-  std::filesystem::remove_all(chunk_dir, ec);
-  if (ec) {
-    return absl::InternalError(
-      absl::StrCat("Failed to remove search table chunk directory '",
-                   chunk_dir.string(), "': ", ec.message()));
-  }
+  // The shard owns no WAL-side files -- its data lives in the index directory,
+  // which DropIndexDir removes. All that is left is to stop its frozen tick
+  // pinning the shared log's GC floor.
   GetSearchEngine().GetDbWal(db_id).DeregisterShard(table_id);
   return absl::OkStatus();
 }
@@ -331,6 +317,12 @@ void SearchTable::OpenWriter() {
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = _segment_memory_max;
+  // A shard loaded from disk may hold segments the crashed process flushed and
+  // fsynced but never published; the WAL references them and recovery
+  // re-attaches them, so Make() must not unlink them for being unreferenced.
+  // FinishRecovery runs the cleanup once replay is done. A brand-new shard has
+  // an empty directory and no records, so it keeps the default.
+  writer_options.cleanup_on_open = _is_new;
   // TODO(Dronplane): for now we rely on rocksdb (still present) lock
   // But in future we need own server wide data dir lock.
   writer_options.lock_repository = false;

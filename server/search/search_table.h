@@ -127,7 +127,6 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   static std::filesystem::path GetPath(ObjectId db_id, ObjectId schema_id,
                                        ObjectId table_id);
   static std::filesystem::path GetWalPath(ObjectId db_id);
-  static std::filesystem::path GetChunkDir(ObjectId db_id, ObjectId table_id);
 
   // Drop on-disk artifacts. The index dir nests under the schema, so a
   // schema/database drop already wipes it; the WAL shard lives under the
@@ -136,10 +135,32 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
                                    ObjectId table_id);
   static absl::Status DropWalShard(ObjectId db_id, ObjectId table_id);
 
-  irs::IndexWriter::Transaction GetTransaction() noexcept {
+  // `exclusive_segment` is required of a writer that will record its flushed
+  // segments in the WAL -- see irs::IndexWriter::GetBatch.
+  irs::IndexWriter::Transaction GetTransaction(
+    bool exclusive_segment = false) noexcept {
     SDB_ASSERT(_writer);
-    return _writer->GetBatch();
+    return _writer->GetBatch(exclusive_segment);
   }
+
+  // Re-attach a segment this shard flushed + fsynced before a crash. `tick`
+  // must be in the replaying transaction's tick space, since it is what orders
+  // the segment against replayed removals. False means the segment cannot be
+  // reopened -- the caller holds a durable record claiming those documents, so
+  // it must treat that as an error rather than skipping them.
+  bool AdoptSegment(irs::SegmentMeta&& meta, uint64_t tick) {
+    SDB_ASSERT(_writer);
+    return _writer->AdoptSegment(irs::IndexSegment{.meta = std::move(meta)},
+                                 tick);
+  }
+
+  // Called once this shard's WAL has been replayed. The writer was opened with
+  // cleanup suppressed so un-replayed segments would survive Make(), so this
+  // reclaims whatever the replay did not adopt -- a crashed bulk load can leave
+  // gigabytes behind. Only about promptness: the refresh loop's periodic
+  // cleanup would reclaim the same files a tick later, so skipping this leaks
+  // nothing.
+  void FinishRecovery() { CleanupUnsafe(); }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {
     SDB_ASSERT(_writer);
@@ -163,11 +184,6 @@ class SearchTable : public std::enable_shared_from_this<SearchTable> {
   SearchDbWal& Wal() noexcept {
     SDB_ASSERT(_wal);
     return *_wal;
-  }
-
-  SearchDbWal::ChunkWriter NewChunkWriter() {
-    SDB_ASSERT(_wal);
-    return _wal->NewChunkWriter(GetTableId());
   }
 
   uint64_t CommittedTick() const noexcept { return _last_committed_tick; }

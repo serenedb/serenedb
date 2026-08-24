@@ -41,7 +41,7 @@ struct LocalTableChangesEntry {
   struct Op {
     std::unique_ptr<duckdb::ColumnDataCollection> collection;
     std::unique_ptr<std::vector<SearchDbWal::InlinePk>> pk_segments;
-    std::vector<SearchDbWal::PendingChunk> chunks;
+    std::vector<SearchDbWal::SegmentRef> segments;
     std::vector<std::string> delete_pks;
     bool truncate = false;
 
@@ -71,22 +71,22 @@ struct LocalTableChangesEntry {
     }
   }
 
-  // Move a bulk statement's chunk files into the current insert run (does not
-  // seal it). Batched: one statement's chunks resolve the current run once,
-  // instead of re-checking the seal condition per chunk on this hot path.
-  void AppendReference(std::vector<SearchDbWal::PendingChunk>&& chunks) {
-    if (chunks.empty()) {
+  // Move a bulk statement's already-flushed iresearch segments into the current
+  // insert run (does not seal it). Batched: one statement's segments resolve
+  // the current run once, instead of per segment on this hot path.
+  void AppendSegments(std::vector<SearchDbWal::SegmentRef>&& segments) {
+    if (segments.empty()) {
       return;
     }
     auto& run = CurrentInsertRun();
-    if (run.chunks.empty()) {
-      run.chunks = std::move(chunks);  // fresh run: take the whole vector
+    if (run.segments.empty()) {
+      run.segments = std::move(segments);  // fresh run: take the whole vector
       return;
     }
     // A prior bulk statement already coalesced into this run; append.
-    for (auto& c : chunks) {
-      run.chunks.push_back(std::move(c));
-    }
+    run.segments.insert(run.segments.end(),
+                        std::make_move_iterator(segments.begin()),
+                        std::make_move_iterator(segments.end()));
   }
 
   // Append a DELETE op, sealing the current insert run. (A delete op is

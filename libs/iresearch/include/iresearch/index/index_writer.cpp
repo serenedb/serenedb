@@ -26,6 +26,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 
+#include <charconv>
 #include <cstdint>
 #include <shared_mutex>
 #include <type_traits>
@@ -590,6 +591,32 @@ uint64_t LimitTick(uint64_t tick, uint64_t def) noexcept {
   return tick != writer_limits::kMaxTick ? tick : def;
 }
 
+// Id of the segment a file belongs to. Every file of a segment is named
+// `_<id>` or `_<id>.<...>` (see FileName), so the id is the digit run right
+// after the leading '_'. Returns false for anything else (index metas, locks).
+bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
+  if (name.size() < 2 || name.front() != '_') {
+    return false;
+  }
+  const auto* begin = name.data() + 1;
+  const auto* end = name.data() + name.size();
+  const auto [ptr, ec] = std::from_chars(begin, end, id);
+  return ec == std::errc{} && (ptr == end || *ptr == '.');
+}
+
+// Largest segment id with a file physically present in the directory, including
+// segments no committed meta references.
+uint64_t MaxSegmentId(const Directory& dir) {
+  uint64_t max_id = 0;
+  dir.visit([&max_id](std::string_view name) {
+    if (uint64_t id = 0; ParseSegmentId(name, id)) {
+      max_id = std::max(max_id, id);
+    }
+    return true;
+  });
+  return max_id;
+}
+
 auto CopyMask(const Directory& dir, const auto& segment) {
   if (const auto* mask = segment.docs_mask(); mask) {
     return std::make_shared<DocumentMask>(*mask);
@@ -670,6 +697,38 @@ void IndexWriter::Document::Finish() noexcept {
   }
 }
 
+std::span<const IndexWriter::FlushedSegment>
+IndexWriter::Transaction::FlushAndFsync() {
+  auto* segment = _active.Segment();
+  if (segment == nullptr) {
+    return {};
+  }
+  SDB_ASSERT(_exclusive_segment,
+             "FlushAndFsync would report segments holding another "
+             "transaction's documents; acquire the batch with "
+             "exclusive_segment");
+  segment->Flush();
+
+  const auto flushed = std::span{segment->flushed};
+  if (flushed.empty()) {
+    return flushed;  // every document was masked away
+  }
+
+  // One batched sync over the whole flushed set: a segment that auto-flushed
+  // mid-insert is as much this transaction's data as the one just serialized.
+  std::vector<std::string_view> files;
+  files.reserve(flushed.size() * 8);
+  for (const auto& entry : flushed) {
+    SDB_ASSERT(!entry.meta.files.empty());
+    files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
+  }
+  if (!segment->dir.sync(files)) {
+    throw IoError{absl::StrCat("Failed to sync ", files.size(), " file(s) of ",
+                               flushed.size(), " flushed segment(s)")};
+  }
+  return flushed;
+}
+
 void IndexWriter::Transaction::Reset() noexcept {
   // TODO(mbkkt) rename Reset() to Rollback()
   if (auto* segment = _active.Segment(); segment != nullptr) {
@@ -717,7 +776,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
                                              bool* commit_on_flush) {
   SDB_ASSERT(Valid());
   while (_active.Segment() == nullptr) {  // lazy init
-    _active = _writer->GetSegmentContext();
+    _active = _writer->GetSegmentContext(_exclusive_segment);
   }
 
   auto& segment = *_active.Segment();
@@ -1274,8 +1333,19 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
       options.column_options, options.norm_column_id, options.row_group_size);
   }
-  // Remove non-index files from directory
-  directory_utils::RemoveAllUnreferenced(dir);
+  if (options.cleanup_on_open) {
+    // Remove non-index files from directory
+    directory_utils::RemoveAllUnreferenced(dir);
+  } else {
+    // Segments the committed meta does not reference are being kept for a host
+    // WAL to adopt, so their ids are still live: floor the counter above every
+    // id on disk, or the next segment would be created over a survivor (the
+    // committed meta's seg_counter sits below them).
+    const auto max_id = MaxSegmentId(dir);
+    if (writer->_seg_counter.load(std::memory_order_relaxed) < max_id) {
+      writer->_seg_counter.store(max_id, std::memory_order_relaxed);
+    }
+  }
 
   return writer;
 }
@@ -1552,6 +1622,62 @@ CompactionResult IndexWriter::Compact(
   return result;
 }
 
+bool IndexWriter::AdoptSegment(IndexSegment&& segment, uint64_t tick) {
+  if (segment.meta.live_docs_count == 0) {
+    return true;  // Nothing to adopt
+  }
+  SDB_ASSERT(!segment.meta.files.empty());
+  // Never guess the codec: the caller reconstructs the segment from its own
+  // durable description, and every file here was encoded by a specific format,
+  // so falling back to _codec would read those files with the wrong one. This
+  // writer also wrote every segment in the directory with a single codec, so
+  // one claiming a different format is not something we produced -- a corrupt
+  // or misparsed description, or an unsupported format change between runs.
+  if (segment.meta.codec == nullptr ||
+      segment.meta.codec->type() != _codec->type()) {
+    SDB_WARN(
+      IRESEARCH, "Cannot adopt segment '", segment.meta.name, "': codec '",
+      segment.meta.codec ? segment.meta.codec->type()().name() : "<none>",
+      "' does not match the writer's '", _codec->type()().name(), "'");
+    return false;
+  }
+
+  // The files already exist and are already durable -- this is Import without
+  // the MergeWriter copy. Only the segment meta is written, so the upcoming
+  // commit can name the segment, and refs are taken so the cleaner cannot
+  // reclaim it from under us.
+  RefTrackingDirectory dir{_dir};  // Track references
+  index_utils::FlushIndexSegment(dir, segment);
+
+  auto adopted_reader =
+    SegmentReaderImpl::Open(_dir, segment.meta, GetSnapshotImpl()->Options());
+  if (!adopted_reader) {
+    return false;
+  }
+
+  // Keep the counter above the adopted id: this segment was named by a previous
+  // process whose counter never reached the committed meta we opened from.
+  if (uint64_t id = 0; ParseSegmentId(segment.meta.name, id) &&
+                       _seg_counter.load(std::memory_order_relaxed) < id) {
+    _seg_counter.store(id, std::memory_order_relaxed);
+  }
+
+  auto refs = dir.GetRefs();
+  auto flush = GetFlushContext();
+
+  // lock due to context modification
+  std::lock_guard lock{flush->pending_mutex};
+
+  // Unlike Import, the tick is the caller's: a removal reaches an imported
+  // segment only when `import.tick <= query.tick` (PrepareFlush stage 2), so
+  // passing the tick these documents were originally committed at is what keeps
+  // a replayed delete ordered against them.
+  flush->imports.emplace_back(std::move(segment), tick, std::move(refs),
+                              std::move(adopted_reader));
+
+  return true;
+}
+
 bool IndexWriter::Import(const IndexReader& reader,
                          Format::ptr codec /*= nullptr*/,
                          const MergeWriter::FlushProgress& progress /*= {}*/) {
@@ -1640,7 +1766,8 @@ IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept
   }
 }
 
-IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext() try {
+IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
+  bool exclusive) try {
   // TODO(mbkkt) rewrite this when will be written parallel Commit
   //  Few ideas about rewriting:
   //  1. We should use all available memory
@@ -1661,7 +1788,7 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext() try {
     return {};
   }
 
-  {
+  if (!exclusive) {
     auto flush = GetFlushContext();
     auto* freelist_node = flush->pending_freelist.pop();
     if (freelist_node != nullptr) {

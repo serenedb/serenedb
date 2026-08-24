@@ -26,11 +26,11 @@ on:
         type: boolean
         required: false
         default: false
-      EXTENSION:
-        description: "also build + run unittest (duckdb + extensions) tests"
-        type: boolean
+      DUCKDB_SUITES:
+        description: "comma-separated duckdb test suites to build + run (empty = none); see tests/duckdb/run.sh --list"
+        type: string
         required: false
-        default: false
+        default: ""
       SQLITE:
         description: "also run the sqlite sqllogic subtree"
         type: boolean
@@ -83,11 +83,11 @@ on:
         type: boolean
         required: false
         default: false
-      EXTENSION:
-        description: "also build + run unittest (duckdb + extensions) tests"
-        type: boolean
+      DUCKDB_SUITES:
+        description: "comma-separated duckdb test suites to build + run (empty = none); see tests/duckdb/run.sh --list"
+        type: string
         required: false
-        default: false
+        default: ""
       SQLITE:
         description: "also run the sqlite sqllogic subtree"
         type: boolean
@@ -164,7 +164,7 @@ jobs:
           esac
 
           echo "RUN_IRESEARCH=${{ inputs.IRESEARCH }}" >> $GITHUB_ENV
-          echo "RUN_EXTENSION=${{ inputs.EXTENSION }}" >> $GITHUB_ENV
+          echo "DUCKDB_SUITES=${{ inputs.DUCKDB_SUITES }}" >> $GITHUB_ENV
           echo "RUN_SQLITE=${{ inputs.SQLITE }}"       >> $GITHUB_ENV
           echo "RUN_SQLSMITH=${{ inputs.SQLSMITH }}"   >> $GITHUB_ENV
           echo "RUN_EXTRA=${{ inputs.RUN_EXTRA }}"     >> $GITHUB_ENV
@@ -228,7 +228,7 @@ jobs:
           if [[ "${{ inputs.CONFIG }}" != "perf" ]]; then
             TARGETS+=(serenedb-tests_basics serenedb-tests_connector)
             [[ "$RUN_IRESEARCH" == "true" ]] && TARGETS+=(iresearch-tests iresearch-load-tests)
-            if [[ "$RUN_EXTENSION" == "true" ]]; then
+            if [[ -n "$DUCKDB_SUITES" ]]; then
               TARGETS+=(unittest)
               EXTRA_FLAGS="${EXTRA_FLAGS} -DSDB_BUILD_DUCKDB_UNITTESTS=ON"
             fi

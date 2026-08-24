@@ -60,7 +60,7 @@ start_iresearch_load_bg() {
 	run_bg bash "${STEPS}/046-ci-in-docker-run-iresearch-load-test.bash"
 }
 
-# gtest + (iresearch) + (unittest/extension) -- need the unit-test binaries, so
+# gtest + (iresearch) + (duckdb suites) -- need the unit-test binaries, so
 # these never run on perf (which doesn't build them). 042 and 043 share the
 # gtest-parallel cache, so they stay sequential (foreground); the load test runs
 # in the background via start_iresearch_load_bg.
@@ -70,34 +70,54 @@ run_test_suites() {
 	if [[ "${RUN_IRESEARCH:-false}" == "true" ]]; then
 		run bash "${STEPS}/042-ci-in-docker-run-iresearch-tests.bash"
 	fi
-	if [[ "${RUN_EXTENSION:-false}" == "true" ]]; then
-		run bash "${STEPS}/048-ci-in-docker-run-extension-tests.bash"
+	if [[ -n "${DUCKDB_SUITES:-}" ]]; then
+		run bash "${STEPS}/048-ci-in-docker-run-duckdb-tests.bash"
 	fi
 }
 
-# The serened-backed smoke that every config runs: sqllogic ours + drivers.
+# The serened-backed smoke that every config runs: sqllogic + drivers.
+#
+# One sqllogic invocation covers both scopes: `all` is ours + the sqlite subtree
+# in a single runner run. Splitting it in two cost a second serened stack
+# bring-up and, worse, silently lost results -- both scopes emit the same
+# tests-serenedb-*-junit.xml names, so the sqlite run overwrote the ours run's
+# report in the uploaded artifact.
 run_serened_core() {
-	run env SDB_SQLLOGIC_SCOPE=ours bash "${STEPS}/044-ci-in-docker-run-sqllogic-tests.bash"
+	local scope=ours
+	[[ "${RUN_SQLITE:-false}" == "true" ]] && scope=all
+	run env SDB_SQLLOGIC_SCOPE="$scope" bash "${STEPS}/044-ci-in-docker-run-sqllogic-tests.bash"
 	run bash "${STEPS}/047-ci-in-docker-run-driver-tests.bash"
 }
 
-# Diff-gated heavy suites: sqlite subtree + sqlsmith fuzzing (+ the slow r driver).
-run_sqlite_sqlsmith() {
-	if [[ "${RUN_SQLITE:-false}" == "true" ]]; then
-		run env SDB_SQLLOGIC_SCOPE=sqlite bash "${STEPS}/044-ci-in-docker-run-sqllogic-tests.bash"
-	fi
+# Diff-gated heavy suite: sqlsmith fuzzing.
+run_sqlsmith() {
 	if [[ "${RUN_SQLSMITH:-false}" == "true" ]]; then
-		# r driver is slow, so it rides the sqlsmith gate instead of the hot driver run.
-		run env SDB_DRV_LANG=sqlsmith,r bash "${STEPS}/047-ci-in-docker-run-driver-tests.bash"
+		run env SDB_DRV_LANG=sqlsmith bash "${STEPS}/047-ci-in-docker-run-driver-tests.bash"
 	fi
 }
+
+# Sanitizer configs run ours + drivers by default; RUN_EXTRA is what widens them
+# to the full in-scope set. Fold that into the diff gates here so the bodies
+# below only ever read RUN_* -- in particular run_serened_core needs RUN_SQLITE
+# to already be false, or the default sanitizer run would pick up the sqlite
+# subtree through the merged scope.
+case "$CONFIG" in
+asan | tsan | msan | ubsan)
+	if [[ "${RUN_EXTRA:-false}" != "true" ]]; then
+		RUN_IRESEARCH=false
+		DUCKDB_SUITES=""
+		RUN_SQLITE=false
+		RUN_SQLSMITH=false
+	fi
+	;;
+esac
 
 case "$CONFIG" in
 perf)
 	# Optimized build: no unit-test binaries, no fault injection -> no gtest /
 	# unittest / iresearch and no recovery. Just the serened smoke + heavy suites.
 	run_serened_core
-	run_sqlite_sqlsmith
+	run_sqlsmith
 	;;
 dev | coverage)
 	# Everything, with asserts (coverage also instruments the build).
@@ -105,18 +125,19 @@ dev | coverage)
 	run_test_suites
 	run_serened_core
 	run bash "${STEPS}/045-ci-in-docker-run-recovery-tests.bash"
-	run_sqlite_sqlsmith
+	run_sqlsmith
 	;;
 asan | tsan | msan | ubsan)
 	# Default: ours + drivers only. Recovery is disabled under sanitizers for now
 	# (doesn't pass yet -- will join the default soon). RUN_EXTRA widens to the
-	# full in-scope set: gtest + iresearch + extension + sqlite + sqlsmith.
+	# full in-scope set; the normalization above already forced every RUN_* gate
+	# off when it isn't set, so the merged sqllogic scope stays `ours` too.
 	run_serened_core
 	if [[ "${RUN_EXTRA:-false}" == "true" ]]; then
 		start_iresearch_load_bg
 		run_test_suites
-		run_sqlite_sqlsmith
 	fi
+	run_sqlsmith
 	;;
 *)
 	echo "Unknown CONFIG '$CONFIG'" >&2

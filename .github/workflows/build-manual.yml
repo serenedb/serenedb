@@ -58,9 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       iresearch: ${{ steps.classify.outputs.iresearch }}
-      extension: ${{ steps.classify.outputs.extension }}
-      duckdb: ${{ steps.classify.outputs.duckdb }}
-      pg: ${{ steps.classify.outputs.pg }}
+      duckdb_suites: ${{ steps.classify.outputs.duckdb_suites }}
       pg_tests: ${{ steps.classify.outputs.pg_tests }}
     steps:
       - uses: actions/checkout@v7
@@ -82,8 +80,8 @@ jobs:
     with:
       LOCATION: ${{ matrix.location }}
       CONFIG: perf
-      SQLITE: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
-      SQLSMITH: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
@@ -100,9 +98,9 @@ jobs:
       LOCATION: ${{ matrix.location }}
       CONFIG: dev
       IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      EXTENSION: ${{ inputs.EVERYTHING || needs.classify.outputs.extension == 'true' }}
-      SQLITE: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
-      SQLSMITH: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
+      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
@@ -120,9 +118,9 @@ jobs:
       CONFIG: asan
       RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_ASAN }}
       IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      EXTENSION: ${{ inputs.EVERYTHING || needs.classify.outputs.extension == 'true' }}
-      SQLITE: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
-      SQLSMITH: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
+      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
@@ -140,16 +138,16 @@ jobs:
       CONFIG: tsan
       RUN_EXTRA: ${{ inputs.EVERYTHING || inputs.EXTRA_TSAN }}
       IRESEARCH: ${{ inputs.EVERYTHING || needs.classify.outputs.iresearch == 'true' }}
-      EXTENSION: ${{ inputs.EVERYTHING || needs.classify.outputs.extension == 'true' }}
-      SQLITE: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
-      SQLSMITH: ${{ inputs.EVERYTHING || needs.classify.outputs.duckdb == 'true' }}
+      DUCKDB_SUITES: ${{ inputs.EVERYTHING && 'core,avro,azure,httpfs,iceberg,inet,postgres_scanner' || needs.classify.outputs.duckdb_suites }}
+      SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
+      SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
   validate-pg:
     name: validate pg
     needs: classify
-    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.classify.outputs.pg == 'true') }}
+    if: ${{ !cancelled() && (inputs.EVERYTHING || needs.classify.outputs.pg_tests != '') }}
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux-amd64
